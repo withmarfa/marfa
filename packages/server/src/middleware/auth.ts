@@ -117,11 +117,11 @@ export function requireTypeAccess(
 
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (resolved === "none") {
-    throw new ProtocolError(ErrorCode.FORBIDDEN, `No access to type "${type}"`);
+    throw new ProtocolError(ErrorCode.TYPE_NOT_PERMITTED, `No access to type "${type}"`);
   }
   if (level === "write" && resolved === "read") {
     throw new ProtocolError(
-      ErrorCode.FORBIDDEN,
+      ErrorCode.TYPE_NOT_PERMITTED,
       `Write access to type "${type}" denied`,
     );
   }

@@ -36,9 +36,12 @@ export class SqliteSearchStore implements SearchStore {
   }
 
   search(query: string, filters: SearchFilters): SearchResult[] {
+    // Wrap query in double quotes for FTS5 phrase matching.
+    // This prevents hyphens from being interpreted as NOT operators.
+    const escapedQuery = `"${query.replace(/"/g, '""')}"`;
     const limit = Math.min(filters.limit ?? 20, 100);
     const conditions: string[] = [];
-    const params: unknown[] = [query];
+    const params: unknown[] = [escapedQuery];
 
     // Default: exclude trashed
     if (filters.state) {

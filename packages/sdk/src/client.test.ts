@@ -136,8 +136,8 @@ describe("items", () => {
   it("deletes an item", async () => {
     const item = await createNote();
     await client.items.delete(item.id);
-    const fetched = await client.items.get(item.id);
-    expect(fetched.state).toBe("trashed");
+    // Trashed items return 404 on GET
+    await expect(client.items.get(item.id)).rejects.toThrow(NotFoundError);
   });
 
   it("restores a deleted item", async () => {

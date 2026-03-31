@@ -65,7 +65,7 @@ export interface CreateItemInput {
 /** Input for updating an existing item. */
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
-  version: number;
+  version?: number;
 }
 
 /** Metadata sidecar — tags and entity references, stored separately from properties. */

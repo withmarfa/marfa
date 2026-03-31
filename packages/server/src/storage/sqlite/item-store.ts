@@ -292,8 +292,8 @@ export class SqliteItemStore implements ItemStore {
       const now = new Date().toISOString();
       const deviceId = row.device_id ?? undefined;
 
-      // Fast path: versions match
-      if (row.version === input.version) {
+      // Fast path: version omitted — always merge, no conflict detection
+      if (input.version === undefined || row.version === input.version) {
         // Fix 7: include device_id in version snapshot
         this.versionStore.create(id, row.version, currentProps, deviceId);
 

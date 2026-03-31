@@ -136,17 +136,28 @@ export class MymeClient {
     },
 
     restore: async (id: string): Promise<Item> => {
-      return this.transport.request<Item>("POST", `/items/${id}/restore`);
+      const res = await this.transport.request<{ item: Item }>(
+        "POST",
+        `/items/${id}/restore`,
+      );
+      return res.item;
     },
 
     transition: async (id: string, state: string): Promise<Item> => {
-      return this.transport.request<Item>("POST", `/items/${id}/transition`, {
-        body: { state },
-      });
+      const res = await this.transport.request<{ item: Item }>(
+        "POST",
+        `/items/${id}/transition`,
+        { body: { state } },
+      );
+      return res.item;
     },
 
     versions: async (id: string): Promise<Version[]> => {
-      return this.transport.request<Version[]>("GET", `/items/${id}/versions`);
+      const res = await this.transport.request<{ versions: Version[] }>(
+        "GET",
+        `/items/${id}/versions`,
+      );
+      return res.versions;
     },
   };
 
@@ -154,28 +165,33 @@ export class MymeClient {
 
   readonly metadata = {
     get: async (itemId: string): Promise<Metadata> => {
-      return this.transport.request<Metadata>(
+      const res = await this.transport.request<{ metadata: Metadata }>(
         "GET",
         `/items/${itemId}/metadata`,
       );
+      return res.metadata;
     },
 
     set: async (itemId: string, input: MetadataInput): Promise<Metadata> => {
-      return this.transport.request<Metadata>(
+      const res = await this.transport.request<{ metadata: Metadata }>(
         "PUT",
         `/items/${itemId}/metadata`,
         { body: input },
       );
+      return res.metadata;
     },
 
     addTags: async (itemId: string, tags: string[]): Promise<Metadata> => {
-      return this.transport.request<Metadata>("POST", `/items/${itemId}/tags`, {
-        body: { tags },
-      });
+      const res = await this.transport.request<{ metadata: Metadata }>(
+        "POST",
+        `/items/${itemId}/tags`,
+        { body: { tags } },
+      );
+      return res.metadata;
     },
 
     removeTag: async (itemId: string, tag: string): Promise<void> => {
-      await this.transport.request<Metadata>(
+      await this.transport.request<{ metadata: Metadata }>(
         "DELETE",
         `/items/${itemId}/tags/${encodeURIComponent(tag)}`,
       );
@@ -188,16 +204,23 @@ export class MymeClient {
     query: string,
     filters?: SearchFilters,
   ): Promise<SearchResult[]> {
-    return this.transport.request<SearchResult[]>("GET", "/search", {
-      query: { q: query, ...filters },
-    });
+    const res = await this.transport.request<{ results: SearchResult[] }>(
+      "GET",
+      "/search",
+      { query: { q: query, ...filters } },
+    );
+    return res.results;
   }
 
   // ---- Threads ----
 
   readonly threads = {
     create: async (): Promise<Thread> => {
-      return this.transport.request<Thread>("POST", "/threads");
+      const res = await this.transport.request<{ thread: Thread }>(
+        "POST",
+        "/threads",
+      );
+      return res.thread;
     },
 
     list: async (filters?: {

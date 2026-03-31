@@ -22,8 +22,13 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const body = await c.req.json();
 
     const type = body.type as string | undefined;
-    if (!type || !isValidTypeIdentifier(type)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Valid type identifier is required");
+    if (!type) {
+      throw new ProtocolError(ErrorCode.MISSING_REQUIRED_FIELD, "type is required", {
+        field: "type",
+      });
+    }
+    if (!isValidTypeIdentifier(type)) {
+      throw new ProtocolError(ErrorCode.INVALID_TYPE, `Invalid type identifier: ${type}`);
     }
 
     const properties = body.properties as Record<string, unknown> | undefined;
@@ -35,7 +40,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     if (body.id && !isValidId(body.id as string)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
     if (body.timestamp && !isValidTimestamp(body.timestamp as string)) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid timestamp");
@@ -116,7 +121,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.get("/:id", (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = storage.items.get(id);
@@ -133,7 +138,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.patch("/:id", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const body = await c.req.json();
@@ -143,9 +148,13 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
         "properties is required and must be an object",
       );
     }
-    // Fix 5: accept version >= 0 (0 means "never seen", still a conflict scenario)
-    if (typeof body.version !== "number" || !Number.isInteger(body.version) || body.version < 0) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "version must be a non-negative integer");
+    if (body.version !== undefined) {
+      if (typeof body.version !== "number" || !Number.isInteger(body.version) || body.version < 0) {
+        throw new ProtocolError(
+          ErrorCode.VALIDATION_ERROR,
+          "version must be a non-negative integer",
+        );
+      }
     }
 
     const item = storage.items.get(id);
@@ -182,7 +191,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.delete("/:id", (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     // Use list with state filter to find trashed items too
@@ -196,7 +205,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.post("/:id/restore", (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     requireAuth(c);
@@ -210,13 +219,13 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.post("/:id/transition", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const body = await c.req.json();
     const state = body.state as string | undefined;
     if (!state || !(ITEM_STATES as readonly string[]).includes(state)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${String(state)}`);
+      throw new ProtocolError(ErrorCode.INVALID_TRANSITION, `Invalid state: ${String(state)}`);
     }
 
     requireAuth(c);
@@ -230,7 +239,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.get("/:id/versions", (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = storage.items.get(id);
@@ -249,7 +258,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.get("/:id/metadata", (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = storage.items.get(id);
@@ -265,7 +274,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.put("/:id/metadata", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = storage.items.get(id);
@@ -287,7 +296,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.patch("/:id/metadata", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = storage.items.get(id);
@@ -309,7 +318,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.post("/:id/tags", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = storage.items.get(id);
@@ -336,7 +345,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   router.delete("/:id/tags/:tag", (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = storage.items.get(id);
