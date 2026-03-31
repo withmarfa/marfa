@@ -4,7 +4,7 @@ import type { AppEnv } from "./auth.js";
 
 export const errorHandler: ErrorHandler<AppEnv> = (err, c) => {
   if (err instanceof ProtocolError) {
-    return c.json(err.toResponse(), { status: err.status });
+    return c.json(err.toResponse(), err.status as 400);
   }
 
   if (err instanceof SyntaxError && err.message.includes("JSON")) {
