@@ -12,7 +12,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
   body,
   description,
   name,
-  content='',
   tokenize='porter unicode61'
 );
 `;
