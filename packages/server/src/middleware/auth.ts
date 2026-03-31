@@ -1,0 +1,159 @@
+import { createHmac } from "node:crypto";
+import { createMiddleware } from "hono/factory";
+import type { Context } from "hono";
+import {
+  ProtocolError,
+  ErrorCode,
+  resolveTypePermission,
+} from "@myme/shared";
+import type { ApiKey, TypePermission } from "@myme/shared";
+import type { Storage } from "../storage/interface.js";
+
+// ---------------------------------------------------------------------------
+// Hono environment type (shared across all routes)
+// ---------------------------------------------------------------------------
+
+export interface AppEnv {
+  Variables: {
+    apiKey: ApiKey | undefined;
+    isBootstrap: boolean;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Key hashing
+// ---------------------------------------------------------------------------
+
+const KEY_PREFIX = "myme_k1_";
+const DEBOUNCE_MS = 3600_000; // 1 hour
+
+export function hashApiKey(raw: string, salt: string): string {
+  return createHmac("sha256", salt).update(raw).digest("hex");
+}
+
+// ---------------------------------------------------------------------------
+// Auth middleware
+// ---------------------------------------------------------------------------
+
+export function authMiddleware(storage: Storage, salt: string) {
+  const lastUsedCache = new Map<string, number>();
+
+  return createMiddleware<AppEnv>(async (c, next) => {
+    // Bootstrap detection: POST /keys with no existing keys
+    if (c.req.method === "POST" && c.req.path === "/keys") {
+      const keyCount = storage.keys.count();
+      if (keyCount === 0) {
+        c.set("apiKey", undefined);
+        c.set("isBootstrap", true);
+        return next();
+      }
+    }
+
+    c.set("isBootstrap", false);
+
+    const authHeader = c.req.header("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      c.set("apiKey", undefined);
+      return next();
+    }
+
+    const token = authHeader.slice(7);
+    if (!token.startsWith(KEY_PREFIX)) {
+      c.set("apiKey", undefined);
+      return next();
+    }
+
+    const hash = hashApiKey(token, salt);
+    const stored = storage.keys.validate(hash);
+
+    if (!stored) {
+      c.set("apiKey", undefined);
+      return next();
+    }
+
+    c.set("apiKey", {
+      id: stored.id,
+      label: stored.label,
+      role: stored.role,
+      type_permissions: stored.type_permissions,
+      created_at: stored.created_at,
+    });
+
+    // Debounced last_used_at update
+    const now = Date.now();
+    const lastTracked = lastUsedCache.get(stored.id) ?? 0;
+    if (now - lastTracked > DEBOUNCE_MS) {
+      lastUsedCache.set(stored.id, now);
+      storage.keys.updateLastUsed(stored.id);
+    }
+
+    return next();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Access control helpers
+// ---------------------------------------------------------------------------
+
+export function requireAuth(c: Context<AppEnv>): ApiKey {
+  const key = c.get("apiKey");
+  if (!key) {
+    throw new ProtocolError(
+      ErrorCode.UNAUTHORIZED,
+      "Authentication required",
+    );
+  }
+  return key;
+}
+
+export function requireAdmin(c: Context<AppEnv>): ApiKey {
+  const key = requireAuth(c);
+  if (key.role !== "admin") {
+    throw new ProtocolError(
+      ErrorCode.FORBIDDEN,
+      "Admin access required",
+    );
+  }
+  return key;
+}
+
+export function requireTypeAccess(
+  c: Context<AppEnv>,
+  type: string,
+  level: "read" | "write",
+): void {
+  const key = requireAuth(c);
+  if (key.role === "admin") return;
+
+  const resolved = resolveTypePermission(type, key.type_permissions);
+  if (resolved === "none") {
+    throw new ProtocolError(
+      ErrorCode.FORBIDDEN,
+      `No access to type "${type}"`,
+    );
+  }
+  if (level === "write" && resolved === "read") {
+    throw new ProtocolError(
+      ErrorCode.FORBIDDEN,
+      `Write access to type "${type}" denied`,
+    );
+  }
+}
+
+export function getTypeFilter(c: Context<AppEnv>): string[] | undefined {
+  const key = c.get("apiKey");
+  if (!key || key.role === "admin") return undefined;
+
+  const patterns: string[] = [];
+  for (const [pattern, permission] of Object.entries(
+    key.type_permissions,
+  )) {
+    if (
+      (permission as TypePermission) === "read" ||
+      (permission as TypePermission) === "write"
+    ) {
+      patterns.push(pattern);
+    }
+  }
+  return patterns.length > 0 ? patterns : undefined;
+}
