@@ -18,9 +18,20 @@ const FLEXIBLE_TIMESTAMP =
  */
 export function isValidTimestamp(value: string): boolean {
   if (!FLEXIBLE_TIMESTAMP.test(value)) return false;
-  // Verify it parses to a real date (catches 2026-02-30 etc.)
+  // Date constructor silently rolls over invalid dates (Feb 30 → Mar 2).
+  // For date-containing strings, compare parsed components to originals.
+  const parts = value.match(/^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?/);
+  if (!parts) return false;
   const d = new Date(value);
-  return !isNaN(d.getTime());
+  if (isNaN(d.getTime())) return false;
+  // Only validate day/month if present in the input
+  if (parts[3] !== undefined) {
+    const utc = value.includes("T") || value.endsWith("Z");
+    const day = utc ? d.getUTCDate() : d.getDate();
+    const month = utc ? d.getUTCMonth() + 1 : d.getMonth() + 1;
+    if (day !== Number(parts[3]) || month !== Number(parts[2])) return false;
+  }
+  return true;
 }
 
 /**
