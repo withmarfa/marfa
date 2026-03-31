@@ -82,6 +82,7 @@ export interface Version {
   version: number;
   properties: Record<string, unknown>;
   created_at: string;
+  device_id?: string;
 }
 
 /** A sequential grouping of items. */

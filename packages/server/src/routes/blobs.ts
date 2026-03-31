@@ -69,12 +69,12 @@ export function blobRoutes(
 
     const record = storage.blobs.get(hash);
     if (!record) {
-      throw new ProtocolError(ErrorCode.NOT_FOUND, "Blob not found");
+      throw new ProtocolError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
 
     const data = blobBackend.get(hash);
     if (!data) {
-      throw new ProtocolError(ErrorCode.NOT_FOUND, "Blob data not found");
+      throw new ProtocolError(ErrorCode.BLOB_NOT_FOUND, "Blob data not found");
     }
 
     return new Response(data, {

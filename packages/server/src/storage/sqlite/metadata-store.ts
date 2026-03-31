@@ -32,6 +32,13 @@ export class SqliteMetadataStore implements MetadataStore {
     return { item_id: itemId, tags, about };
   }
 
+  merge(itemId: string, tags?: string[], about?: string[]): Metadata {
+    const current = this.get(itemId);
+    const mergedTags = tags ? [...new Set([...current.tags, ...tags])] : current.tags;
+    const mergedAbout = about ? [...new Set([...current.about, ...about])] : current.about;
+    return this.set(itemId, mergedTags, mergedAbout);
+  }
+
   addTags(itemId: string, tags: string[]): Metadata {
     const current = this.get(itemId);
     const merged = [...new Set([...current.tags, ...tags])];

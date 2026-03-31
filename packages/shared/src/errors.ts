@@ -3,11 +3,14 @@ import type { ErrorResponse } from "./types.js";
 /** All error codes used across the Myme protocol. */
 export enum ErrorCode {
   NOT_FOUND = "not_found",
+  ITEM_NOT_FOUND = "item_not_found",
+  THREAD_NOT_FOUND = "thread_not_found",
+  BLOB_NOT_FOUND = "blob_not_found",
   VALIDATION_ERROR = "validation_error",
   VERSION_CONFLICT = "version_conflict",
   UNAUTHORIZED = "unauthorized",
   FORBIDDEN = "forbidden",
-  INVALID_STATE = "invalid_state",
+  INVALID_TRANSITION = "invalid_transition",
   TYPE_NOT_FOUND = "type_not_found",
   DUPLICATE_SOURCE = "duplicate_source",
 }
@@ -15,11 +18,14 @@ export enum ErrorCode {
 /** Maps each error code to its HTTP status code. */
 const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.NOT_FOUND]: 404,
+  [ErrorCode.ITEM_NOT_FOUND]: 404,
+  [ErrorCode.THREAD_NOT_FOUND]: 404,
+  [ErrorCode.BLOB_NOT_FOUND]: 404,
   [ErrorCode.VALIDATION_ERROR]: 400,
   [ErrorCode.VERSION_CONFLICT]: 409,
   [ErrorCode.UNAUTHORIZED]: 401,
   [ErrorCode.FORBIDDEN]: 403,
-  [ErrorCode.INVALID_STATE]: 400,
+  [ErrorCode.INVALID_TRANSITION]: 400,
   [ErrorCode.TYPE_NOT_FOUND]: 400,
   [ErrorCode.DUPLICATE_SOURCE]: 409,
 };

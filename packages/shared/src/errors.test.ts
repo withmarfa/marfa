@@ -4,11 +4,14 @@ import { ErrorCode, ProtocolError, httpStatus } from "./errors.js";
 describe("ErrorCode", () => {
   it("has all expected error codes", () => {
     expect(ErrorCode.NOT_FOUND).toBe("not_found");
+    expect(ErrorCode.ITEM_NOT_FOUND).toBe("item_not_found");
+    expect(ErrorCode.THREAD_NOT_FOUND).toBe("thread_not_found");
+    expect(ErrorCode.BLOB_NOT_FOUND).toBe("blob_not_found");
     expect(ErrorCode.VALIDATION_ERROR).toBe("validation_error");
     expect(ErrorCode.VERSION_CONFLICT).toBe("version_conflict");
     expect(ErrorCode.UNAUTHORIZED).toBe("unauthorized");
     expect(ErrorCode.FORBIDDEN).toBe("forbidden");
-    expect(ErrorCode.INVALID_STATE).toBe("invalid_state");
+    expect(ErrorCode.INVALID_TRANSITION).toBe("invalid_transition");
     expect(ErrorCode.TYPE_NOT_FOUND).toBe("type_not_found");
     expect(ErrorCode.DUPLICATE_SOURCE).toBe("duplicate_source");
   });
@@ -17,11 +20,14 @@ describe("ErrorCode", () => {
 describe("httpStatus", () => {
   it("maps error codes to HTTP status codes", () => {
     expect(httpStatus(ErrorCode.NOT_FOUND)).toBe(404);
+    expect(httpStatus(ErrorCode.ITEM_NOT_FOUND)).toBe(404);
+    expect(httpStatus(ErrorCode.THREAD_NOT_FOUND)).toBe(404);
+    expect(httpStatus(ErrorCode.BLOB_NOT_FOUND)).toBe(404);
     expect(httpStatus(ErrorCode.VALIDATION_ERROR)).toBe(400);
     expect(httpStatus(ErrorCode.VERSION_CONFLICT)).toBe(409);
     expect(httpStatus(ErrorCode.UNAUTHORIZED)).toBe(401);
     expect(httpStatus(ErrorCode.FORBIDDEN)).toBe(403);
-    expect(httpStatus(ErrorCode.INVALID_STATE)).toBe(400);
+    expect(httpStatus(ErrorCode.INVALID_TRANSITION)).toBe(400);
     expect(httpStatus(ErrorCode.TYPE_NOT_FOUND)).toBe(400);
     expect(httpStatus(ErrorCode.DUPLICATE_SOURCE)).toBe(409);
   });

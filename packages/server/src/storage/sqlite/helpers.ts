@@ -46,5 +46,6 @@ export function rowToVersion(row: VersionRow): Version {
     version: row.version,
     properties: JSON.parse(row.properties) as Record<string, unknown>,
     created_at: row.created_at,
+    ...(row.device_id != null && { device_id: row.device_id }),
   };
 }

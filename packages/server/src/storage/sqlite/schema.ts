@@ -82,6 +82,7 @@ export const versions = sqliteTable(
     version: integer("version").notNull(),
     properties: text("properties").notNull(),
     created_at: text("created_at").notNull(),
+    device_id: text("device_id"),
   },
   (table) => [index("idx_versions_item_id").on(table.item_id)],
 );

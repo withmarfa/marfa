@@ -27,6 +27,7 @@ export interface ItemFilters {
   source?: string;
   parent_id?: string;
   thread_id?: string;
+  tags?: string[];
   allowed_types?: string[];
   sort?: ItemSortField;
   direction?: SortDirection;
@@ -79,6 +80,7 @@ export interface ItemStore {
 export interface MetadataStore {
   get(itemId: string): Metadata;
   set(itemId: string, tags: string[], about: string[]): Metadata;
+  merge(itemId: string, tags?: string[], about?: string[]): Metadata;
   addTags(itemId: string, tags: string[]): Metadata;
   removeTag(itemId: string, tag: string): Metadata;
 }
@@ -88,6 +90,7 @@ export interface VersionStore {
     itemId: string,
     version: number,
     properties: Record<string, unknown>,
+    deviceId?: string,
   ): Version;
   list(itemId: string): Version[];
   getByVersion(itemId: string, version: number): Version | null;

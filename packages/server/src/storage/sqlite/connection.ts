@@ -88,7 +88,8 @@ export function createConnection(sqlitePath: string): {
       item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
       version INTEGER NOT NULL,
       properties TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      device_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_versions_item_id ON versions(item_id);
 

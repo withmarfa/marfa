@@ -31,3 +31,6 @@ Thumbs.db
 
 # Seed data (local dev only)
 seed/
+
+# Database and blob data
+data/

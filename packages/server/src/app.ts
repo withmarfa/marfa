@@ -6,7 +6,6 @@ import { authMiddleware } from "./middleware/auth.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
 import type { FilesystemBlobBackend } from "./storage/blob-backend.js";
-import { healthRoutes } from "./routes/health.js";
 import { itemRoutes } from "./routes/items.js";
 import { threadRoutes } from "./routes/threads.js";
 import { typeRoutes } from "./routes/types.js";
@@ -30,8 +29,15 @@ export function createApp(
     app.use("*", cors({ origin: config.corsOrigins }));
   }
 
-  // Public routes (before auth)
-  app.route("/", healthRoutes());
+  // Public routes (before auth) — mounted directly to avoid prefix matching issues
+  app.get("/", (c) =>
+    c.json({
+      name: "myme",
+      version: "0.0.1",
+      features: ["items", "threads", "search", "blobs", "types", "keys", "import", "export"],
+    }),
+  );
+  app.get("/health", (c) => c.json({ status: "ok" }));
 
   // Auth middleware
   app.use("*", authMiddleware(storage, config.apiKeySalt));

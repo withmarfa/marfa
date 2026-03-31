@@ -49,28 +49,20 @@ export class SqliteItemStore implements ItemStore {
 
     const validation = validateProperties(input.type, input.properties);
     if (!validation.success) {
-      throw new ProtocolError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid properties",
-        { errors: validation.errors },
-      );
+      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
+        errors: validation.errors,
+      });
     }
 
     const now = new Date().toISOString();
     const state = input.state ?? typeSchema.default_state;
 
     const createFn = this.raw.transaction(() => {
-      // Check source deduplication
       if (input.source && input.source_id) {
         const existing = this.db
           .select({ id: items.id })
           .from(items)
-          .where(
-            and(
-              eq(items.source, input.source),
-              eq(items.source_id, input.source_id),
-            ),
-          )
+          .where(and(eq(items.source, input.source), eq(items.source_id, input.source_id)))
           .get();
         if (existing) {
           throw new ProtocolError(
@@ -81,7 +73,6 @@ export class SqliteItemStore implements ItemStore {
         }
       }
 
-      // Validate parent exists
       if (input.parent_id) {
         const parent = this.db
           .select({ id: items.id })
@@ -89,11 +80,10 @@ export class SqliteItemStore implements ItemStore {
           .where(eq(items.id, input.parent_id))
           .get();
         if (!parent) {
-          throw new ProtocolError(ErrorCode.NOT_FOUND, "Parent item not found");
+          throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Parent item not found");
         }
       }
 
-      // Validate thread exists
       if (input.thread_id) {
         const thread = this.db
           .select({ id: threads.id })
@@ -101,11 +91,10 @@ export class SqliteItemStore implements ItemStore {
           .where(eq(threads.id, input.thread_id))
           .get();
         if (!thread) {
-          throw new ProtocolError(ErrorCode.NOT_FOUND, "Thread not found");
+          throw new ProtocolError(ErrorCode.THREAD_NOT_FOUND, "Thread not found");
         }
       }
 
-      // Insert item
       this.db
         .insert(items)
         .values({
@@ -128,7 +117,6 @@ export class SqliteItemStore implements ItemStore {
         })
         .run();
 
-      // Insert metadata sidecar
       this.db
         .insert(metadata)
         .values({
@@ -138,10 +126,8 @@ export class SqliteItemStore implements ItemStore {
         })
         .run();
 
-      // Index for full-text search
       this.searchStore.index(id, input.properties);
 
-      // Touch thread
       if (input.thread_id) {
         this.db
           .update(threads)
@@ -165,19 +151,24 @@ export class SqliteItemStore implements ItemStore {
         ...(input.device_id != null && { device_id: input.device_id }),
         ...(input.parent_id != null && { parent_id: input.parent_id }),
         ...(input.thread_id != null && { thread_id: input.thread_id }),
-        ...(input.capture_latitude != null && {
-          capture_latitude: input.capture_latitude,
-        }),
-        ...(input.capture_longitude != null && {
-          capture_longitude: input.capture_longitude,
-        }),
+        ...(input.capture_latitude != null && { capture_latitude: input.capture_latitude }),
+        ...(input.capture_longitude != null && { capture_longitude: input.capture_longitude }),
       } satisfies Item;
     });
 
     return createFn();
   }
 
+  // Fix 4: trashed items return null (404 to callers)
   get(id: string): Item | null {
+    const row = this.db.select().from(items).where(eq(items.id, id)).get();
+    if (!row) return null;
+    if (row.state === "trashed") return null;
+    return rowToItem(row);
+  }
+
+  // Internal get that includes trashed items (for restore, delete, transition)
+  private getRaw(id: string): Item | null {
     const row = this.db.select().from(items).where(eq(items.id, id)).get();
     if (!row) return null;
     return rowToItem(row);
@@ -188,10 +179,8 @@ export class SqliteItemStore implements ItemStore {
     const dir = filters.direction ?? "desc";
     const limit = Math.min(filters.limit ?? 50, 200);
 
-    // Build conditions
     const conditions = [];
 
-    // Default: exclude trashed
     if (filters.state) {
       conditions.push(eq(items.state, filters.state));
     } else {
@@ -207,12 +196,21 @@ export class SqliteItemStore implements ItemStore {
     }
 
     if (filters.source) conditions.push(eq(items.source, filters.source));
-    if (filters.parent_id)
-      conditions.push(eq(items.parent_id, filters.parent_id));
-    if (filters.thread_id)
-      conditions.push(eq(items.thread_id, filters.thread_id));
+    if (filters.parent_id) conditions.push(eq(items.parent_id, filters.parent_id));
+    if (filters.thread_id) conditions.push(eq(items.thread_id, filters.thread_id));
 
-    // Type permission filtering
+    // Fix 6: tags filter — items must have ALL specified tags
+    if (filters.tags && filters.tags.length > 0) {
+      for (const tag of filters.tags) {
+        conditions.push(
+          sql`EXISTS (
+            SELECT 1 FROM metadata m, json_each(m.tags) je
+            WHERE m.item_id = ${items.id} AND je.value = ${tag}
+          )`,
+        );
+      }
+    }
+
     if (filters.allowed_types) {
       const typeClauses = filters.allowed_types.map((pattern) => {
         if (pattern === "*") return sql`1=1`;
@@ -227,7 +225,6 @@ export class SqliteItemStore implements ItemStore {
       }
     }
 
-    // Cursor-based pagination
     if (filters.cursor) {
       const { v, id } = decodeCursor(filters.cursor);
       const sortCol =
@@ -237,16 +234,10 @@ export class SqliteItemStore implements ItemStore {
             ? items.timestamp
             : items.created_at;
       if (dir === "desc") {
-        const clause = or(
-          lt(sortCol, v),
-          and(eq(sortCol, v), lt(items.id, id)),
-        );
+        const clause = or(lt(sortCol, v), and(eq(sortCol, v), lt(items.id, id)));
         if (clause) conditions.push(clause);
       } else {
-        const clause = or(
-          gt(sortCol, v),
-          and(eq(sortCol, v), gt(items.id, id)),
-        );
+        const clause = or(gt(sortCol, v), and(eq(sortCol, v), gt(items.id, id)));
         if (clause) conditions.push(clause);
       }
     }
@@ -258,9 +249,7 @@ export class SqliteItemStore implements ItemStore {
           ? items.timestamp
           : items.created_at;
     const orderBy =
-      dir === "desc"
-        ? [desc(sortCol), desc(items.id)]
-        : [asc(sortCol), asc(items.id)];
+      dir === "desc" ? [desc(sortCol), desc(items.id)] : [asc(sortCol), asc(items.id)];
 
     const rows = this.db
       .select()
@@ -293,27 +282,21 @@ export class SqliteItemStore implements ItemStore {
     const updateFn = this.raw.transaction(() => {
       const row = this.db.select().from(items).where(eq(items.id, id)).get();
       if (!row) {
-        throw new ProtocolError(ErrorCode.NOT_FOUND, "Item not found");
+        throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
       if (row.state === "trashed") {
-        throw new ProtocolError(
-          ErrorCode.INVALID_STATE,
-          "Cannot update trashed item",
-        );
+        throw new ProtocolError(ErrorCode.INVALID_TRANSITION, "Cannot update trashed item");
       }
 
-      const currentProps = JSON.parse(row.properties) as Record<
-        string,
-        unknown
-      >;
+      const currentProps = JSON.parse(row.properties) as Record<string, unknown>;
       const now = new Date().toISOString();
+      const deviceId = row.device_id ?? undefined;
 
       // Fast path: versions match
       if (row.version === input.version) {
-        // Snapshot current as version
-        this.versionStore.create(id, row.version, currentProps);
+        // Fix 7: include device_id in version snapshot
+        this.versionStore.create(id, row.version, currentProps, deviceId);
 
-        // Merge client properties onto current
         const merged = { ...currentProps, ...input.properties };
         const newVersion = row.version + 1;
 
@@ -327,7 +310,6 @@ export class SqliteItemStore implements ItemStore {
           .where(eq(items.id, id))
           .run();
 
-        // Update FTS
         this.searchStore.remove(id);
         this.searchStore.index(id, merged);
 
@@ -339,13 +321,17 @@ export class SqliteItemStore implements ItemStore {
         });
       }
 
-      // Slow path: version mismatch — load ancestor for conflict detection
+      // Fix 5: any version < current is a conflict, not necessarily invalid
       const ancestor = this.versionStore.getByVersion(id, input.version);
       if (!ancestor) {
-        throw new ProtocolError(
-          ErrorCode.VALIDATION_ERROR,
-          `Version ${String(input.version)} not found for item ${id}`,
-        );
+        // Version doesn't exist in history — still a conflict scenario
+        // (client has a version we've never seen, or version 0 meaning "never seen")
+        return {
+          error: { code: "version_conflict" as const, status: 409 as const },
+          current: { version: row.version, properties: currentProps },
+          ancestor: { version: input.version, properties: {} },
+          conflicting_fields: Object.keys(input.properties ?? {}),
+        } satisfies ConflictResponse;
       }
 
       const result = detectConflict({
@@ -356,21 +342,15 @@ export class SqliteItemStore implements ItemStore {
 
       if (result.type === "conflict") {
         return {
-          error: {
-            code: "version_conflict" as const,
-            status: 409 as const,
-          },
+          error: { code: "version_conflict" as const, status: 409 as const },
           current: { version: row.version, properties: currentProps },
-          ancestor: {
-            version: input.version,
-            properties: ancestor.properties,
-          },
+          ancestor: { version: input.version, properties: ancestor.properties },
           conflicting_fields: result.conflicting_fields,
         } satisfies ConflictResponse;
       }
 
-      // Auto-merge: no conflicting fields
-      this.versionStore.create(id, row.version, currentProps);
+      // Auto-merge
+      this.versionStore.create(id, row.version, currentProps, deviceId);
       const newVersion = row.version + 1;
 
       this.db
@@ -398,9 +378,9 @@ export class SqliteItemStore implements ItemStore {
   }
 
   delete(id: string): void {
-    const row = this.db.select().from(items).where(eq(items.id, id)).get();
+    const row = this.getRaw(id);
     if (!row) {
-      throw new ProtocolError(ErrorCode.NOT_FOUND, "Item not found");
+      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     this.db
@@ -409,17 +389,16 @@ export class SqliteItemStore implements ItemStore {
       .where(eq(items.id, id))
       .run();
 
-    // Remove from search index
     this.searchStore.remove(id);
   }
 
   restore(id: string): Item {
-    const row = this.db.select().from(items).where(eq(items.id, id)).get();
+    const row = this.getRaw(id);
     if (!row) {
-      throw new ProtocolError(ErrorCode.NOT_FOUND, "Item not found");
+      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     if (row.state !== "trashed") {
-      throw new ProtocolError(ErrorCode.INVALID_STATE, "Item is not trashed");
+      throw new ProtocolError(ErrorCode.INVALID_TRANSITION, "Item is not trashed");
     }
 
     const now = new Date().toISOString();
@@ -429,22 +408,20 @@ export class SqliteItemStore implements ItemStore {
       .where(eq(items.id, id))
       .run();
 
-    // Re-index for search
-    const props = JSON.parse(row.properties) as Record<string, unknown>;
-    this.searchStore.index(id, props);
+    this.searchStore.index(id, row.properties);
 
-    return rowToItem({ ...row, state: "active", updated_at: now });
+    return { ...row, state: "active" as ItemState, updated_at: now };
   }
 
   transition(id: string, state: ItemState): Item {
-    const row = this.db.select().from(items).where(eq(items.id, id)).get();
+    const row = this.getRaw(id);
     if (!row) {
-      throw new ProtocolError(ErrorCode.NOT_FOUND, "Item not found");
+      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
-    const error = validateTransition(row.type, row.state as ItemState, state);
+    const error = validateTransition(row.type, row.state, state);
     if (error) {
-      throw new ProtocolError(ErrorCode.INVALID_STATE, error);
+      throw new ProtocolError(ErrorCode.INVALID_TRANSITION, error);
     }
 
     const now = new Date().toISOString();
@@ -454,14 +431,12 @@ export class SqliteItemStore implements ItemStore {
       .where(eq(items.id, id))
       .run();
 
-    // Update search: remove if trashed, re-index otherwise
     if (state === "trashed") {
       this.searchStore.remove(id);
     } else if (row.state === "trashed") {
-      const props = JSON.parse(row.properties) as Record<string, unknown>;
-      this.searchStore.index(id, props);
+      this.searchStore.index(id, row.properties);
     }
 
-    return rowToItem({ ...row, state, updated_at: now });
+    return { ...row, state, updated_at: now };
   }
 }

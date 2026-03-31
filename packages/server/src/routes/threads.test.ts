@@ -18,9 +18,9 @@ describe("threads", () => {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(201);
-    const thread = (await res.json()) as Record<string, unknown>;
-    expect(thread).toHaveProperty("id");
-    expect(thread).toHaveProperty("created_at");
+    const data = (await res.json()) as { thread: Record<string, unknown> };
+    expect(data.thread).toHaveProperty("id");
+    expect(data.thread).toHaveProperty("created_at");
   });
 
   it("lists threads", async () => {
@@ -38,8 +38,8 @@ describe("threads", () => {
     const threadRes = await request(ctx.app, "POST", "/threads", {
       key: ctx.adminKey,
     });
-    const thread = (await threadRes.json()) as Record<string, unknown>;
-    const threadId = thread.id as string;
+    const threadData = (await threadRes.json()) as { thread: Record<string, unknown> };
+    const threadId = threadData.thread.id as string;
 
     // Add item to thread
     await request(ctx.app, "POST", "/items", {

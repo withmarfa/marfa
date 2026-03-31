@@ -11,7 +11,7 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
   router.post("/", (c) => {
     requireAuth(c);
     const thread = storage.threads.create();
-    return c.json(thread, 201);
+    return c.json({ thread }, 201);
   });
 
   router.get("/", (c) => {
@@ -30,7 +30,7 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
     }
     const thread = storage.threads.get(id);
     if (!thread) {
-      throw new ProtocolError(ErrorCode.NOT_FOUND, `Thread ${id} not found`);
+      throw new ProtocolError(ErrorCode.THREAD_NOT_FOUND, `Thread ${id} not found`);
     }
     const items = storage.threads.getItems(id);
     return c.json({ thread, items });

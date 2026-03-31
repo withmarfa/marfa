@@ -57,7 +57,7 @@ export function searchRoutes(storage: Storage): Hono<AppEnv> {
       limit,
     });
 
-    return c.json(results);
+    return c.json({ results });
   });
 
   return router;
