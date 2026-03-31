@@ -1,19 +1,31 @@
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 
-export default tseslint.config(
+export default [
   eslint.configs.recommended,
-  tseslint.configs.strictTypeChecked,
-  tseslint.configs.stylisticTypeChecked,
+  ...tseslint.configs.strictTypeChecked,
+  ...tseslint.configs.stylisticTypeChecked,
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: [
+            "eslint.config.js",
+            "vitest.config.ts",
+            "packages/*/tsup.config.ts",
+          ],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
   },
   {
+    files: ["eslint.config.js"],
+    rules: {
+      "@typescript-eslint/no-unsafe-assignment": "off",
+    },
+  },
+  {
     ignores: ["**/dist/", "**/coverage/", "**/node_modules/"],
   },
-);
+];

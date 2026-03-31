@@ -20,7 +20,7 @@ export function isValidTimestamp(value: string): boolean {
   if (!FLEXIBLE_TIMESTAMP.test(value)) return false;
   // Date constructor silently rolls over invalid dates (Feb 30 → Mar 2).
   // For date-containing strings, compare parsed components to originals.
-  const parts = value.match(/^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?/);
+  const parts = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?/.exec(value);
   if (!parts) return false;
   const d = new Date(value);
   if (isNaN(d.getTime())) return false;
@@ -140,8 +140,9 @@ export function resolveTypePermission(
   permissions: Record<string, TypePermission>,
 ): TypePermission {
   // Exact match takes priority
-  if (type in permissions) {
-    return permissions[type]!;
+  const exact = permissions[type];
+  if (exact !== undefined) {
+    return exact;
   }
 
   // Find the longest matching wildcard prefix

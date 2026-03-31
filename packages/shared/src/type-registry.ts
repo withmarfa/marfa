@@ -577,10 +577,10 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       schema = z.boolean();
       break;
     case "url":
-      schema = z.string().url();
+      schema = z.url();
       break;
     case "email":
-      schema = z.string().email();
+      schema = z.email();
       break;
     case "datetime":
       schema = z.string();
@@ -607,9 +607,9 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
 }
 
 // Cache generated Zod schemas to avoid re-creation on every validation call.
-const zodSchemaCache = new Map<string, z.ZodObject>();
+const zodSchemaCache = new Map<string, z.ZodType>();
 
-function getZodSchema(typeId: string): z.ZodObject | undefined {
+function getZodSchema(typeId: string): z.ZodType | undefined {
   const cached = zodSchemaCache.get(typeId);
   if (cached) return cached;
 
@@ -621,7 +621,7 @@ function getZodSchema(typeId: string): z.ZodObject | undefined {
     shape[name] = fieldToZod(field);
   }
 
-  const schema = z.object(shape).passthrough();
+  const schema = z.looseObject(shape);
   zodSchemaCache.set(typeId, schema);
   return schema;
 }
@@ -629,7 +629,7 @@ function getZodSchema(typeId: string): z.ZodObject | undefined {
 /** Validation result for property validation. */
 export type ValidationResult =
   | { success: true; data: Record<string, unknown> }
-  | { success: false; errors: Array<{ field: string; message: string }> };
+  | { success: false; errors: { field: string; message: string }[] };
 
 /**
  * Validates item properties against the type schema.
@@ -649,7 +649,10 @@ export function validateProperties(
 
   const result = schema.safeParse(properties);
   if (result.success) {
-    return { success: true, data: result.data as Record<string, unknown> };
+    return {
+      success: true,
+      data: result.data as Record<string, unknown>,
+    };
   }
 
   const errors = result.error.issues.map((issue) => ({

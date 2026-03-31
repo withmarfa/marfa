@@ -84,34 +84,28 @@ describe("getResolvedFields", () => {
   it("returns own fields plus universal fields for standalone types", () => {
     const fields = getResolvedFields("core.note");
     expect(fields).toBeDefined();
-    // Own fields
-    expect(fields!["body"]).toBeDefined();
-    expect(fields!["body"]!.required).toBe(true);
-    expect(fields!["title"]).toBeDefined();
-    expect(fields!["format"]).toBeDefined();
-    // Universal fields
-    expect(fields!["attachments"]).toBeDefined();
-    expect(fields!["links"]).toBeDefined();
+    expect(fields).toHaveProperty("body");
+    expect(fields).toHaveProperty("body.required", true);
+    expect(fields).toHaveProperty("title");
+    expect(fields).toHaveProperty("format");
+    expect(fields).toHaveProperty("attachments");
+    expect(fields).toHaveProperty("links");
   });
 
   it("merges parent fields into subtype", () => {
     const fields = getResolvedFields("core.work.book");
     expect(fields).toBeDefined();
-    // Parent fields (from core.work)
-    expect(fields!["title"]).toBeDefined();
-    expect(fields!["title"]!.required).toBe(true);
-    expect(fields!["author"]).toBeDefined();
-    // Own fields
-    expect(fields!["isbn"]).toBeDefined();
-    expect(fields!["page_count"]).toBeDefined();
-    // Universal fields
-    expect(fields!["attachments"]).toBeDefined();
+    expect(fields).toHaveProperty("title");
+    expect(fields).toHaveProperty("title.required", true);
+    expect(fields).toHaveProperty("author");
+    expect(fields).toHaveProperty("isbn");
+    expect(fields).toHaveProperty("page_count");
+    expect(fields).toHaveProperty("attachments");
   });
 
   it("subtype fields override parent fields of the same name", () => {
-    // core.work has body as optional, core.work.article has body as required
     const fields = getResolvedFields("core.work.article");
-    expect(fields!["body"]!.required).toBe(true);
+    expect(fields).toHaveProperty("body.required", true);
   });
 
   it("returns undefined for unknown type", () => {
@@ -168,8 +162,8 @@ describe("validateProperties", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data["custom_field"]).toBe("preserved");
-      expect(result.data["reading_time"]).toBe(5);
+      expect(result.data).toHaveProperty("custom_field", "preserved");
+      expect(result.data).toHaveProperty("reading_time", 5);
     }
   });
 
@@ -242,7 +236,7 @@ describe("validateProperties", () => {
     const result = validateProperties("core.nonexistent", { body: "hi" });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.errors[0]!.field).toBe("_type");
+      expect(result.errors[0]).toHaveProperty("field", "_type");
     }
   });
 
