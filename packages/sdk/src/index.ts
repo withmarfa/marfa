@@ -1,1 +1,8 @@
-// SDK exports — populated as modules are built
+export {
+  MymeError,
+  NotFoundError,
+  ValidationError,
+  ConflictError,
+  UnauthorizedError,
+  ForbiddenError,
+} from "./errors.js";
