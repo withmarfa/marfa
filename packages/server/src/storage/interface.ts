@@ -11,7 +11,6 @@ import type {
   SearchResult,
   ConflictResponse,
   ItemState,
-  TypePermission,
 } from "@myme/shared";
 import type { TypeSchema } from "@myme/shared";
 
@@ -68,27 +67,20 @@ export function decodeCursor(cursor: string): CursorPayload {
 // ---------------------------------------------------------------------------
 
 export interface ItemStore {
-  create(input: CreateItemInput): Promise<Item>;
-  get(id: string): Promise<Item | null>;
-  list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
-  update(
-    id: string,
-    input: UpdateItemInput,
-  ): Promise<Item | ConflictResponse>;
-  delete(id: string): Promise<void>;
-  restore(id: string): Promise<Item>;
-  transition(id: string, state: ItemState): Promise<Item>;
+  create(input: CreateItemInput): Item;
+  get(id: string): Item | null;
+  list(filters: ItemFilters): PaginatedResult<Item>;
+  update(id: string, input: UpdateItemInput): Item | ConflictResponse;
+  delete(id: string): void;
+  restore(id: string): Item;
+  transition(id: string, state: ItemState): Item;
 }
 
 export interface MetadataStore {
-  get(itemId: string): Promise<Metadata>;
-  set(
-    itemId: string,
-    tags: string[],
-    about: string[],
-  ): Promise<Metadata>;
-  addTags(itemId: string, tags: string[]): Promise<Metadata>;
-  removeTag(itemId: string, tag: string): Promise<Metadata>;
+  get(itemId: string): Metadata;
+  set(itemId: string, tags: string[], about: string[]): Metadata;
+  addTags(itemId: string, tags: string[]): Metadata;
+  removeTag(itemId: string, tag: string): Metadata;
 }
 
 export interface VersionStore {
@@ -96,23 +88,17 @@ export interface VersionStore {
     itemId: string,
     version: number,
     properties: Record<string, unknown>,
-  ): Promise<Version>;
-  list(itemId: string): Promise<Version[]>;
-  getByVersion(
-    itemId: string,
-    version: number,
-  ): Promise<Version | null>;
+  ): Version;
+  list(itemId: string): Version[];
+  getByVersion(itemId: string, version: number): Version | null;
 }
 
 export interface ThreadStore {
-  create(): Promise<Thread>;
-  get(id: string): Promise<Thread | null>;
-  list(
-    limit: number,
-    cursor?: string,
-  ): Promise<PaginatedResult<Thread>>;
-  touch(id: string): Promise<void>;
-  getItems(threadId: string): Promise<Item[]>;
+  create(): Thread;
+  get(id: string): Thread | null;
+  list(limit: number, cursor?: string): PaginatedResult<Thread>;
+  touch(id: string): void;
+  getItems(threadId: string): Item[];
 }
 
 export interface TypeStore {
@@ -121,28 +107,18 @@ export interface TypeStore {
 }
 
 export interface SearchStore {
-  search(
-    query: string,
-    filters: SearchFilters,
-  ): Promise<SearchResult[]>;
-  index(
-    itemId: string,
-    properties: Record<string, unknown>,
-  ): void;
+  search(query: string, filters: SearchFilters): SearchResult[];
+  index(itemId: string, properties: Record<string, unknown>): void;
   remove(itemId: string): void;
 }
 
 export interface KeyStore {
-  create(
-    input: CreateKeyInput,
+  create(input: CreateKeyInput, keyHash: string): ApiKey;
+  list(): ApiKey[];
+  validate(
     keyHash: string,
-  ): Promise<ApiKey>;
-  list(): Promise<ApiKey[]>;
-  validate(keyHash: string): Promise<
-    | (ApiKey & { key_hash: string; revoked_at: string | null })
-    | null
-  >;
-  revoke(id: string): Promise<void>;
+  ): (ApiKey & { key_hash: string; revoked_at: string | null }) | null;
+  revoke(id: string): void;
   updateLastUsed(id: string): void;
   count(): number;
 }

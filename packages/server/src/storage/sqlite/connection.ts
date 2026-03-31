@@ -18,13 +18,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
 `;
 
 export type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
+export type RawDb = InstanceType<typeof Database>;
 
 /**
  * Opens a SQLite connection, enables WAL mode, creates all tables
- * (idempotent), and returns the Drizzle db instance.
+ * (idempotent), and returns both the Drizzle db and raw better-sqlite3 instances.
  */
 export function createConnection(sqlitePath: string): {
   db: DrizzleDb;
+  raw: RawDb;
   close: () => void;
 } {
   // Ensure the directory exists
@@ -117,6 +119,7 @@ export function createConnection(sqlitePath: string): {
 
   return {
     db,
+    raw: sqlite,
     close: () => {
       sqlite.close();
     },
