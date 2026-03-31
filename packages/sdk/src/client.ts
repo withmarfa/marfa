@@ -1,0 +1,336 @@
+import type {
+  Item,
+  CreateItemInput,
+  Metadata,
+  Version,
+  Thread,
+  ApiKey,
+  CreateKeyInput,
+  PaginatedResult,
+  SearchResult,
+  ItemState,
+} from "@myme/shared";
+import type { TypeSchema, ErrorResponse } from "@myme/shared";
+import { HttpTransport } from "./transport.js";
+import {
+  MymeError,
+  NotFoundError,
+  ValidationError,
+  UnauthorizedError,
+  ForbiddenError,
+} from "./errors.js";
+import {
+  handleConflictUpdate,
+  type ConflictStrategy,
+  type ConflictResolver,
+} from "./conflict.js";
+
+// ---------------------------------------------------------------------------
+// Config and option types
+// ---------------------------------------------------------------------------
+
+export interface ClientConfig {
+  url: string;
+  apiKey: string;
+  fetch?: typeof globalThis.fetch;
+  conflictStrategy?: ConflictStrategy;
+}
+
+export interface UpdateOptions {
+  version?: number;
+  conflict?: ConflictStrategy;
+  resolve?: ConflictResolver;
+}
+
+export interface ListFilters {
+  type?: string;
+  state?: ItemState;
+  source?: string;
+  parent_id?: string;
+  thread_id?: string;
+  sort?: "created_at" | "updated_at" | "timestamp";
+  direction?: "asc" | "desc";
+  limit?: number;
+  cursor?: string;
+}
+
+export interface SearchFilters {
+  type?: string;
+  state?: ItemState;
+  limit?: number;
+}
+
+export interface MetadataInput {
+  tags?: string[];
+  about?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
+
+export class MymeClient {
+  private readonly transport: HttpTransport;
+  private readonly defaultConflictStrategy: ConflictStrategy;
+
+  constructor(config: ClientConfig) {
+    this.transport = new HttpTransport({
+      baseUrl: config.url,
+      apiKey: config.apiKey,
+      fetch: config.fetch,
+    });
+    this.defaultConflictStrategy = config.conflictStrategy ?? "auto";
+  }
+
+  // ---- Items ----
+
+  readonly items = {
+    create: async (input: CreateItemInput): Promise<Item> => {
+      const res = await this.transport.request<{ item: Item }>(
+        "POST",
+        "/items",
+        { body: input },
+      );
+      return res.item;
+    },
+
+    get: async (id: string): Promise<Item> => {
+      const res = await this.transport.request<{ item: Item }>(
+        "GET",
+        `/items/${id}`,
+      );
+      return res.item;
+    },
+
+    list: async (filters?: ListFilters): Promise<PaginatedResult<Item>> => {
+      return this.transport.request<PaginatedResult<Item>>(
+        "GET",
+        "/items",
+        { query: filters as Record<string, string | number | undefined> },
+      );
+    },
+
+    update: async (
+      id: string,
+      properties: Record<string, unknown>,
+      options?: UpdateOptions,
+    ): Promise<Item> => {
+      let version = options?.version;
+      if (version === undefined) {
+        const item = await this.items.get(id);
+        version = item.version;
+      }
+
+      const strategy = options?.conflict ?? this.defaultConflictStrategy;
+
+      return handleConflictUpdate(
+        this.transport,
+        id,
+        properties,
+        version,
+        strategy,
+        options?.resolve,
+      );
+    },
+
+    delete: async (id: string): Promise<void> => {
+      await this.transport.request<undefined>("DELETE", `/items/${id}`);
+    },
+
+    restore: async (id: string): Promise<Item> => {
+      return this.transport.request<Item>("POST", `/items/${id}/restore`);
+    },
+
+    transition: async (id: string, state: string): Promise<Item> => {
+      return this.transport.request<Item>(
+        "POST",
+        `/items/${id}/transition`,
+        { body: { state } },
+      );
+    },
+
+    versions: async (id: string): Promise<Version[]> => {
+      return this.transport.request<Version[]>(
+        "GET",
+        `/items/${id}/versions`,
+      );
+    },
+  };
+
+  // ---- Metadata ----
+
+  readonly metadata = {
+    get: async (itemId: string): Promise<Metadata> => {
+      return this.transport.request<Metadata>(
+        "GET",
+        `/items/${itemId}/metadata`,
+      );
+    },
+
+    set: async (itemId: string, input: MetadataInput): Promise<Metadata> => {
+      return this.transport.request<Metadata>(
+        "PUT",
+        `/items/${itemId}/metadata`,
+        { body: input },
+      );
+    },
+
+    addTags: async (itemId: string, tags: string[]): Promise<Metadata> => {
+      return this.transport.request<Metadata>(
+        "POST",
+        `/items/${itemId}/tags`,
+        { body: { tags } },
+      );
+    },
+
+    removeTag: async (itemId: string, tag: string): Promise<void> => {
+      await this.transport.request<Metadata>(
+        "DELETE",
+        `/items/${itemId}/tags/${encodeURIComponent(tag)}`,
+      );
+    },
+  };
+
+  // ---- Search ----
+
+  async search(
+    query: string,
+    filters?: SearchFilters,
+  ): Promise<SearchResult[]> {
+    return this.transport.request<SearchResult[]>("GET", "/search", {
+      query: { q: query, ...filters },
+    });
+  }
+
+  // ---- Threads ----
+
+  readonly threads = {
+    create: async (): Promise<Thread> => {
+      return this.transport.request<Thread>("POST", "/threads");
+    },
+
+    list: async (filters?: {
+      limit?: number;
+      cursor?: string;
+    }): Promise<PaginatedResult<Thread>> => {
+      return this.transport.request<PaginatedResult<Thread>>(
+        "GET",
+        "/threads",
+        { query: filters as Record<string, string | number | undefined> },
+      );
+    },
+
+    get: async (
+      id: string,
+    ): Promise<{ thread: Thread; items: Item[] }> => {
+      return this.transport.request<{ thread: Thread; items: Item[] }>(
+        "GET",
+        `/threads/${id}`,
+      );
+    },
+  };
+
+  // ---- Blobs ----
+
+  readonly blobs = {
+    upload: async (
+      data: Buffer | Uint8Array,
+      mimeType: string,
+    ): Promise<{ hash: string }> => {
+      const response = await this.transport.rawRequest("POST", "/blobs", {
+        rawBody: data,
+        headers: { "Content-Type": mimeType },
+      });
+
+      const result = (await response.json()) as {
+        hash: string;
+        mime_type: string;
+        size: number;
+      };
+
+      if (!response.ok) {
+        this.throwRawError(response.status, result);
+      }
+
+      return { hash: result.hash };
+    },
+
+    download: async (hash: string): Promise<ArrayBuffer> => {
+      const response = await this.transport.rawRequest(
+        "GET",
+        `/blobs/${hash}`,
+      );
+
+      if (!response.ok) {
+        const body = (await response.json()) as unknown;
+        this.throwRawError(response.status, body);
+      }
+
+      return response.arrayBuffer();
+    },
+  };
+
+  // ---- Types ----
+
+  readonly types = {
+    list: async (): Promise<TypeSchema[]> => {
+      return this.transport.request<TypeSchema[]>("GET", "/types");
+    },
+
+    get: async (id: string): Promise<TypeSchema> => {
+      return this.transport.request<TypeSchema>("GET", `/types/${id}`);
+    },
+  };
+
+  // ---- Keys ----
+
+  readonly keys = {
+    create: async (
+      input: CreateKeyInput,
+    ): Promise<{ id: string; key: string }> => {
+      const res = await this.transport.request<{
+        id: string;
+        key: string;
+        label: string;
+        role: string;
+        type_permissions: Record<string, string>;
+        created_at: string;
+      }>("POST", "/keys", { body: input });
+      return { id: res.id, key: res.key };
+    },
+
+    list: async (): Promise<ApiKey[]> => {
+      return this.transport.request<ApiKey[]>("GET", "/keys");
+    },
+
+    revoke: async (id: string): Promise<void> => {
+      await this.transport.request<undefined>("DELETE", `/keys/${id}`);
+    },
+  };
+
+  // ---- Internal ----
+
+  private throwRawError(status: number, body: unknown): never {
+    const err = body as ErrorResponse;
+    const message = err?.error?.message ?? `HTTP ${String(status)}`;
+    const details = err?.error?.details;
+
+    switch (status) {
+      case 400:
+        throw new ValidationError(message, details);
+      case 401:
+        throw new UnauthorizedError(message, details);
+      case 403:
+        throw new ForbiddenError(message, details);
+      case 404:
+        throw new NotFoundError(message, details);
+      default:
+        throw new MymeError(
+          err?.error?.code ?? "unknown",
+          message,
+          status,
+          details,
+        );
+    }
+  }
+}

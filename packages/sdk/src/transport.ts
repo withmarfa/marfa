@@ -79,6 +79,7 @@ export class HttpTransport {
     path: string,
     options?: {
       body?: unknown;
+      rawBody?: ArrayBuffer | Uint8Array | string;
       query?: Record<string, string | number | undefined>;
       headers?: Record<string, string>;
     },
@@ -91,7 +92,9 @@ export class HttpTransport {
 
     const init: RequestInit = { method, headers };
 
-    if (options?.body !== undefined) {
+    if (options?.rawBody !== undefined) {
+      init.body = options.rawBody;
+    } else if (options?.body !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(options.body);
     }
