@@ -17,7 +17,7 @@
     "format:check": "prettier --check ."
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": ["esbuild", "better-sqlite3"]
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
