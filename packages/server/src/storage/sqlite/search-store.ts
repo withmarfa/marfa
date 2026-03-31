@@ -92,19 +92,17 @@ export class SqliteSearchStore implements SearchStore {
       LIMIT ?
     `;
 
-    const rows = this.raw.prepare(rawSql).all(...params) as Array<
-      Record<string, unknown>
-    >;
+    const rows = this.raw.prepare(rawSql).all(...params) as Record<string, unknown>[];
 
     return rows.map((row) => ({
       item: rowToItem(row as unknown as typeof items.$inferSelect),
       metadata: rowToMetadata({
-        item_id: row["id"] as string,
-        tags: (row["tags"] as string | null) ?? "[]",
-        about: (row["about"] as string | null) ?? "[]",
+        item_id: row.id as string,
+        tags: (row.tags as string | null) ?? "[]",
+        about: (row.about as string | null) ?? "[]",
       }),
-      relevance_score: Math.abs(row["rank"] as number),
-      snippet: (row["snippet"] as string) || undefined,
+      relevance_score: Math.abs(row.rank as number),
+      snippet: (row.snippet as string) || undefined,
     }));
   }
 }

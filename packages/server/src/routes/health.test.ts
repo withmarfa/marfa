@@ -17,8 +17,8 @@ describe("GET /", () => {
     const res = await request(ctx.app, "GET", "/");
     expect(res.status).toBe(200);
     const data = (await res.json()) as Record<string, unknown>;
-    expect(data["name"]).toBe("myme");
-    expect(data["version"]).toBe("0.0.1");
+    expect(data.name).toBe("myme");
+    expect(data.version).toBe("0.0.1");
     expect(data).toHaveProperty("features");
   });
 });
@@ -28,6 +28,6 @@ describe("GET /health", () => {
     const res = await request(ctx.app, "GET", "/health");
     expect(res.status).toBe(200);
     const data = (await res.json()) as Record<string, unknown>;
-    expect(data["status"]).toBe("ok");
+    expect(data.status).toBe("ok");
   });
 });

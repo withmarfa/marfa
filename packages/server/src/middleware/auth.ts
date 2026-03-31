@@ -6,7 +6,7 @@ import {
   ErrorCode,
   resolveTypePermission,
 } from "@myme/shared";
-import type { ApiKey, TypePermission } from "@myme/shared";
+import type { ApiKey } from "@myme/shared";
 import type { Storage } from "../storage/interface.js";
 
 // ---------------------------------------------------------------------------
@@ -149,8 +149,8 @@ export function getTypeFilter(c: Context<AppEnv>): string[] | undefined {
     key.type_permissions,
   )) {
     if (
-      (permission as TypePermission) === "read" ||
-      (permission as TypePermission) === "write"
+      (permission) === "read" ||
+      (permission) === "write"
     ) {
       patterns.push(pattern);
     }

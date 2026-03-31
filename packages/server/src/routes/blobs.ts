@@ -33,7 +33,7 @@ export function blobRoutes(
       mimeType = file.type || "application/octet-stream";
     } else {
       data = Buffer.from(await c.req.arrayBuffer());
-      mimeType = contentType.split(";")[0]!.trim();
+      mimeType = (contentType.split(";")[0] ?? contentType).trim();
     }
 
     if (data.length === 0) {

@@ -23,9 +23,9 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
   // POST /items — create
   router.post("/", async (c) => {
-    const body = (await c.req.json()) as Record<string, unknown>;
+    const body = (await c.req.json());
 
-    const type = body["type"] as string | undefined;
+    const type = body.type as string | undefined;
     if (!type || !isValidTypeIdentifier(type)) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
@@ -33,7 +33,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    const properties = body["properties"] as
+    const properties = body.properties as
       | Record<string, unknown>
       | undefined;
     if (!properties || typeof properties !== "object") {
@@ -43,7 +43,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    if (body["id"] && !isValidId(body["id"] as string)) {
+    if (body.id && !isValidId(body.id as string)) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid item ID",
@@ -51,8 +51,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     if (
-      body["timestamp"] &&
-      !isValidTimestamp(body["timestamp"] as string)
+      body.timestamp &&
+      !isValidTimestamp(body.timestamp as string)
     ) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
@@ -60,14 +60,14 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    if (body["parent_id"] && !isValidId(body["parent_id"] as string)) {
+    if (body.parent_id && !isValidId(body.parent_id as string)) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid parent_id",
       );
     }
 
-    if (body["thread_id"] && !isValidId(body["thread_id"] as string)) {
+    if (body.thread_id && !isValidId(body.thread_id as string)) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid thread_id",
@@ -75,14 +75,14 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     if (
-      body["state"] &&
+      body.state &&
       !(ITEM_STATES as readonly string[]).includes(
-        body["state"] as string,
+        body.state as string,
       )
     ) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
-        `Invalid state: ${body["state"] as string}`,
+        `Invalid state: ${body.state as string}`,
       );
     }
 
@@ -91,19 +91,19 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const item = storage.items.create({
       type,
       properties,
-      id: body["id"] as string | undefined,
-      state: body["state"] as ItemState | undefined,
-      timestamp: body["timestamp"] as string | undefined,
-      source: body["source"] as string | undefined,
-      source_id: body["source_id"] as string | undefined,
-      origin: body["origin"] as string | undefined,
-      device_id: body["device_id"] as string | undefined,
-      parent_id: body["parent_id"] as string | undefined,
-      thread_id: body["thread_id"] as string | undefined,
-      capture_latitude: body["capture_latitude"] as number | undefined,
-      capture_longitude: body["capture_longitude"] as number | undefined,
-      tags: body["tags"] as string[] | undefined,
-      about: body["about"] as string[] | undefined,
+      id: body.id as string | undefined,
+      state: body.state as ItemState | undefined,
+      timestamp: body.timestamp as string | undefined,
+      source: body.source as string | undefined,
+      source_id: body.source_id as string | undefined,
+      origin: body.origin as string | undefined,
+      device_id: body.device_id as string | undefined,
+      parent_id: body.parent_id as string | undefined,
+      thread_id: body.thread_id as string | undefined,
+      capture_latitude: body.capture_latitude as number | undefined,
+      capture_longitude: body.capture_longitude as number | undefined,
+      tags: body.tags as string[] | undefined,
+      about: body.about as string[] | undefined,
     });
 
     const metadata = storage.metadata.get(item.id);
@@ -181,11 +181,11 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    const body = (await c.req.json()) as Record<string, unknown>;
+    const body = (await c.req.json());
 
     if (
-      !body["properties"] ||
-      typeof body["properties"] !== "object"
+      !body.properties ||
+      typeof body.properties !== "object"
     ) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
@@ -194,9 +194,9 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     if (
-      typeof body["version"] !== "number" ||
-      !Number.isInteger(body["version"]) ||
-      (body["version"] as number) < 1
+      typeof body.version !== "number" ||
+      !Number.isInteger(body.version) ||
+      (body.version) < 1
     ) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
@@ -217,7 +217,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     // Validate merged properties against type schema
     const merged = {
       ...item.properties,
-      ...(body["properties"] as Record<string, unknown>),
+      ...(body.properties as Record<string, unknown>),
     };
     const validation = validateProperties(item.type, merged);
     if (!validation.success) {
@@ -229,12 +229,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const result = storage.items.update(id, {
-      properties: body["properties"] as Record<string, unknown>,
-      version: body["version"] as number,
+      properties: body.properties as Record<string, unknown>,
+      version: body.version,
     });
 
     // Check if conflict response
-    if ("error" in result && result.error.code === "version_conflict") {
+    if ("error" in result) {
       return c.json(result, 409);
     }
 
@@ -298,8 +298,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    const body = (await c.req.json()) as Record<string, unknown>;
-    const state = body["state"] as string | undefined;
+    const body = (await c.req.json());
+    const state = body.state as string | undefined;
     if (
       !state ||
       !(ITEM_STATES as readonly string[]).includes(state)
@@ -390,9 +390,9 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     requireTypeAccess(c, item.type, "write");
 
-    const body = (await c.req.json()) as Record<string, unknown>;
-    const tags = (body["tags"] as string[] | undefined) ?? [];
-    const about = (body["about"] as string[] | undefined) ?? [];
+    const body = (await c.req.json());
+    const tags = (body.tags as string[] | undefined) ?? [];
+    const about = (body.about as string[] | undefined) ?? [];
 
     const metadata = storage.metadata.set(id, tags, about);
     return c.json(metadata);
@@ -418,8 +418,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     requireTypeAccess(c, item.type, "write");
 
-    const body = (await c.req.json()) as Record<string, unknown>;
-    const tags = body["tags"] as string[] | undefined;
+    const body = (await c.req.json());
+    const tags = body.tags as string[] | undefined;
     if (!Array.isArray(tags) || tags.length === 0) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,

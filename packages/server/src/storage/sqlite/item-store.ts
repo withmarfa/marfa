@@ -159,7 +159,7 @@ export class SqliteItemStore implements ItemStore {
       return {
         id,
         type: input.type,
-        state: state as ItemState,
+        state: state,
         properties: input.properties,
         created_at: now,
         updated_at: now,
@@ -234,7 +234,8 @@ export class SqliteItemStore implements ItemStore {
         return eq(items.type, pattern);
       });
       if (typeClauses.length > 0) {
-        conditions.push(or(...typeClauses)!);
+        const clause = or(...typeClauses);
+        if (clause) conditions.push(clause);
       }
     }
 
@@ -248,13 +249,17 @@ export class SqliteItemStore implements ItemStore {
             ? items.timestamp
             : items.created_at;
       if (dir === "desc") {
-        conditions.push(
-          or(lt(sortCol, v), and(eq(sortCol, v), lt(items.id, id)))!,
+        const clause = or(
+          lt(sortCol, v),
+          and(eq(sortCol, v), lt(items.id, id)),
         );
+        if (clause) conditions.push(clause);
       } else {
-        conditions.push(
-          or(gt(sortCol, v), and(eq(sortCol, v), gt(items.id, id)))!,
+        const clause = or(
+          gt(sortCol, v),
+          and(eq(sortCol, v), gt(items.id, id)),
         );
+        if (clause) conditions.push(clause);
       }
     }
 
@@ -282,7 +287,7 @@ export class SqliteItemStore implements ItemStore {
     let cursor: string | null = null;
 
     if (hasMore && data.length > 0) {
-      const last = data[data.length - 1]!;
+      const last = data.at(-1);
       const sortValue =
         sortField === "updated_at"
           ? last.updated_at

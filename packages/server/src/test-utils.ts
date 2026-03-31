@@ -68,7 +68,7 @@ export function request(
   };
 
   if (options?.key) {
-    headers["Authorization"] = `Bearer ${options.key}`;
+    headers.Authorization = `Bearer ${options.key}`;
   }
 
   const init: RequestInit = { method, headers };
@@ -77,5 +77,5 @@ export function request(
     init.body = JSON.stringify(options.body);
   }
 
-  return app.request(path, init);
+  return Promise.resolve(app.request(path, init));
 }

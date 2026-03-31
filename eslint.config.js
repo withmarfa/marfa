@@ -26,6 +26,16 @@ export default [
     },
   },
   {
-    ignores: ["**/dist/", "**/coverage/", "**/node_modules/"],
+    // Route handlers parse untyped JSON from HTTP requests
+    files: ["**/routes/*.ts"],
+    rules: {
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-argument": "off",
+    },
+  },
+  {
+    ignores: ["**/dist/", "**/coverage/", "**/node_modules/", "**/seed/"],
   },
 ];

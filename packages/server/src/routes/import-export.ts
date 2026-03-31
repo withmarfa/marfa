@@ -20,8 +20,8 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
   router.post("/", async (c) => {
     requireAdmin(c);
 
-    const body = (await c.req.json()) as Record<string, unknown>;
-    const items = body["items"] as unknown[] | undefined;
+    const body = (await c.req.json());
+    const items = body.items as unknown[] | undefined;
     if (!Array.isArray(items)) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
@@ -41,21 +41,21 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
     // Validate all items before storing any
     for (let i = 0; i < items.length; i++) {
       const item = items[i] as Record<string, unknown>;
-      if (!item["type"] || !isValidTypeIdentifier(item["type"] as string)) {
+      if (!item.type || !isValidTypeIdentifier(item.type as string)) {
         throw new ProtocolError(
           ErrorCode.VALIDATION_ERROR,
           `Item at index ${String(i)}: invalid or missing type`,
         );
       }
-      if (!item["properties"] || typeof item["properties"] !== "object") {
+      if (!item.properties || typeof item.properties !== "object") {
         throw new ProtocolError(
           ErrorCode.VALIDATION_ERROR,
           `Item at index ${String(i)}: properties is required`,
         );
       }
       const validation = validateProperties(
-        item["type"] as string,
-        item["properties"] as Record<string, unknown>,
+        item.type as string,
+        item.properties as Record<string, unknown>,
       );
       if (!validation.success) {
         throw new ProtocolError(

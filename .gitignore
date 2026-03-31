@@ -28,3 +28,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Seed data (local dev only)
+seed/

@@ -39,7 +39,7 @@ describe("threads", () => {
       key: ctx.adminKey,
     });
     const thread = (await threadRes.json()) as Record<string, unknown>;
-    const threadId = thread["id"] as string;
+    const threadId = thread.id as string;
 
     // Add item to thread
     await request(ctx.app, "POST", "/items", {
@@ -59,7 +59,7 @@ describe("threads", () => {
     const data = (await res.json()) as Record<string, unknown>;
     expect(data).toHaveProperty("thread");
     expect(data).toHaveProperty("items");
-    const items = data["items"] as unknown[];
+    const items = data.items as unknown[];
     expect(items.length).toBe(1);
   });
 });

@@ -1,5 +1,11 @@
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
+import { createSqliteStorage } from "../storage/sqlite/index.js";
+import { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import { createApp } from "../app.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -35,24 +41,10 @@ describe("authentication", () => {
 
 describe("bootstrap mode", () => {
   it("allows key creation without auth when no keys exist", async () => {
-    // Create a fresh context with no keys
-    const freshTmpDir = require("node:fs").mkdtempSync(
-      require("node:path").join(require("node:os").tmpdir(), "myme-boot-"),
-    );
-    const { createSqliteStorage } = await import(
-      "../storage/sqlite/index.js"
-    );
-    const { FilesystemBlobBackend } = await import(
-      "../storage/blob-backend.js"
-    );
-    const { createApp } = await import("../app.js");
-    const { hashApiKey } = await import("../middleware/auth.js");
-
-    const storage = createSqliteStorage(
-      require("node:path").join(freshTmpDir, "boot.db"),
-    );
+    const freshTmpDir = mkdtempSync(join(tmpdir(), "myme-boot-"));
+    const storage = createSqliteStorage(join(freshTmpDir, "boot.db"));
     const blobBackend = new FilesystemBlobBackend(
-      require("node:path").join(freshTmpDir, "blobs"),
+      join(freshTmpDir, "blobs"),
     );
     const app = createApp(storage, blobBackend, {
       port: 0,
@@ -67,7 +59,7 @@ describe("bootstrap mode", () => {
     });
     expect(res.status).toBe(201);
     const data = (await res.json()) as Record<string, unknown>;
-    expect(data["role"]).toBe("admin");
+    expect(data.role).toBe("admin");
     expect(data).toHaveProperty("key");
 
     storage.close();
@@ -82,7 +74,7 @@ describe("key management", () => {
     });
     expect(createRes.status).toBe(201);
     const created = (await createRes.json()) as Record<string, unknown>;
-    expect(created["role"]).toBe("member");
+    expect(created.role).toBe("member");
 
     const listRes = await request(ctx.app, "GET", "/keys", {
       key: ctx.adminKey,
@@ -102,7 +94,7 @@ describe("key management", () => {
     const revokeRes = await request(
       ctx.app,
       "DELETE",
-      `/keys/${created["id"] as string}`,
+      `/keys/${created.id as string}`,
       { key: ctx.adminKey },
     );
     expect(revokeRes.status).toBe(204);

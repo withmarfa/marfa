@@ -25,10 +25,10 @@ describe("POST /items", () => {
     const data = (await res.json()) as Record<string, unknown>;
     expect(data).toHaveProperty("item");
     expect(data).toHaveProperty("metadata");
-    const item = data["item"] as Record<string, unknown>;
-    expect(item["type"]).toBe("core.note");
-    expect(item["version"]).toBe(1);
-    expect(item["state"]).toBe("new");
+    const item = data.item as Record<string, unknown>;
+    expect(item.type).toBe("core.note");
+    expect(item.version).toBe(1);
+    expect(item.state).toBe("new");
     expect(item).toHaveProperty("id");
   });
 
@@ -76,9 +76,9 @@ describe("POST /items", () => {
     });
     expect(res.status).toBe(201);
     const data = (await res.json()) as Record<string, unknown>;
-    const meta = data["metadata"] as Record<string, unknown>;
-    expect(meta["tags"]).toEqual(["reading", "important"]);
-    expect(meta["about"]).toEqual(["some-id"]);
+    const meta = data.metadata as Record<string, unknown>;
+    expect(meta.tags).toEqual(["reading", "important"]);
+    expect(meta.about).toEqual(["some-id"]);
   });
 
   it("detects duplicate source", async () => {
@@ -114,12 +114,12 @@ describe("GET /items/:id", () => {
       },
     });
     const created = (await createRes.json()) as Record<string, unknown>;
-    const item = created["item"] as Record<string, unknown>;
+    const item = created.item as Record<string, unknown>;
 
     const res = await request(
       ctx.app,
       "GET",
-      `/items/${item["id"] as string}`,
+      `/items/${item.id as string}`,
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
@@ -156,9 +156,9 @@ describe("GET /items", () => {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { data: Array<Record<string, unknown>> };
+    const data = (await res.json()) as { data: Record<string, unknown>[] };
     for (const item of data.data) {
-      expect(item["type"]).toBe("core.note");
+      expect(item.type).toBe("core.note");
     }
   });
 });
@@ -175,7 +175,7 @@ describe("PATCH /items/:id", () => {
     const created = (await createRes.json()) as {
       item: Record<string, unknown>;
     };
-    const id = created.item["id"] as string;
+    const id = created.item.id as string;
 
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.adminKey,
@@ -186,13 +186,13 @@ describe("PATCH /items/:id", () => {
     });
     expect(res.status).toBe(200);
     const updated = (await res.json()) as Record<string, unknown>;
-    expect(updated["version"]).toBe(2);
+    expect(updated.version).toBe(2);
     expect(
-      (updated["properties"] as Record<string, unknown>)["title"],
+      (updated.properties as Record<string, unknown>).title,
     ).toBe("Updated");
     // Body should be preserved
     expect(
-      (updated["properties"] as Record<string, unknown>)["body"],
+      (updated.properties as Record<string, unknown>).body,
     ).toBe("Original");
   });
 
@@ -207,7 +207,7 @@ describe("PATCH /items/:id", () => {
     const created = (await createRes.json()) as {
       item: Record<string, unknown>;
     };
-    const id = created.item["id"] as string;
+    const id = created.item.id as string;
 
     // First update (version 1 -> 2)
     await request(ctx.app, "PATCH", `/items/${id}`, {
@@ -238,7 +238,7 @@ describe("PATCH /items/:id", () => {
     const created = (await createRes.json()) as {
       item: Record<string, unknown>;
     };
-    const id = created.item["id"] as string;
+    const id = created.item.id as string;
 
     // First update changes title (version 1 -> 2)
     await request(ctx.app, "PATCH", `/items/${id}`, {
@@ -253,9 +253,9 @@ describe("PATCH /items/:id", () => {
     });
     expect(res.status).toBe(200);
     const merged = (await res.json()) as Record<string, unknown>;
-    const props = merged["properties"] as Record<string, unknown>;
-    expect(props["title"]).toBe("Server title");
-    expect(props["body"]).toBe("Client body");
+    const props = merged.properties as Record<string, unknown>;
+    expect(props.title).toBe("Server title");
+    expect(props.body).toBe("Client body");
   });
 });
 
@@ -271,7 +271,7 @@ describe("DELETE /items/:id", () => {
     const created = (await createRes.json()) as {
       item: Record<string, unknown>;
     };
-    const id = created.item["id"] as string;
+    const id = created.item.id as string;
 
     const res = await request(ctx.app, "DELETE", `/items/${id}`, {
       key: ctx.adminKey,
@@ -286,7 +286,7 @@ describe("DELETE /items/:id", () => {
     const data = (await getRes.json()) as {
       item: Record<string, unknown>;
     };
-    expect(data.item["state"]).toBe("trashed");
+    expect(data.item.state).toBe("trashed");
   });
 });
 
@@ -302,7 +302,7 @@ describe("POST /items/:id/restore", () => {
     const created = (await createRes.json()) as {
       item: Record<string, unknown>;
     };
-    const id = created.item["id"] as string;
+    const id = created.item.id as string;
 
     await request(ctx.app, "DELETE", `/items/${id}`, {
       key: ctx.adminKey,
@@ -313,7 +313,7 @@ describe("POST /items/:id/restore", () => {
     });
     expect(res.status).toBe(200);
     const restored = (await res.json()) as Record<string, unknown>;
-    expect(restored["state"]).toBe("active");
+    expect(restored.state).toBe("active");
   });
 });
 
@@ -329,7 +329,7 @@ describe("POST /items/:id/transition", () => {
     const created = (await createRes.json()) as {
       item: Record<string, unknown>;
     };
-    const id = created.item["id"] as string;
+    const id = created.item.id as string;
 
     const res = await request(
       ctx.app,
@@ -342,7 +342,7 @@ describe("POST /items/:id/transition", () => {
     );
     expect(res.status).toBe(200);
     const item = (await res.json()) as Record<string, unknown>;
-    expect(item["state"]).toBe("active");
+    expect(item.state).toBe("active");
   });
 
   it("rejects invalid transition", async () => {
@@ -357,7 +357,7 @@ describe("POST /items/:id/transition", () => {
     const created = (await createRes.json()) as {
       item: Record<string, unknown>;
     };
-    const id = created.item["id"] as string;
+    const id = created.item.id as string;
 
     const res = await request(
       ctx.app,
@@ -384,7 +384,7 @@ describe("GET /items/:id/versions", () => {
     const created = (await createRes.json()) as {
       item: Record<string, unknown>;
     };
-    const id = created.item["id"] as string;
+    const id = created.item.id as string;
 
     await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.adminKey,
@@ -398,7 +398,7 @@ describe("GET /items/:id/versions", () => {
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
-    const versions = (await res.json()) as Array<Record<string, unknown>>;
+    const versions = (await res.json()) as Record<string, unknown>[];
     expect(versions.length).toBe(1);
     expect(versions[0]).toHaveProperty("version", 1);
   });

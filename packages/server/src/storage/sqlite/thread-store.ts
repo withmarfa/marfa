@@ -53,7 +53,7 @@ export class SqliteThreadStore implements ThreadStore {
     const data = rows.slice(0, limit);
     let nextCursor: string | null = null;
     if (hasMore && data.length > 0) {
-      const last = data[data.length - 1]!;
+      const last = data.at(-1);
       nextCursor = encodeCursor(last.created_at, last.id);
     }
 

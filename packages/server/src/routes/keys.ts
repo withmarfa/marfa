@@ -27,12 +27,12 @@ export function keyRoutes(
       requireAdmin(c);
     }
 
-    const body = (await c.req.json()) as Record<string, unknown>;
+    const body = (await c.req.json());
 
     if (
-      !body["label"] ||
-      typeof body["label"] !== "string" ||
-      !(body["label"] as string).trim()
+      !body.label ||
+      typeof body.label !== "string" ||
+      !(body.label).trim()
     ) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
@@ -42,7 +42,7 @@ export function keyRoutes(
 
     const role = isBootstrap
       ? "admin"
-      : ((body["role"] as string | undefined) ?? "member");
+      : ((body.role as string | undefined) ?? "member");
     if (role !== "admin" && role !== "member") {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
@@ -51,15 +51,15 @@ export function keyRoutes(
     }
 
     const typePermissions =
-      (body["type_permissions"] as Record<string, string> | undefined) ?? {};
+      (body.type_permissions as Record<string, string> | undefined) ?? {};
 
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
 
     const stored = storage.keys.create(
       {
-        label: (body["label"] as string).trim(),
-        role: role as "admin" | "member",
+        label: (body.label).trim(),
+        role: role,
         type_permissions: typePermissions as Record<
           string,
           "read" | "write" | "none"
