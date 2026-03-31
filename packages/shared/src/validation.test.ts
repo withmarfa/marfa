@@ -216,9 +216,9 @@ describe("matchesTypePattern", () => {
   });
 
   it("matches against any pattern in the array", () => {
-    expect(
-      matchesTypePattern("core.note", ["core.work.*", "core.note"]),
-    ).toBe(true);
+    expect(matchesTypePattern("core.note", ["core.work.*", "core.note"])).toBe(
+      true,
+    );
   });
 
   it("wildcard prefix matches parent type too", () => {

@@ -46,9 +46,7 @@ export class SqliteVersionStore implements VersionStore {
     const row = this.db
       .select()
       .from(versions)
-      .where(
-        and(eq(versions.item_id, itemId), eq(versions.version, version)),
-      )
+      .where(and(eq(versions.item_id, itemId), eq(versions.version, version)))
       .get();
     return row ? rowToVersion(row) : null;
   }

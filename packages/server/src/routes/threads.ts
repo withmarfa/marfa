@@ -26,17 +26,11 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
     requireAuth(c);
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid thread ID",
-      );
+      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid thread ID");
     }
     const thread = storage.threads.get(id);
     if (!thread) {
-      throw new ProtocolError(
-        ErrorCode.NOT_FOUND,
-        `Thread ${id} not found`,
-      );
+      throw new ProtocolError(ErrorCode.NOT_FOUND, `Thread ${id} not found`);
     }
     const items = storage.threads.getItems(id);
     return c.json({ thread, items });

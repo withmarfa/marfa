@@ -37,10 +37,7 @@ export function blobRoutes(
     }
 
     if (data.length === 0) {
-      throw new ProtocolError(
-        ErrorCode.VALIDATION_ERROR,
-        "Empty blob",
-      );
+      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Empty blob");
     }
 
     // Compute content-addressed hash
@@ -67,10 +64,7 @@ export function blobRoutes(
       hash = `sha256:${hash}`;
     }
     if (!isValidBlobHash(hash)) {
-      throw new ProtocolError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid blob hash",
-      );
+      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
     const record = storage.blobs.get(hash);

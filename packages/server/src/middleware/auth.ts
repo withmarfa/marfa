@@ -1,11 +1,7 @@
 import { createHmac } from "node:crypto";
 import { createMiddleware } from "hono/factory";
 import type { Context } from "hono";
-import {
-  ProtocolError,
-  ErrorCode,
-  resolveTypePermission,
-} from "@myme/shared";
+import { ProtocolError, ErrorCode, resolveTypePermission } from "@myme/shared";
 import type { ApiKey } from "@myme/shared";
 import type { Storage } from "../storage/interface.js";
 
@@ -98,10 +94,7 @@ export function authMiddleware(storage: Storage, salt: string) {
 export function requireAuth(c: Context<AppEnv>): ApiKey {
   const key = c.get("apiKey");
   if (!key) {
-    throw new ProtocolError(
-      ErrorCode.UNAUTHORIZED,
-      "Authentication required",
-    );
+    throw new ProtocolError(ErrorCode.UNAUTHORIZED, "Authentication required");
   }
   return key;
 }
@@ -109,10 +102,7 @@ export function requireAuth(c: Context<AppEnv>): ApiKey {
 export function requireAdmin(c: Context<AppEnv>): ApiKey {
   const key = requireAuth(c);
   if (key.role !== "admin") {
-    throw new ProtocolError(
-      ErrorCode.FORBIDDEN,
-      "Admin access required",
-    );
+    throw new ProtocolError(ErrorCode.FORBIDDEN, "Admin access required");
   }
   return key;
 }
@@ -127,10 +117,7 @@ export function requireTypeAccess(
 
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (resolved === "none") {
-    throw new ProtocolError(
-      ErrorCode.FORBIDDEN,
-      `No access to type "${type}"`,
-    );
+    throw new ProtocolError(ErrorCode.FORBIDDEN, `No access to type "${type}"`);
   }
   if (level === "write" && resolved === "read") {
     throw new ProtocolError(
@@ -145,13 +132,8 @@ export function getTypeFilter(c: Context<AppEnv>): string[] | undefined {
   if (!key || key.role === "admin") return undefined;
 
   const patterns: string[] = [];
-  for (const [pattern, permission] of Object.entries(
-    key.type_permissions,
-  )) {
-    if (
-      (permission) === "read" ||
-      (permission) === "write"
-    ) {
+  for (const [pattern, permission] of Object.entries(key.type_permissions)) {
+    if (permission === "read" || permission === "write") {
       patterns.push(pattern);
     }
   }

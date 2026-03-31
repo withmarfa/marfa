@@ -100,8 +100,7 @@ export function isValidLanguageCode(value: string): boolean {
 // Dot-delimited snake_case segments. Minimum 2 segments (namespace.name).
 // Each segment: starts with letter, lowercase alphanumeric + underscores.
 // Max 128 characters total.
-const TYPE_ID =
-  /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
+const TYPE_ID = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 
 /** Returns true if the value is a valid dot-notation type identifier. */
 export function isValidTypeIdentifier(value: string): boolean {
@@ -116,10 +115,7 @@ export function isValidTypeIdentifier(value: string): boolean {
  * Returns true if the type matches any of the given patterns.
  * Patterns can be exact matches, prefix wildcards (core.work.*), or global (*).
  */
-export function matchesTypePattern(
-  type: string,
-  patterns: string[],
-): boolean {
+export function matchesTypePattern(type: string, patterns: string[]): boolean {
   for (const pattern of patterns) {
     if (pattern === "*") return true;
     if (pattern === type) return true;

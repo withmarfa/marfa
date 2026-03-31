@@ -43,9 +43,7 @@ describe("bootstrap mode", () => {
   it("allows key creation without auth when no keys exist", async () => {
     const freshTmpDir = mkdtempSync(join(tmpdir(), "myme-boot-"));
     const storage = createSqliteStorage(join(freshTmpDir, "boot.db"));
-    const blobBackend = new FilesystemBlobBackend(
-      join(freshTmpDir, "blobs"),
-    );
+    const blobBackend = new FilesystemBlobBackend(join(freshTmpDir, "blobs"));
     const app = createApp(storage, blobBackend, {
       port: 0,
       sqlitePath: "",

@@ -116,12 +116,9 @@ describe("GET /items/:id", () => {
     const created = (await createRes.json()) as Record<string, unknown>;
     const item = created.item as Record<string, unknown>;
 
-    const res = await request(
-      ctx.app,
-      "GET",
-      `/items/${item.id as string}`,
-      { key: ctx.adminKey },
-    );
+    const res = await request(ctx.app, "GET", `/items/${item.id as string}`, {
+      key: ctx.adminKey,
+    });
     expect(res.status).toBe(200);
     const data = (await res.json()) as Record<string, unknown>;
     expect(data).toHaveProperty("item");
@@ -187,13 +184,13 @@ describe("PATCH /items/:id", () => {
     expect(res.status).toBe(200);
     const updated = (await res.json()) as Record<string, unknown>;
     expect(updated.version).toBe(2);
-    expect(
-      (updated.properties as Record<string, unknown>).title,
-    ).toBe("Updated");
+    expect((updated.properties as Record<string, unknown>).title).toBe(
+      "Updated",
+    );
     // Body should be preserved
-    expect(
-      (updated.properties as Record<string, unknown>).body,
-    ).toBe("Original");
+    expect((updated.properties as Record<string, unknown>).body).toBe(
+      "Original",
+    );
   });
 
   it("returns 409 on conflicting field update", async () => {
@@ -331,15 +328,10 @@ describe("POST /items/:id/transition", () => {
     };
     const id = created.item.id as string;
 
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/items/${id}/transition`,
-      {
-        key: ctx.adminKey,
-        body: { state: "active" },
-      },
-    );
+    const res = await request(ctx.app, "POST", `/items/${id}/transition`, {
+      key: ctx.adminKey,
+      body: { state: "active" },
+    });
     expect(res.status).toBe(200);
     const item = (await res.json()) as Record<string, unknown>;
     expect(item.state).toBe("active");
@@ -359,15 +351,10 @@ describe("POST /items/:id/transition", () => {
     };
     const id = created.item.id as string;
 
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/items/${id}/transition`,
-      {
-        key: ctx.adminKey,
-        body: { state: "new" },
-      },
-    );
+    const res = await request(ctx.app, "POST", `/items/${id}/transition`, {
+      key: ctx.adminKey,
+      body: { state: "new" },
+    });
     expect(res.status).toBe(400);
   });
 });
@@ -391,12 +378,9 @@ describe("GET /items/:id/versions", () => {
       body: { properties: { body: "V2" }, version: 1 },
     });
 
-    const res = await request(
-      ctx.app,
-      "GET",
-      `/items/${id}/versions`,
-      { key: ctx.adminKey },
-    );
+    const res = await request(ctx.app, "GET", `/items/${id}/versions`, {
+      key: ctx.adminKey,
+    });
     expect(res.status).toBe(200);
     const versions = (await res.json()) as Record<string, unknown>[];
     expect(versions.length).toBe(1);

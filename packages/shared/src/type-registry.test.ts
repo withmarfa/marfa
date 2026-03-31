@@ -310,20 +310,12 @@ describe("validateTransition", () => {
   });
 
   it("returns error for invalid current state", () => {
-    const error = validateTransition(
-      "core.note",
-      "bogus" as "new",
-      "active",
-    );
+    const error = validateTransition("core.note", "bogus" as "new", "active");
     expect(error).not.toBeNull();
   });
 
   it("returns error for invalid target state", () => {
-    const error = validateTransition(
-      "core.note",
-      "new",
-      "bogus" as "active",
-    );
+    const error = validateTransition("core.note", "new", "bogus" as "active");
     expect(error).not.toBeNull();
   });
 

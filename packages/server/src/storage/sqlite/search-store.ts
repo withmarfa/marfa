@@ -32,9 +32,7 @@ export class SqliteSearchStore implements SearchStore {
   }
 
   remove(itemId: string): void {
-    this.raw
-      .prepare("DELETE FROM items_fts WHERE item_id = ?")
-      .run(itemId);
+    this.raw.prepare("DELETE FROM items_fts WHERE item_id = ?").run(itemId);
   }
 
   search(query: string, filters: SearchFilters): SearchResult[] {
@@ -92,7 +90,10 @@ export class SqliteSearchStore implements SearchStore {
       LIMIT ?
     `;
 
-    const rows = this.raw.prepare(rawSql).all(...params) as Record<string, unknown>[];
+    const rows = this.raw.prepare(rawSql).all(...params) as Record<
+      string,
+      unknown
+    >[];
 
     return rows.map((row) => ({
       item: rowToItem(row as unknown as typeof items.$inferSelect),

@@ -1,10 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
-import {
-  ProtocolError,
-  ErrorCode,
-  isValidId,
-} from "@myme/shared";
+import { ProtocolError, ErrorCode, isValidId } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -15,10 +11,7 @@ function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");
 }
 
-export function keyRoutes(
-  storage: Storage,
-  salt: string,
-): Hono<AppEnv> {
+export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
   router.post("/", async (c) => {
@@ -27,17 +20,10 @@ export function keyRoutes(
       requireAdmin(c);
     }
 
-    const body = (await c.req.json());
+    const body = await c.req.json();
 
-    if (
-      !body.label ||
-      typeof body.label !== "string" ||
-      !(body.label).trim()
-    ) {
-      throw new ProtocolError(
-        ErrorCode.VALIDATION_ERROR,
-        "label is required",
-      );
+    if (!body.label || typeof body.label !== "string" || !body.label.trim()) {
+      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "label is required");
     }
 
     const role = isBootstrap
@@ -58,7 +44,7 @@ export function keyRoutes(
 
     const stored = storage.keys.create(
       {
-        label: (body.label).trim(),
+        label: body.label.trim(),
         role: role,
         type_permissions: typePermissions as Record<
           string,
@@ -90,10 +76,7 @@ export function keyRoutes(
     requireAdmin(c);
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid key ID",
-      );
+      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
     storage.keys.revoke(id);
     return c.body(null, 204);

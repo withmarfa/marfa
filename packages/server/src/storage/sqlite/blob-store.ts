@@ -23,11 +23,7 @@ export class SqliteBlobStore implements BlobStore {
   get(
     hash: string,
   ): { mime_type: string; size: number; storage_path: string } | null {
-    const row = this.db
-      .select()
-      .from(blobs)
-      .where(eq(blobs.hash, hash))
-      .get();
+    const row = this.db.select().from(blobs).where(eq(blobs.hash, hash)).get();
     if (!row) return null;
     return {
       mime_type: row.mime_type,

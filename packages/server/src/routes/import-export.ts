@@ -20,7 +20,7 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
   router.post("/", async (c) => {
     requireAdmin(c);
 
-    const body = (await c.req.json());
+    const body = await c.req.json();
     const items = body.items as unknown[] | undefined;
     if (!Array.isArray(items)) {
       throw new ProtocolError(

@@ -38,11 +38,10 @@ describe("ProtocolError", () => {
   });
 
   it("accepts optional details", () => {
-    const err = new ProtocolError(
-      ErrorCode.VALIDATION_ERROR,
-      "Invalid field",
-      { field: "title", reason: "required" },
-    );
+    const err = new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid field", {
+      field: "title",
+      reason: "required",
+    });
     expect(err.details).toEqual({ field: "title", reason: "required" });
   });
 
