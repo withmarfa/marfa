@@ -120,10 +120,11 @@ export class HttpTransport {
   }
 
   private throwForError(status: number, body: unknown): never {
-    const err = body as ErrorResponse;
-    const message = err?.error?.message ?? `HTTP ${String(status)}`;
-    const details = err?.error?.details;
-    const code = err?.error?.code ?? "unknown";
+    const parsed = body as Partial<ErrorResponse> | null;
+    const errObj = parsed?.error;
+    const message = errObj?.message ?? `HTTP ${String(status)}`;
+    const details = errObj?.details;
+    const code = errObj?.code ?? "unknown";
 
     switch (status) {
       case 400:

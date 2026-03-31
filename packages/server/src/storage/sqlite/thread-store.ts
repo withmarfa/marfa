@@ -22,11 +22,7 @@ export class SqliteThreadStore implements ThreadStore {
   }
 
   get(id: string): Thread | null {
-    const row = this.db
-      .select()
-      .from(threads)
-      .where(eq(threads.id, id))
-      .get();
+    const row = this.db.select().from(threads).where(eq(threads.id, id)).get();
     return row ?? null;
   }
 
@@ -52,8 +48,9 @@ export class SqliteThreadStore implements ThreadStore {
     const hasMore = rows.length > limit;
     const data = rows.slice(0, limit);
     let nextCursor: string | null = null;
-    if (hasMore && data.length > 0) {
+    if (hasMore) {
       const last = data.at(-1);
+      if (!last) throw new Error("unreachable: hasMore but data is empty");
       nextCursor = encodeCursor(last.created_at, last.id);
     }
 

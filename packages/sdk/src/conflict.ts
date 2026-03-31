@@ -63,7 +63,6 @@ export async function handleConflictUpdate(
 ): Promise<Item> {
   let properties = clientPatch;
   let currentVersion = version;
-  let lastResponse: ConflictResponse | undefined;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const result = await transport.requestWithConflict<Item>(
@@ -76,14 +75,12 @@ export async function handleConflictUpdate(
       return result;
     }
 
-    lastResponse = result;
-
     if (strategy === "manual") {
       throw toConflictError(result, clientPatch);
     }
 
     if (attempt === MAX_RETRIES) {
-      break;
+      throw toConflictError(result, clientPatch);
     }
 
     const conflict: ConflictData = {
@@ -105,5 +102,11 @@ export async function handleConflictUpdate(
     currentVersion = result.current.version;
   }
 
-  throw toConflictError(lastResponse!, clientPatch);
+  // Unreachable — the loop always returns or throws
+  throw new ConflictError(
+    { version: 0, properties: {} },
+    { version: 0, properties: {} },
+    [],
+    clientPatch,
+  );
 }

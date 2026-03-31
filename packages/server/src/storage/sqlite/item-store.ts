@@ -89,10 +89,7 @@ export class SqliteItemStore implements ItemStore {
           .where(eq(items.id, input.parent_id))
           .get();
         if (!parent) {
-          throw new ProtocolError(
-            ErrorCode.NOT_FOUND,
-            "Parent item not found",
-          );
+          throw new ProtocolError(ErrorCode.NOT_FOUND, "Parent item not found");
         }
       }
 
@@ -104,10 +101,7 @@ export class SqliteItemStore implements ItemStore {
           .where(eq(threads.id, input.thread_id))
           .get();
         if (!thread) {
-          throw new ProtocolError(
-            ErrorCode.NOT_FOUND,
-            "Thread not found",
-          );
+          throw new ProtocolError(ErrorCode.NOT_FOUND, "Thread not found");
         }
       }
 
@@ -184,11 +178,7 @@ export class SqliteItemStore implements ItemStore {
   }
 
   get(id: string): Item | null {
-    const row = this.db
-      .select()
-      .from(items)
-      .where(eq(items.id, id))
-      .get();
+    const row = this.db.select().from(items).where(eq(items.id, id)).get();
     if (!row) return null;
     return rowToItem(row);
   }
@@ -210,9 +200,7 @@ export class SqliteItemStore implements ItemStore {
 
     if (filters.type) {
       if (filters.type.endsWith(".*")) {
-        conditions.push(
-          like(items.type, filters.type.slice(0, -1) + "%"),
-        );
+        conditions.push(like(items.type, filters.type.slice(0, -1) + "%"));
       } else {
         conditions.push(eq(items.type, filters.type));
       }
@@ -286,8 +274,9 @@ export class SqliteItemStore implements ItemStore {
     const data = rows.slice(0, limit).map(rowToItem);
     let cursor: string | null = null;
 
-    if (hasMore && data.length > 0) {
+    if (hasMore) {
       const last = data.at(-1);
+      if (!last) throw new Error("unreachable: hasMore but data is empty");
       const sortValue =
         sortField === "updated_at"
           ? last.updated_at
@@ -302,11 +291,7 @@ export class SqliteItemStore implements ItemStore {
 
   update(id: string, input: UpdateItemInput): Item | ConflictResponse {
     const updateFn = this.raw.transaction(() => {
-      const row = this.db
-        .select()
-        .from(items)
-        .where(eq(items.id, id))
-        .get();
+      const row = this.db.select().from(items).where(eq(items.id, id)).get();
       if (!row) {
         throw new ProtocolError(ErrorCode.NOT_FOUND, "Item not found");
       }
@@ -413,11 +398,7 @@ export class SqliteItemStore implements ItemStore {
   }
 
   delete(id: string): void {
-    const row = this.db
-      .select()
-      .from(items)
-      .where(eq(items.id, id))
-      .get();
+    const row = this.db.select().from(items).where(eq(items.id, id)).get();
     if (!row) {
       throw new ProtocolError(ErrorCode.NOT_FOUND, "Item not found");
     }
@@ -433,19 +414,12 @@ export class SqliteItemStore implements ItemStore {
   }
 
   restore(id: string): Item {
-    const row = this.db
-      .select()
-      .from(items)
-      .where(eq(items.id, id))
-      .get();
+    const row = this.db.select().from(items).where(eq(items.id, id)).get();
     if (!row) {
       throw new ProtocolError(ErrorCode.NOT_FOUND, "Item not found");
     }
     if (row.state !== "trashed") {
-      throw new ProtocolError(
-        ErrorCode.INVALID_STATE,
-        "Item is not trashed",
-      );
+      throw new ProtocolError(ErrorCode.INVALID_STATE, "Item is not trashed");
     }
 
     const now = new Date().toISOString();
@@ -463,20 +437,12 @@ export class SqliteItemStore implements ItemStore {
   }
 
   transition(id: string, state: ItemState): Item {
-    const row = this.db
-      .select()
-      .from(items)
-      .where(eq(items.id, id))
-      .get();
+    const row = this.db.select().from(items).where(eq(items.id, id)).get();
     if (!row) {
       throw new ProtocolError(ErrorCode.NOT_FOUND, "Item not found");
     }
 
-    const error = validateTransition(
-      row.type,
-      row.state as ItemState,
-      state,
-    );
+    const error = validateTransition(row.type, row.state as ItemState, state);
     if (error) {
       throw new ProtocolError(ErrorCode.INVALID_STATE, error);
     }

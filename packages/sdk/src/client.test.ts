@@ -16,15 +16,22 @@ import type { Item } from "@myme/shared";
 // ---------------------------------------------------------------------------
 
 let client: MymeClient;
+let testFetchFn: typeof globalThis.fetch;
 let cleanup: () => void;
 
-function createTestFetch(app: { request: (path: string, init?: RequestInit) => Promise<Response> }) {
-  return (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    const urlStr = typeof input === "string"
-      ? input
-      : input instanceof URL
-        ? input.href
-        : input.url;
+function createTestFetch(app: {
+  request: (path: string, init?: RequestInit) => Response | Promise<Response>;
+}) {
+  return async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const urlStr =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
     const url = new URL(urlStr);
     return app.request(url.pathname + url.search, init);
   };
@@ -42,7 +49,8 @@ beforeAll(async () => {
     corsOrigins: [],
   });
 
-  const testFetch = createTestFetch(app);
+  testFetchFn = createTestFetch(app);
+  const testFetch = testFetchFn;
 
   // Bootstrap: create first admin key (no auth required)
   const bootstrapRes = await testFetch("http://localhost/keys", {
@@ -58,18 +66,20 @@ beforeAll(async () => {
     fetch: testFetch,
   });
 
-  cleanup = () => storage.close();
+  cleanup = () => {
+    storage.close();
+  };
 });
 
-afterAll(() => cleanup());
+afterAll(() => {
+  cleanup();
+});
 
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
 
-async function createNote(
-  overrides?: Record<string, unknown>,
-): Promise<Item> {
+async function createNote(overrides?: Record<string, unknown>): Promise<Item> {
   return client.items.create({
     type: "core.note",
     properties: { title: "Test note", body: "Content", ...overrides },
@@ -148,7 +158,7 @@ describe("items", () => {
     await client.items.update(item.id, { title: "V2" });
     const versions = await client.items.versions(item.id);
     expect(versions.length).toBe(1);
-    expect(versions[0]!.version).toBe(1);
+    expect(versions[0]?.version).toBe(1);
   });
 
   it("throws NotFoundError for missing item", async () => {
@@ -167,7 +177,11 @@ describe("conflict resolution", () => {
     const item = await createNote();
 
     // First update changes title
-    await client.items.update(item.id, { title: "Server title" }, { version: 1 });
+    await client.items.update(
+      item.id,
+      { title: "Server title" },
+      { version: 1 },
+    );
 
     // Second update changes body with stale version — server auto-merges
     const result = await client.items.update(
@@ -183,7 +197,11 @@ describe("conflict resolution", () => {
     const item = await createNote();
 
     // First update changes title
-    await client.items.update(item.id, { title: "Server title" }, { version: 1 });
+    await client.items.update(
+      item.id,
+      { title: "Server title" },
+      { version: 1 },
+    );
 
     // Second update also changes title with stale version — real conflict
     // Auto strategy: server's title wins, but non-conflicting changes preserved
@@ -199,7 +217,11 @@ describe("conflict resolution", () => {
 
   it("manual strategy throws ConflictError", async () => {
     const item = await createNote();
-    await client.items.update(item.id, { title: "Server title" }, { version: 1 });
+    await client.items.update(
+      item.id,
+      { title: "Server title" },
+      { version: 1 },
+    );
 
     try {
       await client.items.update(
@@ -219,7 +241,11 @@ describe("conflict resolution", () => {
 
   it("callback strategy uses resolver function", async () => {
     const item = await createNote();
-    await client.items.update(item.id, { title: "Server title" }, { version: 1 });
+    await client.items.update(
+      item.id,
+      { title: "Server title" },
+      { version: 1 },
+    );
 
     const result = await client.items.update(
       item.id,
@@ -305,7 +331,7 @@ describe("threads", () => {
 
     const result = await client.threads.get(thread.id);
     expect(result.items.length).toBe(1);
-    expect(result.items[0]!.properties.title).toBe("Thread note");
+    expect(result.items[0]?.properties.title).toBe("Thread note");
   });
 });
 
@@ -379,7 +405,7 @@ describe("keys", () => {
     const keys = await client.keys.list();
     const found = keys.find((k) => k.id === id);
     expect(found).toBeTruthy();
-    expect(found!.label).toBe("test-key");
+    expect(found?.label).toBe("test-key");
   });
 
   it("revokes a key", async () => {
@@ -393,11 +419,9 @@ describe("keys", () => {
     const revokedClient = new MymeClient({
       url: "http://localhost",
       apiKey: key,
-      fetch: client["transport"]["fetch"],
+      fetch: testFetchFn,
     });
-    await expect(revokedClient.items.list()).rejects.toThrow(
-      UnauthorizedError,
-    );
+    await expect(revokedClient.items.list()).rejects.toThrow(UnauthorizedError);
   });
 });
 
@@ -410,7 +434,7 @@ describe("error handling", () => {
     const badClient = new MymeClient({
       url: "http://localhost",
       apiKey: "myme_k1_invalid",
-      fetch: client["transport"]["fetch"],
+      fetch: testFetchFn,
     });
 
     await expect(badClient.items.list()).rejects.toThrow(UnauthorizedError);

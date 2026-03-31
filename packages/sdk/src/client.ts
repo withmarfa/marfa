@@ -103,11 +103,9 @@ export class MymeClient {
     },
 
     list: async (filters?: ListFilters): Promise<PaginatedResult<Item>> => {
-      return this.transport.request<PaginatedResult<Item>>(
-        "GET",
-        "/items",
-        { query: filters as Record<string, string | number | undefined> },
-      );
+      return this.transport.request<PaginatedResult<Item>>("GET", "/items", {
+        query: filters as Record<string, string | number | undefined>,
+      });
     },
 
     update: async (
@@ -142,18 +140,13 @@ export class MymeClient {
     },
 
     transition: async (id: string, state: string): Promise<Item> => {
-      return this.transport.request<Item>(
-        "POST",
-        `/items/${id}/transition`,
-        { body: { state } },
-      );
+      return this.transport.request<Item>("POST", `/items/${id}/transition`, {
+        body: { state },
+      });
     },
 
     versions: async (id: string): Promise<Version[]> => {
-      return this.transport.request<Version[]>(
-        "GET",
-        `/items/${id}/versions`,
-      );
+      return this.transport.request<Version[]>("GET", `/items/${id}/versions`);
     },
   };
 
@@ -176,11 +169,9 @@ export class MymeClient {
     },
 
     addTags: async (itemId: string, tags: string[]): Promise<Metadata> => {
-      return this.transport.request<Metadata>(
-        "POST",
-        `/items/${itemId}/tags`,
-        { body: { tags } },
-      );
+      return this.transport.request<Metadata>("POST", `/items/${itemId}/tags`, {
+        body: { tags },
+      });
     },
 
     removeTag: async (itemId: string, tag: string): Promise<void> => {
@@ -220,9 +211,7 @@ export class MymeClient {
       );
     },
 
-    get: async (
-      id: string,
-    ): Promise<{ thread: Thread; items: Item[] }> => {
+    get: async (id: string): Promise<{ thread: Thread; items: Item[] }> => {
       return this.transport.request<{ thread: Thread; items: Item[] }>(
         "GET",
         `/threads/${id}`,
@@ -256,13 +245,10 @@ export class MymeClient {
     },
 
     download: async (hash: string): Promise<ArrayBuffer> => {
-      const response = await this.transport.rawRequest(
-        "GET",
-        `/blobs/${hash}`,
-      );
+      const response = await this.transport.rawRequest("GET", `/blobs/${hash}`);
 
       if (!response.ok) {
-        const body = (await response.json()) as unknown;
+        const body: unknown = await response.json();
         this.throwRawError(response.status, body);
       }
 
@@ -311,9 +297,10 @@ export class MymeClient {
   // ---- Internal ----
 
   private throwRawError(status: number, body: unknown): never {
-    const err = body as ErrorResponse;
-    const message = err?.error?.message ?? `HTTP ${String(status)}`;
-    const details = err?.error?.details;
+    const parsed = body as Partial<ErrorResponse> | null;
+    const errObj = parsed?.error;
+    const message = errObj?.message ?? `HTTP ${String(status)}`;
+    const details = errObj?.details;
 
     switch (status) {
       case 400:
@@ -326,7 +313,7 @@ export class MymeClient {
         throw new NotFoundError(message, details);
       default:
         throw new MymeError(
-          err?.error?.code ?? "unknown",
+          errObj?.code ?? "unknown",
           message,
           status,
           details,
