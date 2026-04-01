@@ -169,7 +169,8 @@ export function computeTypeFilter(apiKey: ApiKey | undefined): string[] | undefi
       patterns.push(pattern);
     }
   }
-  return patterns.length > 0 ? patterns : undefined;
+  // Empty array (no readable types) means "no items" — not "all items"
+  return patterns;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,22 @@
 import type { CreateItemInput, ItemState } from "@myme/shared";
-import { checkAuth, checkTypeAccess } from "../../middleware/auth.js";
-import type { GraphQLContext } from "../context.js";
+import { createGraphQLError } from "graphql-yoga";
+import {
+  gqlCheckAuth,
+  gqlCheckTypeAccess,
+  type GraphQLContext,
+} from "../context.js";
 import { publish } from "../pubsub.js";
+
+/** Fetch an item or throw not-found as GraphQLError. */
+async function requireItem(ctx: GraphQLContext, id: string) {
+  const item = await ctx.storage.items.get(id);
+  if (!item) {
+    throw createGraphQLError(`Item ${id} not found`, {
+      extensions: { code: "item_not_found" },
+    });
+  }
+  return item;
+}
 
 export const mutationResolvers = {
   createItem: async (
@@ -9,8 +24,8 @@ export const mutationResolvers = {
     args: { input: CreateItemInput },
     ctx: GraphQLContext,
   ) => {
-    checkAuth(ctx.apiKey);
-    checkTypeAccess(ctx.apiKey, args.input.type, "write");
+    gqlCheckAuth(ctx.apiKey);
+    gqlCheckTypeAccess(ctx.apiKey, args.input.type, "write");
 
     const item = await ctx.storage.items.create(args.input);
     const metadata = await ctx.storage.metadata.get(item.id);
@@ -24,19 +39,17 @@ export const mutationResolvers = {
     args: { id: string; properties: Record<string, unknown>; version?: number },
     ctx: GraphQLContext,
   ) => {
-    checkAuth(ctx.apiKey);
-    const existing = await ctx.storage.items.get(args.id);
-    if (existing) checkTypeAccess(ctx.apiKey, existing.type, "write");
+    gqlCheckAuth(ctx.apiKey);
+    const existing = await requireItem(ctx, args.id);
+    gqlCheckTypeAccess(ctx.apiKey, existing.type, "write");
 
     const result = await ctx.storage.items.update(args.id, {
       properties: args.properties,
       version: args.version,
     });
 
-    // If conflict, the result is a ConflictResponse — throw as error
     if ("error" in result) {
-      const { GraphQLError } = await import("graphql");
-      throw new GraphQLError("Version conflict", {
+      throw createGraphQLError("Version conflict", {
         extensions: {
           code: "VERSION_CONFLICT",
           current: result.current,
@@ -56,16 +69,14 @@ export const mutationResolvers = {
     args: { id: string },
     ctx: GraphQLContext,
   ) => {
-    checkAuth(ctx.apiKey);
-    const existing = await ctx.storage.items.get(args.id);
-    if (existing) checkTypeAccess(ctx.apiKey, existing.type, "write");
+    gqlCheckAuth(ctx.apiKey);
+    const existing = await requireItem(ctx, args.id);
+    gqlCheckTypeAccess(ctx.apiKey, existing.type, "write");
 
     await ctx.storage.items.delete(args.id);
 
-    if (existing) {
-      const metadata = await ctx.storage.metadata.get(args.id);
-      publish({ type: "deleted", item: { ...existing, state: "trashed" as ItemState }, metadata });
-    }
+    const metadata = await ctx.storage.metadata.get(args.id);
+    publish({ type: "deleted", item: { ...existing, state: "trashed" as ItemState }, metadata });
 
     return { ok: true };
   },
@@ -75,9 +86,13 @@ export const mutationResolvers = {
     args: { id: string },
     ctx: GraphQLContext,
   ) => {
-    checkAuth(ctx.apiKey);
+    gqlCheckAuth(ctx.apiKey);
+    // restore() handles fetching trashed items internally — check type after
+    // Note: we can't pre-check because get() excludes trashed items.
+    // The storage layer will throw if the item doesn't exist.
     const item = await ctx.storage.items.restore(args.id);
-    checkTypeAccess(ctx.apiKey, item.type, "write");
+    // Type access is checked after restore since we need the item's type
+    gqlCheckTypeAccess(ctx.apiKey, item.type, "write");
 
     const metadata = await ctx.storage.metadata.get(item.id);
     publish({ type: "restored", item, metadata });
@@ -89,9 +104,11 @@ export const mutationResolvers = {
     args: { id: string; state: string },
     ctx: GraphQLContext,
   ) => {
-    checkAuth(ctx.apiKey);
+    gqlCheckAuth(ctx.apiKey);
+    const existing = await requireItem(ctx, args.id);
+    gqlCheckTypeAccess(ctx.apiKey, existing.type, "write");
+
     const item = await ctx.storage.items.transition(args.id, args.state as ItemState);
-    checkTypeAccess(ctx.apiKey, item.type, "write");
 
     const metadata = await ctx.storage.metadata.get(item.id);
     publish({ type: "transitioned", item, metadata });
@@ -103,7 +120,10 @@ export const mutationResolvers = {
     args: { itemId: string; tags: string[] },
     ctx: GraphQLContext,
   ) => {
-    checkAuth(ctx.apiKey);
+    gqlCheckAuth(ctx.apiKey);
+    const item = await requireItem(ctx, args.itemId);
+    gqlCheckTypeAccess(ctx.apiKey, item.type, "write");
+
     const metadata = await ctx.storage.metadata.addTags(args.itemId, args.tags);
     return { metadata };
   },
@@ -113,7 +133,10 @@ export const mutationResolvers = {
     args: { itemId: string; tag: string },
     ctx: GraphQLContext,
   ) => {
-    checkAuth(ctx.apiKey);
+    gqlCheckAuth(ctx.apiKey);
+    const item = await requireItem(ctx, args.itemId);
+    gqlCheckTypeAccess(ctx.apiKey, item.type, "write");
+
     const metadata = await ctx.storage.metadata.removeTag(args.itemId, args.tag);
     return { metadata };
   },
@@ -123,7 +146,10 @@ export const mutationResolvers = {
     args: { itemId: string; tags?: string[]; about?: string[] },
     ctx: GraphQLContext,
   ) => {
-    checkAuth(ctx.apiKey);
+    gqlCheckAuth(ctx.apiKey);
+    const item = await requireItem(ctx, args.itemId);
+    gqlCheckTypeAccess(ctx.apiKey, item.type, "write");
+
     const metadata = await ctx.storage.metadata.set(args.itemId, args.tags, args.about);
     return { metadata };
   },

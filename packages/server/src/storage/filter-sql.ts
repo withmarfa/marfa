@@ -12,6 +12,15 @@ import { sql, type SQL } from "drizzle-orm";
 import type { FilterExpression, FilterCondition, ComparisonOp } from "@myme/shared";
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Escape LIKE pattern characters so they are treated as literals. */
+function escapeLike(s: string): string {
+  return s.replace(/[%_\\]/g, "\\$&");
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -92,9 +101,9 @@ function systemFieldSql(col: unknown, op: ComparisonOp, value: unknown): SQL {
     case "lte":
       return sql`${col} <= ${value}`;
     case "contains":
-      return sql`${col} LIKE ${"%" + String(value) + "%"}`;
+      return sql`${col} LIKE ${"%" + escapeLike(String(value)) + "%"}`;
     case "starts_with":
-      return sql`${col} LIKE ${String(value) + "%"}`;
+      return sql`${col} LIKE ${escapeLike(String(value)) + "%"}`;
     default:
       throw new Error(`Unsupported operator "${op}" for system field`);
   }
@@ -136,9 +145,9 @@ function propertyFieldSql(
     case "lte":
       return isNumeric ? sql`${numericExtract} <= ${value}` : sql`${extract} <= ${value}`;
     case "contains":
-      return sql`${extract} LIKE ${"%" + String(value) + "%"}`;
+      return sql`${extract} LIKE ${"%" + escapeLike(String(value)) + "%"}`;
     case "starts_with":
-      return sql`${extract} LIKE ${String(value) + "%"}`;
+      return sql`${extract} LIKE ${escapeLike(String(value)) + "%"}`;
     case "exists":
       return sql`${extract} IS NOT NULL`;
     case "not_exists":
@@ -274,11 +283,11 @@ function systemFieldRawSql(
       params.push(value);
       return { fragment: `${col} <= ${p}`, paramIdx: idx + 1 };
     case "contains": {
-      params.push("%" + String(value) + "%");
+      params.push("%" + escapeLike(String(value)) + "%");
       return { fragment: `${col} LIKE ${p}`, paramIdx: idx + 1 };
     }
     case "starts_with": {
-      params.push(String(value) + "%");
+      params.push(escapeLike(String(value)) + "%");
       return { fragment: `${col} LIKE ${p}`, paramIdx: idx + 1 };
     }
     default:
@@ -362,11 +371,11 @@ function propertyOpRawSql(
       return { fragment: `${expr} <= ${p}`, paramIdx: idx + 1 };
     }
     case "contains": {
-      params.push("%" + String(value) + "%");
+      params.push("%" + escapeLike(String(value)) + "%");
       return { fragment: `${extract} LIKE ${p}`, paramIdx: idx + 1 };
     }
     case "starts_with": {
-      params.push(String(value) + "%");
+      params.push(escapeLike(String(value)) + "%");
       return { fragment: `${extract} LIKE ${p}`, paramIdx: idx + 1 };
     }
     case "exists":
