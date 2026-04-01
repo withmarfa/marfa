@@ -32,11 +32,11 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_TYPE, `Invalid type identifier: ${type}`);
     }
 
-    const properties = body.properties as Record<string, unknown> | undefined;
-    if (!properties || typeof properties !== "object") {
+    const properties = (body.properties as Record<string, unknown> | undefined) ?? {};
+    if (typeof properties !== "object") {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
-        "properties is required and must be an object",
+        "properties must be an object",
       );
     }
 

@@ -69,7 +69,7 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
 
   router.get("/", async (c) => {
     requireAdmin(c);
-    return c.json(await storage.keys.list());
+    return c.json({ keys: await storage.keys.list() });
   });
 
   router.delete("/:id", async (c) => {

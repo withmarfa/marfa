@@ -86,8 +86,8 @@ describe("key management", () => {
       key: ctx.adminKey,
     });
     expect(listRes.status).toBe(200);
-    const keys = (await listRes.json()) as unknown[];
-    expect(keys.length).toBeGreaterThanOrEqual(2);
+    const body = (await listRes.json()) as { keys: unknown[] };
+    expect(body.keys.length).toBeGreaterThanOrEqual(2);
   });
 
   it("revokes a key", async () => {

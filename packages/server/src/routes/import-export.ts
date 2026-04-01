@@ -3,14 +3,12 @@ import {
   ProtocolError,
   ErrorCode,
   isValidTypeIdentifier,
-  validateProperties,
   ITEM_STATES,
 } from "@myme/shared";
-import type { CreateItemInput, ItemState } from "@myme/shared";
+import type { ItemState } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { parseIntParam } from "./util.js";
 
 const MAX_IMPORT_ITEMS = 5000;
 
@@ -38,30 +36,13 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
       return c.json({ imported: 0, duplicates: 0 });
     }
 
-    // Validate all items before storing any
+    // Validate type identifiers
     for (let i = 0; i < items.length; i++) {
       const item = items[i] as Record<string, unknown>;
       if (!item.type || !isValidTypeIdentifier(item.type as string)) {
         throw new ProtocolError(
           ErrorCode.VALIDATION_ERROR,
           `Item at index ${String(i)}: invalid or missing type`,
-        );
-      }
-      if (!item.properties || typeof item.properties !== "object") {
-        throw new ProtocolError(
-          ErrorCode.VALIDATION_ERROR,
-          `Item at index ${String(i)}: properties is required`,
-        );
-      }
-      const validation = validateProperties(
-        item.type as string,
-        item.properties as Record<string, unknown>,
-      );
-      if (!validation.success) {
-        throw new ProtocolError(
-          ErrorCode.VALIDATION_ERROR,
-          `Item at index ${String(i)}: invalid properties`,
-          { errors: validation.errors },
         );
       }
     }
@@ -72,7 +53,14 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
     for (const raw of items) {
       const item = raw as Record<string, unknown>;
       try {
-        await storage.items.create(item as unknown as CreateItemInput);
+        await storage.items.create({
+          type: item.type as string,
+          properties: (item.properties as Record<string, unknown>) ?? {},
+          source: item.source as string | undefined,
+          source_id: item.source_id as string | undefined,
+          tags: item.tags as string[] | undefined,
+          about: item.about as string[] | undefined,
+        });
         imported++;
       } catch (err) {
         if (
@@ -114,28 +102,33 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    const limit = parseIntParam(c.req.query("limit"), 100, 1, 5000);
-    const cursor = c.req.query("cursor");
+    const since = c.req.query("since");
+    const until = c.req.query("until");
 
-    const result = await storage.items.list({
-      type,
-      state,
-      limit,
-      cursor,
-    });
+    // Export as NDJSON — one {item, metadata} per line, paginating internally
+    const lines: string[] = [];
+    let cursor: string | undefined;
 
-    // Enrich with metadata
-    const data = await Promise.all(
-      result.data.map(async (item) => ({
-        item,
-        metadata: await storage.metadata.get(item.id),
-      })),
-    );
+    do {
+      const result = await storage.items.list({
+        type,
+        state,
+        since,
+        until,
+        limit: 200,
+        cursor,
+      });
 
-    return c.json({
-      data,
-      cursor: result.cursor,
-      has_more: result.has_more,
+      for (const item of result.data) {
+        const metadata = await storage.metadata.get(item.id);
+        lines.push(JSON.stringify({ item, metadata }));
+      }
+
+      cursor = result.has_more ? (result.cursor ?? undefined) : undefined;
+    } while (cursor);
+
+    return c.text(lines.join("\n") + "\n", 200, {
+      "Content-Type": "application/x-ndjson",
     });
   });
 
