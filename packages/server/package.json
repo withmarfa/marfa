@@ -27,7 +27,8 @@
     "better-sqlite3": "^11.8.1",
     "drizzle-orm": "^0.44.1",
     "hono": "^4.7.5",
-    "postgres": "^3.4.8"
+    "postgres": "^3.4.8",
+    "tslib": "^2.8.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
