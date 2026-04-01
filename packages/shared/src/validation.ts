@@ -97,10 +97,12 @@ export function isValidLanguageCode(value: string): boolean {
 // Type identifier validation
 // ---------------------------------------------------------------------------
 
-// Dot-delimited snake_case segments. Minimum 2 segments (namespace.name).
-// Each segment: starts with letter, lowercase alphanumeric + underscores.
+// Type identifiers: namespace + name separated by dot or slash.
+// Core types use dots: core.note, core.work.book
+// Community types use slash: acme/deal, demo/web-gallery
+// Segments: lowercase alphanumeric, underscores, hyphens. Min 2 segments.
 // Max 128 characters total.
-const TYPE_ID = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
+const TYPE_ID = /^[a-z][a-z0-9_-]*([./][a-z][a-z0-9_-]*)+$/;
 
 /** Returns true if the value is a valid dot-notation type identifier. */
 export function isValidTypeIdentifier(value: string): boolean {

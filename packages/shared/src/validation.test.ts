@@ -184,8 +184,13 @@ describe("isValidTypeIdentifier", () => {
     expect(isValidTypeIdentifier("Core.Note")).toBe(false);
   });
 
-  it("rejects hyphens", () => {
-    expect(isValidTypeIdentifier("core.my-type")).toBe(false);
+  it("accepts hyphens in segments", () => {
+    expect(isValidTypeIdentifier("core.my-type")).toBe(true);
+  });
+
+  it("accepts slash-separated community types", () => {
+    expect(isValidTypeIdentifier("demo/web-gallery")).toBe(true);
+    expect(isValidTypeIdentifier("acme/deal")).toBe(true);
   });
 
   it("rejects identifiers over 128 characters", () => {
