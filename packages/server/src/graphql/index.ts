@@ -1,6 +1,7 @@
 import { createYoga, createSchema } from "graphql-yoga";
 import { GraphQLJSON } from "graphql-scalars";
 import type { Hono } from "hono";
+import { ProtocolError } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { GraphQLContext } from "./context.js";
@@ -23,8 +24,8 @@ export function mountGraphQL(app: Hono<AppEnv>, storage: Storage): void {
       },
     }),
     graphiql: process.env.NODE_ENV !== "production",
-    // Disable default logging to avoid noise in tests
     logging: false,
+    maskedErrors: false,
   });
 
   app.on(["GET", "POST"], "/graphql", async (c) => {
