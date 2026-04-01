@@ -76,7 +76,7 @@ export function blobRoutes(
       throw new ProtocolError(ErrorCode.BLOB_NOT_FOUND, "Blob data not found");
     }
 
-    return new Response(data, {
+    return new Response(new Uint8Array(data), {
       status: 200,
       headers: {
         "Content-Type": record.mime_type,

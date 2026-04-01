@@ -40,52 +40,52 @@ describe("parseFilter", () => {
 
     it("parses negative number", () => {
       const result = parseFilter("properties.temperature lt -5");
-      expect(result.conditions[0].value).toBe(-5);
+      expect(result.conditions[0]!.value).toBe(-5);
     });
 
     it("parses decimal number", () => {
       const result = parseFilter("properties.rating gte 4.5");
-      expect(result.conditions[0].value).toBe(4.5);
+      expect(result.conditions[0]!.value).toBe(4.5);
     });
 
     it("parses boolean value", () => {
       const result = parseFilter("properties.is_published eq true");
-      expect(result.conditions[0].value).toBe(true);
+      expect(result.conditions[0]!.value).toBe(true);
     });
 
     it("parses false boolean value", () => {
       const result = parseFilter("properties.is_draft eq false");
-      expect(result.conditions[0].value).toBe(false);
+      expect(result.conditions[0]!.value).toBe(false);
     });
 
     it("parses null value", () => {
       const result = parseFilter("properties.subtitle eq null");
-      expect(result.conditions[0].value).toBeNull();
+      expect(result.conditions[0]!.value).toBeNull();
     });
 
     it("parses neq operator", () => {
       const result = parseFilter('state neq "trashed"');
-      expect(result.conditions[0].op).toBe("neq");
+      expect(result.conditions[0]!.op).toBe("neq");
     });
 
     it("parses gte operator", () => {
       const result = parseFilter('created_at gte "2026-01-01"');
-      expect(result.conditions[0].op).toBe("gte");
+      expect(result.conditions[0]!.op).toBe("gte");
     });
 
     it("parses lte operator", () => {
       const result = parseFilter('timestamp lte "2026-12-31"');
-      expect(result.conditions[0].op).toBe("lte");
+      expect(result.conditions[0]!.op).toBe("lte");
     });
 
     it("parses lt operator", () => {
       const result = parseFilter("properties.count lt 10");
-      expect(result.conditions[0].op).toBe("lt");
+      expect(result.conditions[0]!.op).toBe("lt");
     });
 
     it("parses contains on system field", () => {
       const result = parseFilter('source contains "import"');
-      expect(result.conditions[0]).toEqual({
+      expect(result.conditions[0]!).toEqual({
         field: { kind: "system", column: "source" },
         op: "contains",
         value: "import",
@@ -94,17 +94,17 @@ describe("parseFilter", () => {
 
     it("parses contains on property field", () => {
       const result = parseFilter('properties.description contains "adventure"');
-      expect(result.conditions[0].op).toBe("contains");
+      expect(result.conditions[0]!.op).toBe("contains");
     });
 
     it("parses starts_with on property field", () => {
       const result = parseFilter('properties.title starts_with "The"');
-      expect(result.conditions[0].op).toBe("starts_with");
+      expect(result.conditions[0]!.op).toBe("starts_with");
     });
 
     it("parses starts_with on system field", () => {
       const result = parseFilter('type starts_with "core.work"');
-      expect(result.conditions[0].op).toBe("starts_with");
+      expect(result.conditions[0]!.op).toBe("starts_with");
     });
 
     it("parses tags contains", () => {
@@ -119,7 +119,7 @@ describe("parseFilter", () => {
 
     it("parses property exists (unary)", () => {
       const result = parseFilter("properties.subtitle exists");
-      expect(result.conditions[0]).toEqual({
+      expect(result.conditions[0]!).toEqual({
         field: { kind: "property", path: "subtitle" },
         op: "exists",
         value: null,
@@ -128,7 +128,7 @@ describe("parseFilter", () => {
 
     it("parses property not_exists (unary)", () => {
       const result = parseFilter("properties.subtitle not_exists");
-      expect(result.conditions[0]).toEqual({
+      expect(result.conditions[0]!).toEqual({
         field: { kind: "property", path: "subtitle" },
         op: "not_exists",
         value: null,
@@ -137,7 +137,7 @@ describe("parseFilter", () => {
 
     it("parses tags exists (unary)", () => {
       const result = parseFilter("tags exists");
-      expect(result.conditions[0]).toEqual({
+      expect(result.conditions[0]!).toEqual({
         field: { kind: "tags" },
         op: "exists",
         value: null,
@@ -146,19 +146,19 @@ describe("parseFilter", () => {
 
     it("parses tags not_exists (unary)", () => {
       const result = parseFilter("tags not_exists");
-      expect(result.conditions[0].op).toBe("not_exists");
+      expect(result.conditions[0]!.op).toBe("not_exists");
     });
 
     it("handles escaped quotes in strings", () => {
       const result = parseFilter('properties.title eq "The \\"Great\\" Gatsby"');
-      expect(result.conditions[0].value).toBe('The "Great" Gatsby');
+      expect(result.conditions[0]!.value).toBe('The "Great" Gatsby');
     });
 
     it("parses all system fields", () => {
       const fields = ["state", "type", "source", "origin", "timestamp", "created_at", "updated_at"];
       for (const field of fields) {
         const result = parseFilter(`${field} eq "test"`);
-        expect(result.conditions[0].field).toEqual({ kind: "system", column: field });
+        expect(result.conditions[0]!.field).toEqual({ kind: "system", column: field });
       }
     });
   });
@@ -172,8 +172,8 @@ describe("parseFilter", () => {
       const result = parseFilter('state eq "active" AND properties.language eq "en"');
       expect(result.conditions).toHaveLength(2);
       expect(result.logical).toBe("AND");
-      expect(result.conditions[0].field).toEqual({ kind: "system", column: "state" });
-      expect(result.conditions[1].field).toEqual({ kind: "property", path: "language" });
+      expect(result.conditions[0]!.field).toEqual({ kind: "system", column: "state" });
+      expect(result.conditions[1]!.field).toEqual({ kind: "property", path: "language" });
     });
 
     it("parses three AND conditions", () => {
@@ -187,9 +187,9 @@ describe("parseFilter", () => {
     it("parses AND with mixed field types", () => {
       const result = parseFilter('state eq "active" AND properties.author eq "Orwell" AND tags contains "classic"');
       expect(result.conditions).toHaveLength(3);
-      expect(result.conditions[0].field.kind).toBe("system");
-      expect(result.conditions[1].field.kind).toBe("property");
-      expect(result.conditions[2].field.kind).toBe("tags");
+      expect(result.conditions[0]!.field.kind).toBe("system");
+      expect(result.conditions[1]!.field.kind).toBe("property");
+      expect(result.conditions[2]!.field.kind).toBe("tags");
     });
   });
 
@@ -331,12 +331,12 @@ describe("parseFilter", () => {
     it("safely handles SQL in string values", () => {
       // String values are parameterized, so they should parse fine
       const result = parseFilter('properties.name eq "Robert\'; DROP TABLE items;--"');
-      expect(result.conditions[0].value).toBe("Robert'; DROP TABLE items;--");
+      expect(result.conditions[0]!.value).toBe("Robert'; DROP TABLE items;--");
     });
 
     it("safely handles SQL keywords as string values", () => {
       const result = parseFilter('properties.name eq "SELECT * FROM items"');
-      expect(result.conditions[0].value).toBe("SELECT * FROM items");
+      expect(result.conditions[0]!.value).toBe("SELECT * FROM items");
     });
   });
 
@@ -348,7 +348,7 @@ describe("parseFilter", () => {
     it("handles extra whitespace", () => {
       const result = parseFilter('  state   eq   "active"  ');
       expect(result.conditions).toHaveLength(1);
-      expect(result.conditions[0].value).toBe("active");
+      expect(result.conditions[0]!.value).toBe("active");
     });
 
     it("handles tab characters as whitespace", () => {
@@ -358,17 +358,17 @@ describe("parseFilter", () => {
 
     it("handles empty string value", () => {
       const result = parseFilter('properties.name eq ""');
-      expect(result.conditions[0].value).toBe("");
+      expect(result.conditions[0]!.value).toBe("");
     });
 
     it("handles zero as numeric value", () => {
       const result = parseFilter("properties.count eq 0");
-      expect(result.conditions[0].value).toBe(0);
+      expect(result.conditions[0]!.value).toBe(0);
     });
 
     it("handles property names with underscores", () => {
       const result = parseFilter('properties.my_long_field_name eq "test"');
-      expect(result.conditions[0].field).toEqual({
+      expect(result.conditions[0]!.field).toEqual({
         kind: "property",
         path: "my_long_field_name",
       });
@@ -376,7 +376,7 @@ describe("parseFilter", () => {
 
     it("handles property names starting with underscore", () => {
       const result = parseFilter('properties._internal eq "test"');
-      expect(result.conditions[0].field).toEqual({
+      expect(result.conditions[0]!.field).toEqual({
         kind: "property",
         path: "_internal",
       });
@@ -384,7 +384,7 @@ describe("parseFilter", () => {
 
     it("handles property names with numbers", () => {
       const result = parseFilter('properties.field2 eq "test"');
-      expect(result.conditions[0].field).toEqual({
+      expect(result.conditions[0]!.field).toEqual({
         kind: "property",
         path: "field2",
       });
@@ -393,8 +393,8 @@ describe("parseFilter", () => {
     it("handles unary operator followed by AND", () => {
       const result = parseFilter('properties.subtitle exists AND state eq "active"');
       expect(result.conditions).toHaveLength(2);
-      expect(result.conditions[0].op).toBe("exists");
-      expect(result.conditions[1].op).toBe("eq");
+      expect(result.conditions[0]!.op).toBe("exists");
+      expect(result.conditions[1]!.op).toBe("eq");
     });
 
     it("exactly 10 conditions is allowed", () => {

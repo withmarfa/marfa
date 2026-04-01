@@ -150,7 +150,7 @@ export const mutationResolvers = {
     const item = await requireItem(ctx, args.itemId);
     gqlCheckTypeAccess(ctx.apiKey, item.type, "write");
 
-    const metadata = await ctx.storage.metadata.set(args.itemId, args.tags, args.about);
+    const metadata = await ctx.storage.metadata.set(args.itemId, args.tags ?? [], args.about ?? []);
     return { metadata };
   },
 };

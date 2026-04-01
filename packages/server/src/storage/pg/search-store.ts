@@ -75,7 +75,7 @@ export class PgSearchStore implements SearchStore {
         expr, "pg", "i", paramIdx,
       );
       conditions.push(`AND ${clause}`);
-      params.push(...filterParams);
+      params.push(...filterParams as (string | number)[]);
       paramIdx = nextParamIdx;
     }
 

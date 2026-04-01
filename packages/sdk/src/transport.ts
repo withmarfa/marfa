@@ -96,7 +96,7 @@ export class HttpTransport {
     };
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeout = setTimeout(() => { controller.abort(); }, this.timeoutMs);
 
     const init: RequestInit = { method, headers, signal: controller.signal };
 
