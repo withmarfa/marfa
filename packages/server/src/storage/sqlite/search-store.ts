@@ -1,5 +1,6 @@
-import type { SearchResult } from "@myme/shared";
+import { parseFilter, type SearchResult } from "@myme/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
+import { filterToRawSql } from "../filter-sql.js";
 import type { RawDb } from "./connection.js";
 import { rowToItem, rowToMetadata } from "./helpers.js";
 import type { items } from "./schema.js";
@@ -70,6 +71,14 @@ export class SqliteSearchStore implements SearchStore {
       if (typeClauses.length > 0) {
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }
+    }
+
+    // Advanced query language filter
+    if (filters.filter) {
+      const expr = parseFilter(filters.filter);
+      const { clause, params: filterParams } = filterToRawSql(expr, "sqlite", "i");
+      conditions.push(`AND ${clause}`);
+      params.push(...filterParams);
     }
 
     params.push(limit);

@@ -48,11 +48,13 @@ export function searchRoutes(storage: Storage): Hono<AppEnv> {
     if (type) requireTypeAccess(c, type, "read");
 
     const limit = parseIntParam(c.req.query("limit"), 20, 1, 100);
+    const filter = c.req.query("filter") || undefined;
     const allowed_types = getTypeFilter(c);
 
     const results = await storage.search.search(q.trim(), {
       type,
       state,
+      filter,
       allowed_types,
       limit,
     });

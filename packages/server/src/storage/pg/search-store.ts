@@ -1,5 +1,6 @@
-import type { SearchResult } from "@myme/shared";
+import { parseFilter, type SearchResult } from "@myme/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
+import { filterToRawSql } from "../filter-sql.js";
 import type { PgClient } from "./connection.js";
 import { rowToItem } from "./helpers.js";
 import type { items } from "./schema.js";
@@ -65,6 +66,17 @@ export class PgSearchStore implements SearchStore {
       if (typeClauses.length > 0) {
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }
+    }
+
+    // Advanced query language filter
+    if (filters.filter) {
+      const expr = parseFilter(filters.filter);
+      const { clause, params: filterParams, nextParamIdx } = filterToRawSql(
+        expr, "pg", "i", paramIdx,
+      );
+      conditions.push(`AND ${clause}`);
+      params.push(...filterParams);
+      paramIdx = nextParamIdx;
     }
 
     params.push(limit);

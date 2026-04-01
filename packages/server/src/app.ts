@@ -14,6 +14,7 @@ import { blobRoutes } from "./routes/blobs.js";
 import { keyRoutes } from "./routes/keys.js";
 import { importRoutes, exportRoutes } from "./routes/import-export.js";
 import { authRoutes } from "./routes/oauth.js";
+import { mountGraphQL } from "./graphql/index.js";
 
 export function createApp(
   storage: Storage,
@@ -35,13 +36,16 @@ export function createApp(
     c.json({
       name: "myme",
       version: "0.0.1",
-      features: ["items", "threads", "search", "blobs", "types", "keys", "import", "export", "oauth"],
+      features: ["items", "threads", "search", "blobs", "types", "keys", "import", "export", "oauth", "graphql"],
     }),
   );
   app.get("/health", (c) => c.json({ status: "ok" }));
 
   // Auth middleware
   app.use("*", authMiddleware(storage, config.apiKeySalt));
+
+  // GraphQL (after auth middleware, before REST routes)
+  mountGraphQL(app, storage);
 
   // Protected routes
   app.route("/items", itemRoutes(storage));
