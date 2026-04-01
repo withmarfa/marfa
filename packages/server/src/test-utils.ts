@@ -22,7 +22,7 @@ export interface TestContext {
 }
 
 async function truncatePg(storage: Storage): Promise<void> {
-  const s = storage as Record<string, unknown>;
+  const s = storage as unknown as Record<string, unknown>;
   if (typeof s._pgTruncate === "function") {
     await (s._pgTruncate as () => Promise<void>)();
   }
