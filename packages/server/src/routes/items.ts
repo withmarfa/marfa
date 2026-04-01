@@ -13,6 +13,7 @@ import type { ItemState } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireTypeAccess, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { publish } from "../graphql/pubsub.js";
 import { parseIntParam } from "./util.js";
 
 export function itemRoutes(storage: Storage): Hono<AppEnv> {
@@ -77,6 +78,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     });
 
     const metadata = await storage.metadata.get(item.id);
+    publish({ type: "created", item, metadata });
     return c.json({ item, metadata }, 201);
   });
 
@@ -189,6 +191,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const metadata = await storage.metadata.get(id);
+    publish({ type: "updated", item: result, metadata });
     return c.json({ item: result, metadata });
   });
 
@@ -203,7 +206,11 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     // Use list with state filter to find trashed items too
     // delete() uses getRaw internally
     requireAuth(c);
+    const existing = await storage.items.get(id);
     await storage.items.delete(id);
+    if (existing) {
+      publish({ type: "deleted", item: { ...existing, state: "trashed" as ItemState } });
+    }
     return c.json({ ok: true });
   });
 
@@ -218,6 +225,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const restored = await storage.items.restore(id);
     requireTypeAccess(c, restored.type, "write");
     const metadata = await storage.metadata.get(id);
+    publish({ type: "restored", item: restored, metadata });
     return c.json({ item: restored, metadata });
   });
 
@@ -238,6 +246,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const updated = await storage.items.transition(id, state as ItemState);
     requireTypeAccess(c, updated.type, "write");
     const metadata = await storage.metadata.get(id);
+    publish({ type: "transitioned", item: updated, metadata });
     return c.json({ item: updated, metadata });
   });
 

@@ -122,31 +122,30 @@ export function authMiddleware(storage: Storage, salt: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Access control helpers
+// Context-agnostic access control (used by both REST and GraphQL)
 // ---------------------------------------------------------------------------
 
-export function requireAuth(c: Context<AppEnv>): ApiKey {
-  const key = c.get("apiKey");
-  if (!key) {
+export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
+  if (!apiKey) {
     throw new ProtocolError(ErrorCode.UNAUTHORIZED, "Authentication required");
   }
-  return key;
+  return apiKey;
 }
 
-export function requireAdmin(c: Context<AppEnv>): ApiKey {
-  const key = requireAuth(c);
+export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
+  const key = checkAuth(apiKey);
   if (key.role !== "admin") {
     throw new ProtocolError(ErrorCode.FORBIDDEN, "Admin access required");
   }
   return key;
 }
 
-export function requireTypeAccess(
-  c: Context<AppEnv>,
+export function checkTypeAccess(
+  apiKey: ApiKey | undefined,
   type: string,
   level: "read" | "write",
 ): void {
-  const key = requireAuth(c);
+  const key = checkAuth(apiKey);
   if (key.role === "admin") return;
 
   const resolved = resolveTypePermission(type, key.type_permissions);
@@ -161,15 +160,38 @@ export function requireTypeAccess(
   }
 }
 
-export function getTypeFilter(c: Context<AppEnv>): string[] | undefined {
-  const key = c.get("apiKey");
-  if (!key || key.role === "admin") return undefined;
+export function computeTypeFilter(apiKey: ApiKey | undefined): string[] | undefined {
+  if (!apiKey || apiKey.role === "admin") return undefined;
 
   const patterns: string[] = [];
-  for (const [pattern, permission] of Object.entries(key.type_permissions)) {
+  for (const [pattern, permission] of Object.entries(apiKey.type_permissions)) {
     if (permission === "read" || permission === "write") {
       patterns.push(pattern);
     }
   }
   return patterns.length > 0 ? patterns : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Hono-specific wrappers (delegate to context-agnostic functions)
+// ---------------------------------------------------------------------------
+
+export function requireAuth(c: Context<AppEnv>): ApiKey {
+  return checkAuth(c.get("apiKey"));
+}
+
+export function requireAdmin(c: Context<AppEnv>): ApiKey {
+  return checkAdmin(c.get("apiKey"));
+}
+
+export function requireTypeAccess(
+  c: Context<AppEnv>,
+  type: string,
+  level: "read" | "write",
+): void {
+  checkTypeAccess(c.get("apiKey"), type, level);
+}
+
+export function getTypeFilter(c: Context<AppEnv>): string[] | undefined {
+  return computeTypeFilter(c.get("apiKey"));
 }
