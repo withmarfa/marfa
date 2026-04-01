@@ -102,9 +102,6 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    const since = c.req.query("since");
-    const until = c.req.query("until");
-
     // Export as NDJSON — one {item, metadata} per line, paginating internally
     const lines: string[] = [];
     let cursor: string | undefined;
@@ -113,8 +110,6 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
       const result = await storage.items.list({
         type,
         state,
-        since,
-        until,
         limit: 200,
         cursor,
       });
