@@ -326,3 +326,150 @@ describe("GET /items/:id/versions", () => {
     expect(data.versions[0]).toHaveProperty("version", 1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Filter query parameter (advanced query language)
+// ---------------------------------------------------------------------------
+
+describe("GET /items?filter=...", () => {
+  it("filters by system field", async () => {
+    // Create items with different states
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "Active note" }, state: "active" },
+    });
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "New note" } },
+    });
+
+    const res = await request(ctx.app, "GET", `/items?filter=${encodeURIComponent('state eq "active"')}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { data: { state: string }[] };
+    for (const item of data.data) {
+      expect(item.state).toBe("active");
+    }
+  });
+
+  it("filters by property value", async () => {
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.work.book",
+        properties: { title: "1984", author: "Orwell", body: "" },
+      },
+    });
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.work.book",
+        properties: { title: "Fahrenheit 451", author: "Bradbury", body: "" },
+      },
+    });
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?filter=${encodeURIComponent('properties.author eq "Orwell"')}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { data: { properties: Record<string, unknown> }[] };
+    expect(data.data.length).toBeGreaterThanOrEqual(1);
+    for (const item of data.data) {
+      expect(item.properties.author).toBe("Orwell");
+    }
+  });
+
+  it("filters with AND conditions", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?filter=${encodeURIComponent('state eq "active" AND type eq "core.work.book"')}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { data: { state: string; type: string }[] };
+    for (const item of data.data) {
+      expect(item.state).toBe("active");
+      expect(item.type).toBe("core.work.book");
+    }
+  });
+
+  it("filters with OR conditions", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?filter=${encodeURIComponent('properties.author eq "Orwell" OR properties.author eq "Bradbury"')}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { data: { properties: Record<string, unknown> }[] };
+    for (const item of data.data) {
+      expect(["Orwell", "Bradbury"]).toContain(item.properties.author);
+    }
+  });
+
+  it("composes filter with existing type param", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.work.book&filter=${encodeURIComponent('properties.author eq "Orwell"')}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { data: { type: string; properties: Record<string, unknown> }[] };
+    for (const item of data.data) {
+      expect(item.type).toBe("core.work.book");
+      expect(item.properties.author).toBe("Orwell");
+    }
+  });
+
+  it("returns 400 for invalid filter expression", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?filter=${encodeURIComponent("invalid_field eq test")}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("filters by tags contains", async () => {
+    // Create an item with tags
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Tagged note" },
+        tags: ["fiction", "classic"],
+      },
+    });
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?filter=${encodeURIComponent('tags contains "fiction"')}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { data: unknown[] };
+    expect(data.data.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("filters by property exists", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?filter=${encodeURIComponent("properties.author exists")}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { data: { properties: Record<string, unknown> }[] };
+    for (const item of data.data) {
+      expect(item.properties).toHaveProperty("author");
+    }
+  });
+});

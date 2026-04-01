@@ -49,6 +49,7 @@ export interface ListFilters {
   source?: string;
   parent_id?: string;
   thread_id?: string;
+  filter?: string;
   sort?: "created_at" | "updated_at" | "timestamp";
   direction?: "asc" | "desc";
   limit?: number;
@@ -58,6 +59,7 @@ export interface ListFilters {
 export interface SearchFilters {
   type?: string;
   state?: ItemState;
+  filter?: string;
   limit?: number;
 }
 

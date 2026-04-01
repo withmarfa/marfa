@@ -28,6 +28,7 @@ export interface ItemFilters {
   parent_id?: string;
   thread_id?: string;
   tags?: string[];
+  filter?: string;
   allowed_types?: string[];
   sort?: ItemSortField;
   direction?: SortDirection;
@@ -38,6 +39,7 @@ export interface ItemFilters {
 export interface SearchFilters {
   type?: string;
   state?: ItemState;
+  filter?: string;
   allowed_types?: string[];
   limit?: number;
 }

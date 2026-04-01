@@ -99,6 +99,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const tagsParam = c.req.query("tags");
     const tags = tagsParam ? tagsParam.split(",").map((t) => t.trim()) : undefined;
 
+    const filter = c.req.query("filter") || undefined;
+
     const result = await storage.items.list({
       type,
       state,
@@ -106,6 +108,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       parent_id: c.req.query("parent_id"),
       thread_id: c.req.query("thread_id"),
       tags,
+      filter,
       allowed_types: getTypeFilter(c),
       sort:
         (c.req.query("sort") as "created_at" | "updated_at" | "timestamp" | undefined) ??

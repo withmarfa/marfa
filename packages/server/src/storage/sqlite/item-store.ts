@@ -5,9 +5,11 @@ import {
   getTypeSchema,
   validateProperties,
   validateTransition,
+  parseFilter,
   ProtocolError,
   ErrorCode,
 } from "@myme/shared";
+import { filterToSqlConditions } from "../filter-sql.js";
 import type {
   Item,
   CreateItemInput,
@@ -218,6 +220,17 @@ export class SqliteItemStore implements ItemStore {
       if (typeClauses.length > 0) {
         const clause = or(...typeClauses);
         if (clause) conditions.push(clause);
+      }
+    }
+
+    if (filters.filter) {
+      const expr = parseFilter(filters.filter);
+      const filterConds = filterToSqlConditions(expr, "sqlite", items);
+      if (expr.logical === "OR") {
+        const orClause = or(...filterConds);
+        if (orClause) conditions.push(orClause);
+      } else {
+        conditions.push(...filterConds);
       }
     }
 
