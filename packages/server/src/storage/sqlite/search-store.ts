@@ -44,6 +44,11 @@ export class SqliteSearchStore implements SearchStore {
     const conditions: string[] = [];
     const params: unknown[] = [escapedQuery];
 
+    if (filters.tenantId) {
+      conditions.push("AND i.tenant_id = ?");
+      params.push(filters.tenantId);
+    }
+
     // Default: exclude trashed
     if (filters.state) {
       conditions.push("AND i.state = ?");

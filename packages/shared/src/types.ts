@@ -95,6 +95,7 @@ export interface Thread {
 /** An API key record (without the key value itself). */
 export interface ApiKey {
   id: string;
+  tenant_id?: string;
   label: string;
   role: KeyRole;
   type_permissions: Record<string, TypePermission>;

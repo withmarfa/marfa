@@ -8,10 +8,11 @@ import type { PgDb } from "./connection.js";
 export class PgKeyStore implements KeyStore {
   constructor(private db: PgDb) {}
 
-  async create(input: CreateKeyInput, keyHash: string): Promise<ApiKey> {
+  async create(input: CreateKeyInput, keyHash: string, tenantId?: string): Promise<ApiKey> {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
+      tenant_id: tenantId,
       key_hash: keyHash,
       label: input.label,
       role: input.role,
@@ -62,6 +63,7 @@ export class PgKeyStore implements KeyStore {
       created_at: row.created_at,
       key_hash: row.key_hash,
       revoked_at: row.revoked_at,
+      tenant_id: row.tenant_id ?? undefined,
     };
   }
 

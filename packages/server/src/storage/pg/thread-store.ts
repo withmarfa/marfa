@@ -10,26 +10,44 @@ import { rowToItem } from "./helpers.js";
 export class PgThreadStore implements ThreadStore {
   constructor(private db: PgDb) {}
 
-  async create(): Promise<Thread> {
+  async create(tenantId?: string): Promise<Thread> {
     const now = new Date().toISOString();
     const thread: Thread = {
       id: generateId(),
       created_at: now,
       updated_at: now,
     };
-    await this.db.insert(threads).values(thread);
+    await this.db.insert(threads).values({
+      ...thread,
+      tenant_id: tenantId,
+    });
     return thread;
   }
 
-  async get(id: string): Promise<Thread | null> {
+  async get(id: string, tenantId?: string): Promise<Thread | null> {
+    const where = tenantId
+      ? and(eq(threads.id, id), eq(threads.tenant_id, tenantId))
+      : eq(threads.id, id);
     const [row] = await this.db
       .select()
       .from(threads)
-      .where(eq(threads.id, id));
+      .where(where);
     return row ?? null;
   }
 
-  async list(limit: number, cursor?: string): Promise<PaginatedResult<Thread>> {
+  async list(limit: number, cursor?: string, tenantId?: string): Promise<PaginatedResult<Thread>> {
+    const conditions = [];
+    if (tenantId) conditions.push(eq(threads.tenant_id, tenantId));
+
+    if (cursor) {
+      const { v, id } = decodeCursor(cursor);
+      const cursorCondition = or(
+        lt(threads.created_at, v),
+        and(eq(threads.created_at, v), lt(threads.id, id)),
+      );
+      if (cursorCondition) conditions.push(cursorCondition);
+    }
+
     let query = this.db
       .select()
       .from(threads)
@@ -37,14 +55,8 @@ export class PgThreadStore implements ThreadStore {
       .limit(limit + 1)
       .$dynamic();
 
-    if (cursor) {
-      const { v, id } = decodeCursor(cursor);
-      query = query.where(
-        or(
-          lt(threads.created_at, v),
-          and(eq(threads.created_at, v), lt(threads.id, id)),
-        ),
-      );
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
     }
 
     const rows = await query;
@@ -67,11 +79,14 @@ export class PgThreadStore implements ThreadStore {
       .where(eq(threads.id, id));
   }
 
-  async getItems(threadId: string): Promise<Item[]> {
+  async getItems(threadId: string, tenantId?: string): Promise<Item[]> {
+    const where = tenantId
+      ? and(eq(items.thread_id, threadId), eq(items.tenant_id, tenantId))
+      : eq(items.thread_id, threadId);
     const rows = await this.db
       .select()
       .from(items)
-      .where(eq(items.thread_id, threadId))
+      .where(where)
       .orderBy(items.timestamp);
     return rows.map(rowToItem);
   }

@@ -96,6 +96,7 @@ export function authMiddleware(storage: Storage, salt: string) {
 
       c.set("apiKey", {
         id: stored.id,
+        tenant_id: stored.tenant_id ?? undefined,
         label: stored.label,
         role: stored.role,
         type_permissions: stored.type_permissions,

@@ -52,6 +52,7 @@ export function searchRoutes(storage: Storage): Hono<AppEnv> {
     const allowed_types = getTypeFilter(c);
 
     const results = await storage.search.search(q.trim(), {
+      tenantId: c.get("apiKey")?.tenant_id,
       type,
       state,
       filter,

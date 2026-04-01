@@ -58,6 +58,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     requireTypeAccess(c, type, "write");
+    const tenantId = c.get("apiKey")?.tenant_id;
 
     const item = await storage.items.create({
       type,
@@ -75,7 +76,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       capture_longitude: body.capture_longitude as number | undefined,
       tags: body.tags as string[] | undefined,
       about: body.about as string[] | undefined,
-    });
+    }, tenantId);
 
     const metadata = await storage.metadata.get(item.id);
     publish({ type: "created", item, metadata });
@@ -104,6 +105,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const filter = c.req.query("filter") || undefined;
 
     const result = await storage.items.list({
+      tenantId: c.get("apiKey")?.tenant_id,
       type,
       state,
       source: c.req.query("source"),
@@ -130,7 +132,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
+    const tid = c.get("apiKey")?.tenant_id;
+    const item = await storage.items.get(id, tid);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -163,7 +166,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       }
     }
 
-    const item = await storage.items.get(id);
+    const tid = c.get("apiKey")?.tenant_id;
+    const item = await storage.items.get(id, tid);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -183,7 +187,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const result = await storage.items.update(id, {
       properties: body.properties as Record<string, unknown>,
       version: body.version as number,
-    });
+    }, tid);
 
     // Fix 1: wrap in { item, metadata }
     if ("error" in result) {
@@ -203,11 +207,10 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    // Use list with state filter to find trashed items too
-    // delete() uses getRaw internally
     requireAuth(c);
-    const existing = await storage.items.get(id);
-    await storage.items.delete(id);
+    const tid = c.get("apiKey")?.tenant_id;
+    const existing = await storage.items.get(id, tid);
+    await storage.items.delete(id, tid);
     if (existing) {
       publish({ type: "deleted", item: { ...existing, state: "trashed" as ItemState } });
     }
@@ -222,7 +225,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     requireAuth(c);
-    const restored = await storage.items.restore(id);
+    const restored = await storage.items.restore(id, c.get("apiKey")?.tenant_id);
     requireTypeAccess(c, restored.type, "write");
     const metadata = await storage.metadata.get(id);
     publish({ type: "restored", item: restored, metadata });
@@ -243,7 +246,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     requireAuth(c);
-    const updated = await storage.items.transition(id, state as ItemState);
+    const updated = await storage.items.transition(id, state as ItemState, c.get("apiKey")?.tenant_id);
     requireTypeAccess(c, updated.type, "write");
     const metadata = await storage.metadata.get(id);
     publish({ type: "transitioned", item: updated, metadata });
@@ -257,7 +260,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
+    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -276,7 +279,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
+    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -292,7 +295,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
+    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -314,7 +317,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
+    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -336,7 +339,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
+    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -363,7 +366,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
+    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }

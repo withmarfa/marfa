@@ -9,7 +9,7 @@ import { publish } from "../pubsub.js";
 
 /** Fetch an item or throw not-found as GraphQLError. */
 async function requireItem(ctx: GraphQLContext, id: string) {
-  const item = await ctx.storage.items.get(id);
+  const item = await ctx.storage.items.get(id, ctx.apiKey?.tenant_id);
   if (!item) {
     throw createGraphQLError(`Item ${id} not found`, {
       extensions: { code: "item_not_found" },
@@ -27,7 +27,8 @@ export const mutationResolvers = {
     gqlCheckAuth(ctx.apiKey);
     gqlCheckTypeAccess(ctx.apiKey, args.input.type, "write");
 
-    const item = await ctx.storage.items.create(args.input);
+    const tid = ctx.apiKey?.tenant_id;
+    const item = await ctx.storage.items.create(args.input, tid);
     const metadata = await ctx.storage.metadata.get(item.id);
 
     publish({ type: "created", item, metadata });
@@ -46,7 +47,7 @@ export const mutationResolvers = {
     const result = await ctx.storage.items.update(args.id, {
       properties: args.properties,
       version: args.version,
-    });
+    }, ctx.apiKey?.tenant_id);
 
     if ("error" in result) {
       throw createGraphQLError("Version conflict", {
@@ -73,7 +74,7 @@ export const mutationResolvers = {
     const existing = await requireItem(ctx, args.id);
     gqlCheckTypeAccess(ctx.apiKey, existing.type, "write");
 
-    await ctx.storage.items.delete(args.id);
+    await ctx.storage.items.delete(args.id, ctx.apiKey?.tenant_id);
 
     const metadata = await ctx.storage.metadata.get(args.id);
     publish({ type: "deleted", item: { ...existing, state: "trashed" as ItemState }, metadata });
@@ -90,7 +91,7 @@ export const mutationResolvers = {
     // restore() handles fetching trashed items internally — check type after
     // Note: we can't pre-check because get() excludes trashed items.
     // The storage layer will throw if the item doesn't exist.
-    const item = await ctx.storage.items.restore(args.id);
+    const item = await ctx.storage.items.restore(args.id, ctx.apiKey?.tenant_id);
     // Type access is checked after restore since we need the item's type
     gqlCheckTypeAccess(ctx.apiKey, item.type, "write");
 
@@ -108,7 +109,7 @@ export const mutationResolvers = {
     const existing = await requireItem(ctx, args.id);
     gqlCheckTypeAccess(ctx.apiKey, existing.type, "write");
 
-    const item = await ctx.storage.items.transition(args.id, args.state as ItemState);
+    const item = await ctx.storage.items.transition(args.id, args.state as ItemState, ctx.apiKey?.tenant_id);
 
     const metadata = await ctx.storage.metadata.get(item.id);
     publish({ type: "transitioned", item, metadata });

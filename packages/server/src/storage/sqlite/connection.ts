@@ -44,12 +44,14 @@ export function createConnection(sqlitePath: string): {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS threads (
       id TEXT PRIMARY KEY,
+      tenant_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
+      tenant_id TEXT,
       type TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'new',
       properties TEXT NOT NULL,
@@ -95,6 +97,7 @@ export function createConnection(sqlitePath: string): {
 
     CREATE TABLE IF NOT EXISTS api_keys (
       id TEXT PRIMARY KEY,
+      tenant_id TEXT,
       key_hash TEXT NOT NULL UNIQUE,
       label TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',

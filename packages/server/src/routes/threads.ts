@@ -10,7 +10,7 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
 
   router.post("/", async (c) => {
     requireAuth(c);
-    const thread = await storage.threads.create();
+    const thread = await storage.threads.create(c.get("apiKey")?.tenant_id);
     return c.json({ thread }, 201);
   });
 
@@ -18,7 +18,8 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
     requireAuth(c);
     const limit = parseIntParam(c.req.query("limit"), 50, 1, 100);
     const cursor = c.req.query("cursor");
-    const result = await storage.threads.list(limit, cursor ?? undefined);
+    const tid = c.get("apiKey")?.tenant_id;
+    const result = await storage.threads.list(limit, cursor ?? undefined, tid);
     return c.json(result);
   });
 
@@ -28,11 +29,12 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
     if (!isValidId(id)) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid thread ID");
     }
-    const thread = await storage.threads.get(id);
+    const tid = c.get("apiKey")?.tenant_id;
+    const thread = await storage.threads.get(id, tid);
     if (!thread) {
       throw new ProtocolError(ErrorCode.THREAD_NOT_FOUND, `Thread ${id} not found`);
     }
-    const items = await storage.threads.getItems(id);
+    const items = await storage.threads.getItems(id, tid);
     return c.json({ thread, items });
   });
 

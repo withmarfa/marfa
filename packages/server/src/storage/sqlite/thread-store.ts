@@ -10,23 +10,42 @@ import { rowToItem } from "./helpers.js";
 export class SqliteThreadStore implements ThreadStore {
   constructor(private db: DrizzleDb) {}
 
-  async create(): Promise<Thread> {
+  async create(tenantId?: string): Promise<Thread> {
     const now = new Date().toISOString();
-    const thread: Thread = {
-      id: generateId(),
-      created_at: now,
-      updated_at: now,
-    };
-    this.db.insert(threads).values(thread).run();
-    return thread;
+    const id = generateId();
+    this.db
+      .insert(threads)
+      .values({
+        id,
+        tenant_id: tenantId,
+        created_at: now,
+        updated_at: now,
+      })
+      .run();
+    return { id, created_at: now, updated_at: now };
   }
 
-  async get(id: string): Promise<Thread | null> {
-    const row = this.db.select().from(threads).where(eq(threads.id, id)).get();
+  async get(id: string, tenantId?: string): Promise<Thread | null> {
+    const where = tenantId
+      ? and(eq(threads.id, id), eq(threads.tenant_id, tenantId))
+      : eq(threads.id, id);
+    const row = this.db.select().from(threads).where(where).get();
     return row ?? null;
   }
 
-  async list(limit: number, cursor?: string): Promise<PaginatedResult<Thread>> {
+  async list(limit: number, cursor?: string, tenantId?: string): Promise<PaginatedResult<Thread>> {
+    const conditions = [];
+    if (tenantId) conditions.push(eq(threads.tenant_id, tenantId));
+
+    if (cursor) {
+      const { v, id } = decodeCursor(cursor);
+      const cursorClause = or(
+        lt(threads.created_at, v),
+        and(eq(threads.created_at, v), lt(threads.id, id)),
+      );
+      if (cursorClause) conditions.push(cursorClause);
+    }
+
     let query = this.db
       .select()
       .from(threads)
@@ -34,14 +53,8 @@ export class SqliteThreadStore implements ThreadStore {
       .limit(limit + 1)
       .$dynamic();
 
-    if (cursor) {
-      const { v, id } = decodeCursor(cursor);
-      query = query.where(
-        or(
-          lt(threads.created_at, v),
-          and(eq(threads.created_at, v), lt(threads.id, id)),
-        ),
-      );
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
     }
 
     const rows = query.all();
@@ -65,11 +78,14 @@ export class SqliteThreadStore implements ThreadStore {
       .run();
   }
 
-  async getItems(threadId: string): Promise<Item[]> {
+  async getItems(threadId: string, tenantId?: string): Promise<Item[]> {
+    const where = tenantId
+      ? and(eq(items.thread_id, threadId), eq(items.tenant_id, tenantId))
+      : eq(items.thread_id, threadId);
     const rows = this.db
       .select()
       .from(items)
-      .where(eq(items.thread_id, threadId))
+      .where(where)
       .orderBy(items.timestamp)
       .all();
     return rows.map(rowToItem);

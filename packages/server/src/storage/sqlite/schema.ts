@@ -14,6 +14,7 @@ import { sql } from "drizzle-orm";
 
 export const threads = sqliteTable("threads", {
   id: text("id").primaryKey(),
+  tenant_id: text("tenant_id"),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
@@ -26,6 +27,7 @@ export const items = sqliteTable(
   "items",
   {
     id: text("id").primaryKey(),
+    tenant_id: text("tenant_id"),
     type: text("type").notNull(),
     state: text("state").notNull().default("new"),
     properties: text("properties").notNull(),
@@ -93,6 +95,7 @@ export const versions = sqliteTable(
 
 export const apiKeys = sqliteTable("api_keys", {
   id: text("id").primaryKey(),
+  tenant_id: text("tenant_id"),
   key_hash: text("key_hash").notNull().unique(),
   label: text("label").notNull(),
   role: text("role").notNull().default("member"),

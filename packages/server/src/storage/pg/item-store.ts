@@ -34,7 +34,11 @@ export class PgItemStore implements ItemStore {
     private searchStore: PgSearchStore,
   ) {}
 
-  async create(input: CreateItemInput): Promise<Item> {
+  private tenantWhere(id: string, tenantId?: string) {
+    return tenantId ? and(eq(items.id, id), eq(items.tenant_id, tenantId)) : eq(items.id, id);
+  }
+
+  async create(input: CreateItemInput, tenantId?: string): Promise<Item> {
     const id = input.id ?? generateId();
     if (input.id && !isValidId(input.id)) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
@@ -56,12 +60,12 @@ export class PgItemStore implements ItemStore {
 
     return await this.db.transaction(async (tx) => {
       if (input.source && input.source_id) {
+        const dedupConditions = [eq(items.source, input.source), eq(items.source_id, input.source_id)];
+        if (tenantId) dedupConditions.push(eq(items.tenant_id, tenantId));
         const [existing] = await tx
           .select({ id: items.id })
           .from(items)
-          .where(
-            and(eq(items.source, input.source), eq(items.source_id, input.source_id)),
-          );
+          .where(and(...dedupConditions));
         if (existing) {
           throw new ProtocolError(
             ErrorCode.DUPLICATE_SOURCE,
@@ -93,6 +97,7 @@ export class PgItemStore implements ItemStore {
 
       await tx.insert(items).values({
         id,
+        tenant_id: tenantId,
         type: input.type,
         state,
         properties: JSON.stringify(input.properties),
@@ -150,22 +155,22 @@ export class PgItemStore implements ItemStore {
     });
   }
 
-  async get(id: string): Promise<Item | null> {
+  async get(id: string, tenantId?: string): Promise<Item | null> {
     const [row] = await this.db
       .select()
       .from(items)
-      .where(eq(items.id, id));
+      .where(this.tenantWhere(id, tenantId));
     if (!row) return null;
     if (row.state === "trashed") return null;
     return rowToItem(row);
   }
 
   // Internal get that includes trashed items (for restore, delete, transition)
-  private async getRaw(id: string): Promise<Item | null> {
+  private async getRaw(id: string, tenantId?: string): Promise<Item | null> {
     const [row] = await this.db
       .select()
       .from(items)
-      .where(eq(items.id, id));
+      .where(this.tenantWhere(id, tenantId));
     if (!row) return null;
     return rowToItem(row);
   }
@@ -191,6 +196,7 @@ export class PgItemStore implements ItemStore {
       }
     }
 
+    if (filters.tenantId) conditions.push(eq(items.tenant_id, filters.tenantId));
     if (filters.source) conditions.push(eq(items.source, filters.source));
     if (filters.parent_id) conditions.push(eq(items.parent_id, filters.parent_id));
     if (filters.thread_id) conditions.push(eq(items.thread_id, filters.thread_id));
@@ -288,12 +294,13 @@ export class PgItemStore implements ItemStore {
   async update(
     id: string,
     input: UpdateItemInput,
+    tenantId?: string,
   ): Promise<Item | ConflictResponse> {
     return await this.db.transaction(async (tx) => {
       const [row] = await tx
         .select()
         .from(items)
-        .where(eq(items.id, id));
+        .where(this.tenantWhere(id, tenantId));
       if (!row) {
         throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
@@ -322,7 +329,7 @@ export class PgItemStore implements ItemStore {
             version: newVersion,
             updated_at: now,
           })
-          .where(eq(items.id, id));
+          .where(this.tenantWhere(id, tenantId));
 
         await this.searchStore.remove(id);
         await this.searchStore.index(id, merged);
@@ -380,7 +387,7 @@ export class PgItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
         })
-        .where(eq(items.id, id));
+        .where(this.tenantWhere(id, tenantId));
 
       await this.searchStore.remove(id);
       await this.searchStore.index(id, result.merged);
@@ -394,8 +401,8 @@ export class PgItemStore implements ItemStore {
     });
   }
 
-  async delete(id: string): Promise<void> {
-    const row = await this.getRaw(id);
+  async delete(id: string, tenantId?: string): Promise<void> {
+    const row = await this.getRaw(id, tenantId);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -403,13 +410,13 @@ export class PgItemStore implements ItemStore {
     await this.db
       .update(items)
       .set({ state: "trashed", updated_at: new Date().toISOString() })
-      .where(eq(items.id, id));
+      .where(this.tenantWhere(id, tenantId));
 
     await this.searchStore.remove(id);
   }
 
-  async restore(id: string): Promise<Item> {
-    const row = await this.getRaw(id);
+  async restore(id: string, tenantId?: string): Promise<Item> {
+    const row = await this.getRaw(id, tenantId);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -424,15 +431,15 @@ export class PgItemStore implements ItemStore {
     await this.db
       .update(items)
       .set({ state: "active", updated_at: now })
-      .where(eq(items.id, id));
+      .where(this.tenantWhere(id, tenantId));
 
     await this.searchStore.index(id, row.properties);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
 
-  async transition(id: string, state: ItemState): Promise<Item> {
-    const row = await this.getRaw(id);
+  async transition(id: string, state: ItemState, tenantId?: string): Promise<Item> {
+    const row = await this.getRaw(id, tenantId);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -446,7 +453,7 @@ export class PgItemStore implements ItemStore {
     await this.db
       .update(items)
       .set({ state, updated_at: now })
-      .where(eq(items.id, id));
+      .where(this.tenantWhere(id, tenantId));
 
     if (state === "trashed") {
       await this.searchStore.remove(id);

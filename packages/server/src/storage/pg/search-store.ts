@@ -47,6 +47,11 @@ export class PgSearchStore implements SearchStore {
       conditions.push("AND i.state != 'trashed'");
     }
 
+    if (filters.tenantId) {
+      params.push(filters.tenantId);
+      conditions.push(`AND i.tenant_id = $${String(paramIdx++)}`);
+    }
+
     if (filters.type) {
       params.push(filters.type);
       conditions.push(`AND i.type = $${String(paramIdx++)}`);

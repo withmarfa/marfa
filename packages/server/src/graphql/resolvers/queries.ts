@@ -18,7 +18,8 @@ export const queryResolvers = {
     ctx: GraphQLContext,
   ) => {
     gqlCheckAuth(ctx.apiKey);
-    const item = await ctx.storage.items.get(args.id);
+    const tid = ctx.apiKey?.tenant_id;
+    const item = await ctx.storage.items.get(args.id, tid);
     if (!item) return null;
     gqlCheckTypeAccess(ctx.apiKey, item.type, "read");
     return item;
@@ -40,6 +41,7 @@ export const queryResolvers = {
     if (args.type) gqlCheckTypeAccess(ctx.apiKey, args.type.replace(".*", ""), "read");
 
     return ctx.storage.items.list({
+      tenantId: ctx.apiKey?.tenant_id,
       type: args.type,
       state: args.state as ItemState | undefined,
       source: args.source,
@@ -59,6 +61,7 @@ export const queryResolvers = {
     if (args.type) gqlCheckTypeAccess(ctx.apiKey, args.type, "read");
 
     return ctx.storage.search.search(args.query, {
+      tenantId: ctx.apiKey?.tenant_id,
       type: args.type,
       state: args.state as ItemState | undefined,
       allowed_types: computeTypeFilter(ctx.apiKey),
@@ -72,7 +75,7 @@ export const queryResolvers = {
     ctx: GraphQLContext,
   ) => {
     gqlCheckAuth(ctx.apiKey);
-    return ctx.storage.threads.list(args.limit ?? 50, args.cursor);
+    return ctx.storage.threads.list(args.limit ?? 50, args.cursor, ctx.apiKey?.tenant_id);
   },
 
   thread: async (
@@ -81,7 +84,7 @@ export const queryResolvers = {
     ctx: GraphQLContext,
   ) => {
     gqlCheckAuth(ctx.apiKey);
-    return ctx.storage.threads.get(args.id);
+    return ctx.storage.threads.get(args.id, ctx.apiKey?.tenant_id);
   },
 
   types: (

@@ -35,7 +35,11 @@ export class SqliteItemStore implements ItemStore {
     private searchStore: SqliteSearchStore,
   ) {}
 
-  async create(input: CreateItemInput): Promise<Item> {
+  private tenantWhere(id: string, tenantId?: string) {
+    return tenantId ? and(eq(items.id, id), eq(items.tenant_id, tenantId)) : eq(items.id, id);
+  }
+
+  async create(input: CreateItemInput, tenantId?: string): Promise<Item> {
     const id = input.id ?? generateId();
     if (input.id && !isValidId(input.id)) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
@@ -57,10 +61,12 @@ export class SqliteItemStore implements ItemStore {
 
     const createFn = this.raw.transaction(() => {
       if (input.source && input.source_id) {
+        const dedupConditions = [eq(items.source, input.source), eq(items.source_id, input.source_id)];
+        if (tenantId) dedupConditions.push(eq(items.tenant_id, tenantId));
         const existing = this.db
           .select({ id: items.id })
           .from(items)
-          .where(and(eq(items.source, input.source), eq(items.source_id, input.source_id)))
+          .where(and(...dedupConditions))
           .get();
         if (existing) {
           throw new ProtocolError(
@@ -75,7 +81,9 @@ export class SqliteItemStore implements ItemStore {
         const parent = this.db
           .select({ id: items.id })
           .from(items)
-          .where(eq(items.id, input.parent_id))
+          .where(tenantId
+            ? and(eq(items.id, input.parent_id), eq(items.tenant_id, tenantId))
+            : eq(items.id, input.parent_id))
           .get();
         if (!parent) {
           throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Parent item not found");
@@ -86,7 +94,9 @@ export class SqliteItemStore implements ItemStore {
         const thread = this.db
           .select({ id: threads.id })
           .from(threads)
-          .where(eq(threads.id, input.thread_id))
+          .where(tenantId
+            ? and(eq(threads.id, input.thread_id), eq(threads.tenant_id, tenantId))
+            : eq(threads.id, input.thread_id))
           .get();
         if (!thread) {
           throw new ProtocolError(ErrorCode.THREAD_NOT_FOUND, "Thread not found");
@@ -97,6 +107,7 @@ export class SqliteItemStore implements ItemStore {
         .insert(items)
         .values({
           id,
+          tenant_id: tenantId,
           type: input.type,
           state,
           properties: JSON.stringify(input.properties),
@@ -158,16 +169,16 @@ export class SqliteItemStore implements ItemStore {
   }
 
   // Fix 4: trashed items return null (404 to callers)
-  async get(id: string): Promise<Item | null> {
-    const row = this.db.select().from(items).where(eq(items.id, id)).get();
+  async get(id: string, tenantId?: string): Promise<Item | null> {
+    const row = this.db.select().from(items).where(this.tenantWhere(id, tenantId)).get();
     if (!row) return null;
     if (row.state === "trashed") return null;
     return rowToItem(row);
   }
 
   // Internal get that includes trashed items (for restore, delete, transition)
-  private getRaw(id: string): Item | null {
-    const row = this.db.select().from(items).where(eq(items.id, id)).get();
+  private getRaw(id: string, tenantId?: string): Item | null {
+    const row = this.db.select().from(items).where(this.tenantWhere(id, tenantId)).get();
     if (!row) return null;
     return rowToItem(row);
   }
@@ -178,6 +189,8 @@ export class SqliteItemStore implements ItemStore {
     const limit = Math.min(filters.limit ?? 50, 200);
 
     const conditions = [];
+
+    if (filters.tenantId) conditions.push(eq(items.tenant_id, filters.tenantId));
 
     if (filters.state) {
       conditions.push(eq(items.state, filters.state));
@@ -287,15 +300,17 @@ export class SqliteItemStore implements ItemStore {
     return { data, cursor, has_more: hasMore };
   }
 
-  async update(id: string, input: UpdateItemInput): Promise<Item | ConflictResponse> {
+  async update(id: string, input: UpdateItemInput, tenantId?: string): Promise<Item | ConflictResponse> {
     // Pre-fetch ancestor outside transaction so we can await the async store method
     const ancestor =
       input.version !== undefined
         ? await this.versionStore.getByVersion(id, input.version)
         : null;
 
+    const whereClause = this.tenantWhere(id, tenantId);
+
     const updateFn = this.raw.transaction(() => {
-      const row = this.db.select().from(items).where(eq(items.id, id)).get();
+      const row = this.db.select().from(items).where(whereClause).get();
       if (!row) {
         throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
@@ -322,7 +337,7 @@ export class SqliteItemStore implements ItemStore {
             version: newVersion,
             updated_at: now,
           })
-          .where(eq(items.id, id))
+          .where(whereClause)
           .run();
 
         this.searchStore.remove(id);
@@ -374,7 +389,7 @@ export class SqliteItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
         })
-        .where(eq(items.id, id))
+        .where(whereClause)
         .run();
 
       this.searchStore.remove(id);
@@ -391,8 +406,8 @@ export class SqliteItemStore implements ItemStore {
     return updateFn();
   }
 
-  async delete(id: string): Promise<void> {
-    const row = this.getRaw(id);
+  async delete(id: string, tenantId?: string): Promise<void> {
+    const row = this.getRaw(id, tenantId);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -400,14 +415,14 @@ export class SqliteItemStore implements ItemStore {
     this.db
       .update(items)
       .set({ state: "trashed", updated_at: new Date().toISOString() })
-      .where(eq(items.id, id))
+      .where(this.tenantWhere(id, tenantId))
       .run();
 
     this.searchStore.remove(id);
   }
 
-  async restore(id: string): Promise<Item> {
-    const row = this.getRaw(id);
+  async restore(id: string, tenantId?: string): Promise<Item> {
+    const row = this.getRaw(id, tenantId);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -419,7 +434,7 @@ export class SqliteItemStore implements ItemStore {
     this.db
       .update(items)
       .set({ state: "active", updated_at: now })
-      .where(eq(items.id, id))
+      .where(this.tenantWhere(id, tenantId))
       .run();
 
     this.searchStore.index(id, row.properties);
@@ -427,8 +442,8 @@ export class SqliteItemStore implements ItemStore {
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
 
-  async transition(id: string, state: ItemState): Promise<Item> {
-    const row = this.getRaw(id);
+  async transition(id: string, state: ItemState, tenantId?: string): Promise<Item> {
+    const row = this.getRaw(id, tenantId);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -442,7 +457,7 @@ export class SqliteItemStore implements ItemStore {
     this.db
       .update(items)
       .set({ state, updated_at: now })
-      .where(eq(items.id, id))
+      .where(this.tenantWhere(id, tenantId))
       .run();
 
     if (state === "trashed") {

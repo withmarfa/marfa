@@ -22,6 +22,7 @@ export type ItemSortField = "created_at" | "updated_at" | "timestamp";
 export type SortDirection = "asc" | "desc";
 
 export interface ItemFilters {
+  tenantId?: string;
   type?: string;
   state?: ItemState;
   source?: string;
@@ -37,6 +38,7 @@ export interface ItemFilters {
 }
 
 export interface SearchFilters {
+  tenantId?: string;
   type?: string;
   state?: ItemState;
   filter?: string;
@@ -70,13 +72,13 @@ export function decodeCursor(cursor: string): CursorPayload {
 // ---------------------------------------------------------------------------
 
 export interface ItemStore {
-  create(input: CreateItemInput): Promise<Item>;
-  get(id: string): Promise<Item | null>;
+  create(input: CreateItemInput, tenantId?: string): Promise<Item>;
+  get(id: string, tenantId?: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
-  update(id: string, input: UpdateItemInput): Promise<Item | ConflictResponse>;
-  delete(id: string): Promise<void>;
-  restore(id: string): Promise<Item>;
-  transition(id: string, state: ItemState): Promise<Item>;
+  update(id: string, input: UpdateItemInput, tenantId?: string): Promise<Item | ConflictResponse>;
+  delete(id: string, tenantId?: string): Promise<void>;
+  restore(id: string, tenantId?: string): Promise<Item>;
+  transition(id: string, state: ItemState, tenantId?: string): Promise<Item>;
 }
 
 export interface MetadataStore {
@@ -99,11 +101,11 @@ export interface VersionStore {
 }
 
 export interface ThreadStore {
-  create(): Promise<Thread>;
-  get(id: string): Promise<Thread | null>;
-  list(limit: number, cursor?: string): Promise<PaginatedResult<Thread>>;
+  create(tenantId?: string): Promise<Thread>;
+  get(id: string, tenantId?: string): Promise<Thread | null>;
+  list(limit: number, cursor?: string, tenantId?: string): Promise<PaginatedResult<Thread>>;
   touch(id: string): Promise<void>;
-  getItems(threadId: string): Promise<Item[]>;
+  getItems(threadId: string, tenantId?: string): Promise<Item[]>;
 }
 
 export interface TypeStore {

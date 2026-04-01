@@ -60,7 +60,7 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
           source_id: item.source_id as string | undefined,
           tags: item.tags as string[] | undefined,
           about: item.about as string[] | undefined,
-        });
+        }, c.get("apiKey")?.tenant_id);
         imported++;
       } catch (err) {
         if (
@@ -108,6 +108,7 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
 
     do {
       const result = await storage.items.list({
+        tenantId: c.get("apiKey")?.tenant_id,
         type,
         state,
         limit: 200,
