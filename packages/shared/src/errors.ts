@@ -39,7 +39,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.FORBIDDEN]: 403,
   [ErrorCode.TYPE_NOT_PERMITTED]: 403,
   [ErrorCode.INVALID_TRANSITION]: 400,
-  [ErrorCode.TYPE_NOT_FOUND]: 400,
+  [ErrorCode.TYPE_NOT_FOUND]: 404,
   [ErrorCode.DUPLICATE_SOURCE]: 409,
   [ErrorCode.INVALID_GRANT]: 400,
   [ErrorCode.INVALID_CLIENT]: 400,

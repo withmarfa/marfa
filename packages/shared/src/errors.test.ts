@@ -28,7 +28,7 @@ describe("httpStatus", () => {
     expect(httpStatus(ErrorCode.UNAUTHORIZED)).toBe(401);
     expect(httpStatus(ErrorCode.FORBIDDEN)).toBe(403);
     expect(httpStatus(ErrorCode.INVALID_TRANSITION)).toBe(400);
-    expect(httpStatus(ErrorCode.TYPE_NOT_FOUND)).toBe(400);
+    expect(httpStatus(ErrorCode.TYPE_NOT_FOUND)).toBe(404);
     expect(httpStatus(ErrorCode.DUPLICATE_SOURCE)).toBe(409);
   });
 });
