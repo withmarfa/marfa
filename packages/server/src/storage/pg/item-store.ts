@@ -38,23 +38,19 @@ export class PgItemStore implements ItemStore {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
     }
 
+    // Validate properties against type schema if registered; accept unknown types
     const typeSchema = getTypeSchema(input.type);
-    if (!typeSchema) {
-      throw new ProtocolError(
-        ErrorCode.TYPE_NOT_FOUND,
-        `Unknown type: ${input.type}`,
-      );
-    }
-
-    const validation = validateProperties(input.type, input.properties);
-    if (!validation.success) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
-        errors: validation.errors,
-      });
+    if (typeSchema) {
+      const validation = validateProperties(input.type, input.properties);
+      if (!validation.success) {
+        throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
+          errors: validation.errors,
+        });
+      }
     }
 
     const now = new Date().toISOString();
-    const state = input.state ?? typeSchema.default_state;
+    const state = input.state ?? typeSchema?.default_state ?? "new";
 
     return await this.db.transaction(async (tx) => {
       if (input.source && input.source_id) {

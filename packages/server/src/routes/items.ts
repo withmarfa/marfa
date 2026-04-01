@@ -5,6 +5,7 @@ import {
   isValidId,
   isValidTimestamp,
   isValidTypeIdentifier,
+  getTypeSchema,
   validateProperties,
   ITEM_STATES,
 } from "@myme/shared";
@@ -165,11 +166,13 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     requireTypeAccess(c, item.type, "write");
 
     const merged = { ...item.properties, ...(body.properties as Record<string, unknown>) };
-    const validation = validateProperties(item.type, merged);
-    if (!validation.success) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
-        errors: validation.errors,
-      });
+    if (getTypeSchema(item.type)) {
+      const validation = validateProperties(item.type, merged);
+      if (!validation.success) {
+        throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
+          errors: validation.errors,
+        });
+      }
     }
 
     const result = await storage.items.update(id, {

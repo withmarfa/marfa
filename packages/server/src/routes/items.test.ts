@@ -35,12 +35,12 @@ describe("POST /items", () => {
     expect(res.status).toBe(400);
   });
 
-  it("rejects unknown type", async () => {
+  it("accepts unknown type (community types)", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: { type: "core.nonexistent", properties: {} },
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
   });
 
   it("rejects request without auth", async () => {
