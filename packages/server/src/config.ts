@@ -14,8 +14,19 @@ export interface AppConfig {
   corsOrigins: string[];
 }
 
+const DEFAULT_SALT = "dev-salt-change-in-production";
+
 export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
+  const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
+
+  if (process.env.NODE_ENV === "production" && (!apiKeySalt || apiKeySalt === DEFAULT_SALT)) {
+    throw new Error(
+      "API_KEY_SALT must be set to a unique value in production. " +
+        "Generate one with: openssl rand -hex 32",
+    );
+  }
+
   return {
     port: Number(process.env.PORT) || 8200,
     storageDialect: (process.env.STORAGE_DIALECT as "sqlite" | "pg") ?? "sqlite",
@@ -28,7 +39,7 @@ export function loadConfig(): AppConfig {
     s3Endpoint: process.env.S3_ENDPOINT ?? "",
     s3AccessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
     s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
-    apiKeySalt: process.env.API_KEY_SALT ?? "dev-salt-change-in-production",
+    apiKeySalt,
     corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
   };
 }

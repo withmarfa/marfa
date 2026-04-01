@@ -34,6 +34,7 @@ export interface ClientConfig {
   apiKey: string;
   fetch?: typeof globalThis.fetch;
   conflictStrategy?: ConflictStrategy;
+  timeoutMs?: number;
 }
 
 export interface UpdateOptions {
@@ -78,6 +79,7 @@ export class MymeClient {
       baseUrl: config.url,
       apiKey: config.apiKey,
       fetch: config.fetch,
+      timeoutMs: config.timeoutMs,
     });
     this.defaultConflictStrategy = config.conflictStrategy ?? "auto";
   }

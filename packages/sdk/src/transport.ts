@@ -11,17 +11,22 @@ export interface TransportConfig {
   baseUrl: string;
   apiKey: string;
   fetch?: typeof globalThis.fetch;
+  timeoutMs?: number;
 }
+
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export class HttpTransport {
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly fetch: typeof globalThis.fetch;
+  private readonly timeoutMs: number;
 
   constructor(config: TransportConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
     this.apiKey = config.apiKey;
     this.fetch = config.fetch ?? globalThis.fetch.bind(globalThis);
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async request<T>(
@@ -90,7 +95,10 @@ export class HttpTransport {
       ...options?.headers,
     };
 
-    const init: RequestInit = { method, headers };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    const init: RequestInit = { method, headers, signal: controller.signal };
 
     if (options?.rawBody !== undefined) {
       init.body = options.rawBody;
@@ -99,7 +107,11 @@ export class HttpTransport {
       init.body = JSON.stringify(options.body);
     }
 
-    return this.fetch(url, init);
+    try {
+      return await this.fetch(url, init);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private buildUrl(
