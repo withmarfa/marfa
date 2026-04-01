@@ -50,12 +50,12 @@ export function blobRoutes(
     }
 
     // Register metadata (idempotent)
-    storage.blobs.register(hash, mimeType, data.length, hash);
+    await storage.blobs.register(hash, mimeType, data.length, hash);
 
     return c.json({ hash, mime_type: mimeType, size: data.length }, 201);
   });
 
-  router.get("/:hash", (c) => {
+  router.get("/:hash", async (c) => {
     requireAuth(c);
 
     let hash = c.req.param("hash");
@@ -67,7 +67,7 @@ export function blobRoutes(
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
-    const record = storage.blobs.get(hash);
+    const record = await storage.blobs.get(hash);
     if (!record) {
       throw new ProtocolError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }

@@ -21,7 +21,7 @@ function extractSearchableText(
 export class SqliteSearchStore implements SearchStore {
   constructor(private raw: RawDb) {}
 
-  index(itemId: string, properties: Record<string, unknown>): void {
+  async index(itemId: string, properties: Record<string, unknown>): Promise<void> {
     const text = extractSearchableText(properties);
     this.raw
       .prepare(
@@ -31,11 +31,11 @@ export class SqliteSearchStore implements SearchStore {
       .run(itemId, text.title, text.body, text.description, text.name);
   }
 
-  remove(itemId: string): void {
+  async remove(itemId: string): Promise<void> {
     this.raw.prepare("DELETE FROM items_fts WHERE item_id = ?").run(itemId);
   }
 
-  search(query: string, filters: SearchFilters): SearchResult[] {
+  async search(query: string, filters: SearchFilters): Promise<SearchResult[]> {
     // Wrap query in double quotes for FTS5 phrase matching.
     // This prevents hyphens from being interpreted as NOT operators.
     const escapedQuery = `"${query.replace(/"/g, '""')}"`;

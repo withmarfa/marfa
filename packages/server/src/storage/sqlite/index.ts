@@ -30,6 +30,8 @@ export function createSqliteStorage(sqlitePath: string): Storage {
     search: searchStore,
     keys: keyStore,
     blobs: blobStore,
-    close,
+    async close() {
+      close();
+    },
   };
 }

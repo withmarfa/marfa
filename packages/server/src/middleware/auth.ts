@@ -37,7 +37,7 @@ export function authMiddleware(storage: Storage, salt: string) {
   return createMiddleware<AppEnv>(async (c, next) => {
     // Bootstrap detection: POST /keys with no existing keys
     if (c.req.method === "POST" && c.req.path === "/keys") {
-      const keyCount = storage.keys.count();
+      const keyCount = await storage.keys.count();
       if (keyCount === 0) {
         c.set("apiKey", undefined);
         c.set("isBootstrap", true);
@@ -60,7 +60,7 @@ export function authMiddleware(storage: Storage, salt: string) {
     }
 
     const hash = hashApiKey(token, salt);
-    const stored = storage.keys.validate(hash);
+    const stored = await storage.keys.validate(hash);
 
     if (!stored) {
       c.set("apiKey", undefined);
@@ -80,7 +80,7 @@ export function authMiddleware(storage: Storage, salt: string) {
     const lastTracked = lastUsedCache.get(stored.id) ?? 0;
     if (now - lastTracked > DEBOUNCE_MS) {
       lastUsedCache.set(stored.id, now);
-      storage.keys.updateLastUsed(stored.id);
+      await storage.keys.updateLastUsed(stored.id);
     }
 
     return next();

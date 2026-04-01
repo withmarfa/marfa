@@ -57,7 +57,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     requireTypeAccess(c, type, "write");
 
-    const item = storage.items.create({
+    const item = await storage.items.create({
       type,
       properties,
       id: body.id as string | undefined,
@@ -75,12 +75,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       about: body.about as string[] | undefined,
     });
 
-    const metadata = storage.metadata.get(item.id);
+    const metadata = await storage.metadata.get(item.id);
     return c.json({ item, metadata }, 201);
   });
 
   // GET /items — list
-  router.get("/", (c) => {
+  router.get("/", async (c) => {
     requireAuth(c);
 
     const type = c.req.query("type");
@@ -98,7 +98,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const tagsParam = c.req.query("tags");
     const tags = tagsParam ? tagsParam.split(",").map((t) => t.trim()) : undefined;
 
-    const result = storage.items.list({
+    const result = await storage.items.list({
       type,
       state,
       source: c.req.query("source"),
@@ -118,19 +118,19 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   });
 
   // GET /items/:id — get single
-  router.get("/:id", (c) => {
+  router.get("/:id", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = storage.items.get(id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "read");
-    const metadata = storage.metadata.get(id);
+    const metadata = await storage.metadata.get(id);
     return c.json({ item, metadata });
   });
 
@@ -157,7 +157,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       }
     }
 
-    const item = storage.items.get(id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -172,7 +172,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       });
     }
 
-    const result = storage.items.update(id, {
+    const result = await storage.items.update(id, {
       properties: body.properties as Record<string, unknown>,
       version: body.version as number,
     });
@@ -182,13 +182,13 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       return c.json(result, 409);
     }
 
-    const metadata = storage.metadata.get(id);
+    const metadata = await storage.metadata.get(id);
     return c.json({ item: result, metadata });
   });
 
   // DELETE /items/:id — soft delete
   // Fix 1: return 200 { ok: true } instead of 204
-  router.delete("/:id", (c) => {
+  router.delete("/:id", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
@@ -197,21 +197,21 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     // Use list with state filter to find trashed items too
     // delete() uses getRaw internally
     requireAuth(c);
-    storage.items.delete(id);
+    await storage.items.delete(id);
     return c.json({ ok: true });
   });
 
   // POST /items/:id/restore — Fix 1: wrap in { item, metadata }
-  router.post("/:id/restore", (c) => {
+  router.post("/:id/restore", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     requireAuth(c);
-    const restored = storage.items.restore(id);
+    const restored = await storage.items.restore(id);
     requireTypeAccess(c, restored.type, "write");
-    const metadata = storage.metadata.get(id);
+    const metadata = await storage.metadata.get(id);
     return c.json({ item: restored, metadata });
   });
 
@@ -229,45 +229,45 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     requireAuth(c);
-    const updated = storage.items.transition(id, state as ItemState);
+    const updated = await storage.items.transition(id, state as ItemState);
     requireTypeAccess(c, updated.type, "write");
-    const metadata = storage.metadata.get(id);
+    const metadata = await storage.metadata.get(id);
     return c.json({ item: updated, metadata });
   });
 
   // GET /items/:id/versions — Fix 1: wrap in { versions: [...] }
-  router.get("/:id/versions", (c) => {
+  router.get("/:id/versions", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = storage.items.get(id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "read");
-    const versions = storage.versions.list(id);
+    const versions = await storage.versions.list(id);
     return c.json({ versions });
   });
 
   // --- Metadata sub-routes ---
 
   // GET /items/:id/metadata — Fix 1: wrap in { metadata: {...} }
-  router.get("/:id/metadata", (c) => {
+  router.get("/:id/metadata", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = storage.items.get(id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "read");
-    return c.json({ metadata: storage.metadata.get(id) });
+    return c.json({ metadata: await storage.metadata.get(id) });
   });
 
   // PUT /items/:id/metadata — full replacement. Fix 1: wrap in { metadata: {...} }
@@ -277,7 +277,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = storage.items.get(id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -288,7 +288,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const tags = (body.tags as string[] | undefined) ?? [];
     const about = (body.about as string[] | undefined) ?? [];
 
-    const metadata = storage.metadata.set(id, tags, about);
+    const metadata = await storage.metadata.set(id, tags, about);
     return c.json({ metadata });
   });
 
@@ -299,7 +299,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = storage.items.get(id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -310,7 +310,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const tags = body.tags as string[] | undefined;
     const about = body.about as string[] | undefined;
 
-    const metadata = storage.metadata.merge(id, tags, about);
+    const metadata = await storage.metadata.merge(id, tags, about);
     return c.json({ metadata });
   });
 
@@ -321,7 +321,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = storage.items.get(id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -337,25 +337,25 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    const metadata = storage.metadata.addTags(id, tags);
+    const metadata = await storage.metadata.addTags(id, tags);
     return c.json({ metadata });
   });
 
   // DELETE /items/:id/tags/:tag
-  router.delete("/:id/tags/:tag", (c) => {
+  router.delete("/:id/tags/:tag", async (c) => {
     const id = c.req.param("id");
     if (!isValidId(id)) {
       throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = storage.items.get(id);
+    const item = await storage.items.get(id);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "write");
     const tag = decodeURIComponent(c.req.param("tag"));
-    const metadata = storage.metadata.removeTag(id, tag);
+    const metadata = await storage.metadata.removeTag(id, tag);
     return c.json({ metadata });
   });
 

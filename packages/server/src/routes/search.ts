@@ -18,7 +18,7 @@ import { parseIntParam } from "./util.js";
 export function searchRoutes(storage: Storage): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
-  router.get("/", (c) => {
+  router.get("/", async (c) => {
     requireAuth(c);
 
     const q = c.req.query("q");
@@ -50,7 +50,7 @@ export function searchRoutes(storage: Storage): Hono<AppEnv> {
     const limit = parseIntParam(c.req.query("limit"), 20, 1, 100);
     const allowed_types = getTypeFilter(c);
 
-    const results = storage.search.search(q.trim(), {
+    const results = await storage.search.search(q.trim(), {
       type,
       state,
       allowed_types,

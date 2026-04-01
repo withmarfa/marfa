@@ -8,7 +8,7 @@ import type { DrizzleDb } from "./connection.js";
 export class SqliteKeyStore implements KeyStore {
   constructor(private db: DrizzleDb) {}
 
-  create(input: CreateKeyInput, keyHash: string): ApiKey {
+  async create(input: CreateKeyInput, keyHash: string): Promise<ApiKey> {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
@@ -28,7 +28,7 @@ export class SqliteKeyStore implements KeyStore {
     };
   }
 
-  list(): ApiKey[] {
+  async list(): Promise<ApiKey[]> {
     const rows = this.db.select().from(apiKeys).all();
     return rows.map((row) => ({
       id: row.id,
@@ -42,9 +42,9 @@ export class SqliteKeyStore implements KeyStore {
     }));
   }
 
-  validate(
+  async validate(
     keyHash: string,
-  ): (ApiKey & { key_hash: string; revoked_at: string | null }) | null {
+  ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null> {
     const row = this.db
       .select()
       .from(apiKeys)
@@ -66,7 +66,7 @@ export class SqliteKeyStore implements KeyStore {
     };
   }
 
-  revoke(id: string): void {
+  async revoke(id: string): Promise<void> {
     this.db
       .update(apiKeys)
       .set({ revoked_at: new Date().toISOString() })
@@ -74,7 +74,7 @@ export class SqliteKeyStore implements KeyStore {
       .run();
   }
 
-  updateLastUsed(id: string): void {
+  async updateLastUsed(id: string): Promise<void> {
     this.db
       .update(apiKeys)
       .set({ last_used_at: new Date().toISOString() })
@@ -82,7 +82,7 @@ export class SqliteKeyStore implements KeyStore {
       .run();
   }
 
-  count(): number {
+  async count(): Promise<number> {
     const rows = this.db
       .select()
       .from(apiKeys)

@@ -9,12 +9,12 @@ import { rowToVersion } from "./helpers.js";
 export class SqliteVersionStore implements VersionStore {
   constructor(private db: DrizzleDb) {}
 
-  create(
+  async create(
     itemId: string,
     version: number,
     properties: Record<string, unknown>,
     deviceId?: string,
-  ): Version {
+  ): Promise<Version> {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
@@ -35,7 +35,7 @@ export class SqliteVersionStore implements VersionStore {
     };
   }
 
-  list(itemId: string): Version[] {
+  async list(itemId: string): Promise<Version[]> {
     const rows = this.db
       .select()
       .from(versions)
@@ -45,7 +45,7 @@ export class SqliteVersionStore implements VersionStore {
     return rows.map(rowToVersion);
   }
 
-  getByVersion(itemId: string, version: number): Version | null {
+  async getByVersion(itemId: string, version: number): Promise<Version | null> {
     const row = this.db
       .select()
       .from(versions)

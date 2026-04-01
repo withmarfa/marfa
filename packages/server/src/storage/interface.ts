@@ -68,21 +68,21 @@ export function decodeCursor(cursor: string): CursorPayload {
 // ---------------------------------------------------------------------------
 
 export interface ItemStore {
-  create(input: CreateItemInput): Item;
-  get(id: string): Item | null;
-  list(filters: ItemFilters): PaginatedResult<Item>;
-  update(id: string, input: UpdateItemInput): Item | ConflictResponse;
-  delete(id: string): void;
-  restore(id: string): Item;
-  transition(id: string, state: ItemState): Item;
+  create(input: CreateItemInput): Promise<Item>;
+  get(id: string): Promise<Item | null>;
+  list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
+  update(id: string, input: UpdateItemInput): Promise<Item | ConflictResponse>;
+  delete(id: string): Promise<void>;
+  restore(id: string): Promise<Item>;
+  transition(id: string, state: ItemState): Promise<Item>;
 }
 
 export interface MetadataStore {
-  get(itemId: string): Metadata;
-  set(itemId: string, tags: string[], about: string[]): Metadata;
-  merge(itemId: string, tags?: string[], about?: string[]): Metadata;
-  addTags(itemId: string, tags: string[]): Metadata;
-  removeTag(itemId: string, tag: string): Metadata;
+  get(itemId: string): Promise<Metadata>;
+  set(itemId: string, tags: string[], about: string[]): Promise<Metadata>;
+  merge(itemId: string, tags?: string[], about?: string[]): Promise<Metadata>;
+  addTags(itemId: string, tags: string[]): Promise<Metadata>;
+  removeTag(itemId: string, tag: string): Promise<Metadata>;
 }
 
 export interface VersionStore {
@@ -91,39 +91,39 @@ export interface VersionStore {
     version: number,
     properties: Record<string, unknown>,
     deviceId?: string,
-  ): Version;
-  list(itemId: string): Version[];
-  getByVersion(itemId: string, version: number): Version | null;
+  ): Promise<Version>;
+  list(itemId: string): Promise<Version[]>;
+  getByVersion(itemId: string, version: number): Promise<Version | null>;
 }
 
 export interface ThreadStore {
-  create(): Thread;
-  get(id: string): Thread | null;
-  list(limit: number, cursor?: string): PaginatedResult<Thread>;
-  touch(id: string): void;
-  getItems(threadId: string): Item[];
+  create(): Promise<Thread>;
+  get(id: string): Promise<Thread | null>;
+  list(limit: number, cursor?: string): Promise<PaginatedResult<Thread>>;
+  touch(id: string): Promise<void>;
+  getItems(threadId: string): Promise<Item[]>;
 }
 
 export interface TypeStore {
-  list(): TypeSchema[];
-  get(id: string): TypeSchema | undefined;
+  list(): Promise<TypeSchema[]>;
+  get(id: string): Promise<TypeSchema | undefined>;
 }
 
 export interface SearchStore {
-  search(query: string, filters: SearchFilters): SearchResult[];
-  index(itemId: string, properties: Record<string, unknown>): void;
-  remove(itemId: string): void;
+  search(query: string, filters: SearchFilters): Promise<SearchResult[]>;
+  index(itemId: string, properties: Record<string, unknown>): Promise<void>;
+  remove(itemId: string): Promise<void>;
 }
 
 export interface KeyStore {
-  create(input: CreateKeyInput, keyHash: string): ApiKey;
-  list(): ApiKey[];
+  create(input: CreateKeyInput, keyHash: string): Promise<ApiKey>;
+  list(): Promise<ApiKey[]>;
   validate(
     keyHash: string,
-  ): (ApiKey & { key_hash: string; revoked_at: string | null }) | null;
-  revoke(id: string): void;
-  updateLastUsed(id: string): void;
-  count(): number;
+  ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;
+  revoke(id: string): Promise<void>;
+  updateLastUsed(id: string): Promise<void>;
+  count(): Promise<number>;
 }
 
 export interface BlobStore {
@@ -132,10 +132,10 @@ export interface BlobStore {
     mimeType: string,
     size: number,
     storagePath: string,
-  ): void;
+  ): Promise<void>;
   get(
     hash: string,
-  ): { mime_type: string; size: number; storage_path: string } | null;
+  ): Promise<{ mime_type: string; size: number; storage_path: string } | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,5 +151,5 @@ export interface Storage {
   search: SearchStore;
   keys: KeyStore;
   blobs: BlobStore;
-  close(): void;
+  close(): Promise<void>;
 }

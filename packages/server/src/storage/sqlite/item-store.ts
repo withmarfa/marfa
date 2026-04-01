@@ -33,7 +33,7 @@ export class SqliteItemStore implements ItemStore {
     private searchStore: SqliteSearchStore,
   ) {}
 
-  create(input: CreateItemInput): Item {
+  async create(input: CreateItemInput): Promise<Item> {
     const id = input.id ?? generateId();
     if (input.id && !isValidId(input.id)) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
@@ -160,7 +160,7 @@ export class SqliteItemStore implements ItemStore {
   }
 
   // Fix 4: trashed items return null (404 to callers)
-  get(id: string): Item | null {
+  async get(id: string): Promise<Item | null> {
     const row = this.db.select().from(items).where(eq(items.id, id)).get();
     if (!row) return null;
     if (row.state === "trashed") return null;
@@ -174,7 +174,7 @@ export class SqliteItemStore implements ItemStore {
     return rowToItem(row);
   }
 
-  list(filters: ItemFilters): PaginatedResult<Item> {
+  async list(filters: ItemFilters): Promise<PaginatedResult<Item>> {
     const sortField = filters.sort ?? "created_at";
     const dir = filters.direction ?? "desc";
     const limit = Math.min(filters.limit ?? 50, 200);
@@ -278,7 +278,13 @@ export class SqliteItemStore implements ItemStore {
     return { data, cursor, has_more: hasMore };
   }
 
-  update(id: string, input: UpdateItemInput): Item | ConflictResponse {
+  async update(id: string, input: UpdateItemInput): Promise<Item | ConflictResponse> {
+    // Pre-fetch ancestor outside transaction so we can await the async store method
+    const ancestor =
+      input.version !== undefined
+        ? await this.versionStore.getByVersion(id, input.version)
+        : null;
+
     const updateFn = this.raw.transaction(() => {
       const row = this.db.select().from(items).where(eq(items.id, id)).get();
       if (!row) {
@@ -322,7 +328,6 @@ export class SqliteItemStore implements ItemStore {
       }
 
       // Fix 5: any version < current is a conflict, not necessarily invalid
-      const ancestor = this.versionStore.getByVersion(id, input.version);
       if (!ancestor) {
         // Version doesn't exist in history — still a conflict scenario
         // (client has a version we've never seen, or version 0 meaning "never seen")
@@ -377,7 +382,7 @@ export class SqliteItemStore implements ItemStore {
     return updateFn();
   }
 
-  delete(id: string): void {
+  async delete(id: string): Promise<void> {
     const row = this.getRaw(id);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -392,7 +397,7 @@ export class SqliteItemStore implements ItemStore {
     this.searchStore.remove(id);
   }
 
-  restore(id: string): Item {
+  async restore(id: string): Promise<Item> {
     const row = this.getRaw(id);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -413,7 +418,7 @@ export class SqliteItemStore implements ItemStore {
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
 
-  transition(id: string, state: ItemState): Item {
+  async transition(id: string, state: ItemState): Promise<Item> {
     const row = this.getRaw(id);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");

@@ -42,7 +42,7 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
 
-    const stored = storage.keys.create(
+    const stored = await storage.keys.create(
       {
         label: body.label.trim(),
         role: role,
@@ -67,18 +67,18 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     );
   });
 
-  router.get("/", (c) => {
+  router.get("/", async (c) => {
     requireAdmin(c);
-    return c.json(storage.keys.list());
+    return c.json(await storage.keys.list());
   });
 
-  router.delete("/:id", (c) => {
+  router.delete("/:id", async (c) => {
     requireAdmin(c);
     const id = c.req.param("id");
     if (!isValidId(id)) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
-    storage.keys.revoke(id);
+    await storage.keys.revoke(id);
     return c.body(null, 204);
   });
 

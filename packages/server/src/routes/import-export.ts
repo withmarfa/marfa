@@ -72,7 +72,7 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
     for (const raw of items) {
       const item = raw as Record<string, unknown>;
       try {
-        storage.items.create(item as unknown as CreateItemInput);
+        await storage.items.create(item as unknown as CreateItemInput);
         imported++;
       } catch (err) {
         if (
@@ -95,7 +95,7 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
 export function exportRoutes(storage: Storage): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
-  router.get("/", (c) => {
+  router.get("/", async (c) => {
     requireAdmin(c);
 
     const type = c.req.query("type");
@@ -117,7 +117,7 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
     const limit = parseIntParam(c.req.query("limit"), 100, 1, 5000);
     const cursor = c.req.query("cursor");
 
-    const result = storage.items.list({
+    const result = await storage.items.list({
       type,
       state,
       limit,
@@ -125,10 +125,12 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
     });
 
     // Enrich with metadata
-    const data = result.data.map((item) => ({
-      item,
-      metadata: storage.metadata.get(item.id),
-    }));
+    const data = await Promise.all(
+      result.data.map(async (item) => ({
+        item,
+        metadata: await storage.metadata.get(item.id),
+      })),
+    );
 
     return c.json({
       data,

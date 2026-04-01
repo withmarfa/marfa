@@ -19,7 +19,7 @@ export interface TestContext {
   cleanup: () => void;
 }
 
-export function createTestContext(): TestContext {
+export async function createTestContext(): Promise<TestContext> {
   const tmpDir = mkdtempSync(join(tmpdir(), "myme-test-"));
   const dbPath = join(tmpDir, "test.db");
   const blobPath = join(tmpDir, "blobs");
@@ -37,7 +37,7 @@ export function createTestContext(): TestContext {
   // Create a bootstrap admin key
   const rawKey = "myme_k1_test_admin_key_for_testing";
   const keyHash = hashApiKey(rawKey, SALT);
-  storage.keys.create(
+  await storage.keys.create(
     { label: "test-admin", role: "admin", type_permissions: {} },
     keyHash,
   );
@@ -48,7 +48,7 @@ export function createTestContext(): TestContext {
     blobBackend,
     adminKey: rawKey,
     cleanup: () => {
-      storage.close();
+      void storage.close();
     },
   };
 }

@@ -10,7 +10,7 @@ import { rowToItem } from "./helpers.js";
 export class SqliteThreadStore implements ThreadStore {
   constructor(private db: DrizzleDb) {}
 
-  create(): Thread {
+  async create(): Promise<Thread> {
     const now = new Date().toISOString();
     const thread: Thread = {
       id: generateId(),
@@ -21,12 +21,12 @@ export class SqliteThreadStore implements ThreadStore {
     return thread;
   }
 
-  get(id: string): Thread | null {
+  async get(id: string): Promise<Thread | null> {
     const row = this.db.select().from(threads).where(eq(threads.id, id)).get();
     return row ?? null;
   }
 
-  list(limit: number, cursor?: string): PaginatedResult<Thread> {
+  async list(limit: number, cursor?: string): Promise<PaginatedResult<Thread>> {
     let query = this.db
       .select()
       .from(threads)
@@ -57,7 +57,7 @@ export class SqliteThreadStore implements ThreadStore {
     return { data, cursor: nextCursor, has_more: hasMore };
   }
 
-  touch(id: string): void {
+  async touch(id: string): Promise<void> {
     this.db
       .update(threads)
       .set({ updated_at: new Date().toISOString() })
@@ -65,7 +65,7 @@ export class SqliteThreadStore implements ThreadStore {
       .run();
   }
 
-  getItems(threadId: string): Item[] {
+  async getItems(threadId: string): Promise<Item[]> {
     const rows = this.db
       .select()
       .from(items)

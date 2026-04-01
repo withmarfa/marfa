@@ -8,31 +8,31 @@ import { parseIntParam } from "./util.js";
 export function threadRoutes(storage: Storage): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
-  router.post("/", (c) => {
+  router.post("/", async (c) => {
     requireAuth(c);
-    const thread = storage.threads.create();
+    const thread = await storage.threads.create();
     return c.json({ thread }, 201);
   });
 
-  router.get("/", (c) => {
+  router.get("/", async (c) => {
     requireAuth(c);
     const limit = parseIntParam(c.req.query("limit"), 50, 1, 100);
     const cursor = c.req.query("cursor");
-    const result = storage.threads.list(limit, cursor ?? undefined);
+    const result = await storage.threads.list(limit, cursor ?? undefined);
     return c.json(result);
   });
 
-  router.get("/:id", (c) => {
+  router.get("/:id", async (c) => {
     requireAuth(c);
     const id = c.req.param("id");
     if (!isValidId(id)) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid thread ID");
     }
-    const thread = storage.threads.get(id);
+    const thread = await storage.threads.get(id);
     if (!thread) {
       throw new ProtocolError(ErrorCode.THREAD_NOT_FOUND, `Thread ${id} not found`);
     }
-    const items = storage.threads.getItems(id);
+    const items = await storage.threads.getItems(id);
     return c.json({ thread, items });
   });
 

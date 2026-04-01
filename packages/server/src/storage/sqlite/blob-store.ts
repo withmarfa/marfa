@@ -6,12 +6,12 @@ import type { DrizzleDb } from "./connection.js";
 export class SqliteBlobStore implements BlobStore {
   constructor(private db: DrizzleDb) {}
 
-  register(
+  async register(
     hash: string,
     mimeType: string,
     size: number,
     storagePath: string,
-  ): void {
+  ): Promise<void> {
     // Idempotent — ignore if hash already exists
     this.db
       .insert(blobs)
@@ -20,9 +20,9 @@ export class SqliteBlobStore implements BlobStore {
       .run();
   }
 
-  get(
+  async get(
     hash: string,
-  ): { mime_type: string; size: number; storage_path: string } | null {
+  ): Promise<{ mime_type: string; size: number; storage_path: string } | null> {
     const row = this.db.select().from(blobs).where(eq(blobs.hash, hash)).get();
     if (!row) return null;
     return {

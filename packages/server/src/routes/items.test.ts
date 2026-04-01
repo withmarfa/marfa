@@ -4,8 +4,8 @@ import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 
-beforeAll(() => {
-  ctx = createTestContext();
+beforeAll(async () => {
+  ctx = await createTestContext();
 });
 
 afterAll(() => {
