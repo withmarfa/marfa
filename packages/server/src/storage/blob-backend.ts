@@ -1,12 +1,28 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdirSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+
+// ---------------------------------------------------------------------------
+// BlobBackend interface
+// ---------------------------------------------------------------------------
+
+export interface BlobBackend {
+  put(key: string, bytes: Buffer): Promise<void>;
+  get(key: string): Promise<Buffer | null>;
+  exists(key: string): Promise<boolean>;
+  getPresignedUrl?(key: string, ttlSeconds: number): Promise<string>;
+}
+
+// ---------------------------------------------------------------------------
+// Filesystem implementation
+// ---------------------------------------------------------------------------
 
 /**
  * Filesystem-based blob storage. Content-addressed by hash.
  * Files are stored in a two-level directory structure using the first
  * 4 characters of the hex digest as a prefix (e.g., blobs/e3b0/e3b0c44...).
  */
-export class FilesystemBlobBackend {
+export class FilesystemBlobBackend implements BlobBackend {
   private basePath: string;
 
   constructor(basePath: string) {
@@ -17,13 +33,9 @@ export class FilesystemBlobBackend {
   }
 
   private safePath(key: string): string {
-    // key is the full hash string (sha256:<hex>)
-    // Strip the prefix for the filename
     const hex = key.replace("sha256:", "");
-    // Two-level directory: first 4 chars as prefix
     const prefix = hex.slice(0, 4);
     const path = join(this.basePath, prefix, hex);
-    // Path traversal protection
     const resolved = resolve(path);
     if (!resolved.startsWith(this.basePath)) {
       throw new Error("Invalid blob key");
@@ -31,22 +43,33 @@ export class FilesystemBlobBackend {
     return resolved;
   }
 
-  put(key: string, bytes: Buffer): void {
+  async put(key: string, bytes: Buffer): Promise<void> {
     const path = this.safePath(key);
     const dir = join(path, "..");
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-    writeFileSync(path, bytes);
+    await mkdir(dir, { recursive: true });
+    await writeFile(path, bytes);
   }
 
-  get(key: string): Buffer | null {
+  async get(key: string): Promise<Buffer | null> {
     const path = this.safePath(key);
-    if (!existsSync(path)) return null;
-    return readFileSync(path);
+    try {
+      return await readFile(path);
+    } catch (err: unknown) {
+      if (isEnoent(err)) return null;
+      throw err;
+    }
   }
 
-  exists(key: string): boolean {
-    return existsSync(this.safePath(key));
+  async exists(key: string): Promise<boolean> {
+    try {
+      await access(this.safePath(key));
+      return true;
+    } catch {
+      return false;
+    }
   }
+}
+
+function isEnoent(err: unknown): boolean {
+  return err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT";
 }

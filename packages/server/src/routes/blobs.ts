@@ -4,11 +4,11 @@ import { ProtocolError, ErrorCode, isValidBlobHash } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import type { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import type { BlobBackend } from "../storage/blob-backend.js";
 
 export function blobRoutes(
   storage: Storage,
-  blobBackend: FilesystemBlobBackend,
+  blobBackend: BlobBackend,
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
@@ -45,8 +45,8 @@ export function blobRoutes(
     const hash = `sha256:${hex}`;
 
     // Store if not already present
-    if (!blobBackend.exists(hash)) {
-      blobBackend.put(hash, data);
+    if (!(await blobBackend.exists(hash))) {
+      await blobBackend.put(hash, data);
     }
 
     // Register metadata (idempotent)
@@ -59,7 +59,6 @@ export function blobRoutes(
     requireAuth(c);
 
     let hash = c.req.param("hash");
-    // Accept both "sha256:<hex>" and bare "<hex>"
     if (!hash.startsWith("sha256:")) {
       hash = `sha256:${hash}`;
     }
@@ -72,7 +71,7 @@ export function blobRoutes(
       throw new ProtocolError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
 
-    const data = blobBackend.get(hash);
+    const data = await blobBackend.get(hash);
     if (!data) {
       throw new ProtocolError(ErrorCode.BLOB_NOT_FOUND, "Blob data not found");
     }
@@ -84,6 +83,35 @@ export function blobRoutes(
         "Content-Length": String(data.length),
       },
     });
+  });
+
+  // Presigned download URL (S3 backend only)
+  router.get("/:hash/url", async (c) => {
+    requireAuth(c);
+
+    if (!blobBackend.getPresignedUrl) {
+      throw new ProtocolError(
+        ErrorCode.VALIDATION_ERROR,
+        "Presigned URLs are not available with the current blob backend",
+      );
+    }
+
+    let hash = c.req.param("hash");
+    if (!hash.startsWith("sha256:")) {
+      hash = `sha256:${hash}`;
+    }
+    if (!isValidBlobHash(hash)) {
+      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
+    }
+
+    const record = await storage.blobs.get(hash);
+    if (!record) {
+      throw new ProtocolError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
+    }
+
+    const ttl = Number(c.req.query("ttl")) || 3600;
+    const url = await blobBackend.getPresignedUrl(hash, ttl);
+    return c.json({ url, expires_in: ttl });
   });
 
   return router;

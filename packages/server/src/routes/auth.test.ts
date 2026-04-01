@@ -50,6 +50,12 @@ describe("bootstrap mode", () => {
       sqlitePath: "",
       databaseUrl: "",
       blobPath: "",
+      blobBackend: "fs",
+      s3Bucket: "",
+      s3Region: "us-east-1",
+      s3Endpoint: "",
+      s3AccessKeyId: "",
+      s3SecretAccessKey: "",
       apiKeySalt: "test-salt",
       corsOrigins: [],
     });

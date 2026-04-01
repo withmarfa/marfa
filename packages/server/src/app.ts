@@ -5,7 +5,7 @@ import type { AppEnv } from "./middleware/auth.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
-import type { FilesystemBlobBackend } from "./storage/blob-backend.js";
+import type { BlobBackend } from "./storage/blob-backend.js";
 import { itemRoutes } from "./routes/items.js";
 import { threadRoutes } from "./routes/threads.js";
 import { typeRoutes } from "./routes/types.js";
@@ -16,7 +16,7 @@ import { importRoutes, exportRoutes } from "./routes/import-export.js";
 
 export function createApp(
   storage: Storage,
-  blobBackend: FilesystemBlobBackend,
+  blobBackend: BlobBackend,
   config: AppConfig,
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();

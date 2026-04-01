@@ -2,6 +2,7 @@ import { createApp } from "./app.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
+import type { BlobBackend } from "./storage/blob-backend.js";
 import { hashApiKey } from "./middleware/auth.js";
 import type { Storage } from "./storage/interface.js";
 import type { Hono } from "hono";
@@ -15,7 +16,7 @@ const SALT = "test-salt";
 export interface TestContext {
   app: Hono<AppEnv>;
   storage: Storage;
-  blobBackend: FilesystemBlobBackend;
+  blobBackend: BlobBackend;
   adminKey: string;
   cleanup: () => void;
 }
@@ -49,6 +50,12 @@ export async function createTestContext(): Promise<TestContext> {
     sqlitePath: "",
     databaseUrl: "",
     blobPath,
+    blobBackend: "fs",
+    s3Bucket: "",
+    s3Region: "us-east-1",
+    s3Endpoint: "",
+    s3AccessKeyId: "",
+    s3SecretAccessKey: "",
     apiKeySalt: SALT,
     corsOrigins: [],
   });
