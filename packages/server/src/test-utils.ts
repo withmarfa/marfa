@@ -1,5 +1,6 @@
 import { createApp } from "./app.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
+import { createPgStorage } from "./storage/pg/index.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import { hashApiKey } from "./middleware/auth.js";
 import type { Storage } from "./storage/interface.js";
@@ -19,25 +20,42 @@ export interface TestContext {
   cleanup: () => void;
 }
 
+async function truncatePg(storage: Storage): Promise<void> {
+  const s = storage as Record<string, unknown>;
+  if (typeof s._pgTruncate === "function") {
+    await (s._pgTruncate as () => Promise<void>)();
+  }
+}
+
 export async function createTestContext(): Promise<TestContext> {
+  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
   const tmpDir = mkdtempSync(join(tmpdir(), "myme-test-"));
-  const dbPath = join(tmpDir, "test.db");
   const blobPath = join(tmpDir, "blobs");
 
-  const storage = createSqliteStorage(dbPath);
+  let storage: Storage;
+  if (dialect === "pg") {
+    const databaseUrl = process.env.DATABASE_URL ?? "postgres://myme:myme_dev@localhost:5434/myme";
+    storage = await createPgStorage(databaseUrl);
+    await truncatePg(storage);
+  } else {
+    const dbPath = join(tmpDir, "test.db");
+    storage = createSqliteStorage(dbPath);
+  }
+
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const app = createApp(storage, blobBackend, {
     port: 0,
-    storageDialect: "sqlite",
-    sqlitePath: dbPath,
+    storageDialect: dialect as "sqlite" | "pg",
+    sqlitePath: "",
     databaseUrl: "",
     blobPath,
     apiKeySalt: SALT,
     corsOrigins: [],
   });
 
-  // Create a bootstrap admin key
-  const rawKey = "myme_k1_test_admin_key_for_testing";
+  // Create a bootstrap admin key (unique per test context to avoid PG conflicts)
+  const suffix = Math.random().toString(36).slice(2, 14);
+  const rawKey = `myme_k1_test_admin_key_${suffix}`;
   const keyHash = hashApiKey(rawKey, SALT);
   await storage.keys.create(
     { label: "test-admin", role: "admin", type_permissions: {} },

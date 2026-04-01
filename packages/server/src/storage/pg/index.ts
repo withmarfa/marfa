@@ -23,7 +23,7 @@ export async function createPgStorage(
   const keyStore = new PgKeyStore(db);
   const blobStore = new PgBlobStore(db);
 
-  return {
+  const storage = {
     items: itemStore,
     metadata: metadataStore,
     versions: versionStore,
@@ -33,5 +33,11 @@ export async function createPgStorage(
     keys: keyStore,
     blobs: blobStore,
     close,
+    /** Truncate all tables — used by tests for isolation. */
+    async _pgTruncate(): Promise<void> {
+      await client`TRUNCATE items, metadata, versions, threads, api_keys, blobs CASCADE`;
+    },
   };
+
+  return storage;
 }

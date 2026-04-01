@@ -84,8 +84,13 @@ export async function createConnection(connectionString: string): Promise<{
   const client = postgres(connectionString, { max: 10 });
   const db = drizzle(client, { schema });
 
-  // Apply schema
-  await client.unsafe(SCHEMA_SQL);
+  // Apply schema — use advisory lock to prevent concurrent DDL race conditions
+  await client.unsafe(`SELECT pg_advisory_lock(42)`);
+  try {
+    await client.unsafe(SCHEMA_SQL);
+  } finally {
+    await client.unsafe(`SELECT pg_advisory_unlock(42)`);
+  }
 
   return {
     db,
