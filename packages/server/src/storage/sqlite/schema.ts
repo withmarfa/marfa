@@ -112,3 +112,61 @@ export const blobs = sqliteTable("blobs", {
   size: integer("size").notNull(),
   storage_path: text("storage_path").notNull(),
 });
+
+// ---------------------------------------------------------------------------
+// OAuth tables
+// ---------------------------------------------------------------------------
+
+export const oauthClients = sqliteTable("oauth_clients", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  redirect_uris: text("redirect_uris").notNull().default("[]"),
+  created_at: text("created_at").notNull(),
+});
+
+export const oauthGrants = sqliteTable(
+  "oauth_grants",
+  {
+    id: text("id").primaryKey(),
+    client_id: text("client_id")
+      .notNull()
+      .references(() => oauthClients.id),
+    scopes: text("scopes").notNull().default("[]"),
+    created_at: text("created_at").notNull(),
+  },
+  (table) => [index("idx_oauth_grants_client_id").on(table.client_id)],
+);
+
+export const oauthTokens = sqliteTable(
+  "oauth_tokens",
+  {
+    id: text("id").primaryKey(),
+    grant_id: text("grant_id")
+      .notNull()
+      .references(() => oauthGrants.id),
+    token_hash: text("token_hash").notNull().unique(),
+    token_type: text("token_type").notNull(),
+    expires_at: text("expires_at").notNull(),
+    revoked_at: text("revoked_at"),
+    used_at: text("used_at"),
+    created_at: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_oauth_tokens_grant_id").on(table.grant_id),
+    index("idx_oauth_tokens_token_hash").on(table.token_hash),
+  ],
+);
+
+export const oauthCodes = sqliteTable("oauth_codes", {
+  id: text("id").primaryKey(),
+  grant_id: text("grant_id")
+    .notNull()
+    .references(() => oauthGrants.id),
+  code_hash: text("code_hash").notNull().unique(),
+  code_challenge: text("code_challenge").notNull(),
+  code_challenge_method: text("code_challenge_method").notNull(),
+  redirect_uri: text("redirect_uri").notNull(),
+  expires_at: text("expires_at").notNull(),
+  used_at: text("used_at"),
+  created_at: text("created_at").notNull(),
+});

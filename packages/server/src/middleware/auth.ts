@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { createMiddleware } from "hono/factory";
 import type { Context } from "hono";
-import { ProtocolError, ErrorCode, resolveTypePermission } from "@myme/shared";
+import { ProtocolError, ErrorCode, resolveTypePermission, scopesToTypePermissions } from "@myme/shared";
 import type { ApiKey } from "@myme/shared";
 import type { Storage } from "../storage/interface.js";
 
@@ -13,6 +13,7 @@ export interface AppEnv {
   Variables: {
     apiKey: ApiKey | undefined;
     isBootstrap: boolean;
+    authType: "api_key" | "oauth" | undefined;
   };
 }
 
@@ -21,6 +22,7 @@ export interface AppEnv {
 // ---------------------------------------------------------------------------
 
 const KEY_PREFIX = "myme_k1_";
+const ACCESS_TOKEN_PREFIX = "myme_at_";
 const DEBOUNCE_MS = 3600_000; // 1 hour
 
 export function hashApiKey(raw: string, salt: string): string {
@@ -41,6 +43,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       if (keyCount === 0) {
         c.set("apiKey", undefined);
         c.set("isBootstrap", true);
+        c.set("authType", undefined);
         return next();
       }
     }
@@ -50,39 +53,70 @@ export function authMiddleware(storage: Storage, salt: string) {
     const authHeader = c.req.header("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       c.set("apiKey", undefined);
+      c.set("authType", undefined);
       return next();
     }
 
     const token = authHeader.slice(7);
-    if (!token.startsWith(KEY_PREFIX)) {
-      c.set("apiKey", undefined);
+
+    // OAuth access token
+    if (token.startsWith(ACCESS_TOKEN_PREFIX)) {
+      const hash = hashApiKey(token, salt);
+      const oauthToken = await storage.oauth.validateToken(hash);
+
+      if (!oauthToken) {
+        c.set("apiKey", undefined);
+        c.set("authType", undefined);
+        return next();
+      }
+
+      // Build a synthetic ApiKey from the OAuth token's scopes
+      const typePermissions = scopesToTypePermissions(oauthToken.scopes);
+      c.set("apiKey", {
+        id: oauthToken.id,
+        label: `oauth:${oauthToken.grant_id}`,
+        role: "member",
+        type_permissions: typePermissions,
+        created_at: oauthToken.created_at,
+      });
+      c.set("authType", "oauth");
       return next();
     }
 
-    const hash = hashApiKey(token, salt);
-    const stored = await storage.keys.validate(hash);
+    // API key
+    if (token.startsWith(KEY_PREFIX)) {
+      const hash = hashApiKey(token, salt);
+      const stored = await storage.keys.validate(hash);
 
-    if (!stored) {
-      c.set("apiKey", undefined);
+      if (!stored) {
+        c.set("apiKey", undefined);
+        c.set("authType", undefined);
+        return next();
+      }
+
+      c.set("apiKey", {
+        id: stored.id,
+        label: stored.label,
+        role: stored.role,
+        type_permissions: stored.type_permissions,
+        created_at: stored.created_at,
+      });
+      c.set("authType", "api_key");
+
+      // Debounced last_used_at update
+      const now = Date.now();
+      const lastTracked = lastUsedCache.get(stored.id) ?? 0;
+      if (now - lastTracked > DEBOUNCE_MS) {
+        lastUsedCache.set(stored.id, now);
+        await storage.keys.updateLastUsed(stored.id);
+      }
+
       return next();
     }
 
-    c.set("apiKey", {
-      id: stored.id,
-      label: stored.label,
-      role: stored.role,
-      type_permissions: stored.type_permissions,
-      created_at: stored.created_at,
-    });
-
-    // Debounced last_used_at update
-    const now = Date.now();
-    const lastTracked = lastUsedCache.get(stored.id) ?? 0;
-    if (now - lastTracked > DEBOUNCE_MS) {
-      lastUsedCache.set(stored.id, now);
-      await storage.keys.updateLastUsed(stored.id);
-    }
-
+    // Unknown token format
+    c.set("apiKey", undefined);
+    c.set("authType", undefined);
     return next();
   });
 }

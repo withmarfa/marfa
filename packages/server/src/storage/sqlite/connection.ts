@@ -110,6 +110,46 @@ export function createConnection(sqlitePath: string): {
       size INTEGER NOT NULL,
       storage_path TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      redirect_uris TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_grants (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL REFERENCES oauth_clients(id),
+      scopes TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_grants_client_id ON oauth_grants(client_id);
+
+    CREATE TABLE IF NOT EXISTS oauth_tokens (
+      id TEXT PRIMARY KEY,
+      grant_id TEXT NOT NULL REFERENCES oauth_grants(id),
+      token_hash TEXT NOT NULL UNIQUE,
+      token_type TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      used_at TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_grant_id ON oauth_tokens(grant_id);
+    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_token_hash ON oauth_tokens(token_hash);
+
+    CREATE TABLE IF NOT EXISTS oauth_codes (
+      id TEXT PRIMARY KEY,
+      grant_id TEXT NOT NULL REFERENCES oauth_grants(id),
+      code_hash TEXT NOT NULL UNIQUE,
+      code_challenge TEXT NOT NULL,
+      code_challenge_method TEXT NOT NULL,
+      redirect_uri TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL
+    );
   `);
 
   // Create FTS5 virtual table

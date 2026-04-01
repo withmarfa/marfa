@@ -8,6 +8,7 @@ import { PgTypeStore } from "./type-store.js";
 import { PgSearchStore } from "./search-store.js";
 import { PgKeyStore } from "./key-store.js";
 import { PgBlobStore } from "./blob-store.js";
+import { PgOAuthStore } from "./oauth-store.js";
 
 export async function createPgStorage(
   connectionString: string,
@@ -22,6 +23,7 @@ export async function createPgStorage(
   const typeStore = new PgTypeStore();
   const keyStore = new PgKeyStore(db);
   const blobStore = new PgBlobStore(db);
+  const oauthStore = new PgOAuthStore(db);
 
   const storage = {
     items: itemStore,
@@ -32,10 +34,11 @@ export async function createPgStorage(
     search: searchStore,
     keys: keyStore,
     blobs: blobStore,
+    oauth: oauthStore,
     close,
     /** Truncate all tables — used by tests for isolation. */
     async _pgTruncate(): Promise<void> {
-      await client`TRUNCATE items, metadata, versions, threads, api_keys, blobs CASCADE`;
+      await client`TRUNCATE items, metadata, versions, threads, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes CASCADE`;
     },
   };
 

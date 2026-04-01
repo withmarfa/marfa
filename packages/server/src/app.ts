@@ -13,6 +13,7 @@ import { searchRoutes } from "./routes/search.js";
 import { blobRoutes } from "./routes/blobs.js";
 import { keyRoutes } from "./routes/keys.js";
 import { importRoutes, exportRoutes } from "./routes/import-export.js";
+import { authRoutes } from "./routes/oauth.js";
 
 export function createApp(
   storage: Storage,
@@ -34,7 +35,7 @@ export function createApp(
     c.json({
       name: "myme",
       version: "0.0.1",
-      features: ["items", "threads", "search", "blobs", "types", "keys", "import", "export"],
+      features: ["items", "threads", "search", "blobs", "types", "keys", "import", "export", "oauth"],
     }),
   );
   app.get("/health", (c) => c.json({ status: "ok" }));
@@ -51,6 +52,7 @@ export function createApp(
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/import", importRoutes(storage));
   app.route("/export", exportRoutes(storage));
+  app.route("/auth", authRoutes(storage, config.apiKeySalt));
 
   return app;
 }

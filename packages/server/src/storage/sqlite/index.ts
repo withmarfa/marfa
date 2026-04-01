@@ -8,6 +8,7 @@ import { SqliteTypeStore } from "./type-store.js";
 import { SqliteSearchStore } from "./search-store.js";
 import { SqliteKeyStore } from "./key-store.js";
 import { SqliteBlobStore } from "./blob-store.js";
+import { SqliteOAuthStore } from "./oauth-store.js";
 
 export function createSqliteStorage(sqlitePath: string): Storage {
   const { db, raw, close } = createConnection(sqlitePath);
@@ -20,6 +21,7 @@ export function createSqliteStorage(sqlitePath: string): Storage {
   const typeStore = new SqliteTypeStore();
   const keyStore = new SqliteKeyStore(db);
   const blobStore = new SqliteBlobStore(db);
+  const oauthStore = new SqliteOAuthStore(db);
 
   return {
     items: itemStore,
@@ -30,6 +32,7 @@ export function createSqliteStorage(sqlitePath: string): Storage {
     search: searchStore,
     keys: keyStore,
     blobs: blobStore,
+    oauth: oauthStore,
     async close() {
       close();
     },

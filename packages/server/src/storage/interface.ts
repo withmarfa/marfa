@@ -139,6 +139,47 @@ export interface BlobStore {
 }
 
 // ---------------------------------------------------------------------------
+// OAuth store
+// ---------------------------------------------------------------------------
+
+export interface OAuthStore {
+  createClient(input: { name: string; redirect_uris: string[] }): Promise<import("@myme/shared").OAuthClient>;
+  getClient(id: string): Promise<import("@myme/shared").OAuthClient | null>;
+  listClients(): Promise<import("@myme/shared").OAuthClient[]>;
+
+  createGrant(clientId: string, scopes: string[]): Promise<import("@myme/shared").OAuthGrant>;
+  getGrantsByClient(clientId: string): Promise<import("@myme/shared").OAuthGrant[]>;
+
+  createCode(
+    grantId: string,
+    codeHash: string,
+    challenge: string,
+    method: string,
+    redirectUri: string,
+    expiresAt: string,
+  ): Promise<import("@myme/shared").OAuthCode>;
+  /** Atomically marks a code as used. Returns null if already consumed or expired. */
+  consumeCode(codeHash: string): Promise<(import("@myme/shared").OAuthCode & { scopes: string[] }) | null>;
+
+  createToken(
+    grantId: string,
+    tokenHash: string,
+    type: import("@myme/shared").OAuthTokenType,
+    expiresAt: string,
+  ): Promise<import("@myme/shared").OAuthToken>;
+  /** Validates a token hash. Returns null if not found, expired, or revoked. */
+  validateToken(tokenHash: string): Promise<(import("@myme/shared").OAuthToken & { scopes: string[] }) | null>;
+  listTokens(): Promise<import("@myme/shared").OAuthToken[]>;
+  revokeToken(id: string): Promise<void>;
+  reduceTokenScope(id: string, scopes: string[]): Promise<void>;
+
+  /** Marks a refresh token as used. Returns false if already used (replay). */
+  markRefreshUsed(id: string): Promise<boolean>;
+  /** Revokes all tokens for a grant (used after replay detection). */
+  revokeGrantTokens(grantId: string): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
 // Aggregate storage interface
 // ---------------------------------------------------------------------------
 
@@ -151,5 +192,6 @@ export interface Storage {
   search: SearchStore;
   keys: KeyStore;
   blobs: BlobStore;
+  oauth: OAuthStore;
   close(): Promise<void>;
 }
