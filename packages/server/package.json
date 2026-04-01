@@ -24,7 +24,8 @@
     "@myme/shared": "workspace:*",
     "better-sqlite3": "^11.8.1",
     "drizzle-orm": "^0.44.1",
-    "hono": "^4.7.5"
+    "hono": "^4.7.5",
+    "postgres": "^3.4.8"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

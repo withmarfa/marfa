@@ -1,0 +1,97 @@
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
+import * as schema from "./schema.js";
+
+export type PgDb = ReturnType<typeof drizzle<typeof schema>>;
+export type PgClient = ReturnType<typeof postgres>;
+
+const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS threads (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS items (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'new',
+  properties TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  source TEXT,
+  source_id TEXT,
+  origin TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  schema_version INTEGER,
+  device_id TEXT,
+  parent_id TEXT,
+  thread_id TEXT REFERENCES threads(id),
+  capture_latitude DOUBLE PRECISION,
+  capture_longitude DOUBLE PRECISION
+);
+
+CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
+CREATE INDEX IF NOT EXISTS idx_items_state ON items(state);
+CREATE INDEX IF NOT EXISTS idx_items_thread_id ON items(thread_id);
+CREATE INDEX IF NOT EXISTS idx_items_parent_id ON items(parent_id);
+CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at);
+CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_dedup
+  ON items(source, source_id) WHERE source IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS metadata (
+  item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+  tags TEXT NOT NULL DEFAULT '[]',
+  about TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS versions (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  properties TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  device_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_versions_item_id ON versions(item_id);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  key_hash TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
+  created_at TEXT NOT NULL,
+  revoked_at TEXT,
+  last_used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS blobs (
+  hash TEXT PRIMARY KEY,
+  mime_type TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  storage_path TEXT NOT NULL
+);
+`;
+
+export async function createConnection(connectionString: string): Promise<{
+  db: PgDb;
+  client: PgClient;
+  close: () => Promise<void>;
+}> {
+  const client = postgres(connectionString, { max: 10 });
+  const db = drizzle(client, { schema });
+
+  // Apply schema
+  await client.unsafe(SCHEMA_SQL);
+
+  return {
+    db,
+    client,
+    close: async () => {
+      await client.end();
+    },
+  };
+}

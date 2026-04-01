@@ -46,7 +46,9 @@ describe("bootstrap mode", () => {
     const blobBackend = new FilesystemBlobBackend(join(freshTmpDir, "blobs"));
     const app = createApp(storage, blobBackend, {
       port: 0,
+      storageDialect: "sqlite",
       sqlitePath: "",
+      databaseUrl: "",
       blobPath: "",
       apiKeySalt: "test-salt",
       corsOrigins: [],

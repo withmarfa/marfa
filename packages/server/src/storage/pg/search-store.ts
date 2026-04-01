@@ -1,0 +1,110 @@
+import type { SearchResult } from "@myme/shared";
+import type { SearchStore, SearchFilters } from "../interface.js";
+import type { PgClient } from "./connection.js";
+import { rowToItem } from "./helpers.js";
+import type { items } from "./schema.js";
+
+export class PgSearchStore implements SearchStore {
+  constructor(private client: PgClient) {}
+
+  // No-op for Postgres — full-text search operates directly on the properties column
+  async index(
+    _itemId: string,
+    _properties: Record<string, unknown>,
+  ): Promise<void> {
+    // Postgres computes tsvectors from properties at query time
+  }
+
+  // No-op for Postgres
+  async remove(_itemId: string): Promise<void> {
+    // Nothing to remove — no separate FTS table
+  }
+
+  async search(query: string, filters: SearchFilters): Promise<SearchResult[]> {
+    const limit = Math.min(filters.limit ?? 20, 100);
+    const conditions: string[] = [];
+    const params: (string | number)[] = [];
+    let paramIdx = 1;
+
+    // The tsquery parameter
+    params.push(query);
+    const queryParam = `$${String(paramIdx++)}`;
+
+    // tsvector expression over JSON properties
+    const tsvec = `to_tsvector('english',
+      coalesce(i.properties::json->>'title','') || ' ' ||
+      coalesce(i.properties::json->>'body','') || ' ' ||
+      coalesce(i.properties::json->>'description','') || ' ' ||
+      coalesce(i.properties::json->>'name','')
+    )`;
+
+    // Default: exclude trashed
+    if (filters.state) {
+      params.push(filters.state);
+      conditions.push(`AND i.state = $${String(paramIdx++)}`);
+    } else {
+      conditions.push("AND i.state != 'trashed'");
+    }
+
+    if (filters.type) {
+      params.push(filters.type);
+      conditions.push(`AND i.type = $${String(paramIdx++)}`);
+    }
+
+    // Type permission filtering
+    if (filters.allowed_types) {
+      const typeClauses = filters.allowed_types.map((pattern) => {
+        if (pattern === "*") return "1=1";
+        if (pattern.endsWith(".*")) {
+          params.push(pattern.slice(0, -1) + "%");
+          return `i.type LIKE $${String(paramIdx++)}`;
+        }
+        params.push(pattern);
+        return `i.type = $${String(paramIdx++)}`;
+      });
+      if (typeClauses.length > 0) {
+        conditions.push(`AND (${typeClauses.join(" OR ")})`);
+      }
+    }
+
+    params.push(limit);
+    const limitParam = `$${String(paramIdx++)}`;
+
+    const rawSql = `
+      SELECT
+        i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
+        i.timestamp, i.source, i.source_id, i.origin, i.version,
+        i.schema_version, i.device_id, i.parent_id, i.thread_id,
+        i.capture_latitude, i.capture_longitude,
+        m.item_id AS meta_item_id, m.tags, m.about,
+        ts_rank(${tsvec}, plainto_tsquery('english', ${queryParam})) AS rank,
+        ts_headline('english',
+          coalesce(i.properties::json->>'title','') || ' ' ||
+          coalesce(i.properties::json->>'body','') || ' ' ||
+          coalesce(i.properties::json->>'description','') || ' ' ||
+          coalesce(i.properties::json->>'name',''),
+          plainto_tsquery('english', ${queryParam}),
+          'StartSel=<mark>, StopSel=</mark>, MaxFragments=1, MaxWords=32'
+        ) AS snippet
+      FROM items i
+      LEFT JOIN metadata m ON m.item_id = i.id
+      WHERE ${tsvec} @@ plainto_tsquery('english', ${queryParam})
+        ${conditions.join("\n        ")}
+      ORDER BY rank DESC
+      LIMIT ${limitParam}
+    `;
+
+    const rows = await this.client.unsafe(rawSql, params);
+
+    return rows.map((row) => ({
+      item: rowToItem(row as unknown as typeof items.$inferSelect),
+      metadata: {
+        item_id: row.id as string,
+        tags: JSON.parse((row.tags as string | null) ?? "[]") as string[],
+        about: JSON.parse((row.about as string | null) ?? "[]") as string[],
+      },
+      relevance_score: Math.abs(row.rank as number),
+      snippet: (row.snippet as string) || undefined,
+    }));
+  }
+}

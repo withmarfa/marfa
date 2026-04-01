@@ -28,7 +28,9 @@ export async function createTestContext(): Promise<TestContext> {
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const app = createApp(storage, blobBackend, {
     port: 0,
+    storageDialect: "sqlite",
     sqlitePath: dbPath,
+    databaseUrl: "",
     blobPath,
     apiKeySalt: SALT,
     corsOrigins: [],
