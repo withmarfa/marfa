@@ -19,7 +19,8 @@ export function parseScope(scope: string): ParsedScope | null {
   }
   const match = SCOPE_RE.exec(scope);
   if (!match) return null;
-  return { typePattern: match[1]!, operation: match[2] as "read" | "write" };
+  const typePattern = match[1] ?? "";
+  return { typePattern, operation: match[2] as "read" | "write" };
 }
 
 /** Returns true if the scope string is syntactically valid. */
@@ -113,7 +114,7 @@ export function scopeCovers(
     if (!parsed) continue;
     if (parsed.typePattern !== requiredType) continue;
     if (parsed.operation === "write") return true;
-    if (parsed.operation === "read" && requiredOp === "read") return true;
+    if (requiredOp === "read") return true;
   }
   return false;
 }

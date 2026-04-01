@@ -35,7 +35,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
 
   router.post("/clients", async (c) => {
     requireAdmin(c);
-    const body = (await c.req.json()) as { name?: string; redirect_uris?: string[] };
+    const body = (await c.req.json());
     if (!body.name || !body.redirect_uris?.length) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "name and redirect_uris are required");
     }
@@ -170,7 +170,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
   // -----------------------------------------------------------------------
 
   router.post("/token", async (c) => {
-    const body = (await c.req.json()) as Record<string, string>;
+    const body = (await c.req.json());
     const grantType = body.grant_type;
 
     if (grantType === "authorization_code") {
@@ -201,7 +201,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
 
   router.patch("/tokens/:id", async (c) => {
     requireAuth(c);
-    const body = (await c.req.json()) as { scopes?: string[] };
+    const body = (await c.req.json());
     if (!body.scopes) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "scopes is required");
     }
@@ -284,7 +284,7 @@ async function handleRefresh(
   const refreshHash = hashApiKey(refresh_token, salt);
   const refreshRecord = await storage.oauth.validateToken(refreshHash);
 
-  if (!refreshRecord || refreshRecord.token_type !== "refresh") {
+  if (refreshRecord?.token_type !== "refresh") {
     throw new ProtocolError(ErrorCode.INVALID_GRANT, "Invalid refresh token");
   }
 

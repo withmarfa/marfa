@@ -1,5 +1,4 @@
 import { ShapeStream } from "@electric-sql/client";
-import type { Row } from "@electric-sql/client";
 
 export interface ElectricConfig {
   url: string;

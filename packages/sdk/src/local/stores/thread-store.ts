@@ -28,7 +28,7 @@ export class LocalThreadStore {
 
     return {
       data,
-      cursor: hasMore && data.length > 0 ? data[data.length - 1]!.id : null,
+      cursor: hasMore && data.length > 0 ? data.at(-1)?.id ?? null : null,
       has_more: hasMore,
     };
   }

@@ -25,7 +25,7 @@ export class ConnectionStateManager {
 
   transition(newState: ConnectionState, error?: Error): void {
     const allowed = VALID_TRANSITIONS[this.state];
-    if (!allowed?.includes(newState)) {
+    if (!allowed.includes(newState)) {
       console.warn(`ConnectionState: unexpected transition ${this.state} → ${newState}`);
     }
 

@@ -21,22 +21,22 @@ export class ElectricBridge {
     // Subscribe to threads first (items may reference threads)
     this.unsubscribers.push(
       this.streams.threads.subscribe(
-        (messages) => this.handleMessages("threads", messages),
-        (err) => this.handleError(err),
+        (messages) => { this.handleMessages("threads", messages); },
+        (err) => { this.handleError(err); },
       ),
     );
 
     this.unsubscribers.push(
       this.streams.items.subscribe(
-        (messages) => this.handleMessages("items", messages),
-        (err) => this.handleError(err),
+        (messages) => { this.handleMessages("items", messages); },
+        (err) => { this.handleError(err); },
       ),
     );
 
     this.unsubscribers.push(
       this.streams.metadata.subscribe(
-        (messages) => this.handleMessages("metadata", messages),
-        (err) => this.handleError(err),
+        (messages) => { this.handleMessages("metadata", messages); },
+        (err) => { this.handleError(err); },
       ),
     );
 
@@ -51,7 +51,7 @@ export class ElectricBridge {
     this.connectionState.transition("disconnected");
   }
 
-  private handleMessages(table: string, messages: Message<Row>[]): void {
+  private handleMessages(table: string, messages: Message[]): void {
     for (const msg of messages) {
       if ("headers" in msg && "control" in msg.headers) {
         if (msg.headers.control === "up-to-date") {
@@ -110,11 +110,13 @@ export class ElectricBridge {
 // ---------------------------------------------------------------------------
 
 function str(v: unknown): string {
-  return String(v ?? "");
+  if (v == null) return "";
+  return `${v as string | number | boolean}`;
 }
 
 function optStr(v: unknown): string | undefined {
-  return v == null ? undefined : String(v);
+  if (v == null) return undefined;
+  return `${v as string | number | boolean}`;
 }
 
 function num(v: unknown, fallback: number): number {

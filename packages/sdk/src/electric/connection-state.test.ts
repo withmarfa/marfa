@@ -56,6 +56,7 @@ describe("ConnectionStateManager", () => {
 
   it("warns on unexpected transitions but still applies", () => {
     const mgr = new ConnectionStateManager();
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     // disconnected → connected is not in the valid list

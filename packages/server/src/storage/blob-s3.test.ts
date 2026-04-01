@@ -12,16 +12,19 @@ vi.mock("@aws-sdk/client-s3", () => {
     }
     send = mockSend;
   }
+  // eslint-disable-next-line @typescript-eslint/no-extraneous-class
   class MockPutObjectCommand {
     constructor(input: Record<string, unknown>) {
       Object.assign(this, input);
     }
   }
+  // eslint-disable-next-line @typescript-eslint/no-extraneous-class
   class MockGetObjectCommand {
     constructor(input: Record<string, unknown>) {
       Object.assign(this, input);
     }
   }
+  // eslint-disable-next-line @typescript-eslint/no-extraneous-class
   class MockHeadObjectCommand {
     constructor(input: Record<string, unknown>) {
       Object.assign(this, input);

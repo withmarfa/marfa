@@ -65,12 +65,13 @@ describe("MutationQueue", () => {
     const queue = new MutationQueue(db, client);
     const order: string[] = [];
 
-    (client.items.create as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+    (client.items.create as ReturnType<typeof vi.fn>).mockImplementation(() => {
       order.push("create");
-      return { id: "id" };
+      return Promise.resolve({ id: "id" });
     });
-    (client.items.delete as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+    (client.items.delete as ReturnType<typeof vi.fn>).mockImplementation(() => {
       order.push("delete");
+      return Promise.resolve(undefined);
     });
 
     queue.enqueue("create", "item", "item-1", { type: "core.note", properties: { body: "a" } });

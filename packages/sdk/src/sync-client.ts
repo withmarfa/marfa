@@ -66,19 +66,19 @@ export class MymeSyncClient {
 
   // ---- Lifecycle ----
 
-  async start(): Promise<void> {
+  start(): void {
     const streams = createShapeStreams(this.electricConfig);
     this.bridge = new ElectricBridge(streams, this.localStorage, this.connectionManager);
     this.bridge.start();
   }
 
-  async stop(): Promise<void> {
+  stop(): void {
     this.bridge?.stop();
     this.bridge = null;
   }
 
-  async close(): Promise<void> {
-    await this.stop();
+  close(): void {
+    this.stop();
     this.localStorage.close();
   }
 

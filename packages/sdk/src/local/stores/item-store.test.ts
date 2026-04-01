@@ -32,9 +32,9 @@ describe("LocalItemStore", () => {
     store.upsert(testItem);
     const result = store.get(testItem.id);
     expect(result).not.toBeNull();
-    expect(result!.id).toBe(testItem.id);
-    expect(result!.type).toBe("core.note");
-    expect(result!.properties).toEqual({ body: "Test note", title: "Hello" });
+    expect(result?.id).toBe(testItem.id);
+    expect(result?.type).toBe("core.note");
+    expect(result?.properties).toEqual({ body: "Test note", title: "Hello" });
   });
 
   it("returns null for missing item", () => {
@@ -55,7 +55,7 @@ describe("LocalItemStore", () => {
 
     const notes = store.list({ type: "core.note" });
     expect(notes.data.length).toBe(1);
-    expect(notes.data[0]!.type).toBe("core.note");
+    expect(notes.data[0]?.type).toBe("core.note");
   });
 
   it("updates an existing item on upsert", () => {
@@ -68,8 +68,8 @@ describe("LocalItemStore", () => {
     store.upsert(updated);
 
     const result = store.get(testItem.id);
-    expect(result!.version).toBe(2);
-    expect(result!.properties).toEqual({ body: "Updated note" });
+    expect(result?.version).toBe(2);
+    expect(result?.properties).toEqual({ body: "Updated note" });
   });
 
   it("removes an item", () => {
