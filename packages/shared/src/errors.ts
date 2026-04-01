@@ -17,6 +17,11 @@ export enum ErrorCode {
   INVALID_TRANSITION = "invalid_transition",
   TYPE_NOT_FOUND = "type_not_found",
   DUPLICATE_SOURCE = "duplicate_source",
+  INVALID_GRANT = "invalid_grant",
+  INVALID_CLIENT = "invalid_client",
+  INVALID_SCOPE = "invalid_scope",
+  EXPIRED_TOKEN = "expired_token",
+  TOKEN_REUSE_DETECTED = "token_reuse_detected",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -36,6 +41,11 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INVALID_TRANSITION]: 400,
   [ErrorCode.TYPE_NOT_FOUND]: 400,
   [ErrorCode.DUPLICATE_SOURCE]: 409,
+  [ErrorCode.INVALID_GRANT]: 400,
+  [ErrorCode.INVALID_CLIENT]: 400,
+  [ErrorCode.INVALID_SCOPE]: 400,
+  [ErrorCode.EXPIRED_TOKEN]: 401,
+  [ErrorCode.TOKEN_REUSE_DETECTED]: 400,
 };
 
 /** Returns the HTTP status code for a given error code. */

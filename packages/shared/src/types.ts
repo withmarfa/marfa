@@ -164,3 +164,55 @@ export interface Attachment {
   mime_type: string;
   title?: string;
 }
+
+// ---------------------------------------------------------------------------
+// OAuth types
+// ---------------------------------------------------------------------------
+
+/** OAuth token type discriminator. */
+export type OAuthTokenType = "access" | "refresh";
+
+/** A registered OAuth application. */
+export interface OAuthClient {
+  id: string;
+  name: string;
+  redirect_uris: string[];
+  created_at: string;
+}
+
+/** Input for registering an OAuth client. */
+export interface CreateOAuthClientInput {
+  name: string;
+  redirect_uris: string[];
+}
+
+/** A user's approval for a client — records which scopes were granted. */
+export interface OAuthGrant {
+  id: string;
+  client_id: string;
+  scopes: string[];
+  created_at: string;
+}
+
+/** An OAuth access or refresh token record (without raw token value). */
+export interface OAuthToken {
+  id: string;
+  grant_id: string;
+  token_type: OAuthTokenType;
+  scopes: string[];
+  expires_at: string;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+/** A short-lived authorization code issued during the consent flow. */
+export interface OAuthCode {
+  id: string;
+  grant_id: string;
+  code_challenge: string;
+  code_challenge_method: string;
+  redirect_uri: string;
+  expires_at: string;
+  used_at: string | null;
+  created_at: string;
+}
