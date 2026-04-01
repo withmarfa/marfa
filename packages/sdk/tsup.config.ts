@@ -1,9 +1,10 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/sync.ts"],
   format: ["esm"],
   dts: true,
   clean: true,
   target: "node20",
+  external: ["better-sqlite3"],
 });
