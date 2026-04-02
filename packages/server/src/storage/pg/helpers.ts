@@ -20,8 +20,8 @@ export function rowToItem(row: ItemRow): Item {
     ...(row.origin != null && { origin: row.origin }),
     ...(row.schema_version != null && { schema_version: row.schema_version }),
     ...(row.device_id != null && { device_id: row.device_id }),
-    ...(row.parent_id != null && { parent_id: row.parent_id }),
-    ...(row.thread_id != null && { thread_id: row.thread_id }),
+    parent_id: row.parent_id ?? null,
+    thread_id: row.thread_id ?? null,
     ...(row.capture_latitude != null && {
       capture_latitude: row.capture_latitude,
     }),

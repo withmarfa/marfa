@@ -242,7 +242,12 @@ export class SqliteItemStore implements ItemStore {
       if (filters.type.endsWith(".*")) {
         conditions.push(like(items.type, filters.type.slice(0, -1) + "%"));
       } else {
-        conditions.push(eq(items.type, filters.type));
+        // Include subtypes: core.entity matches core.entity, core.entity.person, etc.
+        const typeClause = or(
+          eq(items.type, filters.type),
+          like(items.type, filters.type + ".%"),
+        );
+        if (typeClause) conditions.push(typeClause);
       }
     }
 
@@ -432,6 +437,9 @@ export class SqliteItemStore implements ItemStore {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
+          ...(input.parent_id !== undefined && {
+            parent_id: input.parent_id,
+          }),
         });
       }
 

@@ -115,7 +115,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
         "Invalid type identifier",
       );
     }
-    if (type) requireTypeAccess(c, type.replace(".*", ""), "read");
+    // Type access for list is enforced by allowed_types filtering, not 403 rejection.
+    // This lets scoped keys list any type and get filtered (empty) results.
 
     const state = c.req.query("state") as ItemState | undefined;
     if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
@@ -235,6 +236,24 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     requireTypeAccess(c, item.type, "write");
+
+    // Cycle detection: walk up from proposed parent to ensure this item isn't an ancestor
+    if (hasParentId && body.parent_id !== null) {
+      let current = body.parent_id as string;
+      const visited = new Set<string>([id]);
+      while (current) {
+        if (visited.has(current)) {
+          throw new ProtocolError(
+            ErrorCode.VALIDATION_ERROR,
+            "Setting this parent_id would create a cycle",
+          );
+        }
+        visited.add(current);
+        const ancestor = await storage.items.get(current, tid);
+        if (!ancestor?.parent_id) break;
+        current = ancestor.parent_id;
+      }
+    }
 
     if (hasProperties) {
       const merged = {

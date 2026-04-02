@@ -37,8 +37,8 @@ export interface Item {
   version: number;
   schema_version?: number;
   device_id?: string;
-  parent_id?: string;
-  thread_id?: string;
+  parent_id: string | null;
+  thread_id: string | null;
   capture_latitude?: number;
   capture_longitude?: number;
 }
