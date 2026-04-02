@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { parseFilter, type SearchResult } from "@myme/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql } from "../filter-sql.js";
@@ -22,7 +23,10 @@ function extractSearchableText(
 export class SqliteSearchStore implements SearchStore {
   constructor(private raw: RawDb) {}
 
-  async index(itemId: string, properties: Record<string, unknown>): Promise<void> {
+  async index(
+    itemId: string,
+    properties: Record<string, unknown>,
+  ): Promise<void> {
     const text = extractSearchableText(properties);
     this.raw
       .prepare(
@@ -81,7 +85,11 @@ export class SqliteSearchStore implements SearchStore {
     // Advanced query language filter
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const { clause, params: filterParams } = filterToRawSql(expr, "sqlite", "i");
+      const { clause, params: filterParams } = filterToRawSql(
+        expr,
+        "sqlite",
+        "i",
+      );
       conditions.push(`AND ${clause}`);
       params.push(...filterParams);
     }

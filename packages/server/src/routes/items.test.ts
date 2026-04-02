@@ -16,10 +16,16 @@ describe("POST /items", () => {
   it("creates an item with valid properties", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "Hello world", title: "Test" } },
+      body: {
+        type: "core.note",
+        properties: { body: "Hello world", title: "Test" },
+      },
     });
     expect(res.status).toBe(201);
-    const data = (await res.json()) as { item: Record<string, unknown>; metadata: unknown };
+    const data = (await res.json()) as {
+      item: Record<string, unknown>;
+      metadata: unknown;
+    };
     expect(data.item.type).toBe("core.note");
     expect(data.item.version).toBe(1);
     expect(data.item.state).toBe("new");
@@ -61,7 +67,9 @@ describe("POST /items", () => {
       },
     });
     expect(res.status).toBe(201);
-    const data = (await res.json()) as { metadata: { tags: string[]; about: string[] } };
+    const data = (await res.json()) as {
+      metadata: { tags: string[]; about: string[] };
+    };
     expect(data.metadata.tags).toEqual(["reading", "important"]);
     expect(data.metadata.about).toEqual(["some-id"]);
   });
@@ -69,11 +77,21 @@ describe("POST /items", () => {
   it("detects duplicate source", async () => {
     await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "First" }, source: "test", source_id: "dup-1" },
+      body: {
+        type: "core.note",
+        properties: { body: "First" },
+        source: "test",
+        source_id: "dup-1",
+      },
     });
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "Second" }, source: "test", source_id: "dup-1" },
+      body: {
+        type: "core.note",
+        properties: { body: "Second" },
+        source: "test",
+        source_id: "dup-1",
+      },
     });
     expect(res.status).toBe(409);
   });
@@ -97,9 +115,14 @@ describe("GET /items/:id", () => {
   });
 
   it("returns 404 for non-existent item", async () => {
-    const res = await request(ctx.app, "GET", "/items/019537a0-7b80-7000-8000-000000000000", {
-      key: ctx.adminKey,
-    });
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/items/019537a0-7b80-7000-8000-000000000000",
+      {
+        key: ctx.adminKey,
+      },
+    );
     expect(res.status).toBe(404);
   });
 
@@ -110,7 +133,9 @@ describe("GET /items/:id", () => {
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
-    await request(ctx.app, "DELETE", `/items/${created.item.id}`, { key: ctx.adminKey });
+    await request(ctx.app, "DELETE", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+    });
 
     const res = await request(ctx.app, "GET", `/items/${created.item.id}`, {
       key: ctx.adminKey,
@@ -121,7 +146,9 @@ describe("GET /items/:id", () => {
 
 describe("GET /items", () => {
   it("lists items with pagination", async () => {
-    const res = await request(ctx.app, "GET", "/items?limit=2", { key: ctx.adminKey });
+    const res = await request(ctx.app, "GET", "/items?limit=2", {
+      key: ctx.adminKey,
+    });
     expect(res.status).toBe(200);
     const data = (await res.json()) as Record<string, unknown>;
     expect(data).toHaveProperty("data");
@@ -130,7 +157,9 @@ describe("GET /items", () => {
   });
 
   it("filters by type", async () => {
-    const res = await request(ctx.app, "GET", "/items?type=core.note", { key: ctx.adminKey });
+    const res = await request(ctx.app, "GET", "/items?type=core.note", {
+      key: ctx.adminKey,
+    });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { data: { type: string }[] };
     for (const item of data.data) {
@@ -141,10 +170,16 @@ describe("GET /items", () => {
   it("filters by tags", async () => {
     await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "Tag test" }, tags: ["filter-test"] },
+      body: {
+        type: "core.note",
+        properties: { body: "Tag test" },
+        tags: ["filter-test"],
+      },
     });
 
-    const res = await request(ctx.app, "GET", "/items?tags=filter-test", { key: ctx.adminKey });
+    const res = await request(ctx.app, "GET", "/items?tags=filter-test", {
+      key: ctx.adminKey,
+    });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { data: unknown[] };
     expect(data.data.length).toBeGreaterThanOrEqual(1);
@@ -155,7 +190,10 @@ describe("PATCH /items/:id", () => {
   it("updates properties and returns wrapped { item, metadata }", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "Original", title: "Test" } },
+      body: {
+        type: "core.note",
+        properties: { body: "Original", title: "Test" },
+      },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
@@ -177,7 +215,10 @@ describe("PATCH /items/:id", () => {
   it("returns 409 on conflicting field update", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "Base", title: "Base title" } },
+      body: {
+        type: "core.note",
+        properties: { body: "Base", title: "Base title" },
+      },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
@@ -200,7 +241,10 @@ describe("PATCH /items/:id", () => {
   it("auto-merges non-conflicting field updates", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "Base body", title: "Base title" } },
+      body: {
+        type: "core.note",
+        properties: { body: "Base body", title: "Base title" },
+      },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
@@ -214,7 +258,9 @@ describe("PATCH /items/:id", () => {
       body: { properties: { body: "Client body" }, version: 1 },
     });
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { item: { properties: Record<string, unknown> } };
+    const data = (await res.json()) as {
+      item: { properties: Record<string, unknown> };
+    };
     expect(data.item.properties.title).toBe("Server title");
     expect(data.item.properties.body).toBe("Client body");
   });
@@ -259,13 +305,23 @@ describe("POST /items/:id/restore", () => {
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
-    await request(ctx.app, "DELETE", `/items/${created.item.id}`, { key: ctx.adminKey });
-
-    const res = await request(ctx.app, "POST", `/items/${created.item.id}/restore`, {
+    await request(ctx.app, "DELETE", `/items/${created.item.id}`, {
       key: ctx.adminKey,
     });
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/items/${created.item.id}/restore`,
+      {
+        key: ctx.adminKey,
+      },
+    );
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { item: { state: string }; metadata: unknown };
+    const data = (await res.json()) as {
+      item: { state: string };
+      metadata: unknown;
+    };
     expect(data.item.state).toBe("active");
     expect(data).toHaveProperty("metadata");
   });
@@ -279,12 +335,20 @@ describe("POST /items/:id/transition", () => {
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
-    const res = await request(ctx.app, "POST", `/items/${created.item.id}/transition`, {
-      key: ctx.adminKey,
-      body: { state: "active" },
-    });
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/items/${created.item.id}/transition`,
+      {
+        key: ctx.adminKey,
+        body: { state: "active" },
+      },
+    );
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { item: { state: string }; metadata: unknown };
+    const data = (await res.json()) as {
+      item: { state: string };
+      metadata: unknown;
+    };
     expect(data.item.state).toBe("active");
     expect(data).toHaveProperty("metadata");
   });
@@ -292,14 +356,23 @@ describe("POST /items/:id/transition", () => {
   it("rejects invalid transition", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "Transition test" }, state: "active" },
+      body: {
+        type: "core.note",
+        properties: { body: "Transition test" },
+        state: "active",
+      },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
-    const res = await request(ctx.app, "POST", `/items/${created.item.id}/transition`, {
-      key: ctx.adminKey,
-      body: { state: "new" },
-    });
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/items/${created.item.id}/transition`,
+      {
+        key: ctx.adminKey,
+        body: { state: "new" },
+      },
+    );
     expect(res.status).toBe(400);
   });
 });
@@ -317,9 +390,14 @@ describe("GET /items/:id/versions", () => {
       body: { properties: { body: "V2" }, version: 1 },
     });
 
-    const res = await request(ctx.app, "GET", `/items/${created.item.id}/versions`, {
-      key: ctx.adminKey,
-    });
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items/${created.item.id}/versions`,
+      {
+        key: ctx.adminKey,
+      },
+    );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { versions: { version: number }[] };
     expect(data.versions.length).toBe(1);
@@ -336,16 +414,25 @@ describe("GET /items?filter=...", () => {
     // Create items with different states
     await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "Active note" }, state: "active" },
+      body: {
+        type: "core.note",
+        properties: { body: "Active note" },
+        state: "active",
+      },
     });
     await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: { type: "core.note", properties: { body: "New note" } },
     });
 
-    const res = await request(ctx.app, "GET", `/items?filter=${encodeURIComponent('state eq "active"')}`, {
-      key: ctx.adminKey,
-    });
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?filter=${encodeURIComponent('state eq "active"')}`,
+      {
+        key: ctx.adminKey,
+      },
+    );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { data: { state: string }[] };
     for (const item of data.data) {
@@ -376,7 +463,9 @@ describe("GET /items?filter=...", () => {
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { data: { properties: Record<string, unknown> }[] };
+    const data = (await res.json()) as {
+      data: { properties: Record<string, unknown> }[];
+    };
     expect(data.data.length).toBeGreaterThanOrEqual(1);
     for (const item of data.data) {
       expect(item.properties.author).toBe("Orwell");
@@ -391,7 +480,9 @@ describe("GET /items?filter=...", () => {
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { data: { state: string; type: string }[] };
+    const data = (await res.json()) as {
+      data: { state: string; type: string }[];
+    };
     for (const item of data.data) {
       expect(item.state).toBe("active");
       expect(item.type).toBe("core.work.book");
@@ -406,7 +497,9 @@ describe("GET /items?filter=...", () => {
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { data: { properties: Record<string, unknown> }[] };
+    const data = (await res.json()) as {
+      data: { properties: Record<string, unknown> }[];
+    };
     for (const item of data.data) {
       expect(["Orwell", "Bradbury"]).toContain(item.properties.author);
     }
@@ -420,7 +513,9 @@ describe("GET /items?filter=...", () => {
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { data: { type: string; properties: Record<string, unknown> }[] };
+    const data = (await res.json()) as {
+      data: { type: string; properties: Record<string, unknown> }[];
+    };
     for (const item of data.data) {
       expect(item.type).toBe("core.work.book");
       expect(item.properties.author).toBe("Orwell");
@@ -467,7 +562,9 @@ describe("GET /items?filter=...", () => {
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { data: { properties: Record<string, unknown> }[] };
+    const data = (await res.json()) as {
+      data: { properties: Record<string, unknown> }[];
+    };
     for (const item of data.data) {
       expect(item.properties).toHaveProperty("author");
     }

@@ -23,7 +23,10 @@ function wrapProtocolError<T>(fn: () => T): T {
   try {
     return fn();
   } catch (err) {
-    if (err instanceof ProtocolError || (err instanceof Error && err.name === "ProtocolError")) {
+    if (
+      err instanceof ProtocolError ||
+      (err instanceof Error && err.name === "ProtocolError")
+    ) {
       const pe = err as ProtocolError;
       throw createGraphQLError(pe.message, {
         extensions: { code: pe.code, status: pe.status, details: pe.details },
@@ -49,7 +52,9 @@ export function gqlCheckTypeAccess(
   type: string,
   level: "read" | "write",
 ): void {
-  wrapProtocolError(() => _checkTypeAccess(apiKey, type, level));
+  wrapProtocolError(() => {
+    _checkTypeAccess(apiKey, type, level);
+  });
 }
 
 // Re-export computeTypeFilter as-is (it doesn't throw)

@@ -1,7 +1,12 @@
 import { createHmac } from "node:crypto";
 import { createMiddleware } from "hono/factory";
 import type { Context } from "hono";
-import { ProtocolError, ErrorCode, resolveTypePermission, scopesToTypePermissions } from "@myme/shared";
+import {
+  ProtocolError,
+  ErrorCode,
+  resolveTypePermission,
+  scopesToTypePermissions,
+} from "@myme/shared";
 import type { ApiKey } from "@myme/shared";
 import type { Storage } from "../storage/interface.js";
 
@@ -151,7 +156,10 @@ export function checkTypeAccess(
 
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (resolved === "none") {
-    throw new ProtocolError(ErrorCode.TYPE_NOT_PERMITTED, `No access to type "${type}"`);
+    throw new ProtocolError(
+      ErrorCode.TYPE_NOT_PERMITTED,
+      `No access to type "${type}"`,
+    );
   }
   if (level === "write" && resolved === "read") {
     throw new ProtocolError(
@@ -161,7 +169,9 @@ export function checkTypeAccess(
   }
 }
 
-export function computeTypeFilter(apiKey: ApiKey | undefined): string[] | undefined {
+export function computeTypeFilter(
+  apiKey: ApiKey | undefined,
+): string[] | undefined {
   if (!apiKey || apiKey.role === "admin") return undefined;
 
   const patterns: string[] = [];

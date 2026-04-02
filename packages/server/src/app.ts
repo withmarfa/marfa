@@ -36,7 +36,18 @@ export function createApp(
     c.json({
       name: "myme",
       version: "0.0.1",
-      features: ["items", "threads", "search", "blobs", "types", "keys", "import", "export", "oauth", "graphql"],
+      features: [
+        "items",
+        "threads",
+        "search",
+        "blobs",
+        "types",
+        "keys",
+        "import",
+        "export",
+        "oauth",
+        "graphql",
+      ],
     }),
   );
   app.get("/health", (c) => c.json({ status: "ok" }));

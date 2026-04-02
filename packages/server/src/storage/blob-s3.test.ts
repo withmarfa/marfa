@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- test assertions guard null access */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { S3Client } from "@aws-sdk/client-s3";
 
@@ -39,9 +40,11 @@ vi.mock("@aws-sdk/client-s3", () => {
 });
 
 vi.mock("@aws-sdk/s3-request-presigner", () => ({
-  getSignedUrl: vi.fn().mockResolvedValue(
-    "https://test-bucket.s3.us-east-1.amazonaws.com/blobs/sha256%3Aabc?X-Amz-Signature=test",
-  ),
+  getSignedUrl: vi
+    .fn()
+    .mockResolvedValue(
+      "https://test-bucket.s3.us-east-1.amazonaws.com/blobs/sha256%3Aabc?X-Amz-Signature=test",
+    ),
 }));
 
 import { S3BlobBackend } from "./blob-s3.js";
@@ -59,9 +62,9 @@ describe("S3BlobBackend", () => {
 
   describe("constructor", () => {
     it("throws if bucket is missing", () => {
-      expect(() => new S3BlobBackend({ bucket: "", region: "us-east-1" })).toThrow(
-        "S3_BUCKET is required",
-      );
+      expect(
+        () => new S3BlobBackend({ bucket: "", region: "us-east-1" }),
+      ).toThrow("S3_BUCKET is required");
     });
 
     it("throws if region is missing", () => {
@@ -106,7 +109,9 @@ describe("S3BlobBackend", () => {
       const backend = new S3BlobBackend(defaultConfig);
       const content = Buffer.from("file contents");
       mockSend.mockResolvedValueOnce({
-        Body: { transformToByteArray: () => Promise.resolve(new Uint8Array(content)) },
+        Body: {
+          transformToByteArray: () => Promise.resolve(new Uint8Array(content)),
+        },
       });
 
       const result = await backend.get("sha256:abc");
@@ -197,7 +202,13 @@ describe("S3BlobBackend", () => {
       });
 
       // Access the mock client's stored config
-      const client = (backend as unknown as { client: InstanceType<typeof S3Client> & { config: Record<string, unknown> } }).client;
+      const client = (
+        backend as unknown as {
+          client: InstanceType<typeof S3Client> & {
+            config: Record<string, unknown>;
+          };
+        }
+      ).client;
       expect(client.config.credentials).toEqual({
         accessKeyId: "AKID",
         secretAccessKey: "SECRET",
@@ -210,7 +221,13 @@ describe("S3BlobBackend", () => {
         endpoint: "http://localhost:9000",
       });
 
-      const client = (backend as unknown as { client: InstanceType<typeof S3Client> & { config: Record<string, unknown> } }).client;
+      const client = (
+        backend as unknown as {
+          client: InstanceType<typeof S3Client> & {
+            config: Record<string, unknown>;
+          };
+        }
+      ).client;
       expect(client.config.endpoint).toBe("http://localhost:9000");
       expect(client.config.forcePathStyle).toBe(true);
     });
@@ -218,7 +235,13 @@ describe("S3BlobBackend", () => {
     it("does not set forcePathStyle without endpoint", () => {
       const backend = new S3BlobBackend(defaultConfig);
 
-      const client = (backend as unknown as { client: InstanceType<typeof S3Client> & { config: Record<string, unknown> } }).client;
+      const client = (
+        backend as unknown as {
+          client: InstanceType<typeof S3Client> & {
+            config: Record<string, unknown>;
+          };
+        }
+      ).client;
       expect(client.config.forcePathStyle).toBeUndefined();
     });
   });

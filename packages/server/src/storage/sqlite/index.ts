@@ -33,8 +33,9 @@ export function createSqliteStorage(sqlitePath: string): Storage {
     keys: keyStore,
     blobs: blobStore,
     oauth: oauthStore,
-    async close() {
+    close() {
       close();
+      return Promise.resolve();
     },
   };
 }

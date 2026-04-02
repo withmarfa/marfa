@@ -53,14 +53,17 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
     for (const raw of items) {
       const item = raw as Record<string, unknown>;
       try {
-        await storage.items.create({
-          type: item.type as string,
-          properties: (item.properties as Record<string, unknown>) ?? {},
-          source: item.source as string | undefined,
-          source_id: item.source_id as string | undefined,
-          tags: item.tags as string[] | undefined,
-          about: item.about as string[] | undefined,
-        }, c.get("apiKey")?.tenant_id);
+        await storage.items.create(
+          {
+            type: item.type as string,
+            properties: (item.properties ?? {}) as Record<string, unknown>,
+            source: item.source as string | undefined,
+            source_id: item.source_id as string | undefined,
+            tags: item.tags as string[] | undefined,
+            about: item.about as string[] | undefined,
+          },
+          c.get("apiKey")?.tenant_id,
+        );
         imported++;
       } catch (err) {
         if (
@@ -120,7 +123,9 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
         lines.push(JSON.stringify({ item, metadata }));
       }
 
-      cursor = result.has_more ? (result.cursor ?? undefined) : undefined;
+      cursor = result.has_more
+        ? (result.cursor as string | undefined)
+        : undefined;
     } while (cursor);
 
     return c.text(lines.join("\n") + "\n", 200, {

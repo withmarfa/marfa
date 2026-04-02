@@ -75,7 +75,11 @@ export interface ItemStore {
   create(input: CreateItemInput, tenantId?: string): Promise<Item>;
   get(id: string, tenantId?: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
-  update(id: string, input: UpdateItemInput, tenantId?: string): Promise<Item | ConflictResponse>;
+  update(
+    id: string,
+    input: UpdateItemInput,
+    tenantId?: string,
+  ): Promise<Item | ConflictResponse>;
   delete(id: string, tenantId?: string): Promise<void>;
   restore(id: string, tenantId?: string): Promise<Item>;
   transition(id: string, state: ItemState, tenantId?: string): Promise<Item>;
@@ -103,7 +107,11 @@ export interface VersionStore {
 export interface ThreadStore {
   create(tenantId?: string): Promise<Thread>;
   get(id: string, tenantId?: string): Promise<Thread | null>;
-  list(limit: number, cursor?: string, tenantId?: string): Promise<PaginatedResult<Thread>>;
+  list(
+    limit: number,
+    cursor?: string,
+    tenantId?: string,
+  ): Promise<PaginatedResult<Thread>>;
   touch(id: string): Promise<void>;
   getItems(threadId: string, tenantId?: string): Promise<Item[]>;
 }
@@ -147,12 +155,20 @@ export interface BlobStore {
 // ---------------------------------------------------------------------------
 
 export interface OAuthStore {
-  createClient(input: { name: string; redirect_uris: string[] }): Promise<import("@myme/shared").OAuthClient>;
+  createClient(input: {
+    name: string;
+    redirect_uris: string[];
+  }): Promise<import("@myme/shared").OAuthClient>;
   getClient(id: string): Promise<import("@myme/shared").OAuthClient | null>;
   listClients(): Promise<import("@myme/shared").OAuthClient[]>;
 
-  createGrant(clientId: string, scopes: string[]): Promise<import("@myme/shared").OAuthGrant>;
-  getGrantsByClient(clientId: string): Promise<import("@myme/shared").OAuthGrant[]>;
+  createGrant(
+    clientId: string,
+    scopes: string[],
+  ): Promise<import("@myme/shared").OAuthGrant>;
+  getGrantsByClient(
+    clientId: string,
+  ): Promise<import("@myme/shared").OAuthGrant[]>;
 
   createCode(
     grantId: string,
@@ -163,7 +179,9 @@ export interface OAuthStore {
     expiresAt: string,
   ): Promise<import("@myme/shared").OAuthCode>;
   /** Atomically marks a code as used. Returns null if already consumed or expired. */
-  consumeCode(codeHash: string): Promise<(import("@myme/shared").OAuthCode & { scopes: string[] }) | null>;
+  consumeCode(
+    codeHash: string,
+  ): Promise<(import("@myme/shared").OAuthCode & { scopes: string[] }) | null>;
 
   createToken(
     grantId: string,
@@ -172,7 +190,9 @@ export interface OAuthStore {
     expiresAt: string,
   ): Promise<import("@myme/shared").OAuthToken>;
   /** Validates a token hash. Returns null if not found, expired, or revoked. */
-  validateToken(tokenHash: string): Promise<(import("@myme/shared").OAuthToken & { scopes: string[] }) | null>;
+  validateToken(
+    tokenHash: string,
+  ): Promise<(import("@myme/shared").OAuthToken & { scopes: string[] }) | null>;
   listTokens(): Promise<import("@myme/shared").OAuthToken[]>;
   revokeToken(id: string): Promise<void>;
   reduceTokenScope(id: string, scopes: string[]): Promise<void>;

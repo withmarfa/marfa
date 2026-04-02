@@ -35,7 +35,9 @@ export async function createTestContext(): Promise<TestContext> {
 
   let storage: Storage;
   if (dialect === "pg") {
-    const databaseUrl = process.env.DATABASE_URL ?? "postgres://myme:myme_dev@localhost:5434/myme";
+    const databaseUrl =
+      process.env.DATABASE_URL ??
+      "postgres://myme:myme_dev@localhost:5434/myme";
     storage = await createPgStorage(databaseUrl);
     await truncatePg(storage);
   } else {

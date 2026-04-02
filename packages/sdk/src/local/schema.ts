@@ -1,4 +1,11 @@
-import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  real,
+  index,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 // Local client SQLite schema — mirrors the server tables that Electric syncs.
@@ -69,7 +76,5 @@ export const mutationQueue = sqliteTable(
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
-  (table) => [
-    index("idx_mutation_queue_status").on(table.status),
-  ],
+  (table) => [index("idx_mutation_queue_status").on(table.status)],
 );

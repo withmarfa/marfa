@@ -75,7 +75,7 @@ beforeAll(async () => {
   });
 
   cleanup = () => {
-    storage.close();
+    void storage.close();
   };
 });
 

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq, ne, and, or, lt, gt, desc, asc, like, sql } from "drizzle-orm";
 import {
   generateId,
@@ -36,7 +37,9 @@ export class SqliteItemStore implements ItemStore {
   ) {}
 
   private tenantWhere(id: string, tenantId?: string) {
-    return tenantId ? and(eq(items.id, id), eq(items.tenant_id, tenantId)) : eq(items.id, id);
+    return tenantId
+      ? and(eq(items.id, id), eq(items.tenant_id, tenantId))
+      : eq(items.id, id);
   }
 
   async create(input: CreateItemInput, tenantId?: string): Promise<Item> {
@@ -50,9 +53,13 @@ export class SqliteItemStore implements ItemStore {
     if (typeSchema) {
       const validation = validateProperties(input.type, input.properties);
       if (!validation.success) {
-        throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
-          errors: validation.errors,
-        });
+        throw new ProtocolError(
+          ErrorCode.VALIDATION_ERROR,
+          "Invalid properties",
+          {
+            errors: validation.errors,
+          },
+        );
       }
     }
 
@@ -61,7 +68,10 @@ export class SqliteItemStore implements ItemStore {
 
     const createFn = this.raw.transaction(() => {
       if (input.source && input.source_id) {
-        const dedupConditions = [eq(items.source, input.source), eq(items.source_id, input.source_id)];
+        const dedupConditions = [
+          eq(items.source, input.source),
+          eq(items.source_id, input.source_id),
+        ];
         if (tenantId) dedupConditions.push(eq(items.tenant_id, tenantId));
         const existing = this.db
           .select({ id: items.id })
@@ -81,12 +91,20 @@ export class SqliteItemStore implements ItemStore {
         const parent = this.db
           .select({ id: items.id })
           .from(items)
-          .where(tenantId
-            ? and(eq(items.id, input.parent_id), eq(items.tenant_id, tenantId))
-            : eq(items.id, input.parent_id))
+          .where(
+            tenantId
+              ? and(
+                  eq(items.id, input.parent_id),
+                  eq(items.tenant_id, tenantId),
+                )
+              : eq(items.id, input.parent_id),
+          )
           .get();
         if (!parent) {
-          throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Parent item not found");
+          throw new ProtocolError(
+            ErrorCode.ITEM_NOT_FOUND,
+            "Parent item not found",
+          );
         }
       }
 
@@ -94,12 +112,20 @@ export class SqliteItemStore implements ItemStore {
         const thread = this.db
           .select({ id: threads.id })
           .from(threads)
-          .where(tenantId
-            ? and(eq(threads.id, input.thread_id), eq(threads.tenant_id, tenantId))
-            : eq(threads.id, input.thread_id))
+          .where(
+            tenantId
+              ? and(
+                  eq(threads.id, input.thread_id),
+                  eq(threads.tenant_id, tenantId),
+                )
+              : eq(threads.id, input.thread_id),
+          )
           .get();
         if (!thread) {
-          throw new ProtocolError(ErrorCode.THREAD_NOT_FOUND, "Thread not found");
+          throw new ProtocolError(
+            ErrorCode.THREAD_NOT_FOUND,
+            "Thread not found",
+          );
         }
       }
 
@@ -135,7 +161,7 @@ export class SqliteItemStore implements ItemStore {
         })
         .run();
 
-      this.searchStore.index(id, input.properties);
+      void this.searchStore.index(id, input.properties);
 
       if (input.thread_id) {
         this.db
@@ -160,8 +186,12 @@ export class SqliteItemStore implements ItemStore {
         ...(input.device_id != null && { device_id: input.device_id }),
         ...(input.parent_id != null && { parent_id: input.parent_id }),
         ...(input.thread_id != null && { thread_id: input.thread_id }),
-        ...(input.capture_latitude != null && { capture_latitude: input.capture_latitude }),
-        ...(input.capture_longitude != null && { capture_longitude: input.capture_longitude }),
+        ...(input.capture_latitude != null && {
+          capture_latitude: input.capture_latitude,
+        }),
+        ...(input.capture_longitude != null && {
+          capture_longitude: input.capture_longitude,
+        }),
       } satisfies Item;
     });
 
@@ -170,7 +200,11 @@ export class SqliteItemStore implements ItemStore {
 
   // Fix 4: trashed items return null (404 to callers)
   async get(id: string, tenantId?: string): Promise<Item | null> {
-    const row = this.db.select().from(items).where(this.tenantWhere(id, tenantId)).get();
+    const row = this.db
+      .select()
+      .from(items)
+      .where(this.tenantWhere(id, tenantId))
+      .get();
     if (!row) return null;
     if (row.state === "trashed") return null;
     return rowToItem(row);
@@ -178,7 +212,11 @@ export class SqliteItemStore implements ItemStore {
 
   // Internal get that includes trashed items (for restore, delete, transition)
   private getRaw(id: string, tenantId?: string): Item | null {
-    const row = this.db.select().from(items).where(this.tenantWhere(id, tenantId)).get();
+    const row = this.db
+      .select()
+      .from(items)
+      .where(this.tenantWhere(id, tenantId))
+      .get();
     if (!row) return null;
     return rowToItem(row);
   }
@@ -190,7 +228,8 @@ export class SqliteItemStore implements ItemStore {
 
     const conditions = [];
 
-    if (filters.tenantId) conditions.push(eq(items.tenant_id, filters.tenantId));
+    if (filters.tenantId)
+      conditions.push(eq(items.tenant_id, filters.tenantId));
 
     if (filters.state) {
       conditions.push(eq(items.state, filters.state));
@@ -207,8 +246,10 @@ export class SqliteItemStore implements ItemStore {
     }
 
     if (filters.source) conditions.push(eq(items.source, filters.source));
-    if (filters.parent_id) conditions.push(eq(items.parent_id, filters.parent_id));
-    if (filters.thread_id) conditions.push(eq(items.thread_id, filters.thread_id));
+    if (filters.parent_id)
+      conditions.push(eq(items.parent_id, filters.parent_id));
+    if (filters.thread_id)
+      conditions.push(eq(items.thread_id, filters.thread_id));
 
     // Fix 6: tags filter — items must have ALL specified tags
     if (filters.tags && filters.tags.length > 0) {
@@ -256,10 +297,16 @@ export class SqliteItemStore implements ItemStore {
             ? items.timestamp
             : items.created_at;
       if (dir === "desc") {
-        const clause = or(lt(sortCol, v), and(eq(sortCol, v), lt(items.id, id)));
+        const clause = or(
+          lt(sortCol, v),
+          and(eq(sortCol, v), lt(items.id, id)),
+        );
         if (clause) conditions.push(clause);
       } else {
-        const clause = or(gt(sortCol, v), and(eq(sortCol, v), gt(items.id, id)));
+        const clause = or(
+          gt(sortCol, v),
+          and(eq(sortCol, v), gt(items.id, id)),
+        );
         if (clause) conditions.push(clause);
       }
     }
@@ -271,7 +318,9 @@ export class SqliteItemStore implements ItemStore {
           ? items.timestamp
           : items.created_at;
     const orderBy =
-      dir === "desc" ? [desc(sortCol), desc(items.id)] : [asc(sortCol), asc(items.id)];
+      dir === "desc"
+        ? [desc(sortCol), desc(items.id)]
+        : [asc(sortCol), asc(items.id)];
 
     const rows = this.db
       .select()
@@ -300,7 +349,11 @@ export class SqliteItemStore implements ItemStore {
     return { data, cursor, has_more: hasMore };
   }
 
-  async update(id: string, input: UpdateItemInput, tenantId?: string): Promise<Item | ConflictResponse> {
+  async update(
+    id: string,
+    input: UpdateItemInput,
+    tenantId?: string,
+  ): Promise<Item | ConflictResponse> {
     // Pre-fetch ancestor outside transaction so we can await the async store method
     const ancestor =
       input.version !== undefined
@@ -315,17 +368,23 @@ export class SqliteItemStore implements ItemStore {
         throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
       if (row.state === "trashed") {
-        throw new ProtocolError(ErrorCode.INVALID_TRANSITION, "Cannot update trashed item");
+        throw new ProtocolError(
+          ErrorCode.INVALID_TRANSITION,
+          "Cannot update trashed item",
+        );
       }
 
-      const currentProps = JSON.parse(row.properties) as Record<string, unknown>;
+      const currentProps = JSON.parse(row.properties) as Record<
+        string,
+        unknown
+      >;
       const now = new Date().toISOString();
       const deviceId = row.device_id ?? undefined;
 
       // Fast path: version omitted — always merge, no conflict detection
       if (input.version === undefined || row.version === input.version) {
         // Fix 7: include device_id in version snapshot
-        this.versionStore.create(id, row.version, currentProps, deviceId);
+        void this.versionStore.create(id, row.version, currentProps, deviceId);
 
         const merged = { ...currentProps, ...input.properties };
         const newVersion = row.version + 1;
@@ -340,8 +399,8 @@ export class SqliteItemStore implements ItemStore {
           .where(whereClause)
           .run();
 
-        this.searchStore.remove(id);
-        this.searchStore.index(id, merged);
+        void this.searchStore.remove(id);
+        void this.searchStore.index(id, merged);
 
         return rowToItem({
           ...row,
@@ -379,7 +438,7 @@ export class SqliteItemStore implements ItemStore {
       }
 
       // Auto-merge
-      this.versionStore.create(id, row.version, currentProps, deviceId);
+      void this.versionStore.create(id, row.version, currentProps, deviceId);
       const newVersion = row.version + 1;
 
       this.db
@@ -392,8 +451,8 @@ export class SqliteItemStore implements ItemStore {
         .where(whereClause)
         .run();
 
-      this.searchStore.remove(id);
-      this.searchStore.index(id, result.merged);
+      void this.searchStore.remove(id);
+      void this.searchStore.index(id, result.merged);
 
       return rowToItem({
         ...row,
@@ -418,7 +477,7 @@ export class SqliteItemStore implements ItemStore {
       .where(this.tenantWhere(id, tenantId))
       .run();
 
-    this.searchStore.remove(id);
+    void this.searchStore.remove(id);
   }
 
   async restore(id: string, tenantId?: string): Promise<Item> {
@@ -427,7 +486,10 @@ export class SqliteItemStore implements ItemStore {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     if (row.state !== "trashed") {
-      throw new ProtocolError(ErrorCode.INVALID_TRANSITION, "Item is not trashed");
+      throw new ProtocolError(
+        ErrorCode.INVALID_TRANSITION,
+        "Item is not trashed",
+      );
     }
 
     const now = new Date().toISOString();
@@ -437,12 +499,16 @@ export class SqliteItemStore implements ItemStore {
       .where(this.tenantWhere(id, tenantId))
       .run();
 
-    this.searchStore.index(id, row.properties);
+    void this.searchStore.index(id, row.properties);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
 
-  async transition(id: string, state: ItemState, tenantId?: string): Promise<Item> {
+  async transition(
+    id: string,
+    state: ItemState,
+    tenantId?: string,
+  ): Promise<Item> {
     const row = this.getRaw(id, tenantId);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -461,9 +527,9 @@ export class SqliteItemStore implements ItemStore {
       .run();
 
     if (state === "trashed") {
-      this.searchStore.remove(id);
+      void this.searchStore.remove(id);
     } else if (row.state === "trashed") {
-      this.searchStore.index(id, row.properties);
+      void this.searchStore.index(id, row.properties);
     }
 
     return { ...row, state, updated_at: now };

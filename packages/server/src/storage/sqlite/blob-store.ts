@@ -6,7 +6,7 @@ import type { DrizzleDb } from "./connection.js";
 export class SqliteBlobStore implements BlobStore {
   constructor(private db: DrizzleDb) {}
 
-  async register(
+  register(
     hash: string,
     mimeType: string,
     size: number,
@@ -18,17 +18,18 @@ export class SqliteBlobStore implements BlobStore {
       .values({ hash, mime_type: mimeType, size, storage_path: storagePath })
       .onConflictDoNothing()
       .run();
+    return Promise.resolve();
   }
 
-  async get(
+  get(
     hash: string,
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null> {
     const row = this.db.select().from(blobs).where(eq(blobs.hash, hash)).get();
-    if (!row) return null;
-    return {
+    if (!row) return Promise.resolve(null);
+    return Promise.resolve({
       mime_type: row.mime_type,
       size: row.size,
       storage_path: row.storage_path,
-    };
+    });
   }
 }

@@ -88,14 +88,20 @@ describe("expandWildcardScopes", () => {
   });
 
   it("skips invalid scopes", () => {
-    const result = expandWildcardScopes(["invalid", "core.note:read"], knownTypes);
+    const result = expandWildcardScopes(
+      ["invalid", "core.note:read"],
+      knownTypes,
+    );
     expect(result).toEqual(["core.note:read"]);
   });
 });
 
 describe("scopesToTypePermissions", () => {
   it("converts read scopes to read permissions", () => {
-    const perms = scopesToTypePermissions(["core.note:read", "core.bookmark:read"]);
+    const perms = scopesToTypePermissions([
+      "core.note:read",
+      "core.bookmark:read",
+    ]);
     expect(perms).toEqual({
       "core.note": "read",
       "core.bookmark": "read",
@@ -103,7 +109,10 @@ describe("scopesToTypePermissions", () => {
   });
 
   it("write trumps read for same type", () => {
-    const perms = scopesToTypePermissions(["core.note:read", "core.note:write"]);
+    const perms = scopesToTypePermissions([
+      "core.note:read",
+      "core.note:write",
+    ]);
     expect(perms).toEqual({ "core.note": "write" });
   });
 
@@ -131,7 +140,9 @@ describe("scopeCovers", () => {
   });
 
   it("wrong type returns false", () => {
-    expect(scopeCovers(["core.bookmark:write"], "core.note", "read")).toBe(false);
+    expect(scopeCovers(["core.bookmark:write"], "core.note", "read")).toBe(
+      false,
+    );
   });
 
   it("empty scopes returns false", () => {

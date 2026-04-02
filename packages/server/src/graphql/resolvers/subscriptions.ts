@@ -9,11 +9,7 @@ import { subscribe, type ItemEvent } from "../pubsub.js";
 
 export const subscriptionResolvers = {
   itemChanged: {
-    subscribe: (
-      _: unknown,
-      args: { type?: string },
-      ctx: GraphQLContext,
-    ) => {
+    subscribe: (_: unknown, args: { type?: string }, ctx: GraphQLContext) => {
       gqlCheckAuth(ctx.apiKey);
 
       // If a specific type is requested, verify the key has read access

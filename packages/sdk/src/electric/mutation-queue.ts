@@ -129,7 +129,11 @@ export class MutationQueue {
   private async executeMutation(mutation: QueuedMutation): Promise<void> {
     switch (mutation.operation) {
       case "create":
-        await this.client.items.create(mutation.payload as unknown as Parameters<typeof this.client.items.create>[0]);
+        await this.client.items.create(
+          mutation.payload as unknown as Parameters<
+            typeof this.client.items.create
+          >[0],
+        );
         break;
       case "update":
         await this.client.items.update(
@@ -145,16 +149,28 @@ export class MutationQueue {
         await this.client.items.restore(mutation.entity_id);
         break;
       case "transition":
-        await this.client.items.transition(mutation.entity_id, mutation.payload.state as string);
+        await this.client.items.transition(
+          mutation.entity_id,
+          mutation.payload.state as string,
+        );
         break;
       case "tag":
-        await this.client.metadata.addTags(mutation.entity_id, mutation.payload.tags as string[]);
+        await this.client.metadata.addTags(
+          mutation.entity_id,
+          mutation.payload.tags as string[],
+        );
         break;
       case "untag":
-        await this.client.metadata.removeTag(mutation.entity_id, mutation.payload.tag as string);
+        await this.client.metadata.removeTag(
+          mutation.entity_id,
+          mutation.payload.tag as string,
+        );
         break;
       case "meta":
-        await this.client.metadata.set(mutation.entity_id, mutation.payload as { tags?: string[]; about?: string[] });
+        await this.client.metadata.set(
+          mutation.entity_id,
+          mutation.payload as { tags?: string[]; about?: string[] },
+        );
         break;
     }
   }
@@ -168,7 +184,12 @@ export class MutationQueue {
     this.db
       .update(mutationQueue)
       .set({
-        attempts: (this.db.select().from(mutationQueue).where(eq(mutationQueue.id, id)).get()?.attempts ?? 0) + 1,
+        attempts:
+          (this.db
+            .select()
+            .from(mutationQueue)
+            .where(eq(mutationQueue.id, id))
+            .get()?.attempts ?? 0) + 1,
         updated_at: now,
       })
       .where(eq(mutationQueue.id, id))

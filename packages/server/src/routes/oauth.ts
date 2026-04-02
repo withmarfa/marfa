@@ -35,9 +35,12 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
 
   router.post("/clients", async (c) => {
     requireAdmin(c);
-    const body = (await c.req.json());
+    const body = await c.req.json();
     if (!body.name || !body.redirect_uris?.length) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "name and redirect_uris are required");
+      throw new ProtocolError(
+        ErrorCode.VALIDATION_ERROR,
+        "name and redirect_uris are required",
+      );
     }
     const client = await storage.oauth.createClient({
       name: body.name,
@@ -67,14 +70,23 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     const codeChallengeMethod = c.req.query("code_challenge_method");
     const state = c.req.query("state") ?? "";
 
-    if (!clientId || responseType !== "code" || !scope || !redirectUri || !codeChallenge) {
+    if (
+      !clientId ||
+      responseType !== "code" ||
+      !scope ||
+      !redirectUri ||
+      !codeChallenge
+    ) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
         "Missing required parameters: client_id, response_type=code, scope, redirect_uri, code_challenge",
       );
     }
     if (codeChallengeMethod && codeChallengeMethod !== "S256") {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Only S256 code_challenge_method is supported");
+      throw new ProtocolError(
+        ErrorCode.VALIDATION_ERROR,
+        "Only S256 code_challenge_method is supported",
+      );
     }
 
     const client = await storage.oauth.getClient(clientId);
@@ -82,7 +94,10 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
     }
     if (!client.redirect_uris.includes(redirectUri)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "redirect_uri not registered for this client");
+      throw new ProtocolError(
+        ErrorCode.VALIDATION_ERROR,
+        "redirect_uri not registered for this client",
+      );
     }
 
     // Parse and expand scopes
@@ -91,7 +106,10 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     const parsed = expanded.map(parseScope).filter((s) => s !== null);
 
     if (parsed.length === 0) {
-      throw new ProtocolError(ErrorCode.INVALID_SCOPE, "No valid scopes in request");
+      throw new ProtocolError(
+        ErrorCode.INVALID_SCOPE,
+        "No valid scopes in request",
+      );
     }
 
     // Render consent screen
@@ -117,11 +135,15 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     const clientId = formData.client_id as string;
     const redirectUri = formData.redirect_uri as string;
     const codeChallenge = formData.code_challenge as string;
-    const codeChallengeMethod = (formData.code_challenge_method as string) || "S256";
+    const codeChallengeMethod =
+      (formData.code_challenge_method as string) || "S256";
     const state = (formData.state as string) || "";
 
     if (!clientId || !redirectUri || !codeChallenge) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Missing form parameters");
+      throw new ProtocolError(
+        ErrorCode.VALIDATION_ERROR,
+        "Missing form parameters",
+      );
     }
 
     // Denial
@@ -141,7 +163,10 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
         : [];
 
     if (grantedScopes.length === 0) {
-      throw new ProtocolError(ErrorCode.INVALID_SCOPE, "At least one scope must be granted");
+      throw new ProtocolError(
+        ErrorCode.INVALID_SCOPE,
+        "At least one scope must be granted",
+      );
     }
 
     // Create grant and authorization code
@@ -170,7 +195,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
   // -----------------------------------------------------------------------
 
   router.post("/token", async (c) => {
-    const body = (await c.req.json());
+    const body = await c.req.json();
     const grantType = body.grant_type;
 
     if (grantType === "authorization_code") {
@@ -180,7 +205,10 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       return handleRefresh(c, body, storage, salt);
     }
 
-    throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Unsupported grant_type");
+    throw new ProtocolError(
+      ErrorCode.VALIDATION_ERROR,
+      "Unsupported grant_type",
+    );
   });
 
   // -----------------------------------------------------------------------
@@ -201,7 +229,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
 
   router.patch("/tokens/:id", async (c) => {
     requireAuth(c);
-    const body = (await c.req.json());
+    const body = await c.req.json();
     if (!body.scopes) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "scopes is required");
     }
@@ -235,18 +263,27 @@ async function handleCodeExchange(
   const codeRecord = await storage.oauth.consumeCode(codeHash);
 
   if (!codeRecord) {
-    throw new ProtocolError(ErrorCode.INVALID_GRANT, "Invalid, expired, or already-used authorization code");
+    throw new ProtocolError(
+      ErrorCode.INVALID_GRANT,
+      "Invalid, expired, or already-used authorization code",
+    );
   }
 
   // Verify redirect_uri matches
   if (codeRecord.redirect_uri !== redirect_uri) {
-    throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "redirect_uri does not match");
+    throw new ProtocolError(
+      ErrorCode.VALIDATION_ERROR,
+      "redirect_uri does not match",
+    );
   }
 
   // PKCE verification: SHA256(code_verifier) must equal code_challenge
   const computedChallenge = sha256(code_verifier);
   if (computedChallenge !== codeRecord.code_challenge) {
-    throw new ProtocolError(ErrorCode.INVALID_GRANT, "PKCE verification failed");
+    throw new ProtocolError(
+      ErrorCode.INVALID_GRANT,
+      "PKCE verification failed",
+    );
   }
 
   // Issue tokens
@@ -254,11 +291,25 @@ async function handleCodeExchange(
   const refreshRaw = generateToken(REFRESH_TOKEN_PREFIX);
   const accessHash = hashApiKey(accessRaw, salt);
   const refreshHash = hashApiKey(refreshRaw, salt);
-  const accessExpiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_MS).toISOString();
-  const refreshExpiresAt = new Date(Date.now() + 90 * 24 * 3600_000).toISOString(); // 90 days
+  const accessExpiresAt = new Date(
+    Date.now() + ACCESS_TOKEN_TTL_MS,
+  ).toISOString();
+  const refreshExpiresAt = new Date(
+    Date.now() + 90 * 24 * 3600_000,
+  ).toISOString(); // 90 days
 
-  const accessToken = await storage.oauth.createToken(codeRecord.grant_id, accessHash, "access", accessExpiresAt);
-  await storage.oauth.createToken(codeRecord.grant_id, refreshHash, "refresh", refreshExpiresAt);
+  const accessToken = await storage.oauth.createToken(
+    codeRecord.grant_id,
+    accessHash,
+    "access",
+    accessExpiresAt,
+  );
+  await storage.oauth.createToken(
+    codeRecord.grant_id,
+    refreshHash,
+    "refresh",
+    refreshExpiresAt,
+  );
 
   return c.json({
     access_token: accessRaw,
@@ -278,7 +329,10 @@ async function handleRefresh(
   const { refresh_token } = body;
 
   if (!refresh_token) {
-    throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "refresh_token is required");
+    throw new ProtocolError(
+      ErrorCode.VALIDATION_ERROR,
+      "refresh_token is required",
+    );
   }
 
   const refreshHash = hashApiKey(refresh_token, salt);
@@ -293,7 +347,10 @@ async function handleRefresh(
   if (!wasUnused) {
     // Replay detected — revoke all tokens for this grant
     await storage.oauth.revokeGrantTokens(refreshRecord.grant_id);
-    throw new ProtocolError(ErrorCode.TOKEN_REUSE_DETECTED, "Refresh token reuse detected, all tokens revoked");
+    throw new ProtocolError(
+      ErrorCode.TOKEN_REUSE_DETECTED,
+      "Refresh token reuse detected, all tokens revoked",
+    );
   }
 
   // Issue new token pair
@@ -301,11 +358,25 @@ async function handleRefresh(
   const newRefreshRaw = generateToken(REFRESH_TOKEN_PREFIX);
   const accessHash = hashApiKey(accessRaw, salt);
   const newRefreshHash = hashApiKey(newRefreshRaw, salt);
-  const accessExpiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_MS).toISOString();
-  const refreshExpiresAt = new Date(Date.now() + 90 * 24 * 3600_000).toISOString();
+  const accessExpiresAt = new Date(
+    Date.now() + ACCESS_TOKEN_TTL_MS,
+  ).toISOString();
+  const refreshExpiresAt = new Date(
+    Date.now() + 90 * 24 * 3600_000,
+  ).toISOString();
 
-  const accessToken = await storage.oauth.createToken(refreshRecord.grant_id, accessHash, "access", accessExpiresAt);
-  await storage.oauth.createToken(refreshRecord.grant_id, newRefreshHash, "refresh", refreshExpiresAt);
+  const accessToken = await storage.oauth.createToken(
+    refreshRecord.grant_id,
+    accessHash,
+    "access",
+    accessExpiresAt,
+  );
+  await storage.oauth.createToken(
+    refreshRecord.grant_id,
+    newRefreshHash,
+    "refresh",
+    refreshExpiresAt,
+  );
 
   return c.json({
     access_token: accessRaw,

@@ -8,19 +8,19 @@ import { rowToMetadata } from "./helpers.js";
 export class SqliteMetadataStore implements MetadataStore {
   constructor(private db: DrizzleDb) {}
 
-  async get(itemId: string): Promise<Metadata> {
+  get(itemId: string): Promise<Metadata> {
     const row = this.db
       .select()
       .from(metadata)
       .where(eq(metadata.item_id, itemId))
       .get();
     if (!row) {
-      return { item_id: itemId, tags: [], about: [] };
+      return Promise.resolve({ item_id: itemId, tags: [], about: [] });
     }
-    return rowToMetadata(row);
+    return Promise.resolve(rowToMetadata(row));
   }
 
-  async set(itemId: string, tags: string[], about: string[]): Promise<Metadata> {
+  set(itemId: string, tags: string[], about: string[]): Promise<Metadata> {
     this.db
       .update(metadata)
       .set({
@@ -29,13 +29,21 @@ export class SqliteMetadataStore implements MetadataStore {
       })
       .where(eq(metadata.item_id, itemId))
       .run();
-    return { item_id: itemId, tags, about };
+    return Promise.resolve({ item_id: itemId, tags, about });
   }
 
-  async merge(itemId: string, tags?: string[], about?: string[]): Promise<Metadata> {
+  async merge(
+    itemId: string,
+    tags?: string[],
+    about?: string[],
+  ): Promise<Metadata> {
     const current = await this.get(itemId);
-    const mergedTags = tags ? [...new Set([...current.tags, ...tags])] : current.tags;
-    const mergedAbout = about ? [...new Set([...current.about, ...about])] : current.about;
+    const mergedTags = tags
+      ? [...new Set([...current.tags, ...tags])]
+      : current.tags;
+    const mergedAbout = about
+      ? [...new Set([...current.about, ...about])]
+      : current.about;
     return this.set(itemId, mergedTags, mergedAbout);
   }
 

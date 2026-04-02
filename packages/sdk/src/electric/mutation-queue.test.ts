@@ -1,4 +1,12 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  afterAll,
+  beforeEach,
+} from "vitest";
 import { createLocalConnection } from "../local/connection.js";
 import type { LocalDb } from "../local/connection.js";
 import { MutationQueue } from "./mutation-queue.js";
@@ -33,9 +41,13 @@ function createMockClient(): MymeClient {
       transition: vi.fn().mockResolvedValue({ id: "test-id" }),
     },
     metadata: {
-      addTags: vi.fn().mockResolvedValue({ item_id: "test-id", tags: [], about: [] }),
+      addTags: vi
+        .fn()
+        .mockResolvedValue({ item_id: "test-id", tags: [], about: [] }),
       removeTag: vi.fn().mockResolvedValue(undefined),
-      set: vi.fn().mockResolvedValue({ item_id: "test-id", tags: [], about: [] }),
+      set: vi
+        .fn()
+        .mockResolvedValue({ item_id: "test-id", tags: [], about: [] }),
     },
   } as unknown as MymeClient;
 }
@@ -65,16 +77,21 @@ describe("MutationQueue", () => {
     const queue = new MutationQueue(db, client);
     const order: string[] = [];
 
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
     (client.items.create as ReturnType<typeof vi.fn>).mockImplementation(() => {
       order.push("create");
       return Promise.resolve({ id: "id" });
     });
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
     (client.items.delete as ReturnType<typeof vi.fn>).mockImplementation(() => {
       order.push("delete");
       return Promise.resolve(undefined);
     });
 
-    queue.enqueue("create", "item", "item-1", { type: "core.note", properties: { body: "a" } });
+    queue.enqueue("create", "item", "item-1", {
+      type: "core.note",
+      properties: { body: "a" },
+    });
     queue.enqueue("delete", "item", "item-2", {});
 
     await queue.flush();
@@ -89,8 +106,14 @@ describe("MutationQueue", () => {
       new TypeError("fetch failed"),
     );
 
-    queue.enqueue("create", "item", "item-1", { type: "core.note", properties: { body: "a" } });
-    queue.enqueue("create", "item", "item-2", { type: "core.note", properties: { body: "b" } });
+    queue.enqueue("create", "item", "item-1", {
+      type: "core.note",
+      properties: { body: "a" },
+    });
+    queue.enqueue("create", "item", "item-2", {
+      type: "core.note",
+      properties: { body: "b" },
+    });
 
     const result = await queue.flush();
     // First mutation retried (network), second not attempted
@@ -106,7 +129,10 @@ describe("MutationQueue", () => {
       new Error("duplicate_source"),
     );
 
-    queue.enqueue("create", "item", "item-1", { type: "core.note", properties: { body: "a" } });
+    queue.enqueue("create", "item", "item-1", {
+      type: "core.note",
+      properties: { body: "a" },
+    });
 
     const result = await queue.flush();
     expect(result.replayed).toBe(1);
@@ -117,7 +143,10 @@ describe("MutationQueue", () => {
     const client = createMockClient();
     const queue = new MutationQueue(db, client);
 
-    queue.enqueue("update", "item", "item-1", { properties: { body: "new" }, version: 2 });
+    queue.enqueue("update", "item", "item-1", {
+      properties: { body: "new" },
+      version: 2,
+    });
     queue.enqueue("transition", "item", "item-1", { state: "archived" });
     queue.enqueue("tag", "item", "item-1", { tags: ["test"] });
     queue.enqueue("untag", "item", "item-1", { tag: "old" });

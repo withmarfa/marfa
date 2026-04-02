@@ -121,7 +121,11 @@ export async function createConnection(connectionString: string): Promise<{
   client: PgClient;
   close: () => Promise<void>;
 }> {
-  const client = postgres(connectionString, { max: 10, onnotice: () => {} });
+  const client = postgres(connectionString, {
+    max: 10,
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    onnotice: () => {},
+  });
   const db = drizzle(client, { schema });
 
   // Apply schema — use advisory lock to prevent concurrent DDL race conditions

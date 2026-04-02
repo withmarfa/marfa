@@ -8,7 +8,11 @@ export class LocalMetadataStore {
   constructor(private db: LocalDb) {}
 
   get(itemId: string): Metadata | null {
-    const row = this.db.select().from(metadata).where(eq(metadata.item_id, itemId)).get();
+    const row = this.db
+      .select()
+      .from(metadata)
+      .where(eq(metadata.item_id, itemId))
+      .get();
     if (!row) return null;
     return rowToMetadata(row as unknown as Record<string, unknown>);
   }

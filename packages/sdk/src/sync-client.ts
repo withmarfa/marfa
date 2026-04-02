@@ -11,13 +11,22 @@ import type {
 } from "@myme/shared";
 import type { TypeSchema } from "@myme/shared";
 import { MymeClient } from "./client.js";
-import type { ClientConfig, UpdateOptions, ListFilters, SearchFilters, MetadataInput } from "./client.js";
+import type {
+  ClientConfig,
+  UpdateOptions,
+  ListFilters,
+  SearchFilters,
+  MetadataInput,
+} from "./client.js";
 import { createLocalStorage } from "./local/storage.js";
 import type { LocalStorage } from "./local/storage.js";
 import { createShapeStreams } from "./electric/collections.js";
 import { ElectricBridge } from "./electric/bridge.js";
 import { ConnectionStateManager } from "./electric/connection-state.js";
-import type { ConnectionState, ConnectionStateListener } from "./electric/connection-state.js";
+import type {
+  ConnectionState,
+  ConnectionStateListener,
+} from "./electric/connection-state.js";
 import { MutationQueue } from "./electric/mutation-queue.js";
 
 // ---------------------------------------------------------------------------
@@ -53,7 +62,10 @@ export class MymeSyncClient {
     this.httpClient = new MymeClient(config);
     this.localStorage = createLocalStorage(config.local.path);
     this.connectionManager = new ConnectionStateManager();
-    this.mutationQueue = new MutationQueue(this.localStorage.db, this.httpClient);
+    this.mutationQueue = new MutationQueue(
+      this.localStorage.db,
+      this.httpClient,
+    );
     this.electricConfig = config.electric;
 
     // Auto-flush queue when connected
@@ -68,7 +80,11 @@ export class MymeSyncClient {
 
   start(): void {
     const streams = createShapeStreams(this.electricConfig);
-    this.bridge = new ElectricBridge(streams, this.localStorage, this.connectionManager);
+    this.bridge = new ElectricBridge(
+      streams,
+      this.localStorage,
+      this.connectionManager,
+    );
     this.bridge.start();
   }
 
@@ -172,7 +188,10 @@ export class MymeSyncClient {
 
   // ---- Search (always HTTP) ----
 
-  async search(query: string, filters?: SearchFilters): Promise<SearchResult[]> {
+  async search(
+    query: string,
+    filters?: SearchFilters,
+  ): Promise<SearchResult[]> {
     return this.httpClient.search(query, filters);
   }
 
@@ -185,7 +204,10 @@ export class MymeSyncClient {
       return thread;
     },
 
-    list: (filters?: { limit?: number; cursor?: string }): PaginatedResult<Thread> => {
+    list: (filters?: {
+      limit?: number;
+      cursor?: string;
+    }): PaginatedResult<Thread> => {
       return this.localStorage.threads.list(filters?.limit);
     },
 
@@ -198,7 +220,10 @@ export class MymeSyncClient {
   // ---- Blobs (always HTTP) ----
 
   readonly blobs = {
-    upload: async (data: Buffer | Uint8Array, mimeType: string): Promise<{ hash: string }> => {
+    upload: async (
+      data: Buffer | Uint8Array,
+      mimeType: string,
+    ): Promise<{ hash: string }> => {
       return this.httpClient.blobs.upload(data, mimeType);
     },
 
@@ -222,7 +247,9 @@ export class MymeSyncClient {
   // ---- Keys (always HTTP) ----
 
   readonly keys = {
-    create: async (input: CreateKeyInput): Promise<{ id: string; key: string }> => {
+    create: async (
+      input: CreateKeyInput,
+    ): Promise<{ id: string; key: string }> => {
       return this.httpClient.keys.create(input);
     },
 

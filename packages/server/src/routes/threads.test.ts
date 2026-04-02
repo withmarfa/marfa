@@ -38,7 +38,9 @@ describe("threads", () => {
     const threadRes = await request(ctx.app, "POST", "/threads", {
       key: ctx.adminKey,
     });
-    const threadData = (await threadRes.json()) as { thread: Record<string, unknown> };
+    const threadData = (await threadRes.json()) as {
+      thread: Record<string, unknown>;
+    };
     const threadId = threadData.thread.id as string;
 
     // Add item to thread

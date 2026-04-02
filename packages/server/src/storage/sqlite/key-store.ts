@@ -8,7 +8,11 @@ import type { DrizzleDb } from "./connection.js";
 export class SqliteKeyStore implements KeyStore {
   constructor(private db: DrizzleDb) {}
 
-  async create(input: CreateKeyInput, keyHash: string, tenantId?: string): Promise<ApiKey> {
+  create(
+    input: CreateKeyInput,
+    keyHash: string,
+    tenantId?: string,
+  ): Promise<ApiKey> {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
@@ -20,40 +24,44 @@ export class SqliteKeyStore implements KeyStore {
       created_at: now,
     };
     this.db.insert(apiKeys).values(row).run();
-    return {
+    return Promise.resolve({
       id: row.id,
       label: row.label,
       role: input.role,
       type_permissions: input.type_permissions ?? {},
       created_at: now,
-    };
+    });
   }
 
-  async list(): Promise<ApiKey[]> {
+  list(): Promise<ApiKey[]> {
     const rows = this.db.select().from(apiKeys).all();
-    return rows.map((row) => ({
-      id: row.id,
-      label: row.label,
-      role: row.role as "admin" | "member",
-      type_permissions: JSON.parse(row.type_permissions) as Record<
-        string,
-        TypePermission
-      >,
-      created_at: row.created_at,
-    }));
+    return Promise.resolve(
+      rows.map((row) => ({
+        id: row.id,
+        label: row.label,
+        role: row.role as "admin" | "member",
+        type_permissions: JSON.parse(row.type_permissions) as Record<
+          string,
+          TypePermission
+        >,
+        created_at: row.created_at,
+      })),
+    );
   }
 
-  async validate(
+  validate(
     keyHash: string,
-  ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null> {
+  ): Promise<
+    (ApiKey & { key_hash: string; revoked_at: string | null }) | null
+  > {
     const row = this.db
       .select()
       .from(apiKeys)
       .where(eq(apiKeys.key_hash, keyHash))
       .get();
-    if (!row) return null;
-    if (row.revoked_at) return null;
-    return {
+    if (!row) return Promise.resolve(null);
+    if (row.revoked_at) return Promise.resolve(null);
+    return Promise.resolve({
       id: row.id,
       label: row.label,
       role: row.role as "admin" | "member",
@@ -65,31 +73,33 @@ export class SqliteKeyStore implements KeyStore {
       key_hash: row.key_hash,
       revoked_at: row.revoked_at,
       tenant_id: row.tenant_id ?? undefined,
-    };
+    });
   }
 
-  async revoke(id: string): Promise<void> {
+  revoke(id: string): Promise<void> {
     this.db
       .update(apiKeys)
       .set({ revoked_at: new Date().toISOString() })
       .where(eq(apiKeys.id, id))
       .run();
+    return Promise.resolve();
   }
 
-  async updateLastUsed(id: string): Promise<void> {
+  updateLastUsed(id: string): Promise<void> {
     this.db
       .update(apiKeys)
       .set({ last_used_at: new Date().toISOString() })
       .where(eq(apiKeys.id, id))
       .run();
+    return Promise.resolve();
   }
 
-  async count(): Promise<number> {
+  count(): Promise<number> {
     const rows = this.db
       .select()
       .from(apiKeys)
       .where(isNull(apiKeys.revoked_at))
       .all();
-    return rows.length;
+    return Promise.resolve(rows.length);
   }
 }

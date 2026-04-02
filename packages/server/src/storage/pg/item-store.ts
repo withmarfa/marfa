@@ -35,7 +35,9 @@ export class PgItemStore implements ItemStore {
   ) {}
 
   private tenantWhere(id: string, tenantId?: string) {
-    return tenantId ? and(eq(items.id, id), eq(items.tenant_id, tenantId)) : eq(items.id, id);
+    return tenantId
+      ? and(eq(items.id, id), eq(items.tenant_id, tenantId))
+      : eq(items.id, id);
   }
 
   async create(input: CreateItemInput, tenantId?: string): Promise<Item> {
@@ -49,9 +51,13 @@ export class PgItemStore implements ItemStore {
     if (typeSchema) {
       const validation = validateProperties(input.type, input.properties);
       if (!validation.success) {
-        throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
-          errors: validation.errors,
-        });
+        throw new ProtocolError(
+          ErrorCode.VALIDATION_ERROR,
+          "Invalid properties",
+          {
+            errors: validation.errors,
+          },
+        );
       }
     }
 
@@ -60,7 +66,10 @@ export class PgItemStore implements ItemStore {
 
     return await this.db.transaction(async (tx) => {
       if (input.source && input.source_id) {
-        const dedupConditions = [eq(items.source, input.source), eq(items.source_id, input.source_id)];
+        const dedupConditions = [
+          eq(items.source, input.source),
+          eq(items.source_id, input.source_id),
+        ];
         if (tenantId) dedupConditions.push(eq(items.tenant_id, tenantId));
         const [existing] = await tx
           .select({ id: items.id })
@@ -81,7 +90,10 @@ export class PgItemStore implements ItemStore {
           .from(items)
           .where(eq(items.id, input.parent_id));
         if (!parent) {
-          throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Parent item not found");
+          throw new ProtocolError(
+            ErrorCode.ITEM_NOT_FOUND,
+            "Parent item not found",
+          );
         }
       }
 
@@ -91,7 +103,10 @@ export class PgItemStore implements ItemStore {
           .from(threads)
           .where(eq(threads.id, input.thread_id));
         if (!thread) {
-          throw new ProtocolError(ErrorCode.THREAD_NOT_FOUND, "Thread not found");
+          throw new ProtocolError(
+            ErrorCode.THREAD_NOT_FOUND,
+            "Thread not found",
+          );
         }
       }
 
@@ -196,10 +211,13 @@ export class PgItemStore implements ItemStore {
       }
     }
 
-    if (filters.tenantId) conditions.push(eq(items.tenant_id, filters.tenantId));
+    if (filters.tenantId)
+      conditions.push(eq(items.tenant_id, filters.tenantId));
     if (filters.source) conditions.push(eq(items.source, filters.source));
-    if (filters.parent_id) conditions.push(eq(items.parent_id, filters.parent_id));
-    if (filters.thread_id) conditions.push(eq(items.thread_id, filters.thread_id));
+    if (filters.parent_id)
+      conditions.push(eq(items.parent_id, filters.parent_id));
+    if (filters.thread_id)
+      conditions.push(eq(items.thread_id, filters.thread_id));
 
     // Tags filter — items must have ALL specified tags (Postgres jsonb containment)
     if (filters.tags && filters.tags.length > 0) {
@@ -248,10 +266,16 @@ export class PgItemStore implements ItemStore {
             ? items.timestamp
             : items.created_at;
       if (dir === "desc") {
-        const clause = or(lt(sortCol, v), and(eq(sortCol, v), lt(items.id, id)));
+        const clause = or(
+          lt(sortCol, v),
+          and(eq(sortCol, v), lt(items.id, id)),
+        );
         if (clause) conditions.push(clause);
       } else {
-        const clause = or(gt(sortCol, v), and(eq(sortCol, v), gt(items.id, id)));
+        const clause = or(
+          gt(sortCol, v),
+          and(eq(sortCol, v), gt(items.id, id)),
+        );
         if (clause) conditions.push(clause);
       }
     }
@@ -263,7 +287,9 @@ export class PgItemStore implements ItemStore {
           ? items.timestamp
           : items.created_at;
     const orderBy =
-      dir === "desc" ? [desc(sortCol), desc(items.id)] : [asc(sortCol), asc(items.id)];
+      dir === "desc"
+        ? [desc(sortCol), desc(items.id)]
+        : [asc(sortCol), asc(items.id)];
 
     const rows = await this.db
       .select()
@@ -311,13 +337,22 @@ export class PgItemStore implements ItemStore {
         );
       }
 
-      const currentProps = JSON.parse(row.properties) as Record<string, unknown>;
+      const currentProps = JSON.parse(row.properties) as Record<
+        string,
+        unknown
+      >;
       const now = new Date().toISOString();
       const deviceId = row.device_id ?? undefined;
 
       // Fast path: version omitted — always merge, no conflict detection
       if (input.version === undefined || row.version === input.version) {
-        await this.versionStore.create(id, row.version, currentProps, deviceId, tx);
+        await this.versionStore.create(
+          id,
+          row.version,
+          currentProps,
+          deviceId,
+          tx,
+        );
 
         const merged = { ...currentProps, ...input.properties };
         const newVersion = row.version + 1;
@@ -377,7 +412,13 @@ export class PgItemStore implements ItemStore {
       }
 
       // Auto-merge
-      await this.versionStore.create(id, row.version, currentProps, deviceId, tx);
+      await this.versionStore.create(
+        id,
+        row.version,
+        currentProps,
+        deviceId,
+        tx,
+      );
       const newVersion = row.version + 1;
 
       await tx
@@ -438,7 +479,11 @@ export class PgItemStore implements ItemStore {
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
 
-  async transition(id: string, state: ItemState, tenantId?: string): Promise<Item> {
+  async transition(
+    id: string,
+    state: ItemState,
+    tenantId?: string,
+  ): Promise<Item> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");

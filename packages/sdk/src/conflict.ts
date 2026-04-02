@@ -65,11 +65,12 @@ export async function handleConflictUpdate(
   let currentVersion = version;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const result = await transport.requestWithConflict<{ item: Item; metadata: unknown }>(
-      "PATCH",
-      `/items/${itemId}`,
-      { body: { properties, version: currentVersion } },
-    );
+    const result = await transport.requestWithConflict<{
+      item: Item;
+      metadata: unknown;
+    }>("PATCH", `/items/${itemId}`, {
+      body: { properties, version: currentVersion },
+    });
 
     if (!isConflictResponse(result)) {
       return result.item;

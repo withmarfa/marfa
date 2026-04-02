@@ -8,9 +8,12 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
-function isProtocolError(
-  err: unknown,
-): err is { code: string; status: number; message: string; details?: Record<string, unknown> } {
+function isProtocolError(err: unknown): err is {
+  code: string;
+  status: number;
+  message: string;
+  details?: Record<string, unknown>;
+} {
   return (
     err !== null &&
     typeof err === "object" &&
@@ -23,14 +26,22 @@ function isProtocolError(
 
 export const errorHandler: ErrorHandler<AppEnv> = (err) => {
   if (isProtocolError(err)) {
-    const error: Record<string, unknown> = { code: err.code, message: err.message };
+    const error: Record<string, unknown> = {
+      code: err.code,
+      message: err.message,
+    };
     if (err.details) error.details = err.details;
     return jsonResponse({ error }, err.status);
   }
 
   if (err instanceof SyntaxError && err.message.includes("JSON")) {
     return jsonResponse(
-      { error: { code: "validation_error", message: "Invalid JSON in request body" } },
+      {
+        error: {
+          code: "validation_error",
+          message: "Invalid JSON in request body",
+        },
+      },
       400,
     );
   }

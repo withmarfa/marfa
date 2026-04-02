@@ -9,7 +9,11 @@
  */
 
 import { sql, type SQL } from "drizzle-orm";
-import type { FilterExpression, FilterCondition, ComparisonOp } from "@myme/shared";
+import type {
+  FilterExpression,
+  FilterCondition,
+  ComparisonOp,
+} from "@myme/shared";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -137,13 +141,21 @@ function propertyFieldSql(
     case "neq":
       return sql`${extract} != ${value}`;
     case "gt":
-      return isNumeric ? sql`${numericExtract} > ${value}` : sql`${extract} > ${value}`;
+      return isNumeric
+        ? sql`${numericExtract} > ${value}`
+        : sql`${extract} > ${value}`;
     case "gte":
-      return isNumeric ? sql`${numericExtract} >= ${value}` : sql`${extract} >= ${value}`;
+      return isNumeric
+        ? sql`${numericExtract} >= ${value}`
+        : sql`${extract} >= ${value}`;
     case "lt":
-      return isNumeric ? sql`${numericExtract} < ${value}` : sql`${extract} < ${value}`;
+      return isNumeric
+        ? sql`${numericExtract} < ${value}`
+        : sql`${extract} < ${value}`;
     case "lte":
-      return isNumeric ? sql`${numericExtract} <= ${value}` : sql`${extract} <= ${value}`;
+      return isNumeric
+        ? sql`${numericExtract} <= ${value}`
+        : sql`${extract} <= ${value}`;
     case "contains":
       return sql`${extract} LIKE ${"%" + escapeLike(String(value)) + "%"}`;
     case "starts_with":
@@ -153,7 +165,9 @@ function propertyFieldSql(
     case "not_exists":
       return sql`${extract} IS NULL`;
     default:
-      throw new Error(`Unsupported operator "${op}" for property field`);
+      throw new Error(
+        `Unsupported operator "${String(op)}" for property field`,
+      );
   }
 }
 
@@ -236,11 +250,27 @@ function conditionToRawSql(
   const { field, op, value } = condition;
 
   if (field.kind === "system") {
-    return systemFieldRawSql(tableAlias, field.column, op, value, dialect, params, paramIdx);
+    return systemFieldRawSql(
+      tableAlias,
+      field.column,
+      op,
+      value,
+      dialect,
+      params,
+      paramIdx,
+    );
   }
 
   if (field.kind === "property") {
-    return propertyFieldRawSql(tableAlias, field.path, op, value, dialect, params, paramIdx);
+    return propertyFieldRawSql(
+      tableAlias,
+      field.path,
+      op,
+      value,
+      dialect,
+      params,
+      paramIdx,
+    );
   }
 
   // tags
@@ -291,7 +321,9 @@ function systemFieldRawSql(
       return { fragment: `${col} LIKE ${p}`, paramIdx: idx + 1 };
     }
     default:
-      throw new Error(`Unsupported operator "${op}" for system field in raw SQL`);
+      throw new Error(
+        `Unsupported operator "${op}" for system field in raw SQL`,
+      );
   }
 }
 
@@ -315,7 +347,14 @@ function propertyFieldRawSql(
     const numExtract = `CAST(${extract} AS REAL)`;
 
     return propertyOpRawSql(
-      op, extract, numExtract, isNumeric, value, dialect, params, idx,
+      op,
+      extract,
+      numExtract,
+      isNumeric,
+      value,
+      dialect,
+      params,
+      idx,
     );
   }
 
@@ -327,7 +366,14 @@ function propertyFieldRawSql(
   const numExtract = `(${extract})::numeric`;
 
   return propertyOpRawSql(
-    op, extract, numExtract, isNumeric, value, dialect, params, idx,
+    op,
+    extract,
+    numExtract,
+    isNumeric,
+    value,
+    dialect,
+    params,
+    idx,
   );
 }
 
@@ -383,7 +429,9 @@ function propertyOpRawSql(
     case "not_exists":
       return { fragment: `${extract} IS NULL`, paramIdx: idx };
     default:
-      throw new Error(`Unsupported operator "${op}" for property in raw SQL`);
+      throw new Error(
+        `Unsupported operator "${String(op)}" for property in raw SQL`,
+      );
   }
 }
 
@@ -461,15 +509,22 @@ export function filterToRawSql(
   const fragments: string[] = [];
 
   for (const condition of expr.conditions) {
-    const result = conditionToRawSql(condition, dialect, tableAlias, params, paramIdx);
+    const result = conditionToRawSql(
+      condition,
+      dialect,
+      tableAlias,
+      params,
+      paramIdx,
+    );
     fragments.push(result.fragment);
     paramIdx = result.paramIdx;
   }
 
   const joiner = expr.logical === "OR" ? " OR " : " AND ";
-  const clause = fragments.length === 1
-    ? fragments[0]!
-    : `(${fragments.join(joiner)})`;
+  const clause =
+    fragments.length === 1
+      ? (fragments[0] ?? "")
+      : `(${fragments.join(joiner)})`;
 
   return { clause, params, nextParamIdx: paramIdx };
 }

@@ -3,11 +3,11 @@ import type { TypeSchema } from "@myme/shared";
 import type { TypeStore } from "../interface.js";
 
 export class PgTypeStore implements TypeStore {
-  async list(): Promise<TypeSchema[]> {
-    return Array.from(TYPE_REGISTRY.values());
+  list(): Promise<TypeSchema[]> {
+    return Promise.resolve(Array.from(TYPE_REGISTRY.values()));
   }
 
-  async get(id: string): Promise<TypeSchema | undefined> {
-    return getTypeSchema(id);
+  get(id: string): Promise<TypeSchema | undefined> {
+    return Promise.resolve(getTypeSchema(id));
   }
 }

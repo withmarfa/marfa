@@ -26,15 +26,24 @@ export class S3BlobBackend implements BlobBackend {
   private readonly client: S3Client;
 
   constructor(config: S3BlobConfig) {
-    if (!config.bucket) throw new Error("S3_BUCKET is required for S3 blob backend");
-    if (!config.region) throw new Error("S3_REGION is required for S3 blob backend");
+    if (!config.bucket)
+      throw new Error("S3_BUCKET is required for S3 blob backend");
+    if (!config.region)
+      throw new Error("S3_REGION is required for S3 blob backend");
     this.bucket = config.bucket;
     this.prefix = config.prefix ?? "blobs";
     this.client = new S3Client({
       region: config.region,
-      ...(config.endpoint ? { endpoint: config.endpoint, forcePathStyle: true } : {}),
+      ...(config.endpoint
+        ? { endpoint: config.endpoint, forcePathStyle: true }
+        : {}),
       ...(config.accessKeyId && config.secretAccessKey
-        ? { credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey } }
+        ? {
+            credentials: {
+              accessKeyId: config.accessKeyId,
+              secretAccessKey: config.secretAccessKey,
+            },
+          }
         : {}),
     });
   }

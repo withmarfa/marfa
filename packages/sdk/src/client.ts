@@ -313,7 +313,10 @@ export class MymeClient {
     },
 
     list: async (): Promise<ApiKey[]> => {
-      const res = await this.transport.request<{ keys: ApiKey[] }>("GET", "/keys");
+      const res = await this.transport.request<{ keys: ApiKey[] }>(
+        "GET",
+        "/keys",
+      );
       return res.keys;
     },
 

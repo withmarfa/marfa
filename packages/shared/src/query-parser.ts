@@ -206,7 +206,12 @@ function tokenize(input: string): Token[] {
       } else if (raw === "null") {
         tokens.push({ kind: TokenKind.Null, value: null, raw, pos: start });
       } else {
-        tokens.push({ kind: TokenKind.Identifier, value: raw, raw, pos: start });
+        tokens.push({
+          kind: TokenKind.Identifier,
+          value: raw,
+          raw,
+          pos: start,
+        });
       }
       continue;
     }

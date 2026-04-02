@@ -71,5 +71,7 @@ export class FilesystemBlobBackend implements BlobBackend {
 }
 
 function isEnoent(err: unknown): boolean {
-  return err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT";
+  return (
+    err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }

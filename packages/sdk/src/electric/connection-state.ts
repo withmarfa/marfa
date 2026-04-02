@@ -1,6 +1,14 @@
-export type ConnectionState = "disconnected" | "connecting" | "syncing" | "connected" | "error";
+export type ConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "syncing"
+  | "connected"
+  | "error";
 
-export type ConnectionStateListener = (state: ConnectionState, error?: Error) => void;
+export type ConnectionStateListener = (
+  state: ConnectionState,
+  error?: Error,
+) => void;
 
 const VALID_TRANSITIONS: Record<ConnectionState, ConnectionState[]> = {
   disconnected: ["connecting"],
@@ -26,7 +34,9 @@ export class ConnectionStateManager {
   transition(newState: ConnectionState, error?: Error): void {
     const allowed = VALID_TRANSITIONS[this.state];
     if (!allowed.includes(newState)) {
-      console.warn(`ConnectionState: unexpected transition ${this.state} → ${newState}`);
+      console.warn(
+        `ConnectionState: unexpected transition ${this.state} → ${newState}`,
+      );
     }
 
     this.state = newState;

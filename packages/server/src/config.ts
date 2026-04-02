@@ -20,7 +20,10 @@ export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
   const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
 
-  if (process.env.NODE_ENV === "production" && (!apiKeySalt || apiKeySalt === DEFAULT_SALT)) {
+  if (
+    process.env.NODE_ENV === "production" &&
+    (!apiKeySalt || apiKeySalt === DEFAULT_SALT)
+  ) {
     throw new Error(
       "API_KEY_SALT must be set to a unique value in production. " +
         "Generate one with: openssl rand -hex 32",
@@ -29,11 +32,11 @@ export function loadConfig(): AppConfig {
 
   return {
     port: Number(process.env.PORT) || 8200,
-    storageDialect: (process.env.STORAGE_DIALECT as "sqlite" | "pg") ?? "sqlite",
+    storageDialect: process.env.STORAGE_DIALECT === "pg" ? "pg" : "sqlite",
     sqlitePath: process.env.SQLITE_PATH ?? "./data/myme.db",
     databaseUrl: process.env.DATABASE_URL ?? "",
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
-    blobBackend: (process.env.BLOB_BACKEND as "fs" | "s3") ?? "fs",
+    blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
     s3Bucket: process.env.S3_BUCKET ?? "",
     s3Region: process.env.S3_REGION ?? "us-east-1",
     s3Endpoint: process.env.S3_ENDPOINT ?? "",

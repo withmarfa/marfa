@@ -104,7 +104,9 @@ describe("filterToRawSql", () => {
     });
 
     it("generates AND conditions", () => {
-      const expr = parseFilter('state eq "active" AND properties.author eq "Orwell"');
+      const expr = parseFilter(
+        'state eq "active" AND properties.author eq "Orwell"',
+      );
       const result = filterToRawSql(expr, "sqlite", "i");
       expect(result.clause).toBe(
         "(i.state = ? AND json_extract(i.properties, ?) = ?)",
@@ -113,12 +115,19 @@ describe("filterToRawSql", () => {
     });
 
     it("generates OR conditions", () => {
-      const expr = parseFilter('properties.director eq "Kubrick" OR properties.director eq "Spielberg"');
+      const expr = parseFilter(
+        'properties.director eq "Kubrick" OR properties.director eq "Spielberg"',
+      );
       const result = filterToRawSql(expr, "sqlite", "i");
       expect(result.clause).toBe(
         "(json_extract(i.properties, ?) = ? OR json_extract(i.properties, ?) = ?)",
       );
-      expect(result.params).toEqual(["$.director", "Kubrick", "$.director", "Spielberg"]);
+      expect(result.params).toEqual([
+        "$.director",
+        "Kubrick",
+        "$.director",
+        "Spielberg",
+      ]);
     });
 
     it("single condition has no extra parentheses", () => {
@@ -161,9 +170,7 @@ describe("filterToRawSql", () => {
     it("generates property numeric gt with cast", () => {
       const expr = parseFilter("properties.page_count gt 200");
       const result = filterToRawSql(expr, "pg", "i");
-      expect(result.clause).toBe(
-        "(i.properties::json->>$1)::numeric > $2",
-      );
+      expect(result.clause).toBe("(i.properties::json->>$1)::numeric > $2");
       expect(result.params).toEqual(["page_count", 200]);
     });
 
@@ -176,7 +183,9 @@ describe("filterToRawSql", () => {
     });
 
     it("tracks parameter indices across multiple conditions", () => {
-      const expr = parseFilter('state eq "active" AND properties.author eq "Orwell"');
+      const expr = parseFilter(
+        'state eq "active" AND properties.author eq "Orwell"',
+      );
       const result = filterToRawSql(expr, "pg", "i", 3);
       expect(result.clause).toBe(
         "(i.state = $3 AND i.properties::json->>$4 = $5)",

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- test assertions guard null access */
 import { createHash } from "node:crypto";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -118,7 +119,9 @@ describe("OAuth client registration", () => {
   });
 
   it("lists clients", async () => {
-    const res = await request(ctx.app, "GET", "/auth/clients", { key: ctx.adminKey });
+    const res = await request(ctx.app, "GET", "/auth/clients", {
+      key: ctx.adminKey,
+    });
     expect(res.status).toBe(200);
     const data = (await res.json()) as unknown[];
     expect(data.length).toBeGreaterThanOrEqual(1);
@@ -127,7 +130,10 @@ describe("OAuth client registration", () => {
 
 describe("OAuth authorization flow", () => {
   it("completes full flow: authorize -> consent -> code -> tokens", async () => {
-    const { tokens } = await performOAuthFlow(["core.note:read", "core.note:write"]);
+    const { tokens } = await performOAuthFlow([
+      "core.note:read",
+      "core.note:write",
+    ]);
     expect(tokens.access_token).toMatch(/^myme_at_/);
     expect(tokens.refresh_token).toMatch(/^myme_rt_/);
     expect(tokens.token_type).toBe("bearer");
@@ -235,7 +241,10 @@ describe("OAuth token usage", () => {
     // Try to create a bookmark (not in scope)
     const res = await request(ctx.app, "POST", "/items", {
       key: tokens.access_token,
-      body: { type: "core.bookmark", properties: { url: "https://example.com" } },
+      body: {
+        type: "core.bookmark",
+        properties: { url: "https://example.com" },
+      },
     });
     expect(res.status).toBe(403);
   });
@@ -276,14 +285,20 @@ describe("refresh token rotation", () => {
 
     // First refresh succeeds
     const firstRefresh = await request(ctx.app, "POST", "/auth/token", {
-      body: { grant_type: "refresh_token", refresh_token: tokens.refresh_token },
+      body: {
+        grant_type: "refresh_token",
+        refresh_token: tokens.refresh_token,
+      },
     });
     expect(firstRefresh.status).toBe(200);
     const newTokens = (await firstRefresh.json()) as { access_token: string };
 
     // Second use of same refresh token — replay detected
     const secondRefresh = await request(ctx.app, "POST", "/auth/token", {
-      body: { grant_type: "refresh_token", refresh_token: tokens.refresh_token },
+      body: {
+        grant_type: "refresh_token",
+        refresh_token: tokens.refresh_token,
+      },
     });
     expect(secondRefresh.status).toBe(400);
     const err = (await secondRefresh.json()) as { error: { code: string } };
@@ -300,7 +315,9 @@ describe("refresh token rotation", () => {
 describe("token management", () => {
   it("lists active tokens", async () => {
     await performOAuthFlow(["core.note:read"]);
-    const res = await request(ctx.app, "GET", "/auth/tokens", { key: ctx.adminKey });
+    const res = await request(ctx.app, "GET", "/auth/tokens", {
+      key: ctx.adminKey,
+    });
     expect(res.status).toBe(200);
     const tokens = (await res.json()) as unknown[];
     expect(tokens.length).toBeGreaterThanOrEqual(1);
@@ -315,13 +332,20 @@ describe("token management", () => {
     expect(tokenRecord).not.toBeNull();
 
     // Revoke
-    const revokeRes = await request(ctx.app, "DELETE", `/auth/tokens/${tokenRecord!.id}`, {
-      key: ctx.adminKey,
-    });
+    const revokeRes = await request(
+      ctx.app,
+      "DELETE",
+      `/auth/tokens/${tokenRecord!.id}`,
+      {
+        key: ctx.adminKey,
+      },
+    );
     expect(revokeRes.status).toBe(204);
 
     // Token should no longer work
-    const itemsRes = await request(ctx.app, "GET", "/items", { key: tokens.access_token });
+    const itemsRes = await request(ctx.app, "GET", "/items", {
+      key: tokens.access_token,
+    });
     expect(itemsRes.status).toBe(401);
   });
 });
@@ -333,7 +357,9 @@ describe("coexistence with API keys", () => {
   });
 
   it("invalid token format is treated as unauthenticated", async () => {
-    const res = await request(ctx.app, "GET", "/items", { key: "invalid_prefix_token" });
+    const res = await request(ctx.app, "GET", "/items", {
+      key: "invalid_prefix_token",
+    });
     expect(res.status).toBe(401);
   });
 });

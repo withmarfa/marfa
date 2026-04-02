@@ -1,8 +1,5 @@
 import { createGraphQLError } from "graphql-yoga";
-import {
-  getTypeSchema,
-  TYPE_REGISTRY,
-} from "@myme/shared";
+import { getTypeSchema, TYPE_REGISTRY } from "@myme/shared";
 import type { ItemState } from "@myme/shared";
 import {
   gqlCheckAuth,
@@ -12,11 +9,7 @@ import {
 } from "../context.js";
 
 export const queryResolvers = {
-  item: async (
-    _: unknown,
-    args: { id: string },
-    ctx: GraphQLContext,
-  ) => {
+  item: async (_: unknown, args: { id: string }, ctx: GraphQLContext) => {
     gqlCheckAuth(ctx.apiKey);
     const tid = ctx.apiKey?.tenant_id;
     const item = await ctx.storage.items.get(args.id, tid);
@@ -38,7 +31,8 @@ export const queryResolvers = {
     ctx: GraphQLContext,
   ) => {
     gqlCheckAuth(ctx.apiKey);
-    if (args.type) gqlCheckTypeAccess(ctx.apiKey, args.type.replace(".*", ""), "read");
+    if (args.type)
+      gqlCheckTypeAccess(ctx.apiKey, args.type.replace(".*", ""), "read");
 
     return ctx.storage.items.list({
       tenantId: ctx.apiKey?.tenant_id,
@@ -75,32 +69,24 @@ export const queryResolvers = {
     ctx: GraphQLContext,
   ) => {
     gqlCheckAuth(ctx.apiKey);
-    return ctx.storage.threads.list(args.limit ?? 50, args.cursor, ctx.apiKey?.tenant_id);
+    return ctx.storage.threads.list(
+      args.limit ?? 50,
+      args.cursor,
+      ctx.apiKey?.tenant_id,
+    );
   },
 
-  thread: async (
-    _: unknown,
-    args: { id: string },
-    ctx: GraphQLContext,
-  ) => {
+  thread: async (_: unknown, args: { id: string }, ctx: GraphQLContext) => {
     gqlCheckAuth(ctx.apiKey);
     return ctx.storage.threads.get(args.id, ctx.apiKey?.tenant_id);
   },
 
-  types: (
-    _: unknown,
-    _args: unknown,
-    ctx: GraphQLContext,
-  ) => {
+  types: (_: unknown, _args: unknown, ctx: GraphQLContext) => {
     gqlCheckAuth(ctx.apiKey);
     return Array.from(TYPE_REGISTRY.values());
   },
 
-  type: (
-    _: unknown,
-    args: { id: string },
-    ctx: GraphQLContext,
-  ) => {
+  type: (_: unknown, args: { id: string }, ctx: GraphQLContext) => {
     gqlCheckAuth(ctx.apiKey);
     const schema = getTypeSchema(args.id);
     if (!schema) {

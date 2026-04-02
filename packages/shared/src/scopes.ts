@@ -15,7 +15,10 @@ const SCOPE_RE = /^([a-z][a-z0-9_./*-]+):(read|write)$/;
 /** Parses a scope string into its type pattern and operation. Returns null if invalid. */
 export function parseScope(scope: string): ParsedScope | null {
   if (scope === "metadata:read" || scope === "metadata:write") {
-    return { typePattern: "metadata", operation: scope.split(":")[1] as "read" | "write" };
+    return {
+      typePattern: "metadata",
+      operation: scope.split(":")[1] as "read" | "write",
+    };
   }
   const match = SCOPE_RE.exec(scope);
   if (!match) return null;

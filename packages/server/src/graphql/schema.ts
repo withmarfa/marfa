@@ -31,7 +31,11 @@ export const typeDefs = /* GraphQL */ `
     transitionItem(id: ID!, state: String!): ItemPayload!
     addTags(itemId: ID!, tags: [String!]!): MetadataPayload!
     removeTag(itemId: ID!, tag: String!): MetadataPayload!
-    setMetadata(itemId: ID!, tags: [String!], about: [String!]): MetadataPayload!
+    setMetadata(
+      itemId: ID!
+      tags: [String!]
+      about: [String!]
+    ): MetadataPayload!
   }
 
   type Subscription {

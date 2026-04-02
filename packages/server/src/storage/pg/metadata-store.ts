@@ -19,7 +19,11 @@ export class PgMetadataStore implements MetadataStore {
     return rowToMetadata(row);
   }
 
-  async set(itemId: string, tags: string[], about: string[]): Promise<Metadata> {
+  async set(
+    itemId: string,
+    tags: string[],
+    about: string[],
+  ): Promise<Metadata> {
     await this.db
       .update(metadata)
       .set({
@@ -30,10 +34,18 @@ export class PgMetadataStore implements MetadataStore {
     return { item_id: itemId, tags, about };
   }
 
-  async merge(itemId: string, tags?: string[], about?: string[]): Promise<Metadata> {
+  async merge(
+    itemId: string,
+    tags?: string[],
+    about?: string[],
+  ): Promise<Metadata> {
     const current = await this.get(itemId);
-    const mergedTags = tags ? [...new Set([...current.tags, ...tags])] : current.tags;
-    const mergedAbout = about ? [...new Set([...current.about, ...about])] : current.about;
+    const mergedTags = tags
+      ? [...new Set([...current.tags, ...tags])]
+      : current.tags;
+    const mergedAbout = about
+      ? [...new Set([...current.about, ...about])]
+      : current.about;
     return this.set(itemId, mergedTags, mergedAbout);
   }
 

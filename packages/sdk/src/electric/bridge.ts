@@ -21,22 +21,34 @@ export class ElectricBridge {
     // Subscribe to threads first (items may reference threads)
     this.unsubscribers.push(
       this.streams.threads.subscribe(
-        (messages) => { this.handleMessages("threads", messages); },
-        (err) => { this.handleError(err); },
+        (messages) => {
+          this.handleMessages("threads", messages);
+        },
+        (err) => {
+          this.handleError(err);
+        },
       ),
     );
 
     this.unsubscribers.push(
       this.streams.items.subscribe(
-        (messages) => { this.handleMessages("items", messages); },
-        (err) => { this.handleError(err); },
+        (messages) => {
+          this.handleMessages("items", messages);
+        },
+        (err) => {
+          this.handleError(err);
+        },
       ),
     );
 
     this.unsubscribers.push(
       this.streams.metadata.subscribe(
-        (messages) => { this.handleMessages("metadata", messages); },
-        (err) => { this.handleError(err); },
+        (messages) => {
+          this.handleMessages("metadata", messages);
+        },
+        (err) => {
+          this.handleError(err);
+        },
       ),
     );
 
@@ -61,9 +73,18 @@ export class ElectricBridge {
       }
 
       if ("headers" in msg && "operation" in msg.headers) {
-        const changeMsg = msg as { key: string; value: Row; headers: { operation: string } };
+        const changeMsg = msg as {
+          key: string;
+          value: Row;
+          headers: { operation: string };
+        };
         try {
-          this.applyChange(table, changeMsg.headers.operation, changeMsg.value, changeMsg.key);
+          this.applyChange(
+            table,
+            changeMsg.headers.operation,
+            changeMsg.value,
+            changeMsg.key,
+          );
         } catch (err) {
           console.error(`ElectricBridge: error applying ${table} change`, err);
         }
@@ -71,7 +92,12 @@ export class ElectricBridge {
     }
   }
 
-  private applyChange(table: string, operation: string, value: Row, key: string): void {
+  private applyChange(
+    table: string,
+    operation: string,
+    value: Row,
+    key: string,
+  ): void {
     switch (table) {
       case "items":
         if (operation === "delete") {
@@ -111,12 +137,12 @@ export class ElectricBridge {
 
 function str(v: unknown): string {
   if (v == null) return "";
-  return `${v as string | number | boolean}`;
+  return String(v as string | number | boolean);
 }
 
 function optStr(v: unknown): string | undefined {
   if (v == null) return undefined;
-  return `${v as string | number | boolean}`;
+  return String(v as string | number | boolean);
 }
 
 function num(v: unknown, fallback: number): number {
@@ -135,9 +161,10 @@ function coerceItem(row: Row): Item {
     id: str(row.id),
     type: str(row.type),
     state: str(row.state) as Item["state"],
-    properties: typeof row.properties === "string"
-      ? parseJson(row.properties, {})
-      : (row.properties as Record<string, unknown>) ?? {},
+    properties:
+      typeof row.properties === "string"
+        ? parseJson(row.properties, {})
+        : (row.properties as Record<string, unknown>),
     created_at: str(row.created_at),
     updated_at: str(row.updated_at),
     timestamp: str(row.timestamp),
@@ -155,17 +182,19 @@ function coerceItem(row: Row): Item {
 }
 
 function coerceMetadata(row: Row): Metadata {
-  const tags = typeof row.tags === "string"
-    ? parseJson(row.tags, [])
-    : Array.isArray(row.tags)
-      ? (row.tags as string[])
-      : [];
+  const tags =
+    typeof row.tags === "string"
+      ? parseJson(row.tags, [])
+      : Array.isArray(row.tags)
+        ? (row.tags as string[])
+        : [];
 
-  const about = typeof row.about === "string"
-    ? parseJson(row.about, [])
-    : Array.isArray(row.about)
-      ? (row.about as string[])
-      : [];
+  const about =
+    typeof row.about === "string"
+      ? parseJson(row.about, [])
+      : Array.isArray(row.about)
+        ? (row.about as string[])
+        : [];
 
   return {
     item_id: str(row.item_id),

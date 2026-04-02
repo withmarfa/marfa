@@ -28,14 +28,15 @@ export class PgThreadStore implements ThreadStore {
     const where = tenantId
       ? and(eq(threads.id, id), eq(threads.tenant_id, tenantId))
       : eq(threads.id, id);
-    const [row] = await this.db
-      .select()
-      .from(threads)
-      .where(where);
+    const [row] = await this.db.select().from(threads).where(where);
     return row ?? null;
   }
 
-  async list(limit: number, cursor?: string, tenantId?: string): Promise<PaginatedResult<Thread>> {
+  async list(
+    limit: number,
+    cursor?: string,
+    tenantId?: string,
+  ): Promise<PaginatedResult<Thread>> {
     const conditions = [];
     if (tenantId) conditions.push(eq(threads.tenant_id, tenantId));
 

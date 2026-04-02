@@ -36,13 +36,13 @@ export class LocalItemStore {
       .all();
 
     const hasMore = rows.length > limit;
-    const data = (hasMore ? rows.slice(0, limit) : rows).map(
-      (r) => rowToItem(r as unknown as Record<string, unknown>),
+    const data = (hasMore ? rows.slice(0, limit) : rows).map((r) =>
+      rowToItem(r as unknown as Record<string, unknown>),
     );
 
     return {
       data,
-      cursor: hasMore && data.length > 0 ? data.at(-1)?.id ?? null : null,
+      cursor: hasMore && data.length > 0 ? (data.at(-1)?.id ?? null) : null,
       has_more: hasMore,
     };
   }

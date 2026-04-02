@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq, desc, or, and, lt } from "drizzle-orm";
 import { generateId } from "@myme/shared";
 import type { Thread, PaginatedResult, Item } from "@myme/shared";
@@ -33,7 +34,11 @@ export class SqliteThreadStore implements ThreadStore {
     return row ?? null;
   }
 
-  async list(limit: number, cursor?: string, tenantId?: string): Promise<PaginatedResult<Thread>> {
+  async list(
+    limit: number,
+    cursor?: string,
+    tenantId?: string,
+  ): Promise<PaginatedResult<Thread>> {
     const conditions = [];
     if (tenantId) conditions.push(eq(threads.tenant_id, tenantId));
 

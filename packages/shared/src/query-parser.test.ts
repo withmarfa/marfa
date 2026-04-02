@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- test assertions guard null access */
 import { describe, expect, it } from "vitest";
 import { parseFilter } from "./query-parser.js";
 import type { FilterExpression } from "./query-parser.js";
@@ -12,7 +13,11 @@ describe("parseFilter", () => {
       const result = parseFilter('state eq "active"');
       expect(result).toEqual<FilterExpression>({
         conditions: [
-          { field: { kind: "system", column: "state" }, op: "eq", value: "active" },
+          {
+            field: { kind: "system", column: "state" },
+            op: "eq",
+            value: "active",
+          },
         ],
         logical: "AND",
       });
@@ -22,7 +27,11 @@ describe("parseFilter", () => {
       const result = parseFilter('properties.author eq "Orwell"');
       expect(result).toEqual<FilterExpression>({
         conditions: [
-          { field: { kind: "property", path: "author" }, op: "eq", value: "Orwell" },
+          {
+            field: { kind: "property", path: "author" },
+            op: "eq",
+            value: "Orwell",
+          },
         ],
         logical: "AND",
       });
@@ -32,7 +41,11 @@ describe("parseFilter", () => {
       const result = parseFilter("properties.page_count gt 200");
       expect(result).toEqual<FilterExpression>({
         conditions: [
-          { field: { kind: "property", path: "page_count" }, op: "gt", value: 200 },
+          {
+            field: { kind: "property", path: "page_count" },
+            op: "gt",
+            value: 200,
+          },
         ],
         logical: "AND",
       });
@@ -150,15 +163,28 @@ describe("parseFilter", () => {
     });
 
     it("handles escaped quotes in strings", () => {
-      const result = parseFilter('properties.title eq "The \\"Great\\" Gatsby"');
+      const result = parseFilter(
+        'properties.title eq "The \\"Great\\" Gatsby"',
+      );
       expect(result.conditions[0]!.value).toBe('The "Great" Gatsby');
     });
 
     it("parses all system fields", () => {
-      const fields = ["state", "type", "source", "origin", "timestamp", "created_at", "updated_at"];
+      const fields = [
+        "state",
+        "type",
+        "source",
+        "origin",
+        "timestamp",
+        "created_at",
+        "updated_at",
+      ];
       for (const field of fields) {
         const result = parseFilter(`${field} eq "test"`);
-        expect(result.conditions[0]!.field).toEqual({ kind: "system", column: field });
+        expect(result.conditions[0]!.field).toEqual({
+          kind: "system",
+          column: field,
+        });
       }
     });
   });
@@ -169,11 +195,19 @@ describe("parseFilter", () => {
 
   describe("AND conditions", () => {
     it("parses two AND conditions", () => {
-      const result = parseFilter('state eq "active" AND properties.language eq "en"');
+      const result = parseFilter(
+        'state eq "active" AND properties.language eq "en"',
+      );
       expect(result.conditions).toHaveLength(2);
       expect(result.logical).toBe("AND");
-      expect(result.conditions[0]!.field).toEqual({ kind: "system", column: "state" });
-      expect(result.conditions[1]!.field).toEqual({ kind: "property", path: "language" });
+      expect(result.conditions[0]!.field).toEqual({
+        kind: "system",
+        column: "state",
+      });
+      expect(result.conditions[1]!.field).toEqual({
+        kind: "property",
+        path: "language",
+      });
     });
 
     it("parses three AND conditions", () => {
@@ -185,7 +219,9 @@ describe("parseFilter", () => {
     });
 
     it("parses AND with mixed field types", () => {
-      const result = parseFilter('state eq "active" AND properties.author eq "Orwell" AND tags contains "classic"');
+      const result = parseFilter(
+        'state eq "active" AND properties.author eq "Orwell" AND tags contains "classic"',
+      );
       expect(result.conditions).toHaveLength(3);
       expect(result.conditions[0]!.field.kind).toBe("system");
       expect(result.conditions[1]!.field.kind).toBe("property");
@@ -199,13 +235,17 @@ describe("parseFilter", () => {
 
   describe("OR conditions", () => {
     it("parses two OR conditions", () => {
-      const result = parseFilter('properties.director eq "Kubrick" OR properties.director eq "Spielberg"');
+      const result = parseFilter(
+        'properties.director eq "Kubrick" OR properties.director eq "Spielberg"',
+      );
       expect(result.conditions).toHaveLength(2);
       expect(result.logical).toBe("OR");
     });
 
     it("parses three OR conditions", () => {
-      const result = parseFilter('state eq "new" OR state eq "active" OR state eq "archived"');
+      const result = parseFilter(
+        'state eq "new" OR state eq "active" OR state eq "archived"',
+      );
       expect(result.conditions).toHaveLength(3);
       expect(result.logical).toBe("OR");
     });
@@ -226,16 +266,22 @@ describe("parseFilter", () => {
 
     it("rejects mixed AND/OR", () => {
       expect(() =>
-        parseFilter('state eq "active" AND type eq "core.note" OR source eq "import"'),
+        parseFilter(
+          'state eq "active" AND type eq "core.note" OR source eq "import"',
+        ),
       ).toThrow("Cannot mix AND and OR");
     });
 
     it("rejects unknown field name", () => {
-      expect(() => parseFilter('invalid_field eq "test"')).toThrow("Unknown field");
+      expect(() => parseFilter('invalid_field eq "test"')).toThrow(
+        "Unknown field",
+      );
     });
 
     it("rejects unknown operator", () => {
-      expect(() => parseFilter('state like "test"')).toThrow("Unknown operator");
+      expect(() => parseFilter('state like "test"')).toThrow(
+        "Unknown operator",
+      );
     });
 
     it("rejects nested property paths", () => {
@@ -245,7 +291,9 @@ describe("parseFilter", () => {
     });
 
     it("rejects invalid property name characters", () => {
-      expect(() => parseFilter('properties.author eq "test" AND properties.fo;bar eq "x"')).toThrow();
+      expect(() =>
+        parseFilter('properties.author eq "test" AND properties.fo;bar eq "x"'),
+      ).toThrow();
     });
 
     it("rejects missing value after operator", () => {
@@ -257,35 +305,51 @@ describe("parseFilter", () => {
     });
 
     it("rejects trailing AND", () => {
-      expect(() => parseFilter('state eq "active" AND')).toThrow("expected another condition");
+      expect(() => parseFilter('state eq "active" AND')).toThrow(
+        "expected another condition",
+      );
     });
 
     it("rejects trailing OR", () => {
-      expect(() => parseFilter('state eq "active" OR')).toThrow("expected another condition");
+      expect(() => parseFilter('state eq "active" OR')).toThrow(
+        "expected another condition",
+      );
     });
 
     it("rejects unterminated string", () => {
-      expect(() => parseFilter('state eq "unterminated')).toThrow("Unterminated string");
+      expect(() => parseFilter('state eq "unterminated')).toThrow(
+        "Unterminated string",
+      );
     });
 
     it("rejects exists on system field", () => {
-      expect(() => parseFilter("state exists")).toThrow("not valid for system field");
+      expect(() => parseFilter("state exists")).toThrow(
+        "not valid for system field",
+      );
     });
 
     it("rejects not_exists on system field", () => {
-      expect(() => parseFilter("type not_exists")).toThrow("not valid for system field");
+      expect(() => parseFilter("type not_exists")).toThrow(
+        "not valid for system field",
+      );
     });
 
     it("rejects eq on tags", () => {
-      expect(() => parseFilter('tags eq "fiction"')).toThrow('not valid for "tags"');
+      expect(() => parseFilter('tags eq "fiction"')).toThrow(
+        'not valid for "tags"',
+      );
     });
 
     it("rejects gt on tags", () => {
-      expect(() => parseFilter('tags gt "fiction"')).toThrow('not valid for "tags"');
+      expect(() => parseFilter('tags gt "fiction"')).toThrow(
+        'not valid for "tags"',
+      );
     });
 
     it("rejects starts_with on tags", () => {
-      expect(() => parseFilter('tags starts_with "fic"')).toThrow('not valid for "tags"');
+      expect(() => parseFilter('tags starts_with "fic"')).toThrow(
+        'not valid for "tags"',
+      );
     });
 
     it("rejects expression exceeding max length", () => {
@@ -294,12 +358,19 @@ describe("parseFilter", () => {
     });
 
     it("rejects more than 10 conditions", () => {
-      const conditions = Array.from({ length: 11 }, (_, i) => `properties.f${String(i)} eq "v"`);
-      expect(() => parseFilter(conditions.join(" AND "))).toThrow("Too many conditions");
+      const conditions = Array.from(
+        { length: 11 },
+        (_, i) => `properties.f${String(i)} eq "v"`,
+      );
+      expect(() => parseFilter(conditions.join(" AND "))).toThrow(
+        "Too many conditions",
+      );
     });
 
     it("rejects unexpected character", () => {
-      expect(() => parseFilter('state eq @"test"')).toThrow("Unexpected character");
+      expect(() => parseFilter('state eq @"test"')).toThrow(
+        "Unexpected character",
+      );
     });
 
     it("rejects missing property name after properties.", () => {
@@ -317,11 +388,11 @@ describe("parseFilter", () => {
     });
 
     it("rejects property name with parentheses", () => {
-      expect(() => parseFilter("properties.foo() eq \"test\"")).toThrow();
+      expect(() => parseFilter('properties.foo() eq "test"')).toThrow();
     });
 
     it("rejects property name with single quote", () => {
-      expect(() => parseFilter("properties.foo' eq \"test\"")).toThrow();
+      expect(() => parseFilter('properties.foo\' eq "test"')).toThrow();
     });
 
     it("rejects property name with double dash", () => {
@@ -330,7 +401,9 @@ describe("parseFilter", () => {
 
     it("safely handles SQL in string values", () => {
       // String values are parameterized, so they should parse fine
-      const result = parseFilter('properties.name eq "Robert\'; DROP TABLE items;--"');
+      const result = parseFilter(
+        'properties.name eq "Robert\'; DROP TABLE items;--"',
+      );
       expect(result.conditions[0]!.value).toBe("Robert'; DROP TABLE items;--");
     });
 
@@ -391,14 +464,19 @@ describe("parseFilter", () => {
     });
 
     it("handles unary operator followed by AND", () => {
-      const result = parseFilter('properties.subtitle exists AND state eq "active"');
+      const result = parseFilter(
+        'properties.subtitle exists AND state eq "active"',
+      );
       expect(result.conditions).toHaveLength(2);
       expect(result.conditions[0]!.op).toBe("exists");
       expect(result.conditions[1]!.op).toBe("eq");
     });
 
     it("exactly 10 conditions is allowed", () => {
-      const conditions = Array.from({ length: 10 }, (_, i) => `properties.f${String(i)} eq "v"`);
+      const conditions = Array.from(
+        { length: 10 },
+        (_, i) => `properties.f${String(i)} eq "v"`,
+      );
       const result = parseFilter(conditions.join(" AND "));
       expect(result.conditions).toHaveLength(10);
     });

@@ -16,7 +16,10 @@ afterAll(() => {
 async function gql(
   query: string,
   variables?: Record<string, unknown>,
-): Promise<{ data?: Record<string, unknown>; errors?: { message: string; extensions?: Record<string, unknown> }[] }> {
+): Promise<{
+  data?: Record<string, unknown>;
+  errors?: { message: string; extensions?: Record<string, unknown> }[];
+}> {
   const res = await request(ctx.app, "POST", "/graphql", {
     key: ctx.adminKey,
     body: { query, variables },
@@ -75,17 +78,24 @@ describe("GraphQL queries", () => {
   });
 
   it("fetches item by ID", async () => {
-    const result = await gql(`
+    const result = await gql(
+      `
       query($id: ID!) {
         item(id: $id) {
           id type state properties
           metadata { tags about }
         }
       }
-    `, { id: createdItemId });
+    `,
+      { id: createdItemId },
+    );
 
     expect(result.errors).toBeUndefined();
-    const item = result.data?.item as { id: string; type: string; metadata: { tags: string[] } };
+    const item = result.data?.item as {
+      id: string;
+      type: string;
+      metadata: { tags: string[] };
+    };
     expect(item.id).toBe(createdItemId);
     expect(item.type).toBe("core.note");
     expect(item.metadata.tags).toContain("graphql");
@@ -140,7 +150,9 @@ describe("GraphQL queries", () => {
     `);
 
     expect(result.errors).toBeUndefined();
-    const items = (result.data?.items as { data: { properties: Record<string, unknown> }[] }).data;
+    const items = (
+      result.data?.items as { data: { properties: Record<string, unknown> }[] }
+    ).data;
     expect(items.length).toBeGreaterThanOrEqual(1);
     for (const item of items) {
       expect(item.properties.author).toBe("Orwell");
@@ -184,7 +196,10 @@ describe("GraphQL queries", () => {
     `);
 
     expect(result.errors).toBeUndefined();
-    const schema = result.data?.type as { id: string; fields: Record<string, unknown> };
+    const schema = result.data?.type as {
+      id: string;
+      fields: Record<string, unknown>;
+    };
     expect(schema.id).toBe("core.note");
     expect(schema.fields).toHaveProperty("body");
   });
@@ -206,29 +221,40 @@ describe("GraphQL mutations", () => {
         }) { item { id version } }
       }
     `);
-    itemId = (createResult.data?.createItem as { item: { id: string } }).item.id;
+    itemId = (createResult.data?.createItem as { item: { id: string } }).item
+      .id;
 
-    const updateResult = await gql(`
+    const updateResult = await gql(
+      `
       mutation($id: ID!) {
         updateItem(id: $id, properties: { body: "Updated" }) {
           item { id version properties }
           metadata { tags }
         }
       }
-    `, { id: itemId });
+    `,
+      { id: itemId },
+    );
 
     expect(updateResult.errors).toBeUndefined();
-    const updated = (updateResult.data?.updateItem as { item: { version: number; properties: Record<string, unknown> } }).item;
+    const updated = (
+      updateResult.data?.updateItem as {
+        item: { version: number; properties: Record<string, unknown> };
+      }
+    ).item;
     expect(updated.version).toBe(2);
     expect(updated.properties.body).toBe("Updated");
   });
 
   it("deletes an item", async () => {
-    const result = await gql(`
+    const result = await gql(
+      `
       mutation($id: ID!) {
         deleteItem(id: $id) { ok }
       }
-    `, { id: itemId });
+    `,
+      { id: itemId },
+    );
 
     expect(result.errors).toBeUndefined();
     expect((result.data?.deleteItem as { ok: boolean }).ok).toBe(true);
@@ -243,31 +269,41 @@ describe("GraphQL mutations", () => {
         }) { item { id } }
       }
     `);
-    const id = (createResult.data?.createItem as { item: { id: string } }).item.id;
+    const id = (createResult.data?.createItem as { item: { id: string } }).item
+      .id;
 
-    const addResult = await gql(`
+    const addResult = await gql(
+      `
       mutation($itemId: ID!) {
         addTags(itemId: $itemId, tags: ["new-tag", "another"]) {
           metadata { tags }
         }
       }
-    `, { itemId: id });
+    `,
+      { itemId: id },
+    );
 
     expect(addResult.errors).toBeUndefined();
-    const tags = (addResult.data?.addTags as { metadata: { tags: string[] } }).metadata.tags;
+    const tags = (addResult.data?.addTags as { metadata: { tags: string[] } })
+      .metadata.tags;
     expect(tags).toContain("new-tag");
     expect(tags).toContain("another");
 
-    const removeResult = await gql(`
+    const removeResult = await gql(
+      `
       mutation($itemId: ID!) {
         removeTag(itemId: $itemId, tag: "new-tag") {
           metadata { tags }
         }
       }
-    `, { itemId: id });
+    `,
+      { itemId: id },
+    );
 
     expect(removeResult.errors).toBeUndefined();
-    const remaining = (removeResult.data?.removeTag as { metadata: { tags: string[] } }).metadata.tags;
+    const remaining = (
+      removeResult.data?.removeTag as { metadata: { tags: string[] } }
+    ).metadata.tags;
     expect(remaining).not.toContain("new-tag");
     expect(remaining).toContain("another");
   });
@@ -281,18 +317,24 @@ describe("GraphQL mutations", () => {
         }) { item { id state } }
       }
     `);
-    const id = (createResult.data?.createItem as { item: { id: string } }).item.id;
+    const id = (createResult.data?.createItem as { item: { id: string } }).item
+      .id;
 
-    const result = await gql(`
+    const result = await gql(
+      `
       mutation($id: ID!) {
         transitionItem(id: $id, state: "active") {
           item { id state }
         }
       }
-    `, { id });
+    `,
+      { id },
+    );
 
     expect(result.errors).toBeUndefined();
-    expect((result.data?.transitionItem as { item: { state: string } }).item.state).toBe("active");
+    expect(
+      (result.data?.transitionItem as { item: { state: string } }).item.state,
+    ).toBe("active");
   });
 
   it("sets metadata", async () => {
@@ -304,18 +346,26 @@ describe("GraphQL mutations", () => {
         }) { item { id } }
       }
     `);
-    const id = (createResult.data?.createItem as { item: { id: string } }).item.id;
+    const id = (createResult.data?.createItem as { item: { id: string } }).item
+      .id;
 
-    const result = await gql(`
+    const result = await gql(
+      `
       mutation($itemId: ID!) {
         setMetadata(itemId: $itemId, tags: ["alpha", "beta"], about: ["related-id"]) {
           metadata { tags about }
         }
       }
-    `, { itemId: id });
+    `,
+      { itemId: id },
+    );
 
     expect(result.errors).toBeUndefined();
-    const meta = (result.data?.setMetadata as { metadata: { tags: string[]; about: string[] } }).metadata;
+    const meta = (
+      result.data?.setMetadata as {
+        metadata: { tags: string[]; about: string[] };
+      }
+    ).metadata;
     expect(meta.tags).toEqual(["alpha", "beta"]);
     expect(meta.about).toEqual(["related-id"]);
   });
@@ -393,11 +443,29 @@ describe("GraphQL pub/sub", () => {
     // Publish events
     publish({
       type: "created",
-      item: { id: "1", type: "core.note", state: "new", properties: {}, created_at: "", updated_at: "", timestamp: "", version: 1 },
+      item: {
+        id: "1",
+        type: "core.note",
+        state: "new",
+        properties: {},
+        created_at: "",
+        updated_at: "",
+        timestamp: "",
+        version: 1,
+      },
     });
     publish({
       type: "updated",
-      item: { id: "2", type: "core.note", state: "active", properties: {}, created_at: "", updated_at: "", timestamp: "", version: 2 },
+      item: {
+        id: "2",
+        type: "core.note",
+        state: "active",
+        properties: {},
+        created_at: "",
+        updated_at: "",
+        timestamp: "",
+        version: 2,
+      },
     });
 
     await consumer;
@@ -420,12 +488,30 @@ describe("GraphQL pub/sub", () => {
     // This should be filtered out
     publish({
       type: "created",
-      item: { id: "3", type: "core.note", state: "new", properties: {}, created_at: "", updated_at: "", timestamp: "", version: 1 },
+      item: {
+        id: "3",
+        type: "core.note",
+        state: "new",
+        properties: {},
+        created_at: "",
+        updated_at: "",
+        timestamp: "",
+        version: 1,
+      },
     });
     // This should pass through
     publish({
       type: "created",
-      item: { id: "4", type: "core.work.book", state: "new", properties: {}, created_at: "", updated_at: "", timestamp: "", version: 1 },
+      item: {
+        id: "4",
+        type: "core.work.book",
+        state: "new",
+        properties: {},
+        created_at: "",
+        updated_at: "",
+        timestamp: "",
+        version: 1,
+      },
     });
 
     await consumer;

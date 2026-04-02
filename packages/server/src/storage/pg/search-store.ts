@@ -10,13 +10,14 @@ export class PgSearchStore implements SearchStore {
 
   // No-op for Postgres — full-text search operates directly on the properties column
   async index(
-    _itemId: string,
-    _properties: Record<string, unknown>,
+    _itemId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    _properties: Record<string, unknown>, // eslint-disable-line @typescript-eslint/no-unused-vars
   ): Promise<void> {
     // Postgres computes tsvectors from properties at query time
   }
 
   // No-op for Postgres
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async remove(_itemId: string): Promise<void> {
     // Nothing to remove — no separate FTS table
   }
@@ -76,11 +77,13 @@ export class PgSearchStore implements SearchStore {
     // Advanced query language filter
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const { clause, params: filterParams, nextParamIdx } = filterToRawSql(
-        expr, "pg", "i", paramIdx,
-      );
+      const {
+        clause,
+        params: filterParams,
+        nextParamIdx,
+      } = filterToRawSql(expr, "pg", "i", paramIdx);
       conditions.push(`AND ${clause}`);
-      params.push(...filterParams as (string | number)[]);
+      params.push(...(filterParams as (string | number)[]));
       paramIdx = nextParamIdx;
     }
 
