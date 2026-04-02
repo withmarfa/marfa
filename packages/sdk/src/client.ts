@@ -200,6 +200,48 @@ export class MymeClient {
         `/items/${itemId}/tags/${encodeURIComponent(tag)}`,
       );
     },
+
+    getExtensions: async (
+      itemId: string,
+      namespace?: string,
+    ): Promise<Record<string, Record<string, unknown>>> => {
+      if (namespace) {
+        const res = await this.transport.request<{
+          namespace: string;
+          data: Record<string, unknown> | null;
+        }>("GET", `/items/${itemId}/extensions/${encodeURIComponent(namespace)}`);
+        return res.data ? { [namespace]: res.data } : {};
+      }
+      const res = await this.transport.request<{
+        extensions: Record<string, Record<string, unknown>>;
+      }>("GET", `/items/${itemId}/extensions`);
+      return res.extensions;
+    },
+
+    setExtension: async (
+      itemId: string,
+      namespace: string,
+      data: Record<string, unknown>,
+    ): Promise<Record<string, Record<string, unknown>>> => {
+      const res = await this.transport.request<{
+        extensions: Record<string, Record<string, unknown>>;
+      }>(
+        "PUT",
+        `/items/${itemId}/extensions/${encodeURIComponent(namespace)}`,
+        { body: data },
+      );
+      return res.extensions;
+    },
+
+    deleteExtension: async (
+      itemId: string,
+      namespace: string,
+    ): Promise<void> => {
+      await this.transport.request(
+        "DELETE",
+        `/items/${itemId}/extensions/${encodeURIComponent(namespace)}`,
+      );
+    },
   };
 
   // ---- Search ----
