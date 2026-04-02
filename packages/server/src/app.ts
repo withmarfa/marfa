@@ -15,6 +15,7 @@ import { keyRoutes } from "./routes/keys.js";
 import { importRoutes, exportRoutes } from "./routes/import-export.js";
 import { authRoutes } from "./routes/oauth.js";
 import { extensionRoutes } from "./routes/extensions.js";
+import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { mountGraphQL } from "./graphql/index.js";
 
 export function createApp(
@@ -53,6 +54,12 @@ export function createApp(
     }),
   );
   app.get("/health", (c) => c.json({ status: "ok" }));
+
+  // Rate limiting (before auth to protect all endpoints)
+  // Only enabled when RATE_LIMIT_REQUESTS is explicitly configured
+  if (process.env.RATE_LIMIT_REQUESTS) {
+    app.use("*", rateLimitMiddleware());
+  }
 
   // Auth middleware
   app.use("*", authMiddleware(storage, config.apiKeySalt));

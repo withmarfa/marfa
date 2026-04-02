@@ -22,6 +22,7 @@ export enum ErrorCode {
   INVALID_SCOPE = "invalid_scope",
   EXPIRED_TOKEN = "expired_token",
   TOKEN_REUSE_DETECTED = "token_reuse_detected",
+  RATE_LIMITED = "rate_limited",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -46,6 +47,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INVALID_SCOPE]: 400,
   [ErrorCode.EXPIRED_TOKEN]: 401,
   [ErrorCode.TOKEN_REUSE_DETECTED]: 400,
+  [ErrorCode.RATE_LIMITED]: 429,
 };
 
 /** Returns the HTTP status code for a given error code. */
