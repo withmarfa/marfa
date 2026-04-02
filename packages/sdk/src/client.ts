@@ -185,6 +185,18 @@ export class MymeClient {
       return res.metadata;
     },
 
+    merge: async (
+      itemId: string,
+      input: Partial<MetadataInput>,
+    ): Promise<Metadata> => {
+      const res = await this.transport.request<{ metadata: Metadata }>(
+        "PATCH",
+        `/items/${itemId}/metadata`,
+        { body: input },
+      );
+      return res.metadata;
+    },
+
     addTags: async (itemId: string, tags: string[]): Promise<Metadata> => {
       const res = await this.transport.request<{ metadata: Metadata }>(
         "POST",
@@ -292,7 +304,7 @@ export class MymeClient {
 
   readonly blobs = {
     upload: async (
-      data: Buffer | Uint8Array,
+      data: Uint8Array | ArrayBuffer,
       mimeType: string,
     ): Promise<{ hash: string }> => {
       const response = await this.transport.rawRequest("POST", "/blobs", {
