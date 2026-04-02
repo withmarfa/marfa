@@ -49,9 +49,13 @@ export interface ListFilters {
   source?: string;
   parent_id?: string;
   thread_id?: string;
+  root_only?: boolean;
+  tags?: string[];
   filter?: string;
   sort?: "created_at" | "updated_at" | "timestamp";
   direction?: "asc" | "desc";
+  since?: string;
+  until?: string;
   limit?: number;
   cursor?: string;
 }
