@@ -159,8 +159,8 @@ export class PgItemStore implements ItemStore {
         ...(input.source_id != null && { source_id: input.source_id }),
         ...(input.origin != null && { origin: input.origin }),
         ...(input.device_id != null && { device_id: input.device_id }),
-        ...(input.parent_id != null && { parent_id: input.parent_id }),
-        ...(input.thread_id != null && { thread_id: input.thread_id }),
+        parent_id: input.parent_id ?? null,
+        thread_id: input.thread_id ?? null,
         ...(input.capture_latitude != null && {
           capture_latitude: input.capture_latitude,
         }),

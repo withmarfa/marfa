@@ -452,6 +452,8 @@ describe("GraphQL pub/sub", () => {
         updated_at: "",
         timestamp: "",
         version: 1,
+        parent_id: null,
+        thread_id: null,
       },
     });
     publish({
@@ -465,6 +467,8 @@ describe("GraphQL pub/sub", () => {
         updated_at: "",
         timestamp: "",
         version: 2,
+        parent_id: null,
+        thread_id: null,
       },
     });
 
@@ -497,6 +501,8 @@ describe("GraphQL pub/sub", () => {
         updated_at: "",
         timestamp: "",
         version: 1,
+        parent_id: null,
+        thread_id: null,
       },
     });
     // This should pass through
@@ -511,6 +517,8 @@ describe("GraphQL pub/sub", () => {
         updated_at: "",
         timestamp: "",
         version: 1,
+        parent_id: null,
+        thread_id: null,
       },
     });
 

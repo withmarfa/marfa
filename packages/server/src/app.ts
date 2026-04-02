@@ -14,6 +14,7 @@ import { blobRoutes } from "./routes/blobs.js";
 import { keyRoutes } from "./routes/keys.js";
 import { importRoutes, exportRoutes } from "./routes/import-export.js";
 import { authRoutes } from "./routes/oauth.js";
+import { extensionRoutes } from "./routes/extensions.js";
 import { mountGraphQL } from "./graphql/index.js";
 
 export function createApp(
@@ -47,6 +48,7 @@ export function createApp(
         "export",
         "oauth",
         "graphql",
+        "extensions",
       ],
     }),
   );
@@ -60,6 +62,7 @@ export function createApp(
 
   // Protected routes
   app.route("/items", itemRoutes(storage));
+  app.route("/items", extensionRoutes(storage));
   app.route("/threads", threadRoutes(storage));
   app.route("/types", typeRoutes());
   app.route("/search", searchRoutes(storage));

@@ -15,7 +15,12 @@ export class SqliteMetadataStore implements MetadataStore {
       .where(eq(metadata.item_id, itemId))
       .get();
     if (!row) {
-      return Promise.resolve({ item_id: itemId, tags: [], about: [] });
+      return Promise.resolve({
+        item_id: itemId,
+        tags: [],
+        about: [],
+        extensions: {},
+      });
     }
     return Promise.resolve(rowToMetadata(row));
   }
@@ -29,7 +34,7 @@ export class SqliteMetadataStore implements MetadataStore {
       })
       .where(eq(metadata.item_id, itemId))
       .run();
-    return Promise.resolve({ item_id: itemId, tags, about });
+    return this.get(itemId);
   }
 
   async merge(
@@ -57,5 +62,43 @@ export class SqliteMetadataStore implements MetadataStore {
     const current = await this.get(itemId);
     const filtered = current.tags.filter((t) => t !== tag);
     return this.set(itemId, filtered, current.about);
+  }
+
+  async getExtensions(
+    itemId: string,
+  ): Promise<Record<string, Record<string, unknown>>> {
+    const current = await this.get(itemId);
+    return current.extensions;
+  }
+
+  async setExtension(
+    itemId: string,
+    namespace: string,
+    data: Record<string, unknown>,
+  ): Promise<Record<string, Record<string, unknown>>> {
+    const current = await this.get(itemId);
+    const extensions = { ...current.extensions, [namespace]: data };
+    this.db
+      .update(metadata)
+      .set({ extensions: JSON.stringify(extensions) })
+      .where(eq(metadata.item_id, itemId))
+      .run();
+    return extensions;
+  }
+
+  async deleteExtension(
+    itemId: string,
+    namespace: string,
+  ): Promise<Record<string, Record<string, unknown>>> {
+    const current = await this.get(itemId);
+    const rest = Object.fromEntries(
+      Object.entries(current.extensions).filter(([k]) => k !== namespace),
+    );
+    this.db
+      .update(metadata)
+      .set({ extensions: JSON.stringify(rest) })
+      .where(eq(metadata.item_id, itemId))
+      .run();
+    return rest;
   }
 }

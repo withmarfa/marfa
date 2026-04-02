@@ -94,6 +94,18 @@ export interface MetadataStore {
   merge(itemId: string, tags?: string[], about?: string[]): Promise<Metadata>;
   addTags(itemId: string, tags: string[]): Promise<Metadata>;
   removeTag(itemId: string, tag: string): Promise<Metadata>;
+  getExtensions(
+    itemId: string,
+  ): Promise<Record<string, Record<string, unknown>>>;
+  setExtension(
+    itemId: string,
+    namespace: string,
+    data: Record<string, unknown>,
+  ): Promise<Record<string, Record<string, unknown>>>;
+  deleteExtension(
+    itemId: string,
+    namespace: string,
+  ): Promise<Record<string, Record<string, unknown>>>;
 }
 
 export interface VersionStore {

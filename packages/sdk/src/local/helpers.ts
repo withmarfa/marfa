@@ -25,8 +25,8 @@ export function rowToItem(row: Record<string, unknown>): Item {
     version: row.version as number,
     schema_version: (row.schema_version as number | null) ?? undefined,
     device_id: (row.device_id as string | null) ?? undefined,
-    parent_id: (row.parent_id as string | null) ?? undefined,
-    thread_id: (row.thread_id as string | null) ?? undefined,
+    parent_id: (row.parent_id as string | null) ?? null,
+    thread_id: (row.thread_id as string | null) ?? null,
     capture_latitude: (row.capture_latitude as number | null) ?? undefined,
     capture_longitude: (row.capture_longitude as number | null) ?? undefined,
   };
@@ -38,6 +38,7 @@ export function rowToMetadata(row: Record<string, unknown>): Metadata {
     item_id: row.item_id as string,
     tags: parseJson(row.tags as string, []),
     about: parseJson(row.about as string, []),
+    extensions: parseJson(row.extensions as string, {}),
   };
 }
 

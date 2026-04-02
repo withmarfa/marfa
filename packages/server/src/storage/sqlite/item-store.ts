@@ -185,8 +185,8 @@ export class SqliteItemStore implements ItemStore {
         ...(input.source_id != null && { source_id: input.source_id }),
         ...(input.origin != null && { origin: input.origin }),
         ...(input.device_id != null && { device_id: input.device_id }),
-        ...(input.parent_id != null && { parent_id: input.parent_id }),
-        ...(input.thread_id != null && { thread_id: input.thread_id }),
+        parent_id: input.parent_id ?? null,
+        thread_id: input.thread_id ?? null,
         ...(input.capture_latitude != null && {
           capture_latitude: input.capture_latitude,
         }),
@@ -423,11 +423,7 @@ export class SqliteItemStore implements ItemStore {
           setClause.parent_id = input.parent_id;
         }
 
-        this.db
-          .update(items)
-          .set(setClause)
-          .where(whereClause)
-          .run();
+        this.db.update(items).set(setClause).where(whereClause).run();
 
         void this.searchStore.remove(id);
         void this.searchStore.index(id, merged);

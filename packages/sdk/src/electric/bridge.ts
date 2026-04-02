@@ -174,8 +174,8 @@ function coerceItem(row: Row): Item {
     version: num(row.version, 1),
     schema_version: optNum(row.schema_version),
     device_id: optStr(row.device_id),
-    parent_id: optStr(row.parent_id),
-    thread_id: optStr(row.thread_id),
+    parent_id: optStr(row.parent_id) ?? null,
+    thread_id: optStr(row.thread_id) ?? null,
     capture_latitude: optNum(row.capture_latitude),
     capture_longitude: optNum(row.capture_longitude),
   };
@@ -196,10 +196,16 @@ function coerceMetadata(row: Row): Metadata {
         ? (row.about as string[])
         : [];
 
+  const extensions =
+    typeof row.extensions === "string"
+      ? parseJson(row.extensions, {})
+      : (row.extensions as Record<string, Record<string, unknown>>);
+
   return {
     item_id: str(row.item_id),
     tags,
     about,
+    extensions,
   };
 }
 

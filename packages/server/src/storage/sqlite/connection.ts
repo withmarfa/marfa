@@ -82,7 +82,8 @@ export function createConnection(sqlitePath: string): {
     CREATE TABLE IF NOT EXISTS metadata (
       item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
       tags TEXT NOT NULL DEFAULT '[]',
-      about TEXT NOT NULL DEFAULT '[]'
+      about TEXT NOT NULL DEFAULT '[]',
+      extensions TEXT NOT NULL DEFAULT '{}'
     );
 
     CREATE TABLE IF NOT EXISTS versions (
@@ -154,6 +155,24 @@ export function createConnection(sqlitePath: string): {
       created_at TEXT NOT NULL
     );
   `);
+
+  // Migrations for existing databases
+  const columns = sqlite.prepare("PRAGMA table_info(metadata)").all() as {
+    name: string;
+  }[];
+  if (!columns.some((c) => c.name === "extensions")) {
+    sqlite.exec(
+      "ALTER TABLE metadata ADD COLUMN extensions TEXT NOT NULL DEFAULT '{}'",
+    );
+  }
+  const keyColumns = sqlite.prepare("PRAGMA table_info(api_keys)").all() as {
+    name: string;
+  }[];
+  if (!keyColumns.some((c) => c.name === "extension_permissions")) {
+    sqlite.exec(
+      "ALTER TABLE api_keys ADD COLUMN extension_permissions TEXT NOT NULL DEFAULT '{}'",
+    );
+  }
 
   // Create FTS5 virtual table
   sqlite.exec(CREATE_FTS);

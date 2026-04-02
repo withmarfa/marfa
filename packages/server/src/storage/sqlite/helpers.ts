@@ -36,6 +36,10 @@ export function rowToMetadata(row: MetadataRow): Metadata {
     item_id: row.item_id,
     tags: JSON.parse(row.tags) as string[],
     about: JSON.parse(row.about) as string[],
+    extensions: JSON.parse(row.extensions) as Record<
+      string,
+      Record<string, unknown>
+    >,
   };
 }
 

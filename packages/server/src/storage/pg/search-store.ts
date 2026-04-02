@@ -96,7 +96,7 @@ export class PgSearchStore implements SearchStore {
         i.timestamp, i.source, i.source_id, i.origin, i.version,
         i.schema_version, i.device_id, i.parent_id, i.thread_id,
         i.capture_latitude, i.capture_longitude,
-        m.item_id AS meta_item_id, m.tags, m.about,
+        m.item_id AS meta_item_id, m.tags, m.about, m.extensions,
         ts_rank(${tsvec}, plainto_tsquery('english', ${queryParam})) AS rank,
         ts_headline('english',
           coalesce(i.properties::json->>'title','') || ' ' ||
@@ -122,6 +122,9 @@ export class PgSearchStore implements SearchStore {
         item_id: row.id as string,
         tags: JSON.parse((row.tags as string | null) ?? "[]") as string[],
         about: JSON.parse((row.about as string | null) ?? "[]") as string[],
+        extensions: JSON.parse(
+          (row.extensions as string | null) ?? "{}",
+        ) as Record<string, Record<string, unknown>>,
       },
       relevance_score: Math.abs(row.rank as number),
       snippet: (row.snippet as string) || undefined,

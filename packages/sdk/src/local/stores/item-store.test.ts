@@ -15,6 +15,8 @@ const testItem: Item = {
   updated_at: "2026-01-01T00:00:00Z",
   timestamp: "2026-01-01T00:00:00Z",
   version: 1,
+  parent_id: null,
+  thread_id: null,
 };
 
 beforeAll(() => {

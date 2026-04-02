@@ -280,9 +280,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
         properties: hasProperties
           ? (body.properties as Record<string, unknown>)
           : undefined,
-        parent_id: hasParentId
-          ? (body.parent_id as string | null)
-          : undefined,
+        parent_id: hasParentId ? (body.parent_id as string | null) : undefined,
         version: body.version as number,
       },
       tid,

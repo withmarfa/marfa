@@ -132,6 +132,11 @@ export async function createConnection(connectionString: string): Promise<{
   await client.unsafe(`SELECT pg_advisory_lock(42)`);
   try {
     await client.unsafe(SCHEMA_SQL);
+    // Migrations for existing databases
+    await client.unsafe(`
+      ALTER TABLE metadata ADD COLUMN IF NOT EXISTS extensions TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS extension_permissions TEXT NOT NULL DEFAULT '{}';
+    `);
   } finally {
     await client.unsafe(`SELECT pg_advisory_unlock(42)`);
   }

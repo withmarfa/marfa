@@ -18,6 +18,9 @@ export type KeyRole = "admin" | "member";
 /** Per-type permission levels. */
 export type TypePermission = "read" | "write" | "none";
 
+/** Per-namespace extension permission levels. */
+export type ExtensionPermission = "read" | "write";
+
 // ---------------------------------------------------------------------------
 // Core protocol types
 // ---------------------------------------------------------------------------
@@ -69,11 +72,12 @@ export interface UpdateItemInput {
   version?: number;
 }
 
-/** Metadata sidecar — tags and entity references, stored separately from properties. */
+/** Metadata sidecar — tags, entity references, and namespaced extensions. */
 export interface Metadata {
   item_id: string;
   tags: string[];
   about: string[];
+  extensions: Record<string, Record<string, unknown>>;
 }
 
 /** A frozen snapshot of an item's previous state. */
@@ -100,6 +104,7 @@ export interface ApiKey {
   label: string;
   role: KeyRole;
   type_permissions: Record<string, TypePermission>;
+  extension_permissions?: Record<string, ExtensionPermission>;
   created_at: string;
   last_used_at: string | null;
 }
@@ -109,6 +114,7 @@ export interface CreateKeyInput {
   label: string;
   role: KeyRole;
   type_permissions?: Record<string, TypePermission>;
+  extension_permissions?: Record<string, ExtensionPermission>;
 }
 
 // ---------------------------------------------------------------------------

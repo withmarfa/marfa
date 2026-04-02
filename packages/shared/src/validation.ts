@@ -166,3 +166,55 @@ export function resolveTypePermission(
 
   return bestMatch ?? "none";
 }
+
+// ---------------------------------------------------------------------------
+// Extension permission resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the effective permission for an extension namespace.
+ * Checks: exact match → wildcard "*" → implicit own-namespace write → "none".
+ */
+export function resolveExtensionPermission(
+  namespace: string,
+  permissions:
+    | Record<string, import("./types.js").ExtensionPermission>
+    | undefined,
+  keyLabel: string,
+): import("./types.js").ExtensionPermission | "none" {
+  if (permissions) {
+    // Exact namespace match
+    const exact = permissions[namespace];
+    if (exact) return exact;
+    // Wildcard
+    const wildcard = permissions["*"];
+    if (wildcard) return wildcard;
+  }
+  // Implicit: keys can always write their own namespace (matching key label)
+  if (namespace === keyLabel) return "write";
+  return "none";
+}
+
+/**
+ * Filters extension namespaces based on the requesting key's permissions.
+ * Admins see everything. Members see namespaces they have read or write access to.
+ */
+export function filterExtensionsByPermission(
+  extensions: Record<string, Record<string, unknown>>,
+  permissions:
+    | Record<string, import("./types.js").ExtensionPermission>
+    | undefined,
+  keyLabel: string,
+  isAdmin: boolean,
+): Record<string, Record<string, unknown>> {
+  if (isAdmin) return extensions;
+
+  const filtered: Record<string, Record<string, unknown>> = {};
+  for (const [ns, data] of Object.entries(extensions)) {
+    const perm = resolveExtensionPermission(ns, permissions, keyLabel);
+    if (perm !== "none") {
+      filtered[ns] = data;
+    }
+  }
+  return filtered;
+}

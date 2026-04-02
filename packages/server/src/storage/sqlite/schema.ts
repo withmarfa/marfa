@@ -68,6 +68,7 @@ export const metadata = sqliteTable("metadata", {
     .references(() => items.id, { onDelete: "cascade" }),
   tags: text("tags").notNull().default("[]"),
   about: text("about").notNull().default("[]"),
+  extensions: text("extensions").notNull().default("{}"),
 });
 
 // ---------------------------------------------------------------------------
@@ -100,6 +101,7 @@ export const apiKeys = sqliteTable("api_keys", {
   label: text("label").notNull(),
   role: text("role").notNull().default("member"),
   type_permissions: text("type_permissions").notNull().default('{"*":"write"}'),
+  extension_permissions: text("extension_permissions").notNull().default("{}"),
   created_at: text("created_at").notNull(),
   revoked_at: text("revoked_at"),
   last_used_at: text("last_used_at"),
