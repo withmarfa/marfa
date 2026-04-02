@@ -35,9 +35,22 @@ async function main() {
   }
   const app = createApp(storage, blobBackend, config);
 
-  serve({ fetch: app.fetch, port: config.port }, (info) => {
+  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`Myme server listening on port ${String(info.port)}`);
   });
+
+  // Graceful shutdown
+  const shutdown = () => {
+    console.log("Shutting down...");
+    server.close(() => {
+      storage
+        .close()
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1));
+    });
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 main().catch((err: unknown) => {

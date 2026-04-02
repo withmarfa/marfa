@@ -133,6 +133,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     const filter = c.req.query("filter") ?? undefined;
 
+    const rootOnly = c.req.query("root_only") === "true";
+
     const result = await storage.items.list({
       tenantId: c.get("apiKey")?.tenant_id,
       type,
@@ -140,6 +142,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       source: c.req.query("source"),
       parent_id: c.req.query("parent_id"),
       thread_id: c.req.query("thread_id"),
+      root_only: rootOnly || undefined,
       tags,
       filter,
       allowed_types: getTypeFilter(c),
@@ -151,6 +154,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
           | undefined) ?? undefined,
       direction:
         (c.req.query("direction") as "asc" | "desc" | undefined) ?? undefined,
+      since: c.req.query("since"),
+      until: c.req.query("until"),
       limit: parseIntParam(c.req.query("limit"), 50, 1, 200),
       cursor: c.req.query("cursor"),
     });
@@ -184,10 +189,14 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const body = await c.req.json();
-    if (!body.properties || typeof body.properties !== "object") {
+    const hasProperties =
+      body.properties !== undefined && typeof body.properties === "object";
+    const hasParentId = "parent_id" in body;
+
+    if (!hasProperties && !hasParentId) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
-        "properties is required and must be an object",
+        "At least one of properties or parent_id is required",
       );
     }
     if (body.version !== undefined) {
@@ -203,6 +212,22 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       }
     }
 
+    // Validate parent_id if provided
+    if (hasParentId && body.parent_id !== null) {
+      if (typeof body.parent_id !== "string" || !isValidId(body.parent_id)) {
+        throw new ProtocolError(
+          ErrorCode.VALIDATION_ERROR,
+          "parent_id must be a valid ID or null",
+        );
+      }
+      if (body.parent_id === id) {
+        throw new ProtocolError(
+          ErrorCode.VALIDATION_ERROR,
+          "An item cannot be its own parent",
+        );
+      }
+    }
+
     const tid = c.get("apiKey")?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
@@ -211,27 +236,34 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     requireTypeAccess(c, item.type, "write");
 
-    const merged = {
-      ...item.properties,
-      ...(body.properties as Record<string, unknown>),
-    };
-    if (getTypeSchema(item.type)) {
-      const validation = validateProperties(item.type, merged);
-      if (!validation.success) {
-        throw new ProtocolError(
-          ErrorCode.VALIDATION_ERROR,
-          "Invalid properties",
-          {
-            errors: validation.errors,
-          },
-        );
+    if (hasProperties) {
+      const merged = {
+        ...item.properties,
+        ...(body.properties as Record<string, unknown>),
+      };
+      if (getTypeSchema(item.type)) {
+        const validation = validateProperties(item.type, merged);
+        if (!validation.success) {
+          throw new ProtocolError(
+            ErrorCode.VALIDATION_ERROR,
+            "Invalid properties",
+            {
+              errors: validation.errors,
+            },
+          );
+        }
       }
     }
 
     const result = await storage.items.update(
       id,
       {
-        properties: body.properties as Record<string, unknown>,
+        properties: hasProperties
+          ? (body.properties as Record<string, unknown>)
+          : undefined,
+        parent_id: hasParentId
+          ? (body.parent_id as string | null)
+          : undefined,
         version: body.version as number,
       },
       tid,

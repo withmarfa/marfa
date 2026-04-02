@@ -28,11 +28,14 @@ export interface ItemFilters {
   source?: string;
   parent_id?: string;
   thread_id?: string;
+  root_only?: boolean;
   tags?: string[];
   filter?: string;
   allowed_types?: string[];
   sort?: ItemSortField;
   direction?: SortDirection;
+  since?: string;
+  until?: string;
   limit?: number;
   cursor?: string;
 }

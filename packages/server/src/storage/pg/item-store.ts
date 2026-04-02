@@ -47,8 +47,9 @@ export class PgItemStore implements ItemStore {
     }
 
     // Validate properties against type schema if registered; accept unknown types
+    // Empty properties {} are treated as a draft — skip validation
     const typeSchema = getTypeSchema(input.type);
-    if (typeSchema) {
+    if (typeSchema && Object.keys(input.properties).length > 0) {
       const validation = validateProperties(input.type, input.properties);
       if (!validation.success) {
         throw new ProtocolError(
@@ -218,6 +219,23 @@ export class PgItemStore implements ItemStore {
       conditions.push(eq(items.parent_id, filters.parent_id));
     if (filters.thread_id)
       conditions.push(eq(items.thread_id, filters.thread_id));
+
+    // root_only: only items with no parent
+    if (filters.root_only) {
+      conditions.push(sql`${items.parent_id} IS NULL`);
+    }
+
+    // Timestamp range filters — uses COALESCE(timestamp, created_at) as effective date
+    if (filters.since) {
+      conditions.push(
+        sql`COALESCE(${items.timestamp}, ${items.created_at}) >= ${filters.since}`,
+      );
+    }
+    if (filters.until) {
+      conditions.push(
+        sql`COALESCE(${items.timestamp}, ${items.created_at}) <= ${filters.until}`,
+      );
+    }
 
     // Tags filter — items must have ALL specified tags (Postgres jsonb containment)
     if (filters.tags && filters.tags.length > 0) {

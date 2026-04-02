@@ -30,6 +30,7 @@ export class SqliteKeyStore implements KeyStore {
       role: input.role,
       type_permissions: input.type_permissions ?? {},
       created_at: now,
+      last_used_at: null,
     });
   }
 
@@ -45,6 +46,7 @@ export class SqliteKeyStore implements KeyStore {
           TypePermission
         >,
         created_at: row.created_at,
+        last_used_at: row.last_used_at ?? null,
       })),
     );
   }
@@ -70,6 +72,7 @@ export class SqliteKeyStore implements KeyStore {
         TypePermission
       >,
       created_at: row.created_at,
+      last_used_at: row.last_used_at ?? null,
       key_hash: row.key_hash,
       revoked_at: row.revoked_at,
       tenant_id: row.tenant_id ?? undefined,

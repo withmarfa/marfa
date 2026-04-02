@@ -7,7 +7,7 @@ import {
 } from "@myme/shared";
 import type { ItemState } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireAdmin, requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 
 const MAX_IMPORT_ITEMS = 5000;
@@ -87,7 +87,7 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
   router.get("/", async (c) => {
-    requireAdmin(c);
+    requireAuth(c);
 
     const type = c.req.query("type");
     if (type && !isValidTypeIdentifier(type)) {
@@ -114,6 +114,7 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
         tenantId: c.get("apiKey")?.tenant_id,
         type,
         state,
+        allowed_types: getTypeFilter(c),
         limit: 200,
         cursor,
       });

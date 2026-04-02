@@ -65,6 +65,7 @@ export interface CreateItemInput {
 /** Input for updating an existing item. */
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
+  parent_id?: string | null;
   version?: number;
 }
 
@@ -100,6 +101,7 @@ export interface ApiKey {
   role: KeyRole;
   type_permissions: Record<string, TypePermission>;
   created_at: string;
+  last_used_at: string | null;
 }
 
 /** Input for creating a new API key. */

@@ -6,6 +6,8 @@ import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 
+const MAX_BLOB_SIZE = Number(process.env.MAX_BLOB_SIZE) || 50 * 1024 * 1024; // 50MB default
+
 export function blobRoutes(
   storage: Storage,
   blobBackend: BlobBackend,
@@ -38,6 +40,13 @@ export function blobRoutes(
 
     if (data.length === 0) {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Empty blob");
+    }
+
+    if (data.length > MAX_BLOB_SIZE) {
+      throw new ProtocolError(
+        ErrorCode.VALIDATION_ERROR,
+        `Blob exceeds maximum size of ${String(MAX_BLOB_SIZE)} bytes`,
+      );
     }
 
     // Compute content-addressed hash

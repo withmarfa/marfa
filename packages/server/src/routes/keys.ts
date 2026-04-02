@@ -39,6 +39,17 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     const typePermissions =
       (body.type_permissions as Record<string, string> | undefined) ?? {};
 
+    // Validate permission values
+    const validPermissions = new Set(["read", "write", "none"]);
+    for (const [pattern, perm] of Object.entries(typePermissions)) {
+      if (!validPermissions.has(perm)) {
+        throw new ProtocolError(
+          ErrorCode.VALIDATION_ERROR,
+          `Invalid permission value "${perm}" for type pattern "${pattern}". Must be "read", "write", or "none"`,
+        );
+      }
+    }
+
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
 
@@ -62,6 +73,7 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
         role: stored.role,
         type_permissions: stored.type_permissions,
         created_at: stored.created_at,
+        last_used_at: stored.last_used_at,
       },
       201,
     );
@@ -79,7 +91,7 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
     await storage.keys.revoke(id);
-    return c.body(null, 204);
+    return c.json({ ok: true });
   });
 
   return router;

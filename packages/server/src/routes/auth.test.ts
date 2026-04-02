@@ -103,6 +103,6 @@ describe("key management", () => {
       `/keys/${created.id as string}`,
       { key: ctx.adminKey },
     );
-    expect(revokeRes.status).toBe(204);
+    expect(revokeRes.status).toBe(200);
   });
 });

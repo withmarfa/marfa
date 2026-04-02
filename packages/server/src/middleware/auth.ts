@@ -83,6 +83,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         role: "member",
         type_permissions: typePermissions,
         created_at: oauthToken.created_at,
+        last_used_at: null,
       });
       c.set("authType", "oauth");
       return next();
@@ -106,6 +107,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         role: stored.role,
         type_permissions: stored.type_permissions,
         created_at: stored.created_at,
+        last_used_at: stored.last_used_at,
       });
       c.set("authType", "api_key");
 
