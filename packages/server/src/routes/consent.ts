@@ -11,6 +11,15 @@ interface ConsentParams {
   responseType: string;
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /** Renders the OAuth consent screen as an HTML string. */
 export function renderConsentScreen(params: ConsentParams): string {
   const readScopes = params.scopes.filter((s) => s.operation === "read");
@@ -18,8 +27,8 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   const scopeCheckbox = (scope: ParsedScope) =>
     `<label style="display:block;margin:4px 0">
-      <input type="checkbox" name="scopes" value="${scope.typePattern}:${scope.operation}" checked>
-      ${scope.typePattern} (${scope.operation})
+      <input type="checkbox" name="scopes" value="${escapeHtml(scope.typePattern)}:${escapeHtml(scope.operation)}" checked>
+      ${escapeHtml(scope.typePattern)} (${escapeHtml(scope.operation)})
     </label>`;
 
   return `<!DOCTYPE html>
@@ -27,7 +36,7 @@ export function renderConsentScreen(params: ConsentParams): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Authorize ${params.clientName}</title>
+  <title>Authorize ${escapeHtml(params.clientName)}</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
     h1 { font-size: 1.25rem; margin-bottom: 0.5rem; }
@@ -41,14 +50,14 @@ export function renderConsentScreen(params: ConsentParams): string {
   </style>
 </head>
 <body>
-  <h1><span class="app-name">${params.clientName}</span> wants to access your data</h1>
+  <h1><span class="app-name">${escapeHtml(params.clientName)}</span> wants to access your data</h1>
   <form method="POST" action="/auth/authorize">
-    <input type="hidden" name="client_id" value="${params.clientId}">
-    <input type="hidden" name="redirect_uri" value="${params.redirectUri}">
-    <input type="hidden" name="code_challenge" value="${params.codeChallenge}">
-    <input type="hidden" name="code_challenge_method" value="${params.codeChallengeMethod}">
-    <input type="hidden" name="state" value="${params.state}">
-    <input type="hidden" name="response_type" value="${params.responseType}">
+    <input type="hidden" name="client_id" value="${escapeHtml(params.clientId)}">
+    <input type="hidden" name="redirect_uri" value="${escapeHtml(params.redirectUri)}">
+    <input type="hidden" name="code_challenge" value="${escapeHtml(params.codeChallenge)}">
+    <input type="hidden" name="code_challenge_method" value="${escapeHtml(params.codeChallengeMethod)}">
+    <input type="hidden" name="state" value="${escapeHtml(params.state)}">
+    <input type="hidden" name="response_type" value="${escapeHtml(params.responseType)}">
 
     ${
       readScopes.length > 0

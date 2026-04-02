@@ -10,7 +10,7 @@ export const typeResolvers = {
 
   Thread: {
     items: (parent: Thread, _args: unknown, ctx: GraphQLContext) => {
-      return ctx.storage.threads.getItems(parent.id);
+      return ctx.storage.threads.getItems(parent.id, ctx.apiKey?.tenant_id);
     },
   },
 };

@@ -208,7 +208,7 @@ export class PgItemStore implements ItemStore {
           sql`EXISTS (
             SELECT 1 FROM metadata m
             WHERE m.item_id = ${items.id}
-              AND m.tags::jsonb @> ${JSON.stringify(tag)}::jsonb
+              AND m.tags::jsonb @> ${JSON.stringify([tag])}::jsonb
           )`,
         );
       }

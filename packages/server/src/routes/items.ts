@@ -225,7 +225,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     requireAuth(c);
-    const restored = await storage.items.restore(id, c.get("apiKey")?.tenant_id);
+    const tenantId = c.get("apiKey")?.tenant_id;
+    const restored = await storage.items.restore(id, tenantId);
     requireTypeAccess(c, restored.type, "write");
     const metadata = await storage.metadata.get(id);
     publish({ type: "restored", item: restored, metadata });
@@ -246,8 +247,13 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     requireAuth(c);
-    const updated = await storage.items.transition(id, state as ItemState, c.get("apiKey")?.tenant_id);
-    requireTypeAccess(c, updated.type, "write");
+    const tenantId = c.get("apiKey")?.tenant_id;
+    const item = await storage.items.get(id, tenantId);
+    if (!item) {
+      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+    }
+    requireTypeAccess(c, item.type, "write");
+    const updated = await storage.items.transition(id, state as ItemState, tenantId);
     const metadata = await storage.metadata.get(id);
     publish({ type: "transitioned", item: updated, metadata });
     return c.json({ item: updated, metadata });
