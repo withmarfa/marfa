@@ -188,9 +188,14 @@ describe("isValidTypeIdentifier", () => {
     expect(isValidTypeIdentifier("core.my-type")).toBe(true);
   });
 
-  it("accepts slash-separated community types", () => {
-    expect(isValidTypeIdentifier("demo/web-gallery")).toBe(true);
-    expect(isValidTypeIdentifier("acme/deal")).toBe(true);
+  it("accepts dot-separated community types", () => {
+    expect(isValidTypeIdentifier("demo.web_gallery")).toBe(true);
+    expect(isValidTypeIdentifier("acme.deal")).toBe(true);
+  });
+
+  it("rejects slash-separated identifiers", () => {
+    expect(isValidTypeIdentifier("demo/web-gallery")).toBe(false);
+    expect(isValidTypeIdentifier("acme/deal")).toBe(false);
   });
 
   it("rejects identifiers over 128 characters", () => {
