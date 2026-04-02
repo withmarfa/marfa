@@ -31,6 +31,8 @@ export interface FieldDefinition {
 export interface TypeSchema {
   id: string;
   parent?: string;
+  label: string;
+  description?: string;
   version: number;
   fields: Record<string, FieldDefinition>;
   states: ItemState[];
@@ -80,6 +82,7 @@ const workFields: Record<string, FieldDefinition> = {
 
 const coreWork: TypeSchema = {
   id: "core.work",
+  label: "Work",
   version: 1,
   fields: workFields,
   states: DEFAULT_STATES,
@@ -89,6 +92,7 @@ const coreWork: TypeSchema = {
 
 const coreWorkBook: TypeSchema = {
   id: "core.work.book",
+  label: "Book",
   parent: "core.work",
   version: 1,
   fields: {
@@ -103,6 +107,7 @@ const coreWorkBook: TypeSchema = {
 
 const coreWorkArticle: TypeSchema = {
   id: "core.work.article",
+  label: "Article",
   parent: "core.work",
   version: 1,
   fields: {
@@ -117,6 +122,7 @@ const coreWorkArticle: TypeSchema = {
 
 const coreWorkFilm: TypeSchema = {
   id: "core.work.film",
+  label: "Film",
   parent: "core.work",
   version: 1,
   fields: {
@@ -131,6 +137,7 @@ const coreWorkFilm: TypeSchema = {
 
 const coreWorkSong: TypeSchema = {
   id: "core.work.song",
+  label: "Song",
   parent: "core.work",
   version: 1,
   fields: {
@@ -146,6 +153,7 @@ const coreWorkSong: TypeSchema = {
 
 const coreWorkAlbum: TypeSchema = {
   id: "core.work.album",
+  label: "Album",
   parent: "core.work",
   version: 1,
   fields: {
@@ -159,6 +167,7 @@ const coreWorkAlbum: TypeSchema = {
 
 const coreWorkPodcast: TypeSchema = {
   id: "core.work.podcast",
+  label: "Podcast",
   parent: "core.work",
   version: 1,
   fields: {
@@ -174,6 +183,7 @@ const coreWorkPodcast: TypeSchema = {
 
 const coreWorkSeries: TypeSchema = {
   id: "core.work.series",
+  label: "Series",
   parent: "core.work",
   version: 1,
   fields: {
@@ -189,6 +199,7 @@ const coreWorkSeries: TypeSchema = {
 
 const coreWorkTvEpisode: TypeSchema = {
   id: "core.work.tv_episode",
+  label: "TV Episode",
   parent: "core.work",
   version: 1,
   fields: {
@@ -221,6 +232,7 @@ const entityFields: Record<string, FieldDefinition> = {
 
 const coreEntity: TypeSchema = {
   id: "core.entity",
+  label: "Entity",
   version: 1,
   fields: entityFields,
   states: DEFAULT_STATES,
@@ -230,6 +242,7 @@ const coreEntity: TypeSchema = {
 
 const coreEntityPerson: TypeSchema = {
   id: "core.entity.person",
+  label: "Person",
   parent: "core.entity",
   version: 1,
   fields: {
@@ -239,7 +252,7 @@ const coreEntityPerson: TypeSchema = {
     prefix: { type: "string" },
     suffix: { type: "string" },
     nickname: { type: "string" },
-    organisation: { type: "string" },
+    organization: { type: "string" },
     job_title: { type: "string" },
     department: { type: "string" },
     birthday: { type: "date" },
@@ -252,6 +265,7 @@ const coreEntityPerson: TypeSchema = {
 
 const coreEntityPlace: TypeSchema = {
   id: "core.entity.place",
+  label: "Place",
   parent: "core.entity",
   version: 1,
   fields: {
@@ -288,6 +302,7 @@ const fileFields: Record<string, FieldDefinition> = {
 
 const coreFile: TypeSchema = {
   id: "core.file",
+  label: "File",
   version: 1,
   fields: fileFields,
   states: DEFAULT_STATES,
@@ -297,6 +312,7 @@ const coreFile: TypeSchema = {
 
 const coreFileImage: TypeSchema = {
   id: "core.file.image",
+  label: "Image",
   parent: "core.file",
   version: 1,
   fields: {
@@ -313,6 +329,7 @@ const coreFileImage: TypeSchema = {
 
 const coreFileAudio: TypeSchema = {
   id: "core.file.audio",
+  label: "Audio",
   parent: "core.file",
   version: 1,
   fields: {
@@ -326,6 +343,7 @@ const coreFileAudio: TypeSchema = {
 
 const coreFileVideo: TypeSchema = {
   id: "core.file.video",
+  label: "Video",
   parent: "core.file",
   version: 1,
   fields: {
@@ -348,6 +366,7 @@ const coreFileVideo: TypeSchema = {
 
 const coreNote: TypeSchema = {
   id: "core.note",
+  label: "Note",
   version: 1,
   fields: {
     body: { type: "string", required: true },
@@ -363,6 +382,7 @@ const coreNote: TypeSchema = {
 
 const coreBookmark: TypeSchema = {
   id: "core.bookmark",
+  label: "Bookmark",
   version: 1,
   fields: {
     url: { type: "url" },
@@ -385,6 +405,7 @@ const coreBookmark: TypeSchema = {
 
 const coreTask: TypeSchema = {
   id: "core.task",
+  label: "Task",
   version: 1,
   fields: {
     title: { type: "string", required: true },
@@ -414,6 +435,7 @@ const coreTask: TypeSchema = {
 
 const coreMessage: TypeSchema = {
   id: "core.message",
+  label: "Message",
   version: 1,
   fields: {
     body: { type: "string", required: true },
@@ -433,6 +455,7 @@ const coreMessage: TypeSchema = {
 
 const coreEvent: TypeSchema = {
   id: "core.event",
+  label: "Event",
   version: 1,
   fields: {
     title: { type: "string", required: true },
@@ -458,6 +481,7 @@ const coreEvent: TypeSchema = {
 
 const coreCollection: TypeSchema = {
   id: "core.collection",
+  label: "Collection",
   version: 1,
   fields: {
     title: { type: "string", required: true },
