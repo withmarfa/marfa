@@ -225,7 +225,10 @@ export class MymeClient {
         const res = await this.transport.request<{
           namespace: string;
           data: Record<string, unknown> | null;
-        }>("GET", `/items/${itemId}/extensions/${encodeURIComponent(namespace)}`);
+        }>(
+          "GET",
+          `/items/${itemId}/extensions/${encodeURIComponent(namespace)}`,
+        );
         return res.data ? { [namespace]: res.data } : {};
       }
       const res = await this.transport.request<{

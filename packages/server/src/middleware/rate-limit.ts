@@ -78,10 +78,7 @@ export function rateLimitMiddleware(
     // Set rate limit headers
     c.header("X-RateLimit-Limit", String(limit));
     c.header("X-RateLimit-Remaining", String(Math.max(0, limit - entry.count)));
-    c.header(
-      "X-RateLimit-Reset",
-      String(Math.ceil(entry.resetAt / 1000)),
-    );
+    c.header("X-RateLimit-Reset", String(Math.ceil(entry.resetAt / 1000)));
 
     if (entry.count > limit) {
       const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
