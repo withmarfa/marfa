@@ -11,6 +11,13 @@ import type { items } from "./schema.js";
  * Quoted input ("exact phrase") uses phraseto_tsquery for exact phrase matching.
  * Unquoted input tokenizes, joins with &, and appends :* to the last token.
  */
+/**
+ * Sanitize a token for use in to_tsquery — strip tsquery operators.
+ */
+function sanitizeTsToken(token: string): string {
+  return token.replace(/[&|!():*'"\\<>]/g, "").trim();
+}
+
 function buildTsQueryExpr(
   query: string,
   queryParam: string,
@@ -21,9 +28,16 @@ function buildTsQueryExpr(
       paramValue: query.slice(1, -1),
     };
   }
-  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  const tokens = query
+    .trim()
+    .split(/\s+/)
+    .map(sanitizeTsToken)
+    .filter(Boolean);
   if (tokens.length === 0) {
-    return { expr: `to_tsquery('english', '')`, paramValue: "" };
+    return {
+      expr: `phraseto_tsquery('english', ${queryParam})`,
+      paramValue: query,
+    };
   }
   const tsqueryStr = tokens
     .map((t, i) => (i === tokens.length - 1 ? `${t}:*` : t))

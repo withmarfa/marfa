@@ -36,7 +36,10 @@ export class PgKeyStore implements KeyStore {
   }
 
   async list(): Promise<ApiKey[]> {
-    const rows = await this.db.select().from(apiKeys);
+    const rows = await this.db
+      .select()
+      .from(apiKeys)
+      .where(isNull(apiKeys.revoked_at));
     return rows.map((row) => ({
       id: row.id,
       label: row.label,

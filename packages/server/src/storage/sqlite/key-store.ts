@@ -36,7 +36,11 @@ export class SqliteKeyStore implements KeyStore {
   }
 
   list(): Promise<ApiKey[]> {
-    const rows = this.db.select().from(apiKeys).all();
+    const rows = this.db
+      .select()
+      .from(apiKeys)
+      .where(isNull(apiKeys.revoked_at))
+      .all();
     return Promise.resolve(
       rows.map((row) => ({
         id: row.id,
