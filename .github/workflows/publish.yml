@@ -12,7 +12,7 @@ jobs:
       contents: read
       packages: write
     env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
