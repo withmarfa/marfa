@@ -1,3 +1,4 @@
+import { safeJsonParse } from "../json-utils.js";
 import { eq, isNull } from "drizzle-orm";
 import { generateId } from "@myme/shared";
 import type { ApiKey, CreateKeyInput, TypePermission } from "@myme/shared";
@@ -41,10 +42,11 @@ export class SqliteKeyStore implements KeyStore {
         id: row.id,
         label: row.label,
         role: row.role as "admin" | "member",
-        type_permissions: JSON.parse(row.type_permissions) as Record<
-          string,
-          TypePermission
-        >,
+        type_permissions: safeJsonParse<Record<string, TypePermission>>(
+          row.type_permissions,
+          {},
+          "key type_permissions",
+        ),
         created_at: row.created_at,
         last_used_at: row.last_used_at ?? null,
       })),
@@ -67,10 +69,11 @@ export class SqliteKeyStore implements KeyStore {
       id: row.id,
       label: row.label,
       role: row.role as "admin" | "member",
-      type_permissions: JSON.parse(row.type_permissions) as Record<
-        string,
-        TypePermission
-      >,
+      type_permissions: safeJsonParse<Record<string, TypePermission>>(
+        row.type_permissions,
+        {},
+        "key type_permissions",
+      ),
       created_at: row.created_at,
       last_used_at: row.last_used_at ?? null,
       key_hash: row.key_hash,

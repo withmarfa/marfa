@@ -1,3 +1,4 @@
+import { safeJsonParse } from "../json-utils.js";
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq, ne, and, or, lt, gt, desc, asc, like, sql } from "drizzle-orm";
 import {
@@ -399,10 +400,11 @@ export class SqliteItemStore implements ItemStore {
         );
       }
 
-      const currentProps = JSON.parse(row.properties) as Record<
-        string,
-        unknown
-      >;
+      const currentProps = safeJsonParse<Record<string, unknown>>(
+        row.properties,
+        {},
+        "item update properties",
+      );
       const now = new Date().toISOString();
       const deviceId = row.device_id ?? undefined;
 

@@ -1,3 +1,4 @@
+import { safeJsonParse } from "../json-utils.js";
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq, and, isNull } from "drizzle-orm";
 import { generateId } from "@myme/shared";
@@ -54,14 +55,25 @@ export class SqliteOAuthStore implements OAuthStore {
       .where(eq(oauthClients.id, id))
       .get();
     if (!row) return null;
-    return { ...row, redirect_uris: JSON.parse(row.redirect_uris) as string[] };
+    return {
+      ...row,
+      redirect_uris: safeJsonParse<string[]>(
+        row.redirect_uris,
+        [],
+        "oauth redirect_uris",
+      ),
+    };
   }
 
   async listClients(): Promise<OAuthClient[]> {
     const rows = this.db.select().from(oauthClients).all();
     return rows.map((r) => ({
       ...r,
-      redirect_uris: JSON.parse(r.redirect_uris) as string[],
+      redirect_uris: safeJsonParse<string[]>(
+        r.redirect_uris,
+        [],
+        "oauth redirect_uris",
+      ),
     }));
   }
 
@@ -92,7 +104,7 @@ export class SqliteOAuthStore implements OAuthStore {
       .all();
     return rows.map((r) => ({
       ...r,
-      scopes: JSON.parse(r.scopes) as string[],
+      scopes: safeJsonParse<string[]>(r.scopes, [], "oauth scopes"),
     }));
   }
 
@@ -160,7 +172,9 @@ export class SqliteOAuthStore implements OAuthStore {
       .from(oauthGrants)
       .where(eq(oauthGrants.id, row.grant_id))
       .get();
-    const scopes = grant ? (JSON.parse(grant.scopes) as string[]) : [];
+    const scopes = grant
+      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
+      : [];
 
     return {
       id: row.id,
@@ -194,7 +208,9 @@ export class SqliteOAuthStore implements OAuthStore {
       .from(oauthGrants)
       .where(eq(oauthGrants.id, grantId))
       .get();
-    const scopes = grant ? (JSON.parse(grant.scopes) as string[]) : [];
+    const scopes = grant
+      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
+      : [];
 
     this.db
       .insert(oauthTokens)
@@ -237,7 +253,9 @@ export class SqliteOAuthStore implements OAuthStore {
       .from(oauthGrants)
       .where(eq(oauthGrants.id, row.grant_id))
       .get();
-    const scopes = grant ? (JSON.parse(grant.scopes) as string[]) : [];
+    const scopes = grant
+      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
+      : [];
 
     return {
       id: row.id,
@@ -263,7 +281,9 @@ export class SqliteOAuthStore implements OAuthStore {
         .from(oauthGrants)
         .where(eq(oauthGrants.id, row.grant_id))
         .get();
-      const scopes = grant ? (JSON.parse(grant.scopes) as string[]) : [];
+      const scopes = grant
+        ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
+        : [];
       result.push({
         id: row.id,
         grant_id: row.grant_id,
@@ -301,7 +321,11 @@ export class SqliteOAuthStore implements OAuthStore {
       .get();
     if (!grant) return;
 
-    const currentScopes = JSON.parse(grant.scopes) as string[];
+    const currentScopes = safeJsonParse<string[]>(
+      grant.scopes,
+      [],
+      "oauth grant scopes",
+    );
     const reduced = currentScopes.filter((s) => scopes.includes(s));
 
     this.db

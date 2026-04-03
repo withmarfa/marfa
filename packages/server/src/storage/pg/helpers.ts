@@ -1,21 +1,10 @@
+import { safeJsonParse } from "../json-utils.js";
 import type { Item, ItemState, Metadata, Version } from "@myme/shared";
 import type { items, metadata, versions } from "./schema.js";
 
 type ItemRow = typeof items.$inferSelect;
 type MetadataRow = typeof metadata.$inferSelect;
 type VersionRow = typeof versions.$inferSelect;
-
-/** Safely parse JSON from a database column, returning a fallback on corruption. */
-function safeJsonParse<T>(value: string, fallback: T, context: string): T {
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    console.error(
-      `Corrupted JSON in database column (${context}): ${value.slice(0, 100)}`,
-    );
-    return fallback;
-  }
-}
 
 export function rowToItem(row: ItemRow): Item {
   return {

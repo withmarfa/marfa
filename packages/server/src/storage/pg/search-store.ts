@@ -1,3 +1,4 @@
+import { safeJsonParse } from "../json-utils.js";
 import { parseFilter, type SearchResult } from "@myme/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql } from "../filter-sql.js";
@@ -125,11 +126,21 @@ export class PgSearchStore implements SearchStore {
       item: rowToItem(row as unknown as typeof items.$inferSelect),
       metadata: {
         item_id: row.id as string,
-        tags: JSON.parse((row.tags as string | null) ?? "[]") as string[],
-        about: JSON.parse((row.about as string | null) ?? "[]") as string[],
-        extensions: JSON.parse(
+        tags: safeJsonParse<string[]>(
+          (row.tags as string | null) ?? "[]",
+          [],
+          "search tags",
+        ),
+        about: safeJsonParse<string[]>(
+          (row.about as string | null) ?? "[]",
+          [],
+          "search about",
+        ),
+        extensions: safeJsonParse<Record<string, Record<string, unknown>>>(
           (row.extensions as string | null) ?? "{}",
-        ) as Record<string, Record<string, unknown>>,
+          {},
+          "search extensions",
+        ),
       },
       relevance_score: Math.abs(row.rank as number),
       snippet: (row.snippet as string) || undefined,

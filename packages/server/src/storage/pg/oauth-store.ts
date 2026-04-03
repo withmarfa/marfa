@@ -1,3 +1,4 @@
+import { safeJsonParse } from "../json-utils.js";
 import { eq, and, isNull } from "drizzle-orm";
 import { generateId } from "@myme/shared";
 import type {
@@ -50,14 +51,25 @@ export class PgOAuthStore implements OAuthStore {
       .where(eq(oauthClients.id, id));
     const row = rows[0];
     if (!row) return null;
-    return { ...row, redirect_uris: JSON.parse(row.redirect_uris) as string[] };
+    return {
+      ...row,
+      redirect_uris: safeJsonParse<string[]>(
+        row.redirect_uris,
+        [],
+        "oauth redirect_uris",
+      ),
+    };
   }
 
   async listClients(): Promise<OAuthClient[]> {
     const rows = await this.db.select().from(oauthClients);
     return rows.map((r) => ({
       ...r,
-      redirect_uris: JSON.parse(r.redirect_uris) as string[],
+      redirect_uris: safeJsonParse<string[]>(
+        r.redirect_uris,
+        [],
+        "oauth redirect_uris",
+      ),
     }));
   }
 
@@ -84,7 +96,7 @@ export class PgOAuthStore implements OAuthStore {
       .where(eq(oauthGrants.client_id, clientId));
     return rows.map((r) => ({
       ...r,
-      scopes: JSON.parse(r.scopes) as string[],
+      scopes: safeJsonParse<string[]>(r.scopes, [], "oauth scopes"),
     }));
   }
 
@@ -146,7 +158,9 @@ export class PgOAuthStore implements OAuthStore {
       .from(oauthGrants)
       .where(eq(oauthGrants.id, row.grant_id));
     const grant = grants[0];
-    const scopes = grant ? (JSON.parse(grant.scopes) as string[]) : [];
+    const scopes = grant
+      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
+      : [];
 
     return {
       id: row.id,
@@ -179,7 +193,9 @@ export class PgOAuthStore implements OAuthStore {
       .from(oauthGrants)
       .where(eq(oauthGrants.id, grantId));
     const grant = grants[0];
-    const scopes = grant ? (JSON.parse(grant.scopes) as string[]) : [];
+    const scopes = grant
+      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
+      : [];
 
     await this.db.insert(oauthTokens).values({
       id,
@@ -218,7 +234,9 @@ export class PgOAuthStore implements OAuthStore {
       .from(oauthGrants)
       .where(eq(oauthGrants.id, row.grant_id));
     const grant = grants[0];
-    const scopes = grant ? (JSON.parse(grant.scopes) as string[]) : [];
+    const scopes = grant
+      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
+      : [];
 
     return {
       id: row.id,
@@ -243,7 +261,9 @@ export class PgOAuthStore implements OAuthStore {
         .from(oauthGrants)
         .where(eq(oauthGrants.id, row.grant_id));
       const grant = grants[0];
-      const scopes = grant ? (JSON.parse(grant.scopes) as string[]) : [];
+      const scopes = grant
+        ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
+        : [];
       result.push({
         id: row.id,
         grant_id: row.grant_id,
@@ -279,7 +299,11 @@ export class PgOAuthStore implements OAuthStore {
     const grant = grantRows[0];
     if (!grant) return;
 
-    const currentScopes = JSON.parse(grant.scopes) as string[];
+    const currentScopes = safeJsonParse<string[]>(
+      grant.scopes,
+      [],
+      "oauth grant scopes",
+    );
     const reduced = currentScopes.filter((s) => scopes.includes(s));
 
     await this.db
