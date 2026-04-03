@@ -377,16 +377,23 @@ export class PgItemStore implements ItemStore {
           tx,
         );
 
-        const merged = { ...currentProps, ...input.properties };
+        const merged = input.properties
+          ? { ...currentProps, ...input.properties }
+          : currentProps;
         const newVersion = row.version + 1;
+
+        const setClause: Record<string, unknown> = {
+          properties: JSON.stringify(merged),
+          version: newVersion,
+          updated_at: now,
+        };
+        if (input.parent_id !== undefined) {
+          setClause.parent_id = input.parent_id;
+        }
 
         await tx
           .update(items)
-          .set({
-            properties: JSON.stringify(merged),
-            version: newVersion,
-            updated_at: now,
-          })
+          .set(setClause)
           .where(this.tenantWhere(id, tenantId));
 
         await this.searchStore.remove(id);
@@ -397,6 +404,9 @@ export class PgItemStore implements ItemStore {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
+          ...(input.parent_id !== undefined && {
+            parent_id: input.parent_id,
+          }),
         });
       }
 
