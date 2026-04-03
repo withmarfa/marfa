@@ -100,7 +100,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     );
 
     const metadata = await storage.metadata.get(item.id);
-    publish({ type: "created", item, metadata });
+    publish({ type: "created", item, metadata, tenantId });
     return c.json({ item, metadata }, 201);
   });
 
@@ -342,7 +342,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const metadata = await storage.metadata.get(id);
-    publish({ type: "updated", item: result, metadata });
+    publish({ type: "updated", item: result, metadata, tenantId: tid });
     return c.json({ item: result, metadata });
   });
 
@@ -362,6 +362,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       publish({
         type: "deleted",
         item: { ...existing, state: "trashed" as ItemState },
+        tenantId: tid,
       });
     }
     return c.json({ ok: true });
@@ -379,7 +380,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const restored = await storage.items.restore(id, tenantId);
     requireTypeAccess(c, restored.type, "write");
     const metadata = await storage.metadata.get(id);
-    publish({ type: "restored", item: restored, metadata });
+    publish({ type: "restored", item: restored, metadata, tenantId });
     return c.json({ item: restored, metadata });
   });
 
@@ -412,7 +413,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       tenantId,
     );
     const metadata = await storage.metadata.get(id);
-    publish({ type: "transitioned", item: updated, metadata });
+    publish({ type: "transitioned", item: updated, metadata, tenantId });
     return c.json({ item: updated, metadata });
   });
 

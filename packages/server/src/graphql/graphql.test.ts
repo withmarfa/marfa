@@ -480,7 +480,7 @@ describe("GraphQL pub/sub", () => {
     const { publish, subscribe } = await import("./pubsub.js");
 
     const events: unknown[] = [];
-    const iter = subscribe("core.work.book");
+    const iter = subscribe({ typeFilter: "core.work.book" });
 
     const consumer = (async () => {
       for await (const event of iter) {

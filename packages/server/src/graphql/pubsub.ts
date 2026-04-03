@@ -5,6 +5,7 @@ export interface ItemEvent {
   type: "created" | "updated" | "deleted" | "restored" | "transitioned";
   item: Item;
   metadata?: Metadata;
+  tenantId?: string;
 }
 
 const emitter = new EventEmitter();
@@ -14,13 +15,20 @@ export function publish(event: ItemEvent): void {
   emitter.emit("ITEM_CHANGED", event);
 }
 
+export interface SubscribeOptions {
+  typeFilter?: string;
+  tenantId?: string;
+}
+
 export async function* subscribe(
-  typeFilter?: string,
+  options?: SubscribeOptions,
 ): AsyncGenerator<ItemEvent> {
   const iter = on(emitter, "ITEM_CHANGED");
   for await (const [event] of iter) {
     const itemEvent = event as ItemEvent;
-    if (typeFilter && itemEvent.item.type !== typeFilter) continue;
+    if (options?.typeFilter && itemEvent.item.type !== options.typeFilter)
+      continue;
+    if (options?.tenantId && itemEvent.tenantId !== options.tenantId) continue;
     yield itemEvent;
   }
 }
