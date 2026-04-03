@@ -8,12 +8,14 @@ export type PgClient = ReturnType<typeof postgres>;
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS threads (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT,
   type TEXT NOT NULL,
   state TEXT NOT NULL DEFAULT 'new',
   properties TEXT NOT NULL,
@@ -59,6 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_versions_item_id ON versions(item_id);
 
 CREATE TABLE IF NOT EXISTS api_keys (
   id TEXT PRIMARY KEY,
+  tenant_id TEXT,
   key_hash TEXT NOT NULL UNIQUE,
   label TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'member',
@@ -136,6 +139,9 @@ export async function createConnection(connectionString: string): Promise<{
     await client.unsafe(`
       ALTER TABLE metadata ADD COLUMN IF NOT EXISTS extensions TEXT NOT NULL DEFAULT '{}';
       ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS extension_permissions TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE items ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+      ALTER TABLE threads ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+      ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS tenant_id TEXT;
     `);
   } finally {
     await client.unsafe(`SELECT pg_advisory_unlock(42)`);
