@@ -430,6 +430,9 @@ export class SqliteItemStore implements ItemStore {
         if (input.parent_id !== undefined) {
           setClause.parent_id = input.parent_id;
         }
+        if (input.thread_id !== undefined) {
+          setClause.thread_id = input.thread_id;
+        }
 
         this.db.update(items).set(setClause).where(whereClause).run();
 
@@ -447,6 +450,9 @@ export class SqliteItemStore implements ItemStore {
           updated_at: now,
           ...(input.parent_id !== undefined && {
             parent_id: input.parent_id,
+          }),
+          ...(input.thread_id !== undefined && {
+            thread_id: input.thread_id,
           }),
         });
       }
@@ -486,15 +492,19 @@ export class SqliteItemStore implements ItemStore {
         });
       const newVersion = row.version + 1;
 
-      this.db
-        .update(items)
-        .set({
-          properties: JSON.stringify(result.merged),
-          version: newVersion,
-          updated_at: now,
-        })
-        .where(whereClause)
-        .run();
+      const mergeSet: Record<string, unknown> = {
+        properties: JSON.stringify(result.merged),
+        version: newVersion,
+        updated_at: now,
+      };
+      if (input.parent_id !== undefined) {
+        mergeSet.parent_id = input.parent_id;
+      }
+      if (input.thread_id !== undefined) {
+        mergeSet.thread_id = input.thread_id;
+      }
+
+      this.db.update(items).set(mergeSet).where(whereClause).run();
 
       this.searchStore.remove(id).catch((e: unknown) => {
         console.error("Search remove failed:", e);
@@ -508,6 +518,12 @@ export class SqliteItemStore implements ItemStore {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
+        ...(input.parent_id !== undefined && {
+          parent_id: input.parent_id,
+        }),
+        ...(input.thread_id !== undefined && {
+          thread_id: input.thread_id,
+        }),
       });
     });
 

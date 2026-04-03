@@ -392,6 +392,9 @@ export class PgItemStore implements ItemStore {
         if (input.parent_id !== undefined) {
           setClause.parent_id = input.parent_id;
         }
+        if (input.thread_id !== undefined) {
+          setClause.thread_id = input.thread_id;
+        }
 
         await tx
           .update(items)
@@ -408,6 +411,9 @@ export class PgItemStore implements ItemStore {
           updated_at: now,
           ...(input.parent_id !== undefined && {
             parent_id: input.parent_id,
+          }),
+          ...(input.thread_id !== undefined && {
+            thread_id: input.thread_id,
           }),
         });
       }
@@ -456,13 +462,21 @@ export class PgItemStore implements ItemStore {
       );
       const newVersion = row.version + 1;
 
+      const mergeSet: Record<string, unknown> = {
+        properties: JSON.stringify(result.merged),
+        version: newVersion,
+        updated_at: now,
+      };
+      if (input.parent_id !== undefined) {
+        mergeSet.parent_id = input.parent_id;
+      }
+      if (input.thread_id !== undefined) {
+        mergeSet.thread_id = input.thread_id;
+      }
+
       await tx
         .update(items)
-        .set({
-          properties: JSON.stringify(result.merged),
-          version: newVersion,
-          updated_at: now,
-        })
+        .set(mergeSet)
         .where(this.tenantWhere(id, tenantId));
 
       await this.searchStore.remove(id);
@@ -473,6 +487,12 @@ export class PgItemStore implements ItemStore {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
+        ...(input.parent_id !== undefined && {
+          parent_id: input.parent_id,
+        }),
+        ...(input.thread_id !== undefined && {
+          thread_id: input.thread_id,
+        }),
       });
     });
   }

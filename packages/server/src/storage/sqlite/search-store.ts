@@ -20,6 +20,26 @@ function extractSearchableText(
   return result as Record<(typeof FTS_FIELDS)[number], string>;
 }
 
+/**
+ * Build an FTS5 query with prefix matching on the last token.
+ * Quoted input ("exact phrase") is treated as a phrase match.
+ * Unquoted input tokenizes, quotes each token (to prevent hyphen-as-NOT),
+ * and appends * to the last token for prefix matching.
+ */
+function buildFtsQuery(query: string): string {
+  if (query.startsWith('"') && query.endsWith('"') && query.length > 2) {
+    return `"${query.slice(1, -1).replace(/"/g, '""')}"`;
+  }
+  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return '""';
+  return tokens
+    .map((token, i) => {
+      const escaped = `"${token.replace(/"/g, '""')}"`;
+      return i === tokens.length - 1 ? `${escaped}*` : escaped;
+    })
+    .join(" ");
+}
+
 export class SqliteSearchStore implements SearchStore {
   constructor(private raw: RawDb) {}
 
@@ -41,9 +61,7 @@ export class SqliteSearchStore implements SearchStore {
   }
 
   async search(query: string, filters: SearchFilters): Promise<SearchResult[]> {
-    // Wrap query in double quotes for FTS5 phrase matching.
-    // This prevents hyphens from being interpreted as NOT operators.
-    const escapedQuery = `"${query.replace(/"/g, '""')}"`;
+    const escapedQuery = buildFtsQuery(query);
     const limit = Math.min(filters.limit ?? 20, 100);
     const offset = filters.offset ?? 0;
     const conditions: string[] = [];
@@ -131,6 +149,7 @@ export class SqliteSearchStore implements SearchStore {
         extensions: (row.extensions as string | null) ?? "{}",
       }),
       relevance_score: Math.abs(row.rank as number),
+      snippet_html: (row.snippet as string) || undefined,
       snippet: (row.snippet as string) || undefined,
     }));
   }

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { Metadata } from "@myme/shared";
 import type { MetadataStore } from "../interface.js";
 import { metadata } from "./schema.js";
@@ -7,6 +7,19 @@ import { rowToMetadata } from "./helpers.js";
 
 export class PgMetadataStore implements MetadataStore {
   constructor(private db: PgDb) {}
+
+  async getMany(itemIds: string[]): Promise<Metadata[]> {
+    if (itemIds.length === 0) return [];
+    const rows = await this.db
+      .select()
+      .from(metadata)
+      .where(inArray(metadata.item_id, itemIds));
+    const map = new Map(rows.map((r) => [r.item_id, rowToMetadata(r)]));
+    return itemIds.map(
+      (id) =>
+        map.get(id) ?? { item_id: id, tags: [], about: [], extensions: {} },
+    );
+  }
 
   async get(itemId: string): Promise<Metadata> {
     const [row] = await this.db

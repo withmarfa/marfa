@@ -135,6 +135,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const filter = c.req.query("filter") ?? undefined;
 
     const rootOnly = c.req.query("root_only") === "true";
+    const includeMetadata = c.req.query("include") === "metadata";
 
     const result = await storage.items.list({
       tenantId: c.get("apiKey")?.tenant_id,
@@ -160,6 +161,27 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       limit: parseIntParam(c.req.query("limit"), 50, 1, 200),
       cursor: c.req.query("cursor"),
     });
+
+    if (includeMetadata) {
+      const ids = result.data.map((item) => item.id);
+      const metadataList = await storage.metadata.getMany(ids);
+      const metadataMap = new Map(
+        metadataList.map((m) => [m.item_id, m]),
+      );
+      return c.json({
+        data: result.data.map((item) => ({
+          item,
+          metadata: metadataMap.get(item.id) ?? {
+            item_id: item.id,
+            tags: [],
+            about: [],
+            extensions: {},
+          },
+        })),
+        cursor: result.cursor,
+        has_more: result.has_more,
+      });
+    }
 
     return c.json(result);
   });
@@ -193,11 +215,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const hasProperties =
       body.properties !== undefined && typeof body.properties === "object";
     const hasParentId = "parent_id" in body;
+    const hasThreadId = "thread_id" in body;
 
-    if (!hasProperties && !hasParentId) {
+    if (!hasProperties && !hasParentId && !hasThreadId) {
       throw new ProtocolError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of properties or parent_id is required",
+        "At least one of properties, parent_id, or thread_id is required",
       );
     }
     if (body.version !== undefined) {
@@ -229,7 +252,29 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       }
     }
 
+    // Validate thread_id if provided
+    if (hasThreadId && body.thread_id !== null) {
+      if (typeof body.thread_id !== "string" || !isValidId(body.thread_id)) {
+        throw new ProtocolError(
+          ErrorCode.VALIDATION_ERROR,
+          "thread_id must be a valid ID or null",
+        );
+      }
+    }
+
     const tid = c.get("apiKey")?.tenant_id;
+
+    // Verify thread exists if setting a non-null thread_id
+    if (hasThreadId && body.thread_id !== null) {
+      const thread = await storage.threads.get(body.thread_id as string, tid);
+      if (!thread) {
+        throw new ProtocolError(
+          ErrorCode.THREAD_NOT_FOUND,
+          `Thread ${body.thread_id as string} not found`,
+        );
+      }
+    }
+
     const item = await storage.items.get(id, tid);
     if (!item) {
       throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
@@ -281,10 +326,16 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
           ? (body.properties as Record<string, unknown>)
           : undefined,
         parent_id: hasParentId ? (body.parent_id as string | null) : undefined,
+        thread_id: hasThreadId ? (body.thread_id as string | null) : undefined,
         version: body.version as number,
       },
       tid,
     );
+
+    // Touch thread updated_at when thread assignment changes
+    if (hasThreadId && body.thread_id !== null) {
+      await storage.threads.touch(body.thread_id as string);
+    }
 
     // Fix 1: wrap in { item, metadata }
     if ("error" in result) {

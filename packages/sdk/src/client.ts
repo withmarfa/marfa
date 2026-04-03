@@ -1,5 +1,6 @@
 import type {
   Item,
+  ItemWithMetadata,
   CreateItemInput,
   Metadata,
   Version,
@@ -39,6 +40,7 @@ export interface ClientConfig {
 
 export interface UpdateOptions {
   version?: number;
+  thread_id?: string | null;
   conflict?: ConflictStrategy;
   resolve?: ConflictResolver;
 }
@@ -116,6 +118,21 @@ export class MymeClient {
       });
     },
 
+    listWithMetadata: async (
+      filters?: Omit<ListFilters, "include">,
+    ): Promise<PaginatedResult<ItemWithMetadata>> => {
+      return this.transport.request<PaginatedResult<ItemWithMetadata>>(
+        "GET",
+        "/items",
+        {
+          query: {
+            ...filters,
+            include: "metadata",
+          } as unknown as Record<string, string | number | undefined>,
+        },
+      );
+    },
+
     update: async (
       id: string,
       properties: Record<string, unknown>,
@@ -136,6 +153,7 @@ export class MymeClient {
         version,
         strategy,
         options?.resolve,
+        options?.thread_id,
       );
     },
 

@@ -6,6 +6,34 @@ import type { PgClient } from "./connection.js";
 import { rowToItem } from "./helpers.js";
 import type { items } from "./schema.js";
 
+/**
+ * Build a Postgres tsquery function call with prefix matching on the last token.
+ * Quoted input ("exact phrase") uses phraseto_tsquery for exact phrase matching.
+ * Unquoted input tokenizes, joins with &, and appends :* to the last token.
+ */
+function buildTsQueryExpr(
+  query: string,
+  queryParam: string,
+): { expr: string; paramValue: string } {
+  if (query.startsWith('"') && query.endsWith('"') && query.length > 2) {
+    return {
+      expr: `phraseto_tsquery('english', ${queryParam})`,
+      paramValue: query.slice(1, -1),
+    };
+  }
+  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return { expr: `to_tsquery('english', '')`, paramValue: "" };
+  }
+  const tsqueryStr = tokens
+    .map((t, i) => (i === tokens.length - 1 ? `${t}:*` : t))
+    .join(" & ");
+  return {
+    expr: `to_tsquery('english', ${queryParam})`,
+    paramValue: tsqueryStr,
+  };
+}
+
 export class PgSearchStore implements SearchStore {
   constructor(private client: PgClient) {}
 
@@ -32,9 +60,13 @@ export class PgSearchStore implements SearchStore {
     const params: (string | number)[] = [];
     let paramIdx = 1;
 
-    // The tsquery parameter
-    params.push(query);
+    // The tsquery parameter — build prefix-aware query
     const queryParam = `$${String(paramIdx++)}`;
+    const { expr: tsqueryExpr, paramValue } = buildTsQueryExpr(
+      query,
+      queryParam,
+    );
+    params.push(paramValue);
 
     // tsvector expression over JSON properties
     const tsvec = `to_tsvector('english',
@@ -103,18 +135,18 @@ export class PgSearchStore implements SearchStore {
         i.schema_version, i.device_id, i.parent_id, i.thread_id,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.about, m.extensions,
-        ts_rank(${tsvec}, plainto_tsquery('english', ${queryParam})) AS rank,
+        ts_rank(${tsvec}, ${tsqueryExpr}) AS rank,
         ts_headline('english',
           coalesce(i.properties::json->>'title','') || ' ' ||
           coalesce(i.properties::json->>'body','') || ' ' ||
           coalesce(i.properties::json->>'description','') || ' ' ||
           coalesce(i.properties::json->>'name',''),
-          plainto_tsquery('english', ${queryParam}),
+          ${tsqueryExpr},
           'StartSel=<mark>, StopSel=</mark>, MaxFragments=1, MaxWords=32'
         ) AS snippet
       FROM items i
       LEFT JOIN metadata m ON m.item_id = i.id
-      WHERE ${tsvec} @@ plainto_tsquery('english', ${queryParam})
+      WHERE ${tsvec} @@ ${tsqueryExpr}
         ${conditions.join("\n        ")}
       ORDER BY rank DESC
       LIMIT ${limitParam} OFFSET ${offsetParam}
@@ -143,6 +175,7 @@ export class PgSearchStore implements SearchStore {
         ),
       },
       relevance_score: Math.abs(row.rank as number),
+      snippet_html: (row.snippet as string) || undefined,
       snippet: (row.snippet as string) || undefined,
     }));
   }

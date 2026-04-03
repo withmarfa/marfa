@@ -69,7 +69,14 @@ export interface CreateItemInput {
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
   parent_id?: string | null;
+  thread_id?: string | null;
   version?: number;
+}
+
+/** An item paired with its metadata sidecar. */
+export interface ItemWithMetadata {
+  item: Item;
+  metadata: Metadata;
 }
 
 /** Metadata sidecar — tags, entity references, and namespaced extensions. */
@@ -133,6 +140,9 @@ export interface SearchResult {
   item: Item;
   metadata: Metadata;
   relevance_score: number;
+  /** HTML snippet with `<mark>` tags highlighting matched terms. */
+  snippet_html?: string;
+  /** @deprecated Use `snippet_html` instead. Contains the same HTML content. */
   snippet?: string;
 }
 

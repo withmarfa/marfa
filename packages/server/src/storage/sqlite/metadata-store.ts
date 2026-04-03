@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { Metadata } from "@myme/shared";
 import type { MetadataStore } from "../interface.js";
 import { metadata } from "./schema.js";
@@ -7,6 +7,22 @@ import { rowToMetadata } from "./helpers.js";
 
 export class SqliteMetadataStore implements MetadataStore {
   constructor(private db: DrizzleDb) {}
+
+  getMany(itemIds: string[]): Promise<Metadata[]> {
+    if (itemIds.length === 0) return Promise.resolve([]);
+    const rows = this.db
+      .select()
+      .from(metadata)
+      .where(inArray(metadata.item_id, itemIds))
+      .all();
+    const map = new Map(rows.map((r) => [r.item_id, rowToMetadata(r)]));
+    return Promise.resolve(
+      itemIds.map(
+        (id) =>
+          map.get(id) ?? { item_id: id, tags: [], about: [], extensions: {} },
+      ),
+    );
+  }
 
   get(itemId: string): Promise<Metadata> {
     const row = this.db

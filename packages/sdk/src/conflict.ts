@@ -60,6 +60,7 @@ export async function handleConflictUpdate(
   version: number,
   strategy: ConflictStrategy,
   resolver?: ConflictResolver,
+  threadId?: string | null,
 ): Promise<Item> {
   let properties = clientPatch;
   let currentVersion = version;
@@ -69,7 +70,11 @@ export async function handleConflictUpdate(
       item: Item;
       metadata: unknown;
     }>("PATCH", `/items/${itemId}`, {
-      body: { properties, version: currentVersion },
+      body: {
+        properties,
+        version: currentVersion,
+        ...(threadId !== undefined && { thread_id: threadId }),
+      },
     });
 
     if (!isConflictResponse(result)) {
