@@ -12,12 +12,18 @@ import { PgOAuthStore } from "./oauth-store.js";
 
 export async function createPgStorage(
   connectionString: string,
+  options?: { versionSnapshotIntervalMs?: number },
 ): Promise<Storage> {
   const { db, client, close } = await createConnection(connectionString);
 
   const versionStore = new PgVersionStore(db);
   const searchStore = new PgSearchStore(client);
-  const itemStore = new PgItemStore(db, versionStore, searchStore);
+  const itemStore = new PgItemStore(
+    db,
+    versionStore,
+    searchStore,
+    options?.versionSnapshotIntervalMs,
+  );
   const metadataStore = new PgMetadataStore(db);
   const threadStore = new PgThreadStore(db);
   const typeStore = new PgTypeStore();

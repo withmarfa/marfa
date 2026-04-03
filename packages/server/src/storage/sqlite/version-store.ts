@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, desc } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { Version } from "@mymehq/shared";
 import type { VersionStore } from "../interface.js";
@@ -53,5 +53,20 @@ export class SqliteVersionStore implements VersionStore {
       .where(and(eq(versions.item_id, itemId), eq(versions.version, version)))
       .get();
     return row ? rowToVersion(row) : null;
+  }
+
+  async getLatestTimestamp(itemId: string): Promise<string | null> {
+    return this.getLatestTimestampSync(itemId);
+  }
+
+  getLatestTimestampSync(itemId: string): string | null {
+    const row = this.db
+      .select({ created_at: versions.created_at })
+      .from(versions)
+      .where(eq(versions.item_id, itemId))
+      .orderBy(desc(versions.version))
+      .limit(1)
+      .get();
+    return row?.created_at ?? null;
   }
 }

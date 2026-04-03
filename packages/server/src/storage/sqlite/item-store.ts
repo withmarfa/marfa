@@ -1,3 +1,4 @@
+import { shouldCreateVersion } from "../version-gating.js";
 import { safeJsonParse } from "../json-utils.js";
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq, ne, and, or, lt, gt, desc, asc, like, sql } from "drizzle-orm";
@@ -35,6 +36,7 @@ export class SqliteItemStore implements ItemStore {
     private raw: RawDb,
     private versionStore: SqliteVersionStore,
     private searchStore: SqliteSearchStore,
+    private versionSnapshotIntervalMs: number = 600_000,
   ) {}
 
   private tenantWhere(id: string, tenantId?: string) {
@@ -410,12 +412,21 @@ export class SqliteItemStore implements ItemStore {
 
       // Fast path: version omitted — always merge, no conflict detection
       if (input.version === undefined || row.version === input.version) {
-        // Fix 7: include device_id in version snapshot
-        this.versionStore
-          .create(id, row.version, currentProps, deviceId)
-          .catch((e: unknown) => {
-            console.error("Version create failed:", e);
-          });
+        const latestTs = this.versionStore.getLatestTimestampSync(id);
+        if (
+          shouldCreateVersion(
+            latestTs,
+            this.versionSnapshotIntervalMs,
+            false,
+            input.snapshot === true,
+          )
+        ) {
+          this.versionStore
+            .create(id, row.version, currentProps, deviceId)
+            .catch((e: unknown) => {
+              console.error("Version create failed:", e);
+            });
+        }
 
         const merged = input.properties
           ? { ...currentProps, ...input.properties }
@@ -485,11 +496,21 @@ export class SqliteItemStore implements ItemStore {
       }
 
       // Auto-merge
-      this.versionStore
-        .create(id, row.version, currentProps, deviceId)
-        .catch((e: unknown) => {
-          console.error("Version create failed:", e);
-        });
+      const mergeLatestTs = this.versionStore.getLatestTimestampSync(id);
+      if (
+        shouldCreateVersion(
+          mergeLatestTs,
+          this.versionSnapshotIntervalMs,
+          false,
+          input.snapshot === true,
+        )
+      ) {
+        this.versionStore
+          .create(id, row.version, currentProps, deviceId)
+          .catch((e: unknown) => {
+            console.error("Version create failed:", e);
+          });
+      }
       const newVersion = row.version + 1;
 
       const mergeSet: Record<string, unknown> = {
@@ -587,6 +608,13 @@ export class SqliteItemStore implements ItemStore {
     if (error) {
       throw new ProtocolError(ErrorCode.INVALID_TRANSITION, error);
     }
+
+    // State transitions always create a version snapshot
+    this.versionStore
+      .create(id, row.version, row.properties, row.device_id ?? undefined)
+      .catch((e: unknown) => {
+        console.error("Version create failed:", e);
+      });
 
     const now = new Date().toISOString();
     this.db

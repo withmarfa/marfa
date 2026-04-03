@@ -326,6 +326,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
         parent_id: hasParentId ? (body.parent_id as string | null) : undefined,
         thread_id: hasThreadId ? (body.thread_id as string | null) : undefined,
         version: body.version as number,
+        snapshot: body.snapshot === true ? true : undefined,
       },
       tid,
     );

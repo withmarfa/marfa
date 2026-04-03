@@ -71,6 +71,7 @@ export interface UpdateItemInput {
   parent_id?: string | null;
   thread_id?: string | null;
   version?: number;
+  snapshot?: boolean;
 }
 
 /** An item paired with its metadata sidecar. */

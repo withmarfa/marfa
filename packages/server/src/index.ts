@@ -15,9 +15,13 @@ async function main() {
     if (!config.databaseUrl) {
       throw new Error("DATABASE_URL is required when STORAGE_DIALECT=pg");
     }
-    storage = await createPgStorage(config.databaseUrl);
+    storage = await createPgStorage(config.databaseUrl, {
+      versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
+    });
   } else {
-    storage = createSqliteStorage(config.sqlitePath);
+    storage = createSqliteStorage(config.sqlitePath, {
+      versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
+    });
   }
 
   let blobBackend: BlobBackend;

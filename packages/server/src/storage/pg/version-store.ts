@@ -1,4 +1,4 @@
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, desc } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { Version } from "@mymehq/shared";
 import type { VersionStore } from "../interface.js";
@@ -60,5 +60,19 @@ export class PgVersionStore implements VersionStore {
       .from(versions)
       .where(and(eq(versions.item_id, itemId), eq(versions.version, version)));
     return row ? rowToVersion(row) : null;
+  }
+
+  async getLatestTimestamp(
+    itemId: string,
+    tx?: TxOrDb,
+  ): Promise<string | null> {
+    const executor = tx ?? this.db;
+    const [row] = await executor
+      .select({ created_at: versions.created_at })
+      .from(versions)
+      .where(eq(versions.item_id, itemId))
+      .orderBy(desc(versions.version))
+      .limit(1);
+    return row?.created_at ?? null;
   }
 }

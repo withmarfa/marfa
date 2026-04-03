@@ -131,6 +131,7 @@ export interface VersionStore {
   ): Promise<Version>;
   list(itemId: string): Promise<Version[]>;
   getByVersion(itemId: string, version: number): Promise<Version | null>;
+  getLatestTimestamp(itemId: string): Promise<string | null>;
 }
 
 export interface ThreadStore {

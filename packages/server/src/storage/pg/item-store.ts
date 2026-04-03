@@ -1,3 +1,4 @@
+import { shouldCreateVersion } from "../version-gating.js";
 import { safeJsonParse } from "../json-utils.js";
 import { eq, ne, and, or, lt, gt, desc, asc, like, sql } from "drizzle-orm";
 import {
@@ -33,6 +34,7 @@ export class PgItemStore implements ItemStore {
     private db: PgDb,
     private versionStore: PgVersionStore,
     private searchStore: PgSearchStore,
+    private versionSnapshotIntervalMs: number = 600_000,
   ) {}
 
   private tenantWhere(id: string, tenantId?: string) {
@@ -371,13 +373,23 @@ export class PgItemStore implements ItemStore {
 
       // Fast path: version omitted — always merge, no conflict detection
       if (input.version === undefined || row.version === input.version) {
-        await this.versionStore.create(
-          id,
-          row.version,
-          currentProps,
-          deviceId,
-          tx,
-        );
+        const latestTs = await this.versionStore.getLatestTimestamp(id, tx);
+        if (
+          shouldCreateVersion(
+            latestTs,
+            this.versionSnapshotIntervalMs,
+            false,
+            input.snapshot === true,
+          )
+        ) {
+          await this.versionStore.create(
+            id,
+            row.version,
+            currentProps,
+            deviceId,
+            tx,
+          );
+        }
 
         const merged = input.properties
           ? { ...currentProps, ...input.properties }
@@ -453,13 +465,23 @@ export class PgItemStore implements ItemStore {
       }
 
       // Auto-merge
-      await this.versionStore.create(
-        id,
-        row.version,
-        currentProps,
-        deviceId,
-        tx,
-      );
+      const mergeLatestTs = await this.versionStore.getLatestTimestamp(id, tx);
+      if (
+        shouldCreateVersion(
+          mergeLatestTs,
+          this.versionSnapshotIntervalMs,
+          false,
+          input.snapshot === true,
+        )
+      ) {
+        await this.versionStore.create(
+          id,
+          row.version,
+          currentProps,
+          deviceId,
+          tx,
+        );
+      }
       const newVersion = row.version + 1;
 
       const mergeSet: Record<string, unknown> = {
@@ -548,6 +570,14 @@ export class PgItemStore implements ItemStore {
     if (error) {
       throw new ProtocolError(ErrorCode.INVALID_TRANSITION, error);
     }
+
+    // State transitions always create a version snapshot
+    await this.versionStore.create(
+      id,
+      row.version,
+      row.properties,
+      row.device_id ?? undefined,
+    );
 
     const now = new Date().toISOString();
     await this.db
