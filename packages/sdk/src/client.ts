@@ -34,6 +34,12 @@ export interface ClientConfig {
   url: string;
   apiKey: string;
   fetch?: typeof globalThis.fetch;
+  /**
+   * Default conflict resolution strategy for all updates.
+   * Can be overridden per-call via `UpdateOptions.conflict`.
+   * Defaults to `"auto"` — non-conflicting fields merge, conflicting fields
+   * use the server's value.
+   */
   conflictStrategy?: ConflictStrategy;
   timeoutMs?: number;
   cdnBaseUrl?: string;
@@ -42,7 +48,14 @@ export interface ClientConfig {
 export interface UpdateOptions {
   version?: number;
   thread_id?: string | null;
+  /**
+   * Override the client's default conflict strategy for this update.
+   * - `"auto"`: auto-merge non-conflicting fields (default)
+   * - `"manual"`: throw `ConflictError` with both versions
+   * - `"callback"`: call the `resolve` function to handle the conflict
+   */
   conflict?: ConflictStrategy;
+  /** Custom conflict resolver (required when `conflict` is `"callback"`). */
   resolve?: ConflictResolver;
 }
 

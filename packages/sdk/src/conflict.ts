@@ -2,6 +2,16 @@ import type { ConflictResponse, ConflictSnapshot, Item } from "@mymehq/shared";
 import type { HttpTransport } from "./transport.js";
 import { ConflictError } from "./errors.js";
 
+/**
+ * Conflict resolution strategy for item updates.
+ *
+ * - `"auto"` (default): Non-conflicting field changes merge automatically.
+ *   Conflicting fields use the server's current value. Retries up to 3 times.
+ * - `"manual"`: Throws a `ConflictError` with both versions and the list of
+ *   conflicting fields. The caller decides how to resolve.
+ * - `"callback"`: Calls a custom `ConflictResolver` function with the conflict
+ *   data. The resolver returns the merged properties to submit.
+ */
 export type ConflictStrategy = "auto" | "manual" | "callback";
 
 export interface ConflictData {
