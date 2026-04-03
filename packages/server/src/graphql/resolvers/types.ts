@@ -1,4 +1,4 @@
-import type { Item, Thread } from "@myme/shared";
+import type { Item, Thread } from "@mymehq/shared";
 import type { GraphQLContext } from "../context.js";
 
 export const typeResolvers = {

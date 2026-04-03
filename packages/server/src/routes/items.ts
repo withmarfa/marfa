@@ -8,8 +8,8 @@ import {
   getTypeSchema,
   validateProperties,
   ITEM_STATES,
-} from "@myme/shared";
-import type { ItemState } from "@myme/shared";
+} from "@mymehq/shared";
+import type { ItemState } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,

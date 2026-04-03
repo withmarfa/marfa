@@ -1,7 +1,11 @@
 {
-  "name": "@myme/shared",
-  "version": "0.0.1",
+  "name": "@mymehq/shared",
+  "version": "0.1.0",
   "type": "module",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

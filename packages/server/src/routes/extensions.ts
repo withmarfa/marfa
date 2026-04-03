@@ -13,7 +13,7 @@ import {
   isValidId,
   resolveExtensionPermission,
   filterExtensionsByPermission,
-} from "@myme/shared";
+} from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";

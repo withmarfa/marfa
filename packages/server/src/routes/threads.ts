@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { ProtocolError, ErrorCode, isValidId } from "@myme/shared";
+import { ProtocolError, ErrorCode, isValidId } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";

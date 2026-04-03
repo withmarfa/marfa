@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { ProtocolError, ErrorCode } from "@myme/shared";
+import { ProtocolError, ErrorCode } from "@mymehq/shared";
 import type { AppEnv } from "./auth.js";
 
 interface RateLimitConfig {

@@ -1,4 +1,4 @@
-import { matchesTypePattern, isValidTypeIdentifier } from "@myme/shared";
+import { matchesTypePattern, isValidTypeIdentifier } from "@mymehq/shared";
 import {
   gqlCheckAuth,
   gqlCheckTypeAccess,

@@ -4,7 +4,7 @@ import {
   ErrorCode,
   getTypeSchema,
   TYPE_REGISTRY,
-} from "@myme/shared";
+} from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 

@@ -1,5 +1,5 @@
-import { TYPE_REGISTRY, getTypeSchema } from "@myme/shared";
-import type { TypeSchema } from "@myme/shared";
+import { TYPE_REGISTRY, getTypeSchema } from "@mymehq/shared";
+import type { TypeSchema } from "@mymehq/shared";
 import type { TypeStore } from "../interface.js";
 
 export class PgTypeStore implements TypeStore {

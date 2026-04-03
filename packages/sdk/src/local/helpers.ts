@@ -1,4 +1,4 @@
-import type { Item, Metadata, Thread } from "@myme/shared";
+import type { Item, Metadata, Thread } from "@mymehq/shared";
 
 /** Safely parse a JSON string, returning the fallback on error. */
 export function parseJson<T>(value: string, fallback: T): T {

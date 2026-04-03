@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { ProtocolError, ErrorCode, isValidBlobHash } from "@myme/shared";
+import { ProtocolError, ErrorCode, isValidBlobHash } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";

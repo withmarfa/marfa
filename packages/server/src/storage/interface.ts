@@ -11,9 +11,9 @@ import type {
   SearchResult,
   ConflictResponse,
   ItemState,
-} from "@myme/shared";
-import type { TypeSchema } from "@myme/shared";
-import { ProtocolError, ErrorCode } from "@myme/shared";
+} from "@mymehq/shared";
+import type { TypeSchema } from "@mymehq/shared";
+import { ProtocolError, ErrorCode } from "@mymehq/shared";
 
 // ---------------------------------------------------------------------------
 // Filter types
@@ -187,17 +187,17 @@ export interface OAuthStore {
   createClient(input: {
     name: string;
     redirect_uris: string[];
-  }): Promise<import("@myme/shared").OAuthClient>;
-  getClient(id: string): Promise<import("@myme/shared").OAuthClient | null>;
-  listClients(): Promise<import("@myme/shared").OAuthClient[]>;
+  }): Promise<import("@mymehq/shared").OAuthClient>;
+  getClient(id: string): Promise<import("@mymehq/shared").OAuthClient | null>;
+  listClients(): Promise<import("@mymehq/shared").OAuthClient[]>;
 
   createGrant(
     clientId: string,
     scopes: string[],
-  ): Promise<import("@myme/shared").OAuthGrant>;
+  ): Promise<import("@mymehq/shared").OAuthGrant>;
   getGrantsByClient(
     clientId: string,
-  ): Promise<import("@myme/shared").OAuthGrant[]>;
+  ): Promise<import("@mymehq/shared").OAuthGrant[]>;
 
   createCode(
     grantId: string,
@@ -206,23 +206,23 @@ export interface OAuthStore {
     method: string,
     redirectUri: string,
     expiresAt: string,
-  ): Promise<import("@myme/shared").OAuthCode>;
+  ): Promise<import("@mymehq/shared").OAuthCode>;
   /** Atomically marks a code as used. Returns null if already consumed or expired. */
   consumeCode(
     codeHash: string,
-  ): Promise<(import("@myme/shared").OAuthCode & { scopes: string[] }) | null>;
+  ): Promise<(import("@mymehq/shared").OAuthCode & { scopes: string[] }) | null>;
 
   createToken(
     grantId: string,
     tokenHash: string,
-    type: import("@myme/shared").OAuthTokenType,
+    type: import("@mymehq/shared").OAuthTokenType,
     expiresAt: string,
-  ): Promise<import("@myme/shared").OAuthToken>;
+  ): Promise<import("@mymehq/shared").OAuthToken>;
   /** Validates a token hash. Returns null if not found, expired, or revoked. */
   validateToken(
     tokenHash: string,
-  ): Promise<(import("@myme/shared").OAuthToken & { scopes: string[] }) | null>;
-  listTokens(): Promise<import("@myme/shared").OAuthToken[]>;
+  ): Promise<(import("@mymehq/shared").OAuthToken & { scopes: string[] }) | null>;
+  listTokens(): Promise<import("@mymehq/shared").OAuthToken[]>;
   revokeToken(id: string): Promise<void>;
   reduceTokenScope(id: string, scopes: string[]): Promise<void>;
 

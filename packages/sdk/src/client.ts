@@ -10,8 +10,8 @@ import type {
   PaginatedResult,
   SearchResult,
   ItemState,
-} from "@myme/shared";
-import type { TypeSchema, ErrorResponse } from "@myme/shared";
+} from "@mymehq/shared";
+import type { TypeSchema, ErrorResponse } from "@mymehq/shared";
 import { HttpTransport } from "./transport.js";
 import {
   MymeError,

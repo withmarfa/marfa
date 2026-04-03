@@ -1,14 +1,14 @@
 import { safeJsonParse } from "../json-utils.js";
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq, and, isNull } from "drizzle-orm";
-import { generateId } from "@myme/shared";
+import { generateId } from "@mymehq/shared";
 import type {
   OAuthClient,
   OAuthGrant,
   OAuthToken,
   OAuthCode,
   OAuthTokenType,
-} from "@myme/shared";
+} from "@mymehq/shared";
 import type { OAuthStore } from "../interface.js";
 import {
   oauthClients,

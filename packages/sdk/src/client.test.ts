@@ -6,10 +6,10 @@ import {
   createApp,
   createSqliteStorage,
   FilesystemBlobBackend,
-} from "@myme/server";
+} from "@mymehq/server";
 import { MymeClient } from "./client.js";
 import { ConflictError, NotFoundError, UnauthorizedError } from "./errors.js";
-import type { Item } from "@myme/shared";
+import type { Item } from "@mymehq/shared";
 
 // ---------------------------------------------------------------------------
 // Test setup: create a real Hono app, bootstrap an admin key, create SDK client

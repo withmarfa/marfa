@@ -25,7 +25,7 @@ export type {
   ConflictResolver,
 } from "./conflict.js";
 
-// Re-export key types from @myme/shared
+// Re-export key types from @mymehq/shared
 export type {
   Item,
   CreateItemInput,
@@ -38,5 +38,5 @@ export type {
   SearchResult,
   ConflictSnapshot,
   ItemState,
-} from "@myme/shared";
-export type { TypeSchema } from "@myme/shared";
+} from "@mymehq/shared";
+export type { TypeSchema } from "@mymehq/shared";
