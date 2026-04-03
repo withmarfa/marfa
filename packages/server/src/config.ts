@@ -20,14 +20,19 @@ export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
   const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
 
-  if (
-    process.env.NODE_ENV === "production" &&
-    (!apiKeySalt || apiKeySalt === DEFAULT_SALT)
-  ) {
-    throw new Error(
-      "API_KEY_SALT must be set to a unique value in production. " +
-        "Generate one with: openssl rand -hex 32",
-    );
+  if (process.env.NODE_ENV === "production") {
+    if (!apiKeySalt || apiKeySalt === DEFAULT_SALT) {
+      throw new Error(
+        "API_KEY_SALT must be set to a unique value in production. " +
+          "Generate one with: openssl rand -hex 32",
+      );
+    }
+    if (apiKeySalt.length < 32) {
+      throw new Error(
+        "API_KEY_SALT must be at least 32 characters. " +
+          "Generate one with: openssl rand -hex 32",
+      );
+    }
   }
 
   return {

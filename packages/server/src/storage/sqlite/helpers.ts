@@ -5,12 +5,28 @@ type ItemRow = typeof items.$inferSelect;
 type MetadataRow = typeof metadata.$inferSelect;
 type VersionRow = typeof versions.$inferSelect;
 
+/** Safely parse JSON from a database column, returning a fallback on corruption. */
+function safeJsonParse<T>(value: string, fallback: T, context: string): T {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    console.error(
+      `Corrupted JSON in database column (${context}): ${value.slice(0, 100)}`,
+    );
+    return fallback;
+  }
+}
+
 export function rowToItem(row: ItemRow): Item {
   return {
     id: row.id,
     type: row.type,
     state: row.state as ItemState,
-    properties: JSON.parse(row.properties) as Record<string, unknown>,
+    properties: safeJsonParse<Record<string, unknown>>(
+      row.properties,
+      {},
+      `item ${row.id} properties`,
+    ),
     created_at: row.created_at,
     updated_at: row.updated_at,
     timestamp: row.timestamp,
@@ -34,12 +50,17 @@ export function rowToItem(row: ItemRow): Item {
 export function rowToMetadata(row: MetadataRow): Metadata {
   return {
     item_id: row.item_id,
-    tags: JSON.parse(row.tags) as string[],
-    about: JSON.parse(row.about) as string[],
-    extensions: JSON.parse(row.extensions) as Record<
-      string,
-      Record<string, unknown>
-    >,
+    tags: safeJsonParse<string[]>(row.tags, [], `metadata ${row.item_id} tags`),
+    about: safeJsonParse<string[]>(
+      row.about,
+      [],
+      `metadata ${row.item_id} about`,
+    ),
+    extensions: safeJsonParse<Record<string, Record<string, unknown>>>(
+      row.extensions,
+      {},
+      `metadata ${row.item_id} extensions`,
+    ),
   };
 }
 
@@ -48,7 +69,11 @@ export function rowToVersion(row: VersionRow): Version {
     id: row.id,
     item_id: row.item_id,
     version: row.version,
-    properties: JSON.parse(row.properties) as Record<string, unknown>,
+    properties: safeJsonParse<Record<string, unknown>>(
+      row.properties,
+      {},
+      `version ${row.id} properties`,
+    ),
     created_at: row.created_at,
     ...(row.device_id != null && { device_id: row.device_id }),
   };

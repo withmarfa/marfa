@@ -13,6 +13,7 @@ import type {
   ItemState,
 } from "@myme/shared";
 import type { TypeSchema } from "@myme/shared";
+import { ProtocolError, ErrorCode } from "@myme/shared";
 
 // ---------------------------------------------------------------------------
 // Filter types
@@ -65,9 +66,20 @@ export function encodeCursor(sortValue: string, id: string): string {
 }
 
 export function decodeCursor(cursor: string): CursorPayload {
-  return JSON.parse(
-    Buffer.from(cursor, "base64url").toString("utf-8"),
-  ) as CursorPayload;
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf-8"),
+    ) as CursorPayload;
+    if (typeof parsed.v !== "string" || typeof parsed.id !== "string") {
+      throw new Error("Invalid cursor shape");
+    }
+    return parsed;
+  } catch {
+    throw new ProtocolError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid pagination cursor",
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

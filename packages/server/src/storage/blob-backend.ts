@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 // ---------------------------------------------------------------------------
 
 export interface BlobBackend {
-  put(key: string, bytes: Buffer): Promise<void>;
+  put(key: string, bytes: Buffer, mimeType?: string): Promise<void>;
   get(key: string): Promise<Buffer | null>;
   exists(key: string): Promise<boolean>;
   getPresignedUrl?(key: string, ttlSeconds: number): Promise<string>;
@@ -43,7 +43,8 @@ export class FilesystemBlobBackend implements BlobBackend {
     return resolved;
   }
 
-  async put(key: string, bytes: Buffer): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires mimeType param
+  async put(key: string, bytes: Buffer, _mimeType?: string): Promise<void> {
     const path = this.safePath(key);
     const dir = join(path, "..");
     await mkdir(dir, { recursive: true });

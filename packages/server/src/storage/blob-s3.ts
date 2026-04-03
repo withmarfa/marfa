@@ -52,12 +52,13 @@ export class S3BlobBackend implements BlobBackend {
     return `${this.prefix}/${key}`;
   }
 
-  async put(key: string, bytes: Buffer): Promise<void> {
+  async put(key: string, bytes: Buffer, mimeType?: string): Promise<void> {
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: this.prefixedKey(key),
         Body: bytes,
+        ...(mimeType && { ContentType: mimeType }),
       }),
     );
   }

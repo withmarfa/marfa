@@ -35,15 +35,21 @@ export function rateLimitMiddleware(
 ): MiddlewareHandler<AppEnv> {
   const windows = new Map<string, WindowEntry>();
 
-  // Periodic cleanup of expired entries
-  setInterval(() => {
+  // Periodic cleanup of expired entries — single interval per middleware instance
+  const cleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of windows) {
       if (entry.resetAt <= now) {
         windows.delete(key);
       }
     }
-  }, config.windowMs * 2).unref();
+  }, config.windowMs * 2);
+  cleanupInterval.unref();
+
+  // Expose cleanup for graceful shutdown
+  (
+    cleanupInterval as unknown as { _rateLimitCleanup: true }
+  )._rateLimitCleanup = true;
 
   return async (c, next) => {
     const apiKey = c.get("apiKey");

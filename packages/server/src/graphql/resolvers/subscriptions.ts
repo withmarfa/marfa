@@ -1,4 +1,4 @@
-import { matchesTypePattern } from "@myme/shared";
+import { matchesTypePattern, isValidTypeIdentifier } from "@myme/shared";
 import {
   gqlCheckAuth,
   gqlCheckTypeAccess,
@@ -12,8 +12,11 @@ export const subscriptionResolvers = {
     subscribe: (_: unknown, args: { type?: string }, ctx: GraphQLContext) => {
       gqlCheckAuth(ctx.apiKey);
 
-      // If a specific type is requested, verify the key has read access
+      // If a specific type is requested, validate and verify access
       if (args.type) {
+        if (!isValidTypeIdentifier(args.type)) {
+          throw new Error("Invalid type identifier");
+        }
         gqlCheckTypeAccess(ctx.apiKey, args.type, "read");
         return subscribe(args.type);
       }

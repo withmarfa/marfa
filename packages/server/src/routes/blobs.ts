@@ -55,7 +55,7 @@ export function blobRoutes(
 
     // Store if not already present
     if (!(await blobBackend.exists(hash))) {
-      await blobBackend.put(hash, data);
+      await blobBackend.put(hash, data, mimeType);
     }
 
     // Register metadata (idempotent)

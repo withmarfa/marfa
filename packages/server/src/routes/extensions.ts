@@ -115,6 +115,15 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
+    // Enforce extension data size limit (100KB per namespace)
+    const serialized = JSON.stringify(body);
+    if (serialized.length > 102_400) {
+      throw new ProtocolError(
+        ErrorCode.VALIDATION_ERROR,
+        "Extension data exceeds maximum size of 100KB",
+      );
+    }
+
     const extensions = await storage.metadata.setExtension(
       id,
       namespace,

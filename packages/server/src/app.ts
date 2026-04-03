@@ -31,6 +31,10 @@ export function createApp(
   // CORS
   if (config.corsOrigins.length > 0) {
     app.use("*", cors({ origin: config.corsOrigins }));
+  } else if (process.env.NODE_ENV !== "test") {
+    console.warn(
+      "CORS not configured — browser clients will be blocked. Set CORS_ORIGINS to enable.",
+    );
   }
 
   // Public routes (before auth) — mounted directly to avoid prefix matching issues
