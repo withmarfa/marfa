@@ -60,6 +60,7 @@ export async function createTestContext(): Promise<TestContext> {
     s3SecretAccessKey: "",
     apiKeySalt: SALT,
     corsOrigins: [],
+    cdnBaseUrl: "",
   });
 
   // Create a bootstrap admin key (unique per test context to avoid PG conflicts)

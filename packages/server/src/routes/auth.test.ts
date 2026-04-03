@@ -58,6 +58,7 @@ describe("bootstrap mode", () => {
       s3SecretAccessKey: "",
       apiKeySalt: "test-salt",
       corsOrigins: [],
+      cdnBaseUrl: "",
     });
 
     const res = await request(app, "POST", "/keys", {

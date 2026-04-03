@@ -55,6 +55,7 @@ beforeAll(async () => {
     s3SecretAccessKey: "",
     apiKeySalt: "test-salt",
     corsOrigins: [],
+    cdnBaseUrl: "",
   });
 
   testFetchFn = createTestFetch(app);
