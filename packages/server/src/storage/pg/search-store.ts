@@ -8,22 +8,25 @@ import type { items } from "./schema.js";
 export class PgSearchStore implements SearchStore {
   constructor(private client: PgClient) {}
 
-  // No-op for Postgres — full-text search operates directly on the properties column
+  // No-op: Postgres computes tsvectors at query time from the properties JSON
+  // column. Unlike SQLite (which maintains a separate FTS5 table), Postgres does
+  // not need an explicit index step. The SearchStore interface requires these
+  // methods for SQLite compatibility but they are intentionally empty here.
   async index(
     _itemId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
     _properties: Record<string, unknown>, // eslint-disable-line @typescript-eslint/no-unused-vars
   ): Promise<void> {
-    // Postgres computes tsvectors from properties at query time
+    // Intentionally empty — see class comment above
   }
 
-  // No-op for Postgres
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async remove(_itemId: string): Promise<void> {
-    // Nothing to remove — no separate FTS table
+    // Intentionally empty — see class comment above
   }
 
   async search(query: string, filters: SearchFilters): Promise<SearchResult[]> {
     const limit = Math.min(filters.limit ?? 20, 100);
+    const offset = filters.offset ?? 0;
     const conditions: string[] = [];
     const params: (string | number)[] = [];
     let paramIdx = 1;
@@ -89,6 +92,8 @@ export class PgSearchStore implements SearchStore {
 
     params.push(limit);
     const limitParam = `$${String(paramIdx++)}`;
+    params.push(offset);
+    const offsetParam = `$${String(paramIdx++)}`;
 
     const rawSql = `
       SELECT
@@ -111,7 +116,7 @@ export class PgSearchStore implements SearchStore {
       WHERE ${tsvec} @@ plainto_tsquery('english', ${queryParam})
         ${conditions.join("\n        ")}
       ORDER BY rank DESC
-      LIMIT ${limitParam}
+      LIMIT ${limitParam} OFFSET ${offsetParam}
     `;
 
     const rows = await this.client.unsafe(rawSql, params);

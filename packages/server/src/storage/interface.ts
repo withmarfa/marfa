@@ -48,6 +48,7 @@ export interface SearchFilters {
   filter?: string;
   allowed_types?: string[];
   limit?: number;
+  offset?: number;
 }
 
 // ---------------------------------------------------------------------------

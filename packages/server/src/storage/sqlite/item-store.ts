@@ -162,9 +162,9 @@ export class SqliteItemStore implements ItemStore {
         })
         .run();
 
-      this.searchStore
-        .index(id, input.properties)
-        .catch((e: unknown) => { console.error("Search index failed:", e); });
+      this.searchStore.index(id, input.properties).catch((e: unknown) => {
+        console.error("Search index failed:", e);
+      });
 
       if (input.thread_id) {
         this.db
@@ -411,7 +411,9 @@ export class SqliteItemStore implements ItemStore {
         // Fix 7: include device_id in version snapshot
         this.versionStore
           .create(id, row.version, currentProps, deviceId)
-          .catch((e: unknown) => { console.error("Version create failed:", e); });
+          .catch((e: unknown) => {
+            console.error("Version create failed:", e);
+          });
 
         const merged = input.properties
           ? { ...currentProps, ...input.properties }
@@ -429,12 +431,12 @@ export class SqliteItemStore implements ItemStore {
 
         this.db.update(items).set(setClause).where(whereClause).run();
 
-        this.searchStore
-          .remove(id)
-          .catch((e: unknown) => { console.error("Search remove failed:", e); });
-        this.searchStore
-          .index(id, merged)
-          .catch((e: unknown) => { console.error("Search index failed:", e); });
+        this.searchStore.remove(id).catch((e: unknown) => {
+          console.error("Search remove failed:", e);
+        });
+        this.searchStore.index(id, merged).catch((e: unknown) => {
+          console.error("Search index failed:", e);
+        });
 
         return rowToItem({
           ...row,
@@ -477,7 +479,9 @@ export class SqliteItemStore implements ItemStore {
       // Auto-merge
       this.versionStore
         .create(id, row.version, currentProps, deviceId)
-        .catch((e: unknown) => { console.error("Version create failed:", e); });
+        .catch((e: unknown) => {
+          console.error("Version create failed:", e);
+        });
       const newVersion = row.version + 1;
 
       this.db
@@ -490,12 +494,12 @@ export class SqliteItemStore implements ItemStore {
         .where(whereClause)
         .run();
 
-      this.searchStore
-        .remove(id)
-        .catch((e: unknown) => { console.error("Search remove failed:", e); });
-      this.searchStore
-        .index(id, result.merged)
-        .catch((e: unknown) => { console.error("Search index failed:", e); });
+      this.searchStore.remove(id).catch((e: unknown) => {
+        console.error("Search remove failed:", e);
+      });
+      this.searchStore.index(id, result.merged).catch((e: unknown) => {
+        console.error("Search index failed:", e);
+      });
 
       return rowToItem({
         ...row,
@@ -520,9 +524,9 @@ export class SqliteItemStore implements ItemStore {
       .where(this.tenantWhere(id, tenantId))
       .run();
 
-    this.searchStore
-      .remove(id)
-      .catch((e: unknown) => { console.error("Search remove failed:", e); });
+    this.searchStore.remove(id).catch((e: unknown) => {
+      console.error("Search remove failed:", e);
+    });
   }
 
   async restore(id: string, tenantId?: string): Promise<Item> {
@@ -544,9 +548,9 @@ export class SqliteItemStore implements ItemStore {
       .where(this.tenantWhere(id, tenantId))
       .run();
 
-    this.searchStore
-      .index(id, row.properties)
-      .catch((e: unknown) => { console.error("Search index failed:", e); });
+    this.searchStore.index(id, row.properties).catch((e: unknown) => {
+      console.error("Search index failed:", e);
+    });
 
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
@@ -574,13 +578,13 @@ export class SqliteItemStore implements ItemStore {
       .run();
 
     if (state === "trashed") {
-      this.searchStore
-        .remove(id)
-        .catch((e: unknown) => { console.error("Search remove failed:", e); });
+      this.searchStore.remove(id).catch((e: unknown) => {
+        console.error("Search remove failed:", e);
+      });
     } else if (row.state === "trashed") {
-      this.searchStore
-        .index(id, row.properties)
-        .catch((e: unknown) => { console.error("Search index failed:", e); });
+      this.searchStore.index(id, row.properties).catch((e: unknown) => {
+        console.error("Search index failed:", e);
+      });
     }
 
     return { ...row, state, updated_at: now };

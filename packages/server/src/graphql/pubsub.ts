@@ -8,7 +8,7 @@ export interface ItemEvent {
 }
 
 const emitter = new EventEmitter();
-emitter.setMaxListeners(100);
+emitter.setMaxListeners(Number(process.env.MAX_SUBSCRIPTION_LISTENERS) || 100);
 
 export function publish(event: ItemEvent): void {
   emitter.emit("ITEM_CHANGED", event);

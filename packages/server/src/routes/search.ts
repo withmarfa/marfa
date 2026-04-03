@@ -48,6 +48,7 @@ export function searchRoutes(storage: Storage): Hono<AppEnv> {
     if (type) requireTypeAccess(c, type, "read");
 
     const limit = parseIntParam(c.req.query("limit"), 20, 1, 100);
+    const offset = parseIntParam(c.req.query("offset"), 0, 0, 10000);
     const filter = c.req.query("filter") ?? undefined;
     const allowed_types = getTypeFilter(c);
 
@@ -58,6 +59,7 @@ export function searchRoutes(storage: Storage): Hono<AppEnv> {
       filter,
       allowed_types,
       limit,
+      offset: offset > 0 ? offset : undefined,
     });
 
     return c.json({ results });

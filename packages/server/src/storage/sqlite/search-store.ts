@@ -45,6 +45,7 @@ export class SqliteSearchStore implements SearchStore {
     // This prevents hyphens from being interpreted as NOT operators.
     const escapedQuery = `"${query.replace(/"/g, '""')}"`;
     const limit = Math.min(filters.limit ?? 20, 100);
+    const offset = filters.offset ?? 0;
     const conditions: string[] = [];
     const params: unknown[] = [escapedQuery];
 
@@ -95,6 +96,7 @@ export class SqliteSearchStore implements SearchStore {
     }
 
     params.push(limit);
+    params.push(offset);
 
     const rawSql = `
       SELECT
@@ -112,7 +114,7 @@ export class SqliteSearchStore implements SearchStore {
       WHERE items_fts MATCH ?
         ${conditions.join("\n        ")}
       ORDER BY rank
-      LIMIT ?
+      LIMIT ? OFFSET ?
     `;
 
     const rows = this.raw.prepare(rawSql).all(...params) as Record<

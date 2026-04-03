@@ -90,7 +90,7 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
 export function exportRoutes(storage: Storage): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
-  router.get("/", async (c) => {
+  router.get("/", (c) => {
     requireAuth(c);
 
     const type = c.req.query("type");
@@ -112,34 +112,48 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
     const since = c.req.query("since");
     const until = c.req.query("until");
 
-    // Export as NDJSON — one {item, metadata} per line, paginating internally
-    const lines: string[] = [];
-    let cursor: string | undefined;
+    // Stream NDJSON — one {item, metadata} per line, paginating internally.
+    // Uses ReadableStream to avoid buffering the entire export in memory.
+    const tenantId = c.get("apiKey")?.tenant_id;
+    const allowedTypes = getTypeFilter(c);
+    const encoder = new TextEncoder();
 
-    do {
-      const result = await storage.items.list({
-        tenantId: c.get("apiKey")?.tenant_id,
-        type,
-        state,
-        since,
-        until,
-        allowed_types: getTypeFilter(c),
-        limit: 200,
-        cursor,
-      });
+    const stream = new ReadableStream({
+      async start(controller) {
+        let cursor: string | undefined;
+        try {
+          do {
+            const result = await storage.items.list({
+              tenantId,
+              type,
+              state,
+              since,
+              until,
+              allowed_types: allowedTypes,
+              limit: 200,
+              cursor,
+            });
 
-      for (const item of result.data) {
-        const metadata = await storage.metadata.get(item.id);
-        lines.push(JSON.stringify({ item, metadata }));
-      }
+            for (const item of result.data) {
+              const metadata = await storage.metadata.get(item.id);
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ item, metadata }) + "\n"),
+              );
+            }
 
-      cursor = result.has_more
-        ? (result.cursor as string | undefined)
-        : undefined;
-    } while (cursor);
+            cursor = result.has_more
+              ? (result.cursor as string | undefined)
+              : undefined;
+          } while (cursor);
+        } finally {
+          controller.close();
+        }
+      },
+    });
 
-    return c.text(lines.join("\n") + "\n", 200, {
-      "Content-Type": "application/x-ndjson",
+    return new Response(stream, {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
     });
   });
 
