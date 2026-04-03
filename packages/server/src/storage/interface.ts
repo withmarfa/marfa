@@ -210,7 +210,9 @@ export interface OAuthStore {
   /** Atomically marks a code as used. Returns null if already consumed or expired. */
   consumeCode(
     codeHash: string,
-  ): Promise<(import("@mymehq/shared").OAuthCode & { scopes: string[] }) | null>;
+  ): Promise<
+    (import("@mymehq/shared").OAuthCode & { scopes: string[] }) | null
+  >;
 
   createToken(
     grantId: string,
@@ -221,7 +223,9 @@ export interface OAuthStore {
   /** Validates a token hash. Returns null if not found, expired, or revoked. */
   validateToken(
     tokenHash: string,
-  ): Promise<(import("@mymehq/shared").OAuthToken & { scopes: string[] }) | null>;
+  ): Promise<
+    (import("@mymehq/shared").OAuthToken & { scopes: string[] }) | null
+  >;
   listTokens(): Promise<import("@mymehq/shared").OAuthToken[]>;
   revokeToken(id: string): Promise<void>;
   reduceTokenScope(id: string, scopes: string[]): Promise<void>;

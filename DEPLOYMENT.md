@@ -4,13 +4,13 @@ Myme runs on Atlas (Mac Mini M4 Pro) via launchd. Both environments use the same
 
 ## Environments
 
-| | Production | Staging |
-|---|---|---|
-| Port | 8600 | 8601 |
-| Plist | `com.myme.server.plist` | `com.myme.staging.plist` |
-| Database | `myme` | `myme_staging` |
-| Logs | `~/Services/myme/` | `~/Services/myme-staging/` |
-| Tailscale | `100.127.105.110:8600` | `100.127.105.110:8601` |
+|           | Production              | Staging                    |
+| --------- | ----------------------- | -------------------------- |
+| Port      | 8600                    | 8601                       |
+| Plist     | `com.myme.server.plist` | `com.myme.staging.plist`   |
+| Database  | `myme`                  | `myme_staging`             |
+| Logs      | `~/Services/myme/`      | `~/Services/myme-staging/` |
+| Tailscale | `100.127.105.110:8600`  | `100.127.105.110:8601`     |
 
 Both use Postgres (via `myme` user on localhost:5432), S3 blob storage (`myme-blobs` bucket in eu-west-2), and `KeepAlive: true`.
 

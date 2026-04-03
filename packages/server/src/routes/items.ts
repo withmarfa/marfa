@@ -165,9 +165,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     if (includeMetadata) {
       const ids = result.data.map((item) => item.id);
       const metadataList = await storage.metadata.getMany(ids);
-      const metadataMap = new Map(
-        metadataList.map((m) => [m.item_id, m]),
-      );
+      const metadataMap = new Map(metadataList.map((m) => [m.item_id, m]));
       return c.json({
         data: result.data.map((item) => ({
           item,

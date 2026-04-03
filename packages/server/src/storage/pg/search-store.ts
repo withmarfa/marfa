@@ -28,11 +28,7 @@ function buildTsQueryExpr(
       paramValue: query.slice(1, -1),
     };
   }
-  const tokens = query
-    .trim()
-    .split(/\s+/)
-    .map(sanitizeTsToken)
-    .filter(Boolean);
+  const tokens = query.trim().split(/\s+/).map(sanitizeTsToken).filter(Boolean);
   if (tokens.length === 0) {
     return {
       expr: `phraseto_tsquery('english', ${queryParam})`,
