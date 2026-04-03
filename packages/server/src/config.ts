@@ -12,6 +12,7 @@ export interface AppConfig {
   s3SecretAccessKey: string;
   apiKeySalt: string;
   corsOrigins: string[];
+  cdnBaseUrl: string;
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -49,5 +50,6 @@ export function loadConfig(): AppConfig {
     s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
     apiKeySalt,
     corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
+    cdnBaseUrl: process.env.CDN_BASE_URL ?? "",
   };
 }

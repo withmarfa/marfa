@@ -41,7 +41,7 @@ export function createApp(
   app.get("/", (c) =>
     c.json({
       name: "myme",
-      version: "0.0.1",
+      version: "0.1.0",
       features: [
         "items",
         "threads",
@@ -55,6 +55,7 @@ export function createApp(
         "graphql",
         "extensions",
       ],
+      cdn_base_url: config.cdnBaseUrl || null,
     }),
   );
   app.get("/health", (c) => c.json({ status: "ok" }));

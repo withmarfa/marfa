@@ -59,8 +59,13 @@ export class S3BlobBackend implements BlobBackend {
         Key: this.prefixedKey(key),
         Body: bytes,
         ...(mimeType && { ContentType: mimeType }),
+        CacheControl: "public, max-age=31536000, immutable",
       }),
     );
+  }
+
+  get prefixPath(): string {
+    return this.prefix;
   }
 
   async get(key: string): Promise<Buffer | null> {

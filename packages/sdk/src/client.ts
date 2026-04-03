@@ -36,6 +36,7 @@ export interface ClientConfig {
   fetch?: typeof globalThis.fetch;
   conflictStrategy?: ConflictStrategy;
   timeoutMs?: number;
+  cdnBaseUrl?: string;
 }
 
 export interface UpdateOptions {
@@ -81,8 +82,11 @@ export interface MetadataInput {
 export class MymeClient {
   private readonly transport: HttpTransport;
   private readonly defaultConflictStrategy: ConflictStrategy;
+  private readonly apiBaseUrl: string;
+  private readonly cdnBaseUrl?: string;
 
   constructor(config: ClientConfig) {
+    this.apiBaseUrl = config.url.replace(/\/+$/, "");
     this.transport = new HttpTransport({
       baseUrl: config.url,
       apiKey: config.apiKey,
@@ -90,6 +94,7 @@ export class MymeClient {
       timeoutMs: config.timeoutMs,
     });
     this.defaultConflictStrategy = config.conflictStrategy ?? "auto";
+    this.cdnBaseUrl = config.cdnBaseUrl;
   }
 
   // ---- Items ----
@@ -359,6 +364,15 @@ export class MymeClient {
       }
 
       return response.arrayBuffer();
+    },
+
+    /** Returns a direct CDN URL if configured, otherwise the API proxy URL. */
+    url: (hash: string): string => {
+      const cleanHash = hash.startsWith("sha256:") ? hash : `sha256:${hash}`;
+      if (this.cdnBaseUrl) {
+        return `${this.cdnBaseUrl}/blobs/${cleanHash}`;
+      }
+      return `${this.apiBaseUrl}/blobs/${cleanHash}`;
     },
   };
 
