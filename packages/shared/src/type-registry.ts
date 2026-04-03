@@ -41,19 +41,6 @@ export interface TypeSchema {
 }
 
 // ---------------------------------------------------------------------------
-// Default lifecycle
-// ---------------------------------------------------------------------------
-
-const DEFAULT_STATES: ItemState[] = ["new", "active", "archived", "trashed"];
-
-const DEFAULT_TRANSITIONS: Record<string, ItemState[]> = {
-  new: ["active", "archived", "trashed"],
-  active: ["archived", "trashed"],
-  archived: ["active", "trashed"],
-  trashed: ["active"],
-};
-
-// ---------------------------------------------------------------------------
 // Universal fields (available on every type)
 // ---------------------------------------------------------------------------
 
@@ -62,323 +49,9 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
   links: { type: "array", items_type: "string" },
 };
 
-// ---------------------------------------------------------------------------
-// Type definitions — Work group
-// ---------------------------------------------------------------------------
-
-const workFields: Record<string, FieldDefinition> = {
-  title: { type: "string", required: true },
-  body: { type: "string" },
-  author: { type: "string" },
-  url: { type: "url" },
-  format: { type: "enum", enum_values: ["plaintext", "markdown", "html"] },
-  description: { type: "string" },
-  publisher: { type: "string" },
-  published_at: { type: "datetime" },
-  image_url: { type: "url" },
-  language: { type: "string" },
-  notes: { type: "string" },
-};
-
-const coreWork: TypeSchema = {
-  id: "core.work",
-  label: "Work",
-  version: 1,
-  fields: workFields,
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreWorkBook: TypeSchema = {
-  id: "core.work.book",
-  label: "Book",
-  parent: "core.work",
-  version: 1,
-  fields: {
-    isbn: { type: "string" },
-    page_count: { type: "integer" },
-    edition: { type: "string" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreWorkArticle: TypeSchema = {
-  id: "core.work.article",
-  label: "Article",
-  parent: "core.work",
-  version: 1,
-  fields: {
-    body: { type: "string", required: true },
-    section: { type: "string" },
-    word_count: { type: "integer" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreWorkFilm: TypeSchema = {
-  id: "core.work.film",
-  label: "Film",
-  parent: "core.work",
-  version: 1,
-  fields: {
-    duration: { type: "number" },
-    director: { type: "string" },
-    content_rating: { type: "string" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreWorkSong: TypeSchema = {
-  id: "core.work.song",
-  label: "Song",
-  parent: "core.work",
-  version: 1,
-  fields: {
-    duration: { type: "number" },
-    isrc: { type: "string" },
-    album: { type: "string" },
-    track_number: { type: "integer" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreWorkAlbum: TypeSchema = {
-  id: "core.work.album",
-  label: "Album",
-  parent: "core.work",
-  version: 1,
-  fields: {
-    release_type: { type: "string" },
-    num_tracks: { type: "integer" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreWorkPodcast: TypeSchema = {
-  id: "core.work.podcast",
-  label: "Podcast",
-  parent: "core.work",
-  version: 1,
-  fields: {
-    episode_number: { type: "integer" },
-    season_number: { type: "integer" },
-    duration: { type: "number" },
-    episode_type: { type: "string" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreWorkSeries: TypeSchema = {
-  id: "core.work.series",
-  label: "Series",
-  parent: "core.work",
-  version: 1,
-  fields: {
-    season_count: { type: "integer" },
-    episode_count: { type: "integer" },
-    status: { type: "string" },
-    network: { type: "string" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreWorkTvEpisode: TypeSchema = {
-  id: "core.work.tv_episode",
-  label: "TV Episode",
-  parent: "core.work",
-  version: 1,
-  fields: {
-    episode_number: { type: "integer" },
-    season_number: { type: "integer" },
-    duration: { type: "number" },
-    director: { type: "string" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-// ---------------------------------------------------------------------------
-// Type definitions — Entity group
-// ---------------------------------------------------------------------------
-
-const entityFields: Record<string, FieldDefinition> = {
-  name: { type: "string", required: true },
-  url: { type: "url" },
-  description: { type: "string" },
-  email: { type: "email" },
-  phone: { type: "string" },
-  place: { type: "string" },
-  image_url: { type: "url" },
-  legal_name: { type: "string" },
-  founded: { type: "date" },
-  notes: { type: "string" },
-};
-
-const coreEntity: TypeSchema = {
-  id: "core.entity",
-  label: "Entity",
-  version: 1,
-  fields: entityFields,
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreEntityPerson: TypeSchema = {
-  id: "core.entity.person",
-  label: "Person",
-  parent: "core.entity",
-  version: 1,
-  fields: {
-    given_name: { type: "string" },
-    family_name: { type: "string" },
-    middle_name: { type: "string" },
-    prefix: { type: "string" },
-    suffix: { type: "string" },
-    nickname: { type: "string" },
-    organization: { type: "string" },
-    job_title: { type: "string" },
-    department: { type: "string" },
-    birthday: { type: "date" },
-    pronouns: { type: "string" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreEntityPlace: TypeSchema = {
-  id: "core.entity.place",
-  label: "Place",
-  parent: "core.entity",
-  version: 1,
-  fields: {
-    street_address: { type: "string" },
-    locality: { type: "string" },
-    region: { type: "string" },
-    postal_code: { type: "string" },
-    country: { type: "string" },
-    timezone: { type: "string" },
-    latitude: { type: "number" },
-    longitude: { type: "number" },
-    altitude: { type: "number" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-// ---------------------------------------------------------------------------
-// Type definitions — File group
-// ---------------------------------------------------------------------------
-
-const fileFields: Record<string, FieldDefinition> = {
-  blob_ref: { type: "string", required: true },
-  mime_type: { type: "string", required: true },
-  title: { type: "string" },
-  description: { type: "string" },
-  url: { type: "url" },
-  source_url: { type: "url" },
-  author: { type: "string" },
-  language: { type: "string" },
-  notes: { type: "string" },
-};
-
-const coreFile: TypeSchema = {
-  id: "core.file",
-  label: "File",
-  version: 1,
-  fields: fileFields,
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreFileImage: TypeSchema = {
-  id: "core.file.image",
-  label: "Image",
-  parent: "core.file",
-  version: 1,
-  fields: {
-    width: { type: "integer", required: true },
-    height: { type: "integer", required: true },
-    latitude: { type: "number" },
-    longitude: { type: "number" },
-    altitude: { type: "number" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreFileAudio: TypeSchema = {
-  id: "core.file.audio",
-  label: "Audio",
-  parent: "core.file",
-  version: 1,
-  fields: {
-    duration: { type: "number", required: true },
-    language: { type: "string" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-const coreFileVideo: TypeSchema = {
-  id: "core.file.video",
-  label: "Video",
-  parent: "core.file",
-  version: 1,
-  fields: {
-    width: { type: "integer", required: true },
-    height: { type: "integer", required: true },
-    duration: { type: "number", required: true },
-    latitude: { type: "number" },
-    longitude: { type: "number" },
-    altitude: { type: "number" },
-    language: { type: "string" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
-
-// ---------------------------------------------------------------------------
-// Type definitions — Standalone types
-// ---------------------------------------------------------------------------
-
-const coreNote: TypeSchema = {
-  id: "core.note",
-  label: "Note",
-  version: 1,
-  fields: {
-    body: { type: "string", required: true },
-    title: { type: "string" },
-    format: { type: "enum", enum_values: ["plaintext", "markdown", "html"] },
-    language: { type: "string" },
-    notes: { type: "string" },
-  },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
-};
+// Auto-generated from @mymehq/types JSON schemas — do not edit manually.
+// Generated at: 2026-04-03T06:15:30.930Z
+// Run `pnpm generate` in the types repo to regenerate.
 
 const coreBookmark: TypeSchema = {
   id: "core.bookmark",
@@ -398,39 +71,115 @@ const coreBookmark: TypeSchema = {
     language: { type: "string" },
     notes: { type: "string" },
   },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
 };
 
-const coreTask: TypeSchema = {
-  id: "core.task",
-  label: "Task",
+const coreCollection: TypeSchema = {
+  id: "core.collection",
+  label: "Collection",
   version: 1,
   fields: {
     title: { type: "string", required: true },
     description: { type: "string" },
     body: { type: "string" },
     format: { type: "enum", enum_values: ["plaintext", "markdown", "html"] },
-    due_at: { type: "datetime" },
-    starts_at: { type: "datetime" },
-    completed_at: { type: "datetime" },
-    status: { type: "string" },
-    priority: {
-      type: "enum",
-      enum_values: ["low", "medium", "high", "urgent"],
-    },
-    place: { type: "string" },
-    precision: {
-      type: "enum",
-      enum_values: ["year", "month", "day", "time"],
-    },
-    url: { type: "url" },
+    image_url: { type: "url" },
     notes: { type: "string" },
   },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "active" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreEntity: TypeSchema = {
+  id: "core.entity",
+  label: "Entity",
+  version: 1,
+  fields: {
+    name: { type: "string", required: true },
+    url: { type: "url" },
+    description: { type: "string" },
+    email: { type: "email" },
+    phone: { type: "string" },
+    place: { type: "string" },
+    image_url: { type: "url" },
+    legal_name: { type: "string" },
+    founded: { type: "date" },
+    notes: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreEvent: TypeSchema = {
+  id: "core.event",
+  label: "Event",
+  version: 1,
+  fields: {
+    title: { type: "string", required: true },
+    description: { type: "string" },
+    starts_at: { type: "datetime" },
+    ends_at: { type: "datetime" },
+    duration: { type: "number" },
+    place: { type: "string" },
+    latitude: { type: "number" },
+    longitude: { type: "number" },
+    url: { type: "url" },
+    precision: { type: "enum", enum_values: ["year", "month", "day", "time"] },
+    status: { type: "string" },
+    notes: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreFile: TypeSchema = {
+  id: "core.file",
+  label: "File",
+  version: 1,
+  fields: {
+    blob_ref: { type: "string", required: true },
+    mime_type: { type: "string", required: true },
+    title: { type: "string" },
+    description: { type: "string" },
+    url: { type: "url" },
+    source_url: { type: "url" },
+    author: { type: "string" },
+    language: { type: "string" },
+    notes: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
 };
 
 const coreMessage: TypeSchema = {
@@ -448,86 +197,401 @@ const coreMessage: TypeSchema = {
     url: { type: "url" },
     notes: { type: "string" },
   },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
 };
 
-const coreEvent: TypeSchema = {
-  id: "core.event",
-  label: "Event",
+const coreNote: TypeSchema = {
+  id: "core.note",
+  label: "Note",
   version: 1,
   fields: {
-    title: { type: "string", required: true },
-    description: { type: "string" },
-    starts_at: { type: "datetime" },
-    ends_at: { type: "datetime" },
-    duration: { type: "number" },
-    place: { type: "string" },
-    latitude: { type: "number" },
-    longitude: { type: "number" },
-    url: { type: "url" },
-    precision: {
-      type: "enum",
-      enum_values: ["year", "month", "day", "time"],
-    },
-    status: { type: "string" },
+    body: { type: "string", required: true },
+    title: { type: "string" },
+    format: { type: "enum", enum_values: ["plaintext", "markdown", "html"] },
+    language: { type: "string" },
     notes: { type: "string" },
   },
-  states: DEFAULT_STATES,
-  default_state: "new",
-  transitions: DEFAULT_TRANSITIONS,
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
 };
 
-const coreCollection: TypeSchema = {
-  id: "core.collection",
-  label: "Collection",
+const coreTask: TypeSchema = {
+  id: "core.task",
+  label: "Task",
   version: 1,
   fields: {
     title: { type: "string", required: true },
     description: { type: "string" },
     body: { type: "string" },
     format: { type: "enum", enum_values: ["plaintext", "markdown", "html"] },
-    image_url: { type: "url" },
+    due_at: { type: "datetime" },
+    starts_at: { type: "datetime" },
+    completed_at: { type: "datetime" },
+    status: { type: "string" },
+    priority: { type: "enum", enum_values: ["low", "medium", "high", "urgent"] },
+    place: { type: "string" },
+    precision: { type: "enum", enum_values: ["year", "month", "day", "time"] },
+    url: { type: "url" },
     notes: { type: "string" },
   },
-  states: DEFAULT_STATES,
-  default_state: "active",
-  transitions: DEFAULT_TRANSITIONS,
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
 };
 
-// ---------------------------------------------------------------------------
-// Registry
-// ---------------------------------------------------------------------------
+const coreWork: TypeSchema = {
+  id: "core.work",
+  label: "Work",
+  version: 1,
+  fields: {
+    title: { type: "string", required: true },
+    body: { type: "string" },
+    author: { type: "string" },
+    url: { type: "url" },
+    format: { type: "enum", enum_values: ["plaintext", "markdown", "html"] },
+    description: { type: "string" },
+    publisher: { type: "string" },
+    published_at: { type: "datetime" },
+    image_url: { type: "url" },
+    language: { type: "string" },
+    notes: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
 
-const ALL_TYPES: TypeSchema[] = [
-  // Work group
-  coreWork,
-  coreWorkBook,
-  coreWorkArticle,
-  coreWorkFilm,
-  coreWorkSong,
-  coreWorkAlbum,
-  coreWorkPodcast,
-  coreWorkSeries,
-  coreWorkTvEpisode,
-  // Entity group
+const coreEntityPerson: TypeSchema = {
+  id: "core.entity.person",
+  parent: "core.entity",
+  label: "Person",
+  version: 1,
+  fields: {
+    given_name: { type: "string" },
+    family_name: { type: "string" },
+    middle_name: { type: "string" },
+    prefix: { type: "string" },
+    suffix: { type: "string" },
+    nickname: { type: "string" },
+    organization: { type: "string" },
+    job_title: { type: "string" },
+    department: { type: "string" },
+    birthday: { type: "date" },
+    pronouns: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreEntityPlace: TypeSchema = {
+  id: "core.entity.place",
+  parent: "core.entity",
+  label: "Place",
+  version: 1,
+  fields: {
+    street_address: { type: "string" },
+    locality: { type: "string" },
+    region: { type: "string" },
+    postal_code: { type: "string" },
+    country: { type: "string" },
+    timezone: { type: "string" },
+    latitude: { type: "number" },
+    longitude: { type: "number" },
+    altitude: { type: "number" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreFileAudio: TypeSchema = {
+  id: "core.file.audio",
+  parent: "core.file",
+  label: "Audio",
+  version: 1,
+  fields: {
+    duration: { type: "number", required: true },
+    language: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreFileImage: TypeSchema = {
+  id: "core.file.image",
+  parent: "core.file",
+  label: "Image",
+  version: 1,
+  fields: {
+    width: { type: "integer", required: true },
+    height: { type: "integer", required: true },
+    latitude: { type: "number" },
+    longitude: { type: "number" },
+    altitude: { type: "number" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreFileVideo: TypeSchema = {
+  id: "core.file.video",
+  parent: "core.file",
+  label: "Video",
+  version: 1,
+  fields: {
+    width: { type: "integer", required: true },
+    height: { type: "integer", required: true },
+    duration: { type: "number", required: true },
+    latitude: { type: "number" },
+    longitude: { type: "number" },
+    altitude: { type: "number" },
+    language: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreWorkAlbum: TypeSchema = {
+  id: "core.work.album",
+  parent: "core.work",
+  label: "Album",
+  version: 1,
+  fields: {
+    release_type: { type: "string" },
+    num_tracks: { type: "integer" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreWorkArticle: TypeSchema = {
+  id: "core.work.article",
+  parent: "core.work",
+  label: "Article",
+  version: 1,
+  fields: {
+    body: { type: "string", required: true },
+    section: { type: "string" },
+    word_count: { type: "integer" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreWorkBook: TypeSchema = {
+  id: "core.work.book",
+  parent: "core.work",
+  label: "Book",
+  version: 1,
+  fields: {
+    isbn: { type: "string" },
+    page_count: { type: "integer" },
+    edition: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreWorkFilm: TypeSchema = {
+  id: "core.work.film",
+  parent: "core.work",
+  label: "Film",
+  version: 1,
+  fields: {
+    duration: { type: "number" },
+    director: { type: "string" },
+    content_rating: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreWorkPodcast: TypeSchema = {
+  id: "core.work.podcast",
+  parent: "core.work",
+  label: "Podcast",
+  version: 1,
+  fields: {
+    episode_number: { type: "integer" },
+    season_number: { type: "integer" },
+    duration: { type: "number" },
+    episode_type: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreWorkSeries: TypeSchema = {
+  id: "core.work.series",
+  parent: "core.work",
+  label: "Series",
+  version: 1,
+  fields: {
+    season_count: { type: "integer" },
+    episode_count: { type: "integer" },
+    status: { type: "string" },
+    network: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreWorkSong: TypeSchema = {
+  id: "core.work.song",
+  parent: "core.work",
+  label: "Song",
+  version: 1,
+  fields: {
+    duration: { type: "number" },
+    isrc: { type: "string" },
+    album: { type: "string" },
+    track_number: { type: "integer" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+const coreWorkTvEpisode: TypeSchema = {
+  id: "core.work.tv_episode",
+  parent: "core.work",
+  label: "TV Episode",
+  version: 1,
+  fields: {
+    episode_number: { type: "integer" },
+    season_number: { type: "integer" },
+    duration: { type: "number" },
+    director: { type: "string" },
+  },
+  states: ["new","active","archived","trashed"] as ItemState[],
+  default_state: "new" as ItemState,
+  transitions: {
+    new: ["active","archived","trashed"] as ItemState[],
+    active: ["archived","trashed"] as ItemState[],
+    archived: ["active","trashed"] as ItemState[],
+    trashed: ["active"] as ItemState[],
+  },
+};
+
+export const ALL_TYPES: TypeSchema[] = [
+  coreBookmark,
+  coreCollection,
   coreEntity,
+  coreEvent,
+  coreFile,
+  coreMessage,
+  coreNote,
+  coreTask,
+  coreWork,
   coreEntityPerson,
   coreEntityPlace,
-  // File group
-  coreFile,
-  coreFileImage,
   coreFileAudio,
+  coreFileImage,
   coreFileVideo,
-  // Standalone
-  coreNote,
-  coreBookmark,
-  coreTask,
-  coreMessage,
-  coreEvent,
-  coreCollection,
+  coreWorkAlbum,
+  coreWorkArticle,
+  coreWorkBook,
+  coreWorkFilm,
+  coreWorkPodcast,
+  coreWorkSeries,
+  coreWorkSong,
+  coreWorkTvEpisode,
 ];
+
+
 
 /** The type registry — all registered type schemas indexed by type identifier. */
 export const TYPE_REGISTRY: ReadonlyMap<string, TypeSchema> = new Map(
