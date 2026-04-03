@@ -17,10 +17,12 @@ async function main() {
     }
     storage = await createPgStorage(config.databaseUrl, {
       versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
+      authMode: config.authMode,
     });
   } else {
     storage = createSqliteStorage(config.sqlitePath, {
       versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
+      authMode: config.authMode,
     });
   }
 

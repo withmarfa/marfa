@@ -9,10 +9,15 @@ import { SqliteSearchStore } from "./search-store.js";
 import { SqliteKeyStore } from "./key-store.js";
 import { SqliteBlobStore } from "./blob-store.js";
 import { SqliteOAuthStore } from "./oauth-store.js";
+import { SqliteUserStore } from "./user-store.js";
+import { SqliteTenantStore } from "./tenant-store.js";
 
 export function createSqliteStorage(
   sqlitePath: string,
-  options?: { versionSnapshotIntervalMs?: number },
+  options?: {
+    versionSnapshotIntervalMs?: number;
+    authMode?: "hosted" | "keys";
+  },
 ): Storage {
   const { db, raw, close } = createConnection(sqlitePath);
 
@@ -42,6 +47,10 @@ export function createSqliteStorage(
     keys: keyStore,
     blobs: blobStore,
     oauth: oauthStore,
+    ...(options?.authMode === "hosted" && {
+      users: new SqliteUserStore(db),
+      tenants: new SqliteTenantStore(db),
+    }),
     close() {
       close();
       return Promise.resolve();

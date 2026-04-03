@@ -42,6 +42,25 @@ export function createConnection(sqlitePath: string): {
 
   // Create tables via raw SQL (idempotent — CREATE TABLE IF NOT EXISTS)
   sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS tenants (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT,
+      avatar_url TEXT,
+      provider TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
+
     CREATE TABLE IF NOT EXISTS threads (
       id TEXT PRIMARY KEY,
       tenant_id TEXT,

@@ -23,6 +23,7 @@ export enum ErrorCode {
   EXPIRED_TOKEN = "expired_token",
   TOKEN_REUSE_DETECTED = "token_reuse_detected",
   RATE_LIMITED = "rate_limited",
+  CONFLICT = "conflict",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -48,6 +49,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.EXPIRED_TOKEN]: 401,
   [ErrorCode.TOKEN_REUSE_DETECTED]: 400,
   [ErrorCode.RATE_LIMITED]: 429,
+  [ErrorCode.CONFLICT]: 409,
 };
 
 /** Returns the HTTP status code for a given error code. */

@@ -16,6 +16,7 @@ import { importRoutes, exportRoutes } from "./routes/import-export.js";
 import { authRoutes } from "./routes/oauth.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
+import { userAuthRoutes } from "./routes/users.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { mountGraphQL } from "./graphql/index.js";
 
@@ -91,6 +92,9 @@ export function createApp(
   app.route("/import", importRoutes(storage));
   app.route("/export", exportRoutes(storage));
   app.route("/auth", authRoutes(storage, config.apiKeySalt));
+  if (config.authMode === "hosted" && storage.users && storage.tenants) {
+    app.route("/auth", userAuthRoutes(storage, config.apiKeySalt));
+  }
   app.route("/events", eventRoutes());
 
   return app;

@@ -11,6 +11,8 @@ import type {
   SearchResult,
   ConflictResponse,
   ItemState,
+  User,
+  Tenant,
 } from "@mymehq/shared";
 import type { TypeSchema } from "@mymehq/shared";
 import { ProtocolError, ErrorCode } from "@mymehq/shared";
@@ -158,7 +160,7 @@ export interface SearchStore {
 }
 
 export interface KeyStore {
-  create(input: CreateKeyInput, keyHash: string): Promise<ApiKey>;
+  create(input: CreateKeyInput, keyHash: string, tenantId?: string): Promise<ApiKey>;
   list(): Promise<ApiKey[]>;
   validate(
     keyHash: string,
@@ -178,6 +180,30 @@ export interface BlobStore {
   get(
     hash: string,
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null>;
+}
+
+// ---------------------------------------------------------------------------
+// User + Tenant stores (hosted mode only)
+// ---------------------------------------------------------------------------
+
+export interface UserStore {
+  create(input: {
+    email: string;
+    name?: string;
+    avatar_url?: string;
+    provider: string;
+    provider_id: string;
+    tenant_id: string;
+  }): Promise<User>;
+  getById(id: string): Promise<User | null>;
+  getByEmail(email: string): Promise<User | null>;
+  getByProvider(provider: string, providerId: string): Promise<User | null>;
+  getByTenantId(tenantId: string): Promise<User | null>;
+}
+
+export interface TenantStore {
+  create(name?: string): Promise<Tenant>;
+  get(id: string): Promise<Tenant | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,5 +277,7 @@ export interface Storage {
   keys: KeyStore;
   blobs: BlobStore;
   oauth: OAuthStore;
+  users?: UserStore;
+  tenants?: TenantStore;
   close(): Promise<void>;
 }

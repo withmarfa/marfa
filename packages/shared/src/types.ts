@@ -236,3 +236,27 @@ export interface OAuthCode {
   used_at: string | null;
   created_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// User model (hosted mode only)
+// ---------------------------------------------------------------------------
+
+/** A tenant represents an isolated data namespace. */
+export interface Tenant {
+  id: string;
+  name: string | null;
+  created_at: string;
+}
+
+/** A user account (hosted mode). Owns exactly one tenant. */
+export interface User {
+  id: string;
+  email: string;
+  name: string | null;
+  avatar_url: string | null;
+  provider: string;
+  provider_id: string;
+  tenant_id: string;
+  created_at: string;
+  updated_at: string;
+}

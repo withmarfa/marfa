@@ -9,6 +9,36 @@ import {
 import { sql } from "drizzle-orm";
 
 // ---------------------------------------------------------------------------
+// tenants + users (hosted mode)
+// ---------------------------------------------------------------------------
+
+export const tenants = sqliteTable("tenants", {
+  id: text("id").primaryKey(),
+  name: text("name"),
+  created_at: text("created_at").notNull(),
+});
+
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull().unique(),
+    name: text("name"),
+    avatar_url: text("avatar_url"),
+    provider: text("provider").notNull(),
+    provider_id: text("provider_id").notNull(),
+    tenant_id: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_users_provider").on(table.provider, table.provider_id),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // threads (defined first because items references it)
 // ---------------------------------------------------------------------------
 
