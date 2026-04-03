@@ -162,6 +162,49 @@ export async function createConnection(connectionString: string): Promise<{
       ALTER TABLE threads ADD COLUMN IF NOT EXISTS tenant_id TEXT;
       ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS tenant_id TEXT;
     `);
+
+    // Row Level Security — defense-in-depth for multi-tenant isolation.
+    // The table owner (used by this connection) bypasses RLS by default.
+    // For production hosted deployments, use a non-owner role (e.g. myme_app)
+    // that is subject to these policies.
+    await client.unsafe(`
+      ALTER TABLE items ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE threads ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE metadata ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE versions ENABLE ROW LEVEL SECURITY;
+
+      DO $$ BEGIN
+        CREATE POLICY tenant_isolation_items ON items
+          USING (tenant_id = current_setting('myme.tenant_id', true));
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        CREATE POLICY tenant_isolation_api_keys ON api_keys
+          USING (tenant_id = current_setting('myme.tenant_id', true));
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        CREATE POLICY tenant_isolation_threads ON threads
+          USING (tenant_id = current_setting('myme.tenant_id', true));
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        CREATE POLICY tenant_isolation_metadata ON metadata
+          USING (EXISTS (
+            SELECT 1 FROM items WHERE items.id = metadata.item_id
+            AND items.tenant_id = current_setting('myme.tenant_id', true)
+          ));
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        CREATE POLICY tenant_isolation_versions ON versions
+          USING (EXISTS (
+            SELECT 1 FROM items WHERE items.id = versions.item_id
+            AND items.tenant_id = current_setting('myme.tenant_id', true)
+          ));
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
   } finally {
     await client.unsafe(`SELECT pg_advisory_unlock(42)`);
   }
