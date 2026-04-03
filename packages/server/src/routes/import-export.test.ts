@@ -113,7 +113,7 @@ describe("GET /export", () => {
     const lines = text.trim().split("\n");
     expect(lines.length).toBeGreaterThan(0);
 
-    const first = JSON.parse(lines[0]) as { item: { id: string } };
+    const first = JSON.parse(lines[0] ?? "{}") as { item: { id: string } };
     expect(first.item.id).toBeDefined();
   });
 
@@ -126,12 +126,9 @@ describe("GET /export", () => {
       },
     });
 
-    const res = await request(
-      ctx.app,
-      "GET",
-      "/export?type=core.bookmark",
-      { key: ctx.adminKey },
-    );
+    const res = await request(ctx.app, "GET", "/export?type=core.bookmark", {
+      key: ctx.adminKey,
+    });
     expect(res.status).toBe(200);
 
     const text = await res.text();
@@ -157,12 +154,9 @@ describe("GET /export", () => {
     });
 
     // Export
-    const exportRes = await request(
-      ctx.app,
-      "GET",
-      `/export?type=core.note`,
-      { key: ctx.adminKey },
-    );
+    const exportRes = await request(ctx.app, "GET", `/export?type=core.note`, {
+      key: ctx.adminKey,
+    });
     const exportText = await exportRes.text();
     const lines = exportText.trim().split("\n");
     const exported = lines.map(
