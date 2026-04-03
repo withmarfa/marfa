@@ -61,6 +61,8 @@ export async function createTestContext(): Promise<TestContext> {
     apiKeySalt: SALT,
     corsOrigins: [],
     cdnBaseUrl: "",
+    authMode: "keys",
+    versionSnapshotIntervalMs: 600_000,
   });
 
   // Create a bootstrap admin key (unique per test context to avoid PG conflicts)

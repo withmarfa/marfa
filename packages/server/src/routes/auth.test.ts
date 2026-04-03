@@ -59,6 +59,8 @@ describe("bootstrap mode", () => {
       apiKeySalt: "test-salt",
       corsOrigins: [],
       cdnBaseUrl: "",
+      authMode: "keys",
+      versionSnapshotIntervalMs: 600_000,
     });
 
     const res = await request(app, "POST", "/keys", {

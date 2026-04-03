@@ -13,6 +13,8 @@ export interface AppConfig {
   apiKeySalt: string;
   corsOrigins: string[];
   cdnBaseUrl: string;
+  authMode: "hosted" | "keys";
+  versionSnapshotIntervalMs: number;
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -51,5 +53,8 @@ export function loadConfig(): AppConfig {
     apiKeySalt,
     corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
     cdnBaseUrl: process.env.CDN_BASE_URL ?? "",
+    authMode: process.env.AUTH_MODE === "hosted" ? "hosted" : "keys",
+    versionSnapshotIntervalMs:
+      Number(process.env.VERSION_SNAPSHOT_INTERVAL_MS) || 600_000,
   };
 }

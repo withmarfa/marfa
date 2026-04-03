@@ -38,27 +38,34 @@ export function createApp(
   }
 
   // Public routes (before auth) — mounted directly to avoid prefix matching issues
+  const features = [
+    "items",
+    "threads",
+    "search",
+    "blobs",
+    "types",
+    "keys",
+    "import",
+    "export",
+    "oauth",
+    "graphql",
+    "extensions",
+    "events",
+  ];
+  if (config.authMode === "hosted") {
+    features.push("users");
+  }
   app.get("/", (c) =>
     c.json({
       name: "myme",
       version: "0.1.0",
-      features: [
-        "items",
-        "threads",
-        "search",
-        "blobs",
-        "types",
-        "keys",
-        "import",
-        "export",
-        "oauth",
-        "graphql",
-        "extensions",
-      ],
+      features,
       cdn_base_url: config.cdnBaseUrl || null,
     }),
   );
-  app.get("/health", (c) => c.json({ status: "ok" }));
+  app.get("/health", (c) =>
+    c.json({ status: "ok", auth_mode: config.authMode }),
+  );
 
   // Rate limiting (before auth to protect all endpoints)
   // Only enabled when RATE_LIMIT_REQUESTS is explicitly configured
