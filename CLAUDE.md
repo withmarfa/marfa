@@ -1,10 +1,11 @@
 # Myme
 
-Typed data layer. This monorepo contains three packages:
+Typed data layer. This monorepo contains four packages:
 
-- **@mymehq/shared** — Protocol types, Zod validation schemas, error codes, ID utilities. The foundation imported by both server and SDK
+- **@mymehq/shared** — Myme types, Zod validation schemas, error codes, type registry, ID utilities. The foundation imported by both server and SDK
 - **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published)
 - **@mymehq/sdk** — TypeScript HTTP client for consuming the Myme API
+- **@mymehq/electric** — Electric SQL sync client for local-first apps (optional, experimental)
 
 Published to GitHub Packages under the `@mymehq` scope. Version tags (`v0.1.0`) trigger the publish workflow.
 
@@ -44,6 +45,24 @@ Server package (not needed for shared or SDK development):
 - `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` — S3 config
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
+- `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
+- `ENABLE_GRAPHQL` — `true` to enable the GraphQL endpoint (default: disabled)
+
+## Feature gates
+
+- **GraphQL** (`ENABLE_GRAPHQL=true`) — disabled by default. The REST API and SSE events cover all current use cases. Re-evaluate when third-party apps need complex nested queries. If GraphQL code drifts from REST types or causes maintenance friction, flag it for review.
+
+## Error handling
+
+The base error class is `MymeError` (in `@mymehq/shared`). All structured errors use this class with an `ErrorCode` enum and corresponding HTTP status.
+
+## Type registration
+
+Core types (22, in the `core.*` namespace) are loaded from the codegen registry at startup. Custom types can be registered at runtime via `POST /types` (admin only) and are persisted in the `custom_types` table. Core types cannot be modified or deleted via the API.
+
+## Webhooks
+
+Outbound webhooks fire on item events (created, updated, deleted, restored, transitioned). The `WebhookConsumer` subscribes to the pub/sub system and delivers to registered URLs with HMAC-SHA256 signatures, retry with exponential backoff.
 
 ## Code style
 
