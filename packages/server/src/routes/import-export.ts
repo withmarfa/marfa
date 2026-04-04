@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import {
-  ProtocolError,
+  MymeError,
   ErrorCode,
   isValidTypeIdentifier,
   ITEM_STATES,
@@ -25,13 +25,13 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
     const body = await c.req.json();
     const items = body.items as unknown[] | undefined;
     if (!Array.isArray(items)) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "items must be an array",
       );
     }
     if (items.length > MAX_IMPORT_ITEMS) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Maximum ${String(MAX_IMPORT_ITEMS)} items per import`,
       );
@@ -44,7 +44,7 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
     for (let i = 0; i < items.length; i++) {
       const item = items[i] as Record<string, unknown>;
       if (!item.type || !isValidTypeIdentifier(item.type as string)) {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           `Item at index ${String(i)}: invalid or missing type`,
         );
@@ -71,7 +71,7 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
         imported++;
       } catch (err) {
         if (
-          err instanceof ProtocolError &&
+          err instanceof MymeError &&
           err.code === ErrorCode.DUPLICATE_SOURCE
         ) {
           duplicates++;
@@ -95,7 +95,7 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
 
     const type = c.req.query("type");
     if (type && !isValidTypeIdentifier(type)) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
       );
@@ -103,7 +103,7 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
 
     const state = c.req.query("state") as ItemState | undefined;
     if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Invalid state: ${state}`,
       );

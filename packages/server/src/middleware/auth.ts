@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { createMiddleware } from "hono/factory";
 import type { Context } from "hono";
 import {
-  ProtocolError,
+  MymeError,
   ErrorCode,
   resolveTypePermission,
   scopesToTypePermissions,
@@ -135,7 +135,7 @@ export function authMiddleware(storage: Storage, salt: string) {
 
 export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
   if (!apiKey) {
-    throw new ProtocolError(ErrorCode.UNAUTHORIZED, "Authentication required");
+    throw new MymeError(ErrorCode.UNAUTHORIZED, "Authentication required");
   }
   return apiKey;
 }
@@ -143,7 +143,7 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
 export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
   if (key.role !== "admin") {
-    throw new ProtocolError(ErrorCode.FORBIDDEN, "Admin access required");
+    throw new MymeError(ErrorCode.FORBIDDEN, "Admin access required");
   }
   return key;
 }
@@ -158,13 +158,13 @@ export function checkTypeAccess(
 
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (resolved === "none") {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.TYPE_NOT_PERMITTED,
       `No access to type "${type}"`,
     );
   }
   if (level === "write" && resolved === "read") {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.TYPE_NOT_PERMITTED,
       `Write access to type "${type}" denied`,
     );

@@ -8,7 +8,7 @@
  */
 import { Hono } from "hono";
 import {
-  ProtocolError,
+  MymeError,
   ErrorCode,
   isValidId,
   resolveExtensionPermission,
@@ -26,14 +26,14 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
     requireAuth(c);
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const apiKey = c.get("apiKey");
     const tid = apiKey?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
-      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     const extensions = await storage.metadata.getExtensions(id);
@@ -53,14 +53,14 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
     const id = c.req.param("id");
     const namespace = c.req.param("namespace");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const apiKey = c.get("apiKey");
     const tid = apiKey?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
-      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     const perm =
@@ -72,7 +72,7 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
             apiKey?.label ?? "",
           );
     if (perm === "none") {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.FORBIDDEN,
         `No read access to extension namespace "${namespace}"`,
       );
@@ -90,14 +90,14 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
     const id = c.req.param("id");
     const namespace = c.req.param("namespace");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const apiKey = c.get("apiKey");
     const tid = apiKey?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
-      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     const perm =
@@ -109,7 +109,7 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
             apiKey?.label ?? "",
           );
     if (perm !== "write") {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.FORBIDDEN,
         `No write access to extension namespace "${namespace}"`,
       );
@@ -117,7 +117,7 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
 
     const body = await c.req.json();
     if (typeof body !== "object" || body === null || Array.isArray(body)) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Extension data must be a JSON object",
       );
@@ -126,7 +126,7 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
     // Enforce extension data size limit (100KB per namespace)
     const serialized = JSON.stringify(body);
     if (serialized.length > 102_400) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Extension data exceeds maximum size of 100KB",
       );
@@ -147,14 +147,14 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
     const id = c.req.param("id");
     const namespace = c.req.param("namespace");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const apiKey = c.get("apiKey");
     const tid = apiKey?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
-      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     // Only admin or namespace owner can delete
@@ -166,7 +166,7 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
         apiKey?.label ?? "",
       );
       if (perm !== "write") {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.FORBIDDEN,
           `No write access to extension namespace "${namespace}"`,
         );

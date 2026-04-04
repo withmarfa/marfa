@@ -15,7 +15,7 @@ import type {
   Tenant,
 } from "@mymehq/shared";
 import type { TypeSchema } from "@mymehq/shared";
-import { ProtocolError, ErrorCode } from "@mymehq/shared";
+import { MymeError, ErrorCode } from "@mymehq/shared";
 
 // ---------------------------------------------------------------------------
 // Filter types
@@ -78,7 +78,7 @@ export function decodeCursor(cursor: string): CursorPayload {
     }
     return parsed;
   } catch {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       "Invalid pagination cursor",
     );

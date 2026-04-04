@@ -1,4 +1,4 @@
-// Protocol types — the wire format for the Myme API.
+// Myme types — the wire format for the Myme API.
 // These interfaces define what goes over the network between server and clients.
 
 /** Lifecycle states for items. */
@@ -22,7 +22,7 @@ export type TypePermission = "read" | "write" | "none";
 export type ExtensionPermission = "read" | "write";
 
 // ---------------------------------------------------------------------------
-// Core protocol types
+// Core types
 // ---------------------------------------------------------------------------
 
 /** A Myme item — the fundamental data record. */

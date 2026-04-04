@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
-import { ProtocolError, ErrorCode, isValidId } from "@mymehq/shared";
+import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -23,14 +23,14 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     const body = await c.req.json();
 
     if (!body.label || typeof body.label !== "string" || !body.label.trim()) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "label is required");
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "label is required");
     }
 
     const role = isBootstrap
       ? "admin"
       : ((body.role as string | undefined) ?? "member");
     if (role !== "admin" && role !== "member") {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "role must be 'admin' or 'member'",
       );
@@ -43,7 +43,7 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     const validPermissions = new Set(["read", "write", "none"]);
     for (const [pattern, perm] of Object.entries(typePermissions)) {
       if (!validPermissions.has(perm)) {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           `Invalid permission value "${perm}" for type pattern "${pattern}". Must be "read", "write", or "none"`,
         );
@@ -88,7 +88,7 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     requireAdmin(c);
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
     await storage.keys.revoke(id);
     return c.json({ ok: true });

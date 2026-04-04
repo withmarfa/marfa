@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import {
-  ProtocolError,
+  MymeError,
   ErrorCode,
   ITEM_STATES,
   isValidTypeIdentifier,
@@ -23,7 +23,7 @@ export function searchRoutes(storage: Storage): Hono<AppEnv> {
 
     const q = c.req.query("q");
     if (!q?.trim()) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Query parameter 'q' is required",
       );
@@ -31,7 +31,7 @@ export function searchRoutes(storage: Storage): Hono<AppEnv> {
 
     const type = c.req.query("type");
     if (type && !isValidTypeIdentifier(type)) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
       );
@@ -39,7 +39,7 @@ export function searchRoutes(storage: Storage): Hono<AppEnv> {
 
     const state = c.req.query("state") as ItemState | undefined;
     if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Invalid state: ${state}`,
       );

@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { ProtocolError, ErrorCode } from "@mymehq/shared";
+import { MymeError, ErrorCode } from "@mymehq/shared";
 import type { AppEnv } from "./auth.js";
 
 interface RateLimitConfig {
@@ -89,7 +89,7 @@ export function rateLimitMiddleware(
     if (entry.count > limit) {
       const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
       c.header("Retry-After", String(retryAfter));
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.RATE_LIMITED,
         `Rate limit exceeded. Try again in ${String(retryAfter)} seconds`,
       );

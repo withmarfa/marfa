@@ -9,7 +9,7 @@
  * into a structured AST for SQL generation.
  */
 
-import { ErrorCode, ProtocolError } from "./errors.js";
+import { ErrorCode, MymeError } from "./errors.js";
 
 // ---------------------------------------------------------------------------
 // AST types
@@ -151,7 +151,7 @@ function tokenize(input: string): Token[] {
         }
       }
       if (i >= input.length) {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           `Unterminated string starting at position ${String(start)}`,
         );
@@ -216,7 +216,7 @@ function tokenize(input: string): Token[] {
       continue;
     }
 
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       `Unexpected character '${ch}' at position ${String(i)}`,
     );
@@ -234,7 +234,7 @@ function expectToken(tokens: Token[], pos: number, context: string): Token {
   if (!token) {
     const prev = tokens[pos - 1];
     const after = prev ? ` after "${prev.raw}"` : "";
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       `Unexpected end of expression${after}: expected ${context}`,
     );
@@ -244,7 +244,7 @@ function expectToken(tokens: Token[], pos: number, context: string): Token {
 
 function parseFieldRef(token: Token): FieldRef {
   if (token.kind !== TokenKind.Identifier) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       `Expected field name at position ${String(token.pos)}, got ${token.raw}`,
     );
@@ -259,19 +259,19 @@ function parseFieldRef(token: Token): FieldRef {
   if (name.startsWith("properties.")) {
     const path = name.slice("properties.".length);
     if (!path) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Missing property name after "properties." at position ${String(token.pos)}`,
       );
     }
     if (path.includes(".")) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Nested property paths are not supported in v1. Use "properties.<field>" at position ${String(token.pos)}`,
       );
     }
     if (!PROPERTY_PATH_RE.test(path)) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Invalid property name "${path}". Property names must match /^[a-zA-Z_][a-zA-Z0-9_]*$/`,
       );
@@ -283,7 +283,7 @@ function parseFieldRef(token: Token): FieldRef {
     return { kind: "system", column: name };
   }
 
-  throw new ProtocolError(
+  throw new MymeError(
     ErrorCode.VALIDATION_ERROR,
     `Unknown field "${name}" at position ${String(token.pos)}. ` +
       `Valid system fields: ${[...SYSTEM_FIELDS].join(", ")}. ` +
@@ -293,7 +293,7 @@ function parseFieldRef(token: Token): FieldRef {
 
 function parseOp(token: Token): ComparisonOp {
   if (token.kind !== TokenKind.Identifier) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       `Expected operator at position ${String(token.pos)}, got ${token.raw}`,
     );
@@ -301,7 +301,7 @@ function parseOp(token: Token): ComparisonOp {
 
   const op = token.value as string;
   if (!COMPARISON_OPS.has(op as ComparisonOp)) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       `Unknown operator "${op}" at position ${String(token.pos)}. ` +
         `Valid operators: ${[...COMPARISON_OPS].join(", ")}`,
@@ -319,7 +319,7 @@ function parseValue(token: Token): FilterValue {
     case TokenKind.Null:
       return token.value as FilterValue;
     default:
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Expected value at position ${String(token.pos)}, got "${token.raw}"`,
       );
@@ -333,18 +333,18 @@ function parseValue(token: Token): FilterValue {
 /**
  * Parse a filter expression string into a structured AST.
  *
- * @throws ProtocolError with VALIDATION_ERROR on invalid input
+ * @throws MymeError with VALIDATION_ERROR on invalid input
  */
 export function parseFilter(input: string): FilterExpression {
   if (!input || input.trim().length === 0) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       "Filter expression cannot be empty",
     );
   }
 
   if (input.length > MAX_INPUT_LENGTH) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       `Filter expression too long (${String(input.length)} characters). Maximum is ${String(MAX_INPUT_LENGTH)}`,
     );
@@ -352,7 +352,7 @@ export function parseFilter(input: string): FilterExpression {
 
   const tokens = tokenize(input);
   if (tokens.length === 0) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       "Filter expression cannot be empty",
     );
@@ -375,14 +375,14 @@ export function parseFilter(input: string): FilterExpression {
 
     // Validate operator for field type
     if (field.kind === "tags" && !TAGS_ALLOWED_OPS.has(op)) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Operator "${op}" is not valid for "tags". Use: ${[...TAGS_ALLOWED_OPS].join(", ")}`,
       );
     }
 
     if (field.kind === "system" && UNARY_OPS.has(op)) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Operator "${op}" is not valid for system field "${field.column}". System fields always exist.`,
       );
@@ -399,7 +399,7 @@ export function parseFilter(input: string): FilterExpression {
     conditions.push({ field, op, value });
 
     if (conditions.length > MAX_CONDITIONS) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Too many conditions (${String(conditions.length)}). Maximum is ${String(MAX_CONDITIONS)}`,
       );
@@ -409,7 +409,7 @@ export function parseFilter(input: string): FilterExpression {
     if (pos < tokens.length) {
       const logToken = expectToken(tokens, pos, "AND or OR");
       if (logToken.kind !== TokenKind.Identifier) {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           `Expected AND or OR at position ${String(logToken.pos)}, got "${logToken.raw}"`,
         );
@@ -417,14 +417,14 @@ export function parseFilter(input: string): FilterExpression {
 
       const logValue = logToken.value as string;
       if (logValue !== "AND" && logValue !== "OR") {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           `Expected AND or OR at position ${String(logToken.pos)}, got "${logValue}"`,
         );
       }
 
       if (logical !== undefined && logical !== logValue) {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           `Cannot mix AND and OR in a single filter expression. ` +
             `Found "${logValue}" at position ${String(logToken.pos)} after "${logical}" used earlier. ` +
@@ -437,7 +437,7 @@ export function parseFilter(input: string): FilterExpression {
 
       // Must have another condition after a logical operator
       if (pos >= tokens.length) {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           `Unexpected end of expression after "${logValue}": expected another condition`,
         );

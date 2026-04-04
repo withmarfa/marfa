@@ -1,5 +1,5 @@
 import { createGraphQLError } from "graphql-yoga";
-import { ProtocolError } from "@mymehq/shared";
+import { MymeError } from "@mymehq/shared";
 import type { ApiKey } from "@mymehq/shared";
 import type { Storage } from "../storage/interface.js";
 import {
@@ -16,18 +16,18 @@ export interface GraphQLContext {
 }
 
 /**
- * Wraps a function that may throw ProtocolError, converting it to
+ * Wraps a function that may throw MymeError, converting it to
  * a GraphQLError so yoga doesn't mask the message.
  */
-function wrapProtocolError<T>(fn: () => T): T {
+function wrapMymeError<T>(fn: () => T): T {
   try {
     return fn();
   } catch (err) {
     if (
-      err instanceof ProtocolError ||
-      (err instanceof Error && err.name === "ProtocolError")
+      err instanceof MymeError ||
+      (err instanceof Error && err.name === "MymeError")
     ) {
-      const pe = err as ProtocolError;
+      const pe = err as MymeError;
       throw createGraphQLError(pe.message, {
         extensions: { code: pe.code, status: pe.status, details: pe.details },
       });
@@ -36,23 +36,23 @@ function wrapProtocolError<T>(fn: () => T): T {
   }
 }
 
-/** Auth check that throws GraphQLError (not ProtocolError). */
+/** Auth check that throws GraphQLError (not MymeError). */
 export function gqlCheckAuth(apiKey: ApiKey | undefined): ApiKey {
-  return wrapProtocolError(() => _checkAuth(apiKey));
+  return wrapMymeError(() => _checkAuth(apiKey));
 }
 
-/** Admin check that throws GraphQLError (not ProtocolError). */
+/** Admin check that throws GraphQLError (not MymeError). */
 export function gqlCheckAdmin(apiKey: ApiKey | undefined): ApiKey {
-  return wrapProtocolError(() => _checkAdmin(apiKey));
+  return wrapMymeError(() => _checkAdmin(apiKey));
 }
 
-/** Type access check that throws GraphQLError (not ProtocolError). */
+/** Type access check that throws GraphQLError (not MymeError). */
 export function gqlCheckTypeAccess(
   apiKey: ApiKey | undefined,
   type: string,
   level: "read" | "write",
 ): void {
-  wrapProtocolError(() => {
+  wrapMymeError(() => {
     _checkTypeAccess(apiKey, type, level);
   });
 }

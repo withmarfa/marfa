@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
-import { ProtocolError, ErrorCode } from "@mymehq/shared";
+import { MymeError, ErrorCode } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hashApiKey, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -42,7 +42,7 @@ export function userAuthRoutes(
     const providerId = body.provider_account_id as string | undefined;
 
     if (!email || !provider || !providerId) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "email, provider, and provider_account_id are required",
       );
@@ -51,7 +51,7 @@ export function userAuthRoutes(
     // Check if user already exists
     const existing = await userStore.getByProvider(provider, providerId);
     if (existing) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.CONFLICT,
         "User already exists for this provider",
       );
@@ -94,7 +94,7 @@ export function userAuthRoutes(
     const providerId = body.provider_account_id as string | undefined;
 
     if (!provider || !providerId) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "provider and provider_account_id are required",
       );
@@ -102,7 +102,7 @@ export function userAuthRoutes(
 
     const user = await userStore.getByProvider(provider, providerId);
     if (!user) {
-      throw new ProtocolError(ErrorCode.NOT_FOUND, "User not found");
+      throw new MymeError(ErrorCode.NOT_FOUND, "User not found");
     }
 
     // Find an active admin API key for this tenant
@@ -153,7 +153,7 @@ export function userAuthRoutes(
     const tenantId = apiKey.tenant_id;
 
     if (!tenantId) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.NOT_FOUND,
         "No tenant associated with this key",
       );
@@ -165,7 +165,7 @@ export function userAuthRoutes(
     ]);
 
     if (!tenant) {
-      throw new ProtocolError(ErrorCode.NOT_FOUND, "Tenant not found");
+      throw new MymeError(ErrorCode.NOT_FOUND, "Tenant not found");
     }
 
     return c.json({ user, tenant });

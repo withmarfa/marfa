@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ErrorCode, ProtocolError, httpStatus } from "./errors.js";
+import { ErrorCode, MymeError, httpStatus } from "./errors.js";
 
 describe("ErrorCode", () => {
   it("has all expected error codes", () => {
@@ -33,18 +33,18 @@ describe("httpStatus", () => {
   });
 });
 
-describe("ProtocolError", () => {
+describe("MymeError", () => {
   it("constructs with code, message, and status", () => {
-    const err = new ProtocolError(ErrorCode.NOT_FOUND, "Item not found");
+    const err = new MymeError(ErrorCode.NOT_FOUND, "Item not found");
     expect(err.code).toBe(ErrorCode.NOT_FOUND);
     expect(err.message).toBe("Item not found");
     expect(err.status).toBe(404);
-    expect(err.name).toBe("ProtocolError");
+    expect(err.name).toBe("MymeError");
     expect(err.details).toBeUndefined();
   });
 
   it("accepts optional details", () => {
-    const err = new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid field", {
+    const err = new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid field", {
       field: "title",
       reason: "required",
     });
@@ -52,13 +52,13 @@ describe("ProtocolError", () => {
   });
 
   it("extends Error", () => {
-    const err = new ProtocolError(ErrorCode.FORBIDDEN, "Access denied");
+    const err = new MymeError(ErrorCode.FORBIDDEN, "Access denied");
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(ProtocolError);
+    expect(err).toBeInstanceOf(MymeError);
   });
 
   it("serializes to error response format", () => {
-    const err = new ProtocolError(ErrorCode.NOT_FOUND, "Item not found");
+    const err = new MymeError(ErrorCode.NOT_FOUND, "Item not found");
     expect(err.toResponse()).toEqual({
       error: {
         code: "not_found",
@@ -68,7 +68,7 @@ describe("ProtocolError", () => {
   });
 
   it("includes details in error response when present", () => {
-    const err = new ProtocolError(
+    const err = new MymeError(
       ErrorCode.VERSION_CONFLICT,
       "Conflict detected",
       { version: 3 },
@@ -83,7 +83,7 @@ describe("ProtocolError", () => {
   });
 
   it("omits details from error response when absent", () => {
-    const err = new ProtocolError(ErrorCode.UNAUTHORIZED, "No API key");
+    const err = new MymeError(ErrorCode.UNAUTHORIZED, "No API key");
     const response = err.toResponse();
     expect(response.error).not.toHaveProperty("details");
   });

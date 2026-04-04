@@ -1,6 +1,6 @@
 import type { ErrorResponse } from "./types.js";
 
-/** All error codes used across the Myme protocol. */
+/** All error codes used across the Myme API. */
 export enum ErrorCode {
   NOT_FOUND = "not_found",
   ITEM_NOT_FOUND = "item_not_found",
@@ -24,6 +24,10 @@ export enum ErrorCode {
   TOKEN_REUSE_DETECTED = "token_reuse_detected",
   RATE_LIMITED = "rate_limited",
   CONFLICT = "conflict",
+  TYPE_ALREADY_EXISTS = "type_already_exists",
+  TYPE_IN_USE = "type_in_use",
+  CORE_TYPE_IMMUTABLE = "core_type_immutable",
+  WEBHOOK_NOT_FOUND = "webhook_not_found",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -50,6 +54,10 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.TOKEN_REUSE_DETECTED]: 400,
   [ErrorCode.RATE_LIMITED]: 429,
   [ErrorCode.CONFLICT]: 409,
+  [ErrorCode.TYPE_ALREADY_EXISTS]: 409,
+  [ErrorCode.TYPE_IN_USE]: 409,
+  [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,
+  [ErrorCode.WEBHOOK_NOT_FOUND]: 404,
 };
 
 /** Returns the HTTP status code for a given error code. */
@@ -58,10 +66,10 @@ export function httpStatus(code: ErrorCode): number {
 }
 
 /**
- * Structured protocol error with code, HTTP status, and optional details.
+ * Structured error with code, HTTP status, and optional details.
  * Used throughout the server and SDK for consistent error handling.
  */
-export class ProtocolError extends Error {
+export class MymeError extends Error {
   readonly code: ErrorCode;
   readonly status: number;
   readonly details?: Record<string, unknown>;
@@ -72,7 +80,7 @@ export class ProtocolError extends Error {
     details?: Record<string, unknown>,
   ) {
     super(message);
-    this.name = "ProtocolError";
+    this.name = "MymeError";
     this.code = code;
     this.status = STATUS_MAP[code];
     this.details = details;
@@ -92,3 +100,8 @@ export class ProtocolError extends Error {
     return response;
   }
 }
+
+/** @deprecated Use MymeError instead. */
+export const ProtocolError = MymeError;
+/** @deprecated Use MymeError instead. */
+export type ProtocolError = MymeError;

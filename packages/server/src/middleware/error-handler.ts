@@ -8,7 +8,7 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
-function isProtocolError(err: unknown): err is {
+function isMymeError(err: unknown): err is {
   code: string;
   status: number;
   message: string;
@@ -25,7 +25,7 @@ function isProtocolError(err: unknown): err is {
 }
 
 export const errorHandler: ErrorHandler<AppEnv> = (err) => {
-  if (isProtocolError(err)) {
+  if (isMymeError(err)) {
     const error: Record<string, unknown> = {
       code: err.code,
       message: err.message,

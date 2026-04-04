@@ -9,7 +9,7 @@ import {
   validateProperties,
   validateTransition,
   parseFilter,
-  ProtocolError,
+  MymeError,
   ErrorCode,
 } from "@mymehq/shared";
 import { filterToSqlConditions } from "../filter-sql.js";
@@ -48,7 +48,7 @@ export class SqliteItemStore implements ItemStore {
   async create(input: CreateItemInput, tenantId?: string): Promise<Item> {
     const id = input.id ?? generateId();
     if (input.id && !isValidId(input.id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
     }
 
     // Validate properties against type schema if registered; accept unknown types
@@ -57,7 +57,7 @@ export class SqliteItemStore implements ItemStore {
     if (typeSchema && Object.keys(input.properties).length > 0) {
       const validation = validateProperties(input.type, input.properties);
       if (!validation.success) {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           "Invalid properties",
           {
@@ -83,7 +83,7 @@ export class SqliteItemStore implements ItemStore {
           .where(and(...dedupConditions))
           .get();
         if (existing) {
-          throw new ProtocolError(
+          throw new MymeError(
             ErrorCode.DUPLICATE_SOURCE,
             `Item with source=${input.source} source_id=${input.source_id} already exists`,
             { existing_id: existing.id },
@@ -105,7 +105,7 @@ export class SqliteItemStore implements ItemStore {
           )
           .get();
         if (!parent) {
-          throw new ProtocolError(
+          throw new MymeError(
             ErrorCode.ITEM_NOT_FOUND,
             "Parent item not found",
           );
@@ -126,7 +126,7 @@ export class SqliteItemStore implements ItemStore {
           )
           .get();
         if (!thread) {
-          throw new ProtocolError(
+          throw new MymeError(
             ErrorCode.THREAD_NOT_FOUND,
             "Thread not found",
           );
@@ -393,10 +393,10 @@ export class SqliteItemStore implements ItemStore {
     const updateFn = this.raw.transaction(() => {
       const row = this.db.select().from(items).where(whereClause).get();
       if (!row) {
-        throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+        throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
       if (row.state === "trashed") {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.INVALID_TRANSITION,
           "Cannot update trashed item",
         );
@@ -554,7 +554,7 @@ export class SqliteItemStore implements ItemStore {
   async delete(id: string, tenantId?: string): Promise<void> {
     const row = this.getRaw(id, tenantId);
     if (!row) {
-      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     this.db
@@ -571,10 +571,10 @@ export class SqliteItemStore implements ItemStore {
   async restore(id: string, tenantId?: string): Promise<Item> {
     const row = this.getRaw(id, tenantId);
     if (!row) {
-      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     if (row.state !== "trashed") {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.INVALID_TRANSITION,
         "Item is not trashed",
       );
@@ -601,12 +601,12 @@ export class SqliteItemStore implements ItemStore {
   ): Promise<Item> {
     const row = this.getRaw(id, tenantId);
     if (!row) {
-      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     const error = validateTransition(row.type, row.state, state);
     if (error) {
-      throw new ProtocolError(ErrorCode.INVALID_TRANSITION, error);
+      throw new MymeError(ErrorCode.INVALID_TRANSITION, error);
     }
 
     // State transitions always create a version snapshot

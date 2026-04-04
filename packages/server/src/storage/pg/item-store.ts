@@ -8,7 +8,7 @@ import {
   validateProperties,
   validateTransition,
   parseFilter,
-  ProtocolError,
+  MymeError,
   ErrorCode,
 } from "@mymehq/shared";
 import { filterToSqlConditions } from "../filter-sql.js";
@@ -46,7 +46,7 @@ export class PgItemStore implements ItemStore {
   async create(input: CreateItemInput, tenantId?: string): Promise<Item> {
     const id = input.id ?? generateId();
     if (input.id && !isValidId(input.id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
     }
 
     // Validate properties against type schema if registered; accept unknown types
@@ -55,7 +55,7 @@ export class PgItemStore implements ItemStore {
     if (typeSchema && Object.keys(input.properties).length > 0) {
       const validation = validateProperties(input.type, input.properties);
       if (!validation.success) {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           "Invalid properties",
           {
@@ -80,7 +80,7 @@ export class PgItemStore implements ItemStore {
           .from(items)
           .where(and(...dedupConditions));
         if (existing) {
-          throw new ProtocolError(
+          throw new MymeError(
             ErrorCode.DUPLICATE_SOURCE,
             `Item with source=${input.source} source_id=${input.source_id} already exists`,
             { existing_id: existing.id },
@@ -94,7 +94,7 @@ export class PgItemStore implements ItemStore {
           .from(items)
           .where(eq(items.id, input.parent_id));
         if (!parent) {
-          throw new ProtocolError(
+          throw new MymeError(
             ErrorCode.ITEM_NOT_FOUND,
             "Parent item not found",
           );
@@ -107,7 +107,7 @@ export class PgItemStore implements ItemStore {
           .from(threads)
           .where(eq(threads.id, input.thread_id));
         if (!thread) {
-          throw new ProtocolError(
+          throw new MymeError(
             ErrorCode.THREAD_NOT_FOUND,
             "Thread not found",
           );
@@ -354,10 +354,10 @@ export class PgItemStore implements ItemStore {
         .from(items)
         .where(this.tenantWhere(id, tenantId));
       if (!row) {
-        throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+        throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
       if (row.state === "trashed") {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.INVALID_TRANSITION,
           "Cannot update trashed item",
         );
@@ -522,7 +522,7 @@ export class PgItemStore implements ItemStore {
   async delete(id: string, tenantId?: string): Promise<void> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {
-      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     await this.db
@@ -536,10 +536,10 @@ export class PgItemStore implements ItemStore {
   async restore(id: string, tenantId?: string): Promise<Item> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {
-      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     if (row.state !== "trashed") {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.INVALID_TRANSITION,
         "Item is not trashed",
       );
@@ -563,12 +563,12 @@ export class PgItemStore implements ItemStore {
   ): Promise<Item> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {
-      throw new ProtocolError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     const error = validateTransition(row.type, row.state, state);
     if (error) {
-      throw new ProtocolError(ErrorCode.INVALID_TRANSITION, error);
+      throw new MymeError(ErrorCode.INVALID_TRANSITION, error);
     }
 
     // State transitions always create a version snapshot

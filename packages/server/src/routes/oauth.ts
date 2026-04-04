@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import {
-  ProtocolError,
+  MymeError,
   ErrorCode,
   parseScope,
   expandWildcardScopes,
@@ -37,7 +37,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     requireAdmin(c);
     const body = await c.req.json();
     if (!body.name || !body.redirect_uris?.length) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "name and redirect_uris are required",
       );
@@ -77,13 +77,13 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       !redirectUri ||
       !codeChallenge
     ) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Missing required parameters: client_id, response_type=code, scope, redirect_uri, code_challenge",
       );
     }
     if (codeChallengeMethod && codeChallengeMethod !== "S256") {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Only S256 code_challenge_method is supported",
       );
@@ -91,10 +91,10 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
 
     const client = await storage.oauth.getClient(clientId);
     if (!client) {
-      throw new ProtocolError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
+      throw new MymeError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
     }
     if (!client.redirect_uris.includes(redirectUri)) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "redirect_uri not registered for this client",
       );
@@ -106,7 +106,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     const parsed = expanded.map(parseScope).filter((s) => s !== null);
 
     if (parsed.length === 0) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.INVALID_SCOPE,
         "No valid scopes in request",
       );
@@ -140,7 +140,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     const state = (formData.state as string) || "";
 
     if (!clientId || !redirectUri || !codeChallenge) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Missing form parameters",
       );
@@ -163,7 +163,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
         : [];
 
     if (grantedScopes.length === 0) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.INVALID_SCOPE,
         "At least one scope must be granted",
       );
@@ -205,7 +205,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       return handleRefresh(c, body, storage, salt);
     }
 
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       "Unsupported grant_type",
     );
@@ -231,7 +231,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     requireAuth(c);
     const body = await c.req.json();
     if (!body.scopes) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "scopes is required");
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "scopes is required");
     }
     await storage.oauth.reduceTokenScope(c.req.param("id"), body.scopes);
     return c.json({ status: "ok" });
@@ -253,7 +253,7 @@ async function handleCodeExchange(
   const { code, code_verifier, redirect_uri } = body;
 
   if (!code || !code_verifier || !redirect_uri) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       "code, code_verifier, and redirect_uri are required",
     );
@@ -263,7 +263,7 @@ async function handleCodeExchange(
   const codeRecord = await storage.oauth.consumeCode(codeHash);
 
   if (!codeRecord) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.INVALID_GRANT,
       "Invalid, expired, or already-used authorization code",
     );
@@ -271,7 +271,7 @@ async function handleCodeExchange(
 
   // Verify redirect_uri matches
   if (codeRecord.redirect_uri !== redirect_uri) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       "redirect_uri does not match",
     );
@@ -280,7 +280,7 @@ async function handleCodeExchange(
   // PKCE verification: SHA256(code_verifier) must equal code_challenge
   const computedChallenge = sha256(code_verifier);
   if (computedChallenge !== codeRecord.code_challenge) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.INVALID_GRANT,
       "PKCE verification failed",
     );
@@ -329,7 +329,7 @@ async function handleRefresh(
   const { refresh_token } = body;
 
   if (!refresh_token) {
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.VALIDATION_ERROR,
       "refresh_token is required",
     );
@@ -339,7 +339,7 @@ async function handleRefresh(
   const refreshRecord = await storage.oauth.validateToken(refreshHash);
 
   if (refreshRecord?.token_type !== "refresh") {
-    throw new ProtocolError(ErrorCode.INVALID_GRANT, "Invalid refresh token");
+    throw new MymeError(ErrorCode.INVALID_GRANT, "Invalid refresh token");
   }
 
   // Mark refresh token as used (single-use rotation)
@@ -347,7 +347,7 @@ async function handleRefresh(
   if (!wasUnused) {
     // Replay detected — revoke all tokens for this grant
     await storage.oauth.revokeGrantTokens(refreshRecord.grant_id);
-    throw new ProtocolError(
+    throw new MymeError(
       ErrorCode.TOKEN_REUSE_DETECTED,
       "Refresh token reuse detected, all tokens revoked",
     );

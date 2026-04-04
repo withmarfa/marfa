@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { ProtocolError, ErrorCode, isValidId } from "@mymehq/shared";
+import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -27,12 +27,12 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
     requireAuth(c);
     const id = c.req.param("id");
     if (!isValidId(id)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid thread ID");
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid thread ID");
     }
     const tid = c.get("apiKey")?.tenant_id;
     const thread = await storage.threads.get(id, tid);
     if (!thread) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.THREAD_NOT_FOUND,
         `Thread ${id} not found`,
       );

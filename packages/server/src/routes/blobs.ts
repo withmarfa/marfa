@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { ProtocolError, ErrorCode, isValidBlobHash } from "@mymehq/shared";
+import { MymeError, ErrorCode, isValidBlobHash } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -26,7 +26,7 @@ export function blobRoutes(
       const formData = await c.req.formData();
       const file = formData.get("file");
       if (!(file instanceof File)) {
-        throw new ProtocolError(
+        throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           "Missing 'file' in multipart upload",
         );
@@ -39,11 +39,11 @@ export function blobRoutes(
     }
 
     if (data.length === 0) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Empty blob");
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Empty blob");
     }
 
     if (data.length > MAX_BLOB_SIZE) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Blob exceeds maximum size of ${String(MAX_BLOB_SIZE)} bytes`,
       );
@@ -72,17 +72,17 @@ export function blobRoutes(
       hash = `sha256:${hash}`;
     }
     if (!isValidBlobHash(hash)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
     const record = await storage.blobs.get(hash);
     if (!record) {
-      throw new ProtocolError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
+      throw new MymeError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
 
     const data = await blobBackend.get(hash);
     if (!data) {
-      throw new ProtocolError(ErrorCode.BLOB_NOT_FOUND, "Blob data not found");
+      throw new MymeError(ErrorCode.BLOB_NOT_FOUND, "Blob data not found");
     }
 
     return new Response(new Uint8Array(data), {
@@ -99,7 +99,7 @@ export function blobRoutes(
     requireAuth(c);
 
     if (!blobBackend.getPresignedUrl) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Presigned URLs are not available with the current blob backend",
       );
@@ -110,12 +110,12 @@ export function blobRoutes(
       hash = `sha256:${hash}`;
     }
     if (!isValidBlobHash(hash)) {
-      throw new ProtocolError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
     const record = await storage.blobs.get(hash);
     if (!record) {
-      throw new ProtocolError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
+      throw new MymeError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
 
     const ttl = Number(c.req.query("ttl")) || 3600;

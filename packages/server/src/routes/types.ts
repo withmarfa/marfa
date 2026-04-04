@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import {
-  ProtocolError,
+  MymeError,
   ErrorCode,
   getTypeSchema,
   TYPE_REGISTRY,
@@ -21,7 +21,7 @@ export function typeRoutes(): Hono<AppEnv> {
     const id = c.req.param("id");
     const schema = getTypeSchema(id);
     if (!schema) {
-      throw new ProtocolError(
+      throw new MymeError(
         ErrorCode.TYPE_NOT_FOUND,
         `Type "${id}" not found`,
       );

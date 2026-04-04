@@ -56,6 +56,8 @@ beforeAll(async () => {
     apiKeySalt: "test-salt",
     corsOrigins: [],
     cdnBaseUrl: "",
+    authMode: "keys",
+    versionSnapshotIntervalMs: 600_000,
   });
 
   testFetchFn = createTestFetch(app);
