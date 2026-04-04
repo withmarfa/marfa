@@ -105,6 +105,17 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const schema = result.data;
+
+    // Reject field removal — updates must be backward-compatible
+    for (const fieldName of Object.keys(existing.fields)) {
+      if (!(fieldName in schema.fields)) {
+        throw new MymeError(
+          ErrorCode.VALIDATION_ERROR,
+          `Cannot remove field "${fieldName}". Type updates must be backward-compatible.`,
+        );
+      }
+    }
+
     // Auto-increment version if not explicitly bumped
     if (schema.version <= existing.version) {
       schema.version = existing.version + 1;
