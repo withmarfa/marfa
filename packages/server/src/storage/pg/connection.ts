@@ -181,6 +181,7 @@ export async function createConnection(connectionString: string): Promise<{
       ALTER TABLE items ADD COLUMN IF NOT EXISTS tenant_id TEXT;
       ALTER TABLE threads ADD COLUMN IF NOT EXISTS tenant_id TEXT;
       ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+      ALTER TABLE custom_types ADD COLUMN IF NOT EXISTS tenant_id TEXT;
     `);
 
     // Row Level Security — defense-in-depth for multi-tenant isolation.

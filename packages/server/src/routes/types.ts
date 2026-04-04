@@ -37,6 +37,17 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     requireAdmin(c);
     const body = await c.req.json();
 
+    // Pre-validation for specific error codes
+    if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
+      throw new MymeError(ErrorCode.INVALID_TYPE, "Invalid type identifier");
+    }
+    if (body.fields === undefined || body.fields === null) {
+      throw new MymeError(
+        ErrorCode.MISSING_REQUIRED_FIELD,
+        "fields is required",
+      );
+    }
+
     const result = validateTypeSchema(body);
     if (!result.success) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid type schema", {
@@ -62,7 +73,7 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
 
     const tenantId = c.get("apiKey")?.tenant_id;
     const created = await storage.types.create(schema, tenantId);
-    return c.json(created, 201);
+    return c.json({ type: created }, 201);
   });
 
   // PUT /types/:id — update a custom type (admin only)
@@ -106,7 +117,7 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const updated = await storage.types.update(id, schema);
-    return c.json(updated);
+    return c.json({ type: updated });
   });
 
   // DELETE /types/:id — delete a custom type (admin only)

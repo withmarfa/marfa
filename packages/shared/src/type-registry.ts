@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { ItemState } from "./types.js";
-import { ITEM_STATES } from "./types.js";
 import { isValidTypeIdentifier } from "./validation.js";
 
 // ---------------------------------------------------------------------------
@@ -34,7 +33,7 @@ export interface FieldDefinition {
 export interface TypeSchema {
   id: string;
   parent?: string;
-  label: string;
+  label?: string;
   description?: string;
   version: number;
   fields: Record<string, FieldDefinition>;
@@ -1135,20 +1134,6 @@ export function validateTransition(
 // Type schema validation — validates the shape of a TypeSchema object
 // ---------------------------------------------------------------------------
 
-const VALID_FIELD_TYPES: readonly FieldType[] = [
-  "string",
-  "number",
-  "integer",
-  "boolean",
-  "url",
-  "email",
-  "datetime",
-  "date",
-  "enum",
-  "array",
-  "object",
-];
-
 /**
  * Validates whether an input object is a valid TypeSchema.
  * Returns a ValidationResult with either the parsed schema or field errors.
@@ -1177,18 +1162,20 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     });
   }
 
-  // label
-  if (typeof obj.label !== "string" || obj.label.length === 0) {
-    errors.push({ field: "label", message: "Required non-empty string" });
+  // label (optional — defaults to type id)
+  if (obj.label !== undefined && typeof obj.label !== "string") {
+    errors.push({ field: "label", message: "Must be a string" });
   }
 
-  // version
-  if (
-    typeof obj.version !== "number" ||
-    !Number.isInteger(obj.version) ||
-    obj.version < 1
-  ) {
-    errors.push({ field: "version", message: "Required positive integer" });
+  // version (optional — defaults to 1)
+  if (obj.version !== undefined) {
+    if (
+      typeof obj.version !== "number" ||
+      !Number.isInteger(obj.version) ||
+      obj.version < 1
+    ) {
+      errors.push({ field: "version", message: "Must be a positive integer" });
+    }
   }
 
   // fields
@@ -1205,10 +1192,10 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
         continue;
       }
       const fd = def as Record<string, unknown>;
-      if (!VALID_FIELD_TYPES.includes(fd.type as FieldType)) {
+      if (typeof fd.type !== "string" || fd.type.length === 0) {
         errors.push({
           field: `fields.${name}.type`,
-          message: `Invalid field type. Must be one of: ${VALID_FIELD_TYPES.join(", ")}`,
+          message: "Field type is required and must be a non-empty string",
         });
       }
       if (fd.type === "enum") {
@@ -1229,15 +1216,15 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     }
   }
 
-  // states
+  // states (custom types can define their own states)
   if (!Array.isArray(obj.states) || obj.states.length === 0) {
     errors.push({ field: "states", message: "Required non-empty array" });
   } else {
     for (const s of obj.states) {
-      if (!(ITEM_STATES as readonly string[]).includes(s as string)) {
+      if (typeof s !== "string" || s.length === 0) {
         errors.push({
           field: "states",
-          message: `Invalid state "${String(s)}". Must be one of: ${ITEM_STATES.join(", ")}`,
+          message: `Invalid state "${String(s)}". Must be a non-empty string`,
         });
       }
     }
@@ -1292,8 +1279,8 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
 
   const schema: TypeSchema = {
     id: obj.id as string,
-    label: obj.label as string,
-    version: obj.version as number,
+    label: typeof obj.label === "string" ? obj.label : undefined,
+    version: typeof obj.version === "number" ? obj.version : 1,
     fields: obj.fields as Record<string, FieldDefinition>,
     states: obj.states as ItemState[],
     default_state: obj.default_state as ItemState,
