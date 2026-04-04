@@ -466,9 +466,7 @@ export class MymeClient {
   // ---- Webhooks ----
 
   readonly webhooks = {
-    create: async (
-      input: CreateWebhookInput,
-    ): Promise<Webhook> => {
+    create: async (input: CreateWebhookInput): Promise<Webhook> => {
       return this.transport.request<Webhook>("POST", "/webhooks", {
         body: input,
       });
@@ -486,10 +484,7 @@ export class MymeClient {
       return this.transport.request<Webhook>("GET", `/webhooks/${id}`);
     },
 
-    update: async (
-      id: string,
-      input: UpdateWebhookInput,
-    ): Promise<Webhook> => {
+    update: async (id: string, input: UpdateWebhookInput): Promise<Webhook> => {
       return this.transport.request<Webhook>("PATCH", `/webhooks/${id}`, {
         body: input,
       });

@@ -85,10 +85,10 @@ export class SqliteTypeStore implements TypeStore {
   }
 
   loadCustomTypes(): Promise<TypeSchema[]> {
-    const rows = this.db
-      .select()
-      .from(customTypes)
-      .all() as { id: string; schema: string }[];
+    const rows = this.db.select().from(customTypes).all() as {
+      id: string;
+      schema: string;
+    }[];
     const results: TypeSchema[] = [];
     for (const row of rows) {
       const parsed = safeJsonParse<TypeSchema | null>(

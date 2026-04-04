@@ -25,10 +25,7 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
     const body = await c.req.json();
     const items = body.items as unknown[] | undefined;
     if (!Array.isArray(items)) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "items must be an array",
-      );
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "items must be an array");
     }
     if (items.length > MAX_IMPORT_ITEMS) {
       throw new MymeError(

@@ -205,10 +205,7 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       return handleRefresh(c, body, storage, salt);
     }
 
-    throw new MymeError(
-      ErrorCode.VALIDATION_ERROR,
-      "Unsupported grant_type",
-    );
+    throw new MymeError(ErrorCode.VALIDATION_ERROR, "Unsupported grant_type");
   });
 
   // -----------------------------------------------------------------------
@@ -280,10 +277,7 @@ async function handleCodeExchange(
   // PKCE verification: SHA256(code_verifier) must equal code_challenge
   const computedChallenge = sha256(code_verifier);
   if (computedChallenge !== codeRecord.code_challenge) {
-    throw new MymeError(
-      ErrorCode.INVALID_GRANT,
-      "PKCE verification failed",
-    );
+    throw new MymeError(ErrorCode.INVALID_GRANT, "PKCE verification failed");
   }
 
   // Issue tokens

@@ -6,9 +6,7 @@ import { subscribe } from "../graphql/pubsub.js";
 import type { ItemEvent } from "../graphql/pubsub.js";
 
 /** Maps pubsub event types to webhook event names. */
-function toWebhookEvent(
-  type: ItemEvent["type"],
-): string {
+function toWebhookEvent(type: ItemEvent["type"]): string {
   return `item.${type}`;
 }
 
@@ -72,7 +70,10 @@ export class WebhookConsumer {
       if (w.tenant_id && event.tenantId && w.tenant_id !== event.tenantId)
         return false;
       // Type filter — if the webhook has a type_filter, the item type must match
-      if (w.type_filter && !matchesTypePattern(event.item.type, [w.type_filter]))
+      if (
+        w.type_filter &&
+        !matchesTypePattern(event.item.type, [w.type_filter])
+      )
         return false;
       return true;
     });
@@ -101,7 +102,9 @@ export class WebhookConsumer {
     for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10_000);
+        const timeout = setTimeout(() => {
+          controller.abort();
+        }, 10_000);
 
         const response = await fetch(webhook.url, {
           method: "POST",
@@ -128,12 +131,12 @@ export class WebhookConsumer {
 
         // Server error — fall through to retry
         if (attempt < RETRY_DELAYS.length) {
-          await this.delay(RETRY_DELAYS[attempt]!);
+          await this.delay(RETRY_DELAYS[attempt] ?? 1000);
         }
       } catch (err) {
         // Network error or timeout — retry if attempts remain
         if (attempt < RETRY_DELAYS.length) {
-          await this.delay(RETRY_DELAYS[attempt]!);
+          await this.delay(RETRY_DELAYS[attempt] ?? 1000);
         } else {
           console.error(
             `Webhook ${webhook.id} delivery failed after ${String(RETRY_DELAYS.length + 1)} attempts: ${webhook.url}`,

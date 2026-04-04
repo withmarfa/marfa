@@ -91,7 +91,7 @@ export function eventRoutes(): Hono<AppEnv> {
         c.req.raw.signal.addEventListener("abort", () => {
           closed = true;
           clearInterval(keepAlive);
-          reader.return?.(undefined);
+          void reader.return(undefined);
         });
       },
     });

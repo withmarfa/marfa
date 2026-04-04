@@ -32,10 +32,7 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
     const tid = c.get("apiKey")?.tenant_id;
     const thread = await storage.threads.get(id, tid);
     if (!thread) {
-      throw new MymeError(
-        ErrorCode.THREAD_NOT_FOUND,
-        `Thread ${id} not found`,
-      );
+      throw new MymeError(ErrorCode.THREAD_NOT_FOUND, `Thread ${id} not found`);
     }
     const items = await storage.threads.getItems(id, tid);
     return c.json({ thread, items });

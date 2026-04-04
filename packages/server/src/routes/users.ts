@@ -18,10 +18,7 @@ function generateRawKey(): string {
  * POST /auth/session — exchange provider identity for an existing API key
  * GET  /auth/me      — return current user profile + tenant info
  */
-export function userAuthRoutes(
-  storage: Storage,
-  salt: string,
-): Hono<AppEnv> {
+export function userAuthRoutes(storage: Storage, salt: string): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
   if (!storage.users || !storage.tenants) {
@@ -33,7 +30,7 @@ export function userAuthRoutes(
 
   // POST /auth/signup — create user + tenant + admin API key
   router.post("/signup", async (c) => {
-    const body = (await c.req.json()) as Record<string, unknown>;
+    const body = await c.req.json();
 
     const email = body.email as string | undefined;
     const name = body.name as string | undefined;
@@ -88,7 +85,7 @@ export function userAuthRoutes(
 
   // POST /auth/session — exchange provider identity for an existing API key
   router.post("/session", async (c) => {
-    const body = (await c.req.json()) as Record<string, unknown>;
+    const body = await c.req.json();
 
     const provider = body.provider as string | undefined;
     const providerId = body.provider_account_id as string | undefined;

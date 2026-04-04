@@ -25,7 +25,10 @@ export function webhookRoutes(storage: Storage): Hono<AppEnv> {
     try {
       new URL(body.url);
     } catch {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "url must be a valid URL");
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "url must be a valid URL",
+      );
     }
 
     if (!Array.isArray(body.events) || body.events.length === 0) {

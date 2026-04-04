@@ -167,7 +167,11 @@ export interface SearchStore {
 }
 
 export interface KeyStore {
-  create(input: CreateKeyInput, keyHash: string, tenantId?: string): Promise<ApiKey>;
+  create(
+    input: CreateKeyInput,
+    keyHash: string,
+    tenantId?: string,
+  ): Promise<ApiKey>;
   list(): Promise<ApiKey[]>;
   validate(
     keyHash: string,

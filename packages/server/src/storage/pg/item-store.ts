@@ -34,7 +34,7 @@ export class PgItemStore implements ItemStore {
     private db: PgDb,
     private versionStore: PgVersionStore,
     private searchStore: PgSearchStore,
-    private versionSnapshotIntervalMs: number = 600_000,
+    private versionSnapshotIntervalMs = 600_000,
   ) {}
 
   private tenantWhere(id: string, tenantId?: string) {
@@ -55,13 +55,9 @@ export class PgItemStore implements ItemStore {
     if (typeSchema && Object.keys(input.properties).length > 0) {
       const validation = validateProperties(input.type, input.properties);
       if (!validation.success) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          "Invalid properties",
-          {
-            errors: validation.errors,
-          },
-        );
+        throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
+          errors: validation.errors,
+        });
       }
     }
 
@@ -107,10 +103,7 @@ export class PgItemStore implements ItemStore {
           .from(threads)
           .where(eq(threads.id, input.thread_id));
         if (!thread) {
-          throw new MymeError(
-            ErrorCode.THREAD_NOT_FOUND,
-            "Thread not found",
-          );
+          throw new MymeError(ErrorCode.THREAD_NOT_FOUND, "Thread not found");
         }
       }
 
@@ -539,10 +532,7 @@ export class PgItemStore implements ItemStore {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     if (row.state !== "trashed") {
-      throw new MymeError(
-        ErrorCode.INVALID_TRANSITION,
-        "Item is not trashed",
-      );
+      throw new MymeError(ErrorCode.INVALID_TRANSITION, "Item is not trashed");
     }
 
     const now = new Date().toISOString();

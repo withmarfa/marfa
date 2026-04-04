@@ -36,7 +36,7 @@ export class SqliteItemStore implements ItemStore {
     private raw: RawDb,
     private versionStore: SqliteVersionStore,
     private searchStore: SqliteSearchStore,
-    private versionSnapshotIntervalMs: number = 600_000,
+    private versionSnapshotIntervalMs = 600_000,
   ) {}
 
   private tenantWhere(id: string, tenantId?: string) {
@@ -57,13 +57,9 @@ export class SqliteItemStore implements ItemStore {
     if (typeSchema && Object.keys(input.properties).length > 0) {
       const validation = validateProperties(input.type, input.properties);
       if (!validation.success) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          "Invalid properties",
-          {
-            errors: validation.errors,
-          },
-        );
+        throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
+          errors: validation.errors,
+        });
       }
     }
 
@@ -126,10 +122,7 @@ export class SqliteItemStore implements ItemStore {
           )
           .get();
         if (!thread) {
-          throw new MymeError(
-            ErrorCode.THREAD_NOT_FOUND,
-            "Thread not found",
-          );
+          throw new MymeError(ErrorCode.THREAD_NOT_FOUND, "Thread not found");
         }
       }
 
@@ -574,10 +567,7 @@ export class SqliteItemStore implements ItemStore {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     if (row.state !== "trashed") {
-      throw new MymeError(
-        ErrorCode.INVALID_TRANSITION,
-        "Item is not trashed",
-      );
+      throw new MymeError(ErrorCode.INVALID_TRANSITION, "Item is not trashed");
     }
 
     const now = new Date().toISOString();

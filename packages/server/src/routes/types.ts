@@ -27,10 +27,7 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     const id = c.req.param("id");
     const schema = getTypeSchema(id);
     if (!schema) {
-      throw new MymeError(
-        ErrorCode.TYPE_NOT_FOUND,
-        `Type "${id}" not found`,
-      );
+      throw new MymeError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
     return c.json(schema);
   });
@@ -74,7 +71,10 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     const id = c.req.param("id");
 
     if (!isValidTypeIdentifier(id)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid type identifier",
+      );
     }
 
     if (isCoreType(id)) {

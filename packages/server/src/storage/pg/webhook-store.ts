@@ -1,7 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { eq, and } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { Webhook, CreateWebhookInput, UpdateWebhookInput } from "@mymehq/shared";
+import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
+import type {
+  Webhook,
+  CreateWebhookInput,
+  UpdateWebhookInput,
+} from "@mymehq/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type { WebhookStore } from "../interface.js";
 import { webhooks } from "./schema.js";
@@ -68,21 +72,22 @@ export class PgWebhookStore implements WebhookStore {
     const now = new Date().toISOString();
     const updates: Record<string, unknown> = { updated_at: now };
     if (input.url !== undefined) updates.url = input.url;
-    if (input.events !== undefined) updates.events = JSON.stringify(input.events);
+    if (input.events !== undefined)
+      updates.events = JSON.stringify(input.events);
     if (input.type_filter !== undefined)
       updates.type_filter = input.type_filter ?? null;
     if (input.active !== undefined) updates.active = input.active ? 1 : 0;
 
-    await this.db
-      .update(webhooks)
-      .set(updates)
-      .where(eq(webhooks.id, id));
+    await this.db.update(webhooks).set(updates).where(eq(webhooks.id, id));
 
     const [row] = await this.db
       .select()
       .from(webhooks)
       .where(eq(webhooks.id, id));
-    return rowToWebhook(row!);
+    if (!row) {
+      throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
+    }
+    return rowToWebhook(row);
   }
 
   async delete(id: string): Promise<void> {

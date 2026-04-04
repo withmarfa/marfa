@@ -63,11 +63,11 @@ export async function createPgStorage(
       tenants: new PgTenantStore(db),
     }),
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
-      let result: T;
+      let result: T | undefined;
       await client.begin(async () => {
         result = await fn();
       });
-      return result!;
+      return result as T;
     },
     close,
     /** Truncate all tables — used by tests for isolation. */

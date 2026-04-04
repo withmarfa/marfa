@@ -1158,9 +1158,7 @@ export type TypeSchemaValidationResult =
   | { success: true; data: TypeSchema }
   | { success: false; errors: { field: string; message: string }[] };
 
-export function validateTypeSchema(
-  input: unknown,
-): TypeSchemaValidationResult {
+export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return {
       success: false,
@@ -1175,8 +1173,7 @@ export function validateTypeSchema(
   if (typeof obj.id !== "string" || !isValidTypeIdentifier(obj.id)) {
     errors.push({
       field: "id",
-      message:
-        "Required valid type identifier (dot-notation, e.g. acme.deal)",
+      message: "Required valid type identifier (dot-notation, e.g. acme.deal)",
     });
   }
 

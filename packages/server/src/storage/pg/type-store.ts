@@ -66,10 +66,7 @@ export class PgTypeStore implements TypeStore {
   }
 
   async delete(id: string): Promise<void> {
-    await this.db
-      .delete(customTypes)
-      .where(eq(customTypes.id, id))
-      .execute();
+    await this.db.delete(customTypes).where(eq(customTypes.id, id)).execute();
     unregisterTypeSchema(id);
   }
 

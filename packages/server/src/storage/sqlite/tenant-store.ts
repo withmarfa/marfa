@@ -21,11 +21,7 @@ export class SqliteTenantStore implements TenantStore {
   }
 
   async get(id: string): Promise<Tenant | null> {
-    const row = this.db
-      .select()
-      .from(tenants)
-      .where(eq(tenants.id, id))
-      .get();
+    const row = this.db.select().from(tenants).where(eq(tenants.id, id)).get();
     return row ?? null;
   }
 }
