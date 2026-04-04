@@ -238,6 +238,39 @@ export interface OAuthCode {
 }
 
 // ---------------------------------------------------------------------------
+// Webhook types
+// ---------------------------------------------------------------------------
+
+/** A registered outbound webhook. */
+export interface Webhook {
+  id: string;
+  tenant_id?: string;
+  url: string;
+  secret: string;
+  events: string[];
+  type_filter?: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Input for registering a webhook. */
+export interface CreateWebhookInput {
+  url: string;
+  events: string[];
+  type_filter?: string;
+  secret?: string;
+}
+
+/** Input for updating a webhook. */
+export interface UpdateWebhookInput {
+  url?: string;
+  events?: string[];
+  type_filter?: string | null;
+  active?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // User model (hosted mode only)
 // ---------------------------------------------------------------------------
 

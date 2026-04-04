@@ -6,6 +6,7 @@ import { createPgStorage } from "./storage/pg/index.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
+import { WebhookConsumer } from "./webhooks/delivery.js";
 
 async function main() {
   const config = loadConfig();
@@ -39,6 +40,9 @@ async function main() {
   } else {
     blobBackend = new FilesystemBlobBackend(config.blobPath);
   }
+  const webhookConsumer = new WebhookConsumer(storage.webhooks);
+  webhookConsumer.start();
+
   const app = createApp(storage, blobBackend, config);
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
@@ -48,6 +52,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = () => {
     console.log("Shutting down...");
+    webhookConsumer.stop();
     server.close(() => {
       storage
         .close()

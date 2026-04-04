@@ -11,7 +11,13 @@ import type {
   SearchResult,
   ItemState,
 } from "@mymehq/shared";
-import type { TypeSchema, ErrorResponse } from "@mymehq/shared";
+import type {
+  TypeSchema,
+  ErrorResponse,
+  Webhook,
+  CreateWebhookInput,
+  UpdateWebhookInput,
+} from "@mymehq/shared";
 import { HttpTransport } from "./transport.js";
 import {
   MymeError,
@@ -454,6 +460,46 @@ export class MymeClient {
 
     revoke: async (id: string): Promise<void> => {
       await this.transport.request<undefined>("DELETE", `/keys/${id}`);
+    },
+  };
+
+  // ---- Webhooks ----
+
+  readonly webhooks = {
+    create: async (
+      input: CreateWebhookInput,
+    ): Promise<Webhook> => {
+      return this.transport.request<Webhook>("POST", "/webhooks", {
+        body: input,
+      });
+    },
+
+    list: async (): Promise<Webhook[]> => {
+      const res = await this.transport.request<{ webhooks: Webhook[] }>(
+        "GET",
+        "/webhooks",
+      );
+      return res.webhooks;
+    },
+
+    get: async (id: string): Promise<Webhook> => {
+      return this.transport.request<Webhook>("GET", `/webhooks/${id}`);
+    },
+
+    update: async (
+      id: string,
+      input: UpdateWebhookInput,
+    ): Promise<Webhook> => {
+      return this.transport.request<Webhook>("PATCH", `/webhooks/${id}`, {
+        body: input,
+      });
+    },
+
+    delete: async (id: string): Promise<void> => {
+      await this.transport.request<{ ok: boolean }>(
+        "DELETE",
+        `/webhooks/${id}`,
+      );
     },
   };
 

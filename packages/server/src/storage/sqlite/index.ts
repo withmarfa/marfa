@@ -9,6 +9,7 @@ import { SqliteSearchStore } from "./search-store.js";
 import { SqliteKeyStore } from "./key-store.js";
 import { SqliteBlobStore } from "./blob-store.js";
 import { SqliteOAuthStore } from "./oauth-store.js";
+import { SqliteWebhookStore } from "./webhook-store.js";
 import { SqliteUserStore } from "./user-store.js";
 import { SqliteTenantStore } from "./tenant-store.js";
 
@@ -36,6 +37,7 @@ export function createSqliteStorage(
   const keyStore = new SqliteKeyStore(db);
   const blobStore = new SqliteBlobStore(db);
   const oauthStore = new SqliteOAuthStore(db);
+  const webhookStore = new SqliteWebhookStore(db);
 
   return {
     items: itemStore,
@@ -47,6 +49,7 @@ export function createSqliteStorage(
     keys: keyStore,
     blobs: blobStore,
     oauth: oauthStore,
+    webhooks: webhookStore,
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),
       tenants: new SqliteTenantStore(db),

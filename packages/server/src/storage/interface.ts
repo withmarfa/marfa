@@ -7,6 +7,9 @@ import type {
   Thread,
   ApiKey,
   CreateKeyInput,
+  Webhook,
+  CreateWebhookInput,
+  UpdateWebhookInput,
   PaginatedResult,
   SearchResult,
   ConflictResponse,
@@ -186,6 +189,15 @@ export interface BlobStore {
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null>;
 }
 
+export interface WebhookStore {
+  create(input: CreateWebhookInput, tenantId?: string): Promise<Webhook>;
+  list(tenantId?: string): Promise<Webhook[]>;
+  get(id: string, tenantId?: string): Promise<Webhook | null>;
+  update(id: string, input: UpdateWebhookInput): Promise<Webhook>;
+  delete(id: string): Promise<void>;
+  listActive(): Promise<Webhook[]>;
+}
+
 // ---------------------------------------------------------------------------
 // User + Tenant stores (hosted mode only)
 // ---------------------------------------------------------------------------
@@ -281,6 +293,7 @@ export interface Storage {
   keys: KeyStore;
   blobs: BlobStore;
   oauth: OAuthStore;
+  webhooks: WebhookStore;
   users?: UserStore;
   tenants?: TenantStore;
   close(): Promise<void>;

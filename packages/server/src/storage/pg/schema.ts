@@ -204,6 +204,22 @@ export const customTypes = pgTable("custom_types", {
   updated_at: text("updated_at").notNull(),
 });
 
+// ---------------------------------------------------------------------------
+// webhooks
+// ---------------------------------------------------------------------------
+
+export const webhooks = pgTable("webhooks", {
+  id: text("id").primaryKey(),
+  tenant_id: text("tenant_id"),
+  url: text("url").notNull(),
+  secret: text("secret").notNull(),
+  events: text("events").notNull().default("[]"),
+  type_filter: text("type_filter"),
+  active: integer("active").notNull().default(1),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
 export const oauthCodes = pgTable("oauth_codes", {
   id: text("id").primaryKey(),
   grant_id: text("grant_id")
