@@ -10,6 +10,15 @@ function redactSecret(secret: string): string {
   return "****" + secret.slice(-4);
 }
 
+const VALID_EVENTS = new Set([
+  "item.created",
+  "item.updated",
+  "item.deleted",
+  "item.restored",
+  "item.transitioned",
+  "*",
+]);
+
 export function webhookRoutes(storage: Storage): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
@@ -38,18 +47,11 @@ export function webhookRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    const validEvents = new Set([
-      "item.created",
-      "item.updated",
-      "item.deleted",
-      "item.restored",
-      "item.transitioned",
-    ]);
     for (const event of body.events) {
-      if (typeof event !== "string" || !validEvents.has(event)) {
+      if (typeof event !== "string" || !VALID_EVENTS.has(event)) {
         throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
-          `Invalid event type "${String(event)}". Valid types: ${[...validEvents].join(", ")}`,
+          `Invalid event type "${String(event)}". Valid types: ${[...VALID_EVENTS].join(", ")}`,
         );
       }
     }
@@ -101,11 +103,11 @@ export function webhookRoutes(storage: Storage): Hono<AppEnv> {
 
   // PATCH /webhooks/:id — partial update
   router.patch("/:id", async (c) => {
-    requireAdmin(c);
+    const key = requireAdmin(c);
     const id = c.req.param("id");
     const body = await c.req.json();
 
-    const existing = await storage.webhooks.get(id);
+    const existing = await storage.webhooks.get(id, key.tenant_id);
     if (!existing) {
       throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
@@ -130,6 +132,14 @@ export function webhookRoutes(storage: Storage): Hono<AppEnv> {
           ErrorCode.VALIDATION_ERROR,
           "events must be a non-empty array",
         );
+      }
+      for (const event of body.events) {
+        if (typeof event !== "string" || !VALID_EVENTS.has(event)) {
+          throw new MymeError(
+            ErrorCode.VALIDATION_ERROR,
+            `Invalid event type: ${String(event)}`,
+          );
+        }
       }
     }
 

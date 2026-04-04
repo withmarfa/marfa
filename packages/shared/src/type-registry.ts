@@ -1211,11 +1211,20 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
           message: `Invalid field type. Must be one of: ${VALID_FIELD_TYPES.join(", ")}`,
         });
       }
-      if (fd.type === "enum" && !Array.isArray(fd.enum_values)) {
-        errors.push({
-          field: `fields.${name}.enum_values`,
-          message: "Enum fields require an enum_values array",
-        });
+      if (fd.type === "enum") {
+        if (!Array.isArray(fd.enum_values)) {
+          errors.push({
+            field: `fields.${name}.enum_values`,
+            message: "Enum fields require an enum_values array",
+          });
+        } else if (
+          !fd.enum_values.every((v: unknown) => typeof v === "string")
+        ) {
+          errors.push({
+            field: `fields.${name}.enum_values`,
+            message: "Enum values must be strings",
+          });
+        }
       }
     }
   }

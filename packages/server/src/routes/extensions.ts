@@ -9,7 +9,6 @@
  * Reserved namespaces (core, myme, system) cannot be written to by non-admin keys.
  */
 
-const RESERVED_NAMESPACES = new Set(["core", "myme", "system"]);
 import { Hono } from "hono";
 import {
   MymeError,
@@ -18,6 +17,8 @@ import {
   resolveExtensionPermission,
   filterExtensionsByPermission,
 } from "@mymehq/shared";
+
+const RESERVED_NAMESPACES = new Set(["core", "myme", "system"]);
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
