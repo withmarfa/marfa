@@ -5,7 +5,11 @@
  * label (e.g. a key with label "noter" can write to the "noter" namespace).
  * This coupling is intentional — the key label IS the namespace identity.
  * Additional access can be granted via extension_permissions on the key.
+ *
+ * Reserved namespaces (core, myme, system) cannot be written to by non-admin keys.
  */
+
+const RESERVED_NAMESPACES = new Set(["core", "myme", "system"]);
 import { Hono } from "hono";
 import {
   MymeError,
@@ -100,6 +104,14 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
+    // Reserved namespaces require admin access
+    if (RESERVED_NAMESPACES.has(namespace) && apiKey?.role !== "admin") {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        `Namespace "${namespace}" is reserved`,
+      );
+    }
+
     const perm =
       apiKey?.role === "admin"
         ? "write"
@@ -155,6 +167,14 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
     const item = await storage.items.get(id, tid);
     if (!item) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+    }
+
+    // Reserved namespaces require admin access
+    if (RESERVED_NAMESPACES.has(namespace) && apiKey?.role !== "admin") {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        `Namespace "${namespace}" is reserved`,
+      );
     }
 
     // Only admin or namespace owner can delete
