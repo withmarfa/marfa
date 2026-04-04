@@ -10,14 +10,14 @@ import type {
   SearchResult,
 } from "@mymehq/shared";
 import type { TypeSchema } from "@mymehq/shared";
-import { MymeClient } from "./client.js";
-import type {
-  ClientConfig,
-  UpdateOptions,
-  ListFilters,
-  SearchFilters,
-  MetadataInput,
-} from "./client.js";
+import {
+  MymeClient,
+  type ClientConfig,
+  type UpdateOptions,
+  type ListFilters,
+  type SearchFilters,
+  type MetadataInput,
+} from "@mymehq/sdk";
 import { createLocalStorage } from "./local/storage.js";
 import type { LocalStorage } from "./local/storage.js";
 import { createShapeStreams } from "./electric/collections.js";

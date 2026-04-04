@@ -1,5 +1,5 @@
 {
-  "name": "@mymehq/sdk",
+  "name": "@mymehq/electric",
   "version": "0.1.0",
   "type": "module",
   "publishConfig": {
@@ -22,10 +22,14 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@mymehq/shared": "workspace:*"
+    "@mymehq/sdk": "workspace:*",
+    "@mymehq/shared": "workspace:*",
+    "@electric-sql/client": "^1.5.14",
+    "better-sqlite3": "^11.10.0",
+    "drizzle-orm": "^0.44.7"
   },
   "devDependencies": {
-    "@mymehq/server": "workspace:*",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2"

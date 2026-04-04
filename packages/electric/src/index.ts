@@ -1,7 +1,7 @@
-// Sync entry point — re-exports everything from the main SDK plus sync additions.
+// @mymehq/electric — Electric SQL sync layer for Myme.
 
-// Main SDK exports
-export * from "./index.js";
+// Re-export everything from the SDK for convenience
+export * from "@mymehq/sdk";
 
 // Sync client
 export { MymeSyncClient } from "./sync-client.js";

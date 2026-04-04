@@ -1,7 +1,7 @@
 import { eq, asc } from "drizzle-orm";
 import type { LocalDb } from "../local/connection.js";
 import { mutationQueue } from "../local/schema.js";
-import type { MymeClient } from "../client.js";
+import type { MymeClient } from "@mymehq/sdk";
 
 export type MutationOperation =
   | "create"

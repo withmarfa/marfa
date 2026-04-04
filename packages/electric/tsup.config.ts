@@ -6,4 +6,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   target: "node20",
+  external: ["better-sqlite3"],
 });

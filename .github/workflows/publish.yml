@@ -35,3 +35,5 @@ jobs:
       - run: pnpm --filter @mymehq/shared publish --no-git-checks
 
       - run: pnpm --filter @mymehq/sdk publish --no-git-checks
+
+      - run: pnpm --filter @mymehq/electric publish --no-git-checks
