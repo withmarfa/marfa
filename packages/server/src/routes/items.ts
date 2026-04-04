@@ -65,14 +65,17 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     if (body.thread_id && !isValidId(body.thread_id as string)) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid thread_id");
     }
-    if (
-      body.state &&
-      !(ITEM_STATES as readonly string[]).includes(body.state as string)
-    ) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        `Invalid state: ${body.state as string}`,
-      );
+    if (body.state) {
+      const typeSchema = getTypeSchema(type);
+      const validStates = typeSchema
+        ? (typeSchema.states as string[])
+        : (ITEM_STATES as readonly string[]);
+      if (!validStates.includes(body.state as string)) {
+        throw new MymeError(
+          ErrorCode.VALIDATION_ERROR,
+          `Invalid state: ${body.state as string}`,
+        );
+      }
     }
 
     requireTypeAccess(c, type, "write");
@@ -393,7 +396,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     const body = await c.req.json();
     const state = body.state as string | undefined;
-    if (!state || !(ITEM_STATES as readonly string[]).includes(state)) {
+    if (!state || typeof state !== "string") {
       throw new MymeError(
         ErrorCode.INVALID_TRANSITION,
         `Invalid state: ${String(state)}`,

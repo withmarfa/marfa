@@ -4,13 +4,16 @@ import {
   ErrorCode,
   getTypeSchema,
   TYPE_REGISTRY,
-  isCoreType,
+  ALL_TYPES,
   validateTypeSchema,
   isValidTypeIdentifier,
 } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+
+/** Check if a type is a built-in core type (from codegen, not user-registered). */
+const CORE_TYPE_IDS = new Set(ALL_TYPES.map((t) => t.id));
 
 export function typeRoutes(storage: Storage): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
@@ -57,13 +60,6 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
 
     const schema = result.data;
 
-    if (isCoreType(schema.id)) {
-      throw new MymeError(
-        ErrorCode.CORE_TYPE_IMMUTABLE,
-        `Cannot register types in the core namespace`,
-      );
-    }
-
     if (getTypeSchema(schema.id)) {
       throw new MymeError(
         ErrorCode.TYPE_ALREADY_EXISTS,
@@ -88,7 +84,7 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    if (isCoreType(id)) {
+    if (CORE_TYPE_IDS.has(id)) {
       throw new MymeError(
         ErrorCode.CORE_TYPE_IMMUTABLE,
         `Cannot modify core types`,
@@ -125,7 +121,7 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     requireAdmin(c);
     const id = c.req.param("id");
 
-    if (isCoreType(id)) {
+    if (CORE_TYPE_IDS.has(id)) {
       throw new MymeError(
         ErrorCode.CORE_TYPE_IMMUTABLE,
         `Cannot delete core types`,
