@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  ci:
+  ci-sqlite:
+    name: CI (SQLite)
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -24,4 +25,37 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
+      - run: pnpm test
+
+  ci-pg:
+    name: CI (Postgres)
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      STORAGE_DIALECT: pg
+      DATABASE_URL: postgresql://myme:myme@localhost:5432/myme_test
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: myme
+          POSTGRES_PASSWORD: myme
+          POSTGRES_DB: myme_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U myme"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - run: pnpm test
