@@ -35,7 +35,7 @@ pnpm format:check     # check formatting without writing
 
 Server package (not needed for shared or SDK development):
 
-- `PORT` — server port (default: 8200)
+- `PORT` — server port (default: 8600)
 - `STORAGE_DIALECT` — `sqlite` or `pg` (default: sqlite)
 - `DATABASE_URL` — Postgres connection string (required when dialect is pg)
 - `SQLITE_PATH` — database file path (default: `./data/myme.db`)

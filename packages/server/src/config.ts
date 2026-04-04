@@ -39,7 +39,7 @@ export function loadConfig(): AppConfig {
   }
 
   return {
-    port: Number(process.env.PORT) || 8200,
+    port: Number(process.env.PORT) || 8600,
     storageDialect: process.env.STORAGE_DIALECT === "pg" ? "pg" : "sqlite",
     sqlitePath: process.env.SQLITE_PATH ?? "./data/myme.db",
     databaseUrl: process.env.DATABASE_URL ?? "",
