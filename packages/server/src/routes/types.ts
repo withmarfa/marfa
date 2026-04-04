@@ -105,11 +105,9 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const schema = result.data;
+    // Auto-increment version if not explicitly bumped
     if (schema.version <= existing.version) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        `Version must be greater than current version (${String(existing.version)})`,
-      );
+      schema.version = existing.version + 1;
     }
 
     const updated = await storage.types.update(id, schema);
