@@ -132,7 +132,17 @@ export function userAuthRoutes(
       return c.json({ user, api_key: rawKey });
     }
 
-    // Return a new key (we can't retrieve the raw key from the hash)
+    // Revoke previous session keys to prevent unbounded key accumulation
+    const previousSessionKeys = allKeys.filter(
+      (k) =>
+        (k as { tenant_id?: string }).tenant_id === user.tenant_id &&
+        k.label === "session",
+    );
+    for (const prev of previousSessionKeys) {
+      await storage.keys.revoke(prev.id);
+    }
+
+    // Create a fresh session key (we can't retrieve the raw key from the hash)
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
     await storage.keys.create(
