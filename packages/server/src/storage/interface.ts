@@ -296,5 +296,6 @@ export interface Storage {
   webhooks: WebhookStore;
   users?: UserStore;
   tenants?: TenantStore;
+  runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   close(): Promise<void>;
 }

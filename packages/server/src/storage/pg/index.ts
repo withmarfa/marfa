@@ -62,6 +62,13 @@ export async function createPgStorage(
       users: new PgUserStore(db),
       tenants: new PgTenantStore(db),
     }),
+    async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
+      let result: T;
+      await client.begin(async () => {
+        result = await fn();
+      });
+      return result!;
+    },
     close,
     /** Truncate all tables — used by tests for isolation. */
     async _pgTruncate(): Promise<void> {

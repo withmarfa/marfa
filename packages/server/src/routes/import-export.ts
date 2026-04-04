@@ -51,37 +51,43 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
       }
     }
 
-    let imported = 0;
-    let duplicates = 0;
+    const tenantId = c.get("apiKey")?.tenant_id;
 
-    for (const raw of items) {
-      const item = raw as Record<string, unknown>;
-      try {
-        await storage.items.create(
-          {
-            type: item.type as string,
-            properties: (item.properties ?? {}) as Record<string, unknown>,
-            source: item.source as string | undefined,
-            source_id: item.source_id as string | undefined,
-            tags: item.tags as string[] | undefined,
-            about: item.about as string[] | undefined,
-          },
-          c.get("apiKey")?.tenant_id,
-        );
-        imported++;
-      } catch (err) {
-        if (
-          err instanceof MymeError &&
-          err.code === ErrorCode.DUPLICATE_SOURCE
-        ) {
-          duplicates++;
-        } else {
-          throw err;
+    const result = await storage.runInTransaction(async () => {
+      let imported = 0;
+      let duplicates = 0;
+
+      for (const raw of items) {
+        const item = raw as Record<string, unknown>;
+        try {
+          await storage.items.create(
+            {
+              type: item.type as string,
+              properties: (item.properties ?? {}) as Record<string, unknown>,
+              source: item.source as string | undefined,
+              source_id: item.source_id as string | undefined,
+              tags: item.tags as string[] | undefined,
+              about: item.about as string[] | undefined,
+            },
+            tenantId,
+          );
+          imported++;
+        } catch (err) {
+          if (
+            err instanceof MymeError &&
+            err.code === ErrorCode.DUPLICATE_SOURCE
+          ) {
+            duplicates++;
+          } else {
+            throw err;
+          }
         }
       }
-    }
 
-    return c.json({ imported, duplicates });
+      return { imported, duplicates };
+    });
+
+    return c.json(result);
   });
 
   return router;
