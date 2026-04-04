@@ -61,6 +61,7 @@ describe("bootstrap mode", () => {
       cdnBaseUrl: "",
       authMode: "keys",
       versionSnapshotIntervalMs: 600_000,
+      enableGraphql: false,
     });
 
     const res = await request(app, "POST", "/keys", {

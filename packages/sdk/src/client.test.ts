@@ -58,6 +58,7 @@ beforeAll(async () => {
     cdnBaseUrl: "",
     authMode: "keys",
     versionSnapshotIntervalMs: 600_000,
+    enableGraphql: true,
   });
 
   testFetchFn = createTestFetch(app);

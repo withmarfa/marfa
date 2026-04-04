@@ -15,6 +15,7 @@ export interface AppConfig {
   cdnBaseUrl: string;
   authMode: "hosted" | "keys";
   versionSnapshotIntervalMs: number;
+  enableGraphql: boolean;
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -54,6 +55,7 @@ export function loadConfig(): AppConfig {
     corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
     cdnBaseUrl: process.env.CDN_BASE_URL ?? "",
     authMode: process.env.AUTH_MODE === "hosted" ? "hosted" : "keys",
+    enableGraphql: process.env.ENABLE_GRAPHQL === "true",
     versionSnapshotIntervalMs:
       Number(process.env.VERSION_SNAPSHOT_INTERVAL_MS) || 600_000,
   };

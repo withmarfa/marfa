@@ -50,10 +50,12 @@ export function createApp(
     "import",
     "export",
     "oauth",
-    "graphql",
     "extensions",
     "events",
   ];
+  if (config.enableGraphql) {
+    features.push("graphql");
+  }
   if (config.authMode === "hosted") {
     features.push("users");
   }
@@ -78,8 +80,10 @@ export function createApp(
   // Auth middleware
   app.use("*", authMiddleware(storage, config.apiKeySalt));
 
-  // GraphQL (after auth middleware, before REST routes)
-  mountGraphQL(app, storage);
+  // GraphQL is disabled by default. Enable via ENABLE_GRAPHQL=true.
+  if (config.enableGraphql) {
+    mountGraphQL(app, storage);
+  }
 
   // Protected routes
   app.route("/items", itemRoutes(storage));

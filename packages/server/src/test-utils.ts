@@ -63,6 +63,7 @@ export async function createTestContext(): Promise<TestContext> {
     cdnBaseUrl: "",
     authMode: "keys",
     versionSnapshotIntervalMs: 600_000,
+    enableGraphql: true,
   });
 
   // Create a bootstrap admin key (unique per test context to avoid PG conflicts)
