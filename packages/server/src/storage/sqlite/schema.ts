@@ -192,6 +192,18 @@ export const oauthTokens = sqliteTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// custom_types (runtime type registration)
+// ---------------------------------------------------------------------------
+
+export const customTypes = sqliteTable("custom_types", {
+  id: text("id").primaryKey(),
+  tenant_id: text("tenant_id"),
+  schema: text("schema").notNull(),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
 export const oauthCodes = sqliteTable("oauth_codes", {
   id: text("id").primaryKey(),
   grant_id: text("grant_id")

@@ -399,6 +399,32 @@ export class MymeClient {
     get: async (id: string): Promise<TypeSchema> => {
       return this.transport.request<TypeSchema>("GET", `/types/${id}`);
     },
+
+    register: async (schema: TypeSchema): Promise<TypeSchema> => {
+      return this.transport.request<TypeSchema>("POST", "/types", {
+        body: schema,
+      });
+    },
+
+    update: async (
+      id: string,
+      schema: Omit<TypeSchema, "id">,
+    ): Promise<TypeSchema> => {
+      return this.transport.request<TypeSchema>("PUT", `/types/${id}`, {
+        body: schema,
+      });
+    },
+
+    delete: async (
+      id: string,
+      options?: { force?: boolean },
+    ): Promise<void> => {
+      const query = options?.force ? "?force=true" : "";
+      await this.transport.request<{ ok: boolean }>(
+        "DELETE",
+        `/types/${id}${query}`,
+      );
+    },
   };
 
   // ---- Keys ----

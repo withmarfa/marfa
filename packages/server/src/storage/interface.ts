@@ -151,6 +151,10 @@ export interface ThreadStore {
 export interface TypeStore {
   list(): Promise<TypeSchema[]>;
   get(id: string): Promise<TypeSchema | undefined>;
+  create(schema: TypeSchema, tenantId?: string): Promise<TypeSchema>;
+  update(id: string, schema: TypeSchema): Promise<TypeSchema>;
+  delete(id: string): Promise<void>;
+  loadCustomTypes(): Promise<TypeSchema[]>;
 }
 
 export interface SearchStore {

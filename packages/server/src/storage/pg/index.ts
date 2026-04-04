@@ -1,3 +1,4 @@
+import { registerTypeSchema, isCoreType } from "@mymehq/shared";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
 import { PgItemStore } from "./item-store.js";
@@ -31,7 +32,15 @@ export async function createPgStorage(
   );
   const metadataStore = new PgMetadataStore(db);
   const threadStore = new PgThreadStore(db);
-  const typeStore = new PgTypeStore();
+  const typeStore = new PgTypeStore(db);
+
+  // Load custom types from the database and register them in memory
+  const loadedCustomTypes = await typeStore.loadCustomTypes();
+  for (const ct of loadedCustomTypes) {
+    if (!isCoreType(ct.id)) {
+      registerTypeSchema(ct);
+    }
+  }
   const keyStore = new PgKeyStore(db);
   const blobStore = new PgBlobStore(db);
   const oauthStore = new PgOAuthStore(db);

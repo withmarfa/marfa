@@ -52,6 +52,7 @@ export function createApp(
     "oauth",
     "extensions",
     "events",
+    "type_crud",
   ];
   if (config.enableGraphql) {
     features.push("graphql");
@@ -89,7 +90,7 @@ export function createApp(
   app.route("/items", itemRoutes(storage));
   app.route("/items", extensionRoutes(storage));
   app.route("/threads", threadRoutes(storage));
-  app.route("/types", typeRoutes());
+  app.route("/types", typeRoutes(storage));
   app.route("/search", searchRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));

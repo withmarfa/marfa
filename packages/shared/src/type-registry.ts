@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { ItemState } from "./types.js";
+import { ITEM_STATES } from "./types.js";
+import { isValidTypeIdentifier } from "./validation.js";
 
 // ---------------------------------------------------------------------------
 // Schema types
@@ -918,14 +920,34 @@ export const ALL_TYPES: TypeSchema[] = [
   coreWorkTvEpisode,
 ];
 
-/** The type registry — all registered type schemas indexed by type identifier. */
-export const TYPE_REGISTRY: ReadonlyMap<string, TypeSchema> = new Map(
+// Internal mutable map — exposed as ReadonlyMap to prevent accidental mutation.
+const _registry = new Map<string, TypeSchema>(
   ALL_TYPES.map((schema) => [schema.id, schema]),
 );
 
+/** The type registry — all registered type schemas indexed by type identifier. */
+export const TYPE_REGISTRY: ReadonlyMap<string, TypeSchema> = _registry;
+
 /** Returns the type schema for the given type identifier, or undefined. */
 export function getTypeSchema(typeId: string): TypeSchema | undefined {
-  return TYPE_REGISTRY.get(typeId);
+  return _registry.get(typeId);
+}
+
+/** Returns true if the type identifier belongs to the core namespace. */
+export function isCoreType(id: string): boolean {
+  return id.startsWith("core.");
+}
+
+/** Registers a type schema into the in-memory registry. Clears the zod cache. */
+export function registerTypeSchema(schema: TypeSchema): void {
+  _registry.set(schema.id, schema);
+  zodSchemaCache.delete(schema.id);
+}
+
+/** Removes a type schema from the in-memory registry. Clears the zod cache. */
+export function unregisterTypeSchema(id: string): void {
+  _registry.delete(id);
+  zodSchemaCache.delete(id);
 }
 
 /**
@@ -1107,4 +1129,176 @@ export function validateTransition(
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Type schema validation — validates the shape of a TypeSchema object
+// ---------------------------------------------------------------------------
+
+const VALID_FIELD_TYPES: readonly FieldType[] = [
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "url",
+  "email",
+  "datetime",
+  "date",
+  "enum",
+  "array",
+  "object",
+];
+
+/**
+ * Validates whether an input object is a valid TypeSchema.
+ * Returns a ValidationResult with either the parsed schema or field errors.
+ */
+/** Result of validating a type schema. */
+export type TypeSchemaValidationResult =
+  | { success: true; data: TypeSchema }
+  | { success: false; errors: { field: string; message: string }[] };
+
+export function validateTypeSchema(
+  input: unknown,
+): TypeSchemaValidationResult {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return {
+      success: false,
+      errors: [{ field: "_root", message: "Expected an object" }],
+    };
+  }
+
+  const obj = input as Record<string, unknown>;
+  const errors: { field: string; message: string }[] = [];
+
+  // id
+  if (typeof obj.id !== "string" || !isValidTypeIdentifier(obj.id)) {
+    errors.push({
+      field: "id",
+      message:
+        "Required valid type identifier (dot-notation, e.g. acme.deal)",
+    });
+  }
+
+  // label
+  if (typeof obj.label !== "string" || obj.label.length === 0) {
+    errors.push({ field: "label", message: "Required non-empty string" });
+  }
+
+  // version
+  if (
+    typeof obj.version !== "number" ||
+    !Number.isInteger(obj.version) ||
+    obj.version < 1
+  ) {
+    errors.push({ field: "version", message: "Required positive integer" });
+  }
+
+  // fields
+  if (typeof obj.fields !== "object" || obj.fields === null) {
+    errors.push({ field: "fields", message: "Required object" });
+  } else {
+    const fields = obj.fields as Record<string, unknown>;
+    for (const [name, def] of Object.entries(fields)) {
+      if (typeof def !== "object" || def === null) {
+        errors.push({
+          field: `fields.${name}`,
+          message: "Field definition must be an object",
+        });
+        continue;
+      }
+      const fd = def as Record<string, unknown>;
+      if (!VALID_FIELD_TYPES.includes(fd.type as FieldType)) {
+        errors.push({
+          field: `fields.${name}.type`,
+          message: `Invalid field type. Must be one of: ${VALID_FIELD_TYPES.join(", ")}`,
+        });
+      }
+      if (fd.type === "enum" && !Array.isArray(fd.enum_values)) {
+        errors.push({
+          field: `fields.${name}.enum_values`,
+          message: "Enum fields require an enum_values array",
+        });
+      }
+    }
+  }
+
+  // states
+  if (!Array.isArray(obj.states) || obj.states.length === 0) {
+    errors.push({ field: "states", message: "Required non-empty array" });
+  } else {
+    for (const s of obj.states) {
+      if (!(ITEM_STATES as readonly string[]).includes(s as string)) {
+        errors.push({
+          field: "states",
+          message: `Invalid state "${String(s)}". Must be one of: ${ITEM_STATES.join(", ")}`,
+        });
+      }
+    }
+  }
+
+  // default_state
+  if (
+    typeof obj.default_state !== "string" ||
+    (Array.isArray(obj.states) &&
+      !(obj.states as string[]).includes(obj.default_state))
+  ) {
+    errors.push({
+      field: "default_state",
+      message: "Must be one of the defined states",
+    });
+  }
+
+  // transitions
+  if (typeof obj.transitions !== "object" || obj.transitions === null) {
+    errors.push({ field: "transitions", message: "Required object" });
+  } else if (Array.isArray(obj.states)) {
+    const states = obj.states as string[];
+    const transitions = obj.transitions as Record<string, unknown>;
+    for (const [from, toList] of Object.entries(transitions)) {
+      if (!states.includes(from)) {
+        errors.push({
+          field: `transitions.${from}`,
+          message: `Key "${from}" is not a valid state`,
+        });
+      }
+      if (!Array.isArray(toList)) {
+        errors.push({
+          field: `transitions.${from}`,
+          message: "Must be an array of states",
+        });
+      } else {
+        for (const to of toList) {
+          if (!states.includes(to as string)) {
+            errors.push({
+              field: `transitions.${from}`,
+              message: `Target "${String(to)}" is not a valid state`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    return { success: false, errors };
+  }
+
+  const schema: TypeSchema = {
+    id: obj.id as string,
+    label: obj.label as string,
+    version: obj.version as number,
+    fields: obj.fields as Record<string, FieldDefinition>,
+    states: obj.states as ItemState[],
+    default_state: obj.default_state as ItemState,
+    transitions: obj.transitions as Record<string, ItemState[]>,
+  };
+  if (typeof obj.description === "string") {
+    schema.description = obj.description;
+  }
+  if (typeof obj.parent === "string") {
+    schema.parent = obj.parent;
+  }
+
+  return { success: true, data: schema };
 }
