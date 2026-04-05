@@ -625,4 +625,34 @@ export class SqliteItemStore implements ItemStore {
 
     return { ...row, state, updated_at: now };
   }
+
+  stats(
+    tenantId?: string,
+    allowedTypes?: string[],
+  ): Promise<Record<string, number>> {
+    let sql = "SELECT state, COUNT(*) as count FROM items WHERE 1=1";
+    const params: unknown[] = [];
+
+    if (tenantId) {
+      sql += " AND tenant_id = ?";
+      params.push(tenantId);
+    }
+
+    if (allowedTypes && allowedTypes.length > 0) {
+      sql += ` AND type IN (${allowedTypes.map(() => "?").join(", ")})`;
+      params.push(...allowedTypes);
+    }
+
+    sql += " GROUP BY state";
+
+    const rows = this.raw.prepare(sql).all(...params) as {
+      state: string;
+      count: number;
+    }[];
+    const result: Record<string, number> = {};
+    for (const row of rows) {
+      result[row.state] = row.count;
+    }
+    return Promise.resolve(result);
+  }
 }

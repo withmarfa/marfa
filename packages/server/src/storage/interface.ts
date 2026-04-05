@@ -104,6 +104,10 @@ export interface ItemStore {
   delete(id: string, tenantId?: string): Promise<void>;
   restore(id: string, tenantId?: string): Promise<Item>;
   transition(id: string, state: ItemState, tenantId?: string): Promise<Item>;
+  stats(
+    tenantId?: string,
+    allowedTypes?: string[],
+  ): Promise<Record<string, number>>;
 }
 
 export interface MetadataStore {

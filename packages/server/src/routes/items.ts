@@ -107,6 +107,15 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     return c.json({ item, metadata }, 201);
   });
 
+  // GET /items/stats — item counts grouped by state
+  router.get("/stats", async (c) => {
+    requireAuth(c);
+    const tenantId = c.get("apiKey")?.tenant_id;
+    const allowedTypes = getTypeFilter(c);
+    const stats = await storage.items.stats(tenantId, allowedTypes);
+    return c.json(stats);
+  });
+
   // GET /items — list
   router.get("/", async (c) => {
     requireAuth(c);

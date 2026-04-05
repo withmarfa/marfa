@@ -209,6 +209,13 @@ export class MymeClient {
       );
       return res.versions;
     },
+
+    stats: async (): Promise<Record<string, number>> => {
+      return this.transport.request<Record<string, number>>(
+        "GET",
+        "/items/stats",
+      );
+    },
   };
 
   // ---- Metadata ----
@@ -346,6 +353,23 @@ export class MymeClient {
         "GET",
         `/threads/${id}`,
       );
+    },
+
+    addItem: async (threadId: string, itemId: string): Promise<Item> => {
+      const res = await this.transport.request<{ item: Item }>(
+        "POST",
+        `/threads/${threadId}/items`,
+        { body: { item_id: itemId } },
+      );
+      return res.item;
+    },
+
+    removeItem: async (threadId: string, itemId: string): Promise<Item> => {
+      const res = await this.transport.request<{ item: Item }>(
+        "DELETE",
+        `/threads/${threadId}/items/${itemId}`,
+      );
+      return res.item;
     },
   };
 

@@ -1,6 +1,18 @@
 import { shouldCreateVersion } from "../version-gating.js";
 import { safeJsonParse } from "../json-utils.js";
-import { eq, ne, and, or, lt, gt, desc, asc, like, sql } from "drizzle-orm";
+import {
+  eq,
+  ne,
+  and,
+  or,
+  lt,
+  gt,
+  desc,
+  asc,
+  like,
+  sql,
+  inArray,
+} from "drizzle-orm";
 import {
   generateId,
   isValidId,
@@ -582,5 +594,33 @@ export class PgItemStore implements ItemStore {
     }
 
     return { ...row, state, updated_at: now };
+  }
+
+  async stats(
+    tenantId?: string,
+    allowedTypes?: string[],
+  ): Promise<Record<string, number>> {
+    const conditions = [];
+    if (tenantId) {
+      conditions.push(eq(items.tenant_id, tenantId));
+    }
+    if (allowedTypes && allowedTypes.length > 0) {
+      conditions.push(inArray(items.type, allowedTypes));
+    }
+
+    const rows = await this.db
+      .select({
+        state: items.state,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(items)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .groupBy(items.state);
+
+    const result: Record<string, number> = {};
+    for (const row of rows) {
+      result[row.state] = row.count;
+    }
+    return result;
   }
 }
