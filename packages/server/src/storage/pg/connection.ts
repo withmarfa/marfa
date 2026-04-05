@@ -156,6 +156,18 @@ CREATE TABLE IF NOT EXISTS webhooks (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id TEXT PRIMARY KEY,
+  webhook_id TEXT NOT NULL,
+  event TEXT NOT NULL,
+  status_code INTEGER,
+  attempt INTEGER NOT NULL,
+  success INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
 `;
 
 export async function createConnection(connectionString: string): Promise<{

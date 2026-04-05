@@ -40,7 +40,10 @@ async function main() {
   } else {
     blobBackend = new FilesystemBlobBackend(config.blobPath);
   }
-  const webhookConsumer = new WebhookConsumer(storage.webhooks);
+  const webhookConsumer = new WebhookConsumer(
+    storage.webhooks,
+    storage.webhookDeliveries,
+  );
   webhookConsumer.start();
 
   const app = createApp(storage, blobBackend, config);

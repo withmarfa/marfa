@@ -8,6 +8,7 @@ import type {
   ApiKey,
   CreateKeyInput,
   Webhook,
+  WebhookDelivery,
   CreateWebhookInput,
   UpdateWebhookInput,
   PaginatedResult,
@@ -206,6 +207,18 @@ export interface WebhookStore {
   listActive(): Promise<Webhook[]>;
 }
 
+export interface WebhookDeliveryStore {
+  log(entry: {
+    webhookId: string;
+    event: string;
+    statusCode?: number;
+    attempt: number;
+    success: boolean;
+    error?: string;
+  }): Promise<void>;
+  list(webhookId: string, limit?: number): Promise<WebhookDelivery[]>;
+}
+
 // ---------------------------------------------------------------------------
 // User + Tenant stores (hosted mode only)
 // ---------------------------------------------------------------------------
@@ -302,6 +315,7 @@ export interface Storage {
   blobs: BlobStore;
   oauth: OAuthStore;
   webhooks: WebhookStore;
+  webhookDeliveries: WebhookDeliveryStore;
   users?: UserStore;
   tenants?: TenantStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;

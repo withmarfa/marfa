@@ -15,6 +15,7 @@ import type {
   TypeSchema,
   ErrorResponse,
   Webhook,
+  WebhookDelivery,
   CreateWebhookInput,
   UpdateWebhookInput,
 } from "@mymehq/shared";
@@ -519,6 +520,17 @@ export class MymeClient {
         "DELETE",
         `/webhooks/${id}`,
       );
+    },
+
+    deliveries: async (
+      id: string,
+      options?: { limit?: number },
+    ): Promise<WebhookDelivery[]> => {
+      const query = options?.limit ? { limit: String(options.limit) } : {};
+      const res = await this.transport.request<{
+        deliveries: WebhookDelivery[];
+      }>("GET", `/webhooks/${id}/deliveries`, { query });
+      return res.deliveries;
     },
   };
 

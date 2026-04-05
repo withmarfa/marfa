@@ -15,6 +15,38 @@ import type { Storage } from "../storage/interface.js";
 /** Check if a type is a built-in core type (from codegen, not user-registered). */
 const CORE_TYPE_IDS = new Set(ALL_TYPES.map((t) => t.id));
 
+const MAX_INHERITANCE_DEPTH = 10;
+
+/** Validate parent chain: parent must exist, no circular references, depth capped. */
+function validateParentChain(typeId: string, parentId: string): void {
+  let current = parentId;
+  let depth = 0;
+  while (current) {
+    depth++;
+    if (depth > MAX_INHERITANCE_DEPTH) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        `Inheritance chain exceeds maximum depth of ${String(MAX_INHERITANCE_DEPTH)}`,
+      );
+    }
+    if (current === typeId) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Circular inheritance detected",
+      );
+    }
+    const parentSchema = getTypeSchema(current);
+    if (!parentSchema) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        `Parent type "${current}" not found`,
+      );
+    }
+    current = parentSchema.parent ?? "";
+    if (!current) break;
+  }
+}
+
 export function typeRoutes(storage: Storage): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
@@ -59,6 +91,10 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const schema = result.data;
+
+    if (schema.parent) {
+      validateParentChain(schema.id, schema.parent);
+    }
 
     if (getTypeSchema(schema.id)) {
       throw new MymeError(
@@ -105,6 +141,10 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const schema = result.data;
+
+    if (schema.parent) {
+      validateParentChain(schema.id, schema.parent);
+    }
 
     // Reject field removal — updates must be backward-compatible
     for (const fieldName of Object.keys(existing.fields)) {

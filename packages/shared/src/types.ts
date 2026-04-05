@@ -270,6 +270,18 @@ export interface UpdateWebhookInput {
   active?: boolean;
 }
 
+/** A single webhook delivery attempt. */
+export interface WebhookDelivery {
+  id: string;
+  webhook_id: string;
+  event: string;
+  status_code: number | null;
+  attempt: number;
+  success: boolean;
+  error: string | null;
+  created_at: string;
+}
+
 // ---------------------------------------------------------------------------
 // User model (hosted mode only)
 // ---------------------------------------------------------------------------

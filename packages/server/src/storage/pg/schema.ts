@@ -220,6 +220,25 @@ export const webhooks = pgTable("webhooks", {
   updated_at: text("updated_at").notNull(),
 });
 
+// ---------------------------------------------------------------------------
+// webhook_deliveries
+// ---------------------------------------------------------------------------
+
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    webhook_id: text("webhook_id").notNull(),
+    event: text("event").notNull(),
+    status_code: integer("status_code"),
+    attempt: integer("attempt").notNull(),
+    success: integer("success").notNull().default(0),
+    error: text("error"),
+    created_at: text("created_at").notNull(),
+  },
+  (table) => [index("idx_webhook_deliveries_webhook_id").on(table.webhook_id)],
+);
+
 export const oauthCodes = pgTable("oauth_codes", {
   id: text("id").primaryKey(),
   grant_id: text("grant_id")

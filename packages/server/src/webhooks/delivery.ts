@@ -1,7 +1,10 @@
 import { createHmac } from "node:crypto";
 import { matchesTypePattern } from "@mymehq/shared";
 import type { Webhook } from "@mymehq/shared";
-import type { WebhookStore } from "../storage/interface.js";
+import type {
+  WebhookStore,
+  WebhookDeliveryStore,
+} from "../storage/interface.js";
 import { subscribe } from "../graphql/pubsub.js";
 import type { ItemEvent } from "../graphql/pubsub.js";
 
@@ -22,7 +25,10 @@ export class WebhookConsumer {
   private running = false;
   private abortController: AbortController | null = null;
 
-  constructor(private webhookStore: WebhookStore) {}
+  constructor(
+    private webhookStore: WebhookStore,
+    private deliveryStore: WebhookDeliveryStore,
+  ) {}
 
   start(): void {
     if (this.running) return;
@@ -119,31 +125,81 @@ export class WebhookConsumer {
 
         clearTimeout(timeout);
 
-        if (response.ok) return;
-
-        // Don't retry client errors (4xx) — they won't succeed on retry
-        if (response.status >= 400 && response.status < 500) {
-          console.warn(
-            `Webhook ${webhook.id} delivery failed with ${String(response.status)} (not retrying): ${webhook.url}`,
+        if (response.ok) {
+          await this.logDelivery(
+            webhook.id,
+            eventName,
+            response.status,
+            attempt + 1,
+            true,
           );
           return;
         }
 
-        // Server error — fall through to retry
+        // Don't retry client errors (4xx) — they won't succeed on retry
+        if (response.status >= 400 && response.status < 500) {
+          await this.logDelivery(
+            webhook.id,
+            eventName,
+            response.status,
+            attempt + 1,
+            false,
+          );
+          return;
+        }
+
+        // Server error — log and fall through to retry
+        await this.logDelivery(
+          webhook.id,
+          eventName,
+          response.status,
+          attempt + 1,
+          false,
+        );
         if (attempt < RETRY_DELAYS.length) {
           await this.delay(RETRY_DELAYS[attempt] ?? 1000);
         }
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await this.logDelivery(
+          webhook.id,
+          eventName,
+          undefined,
+          attempt + 1,
+          false,
+          errMsg,
+        );
         // Network error or timeout — retry if attempts remain
-        if (attempt < RETRY_DELAYS.length) {
-          await this.delay(RETRY_DELAYS[attempt] ?? 1000);
-        } else {
+        if (attempt >= RETRY_DELAYS.length) {
           console.error(
             `Webhook ${webhook.id} delivery failed after ${String(RETRY_DELAYS.length + 1)} attempts: ${webhook.url}`,
-            err,
           );
+        } else {
+          await this.delay(RETRY_DELAYS[attempt] ?? 1000);
         }
       }
+    }
+  }
+
+  private async logDelivery(
+    webhookId: string,
+    event: string,
+    statusCode: number | undefined,
+    attempt: number,
+    success: boolean,
+    error?: string,
+  ): Promise<void> {
+    try {
+      await this.deliveryStore.log({
+        webhookId,
+        event,
+        statusCode,
+        attempt,
+        success,
+        error,
+      });
+    } catch (err) {
+      console.error("Failed to log webhook delivery:", err);
     }
   }
 

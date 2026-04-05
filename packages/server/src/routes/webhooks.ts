@@ -162,16 +162,34 @@ export function webhookRoutes(storage: Storage): Hono<AppEnv> {
 
   // DELETE /webhooks/:id
   router.delete("/:id", async (c) => {
-    requireAdmin(c);
+    const key = requireAdmin(c);
     const id = c.req.param("id");
 
-    const existing = await storage.webhooks.get(id);
+    const existing = await storage.webhooks.get(id, key.tenant_id);
     if (!existing) {
       throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
 
     await storage.webhooks.delete(id);
     return c.json({ ok: true });
+  });
+
+  // GET /webhooks/:id/deliveries — recent delivery attempts
+  router.get("/:id/deliveries", async (c) => {
+    const key = requireAdmin(c);
+    const id = c.req.param("id");
+
+    const existing = await storage.webhooks.get(id, key.tenant_id);
+    if (!existing) {
+      throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
+    }
+
+    const limit = Math.min(
+      Math.max(Number(c.req.query("limit")) || 50, 1),
+      200,
+    );
+    const deliveries = await storage.webhookDeliveries.list(id, limit);
+    return c.json({ deliveries });
   });
 
   return router;
