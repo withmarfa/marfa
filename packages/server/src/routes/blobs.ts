@@ -159,45 +159,52 @@ export function blobRoutes(
     // Collect all blob hashes registered in the store
     const allHashes = await storage.blobs.listAll();
 
-    // Collect all blob_ref values referenced by items (paginate through all)
-    const referencedHashes = new Set<string>();
-    let cursor: string | undefined;
-    let hasMore = true;
-    while (hasMore) {
-      const page = await storage.items.list({
-        tenantId,
-        limit: 200,
-        cursor,
-      });
-      for (const item of page.data) {
-        const blobRef = item.properties.blob_ref;
-        if (typeof blobRef === "string") {
-          referencedHashes.add(blobRef);
+    // Recursively scan a value tree for blob hashes.
+    // Custom types can store blob hashes in any field (logo_blob_hash,
+    // screenshots[].blob_hash, etc.), not just the standard blob_ref field.
+    const collectBlobHashes = (
+      value: unknown,
+      out: Set<string>,
+    ): void => {
+      if (typeof value === "string") {
+        if (isValidBlobHash(value)) out.add(value);
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const el of value) collectBlobHashes(el, out);
+        return;
+      }
+      if (typeof value === "object" && value !== null) {
+        for (const v of Object.values(value as Record<string, unknown>)) {
+          collectBlobHashes(v, out);
         }
       }
-      cursor = page.cursor ?? undefined;
-      hasMore = page.has_more;
-    }
+    };
 
-    // Also check trashed items — don't remove blobs for items still in trash
-    let trashedCursor: string | undefined;
-    hasMore = true;
-    while (hasMore) {
-      const page = await storage.items.list({
-        tenantId,
-        state: "trashed",
-        limit: 200,
-        cursor: trashedCursor,
-      });
-      for (const item of page.data) {
-        const blobRef = item.properties.blob_ref;
-        if (typeof blobRef === "string") {
-          referencedHashes.add(blobRef);
+    // Paginate through all items and extract every blob hash from properties
+    const referencedHashes = new Set<string>();
+
+    const scanItems = async (state?: string): Promise<void> => {
+      let cursor: string | undefined;
+      let hasMore = true;
+      while (hasMore) {
+        const page = await storage.items.list({
+          tenantId,
+          state: state as import("@mymehq/shared").ItemState | undefined,
+          limit: 200,
+          cursor,
+        });
+        for (const item of page.data) {
+          collectBlobHashes(item.properties, referencedHashes);
         }
+        cursor = page.cursor ?? undefined;
+        hasMore = page.has_more;
       }
-      trashedCursor = page.cursor ?? undefined;
-      hasMore = page.has_more;
-    }
+    };
+
+    // Scan active items and trashed items (don't remove blobs still in trash)
+    await scanItems();
+    await scanItems("trashed");
 
     const orphaned = allHashes.filter((h) => !referencedHashes.has(h));
 

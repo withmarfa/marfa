@@ -192,6 +192,43 @@ describe("POST /blobs/cleanup", () => {
     expect(body.orphaned).toBeGreaterThan(0);
   });
 
+  it("detects blob hashes in non-standard property fields", async () => {
+    // Upload a blob and reference it via a non-standard field name
+    const data = new TextEncoder().encode("custom field blob");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: data,
+    });
+    const { hash } = (await uploadRes.json()) as { hash: string };
+
+    // Create an item referencing the blob via a custom field name
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "has a logo", logo_blob_hash: hash },
+      },
+    });
+
+    // The blob referenced via logo_blob_hash should be detected as referenced
+    const cleanupRes = await request(
+      ctx.app,
+      "POST",
+      "/blobs/cleanup?dry_run=true",
+      { key: ctx.adminKey },
+    );
+    const body = (await cleanupRes.json()) as {
+      total_blobs: number;
+      referenced: number;
+      orphaned: number;
+    };
+    expect(body.referenced).toBeGreaterThan(0);
+  });
+
   it("removes orphaned blobs when not dry-run", async () => {
     const cleanupRes = await request(ctx.app, "POST", "/blobs/cleanup", {
       key: ctx.adminKey,
