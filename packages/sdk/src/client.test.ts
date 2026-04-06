@@ -380,6 +380,18 @@ describe("blobs", () => {
     const text = Buffer.from(downloaded).toString("utf-8");
     expect(text).toBe("Hello blob world");
   });
+
+  it("checks blob existence", async () => {
+    const content = Buffer.from("existence check");
+    const { hash } = await client.blobs.upload(content, "text/plain");
+
+    expect(await client.blobs.exists(hash)).toBe(true);
+    expect(
+      await client.blobs.exists(
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      ),
+    ).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

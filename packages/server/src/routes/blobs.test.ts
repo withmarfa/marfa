@@ -112,3 +112,50 @@ describe("GET /blobs/:hash", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("HEAD /blobs/:hash", () => {
+  it("returns 200 with headers for existing blob", async () => {
+    const data = new TextEncoder().encode("head check data");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "text/plain",
+      },
+      body: data,
+    });
+    const { hash } = (await uploadRes.json()) as { hash: string };
+
+    const headRes = await request(ctx.app, "HEAD", `/blobs/${hash}`, {
+      key: ctx.adminKey,
+    });
+    expect(headRes.status).toBe(200);
+    expect(headRes.headers.get("Content-Type")).toBe("text/plain");
+    expect(headRes.headers.get("Content-Length")).toBe(String(data.length));
+  });
+
+  it("returns 404 for unknown hash", async () => {
+    const fakeHash =
+      "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    const headRes = await request(ctx.app, "HEAD", `/blobs/${fakeHash}`, {
+      key: ctx.adminKey,
+    });
+    expect(headRes.status).toBe(404);
+  });
+
+  it("returns 400 for invalid hash format", async () => {
+    const headRes = await request(ctx.app, "HEAD", "/blobs/sha256:invalid", {
+      key: ctx.adminKey,
+    });
+    expect(headRes.status).toBe(400);
+  });
+
+  it("requires authentication", async () => {
+    const fakeHash =
+      "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    const headRes = await ctx.app.request(`/blobs/${fakeHash}`, {
+      method: "HEAD",
+    });
+    expect(headRes.status).toBe(401);
+  });
+});

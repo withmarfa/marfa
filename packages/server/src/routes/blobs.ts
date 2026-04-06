@@ -64,6 +64,32 @@ export function blobRoutes(
     return c.json({ hash, mime_type: mimeType, size: data.length }, 201);
   });
 
+  // HEAD /blobs/:hash — check blob existence without downloading
+  router.on("HEAD", "/:hash", async (c) => {
+    requireAuth(c);
+
+    let hash = c.req.param("hash");
+    if (!hash.startsWith("sha256:")) {
+      hash = `sha256:${hash}`;
+    }
+    if (!isValidBlobHash(hash)) {
+      return new Response(null, { status: 400 });
+    }
+
+    const record = await storage.blobs.get(hash);
+    if (!record) {
+      return new Response(null, { status: 404 });
+    }
+
+    return new Response(null, {
+      status: 200,
+      headers: {
+        "Content-Type": record.mime_type,
+        "Content-Length": String(record.size),
+      },
+    });
+  });
+
   router.get("/:hash", async (c) => {
     requireAuth(c);
 

@@ -74,7 +74,10 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
 
     // Pre-validation for specific error codes
     if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
-      throw new MymeError(ErrorCode.INVALID_TYPE, "Invalid type identifier");
+      throw new MymeError(
+        ErrorCode.INVALID_TYPE,
+        "Invalid type identifier. Must be dot-separated lowercase segments (e.g. acme.deal). Forward slashes are not allowed.",
+      );
     }
     if (body.fields === undefined || body.fields === null) {
       throw new MymeError(
@@ -91,6 +94,14 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const schema = result.data;
+
+    // Auto-generate label from type ID if not provided
+    if (!schema.label) {
+      const lastSegment = schema.id.split(".").pop() ?? schema.id;
+      schema.label = lastSegment
+        .replace(/[_-]/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+    }
 
     if (schema.parent) {
       validateParentChain(schema.id, schema.parent);
