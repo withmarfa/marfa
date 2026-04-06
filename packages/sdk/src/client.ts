@@ -410,6 +410,16 @@ export class MymeClient {
       return response.arrayBuffer();
     },
 
+    /** Check whether a blob exists without downloading it. */
+    exists: async (hash: string): Promise<boolean> => {
+      const cleanHash = hash.startsWith("sha256:") ? hash : `sha256:${hash}`;
+      const response = await this.transport.rawRequest(
+        "HEAD",
+        `/blobs/${cleanHash}`,
+      );
+      return response.status === 200;
+    },
+
     /** Returns a direct CDN URL if configured, otherwise the API proxy URL. */
     url: (hash: string): string => {
       const cleanHash = hash.startsWith("sha256:") ? hash : `sha256:${hash}`;

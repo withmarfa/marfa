@@ -3,6 +3,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import type { BlobBackend } from "./blob-backend.js";
 
@@ -98,6 +99,15 @@ export class S3BlobBackend implements BlobBackend {
       if (isNoSuchKey(err) || isNotFound(err)) return false;
       throw err;
     }
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.client.send(
+      new DeleteObjectCommand({
+        Bucket: this.bucket,
+        Key: this.prefixedKey(key),
+      }),
+    );
   }
 
   async getPresignedUrl(key: string, ttlSeconds = 3600): Promise<string> {

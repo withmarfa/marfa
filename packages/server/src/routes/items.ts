@@ -13,6 +13,7 @@ import type { ItemState } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
+  requireAdmin,
   requireTypeAccess,
   getTypeFilter,
 } from "../middleware/auth.js";
@@ -319,7 +320,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
         const validation = validateProperties(item.type, merged);
         if (!validation.success) {
           throw new MymeError(
-            ErrorCode.VALIDATION_ERROR,
+            ErrorCode.INVALID_PROPERTIES,
             "Invalid properties",
             {
               errors: validation.errors,
@@ -533,6 +534,19 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     const metadata = await storage.metadata.addTags(id, tags);
     return c.json({ metadata });
+  });
+
+  // DELETE /items/:id/purge — permanently delete a trashed item (admin only)
+  router.delete("/:id/purge", async (c) => {
+    const id = c.req.param("id");
+    if (!isValidId(id)) {
+      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+    }
+
+    requireAdmin(c);
+    const tenantId = c.get("apiKey")?.tenant_id;
+    await storage.items.purge(id, tenantId);
+    return c.json({ ok: true });
   });
 
   // DELETE /items/:id/tags/:tag

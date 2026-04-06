@@ -28,6 +28,9 @@ export enum ErrorCode {
   TYPE_IN_USE = "type_in_use",
   CORE_TYPE_IMMUTABLE = "core_type_immutable",
   WEBHOOK_NOT_FOUND = "webhook_not_found",
+  BLOB_TOO_LARGE = "blob_too_large",
+  INVALID_PROPERTIES = "invalid_properties",
+  INVALID_SCHEMA = "invalid_schema",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -58,6 +61,9 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.TYPE_IN_USE]: 409,
   [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,
   [ErrorCode.WEBHOOK_NOT_FOUND]: 404,
+  [ErrorCode.BLOB_TOO_LARGE]: 413,
+  [ErrorCode.INVALID_PROPERTIES]: 400,
+  [ErrorCode.INVALID_SCHEMA]: 400,
 };
 
 /** Returns the HTTP status code for a given error code. */

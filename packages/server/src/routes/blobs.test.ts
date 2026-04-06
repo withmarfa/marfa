@@ -112,3 +112,135 @@ describe("GET /blobs/:hash", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("HEAD /blobs/:hash", () => {
+  it("returns 200 with headers for existing blob", async () => {
+    const data = new TextEncoder().encode("head check data");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "text/plain",
+      },
+      body: data,
+    });
+    const { hash } = (await uploadRes.json()) as { hash: string };
+
+    const headRes = await request(ctx.app, "HEAD", `/blobs/${hash}`, {
+      key: ctx.adminKey,
+    });
+    expect(headRes.status).toBe(200);
+    expect(headRes.headers.get("Content-Type")).toBe("text/plain");
+    expect(headRes.headers.get("Content-Length")).toBe(String(data.length));
+  });
+
+  it("returns 404 for unknown hash", async () => {
+    const fakeHash =
+      "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    const headRes = await request(ctx.app, "HEAD", `/blobs/${fakeHash}`, {
+      key: ctx.adminKey,
+    });
+    expect(headRes.status).toBe(404);
+  });
+
+  it("returns 400 for invalid hash format", async () => {
+    const headRes = await request(ctx.app, "HEAD", "/blobs/sha256:invalid", {
+      key: ctx.adminKey,
+    });
+    expect(headRes.status).toBe(400);
+  });
+
+  it("requires authentication", async () => {
+    const fakeHash =
+      "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    const headRes = await ctx.app.request(`/blobs/${fakeHash}`, {
+      method: "HEAD",
+    });
+    expect(headRes.status).toBe(401);
+  });
+});
+
+describe("POST /blobs/cleanup", () => {
+  it("reports orphaned blobs in dry-run mode", async () => {
+    // Upload a blob without creating an item referencing it
+    const data = new TextEncoder().encode("orphan blob content");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: data,
+    });
+    expect(uploadRes.status).toBe(201);
+
+    const cleanupRes = await request(
+      ctx.app,
+      "POST",
+      "/blobs/cleanup?dry_run=true",
+      { key: ctx.adminKey },
+    );
+    expect(cleanupRes.status).toBe(200);
+    const body = (await cleanupRes.json()) as {
+      total_blobs: number;
+      orphaned: number;
+      removed: number;
+      dry_run: boolean;
+    };
+    expect(body.dry_run).toBe(true);
+    expect(body.removed).toBe(0);
+    expect(body.orphaned).toBeGreaterThan(0);
+  });
+
+  it("detects blob hashes in non-standard property fields", async () => {
+    // Upload a blob and reference it via a non-standard field name
+    const data = new TextEncoder().encode("custom field blob");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: data,
+    });
+    const { hash } = (await uploadRes.json()) as { hash: string };
+
+    // Create an item referencing the blob via a custom field name
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "has a logo", logo_blob_hash: hash },
+      },
+    });
+
+    // The blob referenced via logo_blob_hash should be detected as referenced
+    const cleanupRes = await request(
+      ctx.app,
+      "POST",
+      "/blobs/cleanup?dry_run=true",
+      { key: ctx.adminKey },
+    );
+    const body = (await cleanupRes.json()) as {
+      total_blobs: number;
+      referenced: number;
+      orphaned: number;
+    };
+    expect(body.referenced).toBeGreaterThan(0);
+  });
+
+  it("removes orphaned blobs when not dry-run", async () => {
+    const cleanupRes = await request(ctx.app, "POST", "/blobs/cleanup", {
+      key: ctx.adminKey,
+    });
+    expect(cleanupRes.status).toBe(200);
+    const body = (await cleanupRes.json()) as {
+      total_blobs: number;
+      orphaned: number;
+      removed: number;
+      dry_run: boolean;
+    };
+    expect(body.dry_run).toBe(false);
+    expect(body.removed).toBe(body.orphaned);
+  });
+});

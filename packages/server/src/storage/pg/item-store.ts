@@ -538,6 +538,24 @@ export class PgItemStore implements ItemStore {
     await this.searchStore.remove(id);
   }
 
+  async purge(id: string, tenantId?: string): Promise<void> {
+    const row = await this.getRaw(id, tenantId);
+    if (!row) {
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+    }
+    if (row.state !== "trashed") {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Only trashed items can be purged",
+      );
+    }
+
+    // Cascade: metadata and versions are deleted via ON DELETE CASCADE.
+    // Search index must be removed explicitly.
+    await this.db.delete(items).where(this.tenantWhere(id, tenantId));
+    await this.searchStore.remove(id);
+  }
+
   async restore(id: string, tenantId?: string): Promise<Item> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {
