@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { MymeError, ErrorCode, isValidBlobHash } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 
@@ -147,6 +147,74 @@ export function blobRoutes(
     const ttl = Number(c.req.query("ttl")) || 3600;
     const url = await blobBackend.getPresignedUrl(hash, ttl);
     return c.json({ url, expires_in: ttl });
+  });
+
+  // POST /blobs/cleanup — remove unreferenced blobs (admin only)
+  router.post("/cleanup", async (c) => {
+    requireAdmin(c);
+
+    const dryRun = c.req.query("dry_run") === "true";
+    const tenantId = c.get("apiKey")?.tenant_id;
+
+    // Collect all blob hashes registered in the store
+    const allHashes = await storage.blobs.listAll();
+
+    // Collect all blob_ref values referenced by items (paginate through all)
+    const referencedHashes = new Set<string>();
+    let cursor: string | undefined;
+    let hasMore = true;
+    while (hasMore) {
+      const page = await storage.items.list({
+        tenantId,
+        limit: 200,
+        cursor,
+      });
+      for (const item of page.data) {
+        const blobRef = item.properties?.blob_ref;
+        if (typeof blobRef === "string") {
+          referencedHashes.add(blobRef);
+        }
+      }
+      cursor = page.cursor ?? undefined;
+      hasMore = page.has_more;
+    }
+
+    // Also check trashed items — don't remove blobs for items still in trash
+    let trashedCursor: string | undefined;
+    hasMore = true;
+    while (hasMore) {
+      const page = await storage.items.list({
+        tenantId,
+        state: "trashed",
+        limit: 200,
+        cursor: trashedCursor,
+      });
+      for (const item of page.data) {
+        const blobRef = item.properties?.blob_ref;
+        if (typeof blobRef === "string") {
+          referencedHashes.add(blobRef);
+        }
+      }
+      trashedCursor = page.cursor ?? undefined;
+      hasMore = page.has_more;
+    }
+
+    const orphaned = allHashes.filter((h) => !referencedHashes.has(h));
+
+    if (!dryRun) {
+      for (const hash of orphaned) {
+        await blobBackend.delete(hash);
+        await storage.blobs.remove(hash);
+      }
+    }
+
+    return c.json({
+      total_blobs: allHashes.length,
+      referenced: referencedHashes.size,
+      orphaned: orphaned.length,
+      removed: dryRun ? 0 : orphaned.length,
+      dry_run: dryRun,
+    });
   });
 
   return router;

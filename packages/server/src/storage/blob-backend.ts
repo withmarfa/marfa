@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile, unlink } from "node:fs/promises";
 import { mkdirSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -10,6 +10,7 @@ export interface BlobBackend {
   put(key: string, bytes: Buffer, mimeType?: string): Promise<void>;
   get(key: string): Promise<Buffer | null>;
   exists(key: string): Promise<boolean>;
+  delete(key: string): Promise<void>;
   getPresignedUrl?(key: string, ttlSeconds: number): Promise<string>;
 }
 
@@ -67,6 +68,14 @@ export class FilesystemBlobBackend implements BlobBackend {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async delete(key: string): Promise<void> {
+    try {
+      await unlink(this.safePath(key));
+    } catch (err: unknown) {
+      if (!isEnoent(err)) throw err;
     }
   }
 }

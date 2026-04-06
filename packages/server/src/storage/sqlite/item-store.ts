@@ -561,6 +561,27 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
+  async purge(id: string, tenantId?: string): Promise<void> {
+    const row = this.getRaw(id, tenantId);
+    if (!row) {
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+    }
+    if (row.state !== "trashed") {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Only trashed items can be purged",
+      );
+    }
+
+    // Cascade: metadata and versions are deleted via ON DELETE CASCADE.
+    // Search index must be removed explicitly.
+    this.db.delete(items).where(this.tenantWhere(id, tenantId)).run();
+
+    this.searchStore.remove(id).catch((e: unknown) => {
+      console.error("Search remove failed:", e);
+    });
+  }
+
   async restore(id: string, tenantId?: string): Promise<Item> {
     const row = this.getRaw(id, tenantId);
     if (!row) {

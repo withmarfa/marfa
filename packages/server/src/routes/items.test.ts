@@ -570,3 +570,59 @@ describe("GET /items?filter=...", () => {
     }
   });
 });
+
+describe("DELETE /items/:id/purge", () => {
+  it("permanently deletes a trashed item", async () => {
+    // Create and trash an item
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Purge me", title: "Temporary" },
+      },
+    });
+    const { item } = (await createRes.json()) as {
+      item: { id: string };
+    };
+
+    await request(ctx.app, "DELETE", `/items/${item.id}`, {
+      key: ctx.adminKey,
+    });
+
+    // Purge the trashed item
+    const purgeRes = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${item.id}/purge`,
+      { key: ctx.adminKey },
+    );
+    expect(purgeRes.status).toBe(200);
+
+    // Verify the item is gone
+    const getRes = await request(ctx.app, "GET", `/items/${item.id}`, {
+      key: ctx.adminKey,
+    });
+    expect(getRes.status).toBe(404);
+  });
+
+  it("rejects purge on non-trashed item", async () => {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Active item", title: "Active" },
+      },
+    });
+    const { item } = (await createRes.json()) as {
+      item: { id: string };
+    };
+
+    const purgeRes = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${item.id}/purge`,
+      { key: ctx.adminKey },
+    );
+    expect(purgeRes.status).toBe(400);
+  });
+});

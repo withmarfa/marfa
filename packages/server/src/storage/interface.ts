@@ -103,6 +103,7 @@ export interface ItemStore {
     tenantId?: string,
   ): Promise<Item | ConflictResponse>;
   delete(id: string, tenantId?: string): Promise<void>;
+  purge(id: string, tenantId?: string): Promise<void>;
   restore(id: string, tenantId?: string): Promise<Item>;
   transition(id: string, state: ItemState, tenantId?: string): Promise<Item>;
   stats(
@@ -196,6 +197,8 @@ export interface BlobStore {
   get(
     hash: string,
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null>;
+  listAll(): Promise<string[]>;
+  remove(hash: string): Promise<void>;
 }
 
 export interface WebhookStore {

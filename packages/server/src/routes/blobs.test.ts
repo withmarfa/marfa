@@ -159,3 +159,51 @@ describe("HEAD /blobs/:hash", () => {
     expect(headRes.status).toBe(401);
   });
 });
+
+describe("POST /blobs/cleanup", () => {
+  it("reports orphaned blobs in dry-run mode", async () => {
+    // Upload a blob without creating an item referencing it
+    const data = new TextEncoder().encode("orphan blob content");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: data,
+    });
+    expect(uploadRes.status).toBe(201);
+
+    const cleanupRes = await request(
+      ctx.app,
+      "POST",
+      "/blobs/cleanup?dry_run=true",
+      { key: ctx.adminKey },
+    );
+    expect(cleanupRes.status).toBe(200);
+    const body = (await cleanupRes.json()) as {
+      total_blobs: number;
+      orphaned: number;
+      removed: number;
+      dry_run: boolean;
+    };
+    expect(body.dry_run).toBe(true);
+    expect(body.removed).toBe(0);
+    expect(body.orphaned).toBeGreaterThan(0);
+  });
+
+  it("removes orphaned blobs when not dry-run", async () => {
+    const cleanupRes = await request(ctx.app, "POST", "/blobs/cleanup", {
+      key: ctx.adminKey,
+    });
+    expect(cleanupRes.status).toBe(200);
+    const body = (await cleanupRes.json()) as {
+      total_blobs: number;
+      orphaned: number;
+      removed: number;
+      dry_run: boolean;
+    };
+    expect(body.dry_run).toBe(false);
+    expect(body.removed).toBe(body.orphaned);
+  });
+});

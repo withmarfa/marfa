@@ -33,4 +33,13 @@ export class PgBlobStore implements BlobStore {
       storage_path: row.storage_path,
     };
   }
+
+  async listAll(): Promise<string[]> {
+    const rows = await this.db.select({ hash: blobs.hash }).from(blobs);
+    return rows.map((r) => r.hash);
+  }
+
+  async remove(hash: string): Promise<void> {
+    await this.db.delete(blobs).where(eq(blobs.hash, hash));
+  }
 }

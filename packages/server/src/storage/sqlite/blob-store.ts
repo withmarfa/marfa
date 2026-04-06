@@ -32,4 +32,17 @@ export class SqliteBlobStore implements BlobStore {
       storage_path: row.storage_path,
     });
   }
+
+  listAll(): Promise<string[]> {
+    const rows = this.db
+      .select({ hash: blobs.hash })
+      .from(blobs)
+      .all();
+    return Promise.resolve(rows.map((r) => r.hash));
+  }
+
+  remove(hash: string): Promise<void> {
+    this.db.delete(blobs).where(eq(blobs.hash, hash)).run();
+    return Promise.resolve();
+  }
 }
