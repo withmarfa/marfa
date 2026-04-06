@@ -170,7 +170,7 @@ export function blobRoutes(
         cursor,
       });
       for (const item of page.data) {
-        const blobRef = item.properties?.blob_ref;
+        const blobRef = item.properties.blob_ref;
         if (typeof blobRef === "string") {
           referencedHashes.add(blobRef);
         }
@@ -190,7 +190,7 @@ export function blobRoutes(
         cursor: trashedCursor,
       });
       for (const item of page.data) {
-        const blobRef = item.properties?.blob_ref;
+        const blobRef = item.properties.blob_ref;
         if (typeof blobRef === "string") {
           referencedHashes.add(blobRef);
         }

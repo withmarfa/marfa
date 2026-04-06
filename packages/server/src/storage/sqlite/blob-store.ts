@@ -34,10 +34,7 @@ export class SqliteBlobStore implements BlobStore {
   }
 
   listAll(): Promise<string[]> {
-    const rows = this.db
-      .select({ hash: blobs.hash })
-      .from(blobs)
-      .all();
+    const rows = this.db.select({ hash: blobs.hash }).from(blobs).all();
     return Promise.resolve(rows.map((r) => r.hash));
   }
 
