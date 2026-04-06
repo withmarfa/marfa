@@ -88,7 +88,7 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
 
     const result = validateTypeSchema(body);
     if (!result.success) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid type schema", {
+      throw new MymeError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
         errors: result.errors,
       });
     }
@@ -146,7 +146,7 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     const body = await c.req.json();
     const result = validateTypeSchema({ ...body, id });
     if (!result.success) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid type schema", {
+      throw new MymeError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
         errors: result.errors,
       });
     }

@@ -44,7 +44,7 @@ export function blobRoutes(
 
     if (data.length > MAX_BLOB_SIZE) {
       throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
+        ErrorCode.BLOB_TOO_LARGE,
         `Blob exceeds maximum size of ${String(MAX_BLOB_SIZE)} bytes`,
       );
     }

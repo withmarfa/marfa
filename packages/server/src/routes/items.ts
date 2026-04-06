@@ -320,7 +320,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
         const validation = validateProperties(item.type, merged);
         if (!validation.success) {
           throw new MymeError(
-            ErrorCode.VALIDATION_ERROR,
+            ErrorCode.INVALID_PROPERTIES,
             "Invalid properties",
             {
               errors: validation.errors,
