@@ -47,6 +47,15 @@ export class SqliteSearchStore implements SearchStore {
     itemId: string,
     properties: Record<string, unknown>,
   ): Promise<void> {
+    this.indexSync(itemId, properties);
+  }
+
+  async remove(itemId: string): Promise<void> {
+    this.removeSync(itemId);
+  }
+
+  /** Synchronous version for use within SQLite transactions. */
+  indexSync(itemId: string, properties: Record<string, unknown>): void {
     const text = extractSearchableText(properties);
     this.raw
       .prepare(
@@ -56,7 +65,8 @@ export class SqliteSearchStore implements SearchStore {
       .run(itemId, text.title, text.body, text.description, text.name);
   }
 
-  async remove(itemId: string): Promise<void> {
+  /** Synchronous version for use within SQLite transactions. */
+  removeSync(itemId: string): void {
     this.raw.prepare("DELETE FROM items_fts WHERE item_id = ?").run(itemId);
   }
 

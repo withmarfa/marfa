@@ -1,4 +1,4 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, lte, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { WebhookDelivery } from "@mymehq/shared";
 import type { WebhookDeliveryStore } from "../interface.js";
@@ -56,5 +56,129 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .limit(limit)
       .all();
     return Promise.resolve(rows.map(rowToDelivery));
+  }
+
+  schedule(entry: {
+    webhookId: string;
+    event: string;
+    payload: string;
+    webhookUrl: string;
+    webhookSecret: string;
+    nextAttemptAt: string;
+  }): Promise<string> {
+    const id = generateId();
+    this.db
+      .insert(webhookDeliveries)
+      .values({
+        id,
+        webhook_id: entry.webhookId,
+        event: entry.event,
+        status_code: null,
+        attempt: 0,
+        success: 0,
+        error: null,
+        created_at: new Date().toISOString(),
+        next_attempt_at: entry.nextAttemptAt,
+        payload: entry.payload,
+        webhook_url: entry.webhookUrl,
+        webhook_secret: entry.webhookSecret,
+        max_attempts: 4,
+        status: 'pending',
+      })
+      .run();
+    return Promise.resolve(id);
+  }
+
+  getPending(
+    now: string,
+    limit = 50,
+  ): Promise<
+    Array<{
+      id: string;
+      webhook_id: string;
+      event: string;
+      payload: string;
+      webhook_url: string;
+      webhook_secret: string;
+      attempt: number;
+      max_attempts: number;
+    }>
+  > {
+    const rows = this.db
+      .select({
+        id: webhookDeliveries.id,
+        webhook_id: webhookDeliveries.webhook_id,
+        event: webhookDeliveries.event,
+        payload: webhookDeliveries.payload,
+        webhook_url: webhookDeliveries.webhook_url,
+        webhook_secret: webhookDeliveries.webhook_secret,
+        attempt: webhookDeliveries.attempt,
+        max_attempts: webhookDeliveries.max_attempts,
+      })
+      .from(webhookDeliveries)
+      .where(
+        and(
+          sql`${webhookDeliveries.status} = 'pending'`,
+          lte(webhookDeliveries.next_attempt_at, now),
+        ),
+      )
+      .limit(limit)
+      .all();
+    return Promise.resolve(
+      rows.map((r) => ({
+        id: r.id,
+        webhook_id: r.webhook_id,
+        event: r.event,
+        payload: r.payload ?? '',
+        webhook_url: r.webhook_url ?? '',
+        webhook_secret: r.webhook_secret ?? '',
+        attempt: r.attempt,
+        max_attempts: r.max_attempts,
+      })),
+    );
+  }
+
+  markSuccess(id: string, statusCode: number, attempt: number): Promise<void> {
+    this.db
+      .update(webhookDeliveries)
+      .set({
+        status: 'success',
+        success: 1,
+        status_code: statusCode,
+        attempt,
+      })
+      .where(eq(webhookDeliveries.id, id))
+      .run();
+    return Promise.resolve();
+  }
+
+  markFailed(
+    id: string,
+    statusCode: number | undefined,
+    error: string,
+    attempt: number,
+    nextAttemptAt: string | null,
+  ): Promise<void> {
+    this.db
+      .update(webhookDeliveries)
+      .set({
+        status_code: statusCode ?? null,
+        error,
+        attempt,
+        next_attempt_at: nextAttemptAt,
+        status: nextAttemptAt === null ? 'dead_letter' : 'pending',
+      })
+      .where(eq(webhookDeliveries.id, id))
+      .run();
+    return Promise.resolve();
+  }
+
+  markDeadLetter(id: string): Promise<void> {
+    this.db
+      .update(webhookDeliveries)
+      .set({ status: 'dead_letter' })
+      .where(eq(webhookDeliveries.id, id))
+      .run();
+    return Promise.resolve();
   }
 }

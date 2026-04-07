@@ -16,6 +16,16 @@ export class SqliteVersionStore implements VersionStore {
     properties: Record<string, unknown>,
     deviceId?: string,
   ): Promise<Version> {
+    return this.createSync(itemId, version, properties, deviceId);
+  }
+
+  /** Synchronous version for use within SQLite transactions. */
+  createSync(
+    itemId: string,
+    version: number,
+    properties: Record<string, unknown>,
+    deviceId?: string,
+  ): Version {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),

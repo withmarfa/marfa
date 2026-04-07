@@ -151,6 +151,13 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
       body as Record<string, unknown>,
     );
 
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "extension.set",
+      resource_type: "item",
+      resource_id: id,
+      details: { namespace },
+    });
     return c.json({ extensions });
   });
 
@@ -195,6 +202,13 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const extensions = await storage.metadata.deleteExtension(id, namespace);
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "extension.delete",
+      resource_type: "item",
+      resource_id: id,
+      details: { namespace },
+    });
     return c.json({ extensions });
   });
 

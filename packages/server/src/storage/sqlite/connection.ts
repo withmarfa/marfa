@@ -205,6 +205,19 @@ export function createConnection(sqlitePath: string): {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id TEXT PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      key_id TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      details TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_resource_type ON audit_log(resource_type);
   `);
 
   // Migrations for existing databases
@@ -224,6 +237,49 @@ export function createConnection(sqlitePath: string): {
       "ALTER TABLE api_keys ADD COLUMN extension_permissions TEXT NOT NULL DEFAULT '{}'",
     );
   }
+
+  // Durable webhook retry columns
+  try {
+    sqlite.exec(
+      "ALTER TABLE webhook_deliveries ADD COLUMN next_attempt_at TEXT",
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    sqlite.exec("ALTER TABLE webhook_deliveries ADD COLUMN payload TEXT");
+  } catch {
+    /* column already exists */
+  }
+  try {
+    sqlite.exec("ALTER TABLE webhook_deliveries ADD COLUMN webhook_url TEXT");
+  } catch {
+    /* column already exists */
+  }
+  try {
+    sqlite.exec(
+      "ALTER TABLE webhook_deliveries ADD COLUMN webhook_secret TEXT",
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    sqlite.exec(
+      "ALTER TABLE webhook_deliveries ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 4",
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    sqlite.exec(
+      "ALTER TABLE webhook_deliveries ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
+    );
+  } catch {
+    /* column already exists */
+  }
+  sqlite.exec(
+    "CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending ON webhook_deliveries(next_attempt_at) WHERE status = 'pending'",
+  );
 
   // Create FTS5 virtual table
   sqlite.exec(CREATE_FTS);

@@ -17,6 +17,7 @@ import { authRoutes } from "./routes/oauth.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
 import { webhookRoutes } from "./routes/webhooks.js";
+import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
@@ -56,6 +57,7 @@ export function createApp(
     "events",
     "webhooks",
     "type_crud",
+    "audit",
     "metrics",
   ];
   if (config.enableGraphql) {
@@ -106,6 +108,7 @@ export function createApp(
   }
   app.route("/events", eventRoutes());
   app.route("/webhooks", webhookRoutes(storage));
+  app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
 
   return app;

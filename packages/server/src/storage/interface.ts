@@ -223,6 +223,38 @@ export interface WebhookDeliveryStore {
     error?: string;
   }): Promise<void>;
   list(webhookId: string, limit?: number): Promise<WebhookDelivery[]>;
+  schedule(entry: {
+    webhookId: string;
+    event: string;
+    payload: string;
+    webhookUrl: string;
+    webhookSecret: string;
+    nextAttemptAt: string;
+  }): Promise<string>;
+  getPending(
+    now: string,
+    limit?: number,
+  ): Promise<
+    Array<{
+      id: string;
+      webhook_id: string;
+      event: string;
+      payload: string;
+      webhook_url: string;
+      webhook_secret: string;
+      attempt: number;
+      max_attempts: number;
+    }>
+  >;
+  markSuccess(id: string, statusCode: number, attempt: number): Promise<void>;
+  markFailed(
+    id: string,
+    statusCode: number | undefined,
+    error: string,
+    attempt: number,
+    nextAttemptAt: string | null,
+  ): Promise<void>;
+  markDeadLetter(id: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +339,40 @@ export interface OAuthStore {
 }
 
 // ---------------------------------------------------------------------------
+// Audit store
+// ---------------------------------------------------------------------------
+
+export interface AuditEntry {
+  id: string;
+  timestamp: string;
+  key_id: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface AuditStore {
+  log(entry: {
+    key_id?: string;
+    action: string;
+    resource_type: string;
+    resource_id?: string;
+    details?: Record<string, unknown>;
+  }): Promise<void>;
+  list(filters: {
+    action?: string;
+    resource_type?: string;
+    resource_id?: string;
+    since?: string;
+    until?: string;
+    limit?: number;
+    cursor?: string;
+  }): Promise<PaginatedResult<AuditEntry>>;
+  cleanup(retentionDays: number): Promise<number>;
+}
+
+// ---------------------------------------------------------------------------
 // Aggregate storage interface
 // ---------------------------------------------------------------------------
 
@@ -322,6 +388,7 @@ export interface Storage {
   oauth: OAuthStore;
   webhooks: WebhookStore;
   webhookDeliveries: WebhookDeliveryStore;
+  audit: AuditStore;
   users?: UserStore;
   tenants?: TenantStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;

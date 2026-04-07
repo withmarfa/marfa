@@ -235,6 +235,12 @@ export const webhookDeliveries = sqliteTable(
     success: integer("success").notNull().default(0),
     error: text("error"),
     created_at: text("created_at").notNull(),
+    next_attempt_at: text("next_attempt_at"),
+    payload: text("payload"),
+    webhook_url: text("webhook_url"),
+    webhook_secret: text("webhook_secret"),
+    max_attempts: integer("max_attempts").notNull().default(4),
+    status: text("status").notNull().default("pending"),
   },
   (table) => [index("idx_webhook_deliveries_webhook_id").on(table.webhook_id)],
 );
@@ -252,3 +258,25 @@ export const oauthCodes = sqliteTable("oauth_codes", {
   used_at: text("used_at"),
   created_at: text("created_at").notNull(),
 });
+
+// ---------------------------------------------------------------------------
+// audit_log (append-only audit trail)
+// ---------------------------------------------------------------------------
+
+export const auditLog = sqliteTable(
+  "audit_log",
+  {
+    id: text("id").primaryKey(),
+    timestamp: text("timestamp").notNull(),
+    key_id: text("key_id"),
+    action: text("action").notNull(),
+    resource_type: text("resource_type").notNull(),
+    resource_id: text("resource_id"),
+    details: text("details").notNull().default("{}"),
+  },
+  (table) => [
+    index("idx_audit_log_timestamp").on(table.timestamp),
+    index("idx_audit_log_action").on(table.action),
+    index("idx_audit_log_resource_type").on(table.resource_type),
+  ],
+);

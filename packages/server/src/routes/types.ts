@@ -116,6 +116,12 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
 
     const tenantId = c.get("apiKey")?.tenant_id;
     const created = await storage.types.create(schema, tenantId);
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "type.register",
+      resource_type: "type",
+      resource_id: schema.id,
+    });
     return c.json({ type: created }, 201);
   });
 
@@ -173,6 +179,12 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const updated = await storage.types.update(id, schema);
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "type.update",
+      resource_type: "type",
+      resource_id: id,
+    });
     return c.json({ type: updated });
   });
 
@@ -210,6 +222,12 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     await storage.types.delete(id);
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "type.delete",
+      resource_type: "type",
+      resource_id: id,
+    });
     return c.json({ ok: true });
   });
 

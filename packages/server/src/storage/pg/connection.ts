@@ -168,6 +168,19 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id TEXT PRIMARY KEY,
+  timestamp TEXT NOT NULL,
+  key_id TEXT,
+  action TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT,
+  details TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_resource_type ON audit_log(resource_type);
 `;
 
 export async function createConnection(connectionString: string): Promise<{
@@ -194,6 +207,16 @@ export async function createConnection(connectionString: string): Promise<{
       ALTER TABLE threads ADD COLUMN IF NOT EXISTS tenant_id TEXT;
       ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS tenant_id TEXT;
       ALTER TABLE custom_types ADD COLUMN IF NOT EXISTS tenant_id TEXT;
+      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS next_attempt_at TEXT;
+      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS payload TEXT;
+      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS webhook_url TEXT;
+      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
+      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 4;
+      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+    `);
+    await client.unsafe(`
+      CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending
+        ON webhook_deliveries(next_attempt_at) WHERE status = 'pending';
     `);
 
     // Row Level Security — defense-in-depth for multi-tenant isolation.

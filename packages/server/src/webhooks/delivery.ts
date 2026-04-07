@@ -1,22 +1,24 @@
-import { createHmac } from "node:crypto";
-import { matchesTypePattern } from "@mymehq/shared";
-import type { Webhook } from "@mymehq/shared";
+import { createHmac } from 'node:crypto';
+import { matchesTypePattern } from '@mymehq/shared';
+import type { Webhook } from '@mymehq/shared';
 import type {
   WebhookStore,
   WebhookDeliveryStore,
-} from "../storage/interface.js";
-import { subscribe } from "../graphql/pubsub.js";
-import { log } from "../middleware/logger.js";
-import type { ItemEvent } from "../graphql/pubsub.js";
+} from '../storage/interface.js';
+import { subscribe } from '../graphql/pubsub.js';
+import { log } from '../middleware/logger.js';
+import type { ItemEvent } from '../graphql/pubsub.js';
 
 /** Maps pubsub event types to webhook event names. */
-function toWebhookEvent(type: ItemEvent["type"]): string {
+function toWebhookEvent(type: ItemEvent['type']): string {
   return `item.${type}`;
 }
 
 /** Signs a payload with HMAC-SHA256 using the webhook secret. */
 function sign(payload: string, secret: string): string {
-  return "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
+  return (
+    'sha256=' + createHmac('sha256', secret).update(payload).digest('hex')
+  );
 }
 
 /** Retry delays in milliseconds. */
@@ -54,7 +56,7 @@ export class WebhookConsumer {
     } catch (err) {
       // AbortError on shutdown is expected
       if (this.running) {
-        log("error", "Webhook consumer error", {
+        log('error', 'Webhook consumer error', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -66,7 +68,7 @@ export class WebhookConsumer {
     try {
       webhooks = await this.webhookStore.listActive();
     } catch (err) {
-      log("error", "Failed to load active webhooks", {
+      log('error', 'Failed to load active webhooks', {
         error: err instanceof Error ? err.message : String(err),
       });
       return;
@@ -98,121 +100,147 @@ export class WebhookConsumer {
       delivered_at: new Date().toISOString(),
     });
 
+    // Schedule deliveries in the database for durable retry
     await Promise.allSettled(
-      matching.map((w) => this.deliverToWebhook(w, payload, eventName)),
+      matching.map((w) =>
+        this.deliveryStore
+          .schedule({
+            webhookId: w.id,
+            event: eventName,
+            payload,
+            webhookUrl: w.url,
+            webhookSecret: w.secret,
+            nextAttemptAt: new Date().toISOString(),
+          })
+          .catch((err: unknown) => {
+            log('error', 'Failed to schedule webhook delivery', {
+              webhook_id: w.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }),
+      ),
     );
   }
+}
 
-  private async deliverToWebhook(
-    webhook: Webhook,
-    payload: string,
-    eventName: string,
-  ): Promise<void> {
-    const signature = sign(payload, webhook.secret);
+// ---------------------------------------------------------------------------
+// WebhookPoller — picks up pending deliveries from the database and attempts
+// HTTP delivery with durable retry. Survives server restarts.
+// ---------------------------------------------------------------------------
 
-    for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => {
-          controller.abort();
-        }, 10_000);
+interface PendingDelivery {
+  id: string;
+  webhook_id: string;
+  event: string;
+  payload: string;
+  webhook_url: string;
+  webhook_secret: string;
+  attempt: number;
+  max_attempts: number;
+}
 
-        const response = await fetch(webhook.url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Myme-Signature": signature,
-            "X-Myme-Event": eventName,
-          },
-          body: payload,
-          signal: controller.signal,
-        });
+export class WebhookPoller {
+  private interval: ReturnType<typeof setInterval> | null = null;
 
-        clearTimeout(timeout);
+  constructor(private deliveryStore: WebhookDeliveryStore) {}
 
-        if (response.ok) {
-          await this.logDelivery(
-            webhook.id,
-            eventName,
-            response.status,
-            attempt + 1,
-            true,
-          );
-          return;
-        }
+  start(): void {
+    // Poll every 30 seconds for pending deliveries
+    this.interval = setInterval(() => void this.poll(), 30_000);
+    // Also poll immediately on start to pick up any pending from before restart
+    void this.poll();
+  }
 
-        // Don't retry client errors (4xx) — they won't succeed on retry
-        if (response.status >= 400 && response.status < 500) {
-          await this.logDelivery(
-            webhook.id,
-            eventName,
-            response.status,
-            attempt + 1,
-            false,
-          );
-          return;
-        }
-
-        // Server error — log and fall through to retry
-        await this.logDelivery(
-          webhook.id,
-          eventName,
-          response.status,
-          attempt + 1,
-          false,
-        );
-        if (attempt < RETRY_DELAYS.length) {
-          await this.delay(RETRY_DELAYS[attempt] ?? 1000);
-        }
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        await this.logDelivery(
-          webhook.id,
-          eventName,
-          undefined,
-          attempt + 1,
-          false,
-          errMsg,
-        );
-        // Network error or timeout — retry if attempts remain
-        if (attempt >= RETRY_DELAYS.length) {
-          log("error", "Webhook delivery failed after max attempts", {
-            webhook_id: webhook.id,
-            url: webhook.url,
-            attempts: RETRY_DELAYS.length + 1,
-          });
-        } else {
-          await this.delay(RETRY_DELAYS[attempt] ?? 1000);
-        }
-      }
+  stop(): void {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
     }
   }
 
-  private async logDelivery(
-    webhookId: string,
-    event: string,
-    statusCode: number | undefined,
-    attempt: number,
-    success: boolean,
-    error?: string,
-  ): Promise<void> {
+  private async poll(): Promise<void> {
     try {
-      await this.deliveryStore.log({
-        webhookId,
-        event,
-        statusCode,
-        attempt,
-        success,
-        error,
-      });
+      const pending = await this.deliveryStore.getPending(
+        new Date().toISOString(),
+        50,
+      );
+      await Promise.allSettled(pending.map((d) => this.attempt(d)));
     } catch (err) {
-      log("error", "Failed to log webhook delivery", {
+      log('error', 'Webhook poller error', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  private async attempt(delivery: PendingDelivery): Promise<void> {
+    const nextAttempt = delivery.attempt + 1;
+    const signature = sign(delivery.payload, delivery.webhook_secret);
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+
+      const response = await fetch(delivery.webhook_url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Myme-Signature': signature,
+          'X-Myme-Event': delivery.event,
+        },
+        body: delivery.payload,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (response.ok) {
+        await this.deliveryStore.markSuccess(
+          delivery.id,
+          response.status,
+          nextAttempt,
+        );
+        return;
+      }
+
+      // 4xx: don't retry, mark as dead letter
+      if (response.status >= 400 && response.status < 500) {
+        await this.deliveryStore.markDeadLetter(delivery.id);
+        return;
+      }
+
+      // 5xx: retry if attempts remain
+      await this.scheduleRetry(delivery, nextAttempt, response.status);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await this.scheduleRetry(delivery, nextAttempt, undefined, errMsg);
+    }
+  }
+
+  private async scheduleRetry(
+    delivery: PendingDelivery,
+    attempt: number,
+    statusCode: number | undefined,
+    error?: string,
+  ): Promise<void> {
+    if (attempt >= delivery.max_attempts) {
+      await this.deliveryStore.markFailed(
+        delivery.id,
+        statusCode,
+        error ?? 'Max attempts reached',
+        attempt,
+        null,
+      );
+      return;
+    }
+
+    const delayMs = RETRY_DELAYS[attempt - 1] ?? 25000;
+    const nextAttemptAt = new Date(Date.now() + delayMs).toISOString();
+    await this.deliveryStore.markFailed(
+      delivery.id,
+      statusCode,
+      error ?? `HTTP ${statusCode}`,
+      attempt,
+      nextAttemptAt,
+    );
   }
 }

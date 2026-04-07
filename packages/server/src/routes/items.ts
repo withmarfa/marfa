@@ -118,6 +118,13 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     const metadata = await storage.metadata.get(item.id);
     publish({ type: "created", item, metadata, tenantId });
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "item.create",
+      resource_type: "item",
+      resource_id: item.id,
+      details: { type: item.type },
+    });
     return c.json({ item, metadata }, 201);
   });
 
@@ -369,6 +376,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     const metadata = await storage.metadata.get(id);
     publish({ type: "updated", item: result, metadata, tenantId: tid });
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "item.update",
+      resource_type: "item",
+      resource_id: id,
+    });
     return c.json({ item: result, metadata });
   });
 
@@ -391,6 +404,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
         tenantId: tid,
       });
     }
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "item.delete",
+      resource_type: "item",
+      resource_id: id,
+    });
     return c.json({ ok: true });
   });
 
@@ -407,6 +426,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     requireTypeAccess(c, restored.type, "write");
     const metadata = await storage.metadata.get(id);
     publish({ type: "restored", item: restored, metadata, tenantId });
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "item.restore",
+      resource_type: "item",
+      resource_id: id,
+    });
     return c.json({ item: restored, metadata });
   });
 
@@ -440,6 +465,13 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     );
     const metadata = await storage.metadata.get(id);
     publish({ type: "transitioned", item: updated, metadata, tenantId });
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "item.transition",
+      resource_type: "item",
+      resource_id: id,
+      details: { from_state: item.state, to_state: state },
+    });
     return c.json({ item: updated, metadata });
   });
 
@@ -594,6 +626,13 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
         "Maximum 100 tags per item (including existing tags)",
       );
     }
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "item.tag",
+      resource_type: "item",
+      resource_id: id,
+      details: { tags },
+    });
     return c.json({ metadata });
   });
 
@@ -607,6 +646,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     requireAdmin(c);
     const tenantId = c.get("apiKey")?.tenant_id;
     await storage.items.purge(id, tenantId);
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "item.purge",
+      resource_type: "item",
+      resource_id: id,
+    });
     return c.json({ ok: true });
   });
 
@@ -625,6 +670,13 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     requireTypeAccess(c, item.type, "write");
     const tag = decodeURIComponent(c.req.param("tag"));
     const metadata = await storage.metadata.removeTag(id, tag);
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "item.untag",
+      resource_type: "item",
+      resource_id: id,
+      details: { tag },
+    });
     return c.json({ metadata });
   });
 
