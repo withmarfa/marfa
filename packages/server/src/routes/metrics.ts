@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { TYPE_REGISTRY } from "@mymehq/shared";
+import { ALL_TYPES } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -30,23 +30,22 @@ export function metricsRoutes(storage: Storage) {
         storage.types.countCustom(),
       ]);
 
-    const total = Object.values(itemStats).reduce((a, b) => a + b, 0);
+    const total = Object.values(itemStats).reduce(
+      (a, b) => a + Number(b),
+      0,
+    );
 
     const response = {
       items: {
         total,
-        by_state: {
-          active: itemStats.active ?? 0,
-          archived: itemStats.archived ?? 0,
-          trashed: itemStats.trashed ?? 0,
-        },
+        by_state: itemStats,
       },
       blobs: {
-        count: blobStats.count,
-        total_bytes: blobStats.total_size,
+        count: Number(blobStats.count),
+        total_bytes: Number(blobStats.total_size),
       },
       types: {
-        core: TYPE_REGISTRY.size,
+        core: ALL_TYPES.length,
         custom: customTypeCount,
       },
       keys: {
