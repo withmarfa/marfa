@@ -47,7 +47,7 @@ export class PgBlobStore implements BlobStore {
     const [row] = await this.db
       .select({
         count: sql<number>`count(*)::int`,
-        total_size: sql<number>`coalesce(sum(${blobs.size}), 0)::bigint`,
+        total_size: sql<number>`coalesce(sum(${blobs.size}), 0)::int`,
       })
       .from(blobs);
     return {

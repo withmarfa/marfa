@@ -30,10 +30,7 @@ export function metricsRoutes(storage: Storage) {
         storage.types.countCustom(),
       ]);
 
-    const total = Object.values(itemStats).reduce(
-      (a, b) => a + Number(b),
-      0,
-    );
+    const total = Object.values(itemStats).reduce((a, b) => a + b, 0);
 
     const response = {
       items: {
@@ -41,8 +38,8 @@ export function metricsRoutes(storage: Storage) {
         by_state: itemStats,
       },
       blobs: {
-        count: Number(blobStats.count),
-        total_bytes: Number(blobStats.total_size),
+        count: blobStats.count,
+        total_bytes: blobStats.total_size,
       },
       types: {
         core: ALL_TYPES.length,
