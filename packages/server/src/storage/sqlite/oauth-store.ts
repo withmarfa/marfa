@@ -1,6 +1,6 @@
 import { safeJsonParse } from "../json-utils.js";
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, gt } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type {
   OAuthClient,
@@ -150,21 +150,22 @@ export class SqliteOAuthStore implements OAuthStore {
   async consumeCode(
     codeHash: string,
   ): Promise<(OAuthCode & { scopes: string[] }) | null> {
+    const now = new Date().toISOString();
+
+    // Single atomic UPDATE: sets used_at only if code exists, is unused, and not expired
     const row = this.db
-      .select()
-      .from(oauthCodes)
-      .where(eq(oauthCodes.code_hash, codeHash))
+      .update(oauthCodes)
+      .set({ used_at: now })
+      .where(
+        and(
+          eq(oauthCodes.code_hash, codeHash),
+          isNull(oauthCodes.used_at),
+          gt(oauthCodes.expires_at, now),
+        ),
+      )
+      .returning()
       .get();
     if (!row) return null;
-    if (row.used_at) return null;
-    if (new Date(row.expires_at) < new Date()) return null;
-
-    // Atomically mark as used
-    this.db
-      .update(oauthCodes)
-      .set({ used_at: new Date().toISOString() })
-      .where(and(eq(oauthCodes.id, row.id), isNull(oauthCodes.used_at)))
-      .run();
 
     // Fetch grant scopes
     const grant = this.db

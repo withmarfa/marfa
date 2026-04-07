@@ -34,3 +34,4 @@ seed/
 
 # Database and blob data
 data/
+.claude/worktrees/

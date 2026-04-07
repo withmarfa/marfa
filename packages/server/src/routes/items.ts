@@ -82,6 +82,19 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     requireTypeAccess(c, type, "write");
     const tenantId = c.get("apiKey")?.tenant_id;
 
+    if (Array.isArray(body.tags) && body.tags.length > 100) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Maximum 100 tags per item",
+      );
+    }
+    if (Array.isArray(body.about) && body.about.length > 100) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Maximum 100 about references per item",
+      );
+    }
+
     const item = await storage.items.create(
       {
         type,
@@ -483,6 +496,19 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const tags = (body.tags as string[] | undefined) ?? [];
     const about = (body.about as string[] | undefined) ?? [];
 
+    if (tags.length > 100) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Maximum 100 tags per item",
+      );
+    }
+    if (about.length > 100) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Maximum 100 about references per item",
+      );
+    }
+
     const metadata = await storage.metadata.set(id, tags, about);
     return c.json({ metadata });
   });
@@ -505,7 +531,36 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const tags = body.tags as string[] | undefined;
     const about = body.about as string[] | undefined;
 
+    // Pre-merge bounds check on incoming arrays
+    if (Array.isArray(tags) && tags.length > 100) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Maximum 100 tags per item",
+      );
+    }
+    if (Array.isArray(about) && about.length > 100) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Maximum 100 about references per item",
+      );
+    }
+
     const metadata = await storage.metadata.merge(id, tags, about);
+
+    // Post-merge bounds check (incoming may be small but merge could exceed)
+    if (metadata.tags.length > 100) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Maximum 100 tags per item (including existing tags)",
+      );
+    }
+    if (metadata.about.length > 100) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Maximum 100 about references per item (including existing)",
+      );
+    }
+
     return c.json({ metadata });
   });
 
@@ -533,6 +588,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const metadata = await storage.metadata.addTags(id, tags);
+    if (metadata.tags.length > 100) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Maximum 100 tags per item (including existing tags)",
+      );
+    }
     return c.json({ metadata });
   });
 

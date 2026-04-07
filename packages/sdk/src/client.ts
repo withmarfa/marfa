@@ -139,7 +139,7 @@ export class MymeClient {
 
     list: async (filters?: ListFilters): Promise<PaginatedResult<Item>> => {
       return this.transport.request<PaginatedResult<Item>>("GET", "/items", {
-        query: filters as Record<string, string | number | undefined>,
+        query: filters,
       });
     },
 
@@ -152,8 +152,8 @@ export class MymeClient {
         {
           query: {
             ...filters,
-            include: "metadata",
-          } as unknown as Record<string, string | number | undefined>,
+            include: 'metadata',
+          },
         },
       );
     },
@@ -345,7 +345,7 @@ export class MymeClient {
       return this.transport.request<PaginatedResult<Thread>>(
         "GET",
         "/threads",
-        { query: filters as Record<string, string | number | undefined> },
+        { query: filters },
       );
     },
 

@@ -32,7 +32,7 @@ export function createSqliteStorage(
     searchStore,
     options?.versionSnapshotIntervalMs,
   );
-  const metadataStore = new SqliteMetadataStore(db);
+  const metadataStore = new SqliteMetadataStore(db, raw);
   const threadStore = new SqliteThreadStore(db);
   const typeStore = new SqliteTypeStore(db, raw);
   const keyStore = new SqliteKeyStore(db);
