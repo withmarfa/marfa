@@ -197,6 +197,13 @@ export function blobRoutes(
         for (const item of page.data) {
           collectBlobHashes(item.properties, referencedHashes);
         }
+
+        // Also scan metadata extensions for blob references
+        const ids = page.data.map((item) => item.id);
+        const metadataList = await storage.metadata.getMany(ids);
+        for (const meta of metadataList) {
+          collectBlobHashes(meta.extensions, referencedHashes);
+        }
         cursor = page.cursor ?? undefined;
         hasMore = page.has_more;
       }
