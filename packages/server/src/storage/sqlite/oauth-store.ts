@@ -165,6 +165,7 @@ export class SqliteOAuthStore implements OAuthStore {
       )
       .returning()
       .get();
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- row is undefined when UPDATE matches no rows
     if (!row) return null;
 
     // Fetch grant scopes

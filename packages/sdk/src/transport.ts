@@ -34,7 +34,9 @@ export class HttpTransport {
     path: string,
     options?: {
       body?: unknown;
-      query?: Record<string, string | number | boolean | string[] | undefined> | object;
+      query?:
+        | Record<string, string | number | boolean | string[] | undefined>
+        | object;
     },
   ): Promise<T> {
     const response = await this.rawRequest(method, path, options);
@@ -62,7 +64,9 @@ export class HttpTransport {
     path: string,
     options?: {
       body?: unknown;
-      query?: Record<string, string | number | boolean | string[] | undefined> | object;
+      query?:
+        | Record<string, string | number | boolean | string[] | undefined>
+        | object;
     },
   ): Promise<T | ConflictResponse> {
     const response = await this.rawRequest(method, path, options);
@@ -85,7 +89,9 @@ export class HttpTransport {
     options?: {
       body?: unknown;
       rawBody?: ArrayBuffer | Uint8Array | string;
-      query?: Record<string, string | number | boolean | string[] | undefined> | object;
+      query?:
+        | Record<string, string | number | boolean | string[] | undefined>
+        | object;
       headers?: Record<string, string>;
     },
   ): Promise<Response> {

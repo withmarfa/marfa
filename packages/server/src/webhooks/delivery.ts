@@ -176,7 +176,9 @@ export class WebhookPoller {
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10_000);
+      const timeout = setTimeout(() => {
+        controller.abort();
+      }, 10_000);
 
       const response = await fetch(delivery.webhook_url, {
         method: "POST",
@@ -236,7 +238,7 @@ export class WebhookPoller {
     await this.deliveryStore.markFailed(
       delivery.id,
       statusCode,
-      error ?? `HTTP ${statusCode}`,
+      error ?? `HTTP ${String(statusCode)}`,
       attempt,
       nextAttemptAt,
     );

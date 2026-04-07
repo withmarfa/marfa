@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- transaction guarantees row exists after insert */
 import { eq, inArray } from "drizzle-orm";
 import type { Metadata } from "@mymehq/shared";
 import type { MetadataStore } from "../interface.js";

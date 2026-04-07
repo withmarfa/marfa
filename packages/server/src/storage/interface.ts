@@ -235,7 +235,7 @@ export interface WebhookDeliveryStore {
     now: string,
     limit?: number,
   ): Promise<
-    Array<{
+    {
       id: string;
       webhook_id: string;
       event: string;
@@ -244,7 +244,7 @@ export interface WebhookDeliveryStore {
       webhook_secret: string;
       attempt: number;
       max_attempts: number;
-    }>
+    }[]
   >;
   markSuccess(id: string, statusCode: number, attempt: number): Promise<void>;
   markFailed(

@@ -93,7 +93,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     now: string,
     limit = 50,
   ): Promise<
-    Array<{
+    {
       id: string;
       webhook_id: string;
       event: string;
@@ -102,7 +102,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       webhook_secret: string;
       attempt: number;
       max_attempts: number;
-    }>
+    }[]
   > {
     const rows = this.db
       .select({

@@ -85,7 +85,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
     now: string,
     limit = 50,
   ): Promise<
-    Array<{
+    {
       id: string;
       webhook_id: string;
       event: string;
@@ -94,7 +94,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
       webhook_secret: string;
       attempt: number;
       max_attempts: number;
-    }>
+    }[]
   > {
     const rows = await this.db
       .select({

@@ -90,6 +90,6 @@ export class PgTypeStore implements TypeStore {
     const [row] = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(customTypes);
-    return Number(row?.count ?? 0);
+    return row?.count ?? 0;
   }
 }
