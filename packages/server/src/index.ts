@@ -41,6 +41,11 @@ async function main() {
   } else {
     blobBackend = new FilesystemBlobBackend(config.blobPath);
   }
+  void storage.audit.cleanup(90).then((deleted) => {
+    if (deleted > 0)
+      log("info", `Purged ${String(deleted)} audit entries older than 90 days`);
+  });
+
   const webhookConsumer = new WebhookConsumer(
     storage.webhooks,
     storage.webhookDeliveries,

@@ -65,6 +65,12 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       keyHash,
     );
 
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "key.create",
+      resource_type: "key",
+      resource_id: stored.id,
+    });
     return c.json(
       {
         id: stored.id,
@@ -91,6 +97,12 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
     await storage.keys.revoke(id);
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "key.revoke",
+      resource_type: "key",
+      resource_id: id,
+    });
     return c.json({ ok: true });
   });
 

@@ -73,11 +73,7 @@ export class PgMetadataStore implements MetadataStore {
           about: JSON.stringify(mergedAbout),
         })
         .where(eq(metadata.item_id, itemId));
-      const [updated] = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId));
-      return rowToMetadata(updated);
+      return { ...current, tags: mergedTags, about: mergedAbout };
     });
   }
 
@@ -98,11 +94,7 @@ export class PgMetadataStore implements MetadataStore {
           about: JSON.stringify(current.about),
         })
         .where(eq(metadata.item_id, itemId));
-      const [updated] = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId));
-      return rowToMetadata(updated);
+      return { ...current, tags: merged };
     });
   }
 
@@ -123,11 +115,7 @@ export class PgMetadataStore implements MetadataStore {
           about: JSON.stringify(current.about),
         })
         .where(eq(metadata.item_id, itemId));
-      const [updated] = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId));
-      return rowToMetadata(updated);
+      return { ...current, tags: filtered };
     });
   }
 

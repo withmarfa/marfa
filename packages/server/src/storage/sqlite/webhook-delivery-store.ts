@@ -83,7 +83,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         webhook_url: entry.webhookUrl,
         webhook_secret: entry.webhookSecret,
         max_attempts: 4,
-        status: 'pending',
+        status: "pending",
       })
       .run();
     return Promise.resolve(id);
@@ -129,9 +129,9 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         id: r.id,
         webhook_id: r.webhook_id,
         event: r.event,
-        payload: r.payload ?? '',
-        webhook_url: r.webhook_url ?? '',
-        webhook_secret: r.webhook_secret ?? '',
+        payload: r.payload ?? "",
+        webhook_url: r.webhook_url ?? "",
+        webhook_secret: r.webhook_secret ?? "",
         attempt: r.attempt,
         max_attempts: r.max_attempts,
       })),
@@ -142,7 +142,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     this.db
       .update(webhookDeliveries)
       .set({
-        status: 'success',
+        status: "success",
         success: 1,
         status_code: statusCode,
         attempt,
@@ -166,7 +166,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         error,
         attempt,
         next_attempt_at: nextAttemptAt,
-        status: nextAttemptAt === null ? 'dead_letter' : 'pending',
+        status: nextAttemptAt === null ? "dead_letter" : "pending",
       })
       .where(eq(webhookDeliveries.id, id))
       .run();
@@ -176,7 +176,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
   markDeadLetter(id: string): Promise<void> {
     this.db
       .update(webhookDeliveries)
-      .set({ status: 'dead_letter' })
+      .set({ status: "dead_letter" })
       .where(eq(webhookDeliveries.id, id))
       .run();
     return Promise.resolve();

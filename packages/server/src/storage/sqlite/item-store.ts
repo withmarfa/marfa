@@ -412,12 +412,7 @@ export class SqliteItemStore implements ItemStore {
             input.snapshot === true,
           )
         ) {
-          this.versionStore.createSync(
-            id,
-            row.version,
-            currentProps,
-            deviceId,
-          );
+          this.versionStore.createSync(id, row.version, currentProps, deviceId);
         }
 
         const merged = input.properties

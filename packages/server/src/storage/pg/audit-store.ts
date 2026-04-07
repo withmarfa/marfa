@@ -1,11 +1,11 @@
-import { eq, and, desc, lt, or, gte, lte } from 'drizzle-orm';
-import { generateId } from '@mymehq/shared';
-import type { PaginatedResult } from '@mymehq/shared';
-import type { AuditStore, AuditEntry } from '../interface.js';
-import { encodeCursor, decodeCursor } from '../interface.js';
-import { safeJsonParse } from '../json-utils.js';
-import { auditLog } from './schema.js';
-import type { PgDb } from './connection.js';
+import { eq, and, desc, lt, or, gte, lte } from "drizzle-orm";
+import { generateId } from "@mymehq/shared";
+import type { PaginatedResult } from "@mymehq/shared";
+import type { AuditStore, AuditEntry } from "../interface.js";
+import { encodeCursor, decodeCursor } from "../interface.js";
+import { safeJsonParse } from "../json-utils.js";
+import { auditLog } from "./schema.js";
+import type { PgDb } from "./connection.js";
 
 function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
   return {
@@ -18,7 +18,7 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
     details: safeJsonParse<Record<string, unknown>>(
       row.details,
       {},
-      'audit_log.details',
+      "audit_log.details",
     ),
   };
 }
@@ -98,7 +98,7 @@ export class PgAuditStore implements AuditStore {
     let nextCursor: string | null = null;
     if (hasMore) {
       const last = data.at(-1);
-      if (!last) throw new Error('unreachable: hasMore but data is empty');
+      if (!last) throw new Error("unreachable: hasMore but data is empty");
       nextCursor = encodeCursor(last.timestamp, last.id);
     }
 

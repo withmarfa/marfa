@@ -1,24 +1,22 @@
-import { createHmac } from 'node:crypto';
-import { matchesTypePattern } from '@mymehq/shared';
-import type { Webhook } from '@mymehq/shared';
+import { createHmac } from "node:crypto";
+import { matchesTypePattern } from "@mymehq/shared";
+import type { Webhook } from "@mymehq/shared";
 import type {
   WebhookStore,
   WebhookDeliveryStore,
-} from '../storage/interface.js';
-import { subscribe } from '../graphql/pubsub.js';
-import { log } from '../middleware/logger.js';
-import type { ItemEvent } from '../graphql/pubsub.js';
+} from "../storage/interface.js";
+import { subscribe } from "../graphql/pubsub.js";
+import { log } from "../middleware/logger.js";
+import type { ItemEvent } from "../graphql/pubsub.js";
 
 /** Maps pubsub event types to webhook event names. */
-function toWebhookEvent(type: ItemEvent['type']): string {
+function toWebhookEvent(type: ItemEvent["type"]): string {
   return `item.${type}`;
 }
 
 /** Signs a payload with HMAC-SHA256 using the webhook secret. */
 function sign(payload: string, secret: string): string {
-  return (
-    'sha256=' + createHmac('sha256', secret).update(payload).digest('hex')
-  );
+  return "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
 }
 
 /** Retry delays in milliseconds. */
@@ -56,7 +54,7 @@ export class WebhookConsumer {
     } catch (err) {
       // AbortError on shutdown is expected
       if (this.running) {
-        log('error', 'Webhook consumer error', {
+        log("error", "Webhook consumer error", {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -68,7 +66,7 @@ export class WebhookConsumer {
     try {
       webhooks = await this.webhookStore.listActive();
     } catch (err) {
-      log('error', 'Failed to load active webhooks', {
+      log("error", "Failed to load active webhooks", {
         error: err instanceof Error ? err.message : String(err),
       });
       return;
@@ -113,7 +111,7 @@ export class WebhookConsumer {
             nextAttemptAt: new Date().toISOString(),
           })
           .catch((err: unknown) => {
-            log('error', 'Failed to schedule webhook delivery', {
+            log("error", "Failed to schedule webhook delivery", {
               webhook_id: w.id,
               error: err instanceof Error ? err.message : String(err),
             });
@@ -166,7 +164,7 @@ export class WebhookPoller {
       );
       await Promise.allSettled(pending.map((d) => this.attempt(d)));
     } catch (err) {
-      log('error', 'Webhook poller error', {
+      log("error", "Webhook poller error", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -181,11 +179,11 @@ export class WebhookPoller {
       const timeout = setTimeout(() => controller.abort(), 10_000);
 
       const response = await fetch(delivery.webhook_url, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'X-Myme-Signature': signature,
-          'X-Myme-Event': delivery.event,
+          "Content-Type": "application/json",
+          "X-Myme-Signature": signature,
+          "X-Myme-Event": delivery.event,
         },
         body: delivery.payload,
         signal: controller.signal,
@@ -226,7 +224,7 @@ export class WebhookPoller {
       await this.deliveryStore.markFailed(
         delivery.id,
         statusCode,
-        error ?? 'Max attempts reached',
+        error ?? "Max attempts reached",
         attempt,
         null,
       );

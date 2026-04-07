@@ -78,6 +78,12 @@ export function webhookRoutes(storage: Storage): Hono<AppEnv> {
     );
 
     // Return full secret on creation so the caller can store it
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "webhook.create",
+      resource_type: "webhook",
+      resource_id: webhook.id,
+    });
     return c.json(webhook, 201);
   });
 
@@ -157,6 +163,12 @@ export function webhookRoutes(storage: Storage): Hono<AppEnv> {
       active: body.active,
     });
 
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "webhook.update",
+      resource_type: "webhook",
+      resource_id: id,
+    });
     return c.json({ ...updated, secret: redactSecret(updated.secret) });
   });
 
@@ -171,6 +183,12 @@ export function webhookRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     await storage.webhooks.delete(id);
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "webhook.delete",
+      resource_type: "webhook",
+      resource_id: id,
+    });
     return c.json({ ok: true });
   });
 

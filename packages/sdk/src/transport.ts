@@ -34,7 +34,7 @@ export class HttpTransport {
     path: string,
     options?: {
       body?: unknown;
-      query?: Record<string, string | number | boolean | string[] | undefined>;
+      query?: Record<string, string | number | boolean | string[] | undefined> | object;
     },
   ): Promise<T> {
     const response = await this.rawRequest(method, path, options);
@@ -62,7 +62,7 @@ export class HttpTransport {
     path: string,
     options?: {
       body?: unknown;
-      query?: Record<string, string | number | boolean | string[] | undefined>;
+      query?: Record<string, string | number | boolean | string[] | undefined> | object;
     },
   ): Promise<T | ConflictResponse> {
     const response = await this.rawRequest(method, path, options);
@@ -85,7 +85,7 @@ export class HttpTransport {
     options?: {
       body?: unknown;
       rawBody?: ArrayBuffer | Uint8Array | string;
-      query?: Record<string, string | number | boolean | string[] | undefined>;
+      query?: Record<string, string | number | boolean | string[] | undefined> | object;
       headers?: Record<string, string>;
     },
   ): Promise<Response> {
@@ -118,7 +118,9 @@ export class HttpTransport {
 
   private buildUrl(
     path: string,
-    query?: Record<string, string | number | boolean | string[] | undefined>,
+    query?:
+      | Record<string, string | number | boolean | string[] | undefined>
+      | object,
   ): string {
     const url = `${this.baseUrl}${path}`;
     if (!query) return url;
@@ -127,9 +129,9 @@ export class HttpTransport {
     for (const [key, value] of Object.entries(query)) {
       if (value === undefined) continue;
       if (Array.isArray(value)) {
-        params.set(key, value.join(','));
-      } else if (typeof value === 'boolean') {
-        params.set(key, value ? 'true' : 'false');
+        params.set(key, value.join(","));
+      } else if (typeof value === "boolean") {
+        params.set(key, value ? "true" : "false");
       } else {
         params.set(key, String(value));
       }

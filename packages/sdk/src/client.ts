@@ -152,7 +152,7 @@ export class MymeClient {
         {
           query: {
             ...filters,
-            include: 'metadata',
+            include: "metadata",
           },
         },
       );

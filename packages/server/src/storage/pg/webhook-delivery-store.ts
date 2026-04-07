@@ -76,7 +76,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
       webhook_url: entry.webhookUrl,
       webhook_secret: entry.webhookSecret,
       max_attempts: 4,
-      status: 'pending',
+      status: "pending",
     });
     return id;
   }
@@ -119,9 +119,9 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
       id: r.id,
       webhook_id: r.webhook_id,
       event: r.event,
-      payload: r.payload ?? '',
-      webhook_url: r.webhook_url ?? '',
-      webhook_secret: r.webhook_secret ?? '',
+      payload: r.payload ?? "",
+      webhook_url: r.webhook_url ?? "",
+      webhook_secret: r.webhook_secret ?? "",
       attempt: r.attempt,
       max_attempts: r.max_attempts,
     }));
@@ -135,7 +135,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
     await this.db
       .update(webhookDeliveries)
       .set({
-        status: 'success',
+        status: "success",
         success: 1,
         status_code: statusCode,
         attempt,
@@ -157,7 +157,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
         error,
         attempt,
         next_attempt_at: nextAttemptAt,
-        status: nextAttemptAt === null ? 'dead_letter' : 'pending',
+        status: nextAttemptAt === null ? "dead_letter" : "pending",
       })
       .where(eq(webhookDeliveries.id, id));
   }
@@ -165,7 +165,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
   async markDeadLetter(id: string): Promise<void> {
     await this.db
       .update(webhookDeliveries)
-      .set({ status: 'dead_letter' })
+      .set({ status: "dead_letter" })
       .where(eq(webhookDeliveries.id, id));
   }
 }

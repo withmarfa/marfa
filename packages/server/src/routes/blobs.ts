@@ -162,10 +162,7 @@ export function blobRoutes(
     // Recursively scan a value tree for blob hashes.
     // Custom types can store blob hashes in any field (logo_blob_hash,
     // screenshots[].blob_hash, etc.), not just the standard blob_ref field.
-    const collectBlobHashes = (
-      value: unknown,
-      out: Set<string>,
-    ): void => {
+    const collectBlobHashes = (value: unknown, out: Set<string>): void => {
       if (typeof value === "string") {
         if (isValidBlobHash(value)) out.add(value);
         return;
