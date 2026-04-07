@@ -1,5 +1,6 @@
 import { shouldCreateVersion } from "../version-gating.js";
 import { safeJsonParse } from "../json-utils.js";
+import { log } from "../../middleware/logger.js";
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq, ne, and, or, lt, gt, desc, asc, like, sql } from "drizzle-orm";
 import {
@@ -159,7 +160,7 @@ export class SqliteItemStore implements ItemStore {
         .run();
 
       this.searchStore.index(id, input.properties).catch((e: unknown) => {
-        console.error("Search index failed:", e);
+        log("error", "Search index failed", { error: e instanceof Error ? e.message : String(e) });
       });
 
       if (input.thread_id) {
@@ -417,7 +418,7 @@ export class SqliteItemStore implements ItemStore {
           this.versionStore
             .create(id, row.version, currentProps, deviceId)
             .catch((e: unknown) => {
-              console.error("Version create failed:", e);
+              log("error", "Version create failed", { error: e instanceof Error ? e.message : String(e) });
             });
         }
 
@@ -441,10 +442,10 @@ export class SqliteItemStore implements ItemStore {
         this.db.update(items).set(setClause).where(whereClause).run();
 
         this.searchStore.remove(id).catch((e: unknown) => {
-          console.error("Search remove failed:", e);
+          log("error", "Search remove failed", { error: e instanceof Error ? e.message : String(e) });
         });
         this.searchStore.index(id, merged).catch((e: unknown) => {
-          console.error("Search index failed:", e);
+          log("error", "Search index failed", { error: e instanceof Error ? e.message : String(e) });
         });
 
         return rowToItem({
@@ -501,7 +502,7 @@ export class SqliteItemStore implements ItemStore {
         this.versionStore
           .create(id, row.version, currentProps, deviceId)
           .catch((e: unknown) => {
-            console.error("Version create failed:", e);
+            log("error", "Version create failed", { error: e instanceof Error ? e.message : String(e) });
           });
       }
       const newVersion = row.version + 1;
@@ -521,10 +522,10 @@ export class SqliteItemStore implements ItemStore {
       this.db.update(items).set(mergeSet).where(whereClause).run();
 
       this.searchStore.remove(id).catch((e: unknown) => {
-        console.error("Search remove failed:", e);
+        log("error", "Search remove failed", { error: e instanceof Error ? e.message : String(e) });
       });
       this.searchStore.index(id, result.merged).catch((e: unknown) => {
-        console.error("Search index failed:", e);
+        log("error", "Search index failed", { error: e instanceof Error ? e.message : String(e) });
       });
 
       return rowToItem({
@@ -557,7 +558,7 @@ export class SqliteItemStore implements ItemStore {
       .run();
 
     this.searchStore.remove(id).catch((e: unknown) => {
-      console.error("Search remove failed:", e);
+      log("error", "Search remove failed", { error: e instanceof Error ? e.message : String(e) });
     });
   }
 
@@ -578,7 +579,7 @@ export class SqliteItemStore implements ItemStore {
     this.db.delete(items).where(this.tenantWhere(id, tenantId)).run();
 
     this.searchStore.remove(id).catch((e: unknown) => {
-      console.error("Search remove failed:", e);
+      log("error", "Search remove failed", { error: e instanceof Error ? e.message : String(e) });
     });
   }
 
@@ -599,7 +600,7 @@ export class SqliteItemStore implements ItemStore {
       .run();
 
     this.searchStore.index(id, row.properties).catch((e: unknown) => {
-      console.error("Search index failed:", e);
+      log("error", "Search index failed", { error: e instanceof Error ? e.message : String(e) });
     });
 
     return { ...row, state: "active" as ItemState, updated_at: now };
@@ -624,7 +625,7 @@ export class SqliteItemStore implements ItemStore {
     this.versionStore
       .create(id, row.version, row.properties, row.device_id ?? undefined)
       .catch((e: unknown) => {
-        console.error("Version create failed:", e);
+        log("error", "Version create failed", { error: e instanceof Error ? e.message : String(e) });
       });
 
     const now = new Date().toISOString();
@@ -636,11 +637,11 @@ export class SqliteItemStore implements ItemStore {
 
     if (state === "trashed") {
       this.searchStore.remove(id).catch((e: unknown) => {
-        console.error("Search remove failed:", e);
+        log("error", "Search remove failed", { error: e instanceof Error ? e.message : String(e) });
       });
     } else if (row.state === "trashed") {
       this.searchStore.index(id, row.properties).catch((e: unknown) => {
-        console.error("Search index failed:", e);
+        log("error", "Search index failed", { error: e instanceof Error ? e.message : String(e) });
       });
     }
 

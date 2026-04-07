@@ -1,3 +1,5 @@
+import { log } from "../middleware/logger.js";
+
 /** Safely parse JSON from a database column, returning a fallback on corruption. */
 export function safeJsonParse<T>(
   value: string,
@@ -7,9 +9,10 @@ export function safeJsonParse<T>(
   try {
     return JSON.parse(value) as T;
   } catch {
-    console.error(
-      `Corrupted JSON in database column (${context}): ${value.slice(0, 100)}`,
-    );
+    log("error", "Corrupted JSON in database column", {
+      context,
+      value: value.slice(0, 100),
+    });
     return fallback;
   }
 }

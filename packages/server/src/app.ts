@@ -19,6 +19,7 @@ import { eventRoutes } from "./routes/events.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { userAuthRoutes } from "./routes/users.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
+import { loggerMiddleware } from "./middleware/logger.js";
 import { mountGraphQL } from "./graphql/index.js";
 
 export function createApp(
@@ -31,13 +32,12 @@ export function createApp(
   // Global error handler
   app.onError(errorHandler);
 
+  // Structured logging (wraps entire request lifecycle)
+  app.use("*", loggerMiddleware());
+
   // CORS
   if (config.corsOrigins.length > 0) {
     app.use("*", cors({ origin: config.corsOrigins }));
-  } else if (process.env.NODE_ENV !== "test") {
-    console.warn(
-      "CORS not configured — browser clients will be blocked. Set CORS_ORIGINS to enable.",
-    );
   }
 
   // Public routes (before auth) — mounted directly to avoid prefix matching issues

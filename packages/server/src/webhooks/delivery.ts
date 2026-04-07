@@ -6,6 +6,7 @@ import type {
   WebhookDeliveryStore,
 } from "../storage/interface.js";
 import { subscribe } from "../graphql/pubsub.js";
+import { log } from "../middleware/logger.js";
 import type { ItemEvent } from "../graphql/pubsub.js";
 
 /** Maps pubsub event types to webhook event names. */
@@ -53,7 +54,9 @@ export class WebhookConsumer {
     } catch (err) {
       // AbortError on shutdown is expected
       if (this.running) {
-        console.error("Webhook consumer error:", err);
+        log("error", "Webhook consumer error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }
@@ -63,7 +66,9 @@ export class WebhookConsumer {
     try {
       webhooks = await this.webhookStore.listActive();
     } catch (err) {
-      console.error("Failed to load active webhooks:", err);
+      log("error", "Failed to load active webhooks", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       return;
     }
 
@@ -171,9 +176,11 @@ export class WebhookConsumer {
         );
         // Network error or timeout — retry if attempts remain
         if (attempt >= RETRY_DELAYS.length) {
-          console.error(
-            `Webhook ${webhook.id} delivery failed after ${String(RETRY_DELAYS.length + 1)} attempts: ${webhook.url}`,
-          );
+          log("error", "Webhook delivery failed after max attempts", {
+            webhook_id: webhook.id,
+            url: webhook.url,
+            attempts: RETRY_DELAYS.length + 1,
+          });
         } else {
           await this.delay(RETRY_DELAYS[attempt] ?? 1000);
         }
@@ -199,7 +206,9 @@ export class WebhookConsumer {
         error,
       });
     } catch (err) {
-      console.error("Failed to log webhook delivery:", err);
+      log("error", "Failed to log webhook delivery", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

@@ -19,6 +19,7 @@ export interface AppEnv {
     apiKey: ApiKey | undefined;
     isBootstrap: boolean;
     authType: "api_key" | "oauth" | undefined;
+    requestId: string;
   };
 }
 

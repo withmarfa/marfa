@@ -7,6 +7,7 @@ import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer } from "./webhooks/delivery.js";
+import { log } from "./middleware/logger.js";
 
 async function main() {
   const config = loadConfig();
@@ -49,12 +50,12 @@ async function main() {
   const app = createApp(storage, blobBackend, config);
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-    console.log(`Myme server listening on port ${String(info.port)}`);
+    log("info", `Myme server listening on port ${String(info.port)}`);
   });
 
   // Graceful shutdown
   const shutdown = () => {
-    console.log("Shutting down...");
+    log("info", "Shutting down...");
     webhookConsumer.stop();
     server.close(() => {
       storage
@@ -68,6 +69,8 @@ async function main() {
 }
 
 main().catch((err: unknown) => {
-  console.error("Failed to start server:", err);
+  log("error", "Failed to start server", {
+    error: err instanceof Error ? err.message : String(err),
+  });
   process.exit(1);
 });
