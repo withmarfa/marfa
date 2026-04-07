@@ -7,7 +7,7 @@ Typed data layer. This monorepo contains four packages:
 - **@mymehq/sdk** — TypeScript HTTP client for consuming the Myme API
 - **@mymehq/electric** — Electric SQL sync client for local-first apps (optional, experimental)
 
-Published to GitHub Packages under the `@mymehq` scope. Version tags (`v0.1.0`) trigger the publish workflow.
+Published to npm under the `@mymehq` scope. Version tags (`v1.0.0`) trigger the publish workflow.
 
 ## Tech stack
 
