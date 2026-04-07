@@ -46,8 +46,8 @@ export class PgBlobStore implements BlobStore {
   async count(): Promise<{ count: number; total_size: number }> {
     const [row] = await this.db
       .select({
-        count: sql<number>`count(*)`,
-        total_size: sql<number>`coalesce(sum(${blobs.size}), 0)`,
+        count: sql<number>`count(*)::int`,
+        total_size: sql<number>`coalesce(sum(${blobs.size}), 0)::bigint`,
       })
       .from(blobs);
     return {

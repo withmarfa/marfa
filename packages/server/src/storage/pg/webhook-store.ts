@@ -104,7 +104,7 @@ export class PgWebhookStore implements WebhookStore {
 
   async count(): Promise<number> {
     const [row] = await this.db
-      .select({ count: sql<number>`count(*)` })
+      .select({ count: sql<number>`count(*)::int` })
       .from(webhooks);
     return row?.count ?? 0;
   }

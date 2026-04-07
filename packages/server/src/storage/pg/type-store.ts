@@ -88,7 +88,7 @@ export class PgTypeStore implements TypeStore {
 
   async countCustom(): Promise<number> {
     const [row] = await this.db
-      .select({ count: sql<number>`count(*)` })
+      .select({ count: sql<number>`count(*)::int` })
       .from(customTypes);
     return row?.count ?? 0;
   }

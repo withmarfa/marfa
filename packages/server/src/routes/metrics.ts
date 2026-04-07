@@ -30,17 +30,23 @@ export function metricsRoutes(storage: Storage) {
         storage.types.countCustom(),
       ]);
 
-    // Core types = total registered minus custom
-    const coreTypeCount = TYPE_REGISTRY.size - customTypeCount;
+    const total = Object.values(itemStats).reduce((a, b) => a + b, 0);
 
     const response = {
-      items: itemStats,
+      items: {
+        total,
+        by_state: {
+          active: itemStats.active ?? 0,
+          archived: itemStats.archived ?? 0,
+          trashed: itemStats.trashed ?? 0,
+        },
+      },
       blobs: {
         count: blobStats.count,
         total_bytes: blobStats.total_size,
       },
       types: {
-        core: coreTypeCount,
+        core: TYPE_REGISTRY.size,
         custom: customTypeCount,
       },
       keys: {
