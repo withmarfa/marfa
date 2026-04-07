@@ -1,6 +1,6 @@
 import { createGraphQLError } from "graphql-yoga";
-import { getTypeSchema, TYPE_REGISTRY } from "@mymehq/shared";
-import type { ItemState } from "@mymehq/shared";
+import { getTypeSchema, TYPE_REGISTRY } from "@myme/shared";
+import type { ItemState } from "@myme/shared";
 import {
   gqlCheckAuth,
   gqlCheckTypeAccess,

@@ -6,8 +6,8 @@ import {
   isCoreType,
   MymeError,
   ErrorCode,
-} from "@mymehq/shared";
-import type { TypeSchema } from "@mymehq/shared";
+} from "@myme/shared";
+import type { TypeSchema } from "@myme/shared";
 import type { TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";

@@ -1,7 +1,7 @@
 import { safeJsonParse } from "../json-utils.js";
 import { eq, isNull } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { ApiKey, CreateKeyInput, TypePermission } from "@mymehq/shared";
+import { generateId } from "@myme/shared";
+import type { ApiKey, CreateKeyInput, TypePermission } from "@myme/shared";
 import type { KeyStore } from "../interface.js";
 import { apiKeys } from "./schema.js";
 import type { PgDb } from "./connection.js";

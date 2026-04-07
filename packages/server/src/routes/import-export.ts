@@ -4,8 +4,8 @@ import {
   ErrorCode,
   isValidTypeIdentifier,
   ITEM_STATES,
-} from "@mymehq/shared";
-import type { ItemState } from "@mymehq/shared";
+} from "@myme/shared";
+import type { ItemState } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAdmin,

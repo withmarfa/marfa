@@ -37,10 +37,10 @@ importers:
       "@electric-sql/client":
         specifier: ^1.5.14
         version: 1.5.14
-      "@mymehq/sdk":
+      "@myme/sdk":
         specifier: workspace:*
         version: link:../sdk
-      "@mymehq/shared":
+      "@myme/shared":
         specifier: workspace:*
         version: link:../shared
       better-sqlite3:
@@ -65,11 +65,11 @@ importers:
 
   packages/sdk:
     dependencies:
-      "@mymehq/shared":
+      "@myme/shared":
         specifier: workspace:*
         version: link:../shared
     devDependencies:
-      "@mymehq/server":
+      "@myme/server":
         specifier: workspace:*
         version: link:../server
       "@types/node":
@@ -93,7 +93,7 @@ importers:
       "@hono/node-server":
         specifier: ^1.13.8
         version: 1.19.12(hono@4.12.9)
-      "@mymehq/shared":
+      "@myme/shared":
         specifier: workspace:*
         version: link:../shared
       better-sqlite3:

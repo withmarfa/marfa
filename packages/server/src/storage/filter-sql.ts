@@ -13,7 +13,7 @@ import type {
   FilterExpression,
   FilterCondition,
   ComparisonOp,
-} from "@mymehq/shared";
+} from "@myme/shared";
 
 // ---------------------------------------------------------------------------
 // Helpers

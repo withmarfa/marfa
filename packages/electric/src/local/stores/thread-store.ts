@@ -1,5 +1,5 @@
 import { eq, desc } from "drizzle-orm";
-import type { Thread, PaginatedResult } from "@mymehq/shared";
+import type { Thread, PaginatedResult } from "@myme/shared";
 import type { LocalDb } from "../connection.js";
 import { threads } from "../schema.js";
 import { rowToThread } from "../helpers.js";

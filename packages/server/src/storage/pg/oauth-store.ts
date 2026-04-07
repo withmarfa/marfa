@@ -1,13 +1,13 @@
 import { safeJsonParse } from "../json-utils.js";
 import { eq, and, isNull } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
+import { generateId } from "@myme/shared";
 import type {
   OAuthClient,
   OAuthGrant,
   OAuthToken,
   OAuthCode,
   OAuthTokenType,
-} from "@mymehq/shared";
+} from "@myme/shared";
 import type { OAuthStore } from "../interface.js";
 import {
   oauthClients,

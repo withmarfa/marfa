@@ -6,8 +6,8 @@ import {
   ErrorCode,
   resolveTypePermission,
   scopesToTypePermissions,
-} from "@mymehq/shared";
-import type { ApiKey } from "@mymehq/shared";
+} from "@myme/shared";
+import type { ApiKey } from "@myme/shared";
 import type { Storage } from "../storage/interface.js";
 
 // ---------------------------------------------------------------------------

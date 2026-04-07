@@ -2,12 +2,12 @@
 
 Typed data layer. This monorepo contains four packages:
 
-- **@mymehq/shared** — Myme types, Zod validation schemas, error codes, type registry, ID utilities. The foundation imported by both server and SDK
-- **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published)
-- **@mymehq/sdk** — TypeScript HTTP client for consuming the Myme API
-- **@mymehq/electric** — Electric SQL sync client for local-first apps (optional, experimental)
+- **@myme/shared** — Myme types, Zod validation schemas, error codes, type registry, ID utilities. The foundation imported by both server and SDK
+- **@myme/server** — Hono HTTP server exposing the Myme API (private, not published)
+- **@myme/sdk** — TypeScript HTTP client for consuming the Myme API
+- **@myme/electric** — Electric SQL sync client for local-first apps (optional, experimental)
 
-Published to GitHub Packages under the `@mymehq` scope. Version tags (`v0.1.0`) trigger the publish workflow.
+Published to npm under the `@myme` scope. Version tags (`v1.0.0`) trigger the publish workflow.
 
 ## Tech stack
 
@@ -54,7 +54,7 @@ Server package (not needed for shared or SDK development):
 
 ## Error handling
 
-The base error class is `MymeError` (in `@mymehq/shared`). All structured errors use this class with an `ErrorCode` enum and corresponding HTTP status.
+The base error class is `MymeError` (in `@myme/shared`). All structured errors use this class with an `ErrorCode` enum and corresponding HTTP status.
 
 ## Type registration
 

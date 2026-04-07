@@ -1,6 +1,6 @@
 import { eq, and } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { User } from "@mymehq/shared";
+import { generateId } from "@myme/shared";
+import type { User } from "@myme/shared";
 import type { UserStore } from "../interface.js";
 import { users } from "./schema.js";
 import type { PgDb } from "./connection.js";

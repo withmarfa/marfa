@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { matchesTypePattern } from "@mymehq/shared";
+import { matchesTypePattern } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, computeTypeFilter } from "../middleware/auth.js";
 import { subscribe } from "../graphql/pubsub.js";

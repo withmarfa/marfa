@@ -1,4 +1,4 @@
-import type { ConflictResponse, ErrorResponse } from "@mymehq/shared";
+import type { ConflictResponse, ErrorResponse } from "@myme/shared";
 import {
   MymeError,
   NotFoundError,

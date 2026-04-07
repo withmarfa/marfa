@@ -8,8 +8,8 @@ import type {
   CreateKeyInput,
   PaginatedResult,
   SearchResult,
-} from "@mymehq/shared";
-import type { TypeSchema } from "@mymehq/shared";
+} from "@myme/shared";
+import type { TypeSchema } from "@myme/shared";
 import {
   MymeClient,
   type ClientConfig,
@@ -17,7 +17,7 @@ import {
   type ListFilters,
   type SearchFilters,
   type MetadataInput,
-} from "@mymehq/sdk";
+} from "@myme/sdk";
 import { createLocalStorage } from "./local/storage.js";
 import type { LocalStorage } from "./local/storage.js";
 import { createShapeStreams } from "./electric/collections.js";

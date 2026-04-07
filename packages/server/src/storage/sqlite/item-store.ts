@@ -11,7 +11,7 @@ import {
   parseFilter,
   MymeError,
   ErrorCode,
-} from "@mymehq/shared";
+} from "@myme/shared";
 import { filterToSqlConditions } from "../filter-sql.js";
 import type {
   Item,
@@ -20,7 +20,7 @@ import type {
   ConflictResponse,
   ItemState,
   PaginatedResult,
-} from "@mymehq/shared";
+} from "@myme/shared";
 import type { ItemStore, ItemFilters } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { detectConflict } from "../conflict.js";

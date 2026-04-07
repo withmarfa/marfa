@@ -1,6 +1,6 @@
 import { createGraphQLError } from "graphql-yoga";
-import { MymeError } from "@mymehq/shared";
-import type { ApiKey } from "@mymehq/shared";
+import { MymeError } from "@myme/shared";
+import type { ApiKey } from "@myme/shared";
 import type { Storage } from "../storage/interface.js";
 import {
   checkAuth as _checkAuth,

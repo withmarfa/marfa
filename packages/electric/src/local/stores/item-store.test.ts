@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import type { Item } from "@mymehq/shared";
+import type { Item } from "@myme/shared";
 import { createLocalConnection } from "../connection.js";
 import { LocalItemStore } from "./item-store.js";
 

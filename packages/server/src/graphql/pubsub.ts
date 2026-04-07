@@ -1,5 +1,5 @@
 import { EventEmitter, on } from "node:events";
-import type { Item, Metadata } from "@mymehq/shared";
+import type { Item, Metadata } from "@myme/shared";
 
 export interface ItemEvent {
   type: "created" | "updated" | "deleted" | "restored" | "transitioned";

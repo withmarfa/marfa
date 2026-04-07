@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { MymeError, ErrorCode, isValidBlobHash } from "@mymehq/shared";
+import { MymeError, ErrorCode, isValidBlobHash } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -190,7 +190,7 @@ export function blobRoutes(
       while (hasMore) {
         const page = await storage.items.list({
           tenantId,
-          state: state as import("@mymehq/shared").ItemState | undefined,
+          state: state as import("@myme/shared").ItemState | undefined,
           limit: 200,
           cursor,
         });

@@ -1,5 +1,5 @@
 import { eq, desc, and } from "drizzle-orm";
-import type { Item, PaginatedResult, ItemState } from "@mymehq/shared";
+import type { Item, PaginatedResult, ItemState } from "@myme/shared";
 import type { LocalDb } from "../connection.js";
 import { items } from "../schema.js";
 import { rowToItem } from "../helpers.js";

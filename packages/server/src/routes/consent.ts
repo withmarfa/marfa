@@ -1,4 +1,4 @@
-import type { ParsedScope } from "@mymehq/shared";
+import type { ParsedScope } from "@myme/shared";
 
 interface ConsentParams {
   clientName: string;

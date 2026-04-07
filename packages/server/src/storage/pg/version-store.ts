@@ -1,6 +1,6 @@
 import { eq, and, asc, desc } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { Version } from "@mymehq/shared";
+import { generateId } from "@myme/shared";
+import type { Version } from "@myme/shared";
 import type { VersionStore } from "../interface.js";
 import { versions } from "./schema.js";
 import type { PgDb } from "./connection.js";

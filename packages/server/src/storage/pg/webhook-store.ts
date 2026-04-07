@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { eq, and } from "drizzle-orm";
-import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
+import { generateId, MymeError, ErrorCode } from "@myme/shared";
 import type {
   Webhook,
   CreateWebhookInput,
   UpdateWebhookInput,
-} from "@mymehq/shared";
+} from "@myme/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type { WebhookStore } from "../interface.js";
 import { webhooks } from "./schema.js";

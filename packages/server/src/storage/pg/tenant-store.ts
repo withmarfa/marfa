@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { Tenant } from "@mymehq/shared";
+import { generateId } from "@myme/shared";
+import type { Tenant } from "@myme/shared";
 import type { TenantStore } from "../interface.js";
 import { tenants } from "./schema.js";
 import type { PgDb } from "./connection.js";

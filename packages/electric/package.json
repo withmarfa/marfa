@@ -1,10 +1,10 @@
 {
-  "name": "@mymehq/electric",
-  "version": "0.2.0",
+  "name": "@myme/electric",
+  "version": "1.0.0",
   "type": "module",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "exports": {
     ".": {
@@ -22,8 +22,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@mymehq/sdk": "workspace:*",
-    "@mymehq/shared": "workspace:*",
+    "@myme/sdk": "workspace:*",
+    "@myme/shared": "workspace:*",
     "@electric-sql/client": "^1.5.14",
     "better-sqlite3": "^11.10.0",
     "drizzle-orm": "^0.44.7"

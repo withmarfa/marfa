@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
-import { parseFilter, type SearchResult } from "@mymehq/shared";
+import { parseFilter, type SearchResult } from "@myme/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql } from "../filter-sql.js";
 import type { RawDb } from "./connection.js";

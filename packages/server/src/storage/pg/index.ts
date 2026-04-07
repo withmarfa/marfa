@@ -1,4 +1,4 @@
-import { registerTypeSchema, isCoreType } from "@mymehq/shared";
+import { registerTypeSchema, isCoreType } from "@myme/shared";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
 import { PgItemStore } from "./item-store.js";

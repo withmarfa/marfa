@@ -6,7 +6,7 @@ import {
   parseScope,
   expandWildcardScopes,
   TYPE_REGISTRY,
-} from "@mymehq/shared";
+} from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, requireAuth, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";

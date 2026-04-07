@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
-import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
+import { MymeError, ErrorCode, isValidId } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";

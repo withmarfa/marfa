@@ -1,4 +1,4 @@
-import type { CreateItemInput, ItemState } from "@mymehq/shared";
+import type { CreateItemInput, ItemState } from "@myme/shared";
 import { createGraphQLError } from "graphql-yoga";
 import {
   gqlCheckAuth,

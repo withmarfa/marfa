@@ -1,5 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
-import type { Item, ItemState, Metadata, Version } from "@mymehq/shared";
+import type { Item, ItemState, Metadata, Version } from "@myme/shared";
 import type { items, metadata, versions } from "./schema.js";
 
 type ItemRow = typeof items.$inferSelect;

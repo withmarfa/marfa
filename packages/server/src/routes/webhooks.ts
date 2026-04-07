@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import { MymeError, ErrorCode } from "@myme/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";

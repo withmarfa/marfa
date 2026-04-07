@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq, desc, or, and, lt } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { Thread, PaginatedResult, Item } from "@mymehq/shared";
+import { generateId } from "@myme/shared";
+import type { Thread, PaginatedResult, Item } from "@myme/shared";
 import type { ThreadStore } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { threads, items } from "./schema.js";
