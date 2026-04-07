@@ -1,10 +1,10 @@
 {
-  "name": "@myme/sdk",
-  "version": "1.0.0",
+  "name": "@mymehq/sdk",
+  "version": "0.2.0",
   "type": "module",
   "publishConfig": {
-    "registry": "https://registry.npmjs.org",
-    "access": "public"
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
   },
   "exports": {
     ".": {
@@ -22,10 +22,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@myme/shared": "workspace:*"
+    "@mymehq/shared": "workspace:*"
   },
   "devDependencies": {
-    "@myme/server": "workspace:*",
+    "@mymehq/server": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2"

@@ -16,7 +16,7 @@ import {
   isValidId,
   resolveExtensionPermission,
   filterExtensionsByPermission,
-} from "@myme/shared";
+} from "@mymehq/shared";
 
 const RESERVED_NAMESPACES = new Set(["core", "myme", "system"]);
 import type { AppEnv } from "../middleware/auth.js";

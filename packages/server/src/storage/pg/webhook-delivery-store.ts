@@ -1,6 +1,6 @@
 import { eq, desc } from "drizzle-orm";
-import { generateId } from "@myme/shared";
-import type { WebhookDelivery } from "@myme/shared";
+import { generateId } from "@mymehq/shared";
+import type { WebhookDelivery } from "@mymehq/shared";
 import type { WebhookDeliveryStore } from "../interface.js";
 import { webhookDeliveries } from "./schema.js";
 import type { PgDb } from "./connection.js";

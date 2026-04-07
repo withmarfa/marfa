@@ -1,4 +1,4 @@
-import type { ConflictResponse, ConflictSnapshot, Item } from "@myme/shared";
+import type { ConflictResponse, ConflictSnapshot, Item } from "@mymehq/shared";
 import type { HttpTransport } from "./transport.js";
 import { ConflictError } from "./errors.js";
 

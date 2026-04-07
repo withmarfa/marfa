@@ -50,7 +50,7 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
   attachments: { type: "array", items_type: "object" },
   links: { type: "array", items_type: "string" },
 };
-// Auto-generated from @myme/types JSON schemas — do not edit manually.
+// Auto-generated from @mymehq/types JSON schemas — do not edit manually.
 // Generated at: 2026-04-03T20:01:30.422Z
 // Run `pnpm generate` in the types repo to regenerate.
 

@@ -1,4 +1,4 @@
-import type { ConflictSnapshot } from "@myme/shared";
+import type { ConflictSnapshot } from "@mymehq/shared";
 
 export class MymeError extends Error {
   readonly code: string;

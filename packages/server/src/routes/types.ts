@@ -7,7 +7,7 @@ import {
   ALL_TYPES,
   validateTypeSchema,
   isValidTypeIdentifier,
-} from "@myme/shared";
+} from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";

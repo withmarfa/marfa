@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { Metadata } from "@myme/shared";
+import type { Metadata } from "@mymehq/shared";
 import type { LocalDb } from "../connection.js";
 import { metadata } from "../schema.js";
 import { rowToMetadata } from "../helpers.js";

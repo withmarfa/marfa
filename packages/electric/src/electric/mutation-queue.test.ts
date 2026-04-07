@@ -10,7 +10,7 @@ import {
 import { createLocalConnection } from "../local/connection.js";
 import type { LocalDb } from "../local/connection.js";
 import { MutationQueue } from "./mutation-queue.js";
-import { MymeClient } from "@myme/sdk";
+import { MymeClient } from "@mymehq/sdk";
 import { mutationQueue } from "../local/schema.js";
 
 let db: LocalDb;

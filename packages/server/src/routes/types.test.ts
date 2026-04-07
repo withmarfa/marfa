@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import type { TypeSchema } from "@myme/shared";
+import type { TypeSchema } from "@mymehq/shared";
 
 let ctx: TestContext;
 

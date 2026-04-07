@@ -1,5 +1,5 @@
 import type { Message, Row } from "@electric-sql/client";
-import type { Item, Metadata, Thread } from "@myme/shared";
+import type { Item, Metadata, Thread } from "@mymehq/shared";
 import type { LocalStorage } from "../local/storage.js";
 import type { ShapeStreams } from "./collections.js";
 import type { ConnectionStateManager } from "./connection-state.js";

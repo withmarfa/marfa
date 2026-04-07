@@ -1,7 +1,7 @@
-// @myme/electric — Electric SQL sync layer for Myme.
+// @mymehq/electric — Electric SQL sync layer for Myme.
 
 // Re-export everything from the SDK for convenience
-export * from "@myme/sdk";
+export * from "@mymehq/sdk";
 
 // Sync client
 export { MymeSyncClient } from "./sync-client.js";

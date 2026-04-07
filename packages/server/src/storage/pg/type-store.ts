@@ -5,8 +5,8 @@ import {
   unregisterTypeSchema,
   MymeError,
   ErrorCode,
-} from "@myme/shared";
-import type { TypeSchema } from "@myme/shared";
+} from "@mymehq/shared";
+import type { TypeSchema } from "@mymehq/shared";
 import { eq } from "drizzle-orm";
 import type { TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";

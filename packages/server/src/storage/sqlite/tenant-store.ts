@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq } from "drizzle-orm";
-import { generateId } from "@myme/shared";
-import type { Tenant } from "@myme/shared";
+import { generateId } from "@mymehq/shared";
+import type { Tenant } from "@mymehq/shared";
 import type { TenantStore } from "../interface.js";
 import { tenants } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";

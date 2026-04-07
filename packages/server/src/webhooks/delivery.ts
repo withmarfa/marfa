@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
-import { matchesTypePattern } from "@myme/shared";
-import type { Webhook } from "@myme/shared";
+import { matchesTypePattern } from "@mymehq/shared";
+import type { Webhook } from "@mymehq/shared";
 import type {
   WebhookStore,
   WebhookDeliveryStore,

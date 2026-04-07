@@ -10,7 +10,7 @@ import type {
   PaginatedResult,
   SearchResult,
   ItemState,
-} from "@myme/shared";
+} from "@mymehq/shared";
 import type {
   TypeSchema,
   ErrorResponse,
@@ -18,7 +18,7 @@ import type {
   WebhookDelivery,
   CreateWebhookInput,
   UpdateWebhookInput,
-} from "@myme/shared";
+} from "@mymehq/shared";
 import { HttpTransport } from "./transport.js";
 import {
   MymeError,

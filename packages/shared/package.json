@@ -1,10 +1,10 @@
 {
-  "name": "@myme/shared",
-  "version": "1.0.0",
+  "name": "@mymehq/shared",
+  "version": "0.2.0",
   "type": "module",
   "publishConfig": {
-    "registry": "https://registry.npmjs.org",
-    "access": "public"
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
   },
   "exports": {
     ".": {
