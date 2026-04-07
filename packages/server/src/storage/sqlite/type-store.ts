@@ -8,6 +8,7 @@ import {
   ErrorCode,
 } from "@mymehq/shared";
 import type { TypeSchema } from "@mymehq/shared";
+import { sql } from "drizzle-orm";
 import type { TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
@@ -101,5 +102,13 @@ export class SqliteTypeStore implements TypeStore {
       }
     }
     return Promise.resolve(results);
+  }
+
+  countCustom(): Promise<number> {
+    const row = this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(customTypes)
+      .get();
+    return Promise.resolve(row?.count ?? 0);
   }
 }

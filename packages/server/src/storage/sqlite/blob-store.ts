@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { BlobStore } from "../interface.js";
 import { blobs } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -41,5 +41,19 @@ export class SqliteBlobStore implements BlobStore {
   remove(hash: string): Promise<void> {
     this.db.delete(blobs).where(eq(blobs.hash, hash)).run();
     return Promise.resolve();
+  }
+
+  count(): Promise<{ count: number; total_size: number }> {
+    const row = this.db
+      .select({
+        count: sql<number>`count(*)`,
+        total_size: sql<number>`coalesce(sum(${blobs.size}), 0)`,
+      })
+      .from(blobs)
+      .get();
+    return Promise.resolve({
+      count: row?.count ?? 0,
+      total_size: row?.total_size ?? 0,
+    });
   }
 }

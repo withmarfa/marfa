@@ -7,7 +7,7 @@ import {
   ErrorCode,
 } from "@mymehq/shared";
 import type { TypeSchema } from "@mymehq/shared";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
@@ -84,5 +84,12 @@ export class PgTypeStore implements TypeStore {
       }
     }
     return results;
+  }
+
+  async countCustom(): Promise<number> {
+    const [row] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(customTypes);
+    return Number(row?.count ?? 0);
   }
 }

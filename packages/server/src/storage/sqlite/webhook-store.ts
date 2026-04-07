@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
 import type {
   Webhook,
@@ -105,5 +105,13 @@ export class SqliteWebhookStore implements WebhookStore {
       .where(eq(webhooks.active, 1))
       .all();
     return Promise.resolve(rows.map(rowToWebhook));
+  }
+
+  count(): Promise<number> {
+    const row = this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(webhooks)
+      .get();
+    return Promise.resolve(row?.count ?? 0);
   }
 }

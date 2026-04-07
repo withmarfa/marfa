@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { BlobStore } from "../interface.js";
 import { blobs } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -41,5 +41,18 @@ export class PgBlobStore implements BlobStore {
 
   async remove(hash: string): Promise<void> {
     await this.db.delete(blobs).where(eq(blobs.hash, hash));
+  }
+
+  async count(): Promise<{ count: number; total_size: number }> {
+    const [row] = await this.db
+      .select({
+        count: sql<number>`count(*)`,
+        total_size: sql<number>`coalesce(sum(${blobs.size}), 0)`,
+      })
+      .from(blobs);
+    return {
+      count: Number(row?.count ?? 0),
+      total_size: Number(row?.total_size ?? 0),
+    };
   }
 }

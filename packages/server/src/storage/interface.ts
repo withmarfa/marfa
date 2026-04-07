@@ -164,6 +164,7 @@ export interface TypeStore {
   update(id: string, schema: TypeSchema): Promise<TypeSchema>;
   delete(id: string): Promise<void>;
   loadCustomTypes(): Promise<TypeSchema[]>;
+  countCustom(): Promise<number>;
 }
 
 export interface SearchStore {
@@ -199,6 +200,7 @@ export interface BlobStore {
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null>;
   listAll(): Promise<string[]>;
   remove(hash: string): Promise<void>;
+  count(): Promise<{ count: number; total_size: number }>;
 }
 
 export interface WebhookStore {
@@ -208,6 +210,7 @@ export interface WebhookStore {
   update(id: string, input: UpdateWebhookInput): Promise<Webhook>;
   delete(id: string): Promise<void>;
   listActive(): Promise<Webhook[]>;
+  count(): Promise<number>;
 }
 
 export interface WebhookDeliveryStore {

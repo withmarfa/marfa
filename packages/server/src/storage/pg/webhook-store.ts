@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
 import type {
   Webhook,
@@ -100,5 +100,12 @@ export class PgWebhookStore implements WebhookStore {
       .from(webhooks)
       .where(eq(webhooks.active, 1));
     return rows.map(rowToWebhook);
+  }
+
+  async count(): Promise<number> {
+    const [row] = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(webhooks);
+    return Number(row?.count ?? 0);
   }
 }
