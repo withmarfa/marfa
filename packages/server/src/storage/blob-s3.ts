@@ -50,7 +50,9 @@ export class S3BlobBackend implements BlobBackend {
   }
 
   private prefixedKey(key: string): string {
-    return `${this.prefix}/${key}`;
+    // Strip algorithm prefix (sha256:) — S3 keys are the raw hex hash
+    const bare = key.replace(/^sha256:/, "");
+    return `${this.prefix}/${bare}`;
   }
 
   async put(key: string, bytes: Buffer, mimeType?: string): Promise<void> {

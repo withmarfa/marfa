@@ -89,7 +89,7 @@ describe("S3BlobBackend", () => {
       expect(mockSend).toHaveBeenCalledOnce();
       const cmd = mockSend.mock.calls[0]![0] as Record<string, unknown>;
       expect(cmd.Bucket).toBe("test-bucket");
-      expect(cmd.Key).toBe("blobs/sha256:abc123");
+      expect(cmd.Key).toBe("blobs/abc123");
       expect(cmd.Body).toBe(data);
     });
 
@@ -100,7 +100,7 @@ describe("S3BlobBackend", () => {
       await backend.put("sha256:abc", Buffer.from("x"));
 
       const cmd = mockSend.mock.calls[0]![0] as Record<string, unknown>;
-      expect(cmd.Key).toBe("custom/sha256:abc");
+      expect(cmd.Key).toBe("custom/abc");
     });
   });
 
