@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import type { AppConfig } from "./config.js";
@@ -28,8 +28,8 @@ export function createApp(
   storage: Storage,
   blobBackend: BlobBackend,
   config: AppConfig,
-): Hono<AppEnv> {
-  const app = new Hono<AppEnv>();
+) {
+  const app = new OpenAPIHono<AppEnv>();
 
   // Global error handler
   app.onError(
@@ -133,6 +133,23 @@ export function createApp(
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
+
+  // OpenAPI spec — generated from route definitions
+  app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
+    type: "http",
+    scheme: "bearer",
+    bearerFormat: "API Key or OAuth Token",
+    description:
+      "Pass an API key (myme_k1_...) or OAuth access token (myme_at_...)",
+  });
+  app.doc("/openapi.json", {
+    openapi: "3.1.0",
+    info: {
+      title: "Myme API",
+      version: "0.1.0",
+      description: "Typed data layer for structured personal data",
+    },
+  });
 
   return app;
 }

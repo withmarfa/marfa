@@ -32,7 +32,7 @@ import {
 const ItemSchema = z.object({
   id: z.string(),
   type: z.string(),
-  properties: z.record(z.unknown()),
+  properties: z.record(z.string(), z.unknown()),
   state: z.string(),
   version: z.number(),
   thread_id: z.string().nullable(),
@@ -52,7 +52,7 @@ const MetadataSchema = z.object({
   item_id: z.string(),
   tags: z.array(z.string()),
   about: z.array(z.string()),
-  extensions: z.record(z.unknown()),
+  extensions: z.record(z.string(), z.unknown()),
 });
 
 const ItemWithMetadataSchema = z.object({
@@ -64,7 +64,7 @@ const VersionSchema = z.object({
   id: z.string(),
   item_id: z.string(),
   version: z.number(),
-  properties: z.record(z.unknown()),
+  properties: z.record(z.string(), z.unknown()),
   snapshot: z.boolean(),
   created_at: z.string(),
 });

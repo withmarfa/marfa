@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { createGzip, createGunzip } from "node:zlib";
 import { Readable, PassThrough } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
+import type { Context } from "hono";
 import {
   MymeError,
   ErrorCode,
@@ -21,16 +21,106 @@ import {
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
+import {
+  createOpenAPIRouter,
+  ErrorResponseSchema,
+} from "../openapi.js";
 
 const MAX_IMPORT_ITEMS = 5000;
 
-export function importRoutes(
-  storage: Storage,
-  blobBackend: BlobBackend,
-): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
+// ---------------------------------------------------------------------------
+// Route definitions
+// ---------------------------------------------------------------------------
 
-  router.post("/", async (c) => {
+const importRoute = createRoute({
+  method: "post",
+  path: "/",
+  tags: ["Import/Export"],
+  summary: "Bulk import items or archive (admin only)",
+  security: [{ bearerAuth: [] }],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            items: z.array(z.record(z.string(), z.unknown())),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            imported: z.number(),
+            duplicates: z.number(),
+            blobs_imported: z.number().optional(),
+          }),
+        },
+      },
+      description: "Import result",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Admin required",
+    },
+  },
+});
+
+const exportRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Import/Export"],
+  summary: "Streaming NDJSON or archive export with filters",
+  security: [{ bearerAuth: [] }],
+  request: {
+    query: z.object({
+      type: z.string().optional(),
+      state: z.string().optional(),
+      since: z.string().optional(),
+      until: z.string().optional(),
+      format: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "text/x-ndjson": {
+          schema: z.string(),
+        },
+      },
+      description:
+        "Streaming NDJSON export of items with metadata (or archive when format=archive)",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Routers
+// ---------------------------------------------------------------------------
+
+export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
+  const router = createOpenAPIRouter<AppEnv>();
+
+  router.openapi(importRoute, async (c) => {
     requireAdmin(c);
 
     // Archive import: Content-Type: application/gzip or ?format=archive
@@ -43,10 +133,13 @@ export function importRoutes(
       return handleArchiveImport(c, storage, blobBackend);
     }
 
-    const body = await c.req.json();
-    const items = body.items as unknown[] | undefined;
+    const body = c.req.valid("json");
+    const items = body.items;
     if (!Array.isArray(items)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "items must be an array");
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "items must be an array",
+      );
     }
     if (items.length > MAX_IMPORT_ITEMS) {
       throw new MymeError(
@@ -55,7 +148,7 @@ export function importRoutes(
       );
     }
     if (items.length === 0) {
-      return c.json({ imported: 0, duplicates: 0 });
+      return c.json({ imported: 0, duplicates: 0 }, 200);
     }
 
     // Validate type identifiers
@@ -116,27 +209,26 @@ export function importRoutes(
       },
     });
 
-    return c.json(result);
+    return c.json(result, 200);
   });
 
   return router;
 }
 
-export function exportRoutes(
-  storage: Storage,
-  blobBackend: BlobBackend,
-): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
+export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
+  const router = createOpenAPIRouter<AppEnv>();
 
-  router.get("/", (c) => {
+  router.openapi(exportRoute, (c) => {
     requireAuth(c);
 
+    const query = c.req.valid("query");
+
     // Archive export: ?format=archive
-    if (c.req.query("format") === "archive") {
+    if (query.format === "archive") {
       return handleArchiveExport(c, storage, blobBackend);
     }
 
-    const type = c.req.query("type");
+    const type = query.type;
     if (type && !isValidTypeIdentifier(type)) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
@@ -144,7 +236,7 @@ export function exportRoutes(
       );
     }
 
-    const state = c.req.query("state") as ItemState | undefined;
+    const state = query.state as ItemState | undefined;
     if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
@@ -152,8 +244,8 @@ export function exportRoutes(
       );
     }
 
-    const since = c.req.query("since");
-    const until = c.req.query("until");
+    const since = query.since;
+    const until = query.until;
 
     // Stream NDJSON — one {item, metadata} per line, paginating internally.
     // Uses ReadableStream to avoid buffering the entire export in memory.
@@ -216,23 +308,30 @@ interface ArchiveManifest {
   blobs: Record<string, { mime_type: string; size: number }>;
 }
 
-type HonoContext = Parameters<Parameters<Hono<AppEnv>["get"]>[1]>[0];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type HonoContext = Context<any, any, any>;
 
 async function handleArchiveExport(
   c: HonoContext,
   storage: Storage,
   blobBackend: BlobBackend,
 ): Promise<Response> {
-  const type = c.req.query("type");
+  const type = c.req.query("type") as string | undefined;
   if (type && !isValidTypeIdentifier(type)) {
-    throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
+    throw new MymeError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid type identifier",
+    );
   }
   const state = c.req.query("state") as ItemState | undefined;
   if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-    throw new MymeError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${state}`);
+    throw new MymeError(
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid state: ${state}`,
+    );
   }
-  const since = c.req.query("since");
-  const until = c.req.query("until");
+  const since = c.req.query("since") as string | undefined;
+  const until = c.req.query("until") as string | undefined;
   const tenantId = c.get("apiKey")?.tenant_id;
   const allowedTypes = getTypeFilter(c);
 
@@ -291,7 +390,10 @@ async function handleArchiveExport(
   const writeEntries = async (): Promise<void> => {
     // 1. Manifest
     const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2));
-    pack.entry({ name: "manifest.json", size: manifestBuf.length }, manifestBuf);
+    pack.entry(
+      { name: "manifest.json", size: manifestBuf.length },
+      manifestBuf,
+    );
 
     // 2. Items NDJSON
     const ndjsonBuf = Buffer.from(lines.join("\n") + "\n");
@@ -353,7 +455,9 @@ async function handleArchiveImport(
 
         if (header.name === "manifest.json") {
           try {
-            manifest = JSON.parse(buf.toString("utf-8")) as ArchiveManifest;
+            manifest = JSON.parse(
+              buf.toString("utf-8"),
+            ) as ArchiveManifest;
             if (manifest!.version !== 1) {
               reject(
                 new MymeError(
