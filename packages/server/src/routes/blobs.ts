@@ -5,6 +5,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
+import { collectBlobHashes } from "../storage/blob-utils.js";
 
 const MAX_BLOB_SIZE = Number(process.env.MAX_BLOB_SIZE) || 50 * 1024 * 1024; // 50MB default
 
@@ -166,25 +167,6 @@ export function blobRoutes(
 
     // Collect all blob hashes registered in the store
     const allHashes = await storage.blobs.listAll();
-
-    // Recursively scan a value tree for blob hashes.
-    // Custom types can store blob hashes in any field (logo_blob_hash,
-    // screenshots[].blob_hash, etc.), not just the standard blob_ref field.
-    const collectBlobHashes = (value: unknown, out: Set<string>): void => {
-      if (typeof value === "string") {
-        if (isValidBlobHash(value)) out.add(value);
-        return;
-      }
-      if (Array.isArray(value)) {
-        for (const el of value) collectBlobHashes(el, out);
-        return;
-      }
-      if (typeof value === "object" && value !== null) {
-        for (const v of Object.values(value as Record<string, unknown>)) {
-          collectBlobHashes(v, out);
-        }
-      }
-    };
 
     // Paginate through all items and extract every blob hash from properties
     const referencedHashes = new Set<string>();
