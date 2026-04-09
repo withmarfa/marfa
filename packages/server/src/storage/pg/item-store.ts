@@ -629,7 +629,7 @@ export class PgItemStore implements ItemStore {
     const rows = await this.db
       .select({
         state: items.state,
-        count: sql<number>`count(*)::int`,
+        count: sql<number>`count(*)::bigint`,
       })
       .from(items)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
