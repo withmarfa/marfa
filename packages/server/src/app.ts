@@ -93,9 +93,8 @@ export function createApp(
     c.json({ status: "ok", auth_mode: config.authMode }),
   );
 
-  // Rate limiting (before auth to protect all endpoints)
-  // Only enabled when RATE_LIMIT_REQUESTS is explicitly configured
-  if (process.env.RATE_LIMIT_REQUESTS) {
+  // Rate limiting (before auth to protect all endpoints, default 1000 req/min)
+  if (config.rateLimitEnabled !== false) {
     app.use("*", rateLimitMiddleware());
   }
 

@@ -17,7 +17,7 @@ interface WindowEntry {
 }
 
 const DEFAULT_CONFIG: RateLimitConfig = {
-  defaultLimit: Number(process.env.RATE_LIMIT_REQUESTS) || 100,
+  defaultLimit: Number(process.env.RATE_LIMIT_REQUESTS) || 1000,
   windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000,
   pathLimits: {
     "/keys": 10,

@@ -15,6 +15,7 @@ export interface AppConfig {
   cdnBaseUrl: string;
   authMode: "hosted" | "keys";
   versionSnapshotIntervalMs: number;
+  rateLimitEnabled: boolean;
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -56,5 +57,6 @@ export function loadConfig(): AppConfig {
     authMode: process.env.AUTH_MODE === "hosted" ? "hosted" : "keys",
     versionSnapshotIntervalMs:
       Number(process.env.VERSION_SNAPSHOT_INTERVAL_MS) || 600_000,
+    rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
   };
 }
