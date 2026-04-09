@@ -18,6 +18,23 @@ export function createOpenAPIRouter<
   return new OpenAPIHono<T>({
     defaultHook: (result) => {
       if (!result.success) {
+        // Check for missing required fields — map to MISSING_REQUIRED_FIELD
+        // to preserve backwards-compatible error codes.
+        // Zod v4 issues: { code: "invalid_type", message: "...received undefined" }
+        const missingField = result.error.issues.find(
+          (i) =>
+            i.code === "invalid_type" &&
+            i.message.includes("received undefined"),
+        );
+        if (missingField) {
+          const field = missingField.path.join(".");
+          throw new MymeError(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            `${field} is required`,
+            { field },
+          );
+        }
+
         throw new MymeError(ErrorCode.VALIDATION_ERROR, "Validation failed", {
           errors: result.error.issues.map((i) => ({
             path: i.path.join("."),
