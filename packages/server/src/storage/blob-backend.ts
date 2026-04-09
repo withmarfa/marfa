@@ -1,4 +1,11 @@
-import { access, mkdir, readFile, writeFile, unlink } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  opendir,
+  readFile,
+  writeFile,
+  unlink,
+} from "node:fs/promises";
 import { mkdirSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -12,6 +19,7 @@ export interface BlobBackend {
   exists(key: string): Promise<boolean>;
   delete(key: string): Promise<void>;
   getPresignedUrl?(key: string, ttlSeconds: number): Promise<string>;
+  list?(): AsyncIterable<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +84,24 @@ export class FilesystemBlobBackend implements BlobBackend {
       await unlink(this.safePath(key));
     } catch (err: unknown) {
       if (!isEnoent(err)) throw err;
+    }
+  }
+
+  async *list(): AsyncIterable<string> {
+    let dir;
+    try {
+      dir = await opendir(this.basePath);
+    } catch (err: unknown) {
+      if (isEnoent(err)) return;
+      throw err;
+    }
+    for await (const prefixEntry of dir) {
+      if (!prefixEntry.isDirectory()) continue;
+      const subdir = await opendir(join(this.basePath, prefixEntry.name));
+      for await (const fileEntry of subdir) {
+        if (!fileEntry.isFile()) continue;
+        yield `sha256:${fileEntry.name}`;
+      }
     }
   }
 }

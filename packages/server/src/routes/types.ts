@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import {
   MymeError,
   ErrorCode,
@@ -11,6 +11,15 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import {
+  createOpenAPIRouter,
+  ErrorResponseSchema,
+  OkResponseSchema,
+} from "../openapi.js";
+
+// ---------------------------------------------------------------------------
+// Constants & helpers
+// ---------------------------------------------------------------------------
 
 /** Check if a type is a built-in core type (from codegen, not user-registered). */
 const CORE_TYPE_IDS = new Set(ALL_TYPES.map((t) => t.id));
@@ -47,30 +56,222 @@ function validateParentChain(typeId: string, parentId: string): void {
   }
 }
 
-export function typeRoutes(storage: Storage): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
+// ---------------------------------------------------------------------------
+// Schemas
+// ---------------------------------------------------------------------------
+
+const TypeSchemaResponse = z.object({
+  id: z.string(),
+  label: z.string(),
+  parent: z.string().optional(),
+  fields: z.record(z.string(), z.unknown()),
+  states: z.array(z.string()).optional(),
+  version: z.number(),
+});
+
+// ---------------------------------------------------------------------------
+// Route definitions
+// ---------------------------------------------------------------------------
+
+const listTypesRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Types"],
+  summary: "List all registered types",
+  description: "Returns all registered types including core and custom types.",
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.array(TypeSchemaResponse),
+        },
+      },
+      description: "List of all type schemas",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+  },
+});
+
+const getTypeRoute = createRoute({
+  method: "get",
+  path: "/{id}",
+  tags: ["Types"],
+  summary: "Get a single type schema",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      id: z.string(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: TypeSchemaResponse,
+        },
+      },
+      description: "Type schema",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Type not found",
+    },
+  },
+});
+
+const registerTypeRoute = createRoute({
+  method: "post",
+  path: "/",
+  tags: ["Types"],
+  summary: "Register a custom type",
+  description:
+    "Register a new custom type schema. Admin only. Body is validated via validateTypeSchema().",
+  security: [{ bearerAuth: [] }],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.record(z.string(), z.unknown()),
+        },
+      },
+    },
+  },
+  responses: {
+    201: {
+      content: {
+        "application/json": {
+          schema: z.object({ type: TypeSchemaResponse }),
+        },
+      },
+      description: "Custom type registered",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    409: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Type already exists",
+    },
+  },
+});
+
+const updateTypeRoute = createRoute({
+  method: "put",
+  path: "/{id}",
+  tags: ["Types"],
+  summary: "Update a custom type",
+  description:
+    "Update an existing custom type schema. Admin only. Core types cannot be modified. Body is validated via validateTypeSchema().",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      id: z.string(),
+    }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.record(z.string(), z.unknown()),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ type: TypeSchemaResponse }),
+        },
+      },
+      description: "Custom type updated",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Type not found",
+    },
+  },
+});
+
+const deleteTypeRoute = createRoute({
+  method: "delete",
+  path: "/{id}",
+  tags: ["Types"],
+  summary: "Delete a custom type",
+  description:
+    "Delete a custom type. Admin only. Core types cannot be deleted. Use ?force=true to delete even if items exist.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      id: z.string(),
+    }),
+    query: z.object({
+      force: z.enum(["true", "false"]).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: OkResponseSchema,
+        },
+      },
+      description: "Type deleted",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Type not found",
+    },
+    409: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Type in use",
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+export function typeRoutes(storage: Storage) {
+  const router = createOpenAPIRouter<AppEnv>();
 
   // GET /types — list all registered types (core + custom)
-  router.get("/", (c) => {
+  router.openapi(listTypesRoute, (c) => {
     requireAuth(c);
-    return c.json(Array.from(TYPE_REGISTRY.values()));
+    return c.json(Array.from(TYPE_REGISTRY.values()), 200);
   });
 
   // GET /types/:id — get a single type schema
-  router.get("/:id", (c) => {
+  router.openapi(getTypeRoute, (c) => {
     requireAuth(c);
-    const id = c.req.param("id");
+    const { id } = c.req.valid("param");
     const schema = getTypeSchema(id);
     if (!schema) {
       throw new MymeError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
-    return c.json(schema);
+    return c.json(schema, 200);
   });
 
   // POST /types — register a custom type (admin only)
-  router.post("/", async (c) => {
+  router.openapi(registerTypeRoute, async (c) => {
     requireAdmin(c);
-    const body = await c.req.json();
+    const body = c.req.valid("json");
 
     // Pre-validation for specific error codes
     if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
@@ -100,7 +301,7 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
       const lastSegment = schema.id.split(".").pop() ?? schema.id;
       schema.label = lastSegment
         .replace(/[_-]/g, " ")
-        .replace(/\b\w/g, (c) => c.toUpperCase());
+        .replace(/\b\w/g, (ch) => ch.toUpperCase());
     }
 
     if (schema.parent) {
@@ -126,9 +327,9 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
   });
 
   // PUT /types/:id — update a custom type (admin only)
-  router.put("/:id", async (c) => {
+  router.openapi(updateTypeRoute, async (c) => {
     requireAdmin(c);
-    const id = c.req.param("id");
+    const { id } = c.req.valid("param");
 
     if (!isValidTypeIdentifier(id)) {
       throw new MymeError(
@@ -149,7 +350,7 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
       throw new MymeError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
 
-    const body = await c.req.json();
+    const body = c.req.valid("json");
     const result = validateTypeSchema({ ...body, id });
     if (!result.success) {
       throw new MymeError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
@@ -185,13 +386,13 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
       resource_type: "type",
       resource_id: id,
     });
-    return c.json({ type: updated });
+    return c.json({ type: updated }, 200);
   });
 
   // DELETE /types/:id — delete a custom type (admin only)
-  router.delete("/:id", async (c) => {
+  router.openapi(deleteTypeRoute, async (c) => {
     requireAdmin(c);
-    const id = c.req.param("id");
+    const { id } = c.req.valid("param");
 
     if (CORE_TYPE_IDS.has(id)) {
       throw new MymeError(
@@ -205,8 +406,8 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
       throw new MymeError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
 
-    const force = c.req.query("force") === "true";
-    if (!force) {
+    const { force } = c.req.valid("query");
+    if (force !== "true") {
       const tenantId = c.get("apiKey")?.tenant_id;
       const items = await storage.items.list({
         tenantId,
@@ -228,7 +429,7 @@ export function typeRoutes(storage: Storage): Hono<AppEnv> {
       resource_type: "type",
       resource_id: id,
     });
-    return c.json({ ok: true });
+    return c.json({ ok: true as const }, 200);
   });
 
   return router;

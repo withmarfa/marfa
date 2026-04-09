@@ -4,6 +4,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   DeleteObjectCommand,
+  ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 import type { BlobBackend } from "./blob-backend.js";
 
@@ -110,6 +111,28 @@ export class S3BlobBackend implements BlobBackend {
         Key: this.prefixedKey(key),
       }),
     );
+  }
+
+  async *list(): AsyncIterable<string> {
+    let continuationToken: string | undefined;
+    do {
+      const response = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: `${this.prefix}/`,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      for (const obj of response.Contents ?? []) {
+        if (!obj.Key) continue;
+        // Strip prefix ("blobs/") to get raw hex, re-add sha256: to match DB format
+        const hex = obj.Key.slice(this.prefix.length + 1);
+        if (hex) yield `sha256:${hex}`;
+      }
+      continuationToken = response.IsTruncated
+        ? response.NextContinuationToken
+        : undefined;
+    } while (continuationToken);
   }
 
   async getPresignedUrl(key: string, ttlSeconds = 3600): Promise<string> {

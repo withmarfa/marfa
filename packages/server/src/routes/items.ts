@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import {
   MymeError,
   ErrorCode,
@@ -19,16 +19,619 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { publish } from "../pubsub.js";
-import { parseIntParam } from "./util.js";
+import {
+  createOpenAPIRouter,
+  ErrorResponseSchema,
+  OkResponseSchema,
+} from "../openapi.js";
 
-export function itemRoutes(storage: Storage): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
+// ---------------------------------------------------------------------------
+// Reusable schemas
+// ---------------------------------------------------------------------------
+
+const ItemSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  properties: z.record(z.unknown()),
+  state: z.string(),
+  version: z.number(),
+  thread_id: z.string().nullable(),
+  parent_id: z.string().nullable(),
+  source: z.string().nullable(),
+  source_id: z.string().nullable(),
+  origin: z.string().nullable(),
+  device_id: z.string().nullable(),
+  capture_latitude: z.number().nullable(),
+  capture_longitude: z.number().nullable(),
+  timestamp: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const MetadataSchema = z.object({
+  item_id: z.string(),
+  tags: z.array(z.string()),
+  about: z.array(z.string()),
+  extensions: z.record(z.unknown()),
+});
+
+const ItemWithMetadataSchema = z.object({
+  item: ItemSchema,
+  metadata: MetadataSchema,
+});
+
+const VersionSchema = z.object({
+  id: z.string(),
+  item_id: z.string(),
+  version: z.number(),
+  properties: z.record(z.unknown()),
+  snapshot: z.boolean(),
+  created_at: z.string(),
+});
+
+const IdParam = z.object({
+  id: z.string(),
+});
+
+// ---------------------------------------------------------------------------
+// Route definitions
+// ---------------------------------------------------------------------------
+
+const createItemRoute = createRoute({
+  method: "post",
+  path: "/",
+  tags: ["Items"],
+  summary: "Create an item",
+  security: [{ bearerAuth: [] }],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            type: z.string(),
+            properties: z.record(z.string(), z.unknown()).optional(),
+            id: z.string().optional(),
+            state: z.string().optional(),
+            timestamp: z.string().optional(),
+            source: z.string().optional(),
+            source_id: z.string().optional(),
+            origin: z.string().optional(),
+            device_id: z.string().optional(),
+            parent_id: z.string().optional(),
+            thread_id: z.string().optional(),
+            capture_latitude: z.number().optional(),
+            capture_longitude: z.number().optional(),
+            tags: z.array(z.string()).optional(),
+            about: z.array(z.string()).optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: {
+      content: {
+        "application/json": { schema: ItemWithMetadataSchema },
+      },
+      description: "Item created",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Forbidden",
+    },
+  },
+});
+
+const getItemStatsRoute = createRoute({
+  method: "get",
+  path: "/stats",
+  tags: ["Items"],
+  summary: "Get item counts by state",
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.record(z.string(), z.number()),
+        },
+      },
+      description: "Item counts by state",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+  },
+});
+
+const listItemsRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Items"],
+  summary: "List items with filtering and pagination",
+  security: [{ bearerAuth: [] }],
+  request: {
+    query: z.object({
+      type: z.string().optional(),
+      state: z.string().optional(),
+      source: z.string().optional(),
+      parent_id: z.string().optional(),
+      thread_id: z.string().optional(),
+      tags: z.string().optional(),
+      filter: z.string().optional(),
+      root_only: z.enum(["true", "false"]).optional(),
+      sort: z.enum(["created_at", "updated_at", "timestamp"]).optional(),
+      direction: z.enum(["asc", "desc"]).optional(),
+      since: z.string().optional(),
+      until: z.string().optional(),
+      limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+      cursor: z.string().optional(),
+      include: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.union([
+            z.object({
+              data: z.array(ItemSchema),
+              cursor: z.string().nullable(),
+              has_more: z.boolean(),
+            }),
+            z.object({
+              data: z.array(ItemWithMetadataSchema),
+              cursor: z.string().nullable(),
+              has_more: z.boolean(),
+            }),
+          ]),
+        },
+      },
+      description: "Paginated list of items",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+  },
+});
+
+const getItemRoute = createRoute({
+  method: "get",
+  path: "/{id}",
+  tags: ["Items"],
+  summary: "Get a single item",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: ItemWithMetadataSchema },
+      },
+      description: "Item with metadata",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const updateItemRoute = createRoute({
+  method: "patch",
+  path: "/{id}",
+  tags: ["Items"],
+  summary: "Update an item with conflict detection",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            properties: z.record(z.string(), z.unknown()).optional(),
+            parent_id: z.string().nullable().optional(),
+            thread_id: z.string().nullable().optional(),
+            version: z.number().int().min(0).optional(),
+            snapshot: z.boolean().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: ItemWithMetadataSchema },
+      },
+      description: "Item updated",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+    409: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Version conflict",
+    },
+  },
+});
+
+const deleteItemRoute = createRoute({
+  method: "delete",
+  path: "/{id}",
+  tags: ["Items"],
+  summary: "Soft delete (trash) an item",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: OkResponseSchema },
+      },
+      description: "Item trashed",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+  },
+});
+
+const restoreItemRoute = createRoute({
+  method: "post",
+  path: "/{id}/restore",
+  tags: ["Items"],
+  summary: "Restore a trashed item",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: ItemWithMetadataSchema },
+      },
+      description: "Item restored",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const transitionItemRoute = createRoute({
+  method: "post",
+  path: "/{id}/transition",
+  tags: ["Items"],
+  summary: "Transition item state",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            state: z.string().min(1),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: ItemWithMetadataSchema },
+      },
+      description: "Item transitioned",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Invalid transition",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const listVersionsRoute = createRoute({
+  method: "get",
+  path: "/{id}/versions",
+  tags: ["Items"],
+  summary: "List version history for an item",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            versions: z.array(VersionSchema),
+          }),
+        },
+      },
+      description: "Version history",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const getMetadataRoute = createRoute({
+  method: "get",
+  path: "/{id}/metadata",
+  tags: ["Items"],
+  summary: "Get item metadata",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ metadata: MetadataSchema }),
+        },
+      },
+      description: "Item metadata",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const putMetadataRoute = createRoute({
+  method: "put",
+  path: "/{id}/metadata",
+  tags: ["Items"],
+  summary: "Replace item metadata",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            tags: z.array(z.string()).optional().default([]),
+            about: z.array(z.string()).optional().default([]),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ metadata: MetadataSchema }),
+        },
+      },
+      description: "Metadata replaced",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const patchMetadataRoute = createRoute({
+  method: "patch",
+  path: "/{id}/metadata",
+  tags: ["Items"],
+  summary: "Merge metadata (set-union)",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            tags: z.array(z.string()).optional(),
+            about: z.array(z.string()).optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ metadata: MetadataSchema }),
+        },
+      },
+      description: "Metadata merged",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const addTagsRoute = createRoute({
+  method: "post",
+  path: "/{id}/tags",
+  tags: ["Items"],
+  summary: "Add tags to an item",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            tags: z.array(z.string()).min(1, "tags must be a non-empty array of strings"),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ metadata: MetadataSchema }),
+        },
+      },
+      description: "Tags added",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const removeTagRoute = createRoute({
+  method: "delete",
+  path: "/{id}/tags/{tag}",
+  tags: ["Items"],
+  summary: "Remove a tag from an item",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      id: z.string(),
+      tag: z.string(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ metadata: MetadataSchema }),
+        },
+      },
+      description: "Tag removed",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const purgeItemRoute = createRoute({
+  method: "delete",
+  path: "/{id}/purge",
+  tags: ["Items"],
+  summary: "Permanently delete a trashed item (admin only)",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: OkResponseSchema },
+      },
+      description: "Item permanently deleted",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Admin required",
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+export function itemRoutes(storage: Storage) {
+  const router = createOpenAPIRouter<AppEnv>();
 
   // POST /items — create
-  router.post("/", async (c) => {
-    const body = await c.req.json();
+  router.openapi(createItemRoute, async (c) => {
+    const body = c.req.valid("json");
 
-    const type = body.type as string | undefined;
+    const type = body.type;
     if (!type) {
       throw new MymeError(
         ErrorCode.MISSING_REQUIRED_FIELD,
@@ -45,8 +648,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    const properties =
-      (body.properties as Record<string, unknown> | undefined) ?? {};
+    const properties = body.properties ?? {};
     if (typeof properties !== "object") {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
@@ -54,16 +656,16 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    if (body.id && !isValidId(body.id as string)) {
+    if (body.id && !isValidId(body.id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
-    if (body.timestamp && !isValidTimestamp(body.timestamp as string)) {
+    if (body.timestamp && !isValidTimestamp(body.timestamp)) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid timestamp");
     }
-    if (body.parent_id && !isValidId(body.parent_id as string)) {
+    if (body.parent_id && !isValidId(body.parent_id)) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid parent_id");
     }
-    if (body.thread_id && !isValidId(body.thread_id as string)) {
+    if (body.thread_id && !isValidId(body.thread_id)) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid thread_id");
     }
     if (body.state) {
@@ -71,10 +673,10 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       const validStates = typeSchema
         ? (typeSchema.states as string[])
         : (ITEM_STATES as readonly string[]);
-      if (!validStates.includes(body.state as string)) {
+      if (!validStates.includes(body.state)) {
         throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
-          `Invalid state: ${body.state as string}`,
+          `Invalid state: ${body.state}`,
         );
       }
     }
@@ -129,29 +731,29 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
   });
 
   // GET /items/stats — item counts grouped by state
-  router.get("/stats", async (c) => {
+  router.openapi(getItemStatsRoute, async (c) => {
     requireAuth(c);
     const tenantId = c.get("apiKey")?.tenant_id;
     const allowedTypes = getTypeFilter(c);
     const stats = await storage.items.stats(tenantId, allowedTypes);
-    return c.json(stats);
+    return c.json(stats, 200);
   });
 
   // GET /items — list
-  router.get("/", async (c) => {
+  router.openapi(listItemsRoute, async (c) => {
     requireAuth(c);
 
-    const type = c.req.query("type");
+    const query = c.req.valid("query");
+
+    const type = query.type;
     if (type && !isValidTypeIdentifier(type) && !type.endsWith(".*")) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
       );
     }
-    // Type access for list is enforced by allowed_types filtering, not 403 rejection.
-    // This lets scoped keys list any type and get filtered (empty) results.
 
-    const state = c.req.query("state") as ItemState | undefined;
+    const state = query.state as ItemState | undefined;
     if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
@@ -159,67 +761,68 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    // Fix 6: tags query param
-    const tagsParam = c.req.query("tags");
+    const tagsParam = query.tags;
     const tags = tagsParam
       ? tagsParam.split(",").map((t) => t.trim())
       : undefined;
 
-    const filter = c.req.query("filter") ?? undefined;
-
-    const rootOnly = c.req.query("root_only") === "true";
-    const includeMetadata = c.req.query("include") === "metadata";
+    const filter = query.filter ?? undefined;
+    const rootOnly = query.root_only === "true";
+    const includeMetadata = query.include === "metadata";
 
     const result = await storage.items.list({
       tenantId: c.get("apiKey")?.tenant_id,
       type,
       state,
-      source: c.req.query("source"),
-      parent_id: c.req.query("parent_id"),
-      thread_id: c.req.query("thread_id"),
+      source: query.source,
+      parent_id: query.parent_id,
+      thread_id: query.thread_id,
       root_only: rootOnly || undefined,
       tags,
       filter,
       allowed_types: getTypeFilter(c),
       sort:
-        (c.req.query("sort") as
+        (query.sort as
           | "created_at"
           | "updated_at"
           | "timestamp"
           | undefined) ?? undefined,
       direction:
-        (c.req.query("direction") as "asc" | "desc" | undefined) ?? undefined,
-      since: c.req.query("since"),
-      until: c.req.query("until"),
-      limit: parseIntParam(c.req.query("limit"), 50, 1, 200),
-      cursor: c.req.query("cursor"),
+        (query.direction as "asc" | "desc" | undefined) ?? undefined,
+      since: query.since,
+      until: query.until,
+      limit: query.limit,
+      cursor: query.cursor,
     });
 
     if (includeMetadata) {
       const ids = result.data.map((item) => item.id);
       const metadataList = await storage.metadata.getMany(ids);
       const metadataMap = new Map(metadataList.map((m) => [m.item_id, m]));
-      return c.json({
-        data: result.data.map((item) => ({
-          item,
-          metadata: metadataMap.get(item.id) ?? {
-            item_id: item.id,
-            tags: [],
-            about: [],
-            extensions: {},
-          },
-        })),
-        cursor: result.cursor,
-        has_more: result.has_more,
-      });
+      return c.json(
+        {
+          data: result.data.map((item) => ({
+            item,
+            metadata: metadataMap.get(item.id) ?? {
+              item_id: item.id,
+              tags: [],
+              about: [],
+              extensions: {},
+            },
+          })),
+          cursor: result.cursor,
+          has_more: result.has_more,
+        },
+        200,
+      );
     }
 
-    return c.json(result);
+    return c.json(result, 200);
   });
 
   // GET /items/:id — get single
-  router.get("/:id", async (c) => {
-    const id = c.req.param("id");
+  router.openapi(getItemRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -232,17 +835,17 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     requireTypeAccess(c, item.type, "read");
     const metadata = await storage.metadata.get(id);
-    return c.json({ item, metadata });
+    return c.json({ item, metadata }, 200);
   });
 
   // PATCH /items/:id — update with conflict detection
-  router.patch("/:id", async (c) => {
-    const id = c.req.param("id");
+  router.openapi(updateItemRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const body = await c.req.json();
+    const body = c.req.valid("json");
     const hasProperties =
       body.properties !== undefined && typeof body.properties === "object";
     const hasParentId = "parent_id" in body;
@@ -369,7 +972,6 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       await storage.threads.touch(body.thread_id as string);
     }
 
-    // Fix 1: wrap in { item, metadata }
     if ("error" in result) {
       return c.json(result, 409);
     }
@@ -382,13 +984,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       resource_type: "item",
       resource_id: id,
     });
-    return c.json({ item: result, metadata });
+    return c.json({ item: result, metadata }, 200);
   });
 
   // DELETE /items/:id — soft delete
-  // Fix 1: return 200 { ok: true } instead of 204
-  router.delete("/:id", async (c) => {
-    const id = c.req.param("id");
+  router.openapi(deleteItemRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -410,12 +1011,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       resource_type: "item",
       resource_id: id,
     });
-    return c.json({ ok: true });
+    return c.json({ ok: true as const }, 200);
   });
 
-  // POST /items/:id/restore — Fix 1: wrap in { item, metadata }
-  router.post("/:id/restore", async (c) => {
-    const id = c.req.param("id");
+  // POST /items/:id/restore
+  router.openapi(restoreItemRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -432,18 +1033,18 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       resource_type: "item",
       resource_id: id,
     });
-    return c.json({ item: restored, metadata });
+    return c.json({ item: restored, metadata }, 200);
   });
 
-  // POST /items/:id/transition — Fix 1: wrap in { item, metadata }
-  router.post("/:id/transition", async (c) => {
-    const id = c.req.param("id");
+  // POST /items/:id/transition
+  router.openapi(transitionItemRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const body = await c.req.json();
-    const state = body.state as string | undefined;
+    const body = c.req.valid("json");
+    const state = body.state;
     if (!state || typeof state !== "string") {
       throw new MymeError(
         ErrorCode.INVALID_TRANSITION,
@@ -472,12 +1073,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       resource_id: id,
       details: { from_state: item.state, to_state: state },
     });
-    return c.json({ item: updated, metadata });
+    return c.json({ item: updated, metadata }, 200);
   });
 
-  // GET /items/:id/versions — Fix 1: wrap in { versions: [...] }
-  router.get("/:id/versions", async (c) => {
-    const id = c.req.param("id");
+  // GET /items/:id/versions
+  router.openapi(listVersionsRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -489,14 +1090,14 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     requireTypeAccess(c, item.type, "read");
     const versions = await storage.versions.list(id);
-    return c.json({ versions });
+    return c.json({ versions }, 200);
   });
 
   // --- Metadata sub-routes ---
 
-  // GET /items/:id/metadata — Fix 1: wrap in { metadata: {...} }
-  router.get("/:id/metadata", async (c) => {
-    const id = c.req.param("id");
+  // GET /items/:id/metadata
+  router.openapi(getMetadataRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -507,12 +1108,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     requireTypeAccess(c, item.type, "read");
-    return c.json({ metadata: await storage.metadata.get(id) });
+    return c.json({ metadata: await storage.metadata.get(id) }, 200);
   });
 
-  // PUT /items/:id/metadata — full replacement. Fix 1: wrap in { metadata: {...} }
-  router.put("/:id/metadata", async (c) => {
-    const id = c.req.param("id");
+  // PUT /items/:id/metadata — full replacement
+  router.openapi(putMetadataRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -524,9 +1125,9 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     requireTypeAccess(c, item.type, "write");
 
-    const body = await c.req.json();
-    const tags = (body.tags as string[] | undefined) ?? [];
-    const about = (body.about as string[] | undefined) ?? [];
+    const body = c.req.valid("json");
+    const tags = body.tags;
+    const about = body.about;
 
     if (tags.length > 100) {
       throw new MymeError(
@@ -542,12 +1143,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const metadata = await storage.metadata.set(id, tags, about);
-    return c.json({ metadata });
+    return c.json({ metadata }, 200);
   });
 
-  // PATCH /items/:id/metadata — Fix 2: set-union merge
-  router.patch("/:id/metadata", async (c) => {
-    const id = c.req.param("id");
+  // PATCH /items/:id/metadata — set-union merge
+  router.openapi(patchMetadataRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -559,9 +1160,9 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     requireTypeAccess(c, item.type, "write");
 
-    const body = await c.req.json();
-    const tags = body.tags as string[] | undefined;
-    const about = body.about as string[] | undefined;
+    const body = c.req.valid("json");
+    const tags = body.tags;
+    const about = body.about;
 
     // Pre-merge bounds check on incoming arrays
     if (Array.isArray(tags) && tags.length > 100) {
@@ -593,12 +1194,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    return c.json({ metadata });
+    return c.json({ metadata }, 200);
   });
 
   // POST /items/:id/tags
-  router.post("/:id/tags", async (c) => {
-    const id = c.req.param("id");
+  router.openapi(addTagsRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -610,14 +1211,8 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
 
     requireTypeAccess(c, item.type, "write");
 
-    const body = await c.req.json();
-    const tags = body.tags as string[] | undefined;
-    if (!Array.isArray(tags) || tags.length === 0) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "tags must be a non-empty array of strings",
-      );
-    }
+    const body = c.req.valid("json");
+    const tags = body.tags;
 
     const metadata = await storage.metadata.addTags(id, tags);
     if (metadata.tags.length > 100) {
@@ -633,12 +1228,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       resource_id: id,
       details: { tags },
     });
-    return c.json({ metadata });
+    return c.json({ metadata }, 200);
   });
 
   // DELETE /items/:id/purge — permanently delete a trashed item (admin only)
-  router.delete("/:id/purge", async (c) => {
-    const id = c.req.param("id");
+  router.openapi(purgeItemRoute, async (c) => {
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -652,12 +1247,12 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       resource_type: "item",
       resource_id: id,
     });
-    return c.json({ ok: true });
+    return c.json({ ok: true as const }, 200);
   });
 
   // DELETE /items/:id/tags/:tag
-  router.delete("/:id/tags/:tag", async (c) => {
-    const id = c.req.param("id");
+  router.openapi(removeTagRoute, async (c) => {
+    const { id, tag: rawTag } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -668,7 +1263,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     requireTypeAccess(c, item.type, "write");
-    const tag = decodeURIComponent(c.req.param("tag"));
+    const tag = decodeURIComponent(rawTag);
     const metadata = await storage.metadata.removeTag(id, tag);
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
@@ -677,7 +1272,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       resource_id: id,
       details: { tag },
     });
-    return c.json({ metadata });
+    return c.json({ metadata }, 200);
   });
 
   return router;

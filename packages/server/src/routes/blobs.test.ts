@@ -244,3 +244,90 @@ describe("POST /blobs/cleanup", () => {
     expect(body.removed).toBe(body.orphaned);
   });
 });
+
+describe("POST /blobs/reconcile", () => {
+  it("defaults to dry_run=true and returns a report", async () => {
+    // Upload a blob so there's something in both storage and DB
+    const data = new TextEncoder().encode("reconcile test blob");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: data,
+    });
+    expect(uploadRes.status).toBe(201);
+
+    const res = await request(ctx.app, "POST", "/blobs/reconcile", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      s3_total: number;
+      db_total: number;
+      healthy: number;
+      orphaned_s3: number;
+      missing_s3: number;
+      orphaned_s3_sample: string[];
+      missing_s3_sample: string[];
+      deleted: number;
+      dry_run: boolean;
+    };
+    expect(body.dry_run).toBe(true);
+    expect(body.deleted).toBe(0);
+    expect(body.healthy).toBeGreaterThan(0);
+    expect(body.s3_total).toBe(body.db_total);
+    expect(body.orphaned_s3).toBe(0);
+    expect(body.missing_s3).toBe(0);
+  });
+
+  it("detects orphaned storage files not in DB", async () => {
+    // Write a file directly to the blob backend (bypassing DB registration)
+    const orphanHash = "sha256:0000000000000000000000000000000000000000000000000000000000099999";
+    await ctx.blobBackend.put(orphanHash, Buffer.from("orphan data"));
+
+    const res = await request(ctx.app, "POST", "/blobs/reconcile", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      orphaned_s3: number;
+      orphaned_s3_sample: string[];
+      deleted: number;
+      dry_run: boolean;
+    };
+    expect(body.dry_run).toBe(true);
+    expect(body.orphaned_s3).toBeGreaterThan(0);
+    expect(body.orphaned_s3_sample).toContain(orphanHash);
+    expect(body.deleted).toBe(0);
+  });
+
+  it("deletes orphaned storage files in execute mode", async () => {
+    const res = await request(
+      ctx.app,
+      "POST",
+      "/blobs/reconcile?dry_run=false",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      orphaned_s3: number;
+      deleted: number;
+      dry_run: boolean;
+    };
+    expect(body.dry_run).toBe(false);
+    expect(body.deleted).toBe(body.orphaned_s3);
+
+    // Verify the orphan file is gone
+    const orphanHash = "sha256:0000000000000000000000000000000000000000000000000000000000099999";
+    expect(await ctx.blobBackend.exists(orphanHash)).toBe(false);
+  });
+
+  it("requires authentication", async () => {
+    const res = await ctx.app.request("/blobs/reconcile", {
+      method: "POST",
+    });
+    expect(res.status).toBe(401);
+  });
+});

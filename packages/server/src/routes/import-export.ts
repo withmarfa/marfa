@@ -1,11 +1,17 @@
+import { createHash } from "node:crypto";
+import { createGzip, createGunzip } from "node:zlib";
+import { Readable, PassThrough } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { Hono } from "hono";
 import {
   MymeError,
   ErrorCode,
   isValidTypeIdentifier,
+  isValidBlobHash,
   ITEM_STATES,
 } from "@mymehq/shared";
 import type { ItemState } from "@mymehq/shared";
+import * as tar from "tar-stream";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAdmin,
@@ -13,14 +19,29 @@ import {
   getTypeFilter,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import type { BlobBackend } from "../storage/blob-backend.js";
+import { collectBlobHashes } from "../storage/blob-utils.js";
 
 const MAX_IMPORT_ITEMS = 5000;
 
-export function importRoutes(storage: Storage): Hono<AppEnv> {
+export function importRoutes(
+  storage: Storage,
+  blobBackend: BlobBackend,
+): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
   router.post("/", async (c) => {
     requireAdmin(c);
+
+    // Archive import: Content-Type: application/gzip or ?format=archive
+    const contentType = c.req.header("Content-Type") ?? "";
+    if (
+      contentType === "application/gzip" ||
+      contentType === "application/x-gzip" ||
+      c.req.query("format") === "archive"
+    ) {
+      return handleArchiveImport(c, storage, blobBackend);
+    }
 
     const body = await c.req.json();
     const items = body.items as unknown[] | undefined;
@@ -101,11 +122,19 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
   return router;
 }
 
-export function exportRoutes(storage: Storage): Hono<AppEnv> {
+export function exportRoutes(
+  storage: Storage,
+  blobBackend: BlobBackend,
+): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
   router.get("/", (c) => {
     requireAuth(c);
+
+    // Archive export: ?format=archive
+    if (c.req.query("format") === "archive") {
+      return handleArchiveExport(c, storage, blobBackend);
+    }
 
     const type = c.req.query("type");
     if (type && !isValidTypeIdentifier(type)) {
@@ -172,4 +201,292 @@ export function exportRoutes(storage: Storage): Hono<AppEnv> {
   });
 
   return router;
+}
+
+// ---------------------------------------------------------------------------
+// Archive helpers
+// ---------------------------------------------------------------------------
+
+interface ArchiveManifest {
+  version: number;
+  format: string;
+  created_at: string;
+  item_count: number;
+  blob_count: number;
+  blobs: Record<string, { mime_type: string; size: number }>;
+}
+
+type HonoContext = Parameters<Parameters<Hono<AppEnv>["get"]>[1]>[0];
+
+async function handleArchiveExport(
+  c: HonoContext,
+  storage: Storage,
+  blobBackend: BlobBackend,
+): Promise<Response> {
+  const type = c.req.query("type");
+  if (type && !isValidTypeIdentifier(type)) {
+    throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
+  }
+  const state = c.req.query("state") as ItemState | undefined;
+  if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
+    throw new MymeError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${state}`);
+  }
+  const since = c.req.query("since");
+  const until = c.req.query("until");
+  const tenantId = c.get("apiKey")?.tenant_id;
+  const allowedTypes = getTypeFilter(c);
+
+  // Pass 1: Collect all items as NDJSON and gather blob hashes
+  const lines: string[] = [];
+  const blobHashes = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const result = await storage.items.list({
+      tenantId,
+      type,
+      state,
+      since,
+      until,
+      allowed_types: allowedTypes,
+      limit: 200,
+      cursor,
+    });
+    for (const item of result.data) {
+      const metadata = await storage.metadata.get(item.id);
+      lines.push(JSON.stringify({ item, metadata }));
+      collectBlobHashes(item.properties, blobHashes);
+      if (metadata) collectBlobHashes(metadata.extensions, blobHashes);
+    }
+    cursor = result.has_more
+      ? (result.cursor as string | undefined)
+      : undefined;
+  } while (cursor);
+
+  // Resolve blob metadata from the database
+  const blobMeta: Record<string, { mime_type: string; size: number }> = {};
+  for (const hash of blobHashes) {
+    const record = await storage.blobs.get(hash);
+    if (record) {
+      blobMeta[hash] = { mime_type: record.mime_type, size: record.size };
+    }
+  }
+
+  // Build manifest
+  const manifest: ArchiveManifest = {
+    version: 1,
+    format: "myme-archive-v1",
+    created_at: new Date().toISOString(),
+    item_count: lines.length,
+    blob_count: Object.keys(blobMeta).length,
+    blobs: blobMeta,
+  };
+
+  // Pack tar.gz
+  const pack = tar.pack();
+  const gzip = createGzip();
+  const passthrough = new PassThrough();
+  pack.pipe(gzip).pipe(passthrough);
+
+  // Write entries asynchronously
+  const writeEntries = async (): Promise<void> => {
+    // 1. Manifest
+    const manifestBuf = Buffer.from(JSON.stringify(manifest, null, 2));
+    pack.entry({ name: "manifest.json", size: manifestBuf.length }, manifestBuf);
+
+    // 2. Items NDJSON
+    const ndjsonBuf = Buffer.from(lines.join("\n") + "\n");
+    pack.entry({ name: "items.ndjson", size: ndjsonBuf.length }, ndjsonBuf);
+
+    // 3. Blobs
+    for (const hash of Object.keys(blobMeta)) {
+      const data = await blobBackend.get(hash);
+      if (data) {
+        pack.entry({ name: `blobs/${hash}`, size: data.length }, data);
+      }
+    }
+
+    pack.finalize();
+  };
+
+  writeEntries().catch(() => {
+    passthrough.destroy();
+  });
+
+  // Convert Node stream to Web ReadableStream
+  const webStream = Readable.toWeb(passthrough) as ReadableStream;
+
+  const date = new Date().toISOString().split("T")[0];
+  return new Response(webStream, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/gzip",
+      "Content-Disposition": `attachment; filename="myme-export-${date}.tar.gz"`,
+    },
+  });
+}
+
+async function handleArchiveImport(
+  c: HonoContext,
+  storage: Storage,
+  blobBackend: BlobBackend,
+): Promise<Response> {
+  const rawBody = await c.req.arrayBuffer();
+  if (rawBody.byteLength === 0) {
+    throw new MymeError(ErrorCode.VALIDATION_ERROR, "Empty archive");
+  }
+
+  let manifest: ArchiveManifest | null = null;
+  const itemLines: string[] = [];
+  const blobUploads: Promise<void>[] = [];
+  let blobCount = 0;
+
+  // Extract tar.gz entries
+  const extract = tar.extract();
+  const gunzip = createGunzip();
+
+  const entries = new Promise<void>((resolve, reject) => {
+    extract.on("entry", (header, stream, next) => {
+      const chunks: Buffer[] = [];
+      stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+      stream.on("end", () => {
+        const buf = Buffer.concat(chunks);
+
+        if (header.name === "manifest.json") {
+          try {
+            manifest = JSON.parse(buf.toString("utf-8")) as ArchiveManifest;
+            if (manifest!.version !== 1) {
+              reject(
+                new MymeError(
+                  ErrorCode.VALIDATION_ERROR,
+                  `Unsupported archive version: ${String(manifest!.version)}`,
+                ),
+              );
+              return;
+            }
+          } catch (err) {
+            if (err instanceof MymeError) {
+              reject(err);
+              return;
+            }
+            reject(
+              new MymeError(
+                ErrorCode.VALIDATION_ERROR,
+                "Invalid manifest.json",
+              ),
+            );
+            return;
+          }
+        } else if (header.name === "items.ndjson") {
+          const text = buf.toString("utf-8").trimEnd();
+          if (text) {
+            itemLines.push(...text.split("\n"));
+          }
+        } else if (header.name.startsWith("blobs/")) {
+          const hash = header.name.slice("blobs/".length);
+          if (isValidBlobHash(hash)) {
+            // Verify hash integrity
+            const hex = createHash("sha256").update(buf).digest("hex");
+            const computed = `sha256:${hex}`;
+            if (computed === hash) {
+              blobCount++;
+              const mimeType =
+                manifest?.blobs?.[hash]?.mime_type ??
+                "application/octet-stream";
+              blobUploads.push(
+                blobBackend.put(hash, buf, mimeType).then(() =>
+                  storage.blobs.register(hash, mimeType, buf.length, hash),
+                ),
+              );
+            }
+          }
+        }
+
+        next();
+      });
+      stream.resume();
+    });
+    extract.on("finish", () => resolve());
+    extract.on("error", reject);
+  });
+
+  const inputStream = Readable.from(Buffer.from(rawBody));
+  inputStream.pipe(gunzip).pipe(extract);
+  await entries;
+
+  // Wait for all blob uploads to complete
+  await Promise.all(blobUploads);
+
+  // Import items using the existing transaction-wrapped logic
+  const tenantId = c.get("apiKey")?.tenant_id;
+  const items: Record<string, unknown>[] = [];
+  for (const line of itemLines) {
+    try {
+      const parsed = JSON.parse(line) as {
+        item: Record<string, unknown>;
+        metadata?: unknown;
+      };
+      items.push(parsed.item);
+    } catch {
+      // Skip malformed lines
+    }
+  }
+
+  if (items.length > MAX_IMPORT_ITEMS) {
+    throw new MymeError(
+      ErrorCode.VALIDATION_ERROR,
+      `Maximum ${String(MAX_IMPORT_ITEMS)} items per import`,
+    );
+  }
+
+  const result = await storage.runInTransaction(async () => {
+    let imported = 0;
+    let duplicates = 0;
+
+    for (const item of items) {
+      try {
+        await storage.items.create(
+          {
+            type: item.type as string,
+            properties: (item.properties ?? {}) as Record<string, unknown>,
+            source: item.source as string | undefined,
+            source_id: item.source_id as string | undefined,
+            tags: item.tags as string[] | undefined,
+            about: item.about as string[] | undefined,
+          },
+          tenantId,
+        );
+        imported++;
+      } catch (err) {
+        if (
+          err instanceof MymeError &&
+          err.code === ErrorCode.DUPLICATE_SOURCE
+        ) {
+          duplicates++;
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    return { imported, duplicates };
+  });
+
+  await storage.audit.log({
+    key_id: c.get("apiKey")?.id,
+    action: "import",
+    resource_type: "import",
+    details: {
+      format: "archive",
+      imported: result.imported,
+      duplicates: result.duplicates,
+      blobs_imported: blobCount,
+      total_items: items.length,
+    },
+  });
+
+  return c.json({
+    imported: result.imported,
+    duplicates: result.duplicates,
+    blobs_imported: blobCount,
+  });
 }
