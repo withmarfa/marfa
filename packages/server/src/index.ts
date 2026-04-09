@@ -41,10 +41,21 @@ async function main() {
   } else {
     blobBackend = new FilesystemBlobBackend(config.blobPath);
   }
-  void storage.audit.cleanup(90).then((deleted) => {
-    if (deleted > 0)
-      log("info", `Purged ${String(deleted)} audit entries older than 90 days`);
-  });
+  // Audit retention — run once after startup, then on a daily schedule
+  const runAuditCleanup = () => {
+    void storage.audit.cleanup(config.auditRetentionDays).then((deleted) => {
+      if (deleted > 0)
+        log(
+          "info",
+          `Purged ${String(deleted)} audit entries older than ${String(config.auditRetentionDays)} days`,
+        );
+    });
+  };
+  const auditCleanupDelay = setTimeout(runAuditCleanup, 5_000);
+  const auditCleanupInterval = setInterval(
+    runAuditCleanup,
+    config.auditCleanupIntervalMs,
+  );
 
   const webhookConsumer = new WebhookConsumer(
     storage.webhooks,
@@ -66,6 +77,8 @@ async function main() {
     log("info", "Shutting down...");
     webhookConsumer.stop();
     webhookPoller.stop();
+    clearTimeout(auditCleanupDelay);
+    clearInterval(auditCleanupInterval);
     server.close(() => {
       storage
         .close()

@@ -84,6 +84,17 @@ export function importRoutes(storage: Storage): Hono<AppEnv> {
       return { imported, duplicates };
     });
 
+    await storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "import",
+      resource_type: "import",
+      details: {
+        imported: result.imported,
+        duplicates: result.duplicates,
+        total: items.length,
+      },
+    });
+
     return c.json(result);
   });
 

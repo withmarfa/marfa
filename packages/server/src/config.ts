@@ -17,6 +17,8 @@ export interface AppConfig {
   versionSnapshotIntervalMs: number;
   rateLimitEnabled: boolean;
   enableHsts: boolean;
+  auditRetentionDays: number;
+  auditCleanupIntervalMs: number;
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -60,5 +62,9 @@ export function loadConfig(): AppConfig {
       Number(process.env.VERSION_SNAPSHOT_INTERVAL_MS) || 600_000,
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
+    auditRetentionDays:
+      Number(process.env.AUDIT_RETENTION_DAYS) || 90,
+    auditCleanupIntervalMs:
+      Number(process.env.AUDIT_CLEANUP_INTERVAL_MS) || 86_400_000,
   };
 }

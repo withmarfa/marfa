@@ -11,6 +11,12 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
   router.post("/", async (c) => {
     requireAuth(c);
     const thread = await storage.threads.create(c.get("apiKey")?.tenant_id);
+    await storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "thread.create",
+      resource_type: "thread",
+      resource_id: thread.id,
+    });
     return c.json({ thread }, 201);
   });
 
@@ -79,6 +85,13 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     await storage.threads.touch(threadId);
+    await storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "thread.add_item",
+      resource_type: "thread",
+      resource_id: threadId,
+      details: { item_id: itemId },
+    });
     return c.json({ item: updated });
   });
 
@@ -117,6 +130,13 @@ export function threadRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     await storage.threads.touch(threadId);
+    await storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "thread.remove_item",
+      resource_type: "thread",
+      resource_id: threadId,
+      details: { item_id: itemId },
+    });
     return c.json({ item: updated });
   });
 

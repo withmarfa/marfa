@@ -65,6 +65,8 @@ export async function createTestContext(): Promise<TestContext> {
     versionSnapshotIntervalMs: 600_000,
     rateLimitEnabled: false,
     enableHsts: false,
+    auditRetentionDays: 90,
+    auditCleanupIntervalMs: 86_400_000,
   });
 
   // Create a bootstrap admin key (unique per test context to avoid PG conflicts)

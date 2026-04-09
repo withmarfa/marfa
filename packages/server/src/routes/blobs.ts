@@ -61,6 +61,14 @@ export function blobRoutes(
     // Register metadata (idempotent)
     await storage.blobs.register(hash, mimeType, data.length, hash);
 
+    await storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "blob.upload",
+      resource_type: "blob",
+      resource_id: hash,
+      details: { mime_type: mimeType, size: data.length },
+    });
+
     return c.json({ hash, mime_type: mimeType, size: data.length }, 201);
   });
 
