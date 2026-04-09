@@ -33,15 +33,22 @@ export function notifyError(
   if (last && now - last < DEBOUNCE_MS) return;
   debounceMap.set(errorKey, now);
 
-  // Push-style URLs (e.g., Uptime Kuma) use GET with query params
-  if (webhookUrl.includes("/api/push/")) {
-    const msg = encodeURIComponent(
-      `${notification.method} ${notification.path}: ${notification.error}`,
-    );
-    void fetch(`${webhookUrl}?status=down&msg=${msg}&ping=0`, {
+  // Telegram sendMessage API — format as a readable text message
+  if (webhookUrl.includes("api.telegram.org")) {
+    const text = [
+      `\u26a0\ufe0f *Myme 500 Error*`,
+      `\`${notification.method} ${notification.path}\``,
+      notification.error,
+      `Request: \`${notification.request_id}\``,
+    ].join("\n");
+    void fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, parse_mode: "Markdown" }),
       signal: AbortSignal.timeout(5000),
     }).catch(() => {});
   } else {
+    // Generic webhook — POST JSON payload
     void fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
