@@ -9,7 +9,7 @@
  * Reserved namespaces (core, myme, system) cannot be written to by non-admin keys.
  */
 
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import {
   MymeError,
   ErrorCode,
@@ -22,14 +22,198 @@ const RESERVED_NAMESPACES = new Set(["core", "myme", "system"]);
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
-export function extensionRoutes(storage: Storage): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
+// ---------------------------------------------------------------------------
+// Schemas
+// ---------------------------------------------------------------------------
+
+const ExtensionsResponseSchema = z.object({
+  extensions: z.record(z.string(), z.record(z.string(), z.unknown())),
+});
+
+const SingleExtensionResponseSchema = z.object({
+  namespace: z.string(),
+  data: z.record(z.string(), z.unknown()).nullable(),
+});
+
+// ---------------------------------------------------------------------------
+// Route definitions
+// ---------------------------------------------------------------------------
+
+const listExtensionsRoute = createRoute({
+  method: "get",
+  path: "/{id}/extensions",
+  tags: ["Extensions"],
+  summary: "List all extension namespaces for an item",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      id: z.string(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: ExtensionsResponseSchema,
+        },
+      },
+      description: "Extension namespaces (filtered by permissions)",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Invalid item ID",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const getExtensionRoute = createRoute({
+  method: "get",
+  path: "/{id}/extensions/{namespace}",
+  tags: ["Extensions"],
+  summary: "Read a specific extension namespace",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      id: z.string(),
+      namespace: z.string(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: SingleExtensionResponseSchema,
+        },
+      },
+      description: "Extension namespace data",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Invalid item ID",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "No read access to namespace",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const setExtensionRoute = createRoute({
+  method: "put",
+  path: "/{id}/extensions/{namespace}",
+  tags: ["Extensions"],
+  summary: "Write to a specific extension namespace (100KB limit)",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      id: z.string(),
+      namespace: z.string(),
+    }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.record(z.string(), z.unknown()),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: ExtensionsResponseSchema,
+        },
+      },
+      description: "Updated extensions",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "No write access to namespace",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+const deleteExtensionRoute = createRoute({
+  method: "delete",
+  path: "/{id}/extensions/{namespace}",
+  tags: ["Extensions"],
+  summary: "Delete an extension namespace",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      id: z.string(),
+      namespace: z.string(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: ExtensionsResponseSchema,
+        },
+      },
+      description: "Remaining extensions after deletion",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Invalid item ID",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "No write access to namespace",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+export function extensionRoutes(storage: Storage) {
+  const router = createOpenAPIRouter<AppEnv>();
 
   // GET /items/:id/extensions — list all namespaces (filtered by permissions)
-  router.get("/:id/extensions", async (c) => {
+  router.openapi(listExtensionsRoute, async (c) => {
     requireAuth(c);
-    const id = c.req.param("id");
+    const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -49,14 +233,13 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
       apiKey?.role === "admin",
     );
 
-    return c.json({ extensions: filtered });
+    return c.json({ extensions: filtered }, 200);
   });
 
   // GET /items/:id/extensions/:namespace — read a specific namespace
-  router.get("/:id/extensions/:namespace", async (c) => {
+  router.openapi(getExtensionRoute, async (c) => {
     requireAuth(c);
-    const id = c.req.param("id");
-    const namespace = c.req.param("namespace");
+    const { id, namespace } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -86,14 +269,13 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
     const extensions = await storage.metadata.getExtensions(id);
     const data = extensions[namespace] ?? null;
 
-    return c.json({ namespace, data });
+    return c.json({ namespace, data }, 200);
   });
 
   // PUT /items/:id/extensions/:namespace — write to a specific namespace
-  router.put("/:id/extensions/:namespace", async (c) => {
+  router.openapi(setExtensionRoute, async (c) => {
     requireAuth(c);
-    const id = c.req.param("id");
-    const namespace = c.req.param("namespace");
+    const { id, namespace } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -128,13 +310,7 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
       );
     }
 
-    const body = await c.req.json();
-    if (typeof body !== "object" || body === null || Array.isArray(body)) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Extension data must be a JSON object",
-      );
-    }
+    const body = c.req.valid("json");
 
     // Enforce extension data size limit (100KB per namespace)
     const serialized = JSON.stringify(body);
@@ -158,14 +334,13 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
       resource_id: id,
       details: { namespace },
     });
-    return c.json({ extensions });
+    return c.json({ extensions }, 200);
   });
 
   // DELETE /items/:id/extensions/:namespace — remove a namespace
-  router.delete("/:id/extensions/:namespace", async (c) => {
+  router.openapi(deleteExtensionRoute, async (c) => {
     requireAuth(c);
-    const id = c.req.param("id");
-    const namespace = c.req.param("namespace");
+    const { id, namespace } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -209,7 +384,7 @@ export function extensionRoutes(storage: Storage): Hono<AppEnv> {
       resource_id: id,
       details: { namespace },
     });
-    return c.json({ extensions });
+    return c.json({ extensions }, 200);
   });
 
   return router;

@@ -123,8 +123,8 @@ export function createApp(
   app.route("/search", searchRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
-  app.route("/import", importRoutes(storage));
-  app.route("/export", exportRoutes(storage));
+  app.route("/import", importRoutes(storage, blobBackend));
+  app.route("/export", exportRoutes(storage, blobBackend));
   app.route("/auth", authRoutes(storage, config.apiKeySalt));
   if (config.authMode === "hosted" && storage.users && storage.tenants) {
     app.route("/auth", userAuthRoutes(storage, config.apiKeySalt));

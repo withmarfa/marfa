@@ -168,10 +168,7 @@ const cleanupBlobsRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      dry_run: z
-        .enum(["true", "false"])
-        .optional()
-        .default("false"),
+      dry_run: z.enum(["true", "false"]).optional().default("false"),
     }),
   },
   responses: {
@@ -202,10 +199,7 @@ const reconcileBlobsRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      dry_run: z
-        .enum(["true", "false"])
-        .optional()
-        .default("true"),
+      dry_run: z.enum(["true", "false"]).optional().default("true"),
     }),
   },
   responses: {
@@ -232,10 +226,7 @@ const reconcileBlobsRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
-export function blobRoutes(
-  storage: Storage,
-  blobBackend: BlobBackend,
-) {
+export function blobRoutes(storage: Storage, blobBackend: BlobBackend) {
   const router = createOpenAPIRouter<AppEnv>();
 
   // POST /blobs — upload blob
