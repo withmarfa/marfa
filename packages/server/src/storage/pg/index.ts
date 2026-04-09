@@ -13,6 +13,7 @@ import { PgOAuthStore } from "./oauth-store.js";
 import { PgWebhookStore } from "./webhook-store.js";
 import { PgWebhookDeliveryStore } from "./webhook-delivery-store.js";
 import { PgAuditStore } from "./audit-store.js";
+import { PgEventLogStore } from "./event-log-store.js";
 import { PgUserStore } from "./user-store.js";
 import { PgTenantStore } from "./tenant-store.js";
 
@@ -50,6 +51,7 @@ export async function createPgStorage(
   const webhookStore = new PgWebhookStore(db);
   const deliveryStore = new PgWebhookDeliveryStore(db);
   const auditStore = new PgAuditStore(db);
+  const eventLogStore = new PgEventLogStore(db);
 
   const storage = {
     items: itemStore,
@@ -64,6 +66,7 @@ export async function createPgStorage(
     webhooks: webhookStore,
     webhookDeliveries: deliveryStore,
     audit: auditStore,
+    eventLog: eventLogStore,
     ...(options?.authMode === "hosted" && {
       users: new PgUserStore(db),
       tenants: new PgTenantStore(db),
@@ -78,7 +81,7 @@ export async function createPgStorage(
     close,
     /** Truncate all tables — used by tests for isolation. */
     async _pgTruncate(): Promise<void> {
-      await client`TRUNCATE items, metadata, versions, threads, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, tenants, users CASCADE`;
+      await client`TRUNCATE items, metadata, versions, threads, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, event_log, tenants, users CASCADE`;
     },
   } satisfies Storage & { _pgTruncate(): Promise<void> };
 

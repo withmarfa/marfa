@@ -10,6 +10,7 @@ import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
 import { VersionThinner } from "./storage/version-thinner.js";
+import { initEventLog } from "./pubsub.js";
 import { log } from "./middleware/logger.js";
 
 async function main() {
@@ -57,6 +58,19 @@ async function main() {
   } else {
     blobBackend = new FilesystemBlobBackend(config.blobPath);
   }
+  // Enable SSE event persistence
+  initEventLog(storage.eventLog);
+
+  // Event log retention — clean up events older than 24 hours
+  const runEventLogCleanup = () => {
+    void storage.eventLog.cleanup(24).then((deleted) => {
+      if (deleted > 0)
+        log("info", `Purged ${String(deleted)} event_log entries older than 24 hours`);
+    });
+  };
+  const eventLogCleanupDelay = setTimeout(runEventLogCleanup, 10_000);
+  const eventLogCleanupInterval = setInterval(runEventLogCleanup, 3_600_000);
+
   // Audit retention — run once after startup, then on a daily schedule
   const runAuditCleanup = () => {
     void storage.audit.cleanup(config.auditRetentionDays).then((deleted) => {
@@ -105,6 +119,8 @@ async function main() {
     log("info", "Shutting down...");
     webhookConsumer.stop();
     webhookPoller.stop();
+    clearTimeout(eventLogCleanupDelay);
+    clearInterval(eventLogCleanupInterval);
     clearTimeout(auditCleanupDelay);
     clearInterval(auditCleanupInterval);
     versionThinner.stop();

@@ -181,6 +181,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_audit_log_resource_type ON audit_log(resource_type);
+
+CREATE TABLE IF NOT EXISTS event_log (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  tenant_id TEXT,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
 `;
 
 export async function createConnection(connectionString: string): Promise<{

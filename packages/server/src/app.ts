@@ -129,7 +129,7 @@ export function createApp(
   if (config.authMode === "hosted" && storage.users && storage.tenants) {
     app.route("/auth", userAuthRoutes(storage, config.apiKeySalt));
   }
-  app.route("/events", eventRoutes());
+  app.route("/events", eventRoutes(storage));
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));

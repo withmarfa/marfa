@@ -12,6 +12,7 @@ import { SqliteOAuthStore } from "./oauth-store.js";
 import { SqliteWebhookStore } from "./webhook-store.js";
 import { SqliteWebhookDeliveryStore } from "./webhook-delivery-store.js";
 import { SqliteAuditStore } from "./audit-store.js";
+import { SqliteEventLogStore } from "./event-log-store.js";
 import { SqliteUserStore } from "./user-store.js";
 import { SqliteTenantStore } from "./tenant-store.js";
 
@@ -42,6 +43,7 @@ export function createSqliteStorage(
   const webhookStore = new SqliteWebhookStore(db);
   const deliveryStore = new SqliteWebhookDeliveryStore(db);
   const auditStore = new SqliteAuditStore(db);
+  const eventLogStore = new SqliteEventLogStore(db, raw);
 
   return {
     items: itemStore,
@@ -56,6 +58,7 @@ export function createSqliteStorage(
     webhooks: webhookStore,
     webhookDeliveries: deliveryStore,
     audit: auditStore,
+    eventLog: eventLogStore,
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),
       tenants: new SqliteTenantStore(db),

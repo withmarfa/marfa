@@ -382,6 +382,39 @@ export interface AuditStore {
 }
 
 // ---------------------------------------------------------------------------
+// Event log store (SSE event persistence for replay)
+// ---------------------------------------------------------------------------
+
+export interface PersistedEvent {
+  id: number;
+  event_type: string;
+  item_id: string;
+  tenant_id: string | null;
+  payload: string;
+  created_at: string;
+}
+
+export interface EventLogStore {
+  /** Append an event and return its assigned sequential ID. */
+  append(entry: {
+    event_type: string;
+    item_id: string;
+    tenant_id?: string;
+    payload: string;
+  }): Promise<number>;
+
+  /** Retrieve events after a given ID, optionally filtered by tenant. */
+  getAfter(
+    afterId: number,
+    limit: number,
+    tenantId?: string,
+  ): Promise<PersistedEvent[]>;
+
+  /** Delete events older than the given retention period. Returns count deleted. */
+  cleanup(retentionHours: number): Promise<number>;
+}
+
+// ---------------------------------------------------------------------------
 // Aggregate storage interface
 // ---------------------------------------------------------------------------
 
@@ -398,6 +431,7 @@ export interface Storage {
   webhooks: WebhookStore;
   webhookDeliveries: WebhookDeliveryStore;
   audit: AuditStore;
+  eventLog: EventLogStore;
   users?: UserStore;
   tenants?: TenantStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
