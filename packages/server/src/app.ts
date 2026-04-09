@@ -37,9 +37,29 @@ export function createApp(
   // Structured logging (wraps entire request lifecycle)
   app.use("*", loggerMiddleware());
 
-  // CORS
+  // CORS — explicit origins from config, plus any localhost/127.0.0.1 origin automatically
   if (config.corsOrigins.length > 0) {
-    app.use("*", cors({ origin: config.corsOrigins }));
+    app.use(
+      "*",
+      cors({
+        origin: (origin) => {
+          if (!origin) return config.corsOrigins[0];
+          if (config.corsOrigins.includes(origin)) return origin;
+          try {
+            const url = new URL(origin);
+            if (
+              url.hostname === "localhost" ||
+              url.hostname === "127.0.0.1"
+            ) {
+              return origin;
+            }
+          } catch {
+            // invalid origin, ignore
+          }
+          return config.corsOrigins[0];
+        },
+      }),
+    );
   }
 
   // Public routes (before auth) — mounted directly to avoid prefix matching issues
