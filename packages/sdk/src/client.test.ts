@@ -58,7 +58,15 @@ beforeAll(async () => {
     cdnBaseUrl: "",
     authMode: "keys",
     versionSnapshotIntervalMs: 600_000,
-    enableGraphql: true,
+    rateLimitEnabled: false,
+    enableHsts: false,
+    auditRetentionDays: 90,
+    auditCleanupIntervalMs: 86_400_000,
+    versionThinningIntervalMs: 3_600_000,
+    versionRecentDays: 30,
+    versionDailySnapshotDays: 90,
+    versionWeeklySnapshotDays: 365,
+    versionMaxVersions: 500,
   });
 
   testFetchFn = createTestFetch(app);
