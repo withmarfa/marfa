@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { secureHeaders } from "hono/secure-headers";
 import type { AppConfig } from "./config.js";
 import type { AppEnv } from "./middleware/auth.js";
 import { authMiddleware } from "./middleware/auth.js";
@@ -59,6 +60,18 @@ export function createApp(
       }),
     );
   }
+
+  // Security headers
+  app.use(
+    "*",
+    secureHeaders({
+      strictTransportSecurity: config.enableHsts
+        ? "max-age=63072000; includeSubDomains"
+        : false,
+      xFrameOptions: "DENY",
+      xXssProtection: "1",
+    }),
+  );
 
   // Public routes (before auth) — mounted directly to avoid prefix matching issues
   const features = [

@@ -64,6 +64,7 @@ export async function createTestContext(): Promise<TestContext> {
     authMode: "keys",
     versionSnapshotIntervalMs: 600_000,
     rateLimitEnabled: false,
+    enableHsts: false,
   });
 
   // Create a bootstrap admin key (unique per test context to avoid PG conflicts)

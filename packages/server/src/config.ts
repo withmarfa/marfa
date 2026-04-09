@@ -16,6 +16,7 @@ export interface AppConfig {
   authMode: "hosted" | "keys";
   versionSnapshotIntervalMs: number;
   rateLimitEnabled: boolean;
+  enableHsts: boolean;
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -58,5 +59,6 @@ export function loadConfig(): AppConfig {
     versionSnapshotIntervalMs:
       Number(process.env.VERSION_SNAPSHOT_INTERVAL_MS) || 600_000,
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
+    enableHsts: process.env.ENABLE_HSTS === "true",
   };
 }
