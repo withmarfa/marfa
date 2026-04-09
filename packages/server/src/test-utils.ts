@@ -72,6 +72,7 @@ export async function createTestContext(): Promise<TestContext> {
     versionDailySnapshotDays: 90,
     versionWeeklySnapshotDays: 365,
     versionMaxVersions: 500,
+    errorWebhookUrl: "",
   });
 
   // Create a bootstrap admin key (unique per test context to avoid PG conflicts)

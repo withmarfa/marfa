@@ -1,4 +1,6 @@
 import { serve } from "@hono/node-server";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { loadConfig } from "./config.js";
 import { createApp } from "./app.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
@@ -12,6 +14,19 @@ import { log } from "./middleware/logger.js";
 
 async function main() {
   const config = loadConfig();
+
+  // Log version info at startup
+  try {
+    const versionPath = resolve(process.cwd(), "version.json");
+    const raw = await readFile(versionPath, "utf-8");
+    const version = JSON.parse(raw) as Record<string, unknown>;
+    log("info", "Server version", {
+      sha: version.sha,
+      deployed_at: version.deployed_at,
+    });
+  } catch {
+    log("info", "Server version", { sha: "dev" });
+  }
 
   let storage: Storage;
   if (config.storageDialect === "pg") {

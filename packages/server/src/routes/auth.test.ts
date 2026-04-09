@@ -70,6 +70,7 @@ describe("bootstrap mode", () => {
       versionDailySnapshotDays: 90,
       versionWeeklySnapshotDays: 365,
       versionMaxVersions: 500,
+      errorWebhookUrl: "",
     });
 
     const res = await request(app, "POST", "/keys", {

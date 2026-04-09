@@ -4,7 +4,7 @@ import { secureHeaders } from "hono/secure-headers";
 import type { AppConfig } from "./config.js";
 import type { AppEnv } from "./middleware/auth.js";
 import { authMiddleware } from "./middleware/auth.js";
-import { errorHandler } from "./middleware/error-handler.js";
+import { createErrorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import { itemRoutes } from "./routes/items.js";
@@ -23,6 +23,7 @@ import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { loggerMiddleware } from "./middleware/logger.js";
+import { healthRoutes } from "./routes/health.js";
 export function createApp(
   storage: Storage,
   blobBackend: BlobBackend,
@@ -31,7 +32,9 @@ export function createApp(
   const app = new Hono<AppEnv>();
 
   // Global error handler
-  app.onError(errorHandler);
+  app.onError(
+    createErrorHandler({ errorWebhookUrl: config.errorWebhookUrl }),
+  );
 
   // Structured logging (wraps entire request lifecycle)
   app.use("*", loggerMiddleware());
@@ -102,9 +105,7 @@ export function createApp(
       cdn_base_url: config.cdnBaseUrl || null,
     }),
   );
-  app.get("/health", (c) =>
-    c.json({ status: "ok", auth_mode: config.authMode }),
-  );
+  app.route("/health", healthRoutes(storage, blobBackend, config));
 
   // Rate limiting (before auth to protect all endpoints, default 1000 req/min)
   if (config.rateLimitEnabled !== false) {

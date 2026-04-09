@@ -1,6 +1,7 @@
 import type { ErrorHandler } from "hono";
 import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
+import { notifyError } from "./error-notifier.js";
 
 function jsonResponse(
   body: unknown,
@@ -30,36 +31,51 @@ function isMymeError(err: unknown): err is {
   );
 }
 
-export const errorHandler: ErrorHandler<AppEnv> = (err) => {
-  if (isMymeError(err)) {
-    const error: Record<string, unknown> = {
-      code: err.code,
-      message: err.message,
-    };
-    if (err.details) error.details = err.details;
-    return jsonResponse({ error }, err.status, err.code);
-  }
+export function createErrorHandler(config: {
+  errorWebhookUrl: string;
+}): ErrorHandler<AppEnv> {
+  return (err, c) => {
+    if (isMymeError(err)) {
+      const error: Record<string, unknown> = {
+        code: err.code,
+        message: err.message,
+      };
+      if (err.details) error.details = err.details;
+      return jsonResponse({ error }, err.status, err.code);
+    }
 
-  if (err instanceof SyntaxError && err.message.includes("JSON")) {
-    return jsonResponse(
-      {
-        error: {
-          code: "validation_error",
-          message: "Invalid JSON in request body",
+    if (err instanceof SyntaxError && err.message.includes("JSON")) {
+      return jsonResponse(
+        {
+          error: {
+            code: "validation_error",
+            message: "Invalid JSON in request body",
+          },
         },
-      },
-      400,
-      "validation_error",
-    );
-  }
+        400,
+        "validation_error",
+      );
+    }
 
-  log("error", "Unhandled error", {
-    error: err instanceof Error ? err.message : String(err),
-    stack: err instanceof Error ? err.stack : undefined,
-  });
-  return jsonResponse(
-    { error: { code: "internal_error", message: "Internal server error" } },
-    500,
-    "internal_error",
-  );
-};
+    log("error", "Unhandled error", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+
+    if (config.errorWebhookUrl) {
+      notifyError(config.errorWebhookUrl, {
+        timestamp: new Date().toISOString(),
+        request_id: c.get("requestId") ?? "unknown",
+        error: err instanceof Error ? err.message : String(err),
+        path: c.req.path,
+        method: c.req.method,
+      });
+    }
+
+    return jsonResponse(
+      { error: { code: "internal_error", message: "Internal server error" } },
+      500,
+      "internal_error",
+    );
+  };
+}

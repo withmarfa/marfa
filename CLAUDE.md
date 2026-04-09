@@ -56,6 +56,7 @@ Server package (not needed for shared or SDK development):
 - `VERSION_WEEKLY_SNAPSHOT_DAYS` — weekly thinning window end in days (default: 365)
 - `VERSION_MAX_VERSIONS` — hard cap per item (default: 500)
 - `VERSION_THINNING_INTERVAL_MS` — thinning job interval in ms (default: 3600000)
+- `ERROR_WEBHOOK_URL` — webhook URL for 500 error notifications (optional, debounced)
 
 ## Error handling
 
