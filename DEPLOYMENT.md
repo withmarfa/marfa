@@ -14,18 +14,17 @@ Both use Postgres (localhost:5432), S3 blob storage, and `KeepAlive: true`. Conf
 
 ## Deploying
 
-```bash
-# Deploy to production
-./deploy.sh --env production
+Both production and staging share the same code directory with different launchd plists. A single deploy updates both environments.
 
-# Deploy to staging
-./deploy.sh --env staging
+```bash
+# Deploy latest main (restarts both production and staging)
+./deploy.sh
 
 # Rollback to previous SHA
-./deploy.sh --env production --rollback
+./deploy.sh --rollback
 ```
 
-The deploy script SSHs to the server, pulls from git, builds, writes a `version.json` with the git SHA, restarts the launchd service, and verifies the health endpoint.
+The deploy script SSHs to the server, pulls from git, builds, writes a `version.json` with the git SHA, restarts both launchd services, and verifies both health endpoints.
 
 ### Prerequisites
 
@@ -45,7 +44,7 @@ The deploy script SSHs to the server, pulls from git, builds, writes a `version.
 
 The deploy script uses these environment variables (all optional):
 
-- `ATLAS_HOST` — SSH hostname/alias for the server (default: `atlas`)
+- `ATLAS_HOST` — SSH hostname/alias for the server (default: `atlas`). Override with `--host` flag or env var
 - `SERVICE_DIR` — service directory on the server (default: `$HOME/Services/myme`)
 - `REPO_BRANCH` — git branch to deploy (default: `main`)
 
