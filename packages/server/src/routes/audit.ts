@@ -1,27 +1,75 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { parseIntParam } from "./util.js";
+import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
-export function auditRoutes(storage: Storage): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
+const AuditEntrySchema = z.object({
+  id: z.string(),
+  timestamp: z.string(),
+  key_id: z.string().nullable(),
+  action: z.string(),
+  resource_type: z.string(),
+  resource_id: z.string().nullable(),
+  details: z.record(z.unknown()),
+});
 
-  // GET /audit — list audit log entries (admin only)
-  router.get("/", async (c) => {
+const listAuditRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Admin"],
+  summary: "List audit log entries",
+  security: [{ bearerAuth: [] }],
+  request: {
+    query: z.object({
+      action: z.string().optional(),
+      resource_type: z.string().optional(),
+      resource_id: z.string().optional(),
+      since: z.string().optional(),
+      until: z.string().optional(),
+      limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+      cursor: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            data: z.array(AuditEntrySchema),
+            cursor: z.string().nullable(),
+            has_more: z.boolean(),
+          }),
+        },
+      },
+      description: "Paginated audit log entries",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+  },
+});
+
+export function auditRoutes(storage: Storage) {
+  const router = createOpenAPIRouter<AppEnv>();
+
+  router.openapi(listAuditRoute, async (c) => {
     requireAdmin(c);
+    const { action, resource_type, resource_id, since, until, limit, cursor } =
+      c.req.valid("query");
 
     const result = await storage.audit.list({
-      action: c.req.query("action") ?? undefined,
-      resource_type: c.req.query("resource_type") ?? undefined,
-      resource_id: c.req.query("resource_id") ?? undefined,
-      since: c.req.query("since") ?? undefined,
-      until: c.req.query("until") ?? undefined,
-      limit: parseIntParam(c.req.query("limit"), 50, 1, 200),
-      cursor: c.req.query("cursor") ?? undefined,
+      action,
+      resource_type,
+      resource_id,
+      since,
+      until,
+      limit,
+      cursor,
     });
 
-    return c.json(result);
+    return c.json(result, 200);
   });
 
   return router;

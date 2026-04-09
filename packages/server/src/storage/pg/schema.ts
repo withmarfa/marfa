@@ -280,3 +280,20 @@ export const auditLog = pgTable(
     index("idx_audit_log_resource_type").on(table.resource_type),
   ],
 );
+
+// ---------------------------------------------------------------------------
+// event_log (SSE event persistence for replay)
+// ---------------------------------------------------------------------------
+
+export const eventLog = pgTable(
+  "event_log",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    event_type: text("event_type").notNull(),
+    item_id: text("item_id").notNull(),
+    tenant_id: text("tenant_id"),
+    payload: text("payload").notNull(),
+    created_at: text("created_at").notNull(),
+  },
+  (table) => [index("idx_event_log_created_at").on(table.created_at)],
+);

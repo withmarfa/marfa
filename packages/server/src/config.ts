@@ -24,6 +24,7 @@ export interface AppConfig {
   versionDailySnapshotDays: number;
   versionWeeklySnapshotDays: number;
   versionMaxVersions: number;
+  errorWebhookUrl: string;
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -81,5 +82,6 @@ export function loadConfig(): AppConfig {
       Number(process.env.VERSION_WEEKLY_SNAPSHOT_DAYS) || 365,
     versionMaxVersions:
       Number(process.env.VERSION_MAX_VERSIONS) || 500,
+    errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
   };
 }

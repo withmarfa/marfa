@@ -117,7 +117,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     );
 
     const metadata = await storage.metadata.get(item.id);
-    publish({ type: "created", item, metadata, tenantId });
+    await publish({ type: "created", item, metadata, tenantId });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.create",
@@ -375,7 +375,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     }
 
     const metadata = await storage.metadata.get(id);
-    publish({ type: "updated", item: result, metadata, tenantId: tid });
+    await publish({ type: "updated", item: result, metadata, tenantId: tid });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.update",
@@ -398,7 +398,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const existing = await storage.items.get(id, tid);
     await storage.items.delete(id, tid);
     if (existing) {
-      publish({
+      await publish({
         type: "deleted",
         item: { ...existing, state: "trashed" as ItemState },
         tenantId: tid,
@@ -425,7 +425,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
     const restored = await storage.items.restore(id, tenantId);
     requireTypeAccess(c, restored.type, "write");
     const metadata = await storage.metadata.get(id);
-    publish({ type: "restored", item: restored, metadata, tenantId });
+    await publish({ type: "restored", item: restored, metadata, tenantId });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.restore",
@@ -464,7 +464,7 @@ export function itemRoutes(storage: Storage): Hono<AppEnv> {
       tenantId,
     );
     const metadata = await storage.metadata.get(id);
-    publish({ type: "transitioned", item: updated, metadata, tenantId });
+    await publish({ type: "transitioned", item: updated, metadata, tenantId });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.transition",

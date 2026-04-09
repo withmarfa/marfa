@@ -56,6 +56,21 @@ Server package (not needed for shared or SDK development):
 - `VERSION_WEEKLY_SNAPSHOT_DAYS` — weekly thinning window end in days (default: 365)
 - `VERSION_MAX_VERSIONS` — hard cap per item (default: 500)
 - `VERSION_THINNING_INTERVAL_MS` — thinning job interval in ms (default: 3600000)
+- `ERROR_WEBHOOK_URL` — webhook URL for 500 error notifications (optional, debounced)
+
+## Database migrations
+
+Schema managed via Drizzle Kit (dual-dialect: Postgres + SQLite). Existing databases use inline DDL (CREATE TABLE IF NOT EXISTS) in the connection modules. Drizzle migrations are used for fresh databases and future schema changes.
+
+When changing Drizzle schema files (`src/storage/pg/schema.ts` or `src/storage/sqlite/schema.ts`):
+
+1. Update the Drizzle schema file(s)
+2. Generate migrations: `pnpm --filter @mymehq/server run migrate:pg:generate` and `migrate:sqlite:generate`
+3. Review the generated SQL in `drizzle/pg/` and `drizzle/sqlite/`
+4. Also update the inline DDL in the corresponding `connection.ts` for backward compatibility
+5. Run standalone migration: `pnpm --filter @mymehq/server run migrate`
+
+SQLite FTS5 virtual table stays in `connection.ts` (Drizzle Kit cannot express virtual tables).
 
 ## Error handling
 

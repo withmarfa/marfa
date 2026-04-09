@@ -10,19 +10,24 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "drizzle"
   ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "migrate": "tsx src/storage/migrate.ts",
+    "migrate:pg:generate": "drizzle-kit generate --config=drizzle.pg.config.ts",
+    "migrate:sqlite:generate": "drizzle-kit generate --config=drizzle.sqlite.config.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1021.0",
     "@aws-sdk/s3-request-presigner": "^3.1021.0",
     "@hono/node-server": "^1.13.8",
+    "@hono/zod-openapi": "^1.2.4",
     "@mymehq/shared": "workspace:*",
     "better-sqlite3": "^11.8.1",
     "drizzle-orm": "^0.44.1",
@@ -33,6 +38,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "drizzle-kit": "^0.31.10",
     "tsup": "^8.5.1",
     "tsx": "^4.19.4",
     "typescript": "^6.0.2"
