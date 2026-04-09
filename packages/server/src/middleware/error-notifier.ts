@@ -33,12 +33,22 @@ export function notifyError(
   if (last && now - last < DEBOUNCE_MS) return;
   debounceMap.set(errorKey, now);
 
-  void fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(notification),
-    signal: AbortSignal.timeout(5000),
-  }).catch(() => {
-    // Silently swallow — webhook failures must not cascade
-  });
+  // Push-style URLs (e.g., Uptime Kuma) use GET with query params
+  if (webhookUrl.includes("/api/push/")) {
+    const msg = encodeURIComponent(
+      `${notification.method} ${notification.path}: ${notification.error}`,
+    );
+    void fetch(`${webhookUrl}?status=down&msg=${msg}&ping=0`, {
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {});
+  } else {
+    void fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(notification),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {
+      // Silently swallow — webhook failures must not cascade
+    });
+  }
 }
