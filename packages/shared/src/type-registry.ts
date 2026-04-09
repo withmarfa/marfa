@@ -988,6 +988,20 @@ export function getResolvedFields(
   return fields;
 }
 
+const CORE_SEARCH_FIELDS = new Set(["title", "body", "description", "name"]);
+
+/**
+ * Returns the names of string-typed fields for a type that are not already
+ * covered by the 4 core search fields. Used to index custom type properties.
+ */
+export function getSearchableStringFields(typeId: string): string[] {
+  const fields = getResolvedFields(typeId);
+  if (!fields) return [];
+  return Object.entries(fields)
+    .filter(([key, def]) => def.type === "string" && !CORE_SEARCH_FIELDS.has(key))
+    .map(([key]) => key);
+}
+
 /** Returns true if typeId is a subtype of (or equal to) parentId. */
 export function isSubtypeOf(typeId: string, parentId: string): boolean {
   if (typeId === parentId) return true;

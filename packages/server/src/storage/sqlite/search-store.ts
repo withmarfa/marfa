@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
-import { parseFilter, type SearchResult } from "@mymehq/shared";
+import {
+  parseFilter,
+  getSearchableStringFields,
+  type SearchResult,
+} from "@mymehq/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql } from "../filter-sql.js";
 import type { RawDb } from "./connection.js";
@@ -11,13 +15,24 @@ const FTS_FIELDS = ["title", "body", "description", "name"] as const;
 
 function extractSearchableText(
   properties: Record<string, unknown>,
-): Record<(typeof FTS_FIELDS)[number], string> {
+  typeId?: string,
+): { title: string; body: string; description: string; name: string; extra: string } {
   const result: Record<string, string> = {};
   for (const field of FTS_FIELDS) {
     const value = properties[field];
     result[field] = typeof value === "string" ? value : "";
   }
-  return result as Record<(typeof FTS_FIELDS)[number], string>;
+  // Concatenate custom string fields for the extra column
+  const extraFields = typeId ? getSearchableStringFields(typeId) : [];
+  const extraParts: string[] = [];
+  for (const field of extraFields) {
+    const value = properties[field];
+    if (typeof value === "string" && value) {
+      extraParts.push(value);
+    }
+  }
+  result.extra = extraParts.join(" ");
+  return result as { title: string; body: string; description: string; name: string; extra: string };
 }
 
 /**
@@ -46,8 +61,9 @@ export class SqliteSearchStore implements SearchStore {
   async index(
     itemId: string,
     properties: Record<string, unknown>,
+    typeId?: string,
   ): Promise<void> {
-    this.indexSync(itemId, properties);
+    this.indexSync(itemId, properties, typeId);
   }
 
   async remove(itemId: string): Promise<void> {
@@ -55,14 +71,18 @@ export class SqliteSearchStore implements SearchStore {
   }
 
   /** Synchronous version for use within SQLite transactions. */
-  indexSync(itemId: string, properties: Record<string, unknown>): void {
-    const text = extractSearchableText(properties);
+  indexSync(
+    itemId: string,
+    properties: Record<string, unknown>,
+    typeId?: string,
+  ): void {
+    const text = extractSearchableText(properties, typeId);
     this.raw
       .prepare(
-        `INSERT INTO items_fts(item_id, title, body, description, name)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO items_fts(item_id, title, body, description, name, extra)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(itemId, text.title, text.body, text.description, text.name);
+      .run(itemId, text.title, text.body, text.description, text.name, text.extra);
   }
 
   /** Synchronous version for use within SQLite transactions. */

@@ -54,6 +54,7 @@ export class PgSearchStore implements SearchStore {
   async index(
     _itemId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
     _properties: Record<string, unknown>, // eslint-disable-line @typescript-eslint/no-unused-vars
+    _typeId?: string, // eslint-disable-line @typescript-eslint/no-unused-vars
   ): Promise<void> {
     // Intentionally empty — see class comment above
   }
@@ -78,12 +79,15 @@ export class PgSearchStore implements SearchStore {
     );
     params.push(paramValue);
 
-    // tsvector expression over JSON properties
+    // tsvector expression over JSON properties — includes all string values
+    // via json_each_text so custom type string fields are searchable
     const tsvec = `to_tsvector('english',
       coalesce(i.properties::json->>'title','') || ' ' ||
       coalesce(i.properties::json->>'body','') || ' ' ||
       coalesce(i.properties::json->>'description','') || ' ' ||
-      coalesce(i.properties::json->>'name','')
+      coalesce(i.properties::json->>'name','') || ' ' ||
+      coalesce((SELECT string_agg(value, ' ') FROM json_each_text(i.properties::json)
+                WHERE key NOT IN ('title','body','description','name')), '')
     )`;
 
     // Default: exclude trashed

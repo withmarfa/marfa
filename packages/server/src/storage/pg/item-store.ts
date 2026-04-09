@@ -145,7 +145,7 @@ export class PgItemStore implements ItemStore {
         about: JSON.stringify(input.about ?? []),
       });
 
-      await this.searchStore.index(id, input.properties);
+      await this.searchStore.index(id, input.properties, input.type);
 
       if (input.thread_id) {
         await tx
@@ -419,7 +419,7 @@ export class PgItemStore implements ItemStore {
           .where(this.tenantWhere(id, tenantId));
 
         await this.searchStore.remove(id);
-        await this.searchStore.index(id, merged);
+        await this.searchStore.index(id, merged, row.type);
 
         return rowToItem({
           ...row,
@@ -507,7 +507,7 @@ export class PgItemStore implements ItemStore {
         .where(this.tenantWhere(id, tenantId));
 
       await this.searchStore.remove(id);
-      await this.searchStore.index(id, result.merged);
+      await this.searchStore.index(id, result.merged, row.type);
 
       return rowToItem({
         ...row,
@@ -571,7 +571,7 @@ export class PgItemStore implements ItemStore {
       .set({ state: "active", updated_at: now })
       .where(this.tenantWhere(id, tenantId));
 
-    await this.searchStore.index(id, row.properties);
+    await this.searchStore.index(id, row.properties, row.type);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
@@ -608,7 +608,7 @@ export class PgItemStore implements ItemStore {
     if (state === "trashed") {
       await this.searchStore.remove(id);
     } else if (row.state === "trashed") {
-      await this.searchStore.index(id, row.properties);
+      await this.searchStore.index(id, row.properties, row.type);
     }
 
     return { ...row, state, updated_at: now };

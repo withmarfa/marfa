@@ -174,7 +174,11 @@ export interface TypeStore {
 
 export interface SearchStore {
   search(query: string, filters: SearchFilters): Promise<SearchResult[]>;
-  index(itemId: string, properties: Record<string, unknown>): Promise<void>;
+  index(
+    itemId: string,
+    properties: Record<string, unknown>,
+    typeId?: string,
+  ): Promise<void>;
   remove(itemId: string): Promise<void>;
 }
 

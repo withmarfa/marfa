@@ -158,7 +158,7 @@ export class SqliteItemStore implements ItemStore {
         })
         .run();
 
-      this.searchStore.indexSync(id, input.properties);
+      this.searchStore.indexSync(id, input.properties, input.type);
 
       if (input.thread_id) {
         this.db
@@ -435,7 +435,7 @@ export class SqliteItemStore implements ItemStore {
         this.db.update(items).set(setClause).where(whereClause).run();
 
         this.searchStore.removeSync(id);
-        this.searchStore.indexSync(id, merged);
+        this.searchStore.indexSync(id, merged, row.type);
 
         return rowToItem({
           ...row,
@@ -507,7 +507,7 @@ export class SqliteItemStore implements ItemStore {
       this.db.update(items).set(mergeSet).where(whereClause).run();
 
       this.searchStore.removeSync(id);
-      this.searchStore.indexSync(id, result.merged);
+      this.searchStore.indexSync(id, result.merged, row.type);
 
       return rowToItem({
         ...row,
@@ -576,7 +576,7 @@ export class SqliteItemStore implements ItemStore {
       .where(this.tenantWhere(id, tenantId))
       .run();
 
-    this.searchStore.indexSync(id, row.properties);
+    this.searchStore.indexSync(id, row.properties, row.type);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
@@ -614,7 +614,7 @@ export class SqliteItemStore implements ItemStore {
     if (state === "trashed") {
       this.searchStore.removeSync(id);
     } else if (row.state === "trashed") {
-      this.searchStore.indexSync(id, row.properties);
+      this.searchStore.indexSync(id, row.properties, row.type);
     }
 
     return { ...row, state, updated_at: now };
