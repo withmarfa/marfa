@@ -46,11 +46,6 @@ Server package (not needed for shared or SDK development):
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
 - `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
-- `ENABLE_GRAPHQL` — `true` to enable the GraphQL endpoint (default: disabled)
-
-## Feature gates
-
-- **GraphQL** (`ENABLE_GRAPHQL=true`) — disabled by default. The REST API and SSE events cover all current use cases. Re-evaluate when third-party apps need complex nested queries. If GraphQL code drifts from REST types or causes maintenance friction, flag it for review.
 
 ## Error handling
 

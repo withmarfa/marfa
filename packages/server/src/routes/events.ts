@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { matchesTypePattern } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, computeTypeFilter } from "../middleware/auth.js";
-import { subscribe } from "../graphql/pubsub.js";
+import { subscribe } from "../pubsub.js";
 
 const KEEPALIVE_INTERVAL_MS = 30_000;
 

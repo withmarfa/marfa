@@ -18,7 +18,7 @@ import {
   getTypeFilter,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { publish } from "../graphql/pubsub.js";
+import { publish } from "../pubsub.js";
 import { parseIntParam } from "./util.js";
 
 export function itemRoutes(storage: Storage): Hono<AppEnv> {

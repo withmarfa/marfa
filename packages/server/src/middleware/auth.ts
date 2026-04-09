@@ -131,7 +131,7 @@ export function authMiddleware(storage: Storage, salt: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Context-agnostic access control (used by both REST and GraphQL)
+// Context-agnostic access control
 // ---------------------------------------------------------------------------
 
 export function checkAuth(apiKey: ApiKey | undefined): ApiKey {

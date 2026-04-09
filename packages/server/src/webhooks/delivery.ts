@@ -5,9 +5,8 @@ import type {
   WebhookStore,
   WebhookDeliveryStore,
 } from "../storage/interface.js";
-import { subscribe } from "../graphql/pubsub.js";
+import { subscribe, type ItemEvent } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
-import type { ItemEvent } from "../graphql/pubsub.js";
 
 /** Maps pubsub event types to webhook event names. */
 function toWebhookEvent(type: ItemEvent["type"]): string {

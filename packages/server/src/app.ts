@@ -22,8 +22,6 @@ import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { loggerMiddleware } from "./middleware/logger.js";
-import { mountGraphQL } from "./graphql/index.js";
-
 export function createApp(
   storage: Storage,
   blobBackend: BlobBackend,
@@ -80,9 +78,6 @@ export function createApp(
     "audit",
     "metrics",
   ];
-  if (config.enableGraphql) {
-    features.push("graphql");
-  }
   if (config.authMode === "hosted") {
     features.push("users");
   }
@@ -106,11 +101,6 @@ export function createApp(
 
   // Auth middleware
   app.use("*", authMiddleware(storage, config.apiKeySalt));
-
-  // GraphQL is disabled by default. Enable via ENABLE_GRAPHQL=true.
-  if (config.enableGraphql) {
-    mountGraphQL(app, storage);
-  }
 
   // Protected routes
   app.route("/items", itemRoutes(storage));
