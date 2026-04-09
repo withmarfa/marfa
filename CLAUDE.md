@@ -15,7 +15,7 @@ Published to npm under the `@mymehq` scope. Version tags (`v1.0.0`) trigger the 
 - pnpm workspaces for monorepo management
 - Vitest for testing
 - Zod for runtime validation
-- Hono for HTTP server (server package)
+- Hono for HTTP server with `@hono/zod-openapi` for route definitions and OpenAPI spec generation (server package)
 - Drizzle ORM with better-sqlite3 and Postgres dual-dialect (server package)
 
 ## Dev commands
@@ -30,6 +30,7 @@ pnpm lint             # lint all packages
 pnpm lint:fix         # lint and auto-fix
 pnpm format           # format all files with Prettier
 pnpm format:check     # check formatting without writing
+pnpm generate:openapi # generate OpenAPI spec from route definitions
 ```
 
 ## Environment variables
@@ -71,6 +72,12 @@ When changing Drizzle schema files (`src/storage/pg/schema.ts` or `src/storage/s
 5. Run standalone migration: `pnpm --filter @mymehq/server run migrate`
 
 SQLite FTS5 virtual table stays in `connection.ts` (Drizzle Kit cannot express virtual tables).
+
+## OpenAPI
+
+Routes use `@hono/zod-openapi` with request/response schemas. The OpenAPI 3.1 spec is generated from the route definitions — not maintained manually. Run `pnpm generate:openapi` to output the spec. The spec endpoint is available at `GET /openapi.json` on a running server.
+
+When adding or modifying routes, use `createRoute()` with Zod schemas for request params, body, and responses. Streaming endpoints (SSE, NDJSON export) and HTML endpoints (OAuth consent) stay as plain Hono routes.
 
 ## Error handling
 
