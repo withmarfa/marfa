@@ -35,3 +35,7 @@ seed/
 # Database and blob data
 data/
 .claude/worktrees/
+
+# Deploy artifacts (generated on server, not in repo)
+version.json
+deploy.log
