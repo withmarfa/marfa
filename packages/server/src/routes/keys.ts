@@ -1,9 +1,14 @@
 import { randomBytes } from "node:crypto";
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import {
+  createOpenAPIRouter,
+  ErrorResponseSchema,
+  OkResponseSchema,
+} from "../openapi.js";
 
 const KEY_PREFIX = "myme_k1_";
 
@@ -11,44 +16,143 @@ function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");
 }
 
-export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
+// ---------------------------------------------------------------------------
+// Schemas
+// ---------------------------------------------------------------------------
 
-  router.post("/", async (c) => {
+const KeyResponseSchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  label: z.string(),
+  role: z.enum(["admin", "member"]),
+  type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
+  created_at: z.string(),
+  last_used_at: z.string().nullable(),
+});
+
+const KeyListItemSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  role: z.string(),
+  type_permissions: z.record(z.string(), z.string()),
+  created_at: z.string(),
+  last_used_at: z.string().nullable(),
+});
+
+// ---------------------------------------------------------------------------
+// Route definitions
+// ---------------------------------------------------------------------------
+
+const createKeyRoute = createRoute({
+  method: "post",
+  path: "/",
+  tags: ["Keys"],
+  summary: "Create a new API key",
+  description:
+    "Creates a new API key. In bootstrap mode (zero keys exist), no auth is required and the key is always admin.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            label: z.string().min(1, "label is required"),
+            role: z.enum(["admin", "member"]).optional(),
+            type_permissions: z
+              .record(z.string(), z.enum(["read", "write", "none"]))
+              .optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: {
+      content: {
+        "application/json": {
+          schema: KeyResponseSchema,
+        },
+      },
+      description: "API key created",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+  },
+});
+
+const listKeysRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Keys"],
+  summary: "List all API keys",
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            keys: z.array(KeyListItemSchema),
+          }),
+        },
+      },
+      description: "List of API keys",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+  },
+});
+
+const revokeKeyRoute = createRoute({
+  method: "delete",
+  path: "/{id}",
+  tags: ["Keys"],
+  summary: "Revoke an API key",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      id: z.string(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: OkResponseSchema,
+        },
+      },
+      description: "Key revoked",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+export function keyRoutes(storage: Storage, salt: string) {
+  const router = createOpenAPIRouter<AppEnv>();
+
+  router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");
     if (!isBootstrap) {
       requireAdmin(c);
     }
 
-    const body = await c.req.json();
-
-    if (!body.label || typeof body.label !== "string" || !body.label.trim()) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "label is required");
-    }
+    const body = c.req.valid("json");
 
     const role = isBootstrap
       ? "admin"
-      : ((body.role as string | undefined) ?? "member");
-    if (role !== "admin" && role !== "member") {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "role must be 'admin' or 'member'",
-      );
-    }
+      : (body.role ?? "member");
 
-    const typePermissions =
-      (body.type_permissions as Record<string, string> | undefined) ?? {};
-
-    // Validate permission values
-    const validPermissions = new Set(["read", "write", "none"]);
-    for (const [pattern, perm] of Object.entries(typePermissions)) {
-      if (!validPermissions.has(perm)) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          `Invalid permission value "${perm}" for type pattern "${pattern}". Must be "read", "write", or "none"`,
-        );
-      }
-    }
+    const typePermissions = body.type_permissions ?? {};
 
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
@@ -71,6 +175,7 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       resource_type: "key",
       resource_id: stored.id,
     });
+
     return c.json(
       {
         id: stored.id,
@@ -85,17 +190,19 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     );
   });
 
-  router.get("/", async (c) => {
+  router.openapi(listKeysRoute, async (c) => {
     requireAdmin(c);
-    return c.json({ keys: await storage.keys.list() });
+    return c.json({ keys: await storage.keys.list() }, 200);
   });
 
-  router.delete("/:id", async (c) => {
+  router.openapi(revokeKeyRoute, async (c) => {
     requireAdmin(c);
-    const id = c.req.param("id");
+    const { id } = c.req.valid("param");
+
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
+
     await storage.keys.revoke(id);
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
@@ -103,7 +210,8 @@ export function keyRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       resource_type: "key",
       resource_id: id,
     });
-    return c.json({ ok: true });
+
+    return c.json({ ok: true as const }, 200);
   });
 
   return router;
