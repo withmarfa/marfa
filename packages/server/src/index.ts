@@ -7,6 +7,7 @@ import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
+import { VersionThinner } from "./storage/version-thinner.js";
 import { log } from "./middleware/logger.js";
 
 async function main() {
@@ -66,6 +67,18 @@ async function main() {
   const webhookPoller = new WebhookPoller(storage.webhookDeliveries);
   webhookPoller.start();
 
+  const versionThinner = new VersionThinner(
+    storage.versions,
+    {
+      recentDays: config.versionRecentDays,
+      dailySnapshotDays: config.versionDailySnapshotDays,
+      weeklySnapshotDays: config.versionWeeklySnapshotDays,
+      maxVersions: config.versionMaxVersions,
+    },
+    config.versionThinningIntervalMs,
+  );
+  versionThinner.start();
+
   const app = createApp(storage, blobBackend, config);
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
@@ -79,6 +92,7 @@ async function main() {
     webhookPoller.stop();
     clearTimeout(auditCleanupDelay);
     clearInterval(auditCleanupInterval);
+    versionThinner.stop();
     server.close(() => {
       storage
         .close()

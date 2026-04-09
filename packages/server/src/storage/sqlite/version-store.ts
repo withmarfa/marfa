@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { Version } from "@mymehq/shared";
 import type { VersionStore } from "../interface.js";
 import { versions } from "./schema.js";
+import { items } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToVersion } from "./helpers.js";
 
@@ -78,5 +79,33 @@ export class SqliteVersionStore implements VersionStore {
       .limit(1)
       .get();
     return row?.created_at ?? null;
+  }
+
+  async deleteByIds(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const result = this.db
+      .delete(versions)
+      .where(inArray(versions.id, ids))
+      .run();
+    return result.changes;
+  }
+
+  async listThinningCandidates(
+    threshold: number,
+    limit: number,
+  ): Promise<{ itemId: string; type: string; versionCount: number }[]> {
+    const rows = this.db
+      .select({
+        itemId: versions.item_id,
+        type: items.type,
+        versionCount: sql<number>`count(*)`,
+      })
+      .from(versions)
+      .innerJoin(items, eq(versions.item_id, items.id))
+      .groupBy(versions.item_id, items.type)
+      .having(sql`count(*) > ${threshold}`)
+      .limit(limit)
+      .all();
+    return rows;
   }
 }

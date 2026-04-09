@@ -1,8 +1,9 @@
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { Version } from "@mymehq/shared";
 import type { VersionStore } from "../interface.js";
 import { versions } from "./schema.js";
+import { items } from "./schema.js";
 import type { PgDb } from "./connection.js";
 import { rowToVersion } from "./helpers.js";
 
@@ -74,5 +75,32 @@ export class PgVersionStore implements VersionStore {
       .orderBy(desc(versions.version))
       .limit(1);
     return row?.created_at ?? null;
+  }
+
+  async deleteByIds(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const rows = await this.db
+      .delete(versions)
+      .where(inArray(versions.id, ids))
+      .returning({ id: versions.id });
+    return rows.length;
+  }
+
+  async listThinningCandidates(
+    threshold: number,
+    limit: number,
+  ): Promise<{ itemId: string; type: string; versionCount: number }[]> {
+    const rows = await this.db
+      .select({
+        itemId: versions.item_id,
+        type: items.type,
+        versionCount: sql<number>`count(*)::int`,
+      })
+      .from(versions)
+      .innerJoin(items, eq(versions.item_id, items.id))
+      .groupBy(versions.item_id, items.type)
+      .having(sql`count(*) > ${threshold}`)
+      .limit(limit);
+    return rows;
   }
 }

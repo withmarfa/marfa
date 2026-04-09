@@ -46,6 +46,16 @@ Server package (not needed for shared or SDK development):
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
 - `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
+- `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000). Rate limiting is always on
+- `RATE_LIMIT_ENABLED` — set to `false` to disable rate limiting entirely
+- `ENABLE_HSTS` — `true` to add Strict-Transport-Security header (only behind TLS)
+- `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90)
+- `AUDIT_CLEANUP_INTERVAL_MS` — audit cleanup interval in ms (default: 86400000)
+- `VERSION_RECENT_DAYS` — version recent window in days (default: 30)
+- `VERSION_DAILY_SNAPSHOT_DAYS` — daily thinning window end in days (default: 90)
+- `VERSION_WEEKLY_SNAPSHOT_DAYS` — weekly thinning window end in days (default: 365)
+- `VERSION_MAX_VERSIONS` — hard cap per item (default: 500)
+- `VERSION_THINNING_INTERVAL_MS` — thinning job interval in ms (default: 3600000)
 
 ## Error handling
 

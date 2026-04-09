@@ -29,6 +29,14 @@ export interface FieldDefinition {
   items_type?: string;
 }
 
+/** Per-type version retention policy (overrides global defaults). */
+export interface VersionPolicy {
+  recent_days?: number;
+  daily_snapshot_days?: number;
+  weekly_snapshot_days?: number;
+  max_versions?: number;
+}
+
 /** A complete type schema — the data contract for a Myme type. */
 export interface TypeSchema {
   id: string;
@@ -40,6 +48,7 @@ export interface TypeSchema {
   states: ItemState[];
   default_state: ItemState;
   transitions: Record<string, ItemState[]>;
+  version_policy?: VersionPolicy;
 }
 
 // ---------------------------------------------------------------------------
@@ -1273,6 +1282,41 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     }
   }
 
+  // version_policy (optional)
+  if (obj.version_policy !== undefined) {
+    if (
+      typeof obj.version_policy !== "object" ||
+      obj.version_policy === null ||
+      Array.isArray(obj.version_policy)
+    ) {
+      errors.push({
+        field: "version_policy",
+        message: "Must be an object",
+      });
+    } else {
+      const vp = obj.version_policy as Record<string, unknown>;
+      const vpFields = [
+        "recent_days",
+        "daily_snapshot_days",
+        "weekly_snapshot_days",
+        "max_versions",
+      ];
+      for (const f of vpFields) {
+        if (
+          vp[f] !== undefined &&
+          (typeof vp[f] !== "number" ||
+            !Number.isInteger(vp[f]) ||
+            (vp[f] as number) < 1)
+        ) {
+          errors.push({
+            field: `version_policy.${f}`,
+            message: "Must be a positive integer",
+          });
+        }
+      }
+    }
+  }
+
   if (errors.length > 0) {
     return { success: false, errors };
   }
@@ -1291,6 +1335,13 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
   }
   if (typeof obj.parent === "string") {
     schema.parent = obj.parent;
+  }
+  if (
+    typeof obj.version_policy === "object" &&
+    obj.version_policy !== null &&
+    !Array.isArray(obj.version_policy)
+  ) {
+    schema.version_policy = obj.version_policy as VersionPolicy;
   }
 
   return { success: true, data: schema };

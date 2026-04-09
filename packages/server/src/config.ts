@@ -19,6 +19,11 @@ export interface AppConfig {
   enableHsts: boolean;
   auditRetentionDays: number;
   auditCleanupIntervalMs: number;
+  versionThinningIntervalMs: number;
+  versionRecentDays: number;
+  versionDailySnapshotDays: number;
+  versionWeeklySnapshotDays: number;
+  versionMaxVersions: number;
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -66,5 +71,15 @@ export function loadConfig(): AppConfig {
       Number(process.env.AUDIT_RETENTION_DAYS) || 90,
     auditCleanupIntervalMs:
       Number(process.env.AUDIT_CLEANUP_INTERVAL_MS) || 86_400_000,
+    versionThinningIntervalMs:
+      Number(process.env.VERSION_THINNING_INTERVAL_MS) || 3_600_000,
+    versionRecentDays:
+      Number(process.env.VERSION_RECENT_DAYS) || 30,
+    versionDailySnapshotDays:
+      Number(process.env.VERSION_DAILY_SNAPSHOT_DAYS) || 90,
+    versionWeeklySnapshotDays:
+      Number(process.env.VERSION_WEEKLY_SNAPSHOT_DAYS) || 365,
+    versionMaxVersions:
+      Number(process.env.VERSION_MAX_VERSIONS) || 500,
   };
 }

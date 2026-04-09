@@ -143,6 +143,11 @@ export interface VersionStore {
   list(itemId: string): Promise<Version[]>;
   getByVersion(itemId: string, version: number): Promise<Version | null>;
   getLatestTimestamp(itemId: string): Promise<string | null>;
+  deleteByIds(ids: string[]): Promise<number>;
+  listThinningCandidates(
+    threshold: number,
+    limit: number,
+  ): Promise<{ itemId: string; type: string; versionCount: number }[]>;
 }
 
 export interface ThreadStore {
