@@ -51,8 +51,8 @@ export class PgBlobStore implements BlobStore {
       })
       .from(blobs);
     return {
-      count: row?.count ?? 0,
-      total_size: row?.total_size ?? 0,
+      count: Number(row?.count ?? 0),
+      total_size: Number(row?.total_size ?? 0),
     };
   }
 }
