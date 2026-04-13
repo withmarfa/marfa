@@ -1,0 +1,71 @@
+{
+  "id": "core.bookmark",
+  "label": "Bookmark",
+  "description": "Content you captured from elsewhere — a saved URL, a highlight, an excerpt, a clipped paragraph.",
+  "version": 1,
+  "fields": {
+    "url": {
+      "type": "string",
+      "description": "The saved URL",
+      "format": "url"
+    },
+    "body": {
+      "type": "string",
+      "description": "Captured text (a highlight, excerpt, or clipping)"
+    },
+    "title": {
+      "type": "string",
+      "description": "Title of the saved content"
+    },
+    "description": {
+      "type": "string",
+      "description": "Summary"
+    },
+    "format": {
+      "type": "enum",
+      "description": "How to interpret body",
+      "enum_values": ["plaintext", "markdown", "html"]
+    },
+    "source_url": {
+      "type": "string",
+      "description": "Where the content was sourced from",
+      "format": "url"
+    },
+    "source_title": {
+      "type": "string",
+      "description": "Title of the source"
+    },
+    "author": {
+      "type": "string",
+      "description": "Who created the original content"
+    },
+    "published_at": {
+      "type": "string",
+      "description": "When the original content was published",
+      "format": "datetime"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "Preview image",
+      "format": "url"
+    },
+    "language": {
+      "type": "string",
+      "description": "BCP 47 language code",
+      "format": "bcp47"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Personal annotations"
+    }
+  },
+  "required": [],
+  "states": ["new", "active", "archived", "trashed"],
+  "default_state": "new",
+  "transitions": {
+    "new": ["active", "archived", "trashed"],
+    "active": ["archived", "trashed"],
+    "archived": ["active", "trashed"],
+    "trashed": ["active"]
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "id": "core.task",
+  "label": "Task",
+  "description": "Something to be done.",
+  "version": 1,
+  "fields": {
+    "title": {
+      "type": "string",
+      "description": "What needs doing"
+    },
+    "description": {
+      "type": "string",
+      "description": "Brief context"
+    },
+    "body": {
+      "type": "string",
+      "description": "Detailed description"
+    },
+    "format": {
+      "type": "enum",
+      "description": "How to interpret body",
+      "enum_values": ["plaintext", "markdown", "html"]
+    },
+    "due_at": {
+      "type": "string",
+      "description": "Deadline",
+      "format": "datetime"
+    },
+    "starts_at": {
+      "type": "string",
+      "description": "When to start",
+      "format": "datetime"
+    },
+    "completed_at": {
+      "type": "string",
+      "description": "When completed",
+      "format": "datetime"
+    },
+    "status": {
+      "type": "string",
+      "description": "Recommended values: pending, in_progress, completed, cancelled"
+    },
+    "priority": {
+      "type": "enum",
+      "description": "Task priority",
+      "enum_values": ["low", "medium", "high", "urgent"]
+    },
+    "place": {
+      "type": "string",
+      "description": "Location"
+    },
+    "precision": {
+      "type": "enum",
+      "description": "Temporal precision",
+      "enum_values": ["year", "month", "day", "time"]
+    },
+    "url": {
+      "type": "string",
+      "description": "Related link",
+      "format": "url"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Personal annotations"
+    }
+  },
+  "required": ["title"],
+  "states": ["new", "active", "archived", "trashed"],
+  "default_state": "new",
+  "transitions": {
+    "new": ["active", "archived", "trashed"],
+    "active": ["archived", "trashed"],
+    "archived": ["active", "trashed"],
+    "trashed": ["active"]
+  }
+}

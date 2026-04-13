@@ -1,0 +1,61 @@
+{
+  "id": "core.entity",
+  "label": "Entity",
+  "description": "A non-person entity — a company, band, team, charity, brand, school.",
+  "version": 1,
+  "fields": {
+    "name": {
+      "type": "string",
+      "description": "Display name"
+    },
+    "url": {
+      "type": "string",
+      "description": "Web address",
+      "format": "url"
+    },
+    "description": {
+      "type": "string",
+      "description": "What the entity is"
+    },
+    "email": {
+      "type": "string",
+      "description": "Contact email",
+      "format": "email"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Contact phone (E.164 recommended)"
+    },
+    "place": {
+      "type": "string",
+      "description": "Location (human-readable address)"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "Logo or brand image",
+      "format": "url"
+    },
+    "legal_name": {
+      "type": "string",
+      "description": "Official registered name"
+    },
+    "founded": {
+      "type": "string",
+      "description": "Founding date (ISO 8601)",
+      "format": "date"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Personal annotations"
+    }
+  },
+  "required": ["name"],
+  "states": ["new", "active", "archived", "trashed"],
+  "default_state": "new",
+  "transitions": {
+    "new": ["active", "archived", "trashed"],
+    "active": ["archived", "trashed"],
+    "archived": ["active", "trashed"],
+    "trashed": ["active"]
+  }
+}

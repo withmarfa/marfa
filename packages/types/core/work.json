@@ -1,0 +1,66 @@
+{
+  "id": "core.work",
+  "label": "Work",
+  "description": "Something that exists externally — a film, podcast, book, article, song, show.",
+  "version": 1,
+  "fields": {
+    "title": {
+      "type": "string",
+      "description": "Name of the work"
+    },
+    "body": {
+      "type": "string",
+      "description": "Text content or description"
+    },
+    "author": {
+      "type": "string",
+      "description": "Who created the work"
+    },
+    "url": {
+      "type": "string",
+      "description": "Web address",
+      "format": "url"
+    },
+    "format": {
+      "type": "enum",
+      "description": "How to interpret body",
+      "enum_values": ["plaintext", "markdown", "html"]
+    },
+    "description": {
+      "type": "string",
+      "description": "Summary or blurb"
+    },
+    "publisher": {
+      "type": "string",
+      "description": "Who published the work"
+    },
+    "published_at": {
+      "type": "string",
+      "description": "When originally published or released",
+      "format": "datetime"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "Cover art, poster, or thumbnail",
+      "format": "url"
+    },
+    "language": {
+      "type": "string",
+      "description": "BCP 47 language code",
+      "format": "bcp47"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Personal annotations"
+    }
+  },
+  "required": ["title"],
+  "states": ["new", "active", "archived", "trashed"],
+  "default_state": "new",
+  "transitions": {
+    "new": ["active", "archived", "trashed"],
+    "active": ["archived", "trashed"],
+    "archived": ["active", "trashed"],
+    "trashed": ["active"]
+  }
+}

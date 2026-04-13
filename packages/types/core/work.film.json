@@ -1,0 +1,30 @@
+{
+  "id": "core.work.film",
+  "parent": "core.work",
+  "label": "Film",
+  "description": "A film. Inherits all core.work fields.",
+  "version": 1,
+  "fields": {
+    "duration": {
+      "type": "number",
+      "description": "Runtime in seconds"
+    },
+    "director": {
+      "type": "string",
+      "description": "Primary director"
+    },
+    "content_rating": {
+      "type": "string",
+      "description": "Age or content classification"
+    }
+  },
+  "required": [],
+  "states": ["new", "active", "archived", "trashed"],
+  "default_state": "new",
+  "transitions": {
+    "new": ["active", "archived", "trashed"],
+    "active": ["archived", "trashed"],
+    "archived": ["active", "trashed"],
+    "trashed": ["active"]
+  }
+}

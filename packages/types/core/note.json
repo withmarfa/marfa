@@ -1,0 +1,39 @@
+{
+  "id": "core.note",
+  "label": "Note",
+  "description": "Text content you created.",
+  "version": 1,
+  "fields": {
+    "body": {
+      "type": "string",
+      "description": "The note text"
+    },
+    "title": {
+      "type": "string",
+      "description": "Heading or title"
+    },
+    "format": {
+      "type": "enum",
+      "description": "How to interpret body",
+      "enum_values": ["plaintext", "markdown", "html"]
+    },
+    "language": {
+      "type": "string",
+      "description": "BCP 47 language code",
+      "format": "bcp47"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Personal annotations"
+    }
+  },
+  "required": ["body"],
+  "states": ["new", "active", "archived", "trashed"],
+  "default_state": "new",
+  "transitions": {
+    "new": ["active", "archived", "trashed"],
+    "active": ["archived", "trashed"],
+    "archived": ["active", "trashed"],
+    "trashed": ["active"]
+  }
+}

@@ -1,11 +1,8 @@
 {
-  "name": "@mymehq/shared",
-  "version": "1.0.0",
+  "name": "@mymehq/types",
+  "version": "0.1.0",
+  "private": true,
   "type": "module",
-  "publishConfig": {
-    "registry": "https://registry.npmjs.org",
-    "access": "public"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -18,17 +15,13 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "dependencies": {
-    "zod": "^4.3.6",
-    "uuidv7": "^1.2.1"
+    "validate": "tsx scripts/validate.ts",
+    "generate": "tsx scripts/generate.ts"
   },
   "devDependencies": {
-    "@mymehq/types": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
+    "tsx": "^4.19.4",
     "typescript": "^6.0.2"
   }
 }

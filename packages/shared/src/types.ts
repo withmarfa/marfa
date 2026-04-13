@@ -1,8 +1,7 @@
 // Myme types — the wire format for the Myme API.
 // These interfaces define what goes over the network between server and clients.
 
-/** Lifecycle states for items. */
-export type ItemState = "new" | "active" | "archived" | "trashed";
+import type { ItemState } from "@mymehq/types";
 
 /** Valid item states as a readonly array, useful for validation. */
 export const ITEM_STATES: readonly ItemState[] = [

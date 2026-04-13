@@ -1,0 +1,30 @@
+{
+  "id": "core.work.book",
+  "parent": "core.work",
+  "label": "Book",
+  "description": "A book. Inherits all core.work fields.",
+  "version": 1,
+  "fields": {
+    "isbn": {
+      "type": "string",
+      "description": "International Standard Book Number (ISO 2108)"
+    },
+    "page_count": {
+      "type": "integer",
+      "description": "Number of pages"
+    },
+    "edition": {
+      "type": "string",
+      "description": "Edition designation"
+    }
+  },
+  "required": [],
+  "states": ["new", "active", "archived", "trashed"],
+  "default_state": "new",
+  "transitions": {
+    "new": ["active", "archived", "trashed"],
+    "active": ["archived", "trashed"],
+    "archived": ["active", "trashed"],
+    "trashed": ["active"]
+  }
+}

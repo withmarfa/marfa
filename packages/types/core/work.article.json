@@ -1,0 +1,30 @@
+{
+  "id": "core.work.article",
+  "parent": "core.work",
+  "label": "Article",
+  "description": "An article. Inherits all core.work fields.",
+  "version": 1,
+  "fields": {
+    "body": {
+      "type": "string",
+      "description": "The article text"
+    },
+    "section": {
+      "type": "string",
+      "description": "Section of the publication"
+    },
+    "word_count": {
+      "type": "integer",
+      "description": "Word count"
+    }
+  },
+  "required": ["body"],
+  "states": ["new", "active", "archived", "trashed"],
+  "default_state": "new",
+  "transitions": {
+    "new": ["active", "archived", "trashed"],
+    "active": ["archived", "trashed"],
+    "archived": ["active", "trashed"],
+    "trashed": ["active"]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "id": "core.work.tv_episode",
+  "parent": "core.work",
+  "label": "TV Episode",
+  "description": "A TV episode. Inherits all core.work fields.",
+  "version": 1,
+  "fields": {
+    "episode_number": {
+      "type": "integer",
+      "description": "Position within the season"
+    },
+    "season_number": {
+      "type": "integer",
+      "description": "Which season"
+    },
+    "duration": {
+      "type": "number",
+      "description": "Episode runtime in seconds"
+    },
+    "director": {
+      "type": "string",
+      "description": "Episode director"
+    }
+  },
+  "required": [],
+  "states": ["new", "active", "archived", "trashed"],
+  "default_state": "new",
+  "transitions": {
+    "new": ["active", "archived", "trashed"],
+    "active": ["archived", "trashed"],
+    "archived": ["active", "trashed"],
+    "trashed": ["active"]
+  }
+}

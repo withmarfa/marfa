@@ -1,0 +1,34 @@
+{
+  "id": "core.work.song",
+  "parent": "core.work",
+  "label": "Song",
+  "description": "A song. Inherits all core.work fields.",
+  "version": 1,
+  "fields": {
+    "duration": {
+      "type": "number",
+      "description": "Track length in seconds"
+    },
+    "isrc": {
+      "type": "string",
+      "description": "International Standard Recording Code (ISO 3901)"
+    },
+    "album": {
+      "type": "string",
+      "description": "Containing album name"
+    },
+    "track_number": {
+      "type": "integer",
+      "description": "Position within the album"
+    }
+  },
+  "required": [],
+  "states": ["new", "active", "archived", "trashed"],
+  "default_state": "new",
+  "transitions": {
+    "new": ["active", "archived", "trashed"],
+    "active": ["archived", "trashed"],
+    "archived": ["active", "trashed"],
+    "trashed": ["active"]
+  }
+}
