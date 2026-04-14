@@ -18,6 +18,7 @@ import {
   getTypeFilter,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { publish } from "../pubsub.js";
 import {
   createOpenAPIRouter,
@@ -989,6 +990,10 @@ export function itemRoutes(storage: Storage) {
   });
 
   // DELETE /items/:id — soft delete
+  // Cascade-on-delete semantics: outbound edges with cascade_on_delete=cascade
+  // (parent-of in the V0 core set) recursively soft-delete their targets;
+  // block edges (none in V0 core set, but custom types may use them) reject
+  // the delete outright. Orphan is the no-op default.
   router.openapi(deleteItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -997,15 +1002,31 @@ export function itemRoutes(storage: Storage) {
 
     requireAuth(c);
     const tid = c.get("apiKey")?.tenant_id;
-    const existing = await storage.items.get(id, tid);
-    await storage.items.delete(id, tid);
-    if (existing) {
-      await publish({
-        type: "deleted",
-        item: { ...existing, state: "trashed" as ItemState },
-        tenantId: tid,
-      });
-    }
+
+    await storage.runInTransaction(async () => {
+      // Walk the edge graph to plan the cascade + reject block-edges.
+      const toDelete = await planCascadeDelete(storage.edges, id);
+
+      // Fetch snapshots before deletion for event payloads.
+      const snapshots = await Promise.all(
+        toDelete.map((delId) => storage.items.get(delId, tid)),
+      );
+
+      for (const delId of toDelete) {
+        await storage.items.delete(delId, tid);
+      }
+
+      // Publish one deleted event per item (post-order: leaves first).
+      for (const snapshot of snapshots) {
+        if (snapshot) {
+          await publish({
+            type: "deleted",
+            item: { ...snapshot, state: "trashed" as ItemState },
+            tenantId: tid,
+          });
+        }
+      }
+    });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.delete",
