@@ -219,7 +219,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_resource_type ON audit_log(resource_typ
 CREATE TABLE IF NOT EXISTS event_log (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   event_type TEXT NOT NULL,
-  item_id TEXT NOT NULL,
+  item_id TEXT,
   edge_id TEXT,
   tenant_id TEXT,
   payload TEXT NOT NULL,

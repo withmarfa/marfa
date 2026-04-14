@@ -11,8 +11,8 @@ export class SqliteEventLogStore implements EventLogStore {
 
   async append(entry: {
     event_type: string;
-    item_id: string;
-    edge_id?: string;
+    item_id?: string | null;
+    edge_id?: string | null;
     tenant_id?: string;
     payload: string;
   }): Promise<number> {
@@ -22,7 +22,7 @@ export class SqliteEventLogStore implements EventLogStore {
     );
     const result = stmt.run(
       entry.event_type,
-      entry.item_id,
+      entry.item_id ?? null,
       entry.edge_id ?? null,
       entry.tenant_id ?? null,
       entry.payload,

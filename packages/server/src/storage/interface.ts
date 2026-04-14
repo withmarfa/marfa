@@ -406,7 +406,10 @@ export interface AuditStore {
 export interface PersistedEvent {
   id: number;
   event_type: string;
-  item_id: string;
+  /** Populated on item events; null on edge events. Migration 0014
+   *  relaxed this to nullable so edge events no longer reuse source_id
+   *  as a NOT NULL workaround. */
+  item_id: string | null;
   edge_id: string | null;
   tenant_id: string | null;
   payload: string;
@@ -417,10 +420,11 @@ export interface EventLogStore {
   /** Append an event and return its assigned sequential ID. */
   append(entry: {
     event_type: string;
-    item_id: string;
+    /** Non-null for item events; null for edge events. */
+    item_id?: string | null;
     /** Non-null for edge events; lets subscribers filter Last-Event-ID
      *  replay by a specific edge in addition to by item. */
-    edge_id?: string;
+    edge_id?: string | null;
     tenant_id?: string;
     payload: string;
   }): Promise<number>;

@@ -99,6 +99,13 @@
       "when": 1777400000000,
       "tag": "0013_custom_edge_types",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1777500000000,
+      "tag": "0014_event_log_item_id_nullable",
+      "breakpoints": true
     }
   ]
 }

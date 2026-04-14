@@ -347,7 +347,9 @@ export const eventLog = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     event_type: text("event_type").notNull(),
-    item_id: text("item_id").notNull(),
+    // Nullable — migration 0014. Edge events store edge_id only; item
+    // events store item_id only.
+    item_id: text("item_id"),
     edge_id: text("edge_id"),
     tenant_id: text("tenant_id"),
     payload: text("payload").notNull(),

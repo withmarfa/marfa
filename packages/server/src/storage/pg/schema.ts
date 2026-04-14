@@ -350,7 +350,10 @@ export const eventLog = pgTable(
   {
     id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     event_type: text("event_type").notNull(),
-    item_id: text("item_id").notNull(),
+    // Nullable: item events set item_id and leave edge_id null; edge
+    // events set edge_id and leave item_id null. Relaxed from NOT NULL
+    // in migration 0014.
+    item_id: text("item_id"),
     edge_id: text("edge_id"),
     tenant_id: text("tenant_id"),
     payload: text("payload").notNull(),

@@ -89,8 +89,9 @@ export async function publish(event: ItemEvent): Promise<number | undefined> {
 
 /**
  * Publish an edge lifecycle event. Persists via event_log with
- * item_id = edge.source_id and edge_id = edge.id so replay flows through
- * the same filtering machinery as item events.
+ * item_id = null and edge_id = edge.id. Subscribers filter by edge_id
+ * (or accept all edge events); the `?type=` SSE filter applies to
+ * item events only since edges carry no content type.
  */
 export async function publishEdge(
   event: EdgeEvent,
@@ -104,7 +105,7 @@ export async function publishEdge(
     });
     eventId = await eventLogStore.append({
       event_type: event.type,
-      item_id: event.edge.source_id,
+      item_id: null,
       edge_id: event.edge.id,
       tenant_id: event.tenantId,
       payload,

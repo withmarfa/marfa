@@ -256,7 +256,7 @@ export function createConnection(sqlitePath: string): {
     CREATE TABLE IF NOT EXISTS event_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       event_type TEXT NOT NULL,
-      item_id TEXT NOT NULL,
+      item_id TEXT,
       edge_id TEXT,
       tenant_id TEXT,
       payload TEXT NOT NULL,
