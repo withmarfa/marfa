@@ -29,6 +29,9 @@ const KeyResponseSchema = z.object({
   default_origin: z.enum(["user", "ai", "worker"]),
   default_library: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
+  extension_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });
@@ -40,7 +43,10 @@ const KeyListItemSchema = z.object({
   role: z.string(),
   default_origin: z.enum(["user", "ai", "worker"]),
   default_library: z.boolean(),
-  type_permissions: z.record(z.string(), z.string()),
+  type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
+  extension_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });
@@ -72,6 +78,9 @@ const createKeyRoute = createRoute({
             default_library: z.boolean().optional(),
             type_permissions: z
               .record(z.string(), z.enum(["read", "write", "none"]))
+              .optional(),
+            extension_permissions: z
+              .record(z.string(), z.enum(["read", "write"]))
               .optional(),
           }),
         },
@@ -175,6 +184,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         default_origin: body.default_origin,
         default_library: body.default_library,
         type_permissions: typePermissions,
+        extension_permissions: body.extension_permissions,
       },
       keyHash,
     );
@@ -196,6 +206,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         default_origin: stored.default_origin,
         default_library: stored.default_library,
         type_permissions: stored.type_permissions,
+        extension_permissions: stored.extension_permissions,
         created_at: stored.created_at,
         last_used_at: stored.last_used_at,
       },
