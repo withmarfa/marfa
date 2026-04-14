@@ -20,6 +20,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @mymehq/types validate
       - name: Regenerate and check for drift
@@ -43,6 +47,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       # Build first — the generator script imports through @mymehq/shared,
       # which needs its dist/ before tsx can resolve it.
@@ -68,6 +76,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm typecheck
@@ -104,6 +116,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm typecheck

@@ -12,6 +12,12 @@ coverage/
 .env.*
 !.env.example
 
+# Registry auth — local devs copy from .npmrc.example with NPM_TOKEN
+# set in the shell (publish flow). CI generates .npmrc per-job from
+# secrets.GITHUB_TOKEN. Tracking it in the repo caused pnpm to warn
+# on every invocation when NPM_TOKEN was unset.
+.npmrc
+
 # IDE
 .vscode/
 .idea/
