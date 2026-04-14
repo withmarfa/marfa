@@ -15,6 +15,7 @@ import { SqliteAuditStore } from "./audit-store.js";
 import { SqliteEventLogStore } from "./event-log-store.js";
 import { SqliteUserStore } from "./user-store.js";
 import { SqliteTenantStore } from "./tenant-store.js";
+import { SqliteEdgeStore } from "./edge-store.js";
 
 export function createSqliteStorage(
   sqlitePath: string,
@@ -44,6 +45,7 @@ export function createSqliteStorage(
   const deliveryStore = new SqliteWebhookDeliveryStore(db);
   const auditStore = new SqliteAuditStore(db);
   const eventLogStore = new SqliteEventLogStore(db, raw);
+  const edgeStore = new SqliteEdgeStore(db);
 
   return {
     items: itemStore,
@@ -54,6 +56,7 @@ export function createSqliteStorage(
     search: searchStore,
     keys: keyStore,
     blobs: blobStore,
+    edges: edgeStore,
     oauth: oauthStore,
     webhooks: webhookStore,
     webhookDeliveries: deliveryStore,
