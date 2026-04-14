@@ -10,6 +10,28 @@
  */
 import { z } from "@hono/zod-openapi";
 
+export const EdgeSchema = z.object({
+  id: z.string(),
+  tenant_id: z.string().nullable().optional(),
+  source_id: z.string(),
+  target_id: z.string(),
+  edge_type: z.string(),
+  properties: z.record(z.string(), z.unknown()),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+/**
+ * A single edge type's hydrated block on an item response. Per-type cap is
+ * 50 by default; has_more + next_cursor signal that more edges exist and the
+ * caller should paginate via GET /items/:id/edges?edge_type=X&cursor=...
+ */
+export const ItemEdgesBlockSchema = z.object({
+  edges: z.array(EdgeSchema),
+  has_more: z.boolean(),
+  next_cursor: z.string().optional(),
+});
+
 export const ItemSchema = z.object({
   id: z.string(),
   type: z.string(),
@@ -29,6 +51,12 @@ export const ItemSchema = z.object({
   timestamp: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
+  /**
+   * Hydrated outbound edges per type. Always populated on single-item GETs;
+   * opt-in on list GETs via ?include=edges. An empty object means no edges
+   * or hydration was skipped.
+   */
+  edges: z.record(z.string(), ItemEdgesBlockSchema).optional(),
 });
 
 export const MetadataSchema = z.object({

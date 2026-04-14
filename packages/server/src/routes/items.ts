@@ -22,6 +22,10 @@ import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publish } from "../pubsub.js";
 import {
+  hydrateEdgesForItem,
+  hydrateEdgesForItems,
+} from "./_edges-hydrate.js";
+import {
   createOpenAPIRouter,
   ErrorResponseSchema,
   OkResponseSchema,
@@ -776,6 +780,10 @@ export function itemRoutes(storage: Storage) {
       return { item: created, metadata: meta };
     });
 
+    // Hydrate edges onto the response (always on single-item write/read).
+    const hydrated = await hydrateEdgesForItem(storage, item.id);
+    const itemWithEdges = { ...item, edges: hydrated };
+
     await publish({ type: "created", item, metadata, tenantId });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
@@ -784,7 +792,7 @@ export function itemRoutes(storage: Storage) {
       resource_id: item.id,
       details: { type: item.type },
     });
-    return c.json({ item, metadata }, 201);
+    return c.json({ item: itemWithEdges, metadata }, 201);
   });
 
   // GET /items/stats — item counts grouped by state
@@ -832,7 +840,17 @@ export function itemRoutes(storage: Storage) {
     const rawLibrary = c.req.query("library");
     const library =
       rawLibrary === "true" ? true : rawLibrary === "false" ? false : undefined;
-    const includeMetadata = query.include === "metadata";
+    // `include` accepts a comma-separated list. "metadata" adds the sidecar
+    // object per item; "edges" hydrates outbound edges inline (opt-in — list
+    // reads skip edge hydration by default to avoid an N+1 on large lists).
+    const includeSet = new Set(
+      (query.include ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    );
+    const includeMetadata = includeSet.has("metadata");
+    const includeEdges = includeSet.has("edges");
 
     const result = await storage.items.list({
       tenantId: c.get("apiKey")?.tenant_id,
@@ -854,14 +872,20 @@ export function itemRoutes(storage: Storage) {
       cursor: query.cursor,
     });
 
+    const ids = result.data.map((item) => item.id);
+    const edgesMap = includeEdges
+      ? await hydrateEdgesForItems(storage, ids)
+      : null;
+    const decorate = (item: (typeof result.data)[number]) =>
+      edgesMap ? { ...item, edges: edgesMap.get(item.id) ?? {} } : item;
+
     if (includeMetadata) {
-      const ids = result.data.map((item) => item.id);
       const metadataList = await storage.metadata.getMany(ids);
       const metadataMap = new Map(metadataList.map((m) => [m.item_id, m]));
       return c.json(
         {
           data: result.data.map((item) => ({
-            item,
+            item: decorate(item),
             metadata: metadataMap.get(item.id) ?? {
               item_id: item.id,
               tags: [],
@@ -876,10 +900,18 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
-    return c.json(result, 200);
+    return c.json(
+      {
+        data: result.data.map(decorate),
+        cursor: result.cursor,
+        has_more: result.has_more,
+      },
+      200,
+    );
   });
 
-  // GET /items/:id — get single
+  // GET /items/:id — get single. Always hydrates outbound edges (capped per
+  // type) so callers see relationships without a second round-trip.
   router.openapi(getItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -894,7 +926,8 @@ export function itemRoutes(storage: Storage) {
 
     requireTypeAccess(c, item.type, "read");
     const metadata = await storage.metadata.get(id);
-    return c.json({ item, metadata }, 200);
+    const edges = await hydrateEdgesForItem(storage, id);
+    return c.json({ item: { ...item, edges }, metadata }, 200);
   });
 
   // PATCH /items/:id — update with conflict detection

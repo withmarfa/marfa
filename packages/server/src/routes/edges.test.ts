@@ -385,6 +385,64 @@ describe("Atomic POST /items with edges", () => {
   });
 });
 
+describe("Edge hydration on item reads", () => {
+  it("hydrates outbound edges on GET /items/:id", async () => {
+    const source = await createItem();
+    const tgt1 = await createItem();
+    const tgt2 = await createItem();
+    for (const target of [tgt1, tgt2]) {
+      await request(ctx.app, "POST", "/edges", {
+        key: ctx.adminKey,
+        body: { source_id: source, target_id: target, edge_type: "about" },
+      });
+    }
+    const res = await request(ctx.app, "GET", `/items/${source}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      item: { edges?: Record<string, { edges: { target_id: string }[] }> };
+    };
+    expect(data.item.edges).toBeDefined();
+    const about = data.item.edges?.about;
+    expect(about).toBeDefined();
+    expect(about?.edges.length).toBe(2);
+  });
+
+  it("skips edge hydration on GET /items unless include=edges", async () => {
+    const source = await createItem();
+    const target = await createItem();
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: source, target_id: target, edge_type: "about" },
+    });
+    const withoutInclude = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&limit=50`,
+      { key: ctx.adminKey },
+    );
+    const data = (await withoutInclude.json()) as {
+      data: { id: string; edges?: unknown }[];
+    };
+    const found = data.data.find((d) => d.id === source);
+    expect(found).toBeDefined();
+    expect(found?.edges).toBeUndefined();
+
+    const withInclude = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&limit=50&include=edges`,
+      { key: ctx.adminKey },
+    );
+    const inclData = (await withInclude.json()) as {
+      data: { id: string; edges?: Record<string, unknown> }[];
+    };
+    const foundIncl = inclData.data.find((d) => d.id === source);
+    expect(foundIncl?.edges).toBeDefined();
+  });
+});
+
 describe("Cascade-on-delete for parent-of", () => {
   it("soft-deleting a parent cascades to its children", async () => {
     const parent = await createItem();
