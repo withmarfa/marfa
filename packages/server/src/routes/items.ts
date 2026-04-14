@@ -6,6 +6,7 @@ import {
   isValidTimestamp,
   isValidTypeIdentifier,
   getTypeSchema,
+  getEdgeTypeSchema,
   validateProperties,
   ITEM_STATES,
 } from "@mymehq/shared";
@@ -254,6 +255,12 @@ const updateItemRoute = createRoute({
             properties: z.record(z.string(), z.unknown()).optional(),
             version: z.number().int().min(0).optional(),
             snapshot: z.boolean().optional(),
+            // Replace-all-for-specified-types semantics: any edge_type
+            // listed wipes existing outbound edges of that type from
+            // this item, then creates new edges to each listed target.
+            // Empty array for an edge_type deletes all of that type.
+            // Unmentioned edge types are untouched.
+            edges: z.record(z.string(), z.array(z.string())).optional(),
           }),
         },
       },
@@ -955,11 +962,15 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const hasProperties =
       body.properties !== undefined && typeof body.properties === "object";
+    const hasEdges =
+      body.edges !== undefined &&
+      typeof body.edges === "object" &&
+      Object.keys(body.edges).length > 0;
 
-    if (!hasProperties) {
+    if (!hasProperties && !hasEdges) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
-        "properties is required. Relationship changes (parent-of, in-thread, about) go through POST /edges or the `edges` payload — parent_id / thread_id were dropped in Wave 2 PR 4.",
+        "At least one of `properties` or `edges` is required. parent_id / thread_id were dropped in Wave 2 PR 4; relationship changes flow through the `edges` payload or direct /edges endpoints.",
       );
     }
     if (body.version !== undefined) {
@@ -984,6 +995,32 @@ export function itemRoutes(storage: Storage) {
 
     requireTypeAccess(c, item.type, "write");
 
+    // Shape-validate the edges payload up-front so the transaction path
+    // doesn't have to double-check. Permission gating also runs here
+    // (before any write) so a denied request doesn't touch state at all.
+    if (hasEdges && body.edges) {
+      for (const [edgeType, targets] of Object.entries(body.edges)) {
+        if (!Array.isArray(targets)) {
+          throw new MymeError(
+            ErrorCode.VALIDATION_ERROR,
+            `edges.${edgeType} must be an array of item ids`,
+          );
+        }
+        for (const target of targets) {
+          if (!isValidId(target)) {
+            throw new MymeError(
+              ErrorCode.INVALID_ID,
+              `Invalid target id in edges.${edgeType}`,
+            );
+          }
+        }
+        // Dual gate: item-type write is already enforced above;
+        // edge-type write applies whether we're adding targets or
+        // wiping the type entirely (the action is mutating the set).
+        requireEdgePermission(c, edgeType, "write");
+      }
+    }
+
     if (body.properties) {
       const merged = {
         ...item.properties,
@@ -1003,29 +1040,131 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    const result = await storage.items.update(
-      id,
-      {
-        properties: body.properties,
-        version: body.version,
-        snapshot: body.snapshot === true ? true : undefined,
-      },
-      tid,
-    );
+    // Pre-validate the edges payload before any mutation: edge type
+    // exists, each target item exists + type-constraint-compatible, and
+    // (after-delete) cardinality stays within bounds. Runs before the
+    // delete-and-create pass so sqlite (whose runInTransaction can't
+    // rollback async work) doesn't leave a half-applied state on a
+    // validation failure. pg's runInTransaction rollback still kicks
+    // in for lower-level surprises.
+    if (hasEdges && body.edges) {
+      for (const [edgeType, targets] of Object.entries(body.edges)) {
+        const schema = getEdgeTypeSchema(edgeType);
+        if (!schema) {
+          throw new MymeError(
+            ErrorCode.EDGE_TYPE_NOT_FOUND,
+            `Unknown edge type: ${edgeType}`,
+          );
+        }
+        // Detect duplicate target ids in the payload (same edge would
+        // fail existsExact after the first insert).
+        const uniqueTargets = new Set<string>();
+        for (const target of targets) {
+          if (target === id) {
+            throw new MymeError(
+              ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+              `Edge source and target must be different items`,
+              { edge_type: edgeType },
+            );
+          }
+          if (uniqueTargets.has(target)) {
+            throw new MymeError(
+              ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+              `Duplicate target ${target} in edges.${edgeType}`,
+            );
+          }
+          uniqueTargets.add(target);
+          const targetItem = await storage.items.get(target, tid);
+          if (!targetItem) {
+            // Try the thread-store fallback for in-thread edges.
+            const threadRecord =
+              edgeType === "in-thread"
+                ? await storage.threads.get(target, tid)
+                : null;
+            if (!threadRecord) {
+              throw new MymeError(
+                ErrorCode.ITEM_NOT_FOUND,
+                `Edge target not found: ${target}`,
+              );
+            }
+          }
+        }
+      }
+    }
 
-    if ("error" in result) {
-      return c.json(result, 409);
+    const txResult = await storage.runInTransaction(async () => {
+      const updated = hasProperties
+        ? await storage.items.update(
+            id,
+            {
+              properties: body.properties,
+              version: body.version,
+              snapshot: body.snapshot === true ? true : undefined,
+            },
+            tid,
+          )
+        : item;
+      if (hasProperties && "error" in updated) {
+        return updated;
+      }
+
+      // Replace-all-for-specified-types: delete every existing outbound
+      // edge of the listed edge_type, then create fresh ones. Validation
+      // already ran above so this pass should not see constraint errors
+      // outside of concurrent mutation, which the pg transaction rolls
+      // back naturally.
+      if (hasEdges && body.edges) {
+        for (const [edgeType, targets] of Object.entries(body.edges)) {
+          await storage.edges.deleteBySource(id, edgeType);
+          for (const targetId of targets) {
+            await assertEdgeCanBeCreated(
+              storage.edges,
+              storage.items,
+              {
+                source_id: id,
+                target_id: targetId,
+                edge_type: edgeType,
+                tenant_id: tid,
+              },
+              storage.threads,
+            );
+            await storage.edges.createRaw(
+              {
+                source_id: id,
+                target_id: targetId,
+                edge_type: edgeType,
+              },
+              tid,
+            );
+          }
+        }
+      }
+
+      return updated;
+    });
+
+    if ("error" in txResult) {
+      return c.json(txResult, 409);
     }
 
     const metadata = await storage.metadata.get(id);
-    await publish({ type: "updated", item: result, metadata, tenantId: tid });
+    await publish({
+      type: "updated",
+      item: txResult,
+      metadata,
+      tenantId: tid,
+    });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.update",
       resource_type: "item",
       resource_id: id,
     });
-    return c.json({ item: result, metadata }, 200);
+    const hydrated = await hydrateEdgesForItem(storage, id);
+    return c.json(
+      { item: { ...txResult, edges: hydrated }, metadata },
+      200,
+    );
   });
 
   // DELETE /items/:id — soft delete
