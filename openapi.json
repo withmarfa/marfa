@@ -129,7 +129,12 @@
                           }
                         },
                         "state": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "archived",
+                            "trashed"
+                          ]
                         },
                         "library": {
                           "type": "boolean"
@@ -191,6 +196,8 @@
                         "schema_version",
                         "thread_id",
                         "parent_id",
+                        "source",
+                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -400,6 +407,18 @@
           },
           {
             "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "required": false,
+            "name": "library",
+            "in": "query"
+          },
+          {
+            "schema": {
               "type": "string"
             },
             "required": false,
@@ -523,7 +542,12 @@
                                 }
                               },
                               "state": {
-                                "type": "string"
+                                "type": "string",
+                                "enum": [
+                                  "active",
+                                  "archived",
+                                  "trashed"
+                                ]
                               },
                               "library": {
                                 "type": "boolean"
@@ -585,6 +609,8 @@
                               "schema_version",
                               "thread_id",
                               "parent_id",
+                              "source",
+                              "origin",
                               "timestamp",
                               "created_at",
                               "updated_at"
@@ -629,7 +655,12 @@
                                     }
                                   },
                                   "state": {
-                                    "type": "string"
+                                    "type": "string",
+                                    "enum": [
+                                      "active",
+                                      "archived",
+                                      "trashed"
+                                    ]
                                   },
                                   "library": {
                                     "type": "boolean"
@@ -691,6 +722,8 @@
                                   "schema_version",
                                   "thread_id",
                                   "parent_id",
+                                  "source",
+                                  "origin",
                                   "timestamp",
                                   "created_at",
                                   "updated_at"
@@ -938,7 +971,12 @@
                           }
                         },
                         "state": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "archived",
+                            "trashed"
+                          ]
                         },
                         "library": {
                           "type": "boolean"
@@ -1000,6 +1038,8 @@
                         "schema_version",
                         "thread_id",
                         "parent_id",
+                        "source",
+                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -1196,7 +1236,12 @@
                           }
                         },
                         "state": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "archived",
+                            "trashed"
+                          ]
                         },
                         "library": {
                           "type": "boolean"
@@ -1258,6 +1303,8 @@
                         "schema_version",
                         "thread_id",
                         "parent_id",
+                        "source",
+                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -1621,7 +1668,12 @@
                           }
                         },
                         "state": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "archived",
+                            "trashed"
+                          ]
                         },
                         "library": {
                           "type": "boolean"
@@ -1683,6 +1735,8 @@
                         "schema_version",
                         "thread_id",
                         "parent_id",
+                        "source",
+                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -1833,7 +1887,11 @@
                 "properties": {
                   "state": {
                     "type": "string",
-                    "minLength": 1
+                    "enum": [
+                      "active",
+                      "archived",
+                      "trashed"
+                    ]
                   }
                 },
                 "required": [
@@ -1845,7 +1903,7 @@
         },
         "responses": {
           "200": {
-            "description": "Item transitioned",
+            "description": "Item state changed",
             "content": {
               "application/json": {
                 "schema": {
@@ -1867,7 +1925,12 @@
                           }
                         },
                         "state": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "archived",
+                            "trashed"
+                          ]
                         },
                         "library": {
                           "type": "boolean"
@@ -1929,6 +1992,8 @@
                         "schema_version",
                         "thread_id",
                         "parent_id",
+                        "source",
+                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -4290,7 +4355,12 @@
                             }
                           },
                           "state": {
-                            "type": "string"
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "archived",
+                              "trashed"
+                            ]
                           },
                           "library": {
                             "type": "boolean"
@@ -4352,6 +4422,8 @@
                           "schema_version",
                           "thread_id",
                           "parent_id",
+                          "source",
+                          "origin",
                           "timestamp",
                           "created_at",
                           "updated_at"
@@ -4505,7 +4577,12 @@
                           }
                         },
                         "state": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "archived",
+                            "trashed"
+                          ]
                         },
                         "library": {
                           "type": "boolean"
@@ -4567,6 +4644,8 @@
                         "schema_version",
                         "thread_id",
                         "parent_id",
+                        "source",
+                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -4744,7 +4823,12 @@
                           }
                         },
                         "state": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "archived",
+                            "trashed"
+                          ]
                         },
                         "library": {
                           "type": "boolean"
@@ -4806,6 +4890,8 @@
                         "schema_version",
                         "thread_id",
                         "parent_id",
+                        "source",
+                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -5829,33 +5915,85 @@
                               "type": {
                                 "type": "string"
                               },
-                              "state": {
-                                "type": "string"
-                              },
                               "properties": {
                                 "type": "object",
                                 "additionalProperties": {
                                   "nullable": true
                                 }
                               },
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "active",
+                                  "archived",
+                                  "trashed"
+                                ]
+                              },
+                              "library": {
+                                "type": "boolean"
+                              },
+                              "version": {
+                                "type": "number"
+                              },
+                              "schema_version": {
+                                "type": "integer"
+                              },
+                              "thread_id": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "parent_id": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "source": {
+                                "type": "string"
+                              },
+                              "source_id": {
+                                "type": "string"
+                              },
+                              "origin": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "ai",
+                                  "worker"
+                                ]
+                              },
+                              "device": {
+                                "type": "string"
+                              },
+                              "capture_latitude": {
+                                "type": "number"
+                              },
+                              "capture_longitude": {
+                                "type": "number"
+                              },
+                              "timestamp": {
+                                "type": "string"
+                              },
                               "created_at": {
                                 "type": "string"
                               },
                               "updated_at": {
-                                "type": "string"
-                              },
-                              "timestamp": {
                                 "type": "string"
                               }
                             },
                             "required": [
                               "id",
                               "type",
-                              "state",
                               "properties",
+                              "state",
+                              "library",
+                              "version",
+                              "schema_version",
+                              "thread_id",
+                              "parent_id",
+                              "source",
+                              "origin",
+                              "timestamp",
                               "created_at",
-                              "updated_at",
-                              "timestamp"
+                              "updated_at"
                             ],
                             "additionalProperties": {
                               "nullable": true
@@ -5864,6 +6002,9 @@
                           "metadata": {
                             "type": "object",
                             "properties": {
+                              "item_id": {
+                                "type": "string"
+                              },
                               "tags": {
                                 "type": "array",
                                 "items": {
@@ -5875,11 +6016,19 @@
                                 "items": {
                                   "type": "string"
                                 }
+                              },
+                              "extensions": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "nullable": true
+                                }
                               }
                             },
                             "required": [
+                              "item_id",
                               "tags",
-                              "about"
+                              "about",
+                              "extensions"
                             ],
                             "additionalProperties": {
                               "nullable": true
