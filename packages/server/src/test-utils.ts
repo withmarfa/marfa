@@ -85,6 +85,11 @@ export async function createTestContext(): Promise<TestContext> {
       source: `test-admin-${suffix}`,
       role: "admin",
       type_permissions: {},
+      // V0 library-only default: list reads without `?library=all` or
+      // `?library=false` filter to library items. Tests create items
+      // without specifying library explicitly; the test admin stamps
+      // default_library=true so pre-edges-era assertions still find them.
+      default_library: true,
     },
     keyHash,
   );

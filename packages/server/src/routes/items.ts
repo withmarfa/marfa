@@ -172,7 +172,7 @@ const listItemsRoute = createRoute({
       source: z.string().optional(),
       parent_id: z.string().optional(),
       thread_id: z.string().optional(),
-      library: z.enum(["true", "false"]).optional(),
+      library: z.enum(["true", "false", "all"]).optional(),
       tags: z.string().optional(),
       filter: z.string().optional(),
       root_only: z.enum(["true", "false"]).optional(),
@@ -845,9 +845,18 @@ export function itemRoutes(storage: Storage) {
     // validation occasionally drops boolean-as-string enums (a quirk
     // independent of the schema being declared correctly); the raw
     // query lookup is the reliable source.
+    // V0 spec: default query scope is library-only. Explicit opt-outs:
+    //   ?library=false -> ambient-only
+    //   ?library=all   -> no filter (both library and ambient)
+    //   ?library=true or absent -> library-only
+    // See Myme v0 Reference §Library axis.
     const rawLibrary = c.req.query("library");
-    const library =
-      rawLibrary === "true" ? true : rawLibrary === "false" ? false : undefined;
+    const library: boolean | undefined =
+      rawLibrary === "all"
+        ? undefined
+        : rawLibrary === "false"
+          ? false
+          : true;
     // `include` accepts a comma-separated list. "metadata" adds the sidecar
     // object per item; "edges" hydrates outbound edges inline (opt-in — list
     // reads skip edge hydration by default to avoid an N+1 on large lists).
