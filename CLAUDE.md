@@ -1,12 +1,13 @@
 # Myme
 
-Typed data layer. This monorepo contains five packages:
+Typed data layer. This monorepo contains four active workspace packages:
 
 - **@mymehq/types** — JSON schemas for the core type set plus the validate/generate scripts that emit the TypeScript registry (`ALL_TYPES`). Consumed by `@mymehq/shared`; private (bundled into shared's dist, not published to npm)
 - **@mymehq/shared** — Wire types, Zod validation schemas, error codes, type registry consumer, ID utilities. The foundation imported by both server and SDK
 - **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published)
 - **@mymehq/sdk** — TypeScript HTTP client for consuming the Myme API
-- **@mymehq/electric** — Electric SQL sync client for local-first apps (optional, experimental)
+
+A fifth package, **@mymehq/electric** (Electric SQL sync client for local-first apps), lives at `packages/electric/` but is **parked**: excluded from `pnpm-workspace.yaml`, marked deprecated in its `package.json`, and skipped by every CI gate. Code stays on disk for future revival; see `packages/electric/README.md` for rationale and the revival recipe.
 
 Published to npm under the `@mymehq` scope. Version tags (`v1.0.0`) trigger the publish workflow.
 
@@ -62,23 +63,34 @@ Server package (not needed for shared or SDK development):
 
 ## Database migrations
 
-Schema managed via Drizzle Kit (dual-dialect: Postgres + SQLite). Existing databases use inline DDL (CREATE TABLE IF NOT EXISTS) in the connection modules. Drizzle migrations are used for fresh databases and future schema changes.
+Drizzle migrations under `packages/server/drizzle/{pg,sqlite}/` are the schema source of truth. Inline DDL in `connection.ts` (the `SCHEMA_SQL` block) exists only as the fresh-DB bootstrap path used by tests (`:memory:` SQLite) and new instances; it mirrors what running `pnpm migrate` from `0000` would produce.
 
-When changing Drizzle schema files (`src/storage/pg/schema.ts` or `src/storage/sqlite/schema.ts`):
+When changing schema:
 
-1. Update the Drizzle schema file(s)
-2. Generate migrations: `pnpm --filter @mymehq/server run migrate:pg:generate` and `migrate:sqlite:generate`
-3. Review the generated SQL in `drizzle/pg/` and `drizzle/sqlite/`
-4. Also update the inline DDL in the corresponding `connection.ts` for backward compatibility
-5. Run standalone migration: `pnpm --filter @mymehq/server run migrate`
+1. Update the Drizzle schema file(s) (`src/storage/pg/schema.ts` or `src/storage/sqlite/schema.ts`).
+2. Generate migrations: `pnpm --filter @mymehq/server run migrate:pg:generate` and `migrate:sqlite:generate`.
+3. Review the generated SQL in `drizzle/pg/` and `drizzle/sqlite/`.
+4. Mirror the change into the bootstrap `SCHEMA_SQL` block in the corresponding `connection.ts` so fresh databases get it without the migrator.
+5. Run standalone migration on existing dbs: `pnpm --filter @mymehq/server run migrate`.
 
-SQLite FTS5 virtual table stays in `connection.ts` (Drizzle Kit cannot express virtual tables).
+**Two documented exceptions** remain inline because Drizzle Kit cannot express them:
+
+- **SQLite FTS5 virtual table** in `sqlite/connection.ts` — virtual tables aren't part of Drizzle's DSL.
+- **Postgres RLS policies** in `pg/connection.ts` — dormant by design today (the table-owner connection bypasses RLS); the policies are pre-installed so a production hosted deployment running as a non-owner role inherits isolation automatically.
+
+Do not add new inline DDL outside those exceptions.
 
 ## OpenAPI
 
-Routes use `@hono/zod-openapi` with request/response schemas. The OpenAPI 3.1 spec is generated from the route definitions — not maintained manually. Run `pnpm generate:openapi` to output the spec. The spec endpoint is available at `GET /openapi.json` on a running server.
+Routes use `@hono/zod-openapi` with request/response schemas. The OpenAPI 3.1 spec is generated from the route definitions — not maintained manually. Run `pnpm --silent --filter @mymehq/server generate:openapi > openapi.json` to update the committed spec. The spec endpoint is available at `GET /openapi.json` on a running server.
 
 When adding or modifying routes, use `createRoute()` with Zod schemas for request params, body, and responses. Streaming endpoints (SSE, NDJSON export) and HTML endpoints (OAuth consent) stay as plain Hono routes.
+
+The `openapi-freshness` CI job regenerates and diffs `openapi.json` on every PR; spec drift fails the build with a clear regen instruction.
+
+## Per-route tests
+
+Every new HTTP route added under `packages/server/src/routes/` should ship with at least one smoke test in a sibling `*.test.ts` file (auth gate + happy path are the minimum). PR review enforces. Pre-existing untested routes are not subject to this rule until they're modified.
 
 ## Error handling
 

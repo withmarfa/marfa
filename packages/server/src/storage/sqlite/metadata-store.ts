@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion -- transaction guarantees row exists after insert */
 import { eq, inArray } from "drizzle-orm";
 import type { Metadata } from "@mymehq/shared";
 import type { MetadataStore } from "../interface.js";
@@ -86,6 +85,7 @@ export class SqliteMetadataStore implements MetadataStore {
         .where(eq(metadata.item_id, itemId))
         .run();
       return rowToMetadata(
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
         this.db
           .select()
           .from(metadata)
@@ -116,6 +116,7 @@ export class SqliteMetadataStore implements MetadataStore {
         .where(eq(metadata.item_id, itemId))
         .run();
       return rowToMetadata(
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
         this.db
           .select()
           .from(metadata)
@@ -146,6 +147,7 @@ export class SqliteMetadataStore implements MetadataStore {
         .where(eq(metadata.item_id, itemId))
         .run();
       return rowToMetadata(
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
         this.db
           .select()
           .from(metadata)

@@ -31,6 +31,13 @@ export enum ErrorCode {
   BLOB_TOO_LARGE = "blob_too_large",
   INVALID_PROPERTIES = "invalid_properties",
   INVALID_SCHEMA = "invalid_schema",
+  /**
+   * A child type registration redeclares a field that is already defined
+   * by an ancestor in its parent chain. V0 spec: inherited fields keep
+   * their parent-type meaning in every descendant; redefining breaks the
+   * generic-reader contract. See `validateTypeSchema`.
+   */
+  INHERITANCE_VIOLATION = "inheritance_violation",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -64,6 +71,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BLOB_TOO_LARGE]: 413,
   [ErrorCode.INVALID_PROPERTIES]: 400,
   [ErrorCode.INVALID_SCHEMA]: 400,
+  [ErrorCode.INHERITANCE_VIOLATION]: 400,
 };
 
 /** Returns the HTTP status code for a given error code. */

@@ -82,3 +82,51 @@ describe("GET /types", () => {
     expect(noteType).toBeTruthy();
   });
 });
+
+describe("inheritance rule enforcement", () => {
+  it("rejects a child type that redefines an ancestor field with INHERITANCE_VIOLATION", async () => {
+    // core.bookmark declares `body` (the user's annotation on the bookmark).
+    // A child that re-declares `body` violates the inheritance rule.
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.bookmark_redef",
+        label: "Bookmark Redef",
+        version: 1,
+        parent: "core.bookmark",
+        fields: {
+          body: { type: "string" },
+        },
+      },
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as {
+      error: {
+        code: string;
+        message: string;
+        details?: { errors?: { field: string; message: string }[] };
+      };
+    };
+    expect(payload.error.code).toBe("inheritance_violation");
+    const errors = payload.error.details?.errors ?? [];
+    const collision = errors.find((e) => e.field === "fields.body");
+    expect(collision).toBeTruthy();
+    expect(collision?.message).toContain("core.bookmark");
+  });
+
+  it("allows a child type that adds a new field on top of the parent", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.bookmark_extra",
+        label: "Bookmark Extra",
+        version: 1,
+        parent: "core.bookmark",
+        fields: {
+          location: { type: "string" },
+        },
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+});

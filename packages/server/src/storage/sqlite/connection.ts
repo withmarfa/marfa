@@ -211,9 +211,17 @@ export function createConnection(sqlitePath: string): {
       attempt INTEGER NOT NULL,
       success INTEGER NOT NULL DEFAULT 0,
       error TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      next_attempt_at TEXT,
+      payload TEXT,
+      webhook_url TEXT,
+      webhook_secret TEXT,
+      max_attempts INTEGER NOT NULL DEFAULT 4,
+      status TEXT NOT NULL DEFAULT 'pending'
     );
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
+    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending
+      ON webhook_deliveries(next_attempt_at) WHERE status = 'pending';
 
     CREATE TABLE IF NOT EXISTS audit_log (
       id TEXT PRIMARY KEY,
@@ -239,66 +247,14 @@ export function createConnection(sqlitePath: string): {
     CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
   `);
 
-  // Migrations for existing databases
-  const columns = sqlite.prepare("PRAGMA table_info(metadata)").all() as {
-    name: string;
-  }[];
-  if (!columns.some((c) => c.name === "extensions")) {
-    sqlite.exec(
-      "ALTER TABLE metadata ADD COLUMN extensions TEXT NOT NULL DEFAULT '{}'",
-    );
-  }
-  const keyColumns = sqlite.prepare("PRAGMA table_info(api_keys)").all() as {
-    name: string;
-  }[];
-  if (!keyColumns.some((c) => c.name === "extension_permissions")) {
-    sqlite.exec(
-      "ALTER TABLE api_keys ADD COLUMN extension_permissions TEXT NOT NULL DEFAULT '{}'",
-    );
-  }
-
-  // Durable webhook retry columns
-  try {
-    sqlite.exec(
-      "ALTER TABLE webhook_deliveries ADD COLUMN next_attempt_at TEXT",
-    );
-  } catch {
-    /* column already exists */
-  }
-  try {
-    sqlite.exec("ALTER TABLE webhook_deliveries ADD COLUMN payload TEXT");
-  } catch {
-    /* column already exists */
-  }
-  try {
-    sqlite.exec("ALTER TABLE webhook_deliveries ADD COLUMN webhook_url TEXT");
-  } catch {
-    /* column already exists */
-  }
-  try {
-    sqlite.exec(
-      "ALTER TABLE webhook_deliveries ADD COLUMN webhook_secret TEXT",
-    );
-  } catch {
-    /* column already exists */
-  }
-  try {
-    sqlite.exec(
-      "ALTER TABLE webhook_deliveries ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 4",
-    );
-  } catch {
-    /* column already exists */
-  }
-  try {
-    sqlite.exec(
-      "ALTER TABLE webhook_deliveries ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
-    );
-  } catch {
-    /* column already exists */
-  }
-  sqlite.exec(
-    "CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending ON webhook_deliveries(next_attempt_at) WHERE status = 'pending'",
-  );
+  // Schema source of truth is the Drizzle migrations under drizzle/sqlite/.
+  // The CREATE TABLE block above is the fresh-database bootstrap path
+  // (notably tests via :memory:); it mirrors what running `pnpm migrate`
+  // from 0000 would produce. Schema changes go in a Drizzle migration; do
+  // NOT add new inline DDL here.
+  //
+  // One documented exception remains inline: the FTS5 virtual table below.
+  // Drizzle Kit cannot express FTS5; the table is owned by sqlite-only.
 
   // Create FTS5 virtual table
   sqlite.exec(CREATE_FTS);

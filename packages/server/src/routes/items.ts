@@ -24,38 +24,17 @@ import {
   ErrorResponseSchema,
   OkResponseSchema,
 } from "../openapi.js";
+import {
+  ItemSchema,
+  ItemWithMetadataSchema,
+  MetadataSchema,
+} from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
-// Reusable schemas
+// Reusable schemas (Item / Metadata / ItemWithMetadata live in _schemas.ts;
+// imported above. The conflict-response and version schemas are local to
+// items.ts since no other route uses them.)
 // ---------------------------------------------------------------------------
-
-const ItemSchema = z.object({
-  id: z.string(),
-  type: z.string(),
-  properties: z.record(z.string(), z.unknown()),
-  state: z.string(),
-  library: z.boolean(),
-  version: z.number(),
-  schema_version: z.number().int(),
-  thread_id: z.string().nullable(),
-  parent_id: z.string().nullable(),
-  source: z.string().optional(),
-  source_id: z.string().optional(),
-  origin: z.enum(["user", "ai", "worker"]).optional(),
-  device: z.string().optional(),
-  capture_latitude: z.number().optional(),
-  capture_longitude: z.number().optional(),
-  timestamp: z.string(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
-
-const MetadataSchema = z.object({
-  item_id: z.string(),
-  tags: z.array(z.string()),
-  about: z.array(z.string()),
-  extensions: z.record(z.string(), z.unknown()),
-});
 
 const ConflictSnapshotSchema = z.object({
   version: z.number(),
@@ -70,11 +49,6 @@ const ConflictResponseSchema = z.object({
   current: ConflictSnapshotSchema,
   ancestor: ConflictSnapshotSchema,
   conflicting_fields: z.array(z.string()),
-});
-
-const ItemWithMetadataSchema = z.object({
-  item: ItemSchema,
-  metadata: MetadataSchema,
 });
 
 const VersionSchema = z.object({
@@ -183,6 +157,7 @@ const listItemsRoute = createRoute({
       source: z.string().optional(),
       parent_id: z.string().optional(),
       thread_id: z.string().optional(),
+      library: z.enum(["true", "false"]).optional(),
       tags: z.string().optional(),
       filter: z.string().optional(),
       root_only: z.enum(["true", "false"]).optional(),
@@ -363,7 +338,7 @@ const transitionItemRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            state: z.string().min(1),
+            state: z.enum(["active", "archived", "trashed"]),
           }),
         },
       },
@@ -374,7 +349,7 @@ const transitionItemRoute = createRoute({
       content: {
         "application/json": { schema: ItemWithMetadataSchema },
       },
-      description: "Item transitioned",
+      description: "Item state changed",
     },
     400: {
       content: { "application/json": { schema: ErrorResponseSchema } },
@@ -792,6 +767,13 @@ export function itemRoutes(storage: Storage) {
 
     const filter = query.filter ?? undefined;
     const rootOnly = query.root_only === "true";
+    // Read library from the raw query string. zod-openapi's query
+    // validation occasionally drops boolean-as-string enums (a quirk
+    // independent of the schema being declared correctly); the raw
+    // query lookup is the reliable source.
+    const rawLibrary = c.req.query("library");
+    const library =
+      rawLibrary === "true" ? true : rawLibrary === "false" ? false : undefined;
     const includeMetadata = query.include === "metadata";
 
     const result = await storage.items.list({
@@ -802,6 +784,7 @@ export function itemRoutes(storage: Storage) {
       parent_id: query.parent_id,
       thread_id: query.thread_id,
       root_only: rootOnly || undefined,
+      library,
       tags,
       filter,
       allowed_types: getTypeFilter(c),
@@ -1063,9 +1046,8 @@ export function itemRoutes(storage: Storage) {
 
     const body = c.req.valid("json");
     const state = body.state;
-    if (!state || typeof state !== "string") {
-      throw new MymeError(ErrorCode.INVALID_TRANSITION, `Invalid state`);
-    }
+    // body.state is constrained to the lifecycle enum by the route Zod;
+    // typeof / truthiness check would be unreachable.
 
     requireAuth(c);
     const tenantId = c.get("apiKey")?.tenant_id;
@@ -1074,13 +1056,9 @@ export function itemRoutes(storage: Storage) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     requireTypeAccess(c, item.type, "write");
-    const updated = await storage.items.transition(
-      id,
-      state as ItemState,
-      tenantId,
-    );
+    const updated = await storage.items.transition(id, state, tenantId);
     const metadata = await storage.metadata.get(id);
-    await publish({ type: "transitioned", item: updated, metadata, tenantId });
+    await publish({ type: "state_changed", item: updated, metadata, tenantId });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.transition",
@@ -1158,6 +1136,12 @@ export function itemRoutes(storage: Storage) {
     }
 
     const metadata = await storage.metadata.set(id, tags, about);
+    await publish({
+      type: "metadata_changed",
+      item,
+      metadata,
+      tenantId: c.get("apiKey")?.tenant_id,
+    });
     return c.json({ metadata }, 200);
   });
 
@@ -1209,6 +1193,12 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
+    await publish({
+      type: "metadata_changed",
+      item,
+      metadata,
+      tenantId: c.get("apiKey")?.tenant_id,
+    });
     return c.json({ metadata }, 200);
   });
 
@@ -1242,6 +1232,12 @@ export function itemRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
       details: { tags },
+    });
+    await publish({
+      type: "metadata_changed",
+      item,
+      metadata,
+      tenantId: c.get("apiKey")?.tenant_id,
     });
     return c.json({ metadata }, 200);
   });
@@ -1286,6 +1282,12 @@ export function itemRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
       details: { tag },
+    });
+    await publish({
+      type: "metadata_changed",
+      item,
+      metadata,
+      tenantId: c.get("apiKey")?.tenant_id,
     });
     return c.json({ metadata }, 200);
   });

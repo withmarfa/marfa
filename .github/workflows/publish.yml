@@ -22,6 +22,11 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm build
@@ -35,4 +40,5 @@ jobs:
 
       - run: pnpm --filter @mymehq/sdk publish --no-git-checks
 
-      - run: pnpm --filter @mymehq/electric publish --no-git-checks
+      # @mymehq/electric is parked (see packages/electric/README.md);
+      # excluded from publish until/unless it's revived.

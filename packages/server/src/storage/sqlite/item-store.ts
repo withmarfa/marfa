@@ -183,9 +183,9 @@ export class SqliteItemStore implements ItemStore {
         timestamp: input.timestamp ?? now,
         version: 1,
         schema_version: schemaVersion,
-        ...(input.source != null && { source: input.source }),
+        source: input.source ?? "<unknown>",
         ...(input.source_id != null && { source_id: input.source_id }),
-        ...(input.origin != null && { origin: input.origin }),
+        origin: input.origin ?? "user",
         ...(input.device != null && { device: input.device }),
         parent_id: input.parent_id ?? null,
         thread_id: input.thread_id ?? null,
@@ -262,6 +262,13 @@ export class SqliteItemStore implements ItemStore {
     // root_only: only items with no parent
     if (filters.root_only) {
       conditions.push(sql`${items.parent_id} IS NULL`);
+    }
+
+    if (filters.library !== undefined) {
+      // better-sqlite3 cannot bind a JS boolean directly. The library column
+      // is INTEGER under the hood (Drizzle boolean()); coerce to 0/1 here so
+      // the eq() builder produces a bindable parameter.
+      conditions.push(sql`${items.library} = ${filters.library ? 1 : 0}`);
     }
 
     // Timestamp range filters — uses COALESCE(timestamp, created_at) as effective date

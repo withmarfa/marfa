@@ -36,6 +36,8 @@ export interface ItemFilters {
   parent_id?: string;
   thread_id?: string;
   root_only?: boolean;
+  /** Restrict to library items (true) or ambient items (false). */
+  library?: boolean;
   tags?: string[];
   filter?: string;
   allowed_types?: string[];

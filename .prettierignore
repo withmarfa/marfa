@@ -6,3 +6,5 @@
 packages/types/generated/
 # Auto-generated OpenAPI spec — emitted as JSON from route definitions.
 openapi.json
+# Lockfile — owned by pnpm, not Prettier.
+pnpm-lock.yaml

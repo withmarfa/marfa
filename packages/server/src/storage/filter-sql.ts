@@ -32,7 +32,7 @@ export type SqlDialect = "sqlite" | "pg";
 
 /** Table reference with the columns we need for condition generation. */
 interface ItemsTableRef {
-  id: { name: string };
+  id: unknown;
   state: unknown;
   type: unknown;
   source: unknown;
@@ -40,6 +40,9 @@ interface ItemsTableRef {
   timestamp: unknown;
   created_at: unknown;
   updated_at: unknown;
+  library: unknown;
+  device: unknown;
+  version: unknown;
   properties: unknown;
 }
 
@@ -62,6 +65,10 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
     timestamp: table.timestamp,
     created_at: table.created_at,
     updated_at: table.updated_at,
+    library: table.library,
+    device: table.device,
+    version: table.version,
+    id: table.id,
   };
   return map[column];
 }
@@ -79,7 +86,7 @@ function conditionToSql(
 
   if (field.kind === "system") {
     const col = getSystemColumn(table, field.column);
-    return systemFieldSql(col, op, value);
+    return systemFieldSql(col, op, value, dialect);
   }
 
   if (field.kind === "property") {
@@ -90,20 +97,35 @@ function conditionToSql(
   return tagsFieldSql(table.id, op, value, dialect);
 }
 
-function systemFieldSql(col: unknown, op: ComparisonOp, value: unknown): SQL {
+/** better-sqlite3 cannot bind booleans natively (the column is INTEGER
+ * under the hood); coerce to 0/1 for the SQLite path. Postgres needs the
+ * boolean itself because boolean columns are real `bool` and `boolean =
+ * integer` is a type error. */
+function bindable(value: unknown, dialect: SqlDialect): unknown {
+  if (typeof value === "boolean" && dialect === "sqlite") return value ? 1 : 0;
+  return value;
+}
+
+function systemFieldSql(
+  col: unknown,
+  op: ComparisonOp,
+  value: unknown,
+  dialect: SqlDialect,
+): SQL {
+  const v = bindable(value, dialect);
   switch (op) {
     case "eq":
-      return sql`${col} = ${value}`;
+      return sql`${col} = ${v}`;
     case "neq":
-      return sql`${col} != ${value}`;
+      return sql`${col} != ${v}`;
     case "gt":
-      return sql`${col} > ${value}`;
+      return sql`${col} > ${v}`;
     case "gte":
-      return sql`${col} >= ${value}`;
+      return sql`${col} >= ${v}`;
     case "lt":
-      return sql`${col} < ${value}`;
+      return sql`${col} < ${v}`;
     case "lte":
-      return sql`${col} <= ${value}`;
+      return sql`${col} <= ${v}`;
     case "contains":
       return sql`${col} LIKE ${"%" + escapeLike(String(value)) + "%"}`;
     case "starts_with":
