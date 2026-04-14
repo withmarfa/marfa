@@ -44,6 +44,9 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+      # Build first — the generator script imports through @mymehq/shared,
+      # which needs its dist/ before tsx can resolve it.
+      - run: pnpm build
       - name: Regenerate and check for drift
         run: |
           pnpm --filter @mymehq/server generate:openapi > openapi.json
