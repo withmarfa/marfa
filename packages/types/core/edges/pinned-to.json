@@ -1,0 +1,10 @@
+{
+  "id": "pinned-to",
+  "label": "Pinned to",
+  "description": "Source is a member of a group / folder / collection item represented by the target.",
+  "cardinality": "many-to-many",
+  "source_type_constraints": ["*"],
+  "target_type_constraints": ["*"],
+  "cascade_on_delete": "orphan",
+  "property_schema": {}
+}
