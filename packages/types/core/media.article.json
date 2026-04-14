@@ -1,0 +1,22 @@
+{
+  "id": "core.media.article",
+  "parent": "core.media",
+  "label": "Article",
+  "description": "An article. Inherits all core.media fields.",
+  "version": 1,
+  "fields": {
+    "body": {
+      "type": "string",
+      "description": "The article text"
+    },
+    "section": {
+      "type": "string",
+      "description": "Section of the publication"
+    },
+    "word_count": {
+      "type": "integer",
+      "description": "Word count"
+    }
+  },
+  "required": ["body"]
+}

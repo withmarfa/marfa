@@ -22,6 +22,7 @@ import {
   parseFilter,
   MymeError,
   ErrorCode,
+  SYSTEM_DEFAULT_STATE,
 } from "@mymehq/shared";
 import { filterToSqlConditions } from "../filter-sql.js";
 import type {
@@ -74,7 +75,7 @@ export class PgItemStore implements ItemStore {
     }
 
     const now = new Date().toISOString();
-    const state = input.state ?? typeSchema?.default_state ?? "new";
+    const state = input.state ?? SYSTEM_DEFAULT_STATE;
 
     return await this.db.transaction(async (tx) => {
       if (input.source && input.source_id) {
@@ -124,6 +125,7 @@ export class PgItemStore implements ItemStore {
         tenant_id: tenantId,
         type: input.type,
         state,
+        library: input.library ?? false,
         properties: JSON.stringify(input.properties),
         created_at: now,
         updated_at: now,
@@ -132,7 +134,7 @@ export class PgItemStore implements ItemStore {
         source_id: input.source_id,
         origin: input.origin,
         version: 1,
-        device_id: input.device_id,
+        device: input.device,
         parent_id: input.parent_id,
         thread_id: input.thread_id,
         capture_latitude: input.capture_latitude,
@@ -158,6 +160,7 @@ export class PgItemStore implements ItemStore {
         id,
         type: input.type,
         state: state,
+        library: input.library ?? false,
         properties: input.properties,
         created_at: now,
         updated_at: now,
@@ -166,7 +169,7 @@ export class PgItemStore implements ItemStore {
         ...(input.source != null && { source: input.source }),
         ...(input.source_id != null && { source_id: input.source_id }),
         ...(input.origin != null && { origin: input.origin }),
-        ...(input.device_id != null && { device_id: input.device_id }),
+        ...(input.device != null && { device: input.device }),
         parent_id: input.parent_id ?? null,
         thread_id: input.thread_id ?? null,
         ...(input.capture_latitude != null && {
@@ -374,7 +377,7 @@ export class PgItemStore implements ItemStore {
         "item update properties",
       );
       const now = new Date().toISOString();
-      const deviceId = row.device_id ?? undefined;
+      const deviceId = row.device ?? undefined;
 
       // Fast path: version omitted — always merge, no conflict detection
       if (input.version === undefined || row.version === input.version) {
@@ -596,7 +599,7 @@ export class PgItemStore implements ItemStore {
       id,
       row.version,
       row.properties,
-      row.device_id ?? undefined,
+      row.device ?? undefined,
     );
 
     const now = new Date().toISOString();
@@ -637,7 +640,7 @@ export class PgItemStore implements ItemStore {
 
     const result: Record<string, number> = {};
     for (const row of rows) {
-      result[row.state] = Number(row.count);
+      result[row.state] = row.count;
     }
     return result;
   }

@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 export const tenants = sqliteTable("tenants", {
   id: text("id").primaryKey(),
   name: text("name"),
+  config: text("config"),
   created_at: text("created_at").notNull(),
 });
 
@@ -59,7 +60,8 @@ export const items = sqliteTable(
     id: text("id").primaryKey(),
     tenant_id: text("tenant_id"),
     type: text("type").notNull(),
-    state: text("state").notNull().default("new"),
+    state: text("state").notNull().default("active"),
+    library: integer("library", { mode: "boolean" }).notNull().default(false),
     properties: text("properties").notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
@@ -69,7 +71,7 @@ export const items = sqliteTable(
     origin: text("origin"),
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
-    device_id: text("device_id"),
+    device: text("device"),
     parent_id: text("parent_id"),
     thread_id: text("thread_id").references(() => threads.id),
     capture_latitude: real("capture_latitude"),
@@ -115,7 +117,7 @@ export const versions = sqliteTable(
     version: integer("version").notNull(),
     properties: text("properties").notNull(),
     created_at: text("created_at").notNull(),
-    device_id: text("device_id"),
+    device: text("device"),
   },
   (table) => [index("idx_versions_item_id").on(table.item_id)],
 );
@@ -124,18 +126,35 @@ export const versions = sqliteTable(
 // api_keys
 // ---------------------------------------------------------------------------
 
-export const apiKeys = sqliteTable("api_keys", {
-  id: text("id").primaryKey(),
-  tenant_id: text("tenant_id"),
-  key_hash: text("key_hash").notNull().unique(),
-  label: text("label").notNull(),
-  role: text("role").notNull().default("member"),
-  type_permissions: text("type_permissions").notNull().default('{"*":"write"}'),
-  extension_permissions: text("extension_permissions").notNull().default("{}"),
-  created_at: text("created_at").notNull(),
-  revoked_at: text("revoked_at"),
-  last_used_at: text("last_used_at"),
-});
+export const apiKeys = sqliteTable(
+  "api_keys",
+  {
+    id: text("id").primaryKey(),
+    tenant_id: text("tenant_id"),
+    key_hash: text("key_hash").notNull().unique(),
+    label: text("label").notNull(),
+    source: text("source").notNull(),
+    role: text("role").notNull().default("member"),
+    default_origin: text("default_origin").notNull().default("user"),
+    default_library: integer("default_library", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    type_permissions: text("type_permissions")
+      .notNull()
+      .default('{"*":"write"}'),
+    extension_permissions: text("extension_permissions")
+      .notNull()
+      .default("{}"),
+    created_at: text("created_at").notNull(),
+    revoked_at: text("revoked_at"),
+    last_used_at: text("last_used_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_api_keys_source_per_tenant")
+      .on(table.tenant_id, table.source)
+      .where(sql`revoked_at IS NULL`),
+  ],
+);
 
 // ---------------------------------------------------------------------------
 // blobs (metadata only — actual files on filesystem)

@@ -37,10 +37,10 @@ describe("filterToRawSql", () => {
     });
 
     it("generates system field starts_with", () => {
-      const expr = parseFilter('type starts_with "core.work"');
+      const expr = parseFilter('type starts_with "core.media"');
       const result = filterToRawSql(expr, "sqlite", "i");
       expect(result.clause).toBe("i.type LIKE ?");
-      expect(result.params).toEqual(["core.work%"]);
+      expect(result.params).toEqual(["core.media%"]);
     });
 
     it("generates property string equality", () => {

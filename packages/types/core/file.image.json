@@ -1,0 +1,33 @@
+{
+  "id": "core.file.image",
+  "parent": "core.file",
+  "label": "Image",
+  "description": "Photos, screenshots, diagrams. Inherits all core.file fields.",
+  "version": 1,
+  "fields": {
+    "width": {
+      "type": "integer",
+      "description": "Width in pixels"
+    },
+    "height": {
+      "type": "integer",
+      "description": "Height in pixels"
+    },
+    "latitude": {
+      "type": "number",
+      "description": "Subject latitude"
+    },
+    "longitude": {
+      "type": "number",
+      "description": "Subject longitude"
+    },
+    "altitude": {
+      "type": "number",
+      "description": "Altitude in meters"
+    }
+  },
+  "required": ["width", "height"],
+  "display_hints": {
+    "title_field": "title"
+  }
+}

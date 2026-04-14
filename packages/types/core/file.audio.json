@@ -1,0 +1,22 @@
+{
+  "id": "core.file.audio",
+  "parent": "core.file",
+  "label": "Audio",
+  "description": "Recordings, music files, voice memos. Inherits all core.file fields.",
+  "version": 1,
+  "fields": {
+    "duration": {
+      "type": "number",
+      "description": "Length in seconds"
+    },
+    "language": {
+      "type": "string",
+      "description": "BCP 47 language code (for spoken content)",
+      "format": "bcp47"
+    }
+  },
+  "required": ["duration"],
+  "display_hints": {
+    "title_field": "title"
+  }
+}

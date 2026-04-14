@@ -10,6 +10,7 @@ const testItem: Item = {
   id: "01900000-0000-7000-8000-000000000001",
   type: "core.note",
   state: "active",
+  library: false,
   properties: { body: "Test note", title: "Hello" },
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",

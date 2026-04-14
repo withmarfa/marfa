@@ -4,10 +4,7 @@ import { MymeError, ErrorCode } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hashApiKey, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import {
-  createOpenAPIRouter,
-  ErrorResponseSchema,
-} from "../openapi.js";
+import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
 const KEY_PREFIX = "myme_k1_";
 
@@ -28,11 +25,12 @@ const UserSchema = z.object({
   provider_id: z.string(),
   tenant_id: z.string(),
   created_at: z.string(),
+  updated_at: z.string(),
 });
 
 const TenantSchema = z.object({
   id: z.string(),
-  name: z.string(),
+  name: z.string().nullable(),
   created_at: z.string(),
 });
 
@@ -52,7 +50,7 @@ const signupRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            email: z.string().email("email is required"),
+            email: z.email("email is required"),
             name: z.string().optional(),
             avatar_url: z.string().optional(),
             provider: z.string().min(1, "provider is required"),
@@ -129,7 +127,8 @@ const meRoute = createRoute({
   path: "/me",
   tags: ["Auth"],
   summary: "Get current user profile",
-  description: "Return the current user profile and tenant info for the authenticated key.",
+  description:
+    "Return the current user profile and tenant info for the authenticated key.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -177,8 +176,13 @@ export function userAuthRoutes(storage: Storage, salt: string) {
 
   // POST /auth/signup — create user + tenant + admin API key
   router.openapi(signupRoute, async (c) => {
-    const { email, name, avatar_url: avatarUrl, provider, provider_account_id: providerId } =
-      c.req.valid("json");
+    const {
+      email,
+      name,
+      avatar_url: avatarUrl,
+      provider,
+      provider_account_id: providerId,
+    } = c.req.valid("json");
 
     // Check if user already exists
     const existing = await userStore.getByProvider(provider, providerId);
@@ -208,6 +212,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     await storage.keys.create(
       {
         label: "admin",
+        source: "admin",
         role: "admin",
         type_permissions: { "*": "write" },
       },
@@ -245,6 +250,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
       await storage.keys.create(
         {
           label: "admin",
+          source: "admin",
           role: "admin",
           type_permissions: { "*": "write" },
         },
@@ -270,6 +276,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     await storage.keys.create(
       {
         label: "session",
+        source: "session",
         role: "admin",
         type_permissions: { "*": "write" },
       },

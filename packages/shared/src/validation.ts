@@ -98,7 +98,7 @@ export function isValidLanguageCode(value: string): boolean {
 // ---------------------------------------------------------------------------
 
 // Type identifiers: dot-separated segments. Min 2 segments.
-// Core types: core.note, core.work.book
+// Core types: core.note, core.media.book
 // Community types: acme.deal, demo.web_gallery
 // Segments: lowercase alphanumeric, underscores, hyphens. Max 128 characters.
 const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
@@ -114,7 +114,7 @@ export function isValidTypeIdentifier(value: string): boolean {
 
 /**
  * Returns true if the type matches any of the given patterns.
- * Patterns can be exact matches, prefix wildcards (core.work.*), or global (*).
+ * Patterns can be exact matches, prefix wildcards (core.media.*), or global (*).
  */
 export function matchesTypePattern(type: string, patterns: string[]): boolean {
   for (const pattern of patterns) {

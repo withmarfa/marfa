@@ -31,7 +31,7 @@ export const items = sqliteTable(
     origin: text("origin"),
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
-    device_id: text("device_id"),
+    device: text("device"),
     parent_id: text("parent_id"),
     thread_id: text("thread_id"),
     capture_latitude: real("capture_latitude"),

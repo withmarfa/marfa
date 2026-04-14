@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { createGzip, createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import * as tar from "tar-stream";
 import { createTestContext, request } from "../test-utils.js";
@@ -81,6 +80,7 @@ describe("POST /import", () => {
     await ctx.storage.keys.create(
       {
         label: "import-member",
+        source: `import-member-${rawKey.slice(-6)}`,
         role: "member",
         type_permissions: { "*": "write" },
       },
@@ -145,15 +145,16 @@ describe("GET /export", () => {
   });
 
   it("round-trips: export then import produces same items", async () => {
-    // Create items with a unique source
-    const source = `roundtrip-${Math.random().toString(36).slice(2)}`;
+    // Create items with a unique source_id so we can find them post-export.
+    // Source is stamped from the credential (non-forgeable) so we can't use
+    // a client-supplied source value to filter.
+    const sourceId = `rt-${Math.random().toString(36).slice(2)}`;
     await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "core.note",
         properties: { body: "Round trip note", title: "RT" },
-        source,
-        source_id: "rt-1",
+        source_id: sourceId,
         tags: ["roundtrip"],
       },
     });
@@ -172,13 +173,13 @@ describe("GET /export", () => {
         },
     );
 
-    // Find our item
+    // Find our item by source_id (preserved verbatim, unlike source)
     const ours = exported.find(
-      (e) => (e.item as { source?: string }).source === source,
+      (e) => (e.item as { source_id?: string }).source_id === sourceId,
     );
     expect(ours).toBeDefined();
 
-    // Import with new source to avoid dedup
+    // Import with a new source_id to avoid dedup
     const importRes = await request(ctx.app, "POST", "/import", {
       key: ctx.adminKey,
       body: {
@@ -186,8 +187,7 @@ describe("GET /export", () => {
           {
             type: "core.note",
             properties: ours?.item.properties,
-            source: `${source}-copy`,
-            source_id: "rt-1",
+            source_id: `${sourceId}-copy`,
           },
         ],
       },
@@ -205,7 +205,7 @@ describe("GET /export", () => {
 async function buildArchive(
   manifest: Record<string, unknown>,
   ndjsonLines: string[],
-  blobs: Array<{ hash: string; data: Buffer }>,
+  blobs: { hash: string; data: Buffer }[],
 ): Promise<Buffer> {
   const pack = tar.pack();
   const chunks: Buffer[] = [];
@@ -222,7 +222,10 @@ async function buildArchive(
   pack.entry({ name: "items.ndjson", size: ndjsonBuf.length }, ndjsonBuf);
 
   for (const blob of blobs) {
-    pack.entry({ name: `blobs/${blob.hash}`, size: blob.data.length }, blob.data);
+    pack.entry(
+      { name: `blobs/${blob.hash}`, size: blob.data.length },
+      blob.data,
+    );
   }
 
   pack.finalize();

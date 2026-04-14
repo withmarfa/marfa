@@ -21,10 +21,7 @@ import {
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
-import {
-  createOpenAPIRouter,
-  ErrorResponseSchema,
-} from "../openapi.js";
+import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
 const MAX_IMPORT_ITEMS = 5000;
 
@@ -130,16 +127,14 @@ export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
       contentType === "application/x-gzip" ||
       c.req.query("format") === "archive"
     ) {
-      return handleArchiveImport(c, storage, blobBackend);
+      const result = await handleArchiveImport(c, storage, blobBackend);
+      return c.json(result, 200);
     }
 
     const body = c.req.valid("json");
     const items = body.items;
     if (!Array.isArray(items)) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "items must be an array",
-      );
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "items must be an array");
     }
     if (items.length > MAX_IMPORT_ITEMS) {
       throw new MymeError(
@@ -152,8 +147,7 @@ export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
     }
 
     // Validate type identifiers
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i] as Record<string, unknown>;
+    for (const [i, item] of items.entries()) {
       if (!item.type || !isValidTypeIdentifier(item.type as string)) {
         throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
@@ -169,7 +163,7 @@ export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
       let duplicates = 0;
 
       for (const raw of items) {
-        const item = raw as Record<string, unknown>;
+        const item = raw;
         try {
           await storage.items.create(
             {
@@ -316,22 +310,16 @@ async function handleArchiveExport(
   storage: Storage,
   blobBackend: BlobBackend,
 ): Promise<Response> {
-  const type = c.req.query("type") as string | undefined;
+  const type = c.req.query("type");
   if (type && !isValidTypeIdentifier(type)) {
-    throw new MymeError(
-      ErrorCode.VALIDATION_ERROR,
-      "Invalid type identifier",
-    );
+    throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
   }
   const state = c.req.query("state") as ItemState | undefined;
   if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-    throw new MymeError(
-      ErrorCode.VALIDATION_ERROR,
-      `Invalid state: ${state}`,
-    );
+    throw new MymeError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${state}`);
   }
-  const since = c.req.query("since") as string | undefined;
-  const until = c.req.query("until") as string | undefined;
+  const since = c.req.query("since");
+  const until = c.req.query("until");
   const tenantId = c.get("apiKey")?.tenant_id;
   const allowedTypes = getTypeFilter(c);
 
@@ -354,7 +342,7 @@ async function handleArchiveExport(
       const metadata = await storage.metadata.get(item.id);
       lines.push(JSON.stringify({ item, metadata }));
       collectBlobHashes(item.properties, blobHashes);
-      if (metadata) collectBlobHashes(metadata.extensions, blobHashes);
+      collectBlobHashes(metadata.extensions, blobHashes);
     }
     cursor = result.has_more
       ? (result.cursor as string | undefined)
@@ -417,7 +405,7 @@ async function handleArchiveExport(
   // Convert Node stream to Web ReadableStream
   const webStream = Readable.toWeb(passthrough) as ReadableStream;
 
-  const date = new Date().toISOString().split("T")[0];
+  const date = new Date().toISOString().split("T")[0] ?? "today";
   return new Response(webStream, {
     status: 200,
     headers: {
@@ -431,7 +419,7 @@ async function handleArchiveImport(
   c: HonoContext,
   storage: Storage,
   blobBackend: BlobBackend,
-): Promise<Response> {
+): Promise<{ imported: number; duplicates: number; blobs_imported: number }> {
   const rawBody = await c.req.arrayBuffer();
   if (rawBody.byteLength === 0) {
     throw new MymeError(ErrorCode.VALIDATION_ERROR, "Empty archive");
@@ -455,14 +443,12 @@ async function handleArchiveImport(
 
         if (header.name === "manifest.json") {
           try {
-            manifest = JSON.parse(
-              buf.toString("utf-8"),
-            ) as ArchiveManifest;
-            if (manifest!.version !== 1) {
+            manifest = JSON.parse(buf.toString("utf-8")) as ArchiveManifest;
+            if (manifest.version !== 1) {
               reject(
                 new MymeError(
                   ErrorCode.VALIDATION_ERROR,
-                  `Unsupported archive version: ${String(manifest!.version)}`,
+                  `Unsupported archive version: ${String(manifest.version)}`,
                 ),
               );
               return;
@@ -494,12 +480,13 @@ async function handleArchiveImport(
             if (computed === hash) {
               blobCount++;
               const mimeType =
-                manifest?.blobs?.[hash]?.mime_type ??
-                "application/octet-stream";
+                manifest?.blobs[hash]?.mime_type ?? "application/octet-stream";
               blobUploads.push(
-                blobBackend.put(hash, buf, mimeType).then(() =>
-                  storage.blobs.register(hash, mimeType, buf.length, hash),
-                ),
+                blobBackend
+                  .put(hash, buf, mimeType)
+                  .then(() =>
+                    storage.blobs.register(hash, mimeType, buf.length, hash),
+                  ),
               );
             }
           }
@@ -509,7 +496,9 @@ async function handleArchiveImport(
       });
       stream.resume();
     });
-    extract.on("finish", () => resolve());
+    extract.on("finish", () => {
+      resolve();
+    });
     extract.on("error", reject);
   });
 
@@ -588,9 +577,9 @@ async function handleArchiveImport(
     },
   });
 
-  return c.json({
+  return {
     imported: result.imported,
     duplicates: result.duplicates,
     blobs_imported: blobCount,
-  });
+  };
 }

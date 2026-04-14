@@ -1,8 +1,9 @@
 # Myme
 
-Typed data layer. This monorepo contains four packages:
+Typed data layer. This monorepo contains five packages:
 
-- **@mymehq/shared** — Myme types, Zod validation schemas, error codes, type registry, ID utilities. The foundation imported by both server and SDK
+- **@mymehq/types** — JSON schemas for the core type set plus the validate/generate scripts that emit the TypeScript registry (`ALL_TYPES`). Consumed by `@mymehq/shared`; private (bundled into shared's dist, not published to npm)
+- **@mymehq/shared** — Wire types, Zod validation schemas, error codes, type registry consumer, ID utilities. The foundation imported by both server and SDK
 - **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published)
 - **@mymehq/sdk** — TypeScript HTTP client for consuming the Myme API
 - **@mymehq/electric** — Electric SQL sync client for local-first apps (optional, experimental)
@@ -85,7 +86,13 @@ The base error class is `MymeError` (in `@mymehq/shared`). All structured errors
 
 ## Type registration
 
-Core types (22, in the `core.*` namespace) are loaded from the codegen registry at startup. Custom types can be registered at runtime via `POST /types` (admin only) and are persisted in the `custom_types` table. Core types cannot be modified or deleted via the API.
+Core types (21 in the active V0 set; `core.message` is kept as a deferred stub in `packages/types/core/` but excluded from the runtime registry) live in `packages/types/core/*.json`. The codegen in `packages/types/scripts/generate.ts` emits `ALL_TYPES` into `generated/type-registry.ts`; shared bundles it at build time via tsup's `noExternal`. Custom types can be registered at runtime via `POST /types` (admin only) and are persisted in the `custom_types` table. Core types cannot be modified or deleted via the API.
+
+Inheritance rule: child types may add new fields but cannot redefine fields declared by any ancestor in their parent chain. Enforced on `POST /types`.
+
+Types may declare an optional `display_hints: { title_field?, body_field? }` block that points generic readers at the canonical title/body fields; hints are inherited from the nearest ancestor when a subtype omits them.
+
+Lifecycle is universal — the metadata-layer `state` axis is `active | archived | trashed`. Types do not declare their own state machines; `SYSTEM_TRANSITIONS` in shared is the authoritative graph.
 
 ## Webhooks
 

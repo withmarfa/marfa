@@ -18,14 +18,6 @@ const baseType = {
   fields: {
     name: { type: "string", required: true },
   },
-  states: ["new", "active", "archived", "trashed"],
-  default_state: "new",
-  transitions: {
-    new: ["active", "archived", "trashed"],
-    active: ["archived", "trashed"],
-    archived: ["active", "trashed"],
-    trashed: ["active"],
-  },
 };
 
 describe("POST /types", () => {

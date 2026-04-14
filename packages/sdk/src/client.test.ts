@@ -67,6 +67,7 @@ beforeAll(async () => {
     versionDailySnapshotDays: 90,
     versionWeeklySnapshotDays: 365,
     versionMaxVersions: 500,
+    errorWebhookUrl: "",
   });
 
   testFetchFn = createTestFetch(app);
@@ -76,7 +77,7 @@ beforeAll(async () => {
   const bootstrapRes = await testFetch("http://localhost/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ label: "test-admin" }),
+    body: JSON.stringify({ label: "test-admin", source: "sdk-test-admin" }),
   });
   const { key } = (await bootstrapRes.json()) as { key: string };
 
@@ -115,7 +116,7 @@ describe("items", () => {
     const item = await createNote();
     expect(item.type).toBe("core.note");
     expect(item.version).toBe(1);
-    expect(item.state).toBe("new");
+    expect(item.state).toBe("active");
     expect(item.id).toBeTruthy();
     expect(item.properties.title).toBe("Test note");
   });
@@ -169,8 +170,8 @@ describe("items", () => {
 
   it("transitions item state", async () => {
     const item = await createNote();
-    const active = await client.items.transition(item.id, "active");
-    expect(active.state).toBe("active");
+    const archived = await client.items.transition(item.id, "archived");
+    expect(archived.state).toBe("archived");
   });
 
   it("gets version history", async () => {
@@ -429,6 +430,7 @@ describe("keys", () => {
   it("creates and lists keys", async () => {
     const { id, key } = await client.keys.create({
       label: "test-key",
+      source: "test-key-source",
       role: "member",
     });
     expect(id).toBeTruthy();
@@ -443,6 +445,7 @@ describe("keys", () => {
   it("revokes a key", async () => {
     const { id, key } = await client.keys.create({
       label: "revoke-me",
+      source: "revoke-me-source",
       role: "member",
     });
     await client.keys.revoke(id);

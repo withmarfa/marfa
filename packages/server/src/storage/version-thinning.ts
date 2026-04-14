@@ -63,9 +63,7 @@ export function computeVersionsToDelete(
 ): string[] {
   if (versions.length <= 1) return [];
 
-  const recentCutoff = new Date(
-    now.getTime() - policy.recentDays * 86_400_000,
-  );
+  const recentCutoff = new Date(now.getTime() - policy.recentDays * 86_400_000);
   const dailyCutoff = new Date(
     now.getTime() - policy.dailySnapshotDays * 86_400_000,
   );
@@ -121,9 +119,7 @@ export function computeVersionsToDelete(
   }
 
   // Always keep the most recent version by version number
-  const mostRecent = versions.reduce((a, b) =>
-    a.version > b.version ? a : b,
-  );
+  const mostRecent = versions.reduce((a, b) => (a.version > b.version ? a : b));
   keepIds.add(mostRecent.id);
 
   // Hard cap: if kept exceeds max, drop oldest first (never the most recent)
@@ -133,8 +129,9 @@ export function computeVersionsToDelete(
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
     const excess = kept.length - policy.maxVersions;
     for (let i = 0; i < excess; i++) {
-      if (kept[i].id !== mostRecent.id) {
-        keepIds.delete(kept[i].id);
+      const candidate = kept[i];
+      if (candidate && candidate.id !== mostRecent.id) {
+        keepIds.delete(candidate.id);
       }
     }
   }

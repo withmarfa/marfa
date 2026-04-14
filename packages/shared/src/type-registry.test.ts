@@ -6,26 +6,28 @@ import {
   isSubtypeOf,
   validateProperties,
   validateTransition,
+  validateTypeSchema,
 } from "./type-registry.js";
+import type { ItemState } from "@mymehq/types";
 
 describe("TYPE_REGISTRY", () => {
-  it("contains exactly 22 core types", () => {
-    expect(TYPE_REGISTRY.size).toBe(22);
+  it("contains exactly 21 core types", () => {
+    expect(TYPE_REGISTRY.size).toBe(21);
   });
 
-  it("contains all work group types", () => {
-    const workTypes = [
-      "core.work",
-      "core.work.book",
-      "core.work.article",
-      "core.work.film",
-      "core.work.song",
-      "core.work.album",
-      "core.work.podcast",
-      "core.work.series",
-      "core.work.tv_episode",
+  it("contains all media group types", () => {
+    const mediaTypes = [
+      "core.media",
+      "core.media.book",
+      "core.media.article",
+      "core.media.film",
+      "core.media.song",
+      "core.media.album",
+      "core.media.podcast",
+      "core.media.series",
+      "core.media.tv_episode",
     ];
-    for (const id of workTypes) {
+    for (const id of mediaTypes) {
       expect(TYPE_REGISTRY.has(id), `missing ${id}`).toBe(true);
     }
   });
@@ -58,13 +60,18 @@ describe("TYPE_REGISTRY", () => {
       "core.note",
       "core.bookmark",
       "core.task",
-      "core.message",
       "core.event",
-      "core.collection",
+      "core.highlight",
     ];
     for (const id of standalone) {
       expect(TYPE_REGISTRY.has(id), `missing ${id}`).toBe(true);
     }
+  });
+
+  it("excludes deferred and removed V0 types", () => {
+    // core.message is deferred post-V0; core.collection is removed entirely.
+    expect(TYPE_REGISTRY.has("core.message")).toBe(false);
+    expect(TYPE_REGISTRY.has("core.collection")).toBe(false);
   });
 });
 
@@ -87,13 +94,13 @@ describe("getResolvedFields", () => {
     expect(fields).toHaveProperty("body");
     expect(fields).toHaveProperty("body.required", true);
     expect(fields).toHaveProperty("title");
-    expect(fields).toHaveProperty("format");
+    expect(fields).toHaveProperty("language");
     expect(fields).toHaveProperty("attachments");
     expect(fields).toHaveProperty("links");
   });
 
   it("merges parent fields into subtype", () => {
-    const fields = getResolvedFields("core.work.book");
+    const fields = getResolvedFields("core.media.book");
     expect(fields).toBeDefined();
     expect(fields).toHaveProperty("title");
     expect(fields).toHaveProperty("title.required", true);
@@ -104,7 +111,7 @@ describe("getResolvedFields", () => {
   });
 
   it("subtype fields override parent fields of the same name", () => {
-    const fields = getResolvedFields("core.work.article");
+    const fields = getResolvedFields("core.media.article");
     expect(fields).toHaveProperty("body.required", true);
   });
 
@@ -119,19 +126,19 @@ describe("isSubtypeOf", () => {
   });
 
   it("returns true for direct subtype", () => {
-    expect(isSubtypeOf("core.work.book", "core.work")).toBe(true);
+    expect(isSubtypeOf("core.media.book", "core.media")).toBe(true);
   });
 
   it("returns false for unrelated types", () => {
-    expect(isSubtypeOf("core.note", "core.work")).toBe(false);
+    expect(isSubtypeOf("core.note", "core.media")).toBe(false);
   });
 
   it("returns false when child and parent are reversed", () => {
-    expect(isSubtypeOf("core.work", "core.work.book")).toBe(false);
+    expect(isSubtypeOf("core.media", "core.media.book")).toBe(false);
   });
 
   it("returns false for unknown type", () => {
-    expect(isSubtypeOf("core.nonexistent", "core.work")).toBe(false);
+    expect(isSubtypeOf("core.nonexistent", "core.media")).toBe(false);
   });
 });
 
@@ -175,24 +182,24 @@ describe("validateProperties", () => {
   });
 
   it("validates enum values", () => {
-    const result = validateProperties("core.note", {
-      body: "Hello",
-      format: "invalid_format",
+    const result = validateProperties("core.highlight", {
+      text: "Passage",
+      color: "chartreuse",
     });
     expect(result.success).toBe(false);
   });
 
   it("accepts valid enum values", () => {
-    const result = validateProperties("core.note", {
-      body: "Hello",
-      format: "markdown",
+    const result = validateProperties("core.highlight", {
+      text: "Passage",
+      color: "yellow",
     });
     expect(result.success).toBe(true);
   });
 
   it("validates subtype with inherited required fields", () => {
-    // core.work.book inherits title (required) from core.work
-    const result = validateProperties("core.work.book", {
+    // core.media.book inherits title (required) from core.media
+    const result = validateProperties("core.media.book", {
       isbn: "978-0-13-468599-1",
     });
     expect(result.success).toBe(false);
@@ -202,7 +209,7 @@ describe("validateProperties", () => {
   });
 
   it("accepts valid subtype properties including inherited fields", () => {
-    const result = validateProperties("core.work.book", {
+    const result = validateProperties("core.media.book", {
       title: "Clean Code",
       isbn: "978-0-13-468599-1",
       page_count: 464,
@@ -211,7 +218,7 @@ describe("validateProperties", () => {
   });
 
   it("validates integer fields reject floats", () => {
-    const result = validateProperties("core.work.book", {
+    const result = validateProperties("core.media.book", {
       title: "A Book",
       page_count: 3.5,
     });
@@ -266,18 +273,6 @@ describe("validateProperties", () => {
 });
 
 describe("validateTransition", () => {
-  it("allows new -> active", () => {
-    expect(validateTransition("core.note", "new", "active")).toBeNull();
-  });
-
-  it("allows new -> archived", () => {
-    expect(validateTransition("core.note", "new", "archived")).toBeNull();
-  });
-
-  it("allows new -> trashed", () => {
-    expect(validateTransition("core.note", "new", "trashed")).toBeNull();
-  });
-
   it("allows active -> archived", () => {
     expect(validateTransition("core.note", "active", "archived")).toBeNull();
   });
@@ -290,37 +285,181 @@ describe("validateTransition", () => {
     expect(validateTransition("core.note", "archived", "active")).toBeNull();
   });
 
+  it("allows archived -> trashed", () => {
+    expect(validateTransition("core.note", "archived", "trashed")).toBeNull();
+  });
+
   it("allows trashed -> active (restore)", () => {
     expect(validateTransition("core.note", "trashed", "active")).toBeNull();
   });
 
-  it("rejects active -> new", () => {
-    const error = validateTransition("core.note", "active", "new");
+  it("rejects trashed -> archived", () => {
+    const error = validateTransition("core.note", "trashed", "archived");
     expect(error).not.toBeNull();
   });
 
-  it("rejects archived -> new", () => {
-    const error = validateTransition("core.note", "archived", "new");
+  it("rejects active -> active (no-op)", () => {
+    const error = validateTransition("core.note", "active", "active");
     expect(error).not.toBeNull();
   });
 
   it("returns error for unknown type", () => {
-    const error = validateTransition("core.nonexistent", "new", "active");
+    const error = validateTransition("core.nonexistent", "active", "archived");
     expect(error).not.toBeNull();
   });
 
   it("returns error for invalid current state", () => {
-    const error = validateTransition("core.note", "bogus" as "new", "active");
+    const error = validateTransition(
+      "core.note",
+      "bogus" as ItemState,
+      "active",
+    );
     expect(error).not.toBeNull();
   });
 
   it("returns error for invalid target state", () => {
-    const error = validateTransition("core.note", "new", "bogus" as "active");
+    const error = validateTransition(
+      "core.note",
+      "active",
+      "bogus" as ItemState,
+    );
     expect(error).not.toBeNull();
   });
+});
 
-  it("respects collection default state (active, not new)", () => {
-    const schema = getTypeSchema("core.collection");
-    expect(schema?.default_state).toBe("active");
+describe("validateTypeSchema — inheritance rule", () => {
+  it("rejects a child type that redefines a direct parent field", () => {
+    const result = validateTypeSchema({
+      id: "acme.bookmark_ext",
+      parent: "core.bookmark",
+      version: 1,
+      fields: {
+        title: { type: "string", description: "Different title meaning" },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some(
+          (e) =>
+            e.field === "fields.title" && e.message.includes("core.bookmark"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects a child type that redefines a deep-ancestor field", () => {
+    // core.entity.person inherits name from core.entity; a child of
+    // core.entity.person must not redeclare name.
+    const result = validateTypeSchema({
+      id: "acme.employee",
+      parent: "core.entity.person",
+      version: 1,
+      fields: {
+        name: { type: "string", description: "Override" },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some(
+          (e) => e.field === "fields.name" && e.message.includes("core.entity"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("accepts a child type that adds new fields without collisions", () => {
+    const result = validateTypeSchema({
+      id: "acme.bookmark_ext",
+      parent: "core.bookmark",
+      version: 1,
+      fields: {
+        acme_category: { type: "string", description: "Internal tag" },
+        acme_score: { type: "integer", description: "Priority" },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a type without a parent regardless of field names", () => {
+    const result = validateTypeSchema({
+      id: "acme.thing",
+      version: 1,
+      fields: {
+        title: { type: "string", description: "A title" },
+        body: { type: "string", description: "Body text" },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("validateTypeSchema — display_hints", () => {
+  const baseThing = {
+    id: "acme.hint_test",
+    version: 1,
+    fields: {
+      title: { type: "string", description: "Title" },
+      body: { type: "string", description: "Body text" },
+    },
+  };
+
+  it("accepts display_hints whose fields exist on the type", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      display_hints: { title_field: "title", body_field: "body" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.display_hints).toEqual({
+        title_field: "title",
+        body_field: "body",
+      });
+    }
+  });
+
+  it("accepts display_hints with only title_field", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      display_hints: { title_field: "title" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.display_hints?.title_field).toBe("title");
+      expect(result.data.display_hints?.body_field).toBeUndefined();
+    }
+  });
+
+  it("rejects display_hints referencing an unknown field", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      display_hints: { title_field: "nonexistent" },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some((e) => e.field === "display_hints.title_field"),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects display_hints that isn't an object", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      display_hints: "title",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.some((e) => e.field === "display_hints")).toBe(true);
+    }
+  });
+
+  it("accepts omitting display_hints entirely", () => {
+    const result = validateTypeSchema(baseThing);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.display_hints).toBeUndefined();
+    }
   });
 });

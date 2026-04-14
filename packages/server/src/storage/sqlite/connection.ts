@@ -46,6 +46,7 @@ export function createConnection(sqlitePath: string): {
     CREATE TABLE IF NOT EXISTS tenants (
       id TEXT PRIMARY KEY,
       name TEXT,
+      config TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -73,7 +74,8 @@ export function createConnection(sqlitePath: string): {
       id TEXT PRIMARY KEY,
       tenant_id TEXT,
       type TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'new',
+      state TEXT NOT NULL DEFAULT 'active',
+      library INTEGER NOT NULL DEFAULT 0,
       properties TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -83,7 +85,7 @@ export function createConnection(sqlitePath: string): {
       origin TEXT,
       version INTEGER NOT NULL DEFAULT 1,
       schema_version INTEGER,
-      device_id TEXT,
+      device TEXT,
       parent_id TEXT,
       thread_id TEXT REFERENCES threads(id),
       capture_latitude REAL,
@@ -112,7 +114,7 @@ export function createConnection(sqlitePath: string): {
       version INTEGER NOT NULL,
       properties TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      device_id TEXT
+      device TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_versions_item_id ON versions(item_id);
 
@@ -121,12 +123,18 @@ export function createConnection(sqlitePath: string): {
       tenant_id TEXT,
       key_hash TEXT NOT NULL UNIQUE,
       label TEXT NOT NULL,
+      source TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
+      default_origin TEXT NOT NULL DEFAULT 'user',
+      default_library INTEGER NOT NULL DEFAULT 0,
       type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
+      extension_permissions TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       revoked_at TEXT,
       last_used_at TEXT
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_source_per_tenant
+      ON api_keys(tenant_id, source) WHERE revoked_at IS NULL;
 
     CREATE TABLE IF NOT EXISTS blobs (
       hash TEXT PRIMARY KEY,
@@ -305,9 +313,7 @@ export function createConnection(sqlitePath: string): {
     sqlite.exec(CREATE_FTS);
     // Re-index all items (extra defaults to empty since we don't have type context here)
     const allItems = sqlite
-      .prepare(
-        "SELECT id, properties FROM items WHERE state != 'trashed'",
-      )
+      .prepare("SELECT id, properties FROM items WHERE state != 'trashed'")
       .all() as { id: string; properties: string }[];
     const insertStmt = sqlite.prepare(
       `INSERT INTO items_fts(item_id, title, body, description, name, extra)
@@ -318,7 +324,8 @@ export function createConnection(sqlitePath: string): {
         const props = JSON.parse(row.properties) as Record<string, unknown>;
         const title = typeof props.title === "string" ? props.title : "";
         const body = typeof props.body === "string" ? props.body : "";
-        const desc = typeof props.description === "string" ? props.description : "";
+        const desc =
+          typeof props.description === "string" ? props.description : "";
         const name = typeof props.name === "string" ? props.name : "";
         insertStmt.run(row.id, title, body, desc, name, "");
       } catch {

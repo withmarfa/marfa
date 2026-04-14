@@ -9,6 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS tenants (
   id TEXT PRIMARY KEY,
   name TEXT,
+  config JSONB,
   created_at TEXT NOT NULL
 );
 
@@ -36,7 +37,8 @@ CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
   tenant_id TEXT,
   type TEXT NOT NULL,
-  state TEXT NOT NULL DEFAULT 'new',
+  state TEXT NOT NULL DEFAULT 'active',
+  library BOOLEAN NOT NULL DEFAULT false,
   properties TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -46,7 +48,7 @@ CREATE TABLE IF NOT EXISTS items (
   origin TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   schema_version INTEGER,
-  device_id TEXT,
+  device TEXT,
   parent_id TEXT,
   thread_id TEXT REFERENCES threads(id),
   capture_latitude DOUBLE PRECISION,
@@ -74,7 +76,7 @@ CREATE TABLE IF NOT EXISTS versions (
   version INTEGER NOT NULL,
   properties TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  device_id TEXT
+  device TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_versions_item_id ON versions(item_id);
 
@@ -83,12 +85,18 @@ CREATE TABLE IF NOT EXISTS api_keys (
   tenant_id TEXT,
   key_hash TEXT NOT NULL UNIQUE,
   label TEXT NOT NULL,
+  source TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'member',
+  default_origin TEXT NOT NULL DEFAULT 'user',
+  default_library BOOLEAN NOT NULL DEFAULT false,
   type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
+  extension_permissions TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   revoked_at TEXT,
   last_used_at TEXT
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_source_per_tenant
+  ON api_keys(tenant_id, source) WHERE revoked_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS blobs (
   hash TEXT PRIMARY KEY,

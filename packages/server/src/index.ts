@@ -65,7 +65,10 @@ async function main() {
   const runEventLogCleanup = () => {
     void storage.eventLog.cleanup(24).then((deleted) => {
       if (deleted > 0)
-        log("info", `Purged ${String(deleted)} event_log entries older than 24 hours`);
+        log(
+          "info",
+          `Purged ${String(deleted)} event_log entries older than 24 hours`,
+        );
     });
   };
   const eventLogCleanupDelay = setTimeout(runEventLogCleanup, 10_000);

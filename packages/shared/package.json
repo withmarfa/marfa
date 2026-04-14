@@ -26,6 +26,7 @@
     "uuidv7": "^1.2.1"
   },
   "devDependencies": {
+    "@mymehq/types": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2"

@@ -62,11 +62,19 @@ function validateParentChain(typeId: string, parentId: string): void {
 
 const TypeSchemaResponse = z.object({
   id: z.string(),
-  label: z.string(),
+  label: z.string().optional(),
+  description: z.string().optional(),
   parent: z.string().optional(),
   fields: z.record(z.string(), z.unknown()),
-  states: z.array(z.string()).optional(),
   version: z.number(),
+  version_policy: z
+    .object({
+      recent_days: z.number().optional(),
+      daily_snapshot_days: z.number().optional(),
+      weekly_snapshot_days: z.number().optional(),
+      max_versions: z.number().optional(),
+    })
+    .optional(),
 });
 
 // ---------------------------------------------------------------------------

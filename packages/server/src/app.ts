@@ -21,6 +21,7 @@ import { webhookRoutes } from "./routes/webhooks.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
+import { tenantRoutes } from "./routes/tenants.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { healthRoutes } from "./routes/health.js";
@@ -32,9 +33,7 @@ export function createApp(
   const app = new OpenAPIHono<AppEnv>();
 
   // Global error handler
-  app.onError(
-    createErrorHandler({ errorWebhookUrl: config.errorWebhookUrl }),
-  );
+  app.onError(createErrorHandler({ errorWebhookUrl: config.errorWebhookUrl }));
 
   // Structured logging (wraps entire request lifecycle)
   app.use("*", loggerMiddleware());
@@ -49,10 +48,7 @@ export function createApp(
           if (config.corsOrigins.includes(origin)) return origin;
           try {
             const url = new URL(origin);
-            if (
-              url.hostname === "localhost" ||
-              url.hostname === "127.0.0.1"
-            ) {
+            if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
               return origin;
             }
           } catch {
@@ -108,7 +104,7 @@ export function createApp(
   app.route("/health", healthRoutes(storage, blobBackend, config));
 
   // Rate limiting (before auth to protect all endpoints, default 1000 req/min)
-  if (config.rateLimitEnabled !== false) {
+  if (config.rateLimitEnabled) {
     app.use("*", rateLimitMiddleware());
   }
 
@@ -123,6 +119,7 @@ export function createApp(
   app.route("/search", searchRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
+  app.route("/tenants", tenantRoutes(storage));
   app.route("/import", importRoutes(storage, blobBackend));
   app.route("/export", exportRoutes(storage, blobBackend));
   app.route("/auth", authRoutes(storage, config.apiKeySalt));

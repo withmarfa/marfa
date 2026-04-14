@@ -284,7 +284,8 @@ describe("POST /blobs/reconcile", () => {
 
   it("detects orphaned storage files not in DB", async () => {
     // Write a file directly to the blob backend (bypassing DB registration)
-    const orphanHash = "sha256:0000000000000000000000000000000000000000000000000000000000099999";
+    const orphanHash =
+      "sha256:0000000000000000000000000000000000000000000000000000000000099999";
     await ctx.blobBackend.put(orphanHash, Buffer.from("orphan data"));
 
     const res = await request(ctx.app, "POST", "/blobs/reconcile", {
@@ -320,7 +321,8 @@ describe("POST /blobs/reconcile", () => {
     expect(body.deleted).toBe(body.orphaned_s3);
 
     // Verify the orphan file is gone
-    const orphanHash = "sha256:0000000000000000000000000000000000000000000000000000000000099999";
+    const orphanHash =
+      "sha256:0000000000000000000000000000000000000000000000000000000000099999";
     expect(await ctx.blobBackend.exists(orphanHash)).toBe(false);
   });
 

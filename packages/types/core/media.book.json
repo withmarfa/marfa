@@ -1,0 +1,22 @@
+{
+  "id": "core.media.book",
+  "parent": "core.media",
+  "label": "Book",
+  "description": "A book. Inherits all core.media fields.",
+  "version": 1,
+  "fields": {
+    "isbn": {
+      "type": "string",
+      "description": "International Standard Book Number (ISO 2108)"
+    },
+    "page_count": {
+      "type": "integer",
+      "description": "Number of pages"
+    },
+    "edition": {
+      "type": "string",
+      "description": "Edition designation"
+    }
+  },
+  "required": []
+}

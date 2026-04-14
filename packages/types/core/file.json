@@ -1,0 +1,51 @@
+{
+  "id": "core.file",
+  "label": "File",
+  "description": "A file or binary reference — the generic fallback for non-media files.",
+  "version": 1,
+  "fields": {
+    "blob_ref": {
+      "type": "string",
+      "description": "Reference to the binary content (sha256:<hex>)"
+    },
+    "mime_type": {
+      "type": "string",
+      "description": "MIME type"
+    },
+    "title": {
+      "type": "string",
+      "description": "Filename or title"
+    },
+    "description": {
+      "type": "string",
+      "description": "What the file contains"
+    },
+    "url": {
+      "type": "string",
+      "description": "Web address",
+      "format": "url"
+    },
+    "source_url": {
+      "type": "string",
+      "description": "Where the file was sourced from",
+      "format": "url"
+    },
+    "author": {
+      "type": "string",
+      "description": "Who created the file"
+    },
+    "language": {
+      "type": "string",
+      "description": "BCP 47 language code",
+      "format": "bcp47"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Personal annotations"
+    }
+  },
+  "required": ["blob_ref", "mime_type"],
+  "display_hints": {
+    "title_field": "title"
+  }
+}

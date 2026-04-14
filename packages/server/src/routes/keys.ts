@@ -24,7 +24,10 @@ const KeyResponseSchema = z.object({
   id: z.string(),
   key: z.string(),
   label: z.string(),
+  source: z.string(),
   role: z.enum(["admin", "member"]),
+  default_origin: z.enum(["user", "ai", "worker"]),
+  default_library: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
@@ -33,7 +36,10 @@ const KeyResponseSchema = z.object({
 const KeyListItemSchema = z.object({
   id: z.string(),
   label: z.string(),
+  source: z.string(),
   role: z.string(),
+  default_origin: z.enum(["user", "ai", "worker"]),
+  default_library: z.boolean(),
   type_permissions: z.record(z.string(), z.string()),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
@@ -57,7 +63,13 @@ const createKeyRoute = createRoute({
         "application/json": {
           schema: z.object({
             label: z.string().min(1, "label is required"),
+            source: z
+              .string()
+              .min(1, "source display name is required")
+              .max(200),
             role: z.enum(["admin", "member"]).optional(),
+            default_origin: z.enum(["user", "ai", "worker"]).optional(),
+            default_library: z.boolean().optional(),
             type_permissions: z
               .record(z.string(), z.enum(["read", "write", "none"]))
               .optional(),
@@ -148,9 +160,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     const body = c.req.valid("json");
 
-    const role = isBootstrap
-      ? "admin"
-      : (body.role ?? "member");
+    const role = isBootstrap ? "admin" : (body.role ?? "member");
 
     const typePermissions = body.type_permissions ?? {};
 
@@ -160,11 +170,11 @@ export function keyRoutes(storage: Storage, salt: string) {
     const stored = await storage.keys.create(
       {
         label: body.label.trim(),
+        source: body.source.trim(),
         role: role,
-        type_permissions: typePermissions as Record<
-          string,
-          "read" | "write" | "none"
-        >,
+        default_origin: body.default_origin,
+        default_library: body.default_library,
+        type_permissions: typePermissions,
       },
       keyHash,
     );
@@ -181,7 +191,10 @@ export function keyRoutes(storage: Storage, salt: string) {
         id: stored.id,
         key: rawKey,
         label: stored.label,
+        source: stored.source,
         role: stored.role,
+        default_origin: stored.default_origin,
+        default_library: stored.default_library,
         type_permissions: stored.type_permissions,
         created_at: stored.created_at,
         last_used_at: stored.last_used_at,

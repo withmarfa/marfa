@@ -1,0 +1,30 @@
+{
+  "id": "core.note",
+  "label": "Note",
+  "description": "Text content you created.",
+  "version": 1,
+  "fields": {
+    "body": {
+      "type": "string",
+      "description": "The note text"
+    },
+    "title": {
+      "type": "string",
+      "description": "Heading or title"
+    },
+    "language": {
+      "type": "string",
+      "description": "BCP 47 language code",
+      "format": "bcp47"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Personal annotations"
+    }
+  },
+  "required": ["body"],
+  "display_hints": {
+    "title_field": "title",
+    "body_field": "body"
+  }
+}

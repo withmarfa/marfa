@@ -1,16 +1,20 @@
 // Myme types — the wire format for the Myme API.
 // These interfaces define what goes over the network between server and clients.
 
-/** Lifecycle states for items. */
-export type ItemState = "new" | "active" | "archived" | "trashed";
+import type { ItemState } from "@mymehq/types";
 
 /** Valid item states as a readonly array, useful for validation. */
 export const ITEM_STATES: readonly ItemState[] = [
-  "new",
   "active",
   "archived",
   "trashed",
 ] as const;
+
+/** Authorship class of an item's content. */
+export type Origin = "user" | "ai" | "worker";
+
+/** Valid origin values as a readonly array, useful for validation. */
+export const ORIGINS: readonly Origin[] = ["user", "ai", "worker"] as const;
 
 /** API key roles. */
 export type KeyRole = "admin" | "member";
@@ -30,16 +34,18 @@ export interface Item {
   id: string;
   type: string;
   state: ItemState;
+  /** Whether this item is part of the curated personal-data layer. */
+  library: boolean;
   properties: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   timestamp: string;
   source?: string;
   source_id?: string;
-  origin?: string;
+  origin?: Origin;
   version: number;
   schema_version?: number;
-  device_id?: string;
+  device?: string;
   parent_id: string | null;
   thread_id: string | null;
   capture_latitude?: number;
@@ -52,11 +58,14 @@ export interface CreateItemInput {
   properties: Record<string, unknown>;
   id?: string;
   state?: ItemState;
+  /** Overrides the credential's default_library when supplied. */
+  library?: boolean;
   timestamp?: string;
+  /** Ignored on the wire — server always stamps source from the credential. */
   source?: string;
   source_id?: string;
-  origin?: string;
-  device_id?: string;
+  origin?: Origin;
+  device?: string;
   parent_id?: string;
   thread_id?: string;
   capture_latitude?: number;
@@ -95,7 +104,7 @@ export interface Version {
   version: number;
   properties: Record<string, unknown>;
   created_at: string;
-  device_id?: string;
+  device?: string;
 }
 
 /** A sequential grouping of items. */
@@ -110,7 +119,13 @@ export interface ApiKey {
   id: string;
   tenant_id?: string;
   label: string;
+  /** Human-readable display name stamped onto items this credential writes. */
+  source: string;
   role: KeyRole;
+  /** Origin stamped onto items when the client doesn't supply one. */
+  default_origin: Origin;
+  /** Library flag stamped onto items when the client doesn't supply one. */
+  default_library: boolean;
   type_permissions: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   created_at: string;
@@ -120,7 +135,10 @@ export interface ApiKey {
 /** Input for creating a new API key. */
 export interface CreateKeyInput {
   label: string;
+  source: string;
   role: KeyRole;
+  default_origin?: Origin;
+  default_library?: boolean;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
 }
@@ -291,6 +309,16 @@ export interface Tenant {
   id: string;
   name: string | null;
   created_at: string;
+}
+
+/** Per-type ambient retention override (days before ambient items expire). */
+export interface TenantRetentionOverride {
+  ambient_days: number;
+}
+
+/** Tenant-level configuration. Admin-writable via `/tenants/current/config`. */
+export interface TenantConfig {
+  retention?: Record<string, TenantRetentionOverride>;
 }
 
 /** A user account (hosted mode). Owns exactly one tenant. */

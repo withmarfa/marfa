@@ -169,11 +169,11 @@ describe("isValidTypeIdentifier", () => {
   });
 
   it("accepts three-segment identifier", () => {
-    expect(isValidTypeIdentifier("core.work.book")).toBe(true);
+    expect(isValidTypeIdentifier("core.media.book")).toBe(true);
   });
 
   it("accepts underscores in segments", () => {
-    expect(isValidTypeIdentifier("core.work.tv_episode")).toBe(true);
+    expect(isValidTypeIdentifier("core.media.tv_episode")).toBe(true);
   });
 
   it("rejects single segment", () => {
@@ -214,7 +214,7 @@ describe("matchesTypePattern", () => {
   });
 
   it("matches wildcard prefix", () => {
-    expect(matchesTypePattern("core.work.book", ["core.work.*"])).toBe(true);
+    expect(matchesTypePattern("core.media.book", ["core.media.*"])).toBe(true);
   });
 
   it("matches global wildcard", () => {
@@ -222,17 +222,17 @@ describe("matchesTypePattern", () => {
   });
 
   it("does not match unrelated pattern", () => {
-    expect(matchesTypePattern("core.note", ["core.work.*"])).toBe(false);
+    expect(matchesTypePattern("core.note", ["core.media.*"])).toBe(false);
   });
 
   it("matches against any pattern in the array", () => {
-    expect(matchesTypePattern("core.note", ["core.work.*", "core.note"])).toBe(
+    expect(matchesTypePattern("core.note", ["core.media.*", "core.note"])).toBe(
       true,
     );
   });
 
   it("wildcard prefix matches parent type too", () => {
-    expect(matchesTypePattern("core.work", ["core.work.*"])).toBe(false);
+    expect(matchesTypePattern("core.media", ["core.media.*"])).toBe(false);
   });
 });
 
@@ -241,15 +241,15 @@ describe("resolveTypePermission", () => {
     expect(
       resolveTypePermission("core.note", {
         "core.note": "write",
-        "core.work.*": "read",
+        "core.media.*": "read",
       }),
     ).toBe("write");
   });
 
   it("returns wildcard prefix permission", () => {
     expect(
-      resolveTypePermission("core.work.book", {
-        "core.work.*": "read",
+      resolveTypePermission("core.media.book", {
+        "core.media.*": "read",
       }),
     ).toBe("read");
   });
@@ -265,34 +265,34 @@ describe("resolveTypePermission", () => {
   it("returns none when no pattern matches", () => {
     expect(
       resolveTypePermission("core.note", {
-        "core.work.*": "write",
+        "core.media.*": "write",
       }),
     ).toBe("none");
   });
 
   it("prefers longer prefix over shorter", () => {
     expect(
-      resolveTypePermission("core.work.book", {
+      resolveTypePermission("core.media.book", {
         "core.*": "read",
-        "core.work.*": "write",
+        "core.media.*": "write",
       }),
     ).toBe("write");
   });
 
   it("prefers exact match over wildcard", () => {
     expect(
-      resolveTypePermission("core.work.book", {
-        "core.work.*": "read",
-        "core.work.book": "write",
+      resolveTypePermission("core.media.book", {
+        "core.media.*": "read",
+        "core.media.book": "write",
       }),
     ).toBe("write");
   });
 
   it("prefers wildcard prefix over global wildcard", () => {
     expect(
-      resolveTypePermission("core.work.book", {
+      resolveTypePermission("core.media.book", {
         "*": "none",
-        "core.work.*": "write",
+        "core.media.*": "write",
       }),
     ).toBe("write");
   });

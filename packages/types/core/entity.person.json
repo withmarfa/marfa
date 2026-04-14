@@ -1,0 +1,58 @@
+{
+  "id": "core.entity.person",
+  "parent": "core.entity",
+  "label": "Person",
+  "description": "Contact information for an individual. Inherits all core.entity fields.",
+  "version": 1,
+  "fields": {
+    "given_name": {
+      "type": "string",
+      "description": "Given (first) name"
+    },
+    "family_name": {
+      "type": "string",
+      "description": "Family (last) name"
+    },
+    "middle_name": {
+      "type": "string",
+      "description": "Middle or additional name"
+    },
+    "prefix": {
+      "type": "string",
+      "description": "Honorific prefix (Dr, Mr, Prof)"
+    },
+    "suffix": {
+      "type": "string",
+      "description": "Honorific suffix (PhD, Jr, OBE)"
+    },
+    "nickname": {
+      "type": "string",
+      "description": "Familiar name or alias"
+    },
+    "organization": {
+      "type": "string",
+      "description": "Associated organization"
+    },
+    "job_title": {
+      "type": "string",
+      "description": "Position or job title"
+    },
+    "department": {
+      "type": "string",
+      "description": "Department within the organization"
+    },
+    "birthday": {
+      "type": "string",
+      "description": "Date of birth (ISO 8601)",
+      "format": "date"
+    },
+    "pronouns": {
+      "type": "string",
+      "description": "Pronouns"
+    }
+  },
+  "required": [],
+  "display_hints": {
+    "title_field": "name"
+  }
+}

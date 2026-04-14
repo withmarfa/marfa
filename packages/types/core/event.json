@@ -1,0 +1,65 @@
+{
+  "id": "core.event",
+  "label": "Event",
+  "description": "Something that happens at a time.",
+  "version": 1,
+  "fields": {
+    "title": {
+      "type": "string",
+      "description": "Event name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Event details"
+    },
+    "starts_at": {
+      "type": "string",
+      "description": "Start time",
+      "format": "datetime"
+    },
+    "ends_at": {
+      "type": "string",
+      "description": "End time",
+      "format": "datetime"
+    },
+    "duration": {
+      "type": "number",
+      "description": "Duration in seconds"
+    },
+    "place": {
+      "type": "string",
+      "description": "Location"
+    },
+    "latitude": {
+      "type": "number",
+      "description": "Venue latitude"
+    },
+    "longitude": {
+      "type": "number",
+      "description": "Venue longitude"
+    },
+    "url": {
+      "type": "string",
+      "description": "Event link",
+      "format": "url"
+    },
+    "precision": {
+      "type": "enum",
+      "description": "Temporal precision",
+      "enum_values": ["year", "month", "day", "time"]
+    },
+    "status": {
+      "type": "string",
+      "description": "Recommended values: tentative, confirmed, cancelled, rescheduled"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Personal annotations"
+    }
+  },
+  "required": ["title"],
+  "display_hints": {
+    "title_field": "title",
+    "body_field": "description"
+  }
+}

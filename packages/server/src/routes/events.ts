@@ -23,14 +23,17 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
     const stream = new ReadableStream({
       start(controller) {
         const encoder = new TextEncoder();
-        let closed = false;
+        // Mutable flag used across async callbacks. Wrapped in an object
+        // so TypeScript's narrowing doesn't assume the value is `false`
+        // at the callsite when mutations happen inside async closures.
+        const state: { closed: boolean } = { closed: false };
 
         const send = (data: string) => {
-          if (closed) return;
+          if (state.closed) return;
           try {
             controller.enqueue(encoder.encode(data));
           } catch {
-            closed = true;
+            state.closed = true;
           }
         };
 
@@ -40,7 +43,7 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
         }, KEEPALIVE_INTERVAL_MS);
 
         const cleanup = () => {
-          closed = true;
+          state.closed = true;
           clearInterval(keepAlive);
         };
 
@@ -81,9 +84,9 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
           reader
             .next()
             .then(({ value: event, done }) => {
-              if (done || closed) {
+              if (done || state.closed) {
                 cleanup();
-                if (!closed) controller.close();
+                if (!state.closed) controller.close();
                 return;
               }
 
@@ -96,7 +99,7 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
             })
             .catch(() => {
               cleanup();
-              if (!closed) controller.close();
+              if (!state.closed) controller.close();
             });
         };
 
@@ -111,7 +114,7 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
                 let lastReplayedId = afterId;
 
                 // Replay in batches
-                while (!closed) {
+                while (!state.closed) {
                   const batch = await storage.eventLog.getAfter(
                     lastReplayedId,
                     REPLAY_BATCH_SIZE,
@@ -121,7 +124,8 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
                   if (batch.length === 0) break;
 
                   for (const event of batch) {
-                    if (closed) return;
+                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
+                    if (state.closed) return;
                     // Type filtering
                     if (typeParam) {
                       const parsed = JSON.parse(event.payload) as {
@@ -152,8 +156,11 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
                 // Drain buffered live events, skipping any already replayed
                 replaying = false;
                 for (const event of liveBuffer) {
-                  if (closed) return;
-                  if (event.eventId !== undefined && event.eventId <= lastReplayedId)
+                  if (state.closed) return;
+                  if (
+                    event.eventId !== undefined &&
+                    event.eventId <= lastReplayedId
+                  )
                     continue;
                   sendEvent(event.eventId, event);
                 }

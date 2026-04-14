@@ -22,6 +22,9 @@ export class PgEventLogStore implements EventLogStore {
         created_at: new Date().toISOString(),
       })
       .returning({ id: eventLog.id });
+    if (!row) {
+      throw new Error("event_log insert returned no row");
+    }
     return row.id;
   }
 

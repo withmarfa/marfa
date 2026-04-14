@@ -16,15 +16,15 @@ describe("parseScope", () => {
   });
 
   it("parses a write scope", () => {
-    expect(parseScope("core.work.book:write")).toEqual({
-      typePattern: "core.work.book",
+    expect(parseScope("core.media.book:write")).toEqual({
+      typePattern: "core.media.book",
       operation: "write",
     });
   });
 
   it("parses wildcard scope", () => {
-    expect(parseScope("core.work.*:read")).toEqual({
-      typePattern: "core.work.*",
+    expect(parseScope("core.media.*:read")).toEqual({
+      typePattern: "core.media.*",
       operation: "read",
     });
   });
@@ -47,7 +47,7 @@ describe("parseScope", () => {
 describe("isValidScope", () => {
   it("accepts valid scopes", () => {
     expect(isValidScope("core.note:read")).toBe(true);
-    expect(isValidScope("core.work.*:write")).toBe(true);
+    expect(isValidScope("core.media.*:write")).toBe(true);
     expect(isValidScope("metadata:read")).toBe(true);
   });
 
@@ -59,18 +59,18 @@ describe("isValidScope", () => {
 
 describe("expandWildcardScopes", () => {
   const knownTypes = [
-    "core.work",
-    "core.work.book",
-    "core.work.article",
+    "core.media",
+    "core.media.book",
+    "core.media.article",
     "core.note",
     "core.bookmark",
   ];
 
   it("expands wildcard to matching types", () => {
-    const result = expandWildcardScopes(["core.work.*:read"], knownTypes);
-    expect(result).toContain("core.work:read");
-    expect(result).toContain("core.work.book:read");
-    expect(result).toContain("core.work.article:read");
+    const result = expandWildcardScopes(["core.media.*:read"], knownTypes);
+    expect(result).toContain("core.media:read");
+    expect(result).toContain("core.media.book:read");
+    expect(result).toContain("core.media.article:read");
     expect(result).not.toContain("core.note:read");
   });
 

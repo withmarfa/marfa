@@ -80,7 +80,12 @@ export async function createTestContext(): Promise<TestContext> {
   const rawKey = `myme_k1_test_admin_key_${suffix}`;
   const keyHash = hashApiKey(rawKey, SALT);
   await storage.keys.create(
-    { label: "test-admin", role: "admin", type_permissions: {} },
+    {
+      label: "test-admin",
+      source: `test-admin-${suffix}`,
+      role: "admin",
+      type_permissions: {},
+    },
     keyHash,
   );
 

@@ -35,8 +35,12 @@ export function notifyError(
 
   // Telegram sendMessage API — format as a readable text message
   if (webhookUrl.includes("api.telegram.org")) {
-    const env = process.env.NODE_ENV === "production" ? "production" : "staging";
-    const time = new Date(notification.timestamp).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
+    const env =
+      process.env.NODE_ENV === "production" ? "production" : "staging";
+    const time = new Date(notification.timestamp)
+      .toISOString()
+      .replace("T", " ")
+      .replace(/\.\d+Z$/, " UTC");
     const text = [
       `\u26a0\ufe0f *Myme 500 Error* (${env})`,
       `\`${notification.method} ${notification.path}\` \u2014 ${time}`,
@@ -48,7 +52,7 @@ export function notifyError(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, parse_mode: "Markdown" }),
       signal: AbortSignal.timeout(5000),
-    }).catch(() => {});
+    }).catch(() => undefined);
   } else {
     // Generic webhook — POST JSON payload
     void fetch(webhookUrl, {

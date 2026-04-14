@@ -1,0 +1,42 @@
+{
+  "id": "core.file.video",
+  "parent": "core.file",
+  "label": "Video",
+  "description": "Video files. Inherits all core.file fields.",
+  "version": 1,
+  "fields": {
+    "width": {
+      "type": "integer",
+      "description": "Width in pixels"
+    },
+    "height": {
+      "type": "integer",
+      "description": "Height in pixels"
+    },
+    "duration": {
+      "type": "number",
+      "description": "Length in seconds"
+    },
+    "latitude": {
+      "type": "number",
+      "description": "Subject latitude"
+    },
+    "longitude": {
+      "type": "number",
+      "description": "Subject longitude"
+    },
+    "altitude": {
+      "type": "number",
+      "description": "Altitude in meters"
+    },
+    "language": {
+      "type": "string",
+      "description": "BCP 47 language code (for spoken content)",
+      "format": "bcp47"
+    }
+  },
+  "required": ["width", "height", "duration"],
+  "display_hints": {
+    "title_field": "title"
+  }
+}

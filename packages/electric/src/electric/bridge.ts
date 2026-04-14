@@ -161,6 +161,7 @@ function coerceItem(row: Row): Item {
     id: str(row.id),
     type: str(row.type),
     state: str(row.state) as Item["state"],
+    library: Boolean(row.library),
     properties:
       typeof row.properties === "string"
         ? parseJson(row.properties, {})
@@ -170,10 +171,10 @@ function coerceItem(row: Row): Item {
     timestamp: str(row.timestamp),
     source: optStr(row.source),
     source_id: optStr(row.source_id),
-    origin: optStr(row.origin),
+    origin: optStr(row.origin) as Item["origin"],
     version: num(row.version, 1),
     schema_version: optNum(row.schema_version),
-    device_id: optStr(row.device_id),
+    device: optStr(row.device),
     parent_id: optStr(row.parent_id) ?? null,
     thread_id: optStr(row.thread_id) ?? null,
     capture_latitude: optNum(row.capture_latitude),

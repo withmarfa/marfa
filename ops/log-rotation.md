@@ -21,6 +21,7 @@ Contents:
 Replace `<operator>` with the actual username on the server.
 
 Fields:
+
 - **mode**: file permissions after rotation
 - **count**: number of rotated files to keep (7 = one week of daily rotations)
 - **size**: rotate when file exceeds this size in KB (1024 = 1 MB)

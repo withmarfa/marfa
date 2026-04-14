@@ -1,0 +1,50 @@
+{
+  "id": "core.entity.place",
+  "parent": "core.entity",
+  "label": "Place",
+  "description": "A location or venue. Inherits all core.entity fields.",
+  "version": 1,
+  "fields": {
+    "street_address": {
+      "type": "string",
+      "description": "Street line"
+    },
+    "locality": {
+      "type": "string",
+      "description": "City or town"
+    },
+    "region": {
+      "type": "string",
+      "description": "State, province, or county"
+    },
+    "postal_code": {
+      "type": "string",
+      "description": "Postcode or ZIP code"
+    },
+    "country": {
+      "type": "string",
+      "description": "ISO 3166-1 alpha-2 country code",
+      "format": "iso3166"
+    },
+    "timezone": {
+      "type": "string",
+      "description": "IANA timezone"
+    },
+    "latitude": {
+      "type": "number",
+      "description": "Subject latitude"
+    },
+    "longitude": {
+      "type": "number",
+      "description": "Subject longitude"
+    },
+    "altitude": {
+      "type": "number",
+      "description": "Altitude in meters above sea level"
+    }
+  },
+  "required": [],
+  "display_hints": {
+    "title_field": "name"
+  }
+}

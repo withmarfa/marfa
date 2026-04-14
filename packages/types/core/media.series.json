@@ -1,0 +1,26 @@
+{
+  "id": "core.media.series",
+  "parent": "core.media",
+  "label": "Series",
+  "description": "A TV show or series. Inherits all core.media fields.",
+  "version": 1,
+  "fields": {
+    "season_count": {
+      "type": "integer",
+      "description": "Number of seasons"
+    },
+    "episode_count": {
+      "type": "integer",
+      "description": "Total episodes across all seasons"
+    },
+    "status": {
+      "type": "string",
+      "description": "Recommended values: ongoing, ended, cancelled"
+    },
+    "network": {
+      "type": "string",
+      "description": "Broadcasting network or streaming service"
+    }
+  },
+  "required": []
+}

@@ -1,0 +1,26 @@
+{
+  "id": "core.media.song",
+  "parent": "core.media",
+  "label": "Song",
+  "description": "A song. Inherits all core.media fields.",
+  "version": 1,
+  "fields": {
+    "duration": {
+      "type": "number",
+      "description": "Track length in seconds"
+    },
+    "isrc": {
+      "type": "string",
+      "description": "International Standard Recording Code (ISO 3901)"
+    },
+    "album": {
+      "type": "string",
+      "description": "Containing album name"
+    },
+    "track_number": {
+      "type": "integer",
+      "description": "Position within the album"
+    }
+  },
+  "required": []
+}

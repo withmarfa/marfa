@@ -321,11 +321,7 @@ export function extensionRoutes(storage: Storage) {
       );
     }
 
-    const extensions = await storage.metadata.setExtension(
-      id,
-      namespace,
-      body as Record<string, unknown>,
-    );
+    const extensions = await storage.metadata.setExtension(id, namespace, body);
 
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,

@@ -1,0 +1,18 @@
+{
+  "id": "core.media.album",
+  "parent": "core.media",
+  "label": "Album",
+  "description": "An album. Inherits all core.media fields.",
+  "version": 1,
+  "fields": {
+    "release_type": {
+      "type": "string",
+      "description": "Recommended values: album, ep, single"
+    },
+    "num_tracks": {
+      "type": "integer",
+      "description": "Total track count"
+    }
+  },
+  "required": []
+}

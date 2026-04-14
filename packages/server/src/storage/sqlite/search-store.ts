@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import {
   parseFilter,
   getSearchableStringFields,
@@ -16,7 +15,13 @@ const FTS_FIELDS = ["title", "body", "description", "name"] as const;
 function extractSearchableText(
   properties: Record<string, unknown>,
   typeId?: string,
-): { title: string; body: string; description: string; name: string; extra: string } {
+): {
+  title: string;
+  body: string;
+  description: string;
+  name: string;
+  extra: string;
+} {
   const result: Record<string, string> = {};
   for (const field of FTS_FIELDS) {
     const value = properties[field];
@@ -32,7 +37,13 @@ function extractSearchableText(
     }
   }
   result.extra = extraParts.join(" ");
-  return result as { title: string; body: string; description: string; name: string; extra: string };
+  return result as {
+    title: string;
+    body: string;
+    description: string;
+    name: string;
+    extra: string;
+  };
 }
 
 /**
@@ -82,7 +93,14 @@ export class SqliteSearchStore implements SearchStore {
         `INSERT INTO items_fts(item_id, title, body, description, name, extra)
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(itemId, text.title, text.body, text.description, text.name, text.extra);
+      .run(
+        itemId,
+        text.title,
+        text.body,
+        text.description,
+        text.name,
+        text.extra,
+      );
   }
 
   /** Synchronous version for use within SQLite transactions. */
@@ -153,7 +171,7 @@ export class SqliteSearchStore implements SearchStore {
         bm25(items_fts) AS rank,
         i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.origin, i.version,
-        i.schema_version, i.device_id, i.parent_id, i.thread_id,
+        i.schema_version, i.device, i.parent_id, i.thread_id,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.about, m.extensions
       FROM items_fts fts

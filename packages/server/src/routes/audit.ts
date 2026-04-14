@@ -11,7 +11,7 @@ const AuditEntrySchema = z.object({
   action: z.string(),
   resource_type: z.string(),
   resource_id: z.string().nullable(),
-  details: z.record(z.unknown()),
+  details: z.record(z.string(), z.unknown()),
 });
 
 const listAuditRoute = createRoute({

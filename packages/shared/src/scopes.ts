@@ -37,7 +37,7 @@ export function isValidScope(scope: string): boolean {
 
 /**
  * Expands wildcard scopes against a list of known type identifiers.
- * "core.work.*:read" → ["core.work:read", "core.work.book:read", ...]
+ * "core.media.*:read" → ["core.media:read", "core.media.book:read", ...]
  * Non-wildcard scopes pass through unchanged.
  */
 export function expandWildcardScopes(
@@ -52,7 +52,7 @@ export function expandWildcardScopes(
     if (!parsed) continue;
 
     if (parsed.typePattern.endsWith(".*")) {
-      const prefix = parsed.typePattern.slice(0, -1); // "core.work."
+      const prefix = parsed.typePattern.slice(0, -1); // "core.media."
       for (const type of knownTypes) {
         if (type.startsWith(prefix) || type === prefix.slice(0, -1)) {
           const expanded = `${type}:${parsed.operation}`;
