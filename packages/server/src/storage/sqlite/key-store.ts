@@ -19,7 +19,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     source: row.source,
     role: row.role as "admin" | "member",
     default_origin: row.default_origin as Origin,
-    default_library: Boolean(row.default_library),
+    default_library: row.default_library,
     type_permissions: safeJsonParse<Record<string, TypePermission>>(
       row.type_permissions,
       {},
@@ -79,7 +79,7 @@ export class SqliteKeyStore implements KeyStore {
       label: row.label,
       source: row.source,
       role: input.role,
-      default_origin: row.default_origin as Origin,
+      default_origin: row.default_origin,
       default_library: row.default_library,
       type_permissions: input.type_permissions ?? {},
       created_at: now,

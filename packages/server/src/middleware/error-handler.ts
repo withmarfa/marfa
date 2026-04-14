@@ -65,7 +65,7 @@ export function createErrorHandler(config: {
     if (config.errorWebhookUrl) {
       notifyError(config.errorWebhookUrl, {
         timestamp: new Date().toISOString(),
-        request_id: c.get("requestId") ?? "unknown",
+        request_id: c.get("requestId"),
         error: err instanceof Error ? err.message : String(err),
         path: c.req.path,
         method: c.req.method,

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { Tenant, TenantConfig } from "@mymehq/shared";
@@ -33,7 +32,7 @@ export class SqliteTenantStore implements TenantStore {
       .from(tenants)
       .where(eq(tenants.id, id))
       .get();
-    if (!row || !row.config) return null;
+    if (!row?.config) return null;
     return safeJsonParse<TenantConfig>(row.config, {}, `tenant ${id} config`);
   }
 

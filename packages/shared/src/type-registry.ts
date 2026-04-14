@@ -453,9 +453,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
       for (const f of vpFields) {
         if (
           vp[f] !== undefined &&
-          (typeof vp[f] !== "number" ||
-            !Number.isInteger(vp[f]) ||
-            (vp[f] as number) < 1)
+          (typeof vp[f] !== "number" || !Number.isInteger(vp[f]) || vp[f] < 1)
         ) {
           errors.push({
             field: `version_policy.${f}`,

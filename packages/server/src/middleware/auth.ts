@@ -14,17 +14,18 @@ import type { Storage } from "../storage/interface.js";
 // Hono environment type (shared across all routes)
 // ---------------------------------------------------------------------------
 
-// Note: `type` alias (not `interface`) — @hono/zod-openapi's router generic
-// requires `E extends Record<string, unknown>`, which an interface can't
-// satisfy under strict TypeScript (interfaces are open to augmentation).
-export type AppEnv = {
+// Note: `extends Record<string, unknown>` — @hono/zod-openapi's router
+// generic requires this constraint. Pure interfaces don't satisfy it under
+// strict TypeScript (interfaces are open to external augmentation), so we
+// pull in the index signature explicitly.
+export interface AppEnv extends Record<string, unknown> {
   Variables: {
     apiKey: ApiKey | undefined;
     isBootstrap: boolean;
     authType: "api_key" | "oauth" | undefined;
     requestId: string;
   };
-};
+}
 
 // ---------------------------------------------------------------------------
 // Key hashing

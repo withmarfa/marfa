@@ -723,20 +723,20 @@ export function itemRoutes(storage: Storage) {
       {
         type,
         properties,
-        id: body.id as string | undefined,
+        id: body.id,
         state: body.state as ItemState | undefined,
         library: libraryValue,
-        timestamp: body.timestamp as string | undefined,
+        timestamp: body.timestamp,
         source: stampedSource,
-        source_id: body.source_id as string | undefined,
+        source_id: body.source_id,
         origin: stampedOrigin,
-        device: body.device as string | undefined,
-        parent_id: body.parent_id as string | undefined,
-        thread_id: body.thread_id as string | undefined,
-        capture_latitude: body.capture_latitude as number | undefined,
-        capture_longitude: body.capture_longitude as number | undefined,
-        tags: body.tags as string[] | undefined,
-        about: body.about as string[] | undefined,
+        device: body.device,
+        parent_id: body.parent_id,
+        thread_id: body.thread_id,
+        capture_latitude: body.capture_latitude,
+        capture_longitude: body.capture_longitude,
+        tags: body.tags,
+        about: body.about,
       },
       tenantId,
     );
@@ -804,10 +804,8 @@ export function itemRoutes(storage: Storage) {
       tags,
       filter,
       allowed_types: getTypeFilter(c),
-      sort:
-        (query.sort as "created_at" | "updated_at" | "timestamp" | undefined) ??
-        undefined,
-      direction: (query.direction as "asc" | "desc" | undefined) ?? undefined,
+      sort: query.sort ?? undefined,
+      direction: query.direction ?? undefined,
       since: query.since,
       until: query.until,
       limit: query.limit,
@@ -918,12 +916,13 @@ export function itemRoutes(storage: Storage) {
     const tid = c.get("apiKey")?.tenant_id;
 
     // Verify thread exists if setting a non-null thread_id
-    if (hasThreadId && body.thread_id !== null) {
-      const thread = await storage.threads.get(body.thread_id as string, tid);
+    if (hasThreadId && typeof body.thread_id === "string") {
+      const threadId = body.thread_id;
+      const thread = await storage.threads.get(threadId, tid);
       if (!thread) {
         throw new MymeError(
           ErrorCode.THREAD_NOT_FOUND,
-          `Thread ${body.thread_id as string} not found`,
+          `Thread ${threadId} not found`,
         );
       }
     }
@@ -936,8 +935,8 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
 
     // Cycle detection: walk up from proposed parent to ensure this item isn't an ancestor
-    if (hasParentId && body.parent_id !== null) {
-      let current = body.parent_id as string;
+    if (hasParentId && typeof body.parent_id === "string") {
+      let current: string = body.parent_id;
       const visited = new Set<string>([id]);
       while (current) {
         if (visited.has(current)) {
@@ -953,10 +952,10 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    if (hasProperties) {
+    if (hasProperties && body.properties) {
       const merged = {
         ...item.properties,
-        ...(body.properties as Record<string, unknown>),
+        ...body.properties,
       };
       if (getTypeSchema(item.type)) {
         const validation = validateProperties(item.type, merged);
@@ -975,20 +974,19 @@ export function itemRoutes(storage: Storage) {
     const result = await storage.items.update(
       id,
       {
-        properties: hasProperties
-          ? (body.properties as Record<string, unknown>)
-          : undefined,
+        properties:
+          hasProperties && body.properties ? body.properties : undefined,
         parent_id: hasParentId ? (body.parent_id as string | null) : undefined,
         thread_id: hasThreadId ? (body.thread_id as string | null) : undefined,
-        version: body.version as number,
+        version: body.version,
         snapshot: body.snapshot === true ? true : undefined,
       },
       tid,
     );
 
     // Touch thread updated_at when thread assignment changes
-    if (hasThreadId && body.thread_id !== null) {
-      await storage.threads.touch(body.thread_id as string);
+    if (hasThreadId && typeof body.thread_id === "string") {
+      await storage.threads.touch(body.thread_id);
     }
 
     if ("error" in result) {
@@ -1065,10 +1063,7 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const state = body.state;
     if (!state || typeof state !== "string") {
-      throw new MymeError(
-        ErrorCode.INVALID_TRANSITION,
-        `Invalid state: ${String(state)}`,
-      );
+      throw new MymeError(ErrorCode.INVALID_TRANSITION, `Invalid state`);
     }
 
     requireAuth(c);

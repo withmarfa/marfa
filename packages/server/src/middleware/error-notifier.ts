@@ -52,7 +52,7 @@ export function notifyError(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, parse_mode: "Markdown" }),
       signal: AbortSignal.timeout(5000),
-    }).catch(() => {});
+    }).catch(() => undefined);
   } else {
     // Generic webhook — POST JSON payload
     void fetch(webhookUrl, {

@@ -104,7 +104,7 @@ export function createApp(
   app.route("/health", healthRoutes(storage, blobBackend, config));
 
   // Rate limiting (before auth to protect all endpoints, default 1000 req/min)
-  if (config.rateLimitEnabled !== false) {
+  if (config.rateLimitEnabled) {
     app.use("*", rateLimitMiddleware());
   }
 

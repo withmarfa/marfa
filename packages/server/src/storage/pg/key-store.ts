@@ -78,7 +78,7 @@ export class PgKeyStore implements KeyStore {
       label: row.label,
       source: row.source,
       role: input.role,
-      default_origin: row.default_origin as Origin,
+      default_origin: row.default_origin,
       default_library: row.default_library,
       type_permissions: input.type_permissions ?? {},
       created_at: now,

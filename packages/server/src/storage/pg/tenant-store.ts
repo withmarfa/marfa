@@ -36,7 +36,7 @@ export class PgTenantStore implements TenantStore {
       .select({ config: tenants.config })
       .from(tenants)
       .where(eq(tenants.id, id));
-    if (!row || !row.config) return null;
+    if (!row?.config) return null;
     return row.config as TenantConfig;
   }
 

@@ -36,6 +36,24 @@ export default [
     },
   },
   {
+    // Tests frequently use non-null assertions where an in-scope setup
+    // guarantees the value exists; the test framework surfaces the failure
+    // clearly if the assumption is wrong.
+    files: ["**/*.test.ts"],
+    rules: {
+      "@typescript-eslint/no-non-null-assertion": "off",
+    },
+  },
+  {
+    // The Storage interface is async (Postgres path awaits); the SQLite
+    // implementations satisfy it with sync bodies because better-sqlite3
+    // is sync. require-await flags the empty Promise wrapping.
+    files: ["**/storage/sqlite/*.ts"],
+    rules: {
+      "@typescript-eslint/require-await": "off",
+    },
+  },
+  {
     ignores: ["**/dist/", "**/coverage/", "**/node_modules/", "**/seed/"],
   },
 ];

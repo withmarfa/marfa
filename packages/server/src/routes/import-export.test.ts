@@ -205,7 +205,7 @@ describe("GET /export", () => {
 async function buildArchive(
   manifest: Record<string, unknown>,
   ndjsonLines: string[],
-  blobs: Array<{ hash: string; data: Buffer }>,
+  blobs: { hash: string; data: Buffer }[],
 ): Promise<Buffer> {
   const pack = tar.pack();
   const chunks: Buffer[] = [];

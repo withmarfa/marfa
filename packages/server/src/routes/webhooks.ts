@@ -292,7 +292,7 @@ export function webhookRoutes(storage: Storage) {
       if (!VALID_EVENTS.has(event)) {
         throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
-          `Invalid event type "${String(event)}". Valid types: ${[...VALID_EVENTS].join(", ")}`,
+          `Invalid event type "${event}". Valid types: ${[...VALID_EVENTS].join(", ")}`,
         );
       }
     }
@@ -372,7 +372,7 @@ export function webhookRoutes(storage: Storage) {
         if (!VALID_EVENTS.has(event)) {
           throw new MymeError(
             ErrorCode.VALIDATION_ERROR,
-            `Invalid event type: ${String(event)}`,
+            `Invalid event type: ${event}`,
           );
         }
       }

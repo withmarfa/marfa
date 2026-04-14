@@ -25,14 +25,14 @@ const ItemSchema = z
     updated_at: z.string(),
     timestamp: z.string(),
   })
-  .passthrough();
+  .loose();
 
 const MetadataSchema = z
   .object({
     tags: z.array(z.string()),
     about: z.array(z.string()),
   })
-  .passthrough();
+  .loose();
 
 const SearchResultSchema = z.object({
   item: ItemSchema,

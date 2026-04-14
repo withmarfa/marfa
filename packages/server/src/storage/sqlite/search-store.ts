@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import {
   parseFilter,
   getSearchableStringFields,

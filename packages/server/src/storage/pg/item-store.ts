@@ -640,7 +640,7 @@ export class PgItemStore implements ItemStore {
 
     const result: Record<string, number> = {};
     for (const row of rows) {
-      result[row.state] = Number(row.count);
+      result[row.state] = row.count;
     }
     return result;
   }

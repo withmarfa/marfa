@@ -17,7 +17,7 @@ export function rowToItem(row: ItemRow): Item {
     id: row.id,
     type: row.type,
     state: row.state as ItemState,
-    library: Boolean(row.library),
+    library: row.library,
     properties: safeJsonParse<Record<string, unknown>>(
       row.properties,
       {},

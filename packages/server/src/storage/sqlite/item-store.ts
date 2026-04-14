@@ -1,6 +1,5 @@
 import { shouldCreateVersion } from "../version-gating.js";
 import { safeJsonParse } from "../json-utils.js";
-/* eslint-disable @typescript-eslint/require-await -- sync better-sqlite3 implementing async interface */
 import { eq, ne, and, or, lt, gt, desc, asc, like, sql } from "drizzle-orm";
 import {
   generateId,

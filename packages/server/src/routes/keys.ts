@@ -174,10 +174,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         role: role,
         default_origin: body.default_origin,
         default_library: body.default_library,
-        type_permissions: typePermissions as Record<
-          string,
-          "read" | "write" | "none"
-        >,
+        type_permissions: typePermissions,
       },
       keyHash,
     );

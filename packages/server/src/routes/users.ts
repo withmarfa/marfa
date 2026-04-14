@@ -50,7 +50,7 @@ const signupRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            email: z.string().email("email is required"),
+            email: z.email("email is required"),
             name: z.string().optional(),
             avatar_url: z.string().optional(),
             provider: z.string().min(1, "provider is required"),

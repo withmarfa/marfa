@@ -147,8 +147,7 @@ export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
     }
 
     // Validate type identifiers
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i] as Record<string, unknown>;
+    for (const [i, item] of items.entries()) {
       if (!item.type || !isValidTypeIdentifier(item.type as string)) {
         throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
@@ -164,7 +163,7 @@ export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
       let duplicates = 0;
 
       for (const raw of items) {
-        const item = raw as Record<string, unknown>;
+        const item = raw;
         try {
           await storage.items.create(
             {
@@ -311,7 +310,7 @@ async function handleArchiveExport(
   storage: Storage,
   blobBackend: BlobBackend,
 ): Promise<Response> {
-  const type = c.req.query("type") as string | undefined;
+  const type = c.req.query("type");
   if (type && !isValidTypeIdentifier(type)) {
     throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
   }
@@ -319,8 +318,8 @@ async function handleArchiveExport(
   if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
     throw new MymeError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${state}`);
   }
-  const since = c.req.query("since") as string | undefined;
-  const until = c.req.query("until") as string | undefined;
+  const since = c.req.query("since");
+  const until = c.req.query("until");
   const tenantId = c.get("apiKey")?.tenant_id;
   const allowedTypes = getTypeFilter(c);
 
@@ -343,7 +342,7 @@ async function handleArchiveExport(
       const metadata = await storage.metadata.get(item.id);
       lines.push(JSON.stringify({ item, metadata }));
       collectBlobHashes(item.properties, blobHashes);
-      if (metadata) collectBlobHashes(metadata.extensions, blobHashes);
+      collectBlobHashes(metadata.extensions, blobHashes);
     }
     cursor = result.has_more
       ? (result.cursor as string | undefined)
@@ -406,7 +405,7 @@ async function handleArchiveExport(
   // Convert Node stream to Web ReadableStream
   const webStream = Readable.toWeb(passthrough) as ReadableStream;
 
-  const date = new Date().toISOString().split("T")[0];
+  const date = new Date().toISOString().split("T")[0] ?? "today";
   return new Response(webStream, {
     status: 200,
     headers: {
@@ -445,11 +444,11 @@ async function handleArchiveImport(
         if (header.name === "manifest.json") {
           try {
             manifest = JSON.parse(buf.toString("utf-8")) as ArchiveManifest;
-            if (manifest!.version !== 1) {
+            if (manifest.version !== 1) {
               reject(
                 new MymeError(
                   ErrorCode.VALIDATION_ERROR,
-                  `Unsupported archive version: ${String(manifest!.version)}`,
+                  `Unsupported archive version: ${String(manifest.version)}`,
                 ),
               );
               return;
@@ -481,8 +480,7 @@ async function handleArchiveImport(
             if (computed === hash) {
               blobCount++;
               const mimeType =
-                manifest?.blobs?.[hash]?.mime_type ??
-                "application/octet-stream";
+                manifest?.blobs[hash]?.mime_type ?? "application/octet-stream";
               blobUploads.push(
                 blobBackend
                   .put(hash, buf, mimeType)
@@ -498,7 +496,9 @@ async function handleArchiveImport(
       });
       stream.resume();
     });
-    extract.on("finish", () => resolve());
+    extract.on("finish", () => {
+      resolve();
+    });
     extract.on("error", reject);
   });
 

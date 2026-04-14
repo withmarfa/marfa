@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion -- test assertions guard null access */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { S3Client } from "@aws-sdk/client-s3";
 

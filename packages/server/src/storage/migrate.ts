@@ -68,23 +68,25 @@ if (
       console.error("DATABASE_URL is required for Postgres migrations");
       process.exit(1);
     }
-    runPgMigrations(url)
+    void runPgMigrations(url)
       .then(() => {
         console.log("Migrations complete.");
         process.exit(0);
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         console.error("Migration failed:", err);
         process.exit(1);
       });
   } else {
     const path = process.env.SQLITE_PATH ?? "./data/myme.db";
-    try {
-      runSqliteMigrations(path);
-      console.log("Migrations complete.");
-    } catch (err) {
-      console.error("Migration failed:", err);
-      process.exit(1);
-    }
+    void runSqliteMigrations(path)
+      .then(() => {
+        console.log("Migrations complete.");
+        process.exit(0);
+      })
+      .catch((err: unknown) => {
+        console.error("Migration failed:", err);
+        process.exit(1);
+      });
   }
 }

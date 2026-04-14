@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion -- test assertions guard null access */
 import { describe, expect, it } from "vitest";
 import { parseFilter } from "./query-parser.js";
 import type { FilterExpression } from "./query-parser.js";
