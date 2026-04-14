@@ -30,7 +30,7 @@ export function rowToItem(row: ItemRow): Item {
     ...(row.source != null && { source: row.source }),
     ...(row.source_id != null && { source_id: row.source_id }),
     ...(row.origin != null && { origin: row.origin as Origin }),
-    ...(row.schema_version != null && { schema_version: row.schema_version }),
+    schema_version: row.schema_version ?? 1,
     ...(row.device != null && { device: row.device }),
     parent_id: row.parent_id ?? null,
     thread_id: row.thread_id ?? null,

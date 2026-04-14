@@ -63,7 +63,7 @@ export class LocalItemStore {
         source_id: item.source_id ?? null,
         origin: item.origin ?? null,
         version: item.version,
-        schema_version: item.schema_version ?? null,
+        schema_version: item.schema_version,
         device: item.device ?? null,
         parent_id: item.parent_id ?? null,
         thread_id: item.thread_id ?? null,

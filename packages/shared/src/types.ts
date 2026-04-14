@@ -44,7 +44,7 @@ export interface Item {
   source_id?: string;
   origin?: Origin;
   version: number;
-  schema_version?: number;
+  schema_version: number;
   device?: string;
   parent_id: string | null;
   thread_id: string | null;
