@@ -114,6 +114,52 @@ export interface Thread {
   updated_at: string;
 }
 
+// ---------------------------------------------------------------------------
+// Edges — first-class typed relationships between items
+// ---------------------------------------------------------------------------
+
+/**
+ * A typed edge between two items. Direction is spec-exact: source is the
+ * "from" side of the relationship, target is the "to" side. See
+ * Myme v0 Reference §Relationships for semantics per edge type.
+ */
+export interface Edge {
+  id: string;
+  tenant_id?: string | null;
+  source_id: string;
+  target_id: string;
+  edge_type: string;
+  properties: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Input for creating a new edge. */
+export interface CreateEdgeInput {
+  source_id: string;
+  target_id: string;
+  edge_type: string;
+  properties?: Record<string, unknown>;
+  /** Explicit id override (otherwise server-generated UUIDv7). */
+  id?: string;
+}
+
+/** Input for updating an existing edge (properties only — direction/type immutable). */
+export interface UpdateEdgeInput {
+  properties: Record<string, unknown>;
+}
+
+/**
+ * Hydrated edges block attached to an item response — one entry per edge
+ * type pointing out from (or into) this item. Truncated per-type with
+ * a pagination cursor.
+ */
+export interface ItemEdgesBlock {
+  edges: Edge[];
+  has_more: boolean;
+  next_cursor?: string;
+}
+
 /** An API key record (without the key value itself). */
 export interface ApiKey {
   id: string;
