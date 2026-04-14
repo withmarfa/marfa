@@ -30,7 +30,26 @@ interface BackfillCounts {
   skipped: number;
 }
 
-export async function backfillEdges(storage: Storage): Promise<BackfillCounts> {
+export interface LegacyRelationshipData {
+  withParent: {
+    id: string;
+    tenant_id: string | null;
+    parent_id: string;
+    created_at: string;
+  }[];
+  withThread: {
+    id: string;
+    tenant_id: string | null;
+    thread_id: string;
+    created_at: string;
+  }[];
+  metadataAbout: Map<string, { about: string[]; tenant_id: string | null }>;
+}
+
+export async function backfillEdges(
+  storage: Storage,
+  preloaded?: LegacyRelationshipData,
+): Promise<BackfillCounts> {
   const counts: BackfillCounts = {
     parentOf: 0,
     inThread: 0,
@@ -70,9 +89,11 @@ export async function backfillEdges(storage: Storage): Promise<BackfillCounts> {
     };
 
     // ---- 1. parent_id → parent-of (source=parent, target=child) ----
-    // Pull rows directly via the internal helper. Both dialects expose raw
-    // access via storage internals; use a storage-agnostic listing.
-    const allItems = await collectAllItemsWithParentOrThread(storage);
+    // Use preloaded snapshot when provided (migrator took one pre-migration
+    // because 0010 drops these columns). Fall back to live DB reads for
+    // direct-invocation on a not-yet-migrated DB.
+    const allItems =
+      preloaded ?? (await collectAllItemsWithParentOrThread(storage));
 
     for (const item of allItems.withParent) {
       const created = await createIfMissing(
