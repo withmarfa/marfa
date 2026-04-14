@@ -43,6 +43,13 @@
       "when": 1776600000000,
       "tag": "0005_backfill_schema_version",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1776700000000,
+      "tag": "0006_backfill_source_origin",
+      "breakpoints": true
     }
   ]
 }

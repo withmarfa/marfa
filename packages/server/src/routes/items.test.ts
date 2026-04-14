@@ -666,3 +666,21 @@ describe("schema_version stamping", () => {
     expect(updated.item.schema_version).toBe(1);
   });
 });
+
+describe("state lifecycle enum at the route boundary", () => {
+  it("rejects POST /items/:id/transition with an unknown state", async () => {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "Lifecycle test" } },
+    });
+    const created = (await createRes.json()) as { item: { id: string } };
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/items/${created.item.id}/transition`,
+      { key: ctx.adminKey, body: { state: "draft" } },
+    );
+    expect(res.status).toBe(400);
+  });
+});

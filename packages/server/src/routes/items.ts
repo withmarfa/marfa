@@ -337,7 +337,7 @@ const transitionItemRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            state: z.string().min(1),
+            state: z.enum(["active", "archived", "trashed"]),
           }),
         },
       },
@@ -1037,9 +1037,8 @@ export function itemRoutes(storage: Storage) {
 
     const body = c.req.valid("json");
     const state = body.state;
-    if (!state || typeof state !== "string") {
-      throw new MymeError(ErrorCode.INVALID_TRANSITION, `Invalid state`);
-    }
+    // body.state is constrained to the lifecycle enum by the route Zod;
+    // typeof / truthiness check would be unreachable.
 
     requireAuth(c);
     const tenantId = c.get("apiKey")?.tenant_id;
@@ -1048,11 +1047,7 @@ export function itemRoutes(storage: Storage) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     requireTypeAccess(c, item.type, "write");
-    const updated = await storage.items.transition(
-      id,
-      state as ItemState,
-      tenantId,
-    );
+    const updated = await storage.items.transition(id, state, tenantId);
     const metadata = await storage.metadata.get(id);
     await publish({ type: "transitioned", item: updated, metadata, tenantId });
     void storage.audit.log({

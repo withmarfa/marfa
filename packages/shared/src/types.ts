@@ -40,9 +40,9 @@ export interface Item {
   created_at: string;
   updated_at: string;
   timestamp: string;
-  source?: string;
+  source: string;
   source_id?: string;
-  origin?: Origin;
+  origin: Origin;
   version: number;
   schema_version: number;
   device?: string;

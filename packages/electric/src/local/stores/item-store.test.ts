@@ -17,6 +17,8 @@ const testItem: Item = {
   timestamp: "2026-01-01T00:00:00Z",
   version: 1,
   schema_version: 1,
+  source: "test-fixture",
+  origin: "user",
   parent_id: null,
   thread_id: null,
 };
