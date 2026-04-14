@@ -82,7 +82,11 @@ beforeAll(async () => {
   const bootstrapRes = await testFetch("http://localhost/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ label: "test-admin", source: "sdk-test-admin" }),
+    body: JSON.stringify({
+      label: "test-admin",
+      source: "sdk-test-admin",
+      default_library: true,
+    }),
   });
   const { key } = (await bootstrapRes.json()) as { key: string };
 
@@ -344,6 +348,42 @@ describe("threads", () => {
     await client.threads.create();
     const result = await client.threads.list();
     expect(result.data.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("exposes edges CRUD + listings via the SDK", async () => {
+    const a = await createNote({ title: "A" });
+    const b = await createNote({ title: "B" });
+    const edge = await client.edges.create({
+      source_id: a.id,
+      target_id: b.id,
+      edge_type: "about",
+    });
+    expect(edge.edge_type).toBe("about");
+
+    const outbound = await client.items.edges(a.id);
+    expect(outbound.data.length).toBe(1);
+
+    const backrefs = await client.items.backrefs(b.id);
+    expect(backrefs.data.length).toBe(1);
+
+    await client.edges.delete(edge.id);
+    const afterDelete = await client.items.edges(a.id);
+    expect(afterDelete.data.length).toBe(0);
+  });
+
+  it("registers a custom edge type via client.edges.types.create", async () => {
+    const schema = await client.edges.types.create({
+      id: "sdk.custom-rel",
+      cardinality: "many-to-many",
+      source_type_constraints: ["*"],
+      target_type_constraints: ["*"],
+      cascade_on_delete: "orphan",
+      property_schema: {},
+    });
+    expect(schema.id).toBe("sdk.custom-rel");
+
+    const all = await client.edges.types.list();
+    expect(all.some((t) => t.id === "sdk.custom-rel")).toBe(true);
   });
 
   it("retrieves thread with its items", async () => {
