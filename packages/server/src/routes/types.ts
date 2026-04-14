@@ -303,9 +303,19 @@ export function typeRoutes(storage: Storage) {
 
     const result = validateTypeSchema(body);
     if (!result.success) {
-      throw new MymeError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
-        errors: result.errors,
-      });
+      // If any error carries the inheritance_violation discriminator, surface
+      // the specific code so clients (e.g. mock-myme conformance) can
+      // disambiguate from generic schema-shape failures.
+      const hasInheritanceViolation = result.errors.some(
+        (e) => e.code === "inheritance_violation",
+      );
+      const code = hasInheritanceViolation
+        ? ErrorCode.INHERITANCE_VIOLATION
+        : ErrorCode.INVALID_SCHEMA;
+      const message = hasInheritanceViolation
+        ? "Child type redefines a field declared by an ancestor"
+        : "Invalid type schema";
+      throw new MymeError(code, message, { errors: result.errors });
     }
 
     const schema = result.data;

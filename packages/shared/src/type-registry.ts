@@ -280,10 +280,21 @@ export function validateTransition(
  * Validates whether an input object is a valid TypeSchema.
  * Returns a ValidationResult with either the parsed schema or field errors.
  */
-/** Result of validating a type schema. */
+/** Result of validating a type schema.
+ *
+ * Each error optionally carries a `code` discriminator. The most specific
+ * code today is `"inheritance_violation"`, used when a child type
+ * redeclares a field already defined by an ancestor (V0 spec inheritance
+ * rule). Route handlers consult this to surface the specific
+ * `INHERITANCE_VIOLATION` error code in the API response rather than the
+ * generic `INVALID_SCHEMA`.
+ */
 export type TypeSchemaValidationResult =
   | { success: true; data: TypeSchema }
-  | { success: false; errors: { field: string; message: string }[] };
+  | {
+      success: false;
+      errors: { field: string; message: string; code?: string }[];
+    };
 
 export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -294,7 +305,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
   }
 
   const obj = input as Record<string, unknown>;
-  const errors: { field: string; message: string }[] = [];
+  const errors: { field: string; message: string; code?: string }[] = [];
 
   // id
   if (typeof obj.id !== "string" || !isValidTypeIdentifier(obj.id)) {
@@ -349,6 +360,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
           errors.push({
             field: `fields.${fieldName}`,
             message: `Field "${fieldName}" is already declared by ancestor "${owner}"; child types may not redefine ancestor fields.`,
+            code: "inheritance_violation",
           });
         }
       }
