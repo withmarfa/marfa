@@ -20,7 +20,9 @@
   "paths": {
     "/items": {
       "post": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Create an item",
         "security": [
           {
@@ -59,7 +61,11 @@
                   },
                   "origin": {
                     "type": "string",
-                    "enum": ["user", "ai", "worker"]
+                    "enum": [
+                      "user",
+                      "ai",
+                      "worker"
+                    ]
                   },
                   "library": {
                     "type": "boolean"
@@ -92,7 +98,9 @@
                     }
                   }
                 },
-                "required": ["type"]
+                "required": [
+                  "type"
+                ]
               }
             }
           }
@@ -123,8 +131,14 @@
                         "state": {
                           "type": "string"
                         },
+                        "library": {
+                          "type": "boolean"
+                        },
                         "version": {
                           "type": "number"
+                        },
+                        "schema_version": {
+                          "type": "integer"
                         },
                         "thread_id": {
                           "type": "string",
@@ -135,28 +149,27 @@
                           "nullable": true
                         },
                         "source": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "source_id": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "origin": {
                           "type": "string",
-                          "nullable": true
+                          "enum": [
+                            "user",
+                            "ai",
+                            "worker"
+                          ]
                         },
                         "device": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "capture_latitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "capture_longitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "timestamp": {
                           "type": "string"
@@ -173,15 +186,11 @@
                         "type",
                         "properties",
                         "state",
+                        "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
-                        "source",
-                        "source_id",
-                        "origin",
-                        "device",
-                        "capture_latitude",
-                        "capture_longitude",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -212,10 +221,18 @@
                           }
                         }
                       },
-                      "required": ["item_id", "tags", "about", "extensions"]
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "about",
+                        "extensions"
+                      ]
                     }
                   },
-                  "required": ["item", "metadata"]
+                  "required": [
+                    "item",
+                    "metadata"
+                  ]
                 }
               }
             }
@@ -238,13 +255,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -267,13 +291,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -296,13 +327,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -310,7 +348,9 @@
         }
       },
       "get": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "List items with filtering and pagination",
         "security": [
           {
@@ -377,7 +417,10 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["true", "false"]
+              "enum": [
+                "true",
+                "false"
+              ]
             },
             "required": false,
             "name": "root_only",
@@ -386,7 +429,11 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["created_at", "updated_at", "timestamp"]
+              "enum": [
+                "created_at",
+                "updated_at",
+                "timestamp"
+              ]
             },
             "required": false,
             "name": "sort",
@@ -395,7 +442,10 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["asc", "desc"]
+              "enum": [
+                "asc",
+                "desc"
+              ]
             },
             "required": false,
             "name": "direction",
@@ -475,8 +525,14 @@
                               "state": {
                                 "type": "string"
                               },
+                              "library": {
+                                "type": "boolean"
+                              },
                               "version": {
                                 "type": "number"
+                              },
+                              "schema_version": {
+                                "type": "integer"
                               },
                               "thread_id": {
                                 "type": "string",
@@ -487,28 +543,27 @@
                                 "nullable": true
                               },
                               "source": {
-                                "type": "string",
-                                "nullable": true
+                                "type": "string"
                               },
                               "source_id": {
-                                "type": "string",
-                                "nullable": true
+                                "type": "string"
                               },
                               "origin": {
                                 "type": "string",
-                                "nullable": true
+                                "enum": [
+                                  "user",
+                                  "ai",
+                                  "worker"
+                                ]
                               },
                               "device": {
-                                "type": "string",
-                                "nullable": true
+                                "type": "string"
                               },
                               "capture_latitude": {
-                                "type": "number",
-                                "nullable": true
+                                "type": "number"
                               },
                               "capture_longitude": {
-                                "type": "number",
-                                "nullable": true
+                                "type": "number"
                               },
                               "timestamp": {
                                 "type": "string"
@@ -525,15 +580,11 @@
                               "type",
                               "properties",
                               "state",
+                              "library",
                               "version",
+                              "schema_version",
                               "thread_id",
                               "parent_id",
-                              "source",
-                              "source_id",
-                              "origin",
-                              "device",
-                              "capture_latitude",
-                              "capture_longitude",
                               "timestamp",
                               "created_at",
                               "updated_at"
@@ -548,7 +599,11 @@
                           "type": "boolean"
                         }
                       },
-                      "required": ["data", "cursor", "has_more"]
+                      "required": [
+                        "data",
+                        "cursor",
+                        "has_more"
+                      ]
                     },
                     {
                       "type": "object",
@@ -576,8 +631,14 @@
                                   "state": {
                                     "type": "string"
                                   },
+                                  "library": {
+                                    "type": "boolean"
+                                  },
                                   "version": {
                                     "type": "number"
+                                  },
+                                  "schema_version": {
+                                    "type": "integer"
                                   },
                                   "thread_id": {
                                     "type": "string",
@@ -588,28 +649,27 @@
                                     "nullable": true
                                   },
                                   "source": {
-                                    "type": "string",
-                                    "nullable": true
+                                    "type": "string"
                                   },
                                   "source_id": {
-                                    "type": "string",
-                                    "nullable": true
+                                    "type": "string"
                                   },
                                   "origin": {
                                     "type": "string",
-                                    "nullable": true
+                                    "enum": [
+                                      "user",
+                                      "ai",
+                                      "worker"
+                                    ]
                                   },
                                   "device": {
-                                    "type": "string",
-                                    "nullable": true
+                                    "type": "string"
                                   },
                                   "capture_latitude": {
-                                    "type": "number",
-                                    "nullable": true
+                                    "type": "number"
                                   },
                                   "capture_longitude": {
-                                    "type": "number",
-                                    "nullable": true
+                                    "type": "number"
                                   },
                                   "timestamp": {
                                     "type": "string"
@@ -626,15 +686,11 @@
                                   "type",
                                   "properties",
                                   "state",
+                                  "library",
                                   "version",
+                                  "schema_version",
                                   "thread_id",
                                   "parent_id",
-                                  "source",
-                                  "source_id",
-                                  "origin",
-                                  "device",
-                                  "capture_latitude",
-                                  "capture_longitude",
                                   "timestamp",
                                   "created_at",
                                   "updated_at"
@@ -673,7 +729,10 @@
                                 ]
                               }
                             },
-                            "required": ["item", "metadata"]
+                            "required": [
+                              "item",
+                              "metadata"
+                            ]
                           }
                         },
                         "cursor": {
@@ -684,7 +743,11 @@
                           "type": "boolean"
                         }
                       },
-                      "required": ["data", "cursor", "has_more"]
+                      "required": [
+                        "data",
+                        "cursor",
+                        "has_more"
+                      ]
                     }
                   ]
                 }
@@ -709,13 +772,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -738,13 +808,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -754,7 +831,9 @@
     },
     "/items/stats": {
       "get": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Get item counts by state",
         "security": [
           {
@@ -793,13 +872,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -809,7 +895,9 @@
     },
     "/items/{id}": {
       "get": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Get a single item",
         "security": [
           {
@@ -852,8 +940,14 @@
                         "state": {
                           "type": "string"
                         },
+                        "library": {
+                          "type": "boolean"
+                        },
                         "version": {
                           "type": "number"
+                        },
+                        "schema_version": {
+                          "type": "integer"
                         },
                         "thread_id": {
                           "type": "string",
@@ -864,28 +958,27 @@
                           "nullable": true
                         },
                         "source": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "source_id": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "origin": {
                           "type": "string",
-                          "nullable": true
+                          "enum": [
+                            "user",
+                            "ai",
+                            "worker"
+                          ]
                         },
                         "device": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "capture_latitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "capture_longitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "timestamp": {
                           "type": "string"
@@ -902,15 +995,11 @@
                         "type",
                         "properties",
                         "state",
+                        "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
-                        "source",
-                        "source_id",
-                        "origin",
-                        "device",
-                        "capture_latitude",
-                        "capture_longitude",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -941,10 +1030,18 @@
                           }
                         }
                       },
-                      "required": ["item_id", "tags", "about", "extensions"]
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "about",
+                        "extensions"
+                      ]
                     }
                   },
-                  "required": ["item", "metadata"]
+                  "required": [
+                    "item",
+                    "metadata"
+                  ]
                 }
               }
             }
@@ -967,13 +1064,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -996,13 +1100,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1010,7 +1121,9 @@
         }
       },
       "patch": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Update an item with conflict detection",
         "security": [
           {
@@ -1085,8 +1198,14 @@
                         "state": {
                           "type": "string"
                         },
+                        "library": {
+                          "type": "boolean"
+                        },
                         "version": {
                           "type": "number"
+                        },
+                        "schema_version": {
+                          "type": "integer"
                         },
                         "thread_id": {
                           "type": "string",
@@ -1097,28 +1216,27 @@
                           "nullable": true
                         },
                         "source": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "source_id": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "origin": {
                           "type": "string",
-                          "nullable": true
+                          "enum": [
+                            "user",
+                            "ai",
+                            "worker"
+                          ]
                         },
                         "device": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "capture_latitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "capture_longitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "timestamp": {
                           "type": "string"
@@ -1135,15 +1253,11 @@
                         "type",
                         "properties",
                         "state",
+                        "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
-                        "source",
-                        "source_id",
-                        "origin",
-                        "device",
-                        "capture_latitude",
-                        "capture_longitude",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -1174,10 +1288,18 @@
                           }
                         }
                       },
-                      "required": ["item_id", "tags", "about", "extensions"]
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "about",
+                        "extensions"
+                      ]
                     }
                   },
-                  "required": ["item", "metadata"]
+                  "required": [
+                    "item",
+                    "metadata"
+                  ]
                 }
               }
             }
@@ -1200,13 +1322,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1229,13 +1358,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1258,13 +1394,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1280,20 +1423,72 @@
                       "type": "object",
                       "properties": {
                         "code": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "version_conflict"
+                          ]
                         },
-                        "message": {
-                          "type": "string"
-                        },
-                        "details": {
-                          "type": "object",
-                          "additionalProperties": {}
+                        "status": {
+                          "type": "number",
+                          "enum": [
+                            409
+                          ]
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "status"
+                      ]
+                    },
+                    "current": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "number"
+                        },
+                        "properties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "properties"
+                      ]
+                    },
+                    "ancestor": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "number"
+                        },
+                        "properties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "properties"
+                      ]
+                    },
+                    "conflicting_fields": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error",
+                    "current",
+                    "ancestor",
+                    "conflicting_fields"
+                  ]
                 }
               }
             }
@@ -1301,7 +1496,9 @@
         }
       },
       "delete": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Soft delete (trash) an item",
         "security": [
           {
@@ -1328,10 +1525,14 @@
                   "properties": {
                     "ok": {
                       "type": "boolean",
-                      "enum": [true]
+                      "enum": [
+                        true
+                      ]
                     }
                   },
-                  "required": ["ok"]
+                  "required": [
+                    "ok"
+                  ]
                 }
               }
             }
@@ -1354,13 +1555,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1370,7 +1578,9 @@
     },
     "/items/{id}/restore": {
       "post": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Restore a trashed item",
         "security": [
           {
@@ -1413,8 +1623,14 @@
                         "state": {
                           "type": "string"
                         },
+                        "library": {
+                          "type": "boolean"
+                        },
                         "version": {
                           "type": "number"
+                        },
+                        "schema_version": {
+                          "type": "integer"
                         },
                         "thread_id": {
                           "type": "string",
@@ -1425,28 +1641,27 @@
                           "nullable": true
                         },
                         "source": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "source_id": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "origin": {
                           "type": "string",
-                          "nullable": true
+                          "enum": [
+                            "user",
+                            "ai",
+                            "worker"
+                          ]
                         },
                         "device": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "capture_latitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "capture_longitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "timestamp": {
                           "type": "string"
@@ -1463,15 +1678,11 @@
                         "type",
                         "properties",
                         "state",
+                        "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
-                        "source",
-                        "source_id",
-                        "origin",
-                        "device",
-                        "capture_latitude",
-                        "capture_longitude",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -1502,10 +1713,18 @@
                           }
                         }
                       },
-                      "required": ["item_id", "tags", "about", "extensions"]
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "about",
+                        "extensions"
+                      ]
                     }
                   },
-                  "required": ["item", "metadata"]
+                  "required": [
+                    "item",
+                    "metadata"
+                  ]
                 }
               }
             }
@@ -1528,13 +1747,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1557,13 +1783,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1573,7 +1806,9 @@
     },
     "/items/{id}/transition": {
       "post": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Transition item state",
         "security": [
           {
@@ -1601,7 +1836,9 @@
                     "minLength": 1
                   }
                 },
-                "required": ["state"]
+                "required": [
+                  "state"
+                ]
               }
             }
           }
@@ -1632,8 +1869,14 @@
                         "state": {
                           "type": "string"
                         },
+                        "library": {
+                          "type": "boolean"
+                        },
                         "version": {
                           "type": "number"
+                        },
+                        "schema_version": {
+                          "type": "integer"
                         },
                         "thread_id": {
                           "type": "string",
@@ -1644,28 +1887,27 @@
                           "nullable": true
                         },
                         "source": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "source_id": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "origin": {
                           "type": "string",
-                          "nullable": true
+                          "enum": [
+                            "user",
+                            "ai",
+                            "worker"
+                          ]
                         },
                         "device": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "capture_latitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "capture_longitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "timestamp": {
                           "type": "string"
@@ -1682,15 +1924,11 @@
                         "type",
                         "properties",
                         "state",
+                        "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
-                        "source",
-                        "source_id",
-                        "origin",
-                        "device",
-                        "capture_latitude",
-                        "capture_longitude",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -1721,10 +1959,18 @@
                           }
                         }
                       },
-                      "required": ["item_id", "tags", "about", "extensions"]
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "about",
+                        "extensions"
+                      ]
                     }
                   },
-                  "required": ["item", "metadata"]
+                  "required": [
+                    "item",
+                    "metadata"
+                  ]
                 }
               }
             }
@@ -1747,13 +1993,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1776,13 +2029,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1805,13 +2065,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1821,7 +2088,9 @@
     },
     "/items/{id}/versions": {
       "get": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "List version history for an item",
         "security": [
           {
@@ -1866,10 +2135,10 @@
                               "nullable": true
                             }
                           },
-                          "snapshot": {
-                            "type": "boolean"
-                          },
                           "created_at": {
+                            "type": "string"
+                          },
+                          "device": {
                             "type": "string"
                           }
                         },
@@ -1878,13 +2147,14 @@
                           "item_id",
                           "version",
                           "properties",
-                          "snapshot",
                           "created_at"
                         ]
                       }
                     }
                   },
-                  "required": ["versions"]
+                  "required": [
+                    "versions"
+                  ]
                 }
               }
             }
@@ -1907,13 +2177,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1936,13 +2213,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -1952,7 +2236,9 @@
     },
     "/items/{id}/metadata": {
       "get": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Get item metadata",
         "security": [
           {
@@ -2002,10 +2288,17 @@
                           }
                         }
                       },
-                      "required": ["item_id", "tags", "about", "extensions"]
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "about",
+                        "extensions"
+                      ]
                     }
                   },
-                  "required": ["metadata"]
+                  "required": [
+                    "metadata"
+                  ]
                 }
               }
             }
@@ -2028,13 +2321,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2057,13 +2357,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2071,7 +2378,9 @@
         }
       },
       "put": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Replace item metadata",
         "security": [
           {
@@ -2146,10 +2455,17 @@
                           }
                         }
                       },
-                      "required": ["item_id", "tags", "about", "extensions"]
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "about",
+                        "extensions"
+                      ]
                     }
                   },
-                  "required": ["metadata"]
+                  "required": [
+                    "metadata"
+                  ]
                 }
               }
             }
@@ -2172,13 +2488,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2201,13 +2524,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2230,13 +2560,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2244,7 +2581,9 @@
         }
       },
       "patch": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Merge metadata (set-union)",
         "security": [
           {
@@ -2317,10 +2656,17 @@
                           }
                         }
                       },
-                      "required": ["item_id", "tags", "about", "extensions"]
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "about",
+                        "extensions"
+                      ]
                     }
                   },
-                  "required": ["metadata"]
+                  "required": [
+                    "metadata"
+                  ]
                 }
               }
             }
@@ -2343,13 +2689,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2372,13 +2725,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2401,13 +2761,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2417,7 +2784,9 @@
     },
     "/items/{id}/tags": {
       "post": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Add tags to an item",
         "security": [
           {
@@ -2448,7 +2817,9 @@
                     "minItems": 1
                   }
                 },
-                "required": ["tags"]
+                "required": [
+                  "tags"
+                ]
               }
             }
           }
@@ -2486,10 +2857,17 @@
                           }
                         }
                       },
-                      "required": ["item_id", "tags", "about", "extensions"]
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "about",
+                        "extensions"
+                      ]
                     }
                   },
-                  "required": ["metadata"]
+                  "required": [
+                    "metadata"
+                  ]
                 }
               }
             }
@@ -2512,13 +2890,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2541,13 +2926,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2570,13 +2962,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2586,7 +2985,9 @@
     },
     "/items/{id}/purge": {
       "delete": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Permanently delete a trashed item (admin only)",
         "security": [
           {
@@ -2613,10 +3014,14 @@
                   "properties": {
                     "ok": {
                       "type": "boolean",
-                      "enum": [true]
+                      "enum": [
+                        true
+                      ]
                     }
                   },
-                  "required": ["ok"]
+                  "required": [
+                    "ok"
+                  ]
                 }
               }
             }
@@ -2639,13 +3044,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2668,13 +3080,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2684,7 +3103,9 @@
     },
     "/items/{id}/tags/{tag}": {
       "delete": {
-        "tags": ["Items"],
+        "tags": [
+          "Items"
+        ],
         "summary": "Remove a tag from an item",
         "security": [
           {
@@ -2742,10 +3163,17 @@
                           }
                         }
                       },
-                      "required": ["item_id", "tags", "about", "extensions"]
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "about",
+                        "extensions"
+                      ]
                     }
                   },
-                  "required": ["metadata"]
+                  "required": [
+                    "metadata"
+                  ]
                 }
               }
             }
@@ -2768,13 +3196,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2797,13 +3232,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2813,7 +3255,9 @@
     },
     "/items/{id}/extensions": {
       "get": {
-        "tags": ["Extensions"],
+        "tags": [
+          "Extensions"
+        ],
         "summary": "List all extension namespaces for an item",
         "security": [
           {
@@ -2848,7 +3292,9 @@
                       }
                     }
                   },
-                  "required": ["extensions"]
+                  "required": [
+                    "extensions"
+                  ]
                 }
               }
             }
@@ -2871,13 +3317,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2900,13 +3353,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2929,13 +3389,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -2945,7 +3412,9 @@
     },
     "/items/{id}/extensions/{namespace}": {
       "get": {
-        "tags": ["Extensions"],
+        "tags": [
+          "Extensions"
+        ],
         "summary": "Read a specific extension namespace",
         "security": [
           {
@@ -2989,7 +3458,10 @@
                       }
                     }
                   },
-                  "required": ["namespace", "data"]
+                  "required": [
+                    "namespace",
+                    "data"
+                  ]
                 }
               }
             }
@@ -3012,13 +3484,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3041,13 +3520,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3070,13 +3556,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3099,13 +3592,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3113,7 +3613,9 @@
         }
       },
       "put": {
-        "tags": ["Extensions"],
+        "tags": [
+          "Extensions"
+        ],
         "summary": "Write to a specific extension namespace (100KB limit)",
         "security": [
           {
@@ -3168,7 +3670,9 @@
                       }
                     }
                   },
-                  "required": ["extensions"]
+                  "required": [
+                    "extensions"
+                  ]
                 }
               }
             }
@@ -3191,13 +3695,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3220,13 +3731,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3249,13 +3767,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3278,13 +3803,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3292,7 +3824,9 @@
         }
       },
       "delete": {
-        "tags": ["Extensions"],
+        "tags": [
+          "Extensions"
+        ],
         "summary": "Delete an extension namespace",
         "security": [
           {
@@ -3335,7 +3869,9 @@
                       }
                     }
                   },
-                  "required": ["extensions"]
+                  "required": [
+                    "extensions"
+                  ]
                 }
               }
             }
@@ -3358,13 +3894,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3387,13 +3930,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3416,13 +3966,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3445,13 +4002,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3461,7 +4025,9 @@
     },
     "/threads": {
       "post": {
-        "tags": ["Threads"],
+        "tags": [
+          "Threads"
+        ],
         "summary": "Create a new thread",
         "security": [
           {
@@ -3482,10 +4048,6 @@
                         "id": {
                           "type": "string"
                         },
-                        "tenant_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "created_at": {
                           "type": "string"
                         },
@@ -3495,13 +4057,14 @@
                       },
                       "required": [
                         "id",
-                        "tenant_id",
                         "created_at",
                         "updated_at"
                       ]
                     }
                   },
-                  "required": ["thread"]
+                  "required": [
+                    "thread"
+                  ]
                 }
               }
             }
@@ -3524,13 +4087,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3538,7 +4108,9 @@
         }
       },
       "get": {
-        "tags": ["Threads"],
+        "tags": [
+          "Threads"
+        ],
         "summary": "List threads with pagination",
         "security": [
           {
@@ -3582,10 +4154,6 @@
                           "id": {
                             "type": "string"
                           },
-                          "tenant_id": {
-                            "type": "string",
-                            "nullable": true
-                          },
                           "created_at": {
                             "type": "string"
                           },
@@ -3595,7 +4163,6 @@
                         },
                         "required": [
                           "id",
-                          "tenant_id",
                           "created_at",
                           "updated_at"
                         ]
@@ -3609,7 +4176,11 @@
                       "type": "boolean"
                     }
                   },
-                  "required": ["data", "cursor", "has_more"]
+                  "required": [
+                    "data",
+                    "cursor",
+                    "has_more"
+                  ]
                 }
               }
             }
@@ -3632,13 +4203,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3648,7 +4226,9 @@
     },
     "/threads/{id}": {
       "get": {
-        "tags": ["Threads"],
+        "tags": [
+          "Threads"
+        ],
         "summary": "Get a thread and its items",
         "security": [
           {
@@ -3679,10 +4259,6 @@
                         "id": {
                           "type": "string"
                         },
-                        "tenant_id": {
-                          "type": "string",
-                          "nullable": true
-                        },
                         "created_at": {
                           "type": "string"
                         },
@@ -3692,7 +4268,6 @@
                       },
                       "required": [
                         "id",
-                        "tenant_id",
                         "created_at",
                         "updated_at"
                       ]
@@ -3717,8 +4292,14 @@
                           "state": {
                             "type": "string"
                           },
+                          "library": {
+                            "type": "boolean"
+                          },
                           "version": {
                             "type": "number"
+                          },
+                          "schema_version": {
+                            "type": "integer"
                           },
                           "thread_id": {
                             "type": "string",
@@ -3729,28 +4310,27 @@
                             "nullable": true
                           },
                           "source": {
-                            "type": "string",
-                            "nullable": true
+                            "type": "string"
                           },
                           "source_id": {
-                            "type": "string",
-                            "nullable": true
+                            "type": "string"
                           },
                           "origin": {
                             "type": "string",
-                            "nullable": true
+                            "enum": [
+                              "user",
+                              "ai",
+                              "worker"
+                            ]
                           },
                           "device": {
-                            "type": "string",
-                            "nullable": true
+                            "type": "string"
                           },
                           "capture_latitude": {
-                            "type": "number",
-                            "nullable": true
+                            "type": "number"
                           },
                           "capture_longitude": {
-                            "type": "number",
-                            "nullable": true
+                            "type": "number"
                           },
                           "timestamp": {
                             "type": "string"
@@ -3767,15 +4347,11 @@
                           "type",
                           "properties",
                           "state",
+                          "library",
                           "version",
+                          "schema_version",
                           "thread_id",
                           "parent_id",
-                          "source",
-                          "source_id",
-                          "origin",
-                          "device",
-                          "capture_latitude",
-                          "capture_longitude",
                           "timestamp",
                           "created_at",
                           "updated_at"
@@ -3783,7 +4359,10 @@
                       }
                     }
                   },
-                  "required": ["thread", "items"]
+                  "required": [
+                    "thread",
+                    "items"
+                  ]
                 }
               }
             }
@@ -3806,13 +4385,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3835,13 +4421,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -3851,7 +4444,9 @@
     },
     "/threads/{id}/items": {
       "post": {
-        "tags": ["Threads"],
+        "tags": [
+          "Threads"
+        ],
         "summary": "Add an item to a thread",
         "security": [
           {
@@ -3879,7 +4474,9 @@
                     "minLength": 1
                   }
                 },
-                "required": ["item_id"]
+                "required": [
+                  "item_id"
+                ]
               }
             }
           }
@@ -3910,8 +4507,14 @@
                         "state": {
                           "type": "string"
                         },
+                        "library": {
+                          "type": "boolean"
+                        },
                         "version": {
                           "type": "number"
+                        },
+                        "schema_version": {
+                          "type": "integer"
                         },
                         "thread_id": {
                           "type": "string",
@@ -3922,28 +4525,27 @@
                           "nullable": true
                         },
                         "source": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "source_id": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "origin": {
                           "type": "string",
-                          "nullable": true
+                          "enum": [
+                            "user",
+                            "ai",
+                            "worker"
+                          ]
                         },
                         "device": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "capture_latitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "capture_longitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "timestamp": {
                           "type": "string"
@@ -3960,22 +4562,20 @@
                         "type",
                         "properties",
                         "state",
+                        "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
-                        "source",
-                        "source_id",
-                        "origin",
-                        "device",
-                        "capture_latitude",
-                        "capture_longitude",
                         "timestamp",
                         "created_at",
                         "updated_at"
                       ]
                     }
                   },
-                  "required": ["item"]
+                  "required": [
+                    "item"
+                  ]
                 }
               }
             }
@@ -3998,13 +4598,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4027,13 +4634,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4056,13 +4670,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4072,7 +4693,9 @@
     },
     "/threads/{id}/items/{itemId}": {
       "delete": {
-        "tags": ["Threads"],
+        "tags": [
+          "Threads"
+        ],
         "summary": "Remove an item from a thread",
         "security": [
           {
@@ -4123,8 +4746,14 @@
                         "state": {
                           "type": "string"
                         },
+                        "library": {
+                          "type": "boolean"
+                        },
                         "version": {
                           "type": "number"
+                        },
+                        "schema_version": {
+                          "type": "integer"
                         },
                         "thread_id": {
                           "type": "string",
@@ -4135,28 +4764,27 @@
                           "nullable": true
                         },
                         "source": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "source_id": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "origin": {
                           "type": "string",
-                          "nullable": true
+                          "enum": [
+                            "user",
+                            "ai",
+                            "worker"
+                          ]
                         },
                         "device": {
-                          "type": "string",
-                          "nullable": true
+                          "type": "string"
                         },
                         "capture_latitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "capture_longitude": {
-                          "type": "number",
-                          "nullable": true
+                          "type": "number"
                         },
                         "timestamp": {
                           "type": "string"
@@ -4173,22 +4801,20 @@
                         "type",
                         "properties",
                         "state",
+                        "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
-                        "source",
-                        "source_id",
-                        "origin",
-                        "device",
-                        "capture_latitude",
-                        "capture_longitude",
                         "timestamp",
                         "created_at",
                         "updated_at"
                       ]
                     }
                   },
-                  "required": ["item"]
+                  "required": [
+                    "item"
+                  ]
                 }
               }
             }
@@ -4211,13 +4837,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4240,13 +4873,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4269,13 +4909,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4285,7 +4932,9 @@
     },
     "/types": {
       "get": {
-        "tags": ["Types"],
+        "tags": [
+          "Types"
+        ],
         "summary": "List all registered types",
         "description": "Returns all registered types including core and custom types.",
         "security": [
@@ -4324,6 +4973,17 @@
                       "version": {
                         "type": "number"
                       },
+                      "display_hints": {
+                        "type": "object",
+                        "properties": {
+                          "title_field": {
+                            "type": "string"
+                          },
+                          "body_field": {
+                            "type": "string"
+                          }
+                        }
+                      },
                       "version_policy": {
                         "type": "object",
                         "properties": {
@@ -4342,7 +5002,11 @@
                         }
                       }
                     },
-                    "required": ["id", "fields", "version"]
+                    "required": [
+                      "id",
+                      "fields",
+                      "version"
+                    ]
                   }
                 }
               }
@@ -4366,13 +5030,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4380,7 +5051,9 @@
         }
       },
       "post": {
-        "tags": ["Types"],
+        "tags": [
+          "Types"
+        ],
         "summary": "Register a custom type",
         "description": "Register a new custom type schema. Admin only. Body is validated via validateTypeSchema().",
         "security": [
@@ -4432,6 +5105,17 @@
                         "version": {
                           "type": "number"
                         },
+                        "display_hints": {
+                          "type": "object",
+                          "properties": {
+                            "title_field": {
+                              "type": "string"
+                            },
+                            "body_field": {
+                              "type": "string"
+                            }
+                          }
+                        },
                         "version_policy": {
                           "type": "object",
                           "properties": {
@@ -4450,10 +5134,16 @@
                           }
                         }
                       },
-                      "required": ["id", "fields", "version"]
+                      "required": [
+                        "id",
+                        "fields",
+                        "version"
+                      ]
                     }
                   },
-                  "required": ["type"]
+                  "required": [
+                    "type"
+                  ]
                 }
               }
             }
@@ -4476,13 +5166,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4505,13 +5202,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4521,7 +5225,9 @@
     },
     "/types/{id}": {
       "get": {
-        "tags": ["Types"],
+        "tags": [
+          "Types"
+        ],
         "summary": "Get a single type schema",
         "security": [
           {
@@ -4567,6 +5273,17 @@
                     "version": {
                       "type": "number"
                     },
+                    "display_hints": {
+                      "type": "object",
+                      "properties": {
+                        "title_field": {
+                          "type": "string"
+                        },
+                        "body_field": {
+                          "type": "string"
+                        }
+                      }
+                    },
                     "version_policy": {
                       "type": "object",
                       "properties": {
@@ -4585,7 +5302,11 @@
                       }
                     }
                   },
-                  "required": ["id", "fields", "version"]
+                  "required": [
+                    "id",
+                    "fields",
+                    "version"
+                  ]
                 }
               }
             }
@@ -4608,13 +5329,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4637,13 +5365,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4651,7 +5386,9 @@
         }
       },
       "put": {
-        "tags": ["Types"],
+        "tags": [
+          "Types"
+        ],
         "summary": "Update a custom type",
         "description": "Update an existing custom type schema. Admin only. Core types cannot be modified. Body is validated via validateTypeSchema().",
         "security": [
@@ -4713,6 +5450,17 @@
                         "version": {
                           "type": "number"
                         },
+                        "display_hints": {
+                          "type": "object",
+                          "properties": {
+                            "title_field": {
+                              "type": "string"
+                            },
+                            "body_field": {
+                              "type": "string"
+                            }
+                          }
+                        },
                         "version_policy": {
                           "type": "object",
                           "properties": {
@@ -4731,10 +5479,16 @@
                           }
                         }
                       },
-                      "required": ["id", "fields", "version"]
+                      "required": [
+                        "id",
+                        "fields",
+                        "version"
+                      ]
                     }
                   },
-                  "required": ["type"]
+                  "required": [
+                    "type"
+                  ]
                 }
               }
             }
@@ -4757,13 +5511,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4786,13 +5547,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4800,7 +5568,9 @@
         }
       },
       "delete": {
-        "tags": ["Types"],
+        "tags": [
+          "Types"
+        ],
         "summary": "Delete a custom type",
         "description": "Delete a custom type. Admin only. Core types cannot be deleted. Use ?force=true to delete even if items exist.",
         "security": [
@@ -4820,7 +5590,10 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["true", "false"]
+              "enum": [
+                "true",
+                "false"
+              ]
             },
             "required": false,
             "name": "force",
@@ -4837,10 +5610,14 @@
                   "properties": {
                     "ok": {
                       "type": "boolean",
-                      "enum": [true]
+                      "enum": [
+                        true
+                      ]
                     }
                   },
-                  "required": ["ok"]
+                  "required": [
+                    "ok"
+                  ]
                 }
               }
             }
@@ -4863,13 +5640,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4892,13 +5676,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4921,13 +5712,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -4937,7 +5735,9 @@
     },
     "/search": {
       "get": {
-        "tags": ["Search"],
+        "tags": [
+          "Search"
+        ],
         "summary": "Full-text search across items",
         "security": [
           {
@@ -4965,7 +5765,11 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["active", "archived", "trashed"]
+              "enum": [
+                "active",
+                "archived",
+                "trashed"
+              ]
             },
             "required": false,
             "name": "state",
@@ -5073,7 +5877,10 @@
                                 }
                               }
                             },
-                            "required": ["tags", "about"],
+                            "required": [
+                              "tags",
+                              "about"
+                            ],
                             "additionalProperties": {
                               "nullable": true
                             }
@@ -5088,11 +5895,17 @@
                             "type": "string"
                           }
                         },
-                        "required": ["item", "metadata", "relevance_score"]
+                        "required": [
+                          "item",
+                          "metadata",
+                          "relevance_score"
+                        ]
                       }
                     }
                   },
-                  "required": ["results"]
+                  "required": [
+                    "results"
+                  ]
                 }
               }
             }
@@ -5115,13 +5928,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5131,7 +5951,9 @@
     },
     "/blobs": {
       "post": {
-        "tags": ["Blobs"],
+        "tags": [
+          "Blobs"
+        ],
         "summary": "Upload a blob (multipart or raw binary)",
         "security": [
           {
@@ -5170,7 +5992,11 @@
                       "type": "number"
                     }
                   },
-                  "required": ["hash", "mime_type", "size"]
+                  "required": [
+                    "hash",
+                    "mime_type",
+                    "size"
+                  ]
                 }
               }
             }
@@ -5193,13 +6019,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5222,13 +6055,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5238,7 +6078,9 @@
     },
     "/blobs/{hash}": {
       "get": {
-        "tags": ["Blobs"],
+        "tags": [
+          "Blobs"
+        ],
         "summary": "Download blob binary",
         "security": [
           {
@@ -5284,13 +6126,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5313,13 +6162,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5342,13 +6198,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5358,7 +6221,9 @@
     },
     "/blobs/{hash}/url": {
       "get": {
-        "tags": ["Blobs"],
+        "tags": [
+          "Blobs"
+        ],
         "summary": "Get a presigned download URL for a blob",
         "security": [
           {
@@ -5400,7 +6265,10 @@
                       "type": "number"
                     }
                   },
-                  "required": ["url", "expires_in"]
+                  "required": [
+                    "url",
+                    "expires_in"
+                  ]
                 }
               }
             }
@@ -5423,13 +6291,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5452,13 +6327,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5481,13 +6363,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5497,7 +6386,9 @@
     },
     "/blobs/cleanup": {
       "post": {
-        "tags": ["Blobs"],
+        "tags": [
+          "Blobs"
+        ],
         "summary": "Remove unreferenced blobs (admin only)",
         "security": [
           {
@@ -5508,7 +6399,10 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["true", "false"],
+              "enum": [
+                "true",
+                "false"
+              ],
               "default": "false"
             },
             "required": false,
@@ -5569,13 +6463,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5585,7 +6486,9 @@
     },
     "/blobs/reconcile": {
       "post": {
-        "tags": ["Blobs"],
+        "tags": [
+          "Blobs"
+        ],
         "summary": "Reconcile blob storage against database (admin only)",
         "description": "Compares the blob storage backend against the database to find orphaned files (in storage but not DB) and missing files (in DB but not storage). Defaults to dry_run=true for safety.",
         "security": [
@@ -5597,7 +6500,10 @@
           {
             "schema": {
               "type": "string",
-              "enum": ["true", "false"],
+              "enum": [
+                "true",
+                "false"
+              ],
               "default": "true"
             },
             "required": false,
@@ -5680,13 +6586,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5709,13 +6622,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5725,7 +6645,9 @@
     },
     "/keys": {
       "post": {
-        "tags": ["Keys"],
+        "tags": [
+          "Keys"
+        ],
         "summary": "Create a new API key",
         "description": "Creates a new API key. In bootstrap mode (zero keys exist), no auth is required and the key is always admin.",
         "security": [
@@ -5750,11 +6672,18 @@
                   },
                   "role": {
                     "type": "string",
-                    "enum": ["admin", "member"]
+                    "enum": [
+                      "admin",
+                      "member"
+                    ]
                   },
                   "default_origin": {
                     "type": "string",
-                    "enum": ["user", "ai", "worker"]
+                    "enum": [
+                      "user",
+                      "ai",
+                      "worker"
+                    ]
                   },
                   "default_library": {
                     "type": "boolean"
@@ -5763,11 +6692,28 @@
                     "type": "object",
                     "additionalProperties": {
                       "type": "string",
-                      "enum": ["read", "write", "none"]
+                      "enum": [
+                        "read",
+                        "write",
+                        "none"
+                      ]
+                    }
+                  },
+                  "extension_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
                     }
                   }
                 },
-                "required": ["label", "source"]
+                "required": [
+                  "label",
+                  "source"
+                ]
               }
             }
           }
@@ -5794,11 +6740,18 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": ["admin", "member"]
+                      "enum": [
+                        "admin",
+                        "member"
+                      ]
                     },
                     "default_origin": {
                       "type": "string",
-                      "enum": ["user", "ai", "worker"]
+                      "enum": [
+                        "user",
+                        "ai",
+                        "worker"
+                      ]
                     },
                     "default_library": {
                       "type": "boolean"
@@ -5807,7 +6760,21 @@
                       "type": "object",
                       "additionalProperties": {
                         "type": "string",
-                        "enum": ["read", "write", "none"]
+                        "enum": [
+                          "read",
+                          "write",
+                          "none"
+                        ]
+                      }
+                    },
+                    "extension_permissions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "write"
+                        ]
                       }
                     },
                     "created_at": {
@@ -5852,13 +6819,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5866,7 +6840,9 @@
         }
       },
       "get": {
-        "tags": ["Keys"],
+        "tags": [
+          "Keys"
+        ],
         "summary": "List all API keys",
         "security": [
           {
@@ -5900,7 +6876,11 @@
                           },
                           "default_origin": {
                             "type": "string",
-                            "enum": ["user", "ai", "worker"]
+                            "enum": [
+                              "user",
+                              "ai",
+                              "worker"
+                            ]
                           },
                           "default_library": {
                             "type": "boolean"
@@ -5908,7 +6888,22 @@
                           "type_permissions": {
                             "type": "object",
                             "additionalProperties": {
-                              "type": "string"
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "write",
+                                "none"
+                              ]
+                            }
+                          },
+                          "extension_permissions": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "write"
+                              ]
                             }
                           },
                           "created_at": {
@@ -5933,7 +6928,9 @@
                       }
                     }
                   },
-                  "required": ["keys"]
+                  "required": [
+                    "keys"
+                  ]
                 }
               }
             }
@@ -5956,13 +6953,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -5972,7 +6976,9 @@
     },
     "/keys/{id}": {
       "delete": {
-        "tags": ["Keys"],
+        "tags": [
+          "Keys"
+        ],
         "summary": "Revoke an API key",
         "security": [
           {
@@ -5999,10 +7005,14 @@
                   "properties": {
                     "ok": {
                       "type": "boolean",
-                      "enum": [true]
+                      "enum": [
+                        true
+                      ]
                     }
                   },
-                  "required": ["ok"]
+                  "required": [
+                    "ok"
+                  ]
                 }
               }
             }
@@ -6025,13 +7035,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6041,7 +7058,9 @@
     },
     "/tenants/current/config": {
       "get": {
-        "tags": ["Tenants"],
+        "tags": [
+          "Tenants"
+        ],
         "summary": "Get the current tenant's configuration",
         "description": "Admin only. Returns tenant-scoped config (per-type ambient retention overrides). An empty object is returned when nothing is configured.",
         "security": [
@@ -6068,7 +7087,9 @@
                             "exclusiveMinimum": true
                           }
                         },
-                        "required": ["ambient_days"]
+                        "required": [
+                          "ambient_days"
+                        ]
                       }
                     }
                   }
@@ -6094,13 +7115,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6123,13 +7151,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6137,7 +7172,9 @@
         }
       },
       "put": {
-        "tags": ["Tenants"],
+        "tags": [
+          "Tenants"
+        ],
         "summary": "Replace the current tenant's configuration",
         "description": "Admin only. Overwrites the tenant's config with the supplied object. Validates that retention type IDs resolve in the registry.",
         "security": [
@@ -6162,7 +7199,9 @@
                           "exclusiveMinimum": true
                         }
                       },
-                      "required": ["ambient_days"]
+                      "required": [
+                        "ambient_days"
+                      ]
                     }
                   }
                 }
@@ -6189,7 +7228,9 @@
                             "exclusiveMinimum": true
                           }
                         },
-                        "required": ["ambient_days"]
+                        "required": [
+                          "ambient_days"
+                        ]
                       }
                     }
                   }
@@ -6215,13 +7256,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6244,13 +7292,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6273,13 +7328,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6289,7 +7351,9 @@
     },
     "/import": {
       "post": {
-        "tags": ["Import/Export"],
+        "tags": [
+          "Import/Export"
+        ],
         "summary": "Bulk import items or archive (admin only)",
         "security": [
           {
@@ -6312,7 +7376,9 @@
                     }
                   }
                 },
-                "required": ["items"]
+                "required": [
+                  "items"
+                ]
               }
             }
           }
@@ -6335,7 +7401,10 @@
                       "type": "number"
                     }
                   },
-                  "required": ["imported", "duplicates"]
+                  "required": [
+                    "imported",
+                    "duplicates"
+                  ]
                 }
               }
             }
@@ -6358,13 +7427,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6387,13 +7463,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6416,13 +7499,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6432,7 +7522,9 @@
     },
     "/export": {
       "get": {
-        "tags": ["Import/Export"],
+        "tags": [
+          "Import/Export"
+        ],
         "summary": "Streaming NDJSON or archive export with filters",
         "security": [
           {
@@ -6510,13 +7602,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6539,13 +7638,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6555,7 +7661,9 @@
     },
     "/webhooks": {
       "post": {
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "summary": "Create a new webhook",
         "security": [
           {
@@ -6587,7 +7695,10 @@
                     "type": "string"
                   }
                 },
-                "required": ["url", "events"]
+                "required": [
+                  "url",
+                  "events"
+                ]
               }
             }
           }
@@ -6660,13 +7771,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6689,13 +7807,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6703,7 +7828,9 @@
         }
       },
       "get": {
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "summary": "List all webhooks",
         "security": [
           {
@@ -6764,7 +7891,9 @@
                       }
                     }
                   },
-                  "required": ["webhooks"]
+                  "required": [
+                    "webhooks"
+                  ]
                 }
               }
             }
@@ -6787,13 +7916,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6803,7 +7939,9 @@
     },
     "/webhooks/{id}": {
       "get": {
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "summary": "Get a single webhook",
         "security": [
           {
@@ -6888,13 +8026,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6917,13 +8062,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -6931,7 +8083,9 @@
         }
       },
       "patch": {
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "summary": "Partially update a webhook",
         "security": [
           {
@@ -7044,13 +8198,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -7073,13 +8234,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -7102,13 +8270,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -7116,7 +8291,9 @@
         }
       },
       "delete": {
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "summary": "Delete a webhook",
         "security": [
           {
@@ -7143,10 +8320,14 @@
                   "properties": {
                     "ok": {
                       "type": "boolean",
-                      "enum": [true]
+                      "enum": [
+                        true
+                      ]
                     }
                   },
-                  "required": ["ok"]
+                  "required": [
+                    "ok"
+                  ]
                 }
               }
             }
@@ -7169,13 +8350,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -7198,13 +8386,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -7214,7 +8409,9 @@
     },
     "/webhooks/{id}/deliveries": {
       "get": {
-        "tags": ["Webhooks"],
+        "tags": [
+          "Webhooks"
+        ],
         "summary": "List recent delivery attempts for a webhook",
         "security": [
           {
@@ -7295,7 +8492,9 @@
                       }
                     }
                   },
-                  "required": ["deliveries"]
+                  "required": [
+                    "deliveries"
+                  ]
                 }
               }
             }
@@ -7318,13 +8517,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -7347,13 +8553,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -7363,7 +8576,9 @@
     },
     "/audit": {
       "get": {
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "summary": "List audit log entries",
         "security": [
           {
@@ -7466,7 +8681,9 @@
                           },
                           "details": {
                             "type": "object",
-                            "additionalProperties": {}
+                            "additionalProperties": {
+                              "nullable": true
+                            }
                           }
                         },
                         "required": [
@@ -7488,7 +8705,11 @@
                       "type": "boolean"
                     }
                   },
-                  "required": ["data", "cursor", "has_more"]
+                  "required": [
+                    "data",
+                    "cursor",
+                    "has_more"
+                  ]
                 }
               }
             }
@@ -7511,13 +8732,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }
@@ -7527,7 +8755,9 @@
     },
     "/metrics": {
       "get": {
-        "tags": ["Admin"],
+        "tags": [
+          "Admin"
+        ],
         "summary": "Get server metrics and statistics",
         "security": [
           {
@@ -7550,10 +8780,15 @@
                         },
                         "by_state": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "type": "number"
+                          }
                         }
                       },
-                      "required": ["total", "by_state"]
+                      "required": [
+                        "total",
+                        "by_state"
+                      ]
                     },
                     "blobs": {
                       "type": "object",
@@ -7565,7 +8800,10 @@
                           "type": "number"
                         }
                       },
-                      "required": ["count", "total_bytes"]
+                      "required": [
+                        "count",
+                        "total_bytes"
+                      ]
                     },
                     "types": {
                       "type": "object",
@@ -7577,7 +8815,10 @@
                           "type": "number"
                         }
                       },
-                      "required": ["core", "custom"]
+                      "required": [
+                        "core",
+                        "custom"
+                      ]
                     },
                     "keys": {
                       "type": "object",
@@ -7586,7 +8827,9 @@
                           "type": "number"
                         }
                       },
-                      "required": ["total"]
+                      "required": [
+                        "total"
+                      ]
                     },
                     "webhooks": {
                       "type": "object",
@@ -7595,7 +8838,9 @@
                           "type": "number"
                         }
                       },
-                      "required": ["total"]
+                      "required": [
+                        "total"
+                      ]
                     },
                     "uptime_seconds": {
                       "type": "number"
@@ -7635,13 +8880,20 @@
                         },
                         "details": {
                           "type": "object",
-                          "additionalProperties": {}
+                          "additionalProperties": {
+                            "nullable": true
+                          }
                         }
                       },
-                      "required": ["code", "message"]
+                      "required": [
+                        "code",
+                        "message"
+                      ]
                     }
                   },
-                  "required": ["error"]
+                  "required": [
+                    "error"
+                  ]
                 }
               }
             }

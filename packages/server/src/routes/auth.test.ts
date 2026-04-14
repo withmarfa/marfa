@@ -119,3 +119,95 @@ describe("key management", () => {
     expect(revokeRes.status).toBe(200);
   });
 });
+
+describe("extension_permissions wiring", () => {
+  it("persists and surfaces extension_permissions on POST /keys and GET /keys", async () => {
+    const createRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "ext-write-key",
+        source: "ext-write-key-src",
+        role: "member",
+        type_permissions: { "*": "write" },
+        extension_permissions: { "swift.calendar": "write" },
+      },
+    });
+    expect(createRes.status).toBe(201);
+    const created = (await createRes.json()) as {
+      id: string;
+      extension_permissions: Record<string, string>;
+    };
+    expect(created.extension_permissions).toEqual({
+      "swift.calendar": "write",
+    });
+
+    const listRes = await request(ctx.app, "GET", "/keys", {
+      key: ctx.adminKey,
+    });
+    const list = (await listRes.json()) as {
+      keys: { id: string; extension_permissions?: Record<string, string> }[];
+    };
+    const found = list.keys.find((k) => k.id === created.id);
+    expect(found?.extension_permissions).toEqual({ "swift.calendar": "write" });
+  });
+
+  it("auth middleware copies extension_permissions onto the request context", async () => {
+    // Create a non-admin key with explicit grant on a namespace that doesn't
+    // match its label. Without the wiring this would fall through to the
+    // implicit own-namespace rule and 403 on the non-matching namespace.
+    const createKeyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "myapp",
+        source: "myapp-grant-src",
+        role: "member",
+        type_permissions: { "*": "write" },
+        extension_permissions: { "other-app.notes": "write" },
+      },
+    });
+    const { key: rawKey } = (await createKeyRes.json()) as { key: string };
+
+    const itemRes = await request(ctx.app, "POST", "/items", {
+      key: rawKey,
+      body: { type: "core.note", properties: { body: "Ext write target" } },
+    });
+    const { item } = (await itemRes.json()) as { item: { id: string } };
+
+    const putRes = await request(
+      ctx.app,
+      "PUT",
+      `/items/${item.id}/extensions/other-app.notes`,
+      { key: rawKey, body: { stored: true } },
+    );
+    expect(putRes.status).toBe(200);
+  });
+
+  it("falls through to implicit own-namespace write when extension_permissions is empty", async () => {
+    // Regression guard: the wiring change must not break the
+    // "key writes its own namespace" implicit rule for keys with no grants.
+    const createKeyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "selfns",
+        source: "selfns-src",
+        role: "member",
+        type_permissions: { "*": "write" },
+      },
+    });
+    const { key: rawKey } = (await createKeyRes.json()) as { key: string };
+
+    const itemRes = await request(ctx.app, "POST", "/items", {
+      key: rawKey,
+      body: { type: "core.note", properties: { body: "Self ns target" } },
+    });
+    const { item } = (await itemRes.json()) as { item: { id: string } };
+
+    const putRes = await request(
+      ctx.app,
+      "PUT",
+      `/items/${item.id}/extensions/selfns`,
+      { key: rawKey, body: { ok: true } },
+    );
+    expect(putRes.status).toBe(200);
+  });
+});

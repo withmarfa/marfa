@@ -36,6 +36,7 @@ const ItemSchema = z.object({
   state: z.string(),
   library: z.boolean(),
   version: z.number(),
+  schema_version: z.number().int(),
   thread_id: z.string().nullable(),
   parent_id: z.string().nullable(),
   source: z.string().optional(),

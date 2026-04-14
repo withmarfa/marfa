@@ -30,6 +30,31 @@ jobs:
             exit 1
           fi
 
+  openapi-freshness:
+    name: OpenAPI spec freshness
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      # Build first — the generator script imports through @mymehq/shared,
+      # which needs its dist/ before tsx can resolve it.
+      - run: pnpm build
+      - name: Regenerate and check for drift
+        run: |
+          pnpm --silent --filter @mymehq/server generate:openapi > openapi.json
+          if ! git diff --exit-code openapi.json; then
+            echo "openapi.json is out of date. Run 'pnpm --silent --filter @mymehq/server generate:openapi > openapi.json' and commit."
+            exit 1
+          fi
+
   ci-sqlite:
     name: CI (SQLite)
     runs-on: ubuntu-latest

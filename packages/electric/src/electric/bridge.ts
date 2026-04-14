@@ -173,7 +173,7 @@ function coerceItem(row: Row): Item {
     source_id: optStr(row.source_id),
     origin: optStr(row.origin) as Item["origin"],
     version: num(row.version, 1),
-    schema_version: optNum(row.schema_version),
+    schema_version: optNum(row.schema_version) ?? 1,
     device: optStr(row.device),
     parent_id: optStr(row.parent_id) ?? null,
     thread_id: optStr(row.thread_id) ?? null,

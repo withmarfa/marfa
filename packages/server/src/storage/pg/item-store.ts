@@ -120,6 +120,8 @@ export class PgItemStore implements ItemStore {
         }
       }
 
+      const schemaVersion = getTypeSchema(input.type)?.version ?? 1;
+
       await tx.insert(items).values({
         id,
         tenant_id: tenantId,
@@ -134,6 +136,7 @@ export class PgItemStore implements ItemStore {
         source_id: input.source_id,
         origin: input.origin,
         version: 1,
+        schema_version: schemaVersion,
         device: input.device,
         parent_id: input.parent_id,
         thread_id: input.thread_id,
@@ -166,6 +169,7 @@ export class PgItemStore implements ItemStore {
         updated_at: now,
         timestamp: input.timestamp ?? now,
         version: 1,
+        schema_version: schemaVersion,
         ...(input.source != null && { source: input.source }),
         ...(input.source_id != null && { source_id: input.source_id }),
         ...(input.origin != null && { origin: input.origin }),

@@ -92,6 +92,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         default_origin: "user",
         default_library: false,
         type_permissions: typePermissions,
+        extension_permissions: {},
         created_at: oauthToken.created_at,
         last_used_at: null,
       });
@@ -119,6 +120,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         default_origin: stored.default_origin,
         default_library: stored.default_library,
         type_permissions: stored.type_permissions,
+        extension_permissions: stored.extension_permissions,
         created_at: stored.created_at,
         last_used_at: stored.last_used_at,
       });

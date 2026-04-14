@@ -4,6 +4,7 @@ import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
 import type {
   ApiKey,
   CreateKeyInput,
+  ExtensionPermission,
   Origin,
   TypePermission,
 } from "@mymehq/shared";
@@ -24,6 +25,11 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
       row.type_permissions,
       {},
       "key type_permissions",
+    ),
+    extension_permissions: safeJsonParse<Record<string, ExtensionPermission>>(
+      row.extension_permissions,
+      {},
+      "key extension_permissions",
     ),
     created_at: row.created_at,
     last_used_at: row.last_used_at ?? null,
@@ -70,6 +76,7 @@ export class SqliteKeyStore implements KeyStore {
       default_origin: input.default_origin ?? "user",
       default_library: input.default_library ?? false,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
+      extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
       created_at: now,
     };
     this.db.insert(apiKeys).values(row).run();
@@ -82,6 +89,7 @@ export class SqliteKeyStore implements KeyStore {
       default_origin: row.default_origin,
       default_library: row.default_library,
       type_permissions: input.type_permissions ?? {},
+      extension_permissions: input.extension_permissions ?? {},
       created_at: now,
       last_used_at: null,
     });
