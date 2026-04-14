@@ -590,6 +590,263 @@ describe("Edge hydration on item reads", () => {
   });
 });
 
+describe("event_log accepts item_id=null for edge rows", () => {
+  it("append({item_id: null, edge_id: <id>}) round-trips as null/id", async () => {
+    // Exercise the persistence layer directly — the test-utils bootstrap
+    // doesn't call initEventLog() so publishEdge() won't persist at the
+    // HTTP layer during tests. What we care about here is the column
+    // nullability (Q10 fix): item_id can be null, edge_id is set, and
+    // getAfter returns them as null / <id> respectively.
+    const id = await ctx.storage.eventLog.append({
+      event_type: "edge_created",
+      item_id: null,
+      edge_id: "019d0000-0000-7000-a000-000000000abc",
+      tenant_id: undefined,
+      payload: JSON.stringify({ type: "edge.created", edge: { id: "x" } }),
+    });
+    expect(id).toBeGreaterThan(0);
+    const batch = await ctx.storage.eventLog.getAfter(id - 1, 10);
+    const mine = batch.find((e) => e.id === id);
+    expect(mine).toBeDefined();
+    expect(mine?.item_id).toBeNull();
+    expect(mine?.edge_id).toBe("019d0000-0000-7000-a000-000000000abc");
+  });
+});
+
+describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => {
+  it("replaces edges of mentioned types, preserves other types", async () => {
+    const source = await createItem();
+    const aboutTarget1 = await createItem();
+    const aboutTarget2 = await createItem();
+    const derivedTarget = await createItem();
+
+    // Seed: source has about->aboutTarget1 and derived-from->derivedTarget
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        source_id: source,
+        target_id: aboutTarget1,
+        edge_type: "about",
+      },
+    });
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        source_id: source,
+        target_id: derivedTarget,
+        edge_type: "derived-from",
+      },
+    });
+
+    // PATCH replaces `about` with [aboutTarget2], leaves derived-from alone.
+    const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
+      key: ctx.adminKey,
+      body: { edges: { about: [aboutTarget2] } },
+    });
+    expect(patch.status).toBe(200);
+
+    const out = await request(ctx.app, "GET", `/items/${source}/edges`, {
+      key: ctx.adminKey,
+    });
+    const data = (await out.json()) as {
+      data: { edge_type: string; target_id: string }[];
+    };
+    const aboutEdges = data.data.filter((e) => e.edge_type === "about");
+    const derivedEdges = data.data.filter((e) => e.edge_type === "derived-from");
+    expect(aboutEdges.length).toBe(1);
+    expect(aboutEdges[0]?.target_id).toBe(aboutTarget2);
+    expect(derivedEdges.length).toBe(1);
+    expect(derivedEdges[0]?.target_id).toBe(derivedTarget);
+  });
+
+  it("empty array deletes all edges of that type", async () => {
+    const source = await createItem();
+    const t1 = await createItem();
+    const t2 = await createItem();
+    for (const target of [t1, t2]) {
+      await request(ctx.app, "POST", "/edges", {
+        key: ctx.adminKey,
+        body: { source_id: source, target_id: target, edge_type: "about" },
+      });
+    }
+    const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
+      key: ctx.adminKey,
+      body: { edges: { about: [] } },
+    });
+    expect(patch.status).toBe(200);
+
+    const out = await request(ctx.app, "GET", `/items/${source}/edges`, {
+      key: ctx.adminKey,
+    });
+    const data = (await out.json()) as { data: unknown[] };
+    expect(data.data.length).toBe(0);
+  });
+
+  it("rolls back the whole PATCH on any invalid target", async () => {
+    const source = await createItem();
+    const preexistingTarget = await createItem();
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        source_id: source,
+        target_id: preexistingTarget,
+        edge_type: "about",
+      },
+    });
+    const goodTarget = await createItem();
+    const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
+      key: ctx.adminKey,
+      body: {
+        edges: {
+          about: [goodTarget, "019d0000-0000-7000-a000-000000000000"],
+        },
+      },
+    });
+    expect(patch.status).toBe(404);
+
+    // Rollback: preexisting edge survives, good target was NOT added.
+    const out = await request(ctx.app, "GET", `/items/${source}/edges`, {
+      key: ctx.adminKey,
+    });
+    const data = (await out.json()) as {
+      data: { target_id: string }[];
+    };
+    expect(data.data.length).toBe(1);
+    expect(data.data[0]?.target_id).toBe(preexistingTarget);
+  });
+
+  it("rejects PATCH with neither properties nor edges", async () => {
+    const source = await createItem();
+    const patch = await request(ctx.app, "PATCH", `/items/${source}`, {
+      key: ctx.adminKey,
+      body: {},
+    });
+    expect(patch.status).toBe(400);
+  });
+
+  it("PATCH edges gates by edge-type permission for non-admin keys", async () => {
+    const keyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "patch-edge-denied",
+        source: `patch-edge-denied-${String(Math.random())}`,
+        role: "member",
+        default_library: true,
+        type_permissions: { "*": "write" },
+        edge_permissions: {}, // explicitly denies edges
+      },
+    });
+    const memberKey = (await keyRes.json() as { key: string }).key;
+
+    const source = await createItem();
+    const target = await createItem();
+    const res = await request(ctx.app, "PATCH", `/items/${source}`, {
+      key: memberKey,
+      body: { edges: { about: [target] } },
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("Edge permission matrix (admin / type-only / edge-only / both / neither)", () => {
+  async function mkKey(
+    typePerms: Record<string, "read" | "write" | "none"> | undefined,
+    edgePerms: Record<string, "read" | "write"> | undefined,
+    role: "admin" | "member" = "member",
+  ): Promise<string> {
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: `matrix-${String(Math.random())}`,
+        source: `matrix-${String(Math.random())}`,
+        role,
+        default_library: true,
+        ...(typePerms && { type_permissions: typePerms }),
+        ...(edgePerms && { edge_permissions: edgePerms }),
+      },
+    });
+    return (await res.json() as { key: string }).key;
+  }
+
+  it("admin passes create + update + delete without permissions", async () => {
+    // ctx.adminKey is already admin; demonstrate end-to-end.
+    const a = await createItem();
+    const b = await createItem();
+    const create = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: a, target_id: b, edge_type: "about" },
+    });
+    expect(create.status).toBe(201);
+    const id = (await create.json() as { edge: { id: string } }).edge.id;
+    const patch = await request(ctx.app, "PATCH", `/edges/${id}`, {
+      key: ctx.adminKey,
+      body: { properties: { note: "admin" } },
+    });
+    expect(patch.status).toBe(200);
+    const del = await request(ctx.app, "DELETE", `/edges/${id}`, {
+      key: ctx.adminKey,
+    });
+    expect(del.status).toBe(200);
+  });
+
+  it("type-only member denies edge create (FORBIDDEN)", async () => {
+    const key = await mkKey({ "*": "write" }, {});
+    const a = await createItem();
+    const b = await createItem();
+    const res = await request(ctx.app, "POST", "/edges", {
+      key,
+      body: { source_id: a, target_id: b, edge_type: "about" },
+    });
+    expect(res.status).toBe(403);
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("edge_permission_denied");
+  });
+
+  it("edge-only member denies edge create (source-type gate fails)", async () => {
+    const key = await mkKey({}, { "*": "write" });
+    const a = await createItem();
+    const b = await createItem();
+    const res = await request(ctx.app, "POST", "/edges", {
+      key,
+      body: { source_id: a, target_id: b, edge_type: "about" },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("both-granted member succeeds on create", async () => {
+    const key = await mkKey({ "*": "write" }, { "*": "write" });
+    const a = await createItem();
+    const b = await createItem();
+    const res = await request(ctx.app, "POST", "/edges", {
+      key,
+      body: { source_id: a, target_id: b, edge_type: "about" },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("neither-granted member is rejected", async () => {
+    const key = await mkKey({}, {});
+    const a = await createItem();
+    const b = await createItem();
+    const res = await request(ctx.app, "POST", "/edges", {
+      key,
+      body: { source_id: a, target_id: b, edge_type: "about" },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("type-only member succeeds on read listings (edges read uses no gate today)", async () => {
+    // Reads follow the item-type read permission; edges hydrated on
+    // outbound list don't add a second gate.
+    const key = await mkKey({ "*": "read" }, {});
+    const a = await createItem();
+    const res = await request(ctx.app, "GET", `/items/${a}/edges`, {
+      key,
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("Cascade-on-delete for parent-of", () => {
   it("soft-deleting a parent cascades to its children", async () => {
     const parent = await createItem();
