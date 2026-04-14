@@ -831,7 +831,26 @@ export function itemRoutes(storage: Storage) {
       ? tagsParam.split(",").map((t) => t.trim())
       : undefined;
 
-    const filter = query.filter ?? undefined;
+    // URL shorthand: `?edge[X]=Y` (outbound) and `?backref[X]=Y` (inbound)
+    // get translated into filter clauses and AND-composed with any existing
+    // `filter=` param. Multiple shorthand params are joined with AND — the
+    // parser rejects mixing AND and OR in a single expression, so any existing
+    // OR in `filter=` disqualifies the shorthand; document as a known limit.
+    const rawQuery = new URL(c.req.raw.url).searchParams;
+    const edgeClauses: string[] = [];
+    const shorthandRe = /^(edge|backref)\[([^\]]+)\]$/;
+    for (const [key, val] of rawQuery.entries()) {
+      // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec -- using String#match for boolean shape check; no captures needed
+      if (key.match(shorthandRe) && val) {
+        edgeClauses.push(`${key} eq "${val.replace(/"/g, '\\"')}"`);
+      }
+    }
+    let filter = query.filter ?? undefined;
+    if (edgeClauses.length > 0) {
+      filter = filter
+        ? `${filter} AND ${edgeClauses.join(" AND ")}`
+        : edgeClauses.join(" AND ");
+    }
     const rootOnly = query.root_only === "true";
     // Read library from the raw query string. zod-openapi's query
     // validation occasionally drops boolean-as-string enums (a quirk

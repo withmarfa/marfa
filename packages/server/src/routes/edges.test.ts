@@ -385,6 +385,52 @@ describe("Atomic POST /items with edges", () => {
   });
 });
 
+describe("Query-language: edge[X]=Y and backref[X]=Y", () => {
+  it("filters items by outbound edge via ?edge[X]=Y", async () => {
+    const target = await createItem();
+    const a = await createItem();
+    const b = await createItem();
+    // a → about → target; b unrelated.
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: a, target_id: target, edge_type: "about" },
+    });
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&limit=200&edge[about]=${target}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { data: { id: string }[] };
+    const ids = data.data.map((d) => d.id);
+    expect(ids).toContain(a);
+    expect(ids).not.toContain(b);
+  });
+
+  it("filters items by inbound edge via ?backref[X]=Y", async () => {
+    const source = await createItem();
+    const a = await createItem();
+    const b = await createItem();
+    // source → about → a. Looking up `backref[about]=source` returns a.
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: source, target_id: a, edge_type: "about" },
+    });
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&limit=200&backref[about]=${source}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { data: { id: string }[] };
+    const ids = data.data.map((d) => d.id);
+    expect(ids).toContain(a);
+    expect(ids).not.toContain(b);
+  });
+});
+
 describe("Edge hydration on item reads", () => {
   it("hydrates outbound edges on GET /items/:id", async () => {
     const source = await createItem();

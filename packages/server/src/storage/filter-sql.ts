@@ -93,8 +93,91 @@ function conditionToSql(
     return propertyFieldSql(table.properties, field.path, op, value, dialect);
   }
 
+  if (field.kind === "edge") {
+    return edgeFieldSql(
+      table.id,
+      field.edge_type,
+      field.direction,
+      op,
+      value,
+    );
+  }
+
   // tags
   return tagsFieldSql(table.id, op, value, dialect);
+}
+
+/**
+ * Edge-membership filter. Direction = "outbound" → item is the source of an
+ * edge of the given type pointing to `value` (or any edge with exists op).
+ * Direction = "backref" → item is the target of such an edge.
+ */
+function edgeFieldSql(
+  idCol: unknown,
+  edgeType: string,
+  direction: "outbound" | "backref",
+  op: ComparisonOp,
+  value: unknown,
+): SQL {
+  if (direction === "outbound") {
+    switch (op) {
+      case "eq":
+        return sql`EXISTS (
+          SELECT 1 FROM edges e
+          WHERE e.source_id = ${idCol}
+            AND e.edge_type = ${edgeType}
+            AND e.target_id = ${value}
+        )`;
+      case "neq":
+        return sql`NOT EXISTS (
+          SELECT 1 FROM edges e
+          WHERE e.source_id = ${idCol}
+            AND e.edge_type = ${edgeType}
+            AND e.target_id = ${value}
+        )`;
+      case "exists":
+        return sql`EXISTS (
+          SELECT 1 FROM edges e
+          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}
+        )`;
+      case "not_exists":
+        return sql`NOT EXISTS (
+          SELECT 1 FROM edges e
+          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}
+        )`;
+      default:
+        throw new Error(`Unsupported operator "${op}" for edge reference`);
+    }
+  }
+  // backref
+  switch (op) {
+    case "eq":
+      return sql`EXISTS (
+        SELECT 1 FROM edges e
+        WHERE e.target_id = ${idCol}
+          AND e.edge_type = ${edgeType}
+          AND e.source_id = ${value}
+      )`;
+    case "neq":
+      return sql`NOT EXISTS (
+        SELECT 1 FROM edges e
+        WHERE e.target_id = ${idCol}
+          AND e.edge_type = ${edgeType}
+          AND e.source_id = ${value}
+      )`;
+    case "exists":
+      return sql`EXISTS (
+        SELECT 1 FROM edges e
+        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}
+      )`;
+    case "not_exists":
+      return sql`NOT EXISTS (
+        SELECT 1 FROM edges e
+        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}
+      )`;
+    default:
+      throw new Error(`Unsupported operator "${op}" for edge reference`);
+  }
 }
 
 /** better-sqlite3 cannot bind booleans natively (the column is INTEGER
@@ -295,8 +378,59 @@ function conditionToRawSql(
     );
   }
 
+  if (field.kind === "edge") {
+    return edgeFieldRawSql(
+      tableAlias,
+      field.edge_type,
+      field.direction,
+      op,
+      value,
+      dialect,
+      params,
+      paramIdx,
+    );
+  }
+
   // tags
   return tagsFieldRawSql(tableAlias, op, value, dialect, params, paramIdx);
+}
+
+function edgeFieldRawSql(
+  alias: string,
+  edgeType: string,
+  direction: "outbound" | "backref",
+  op: ComparisonOp,
+  value: unknown,
+  dialect: SqlDialect,
+  params: unknown[],
+  idx: number,
+): { fragment: string; paramIdx: number } {
+  const idColumn = direction === "outbound" ? "e.source_id" : "e.target_id";
+  const otherColumn = direction === "outbound" ? "e.target_id" : "e.source_id";
+
+  if (op === "exists" || op === "not_exists") {
+    const typePh = placeholder(dialect, idx);
+    params.push(edgeType);
+    const prefix = op === "exists" ? "EXISTS" : "NOT EXISTS";
+    return {
+      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh})`,
+      paramIdx: idx + 1,
+    };
+  }
+
+  if (op === "eq" || op === "neq") {
+    const typePh = placeholder(dialect, idx);
+    params.push(edgeType);
+    const valPh = placeholder(dialect, idx + 1);
+    params.push(value);
+    const prefix = op === "eq" ? "EXISTS" : "NOT EXISTS";
+    return {
+      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh} AND ${otherColumn} = ${valPh})`,
+      paramIdx: idx + 2,
+    };
+  }
+
+  throw new Error(`Unsupported operator "${op}" for edge reference in raw SQL`);
 }
 
 function placeholder(dialect: SqlDialect, idx: number): string {
