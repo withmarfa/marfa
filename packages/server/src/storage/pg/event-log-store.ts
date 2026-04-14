@@ -9,6 +9,7 @@ export class PgEventLogStore implements EventLogStore {
   async append(entry: {
     event_type: string;
     item_id: string;
+    edge_id?: string;
     tenant_id?: string;
     payload: string;
   }): Promise<number> {
@@ -17,6 +18,7 @@ export class PgEventLogStore implements EventLogStore {
       .values({
         event_type: entry.event_type,
         item_id: entry.item_id,
+        edge_id: entry.edge_id ?? null,
         tenant_id: entry.tenant_id ?? null,
         payload: entry.payload,
         created_at: new Date().toISOString(),
@@ -47,6 +49,7 @@ export class PgEventLogStore implements EventLogStore {
       id: row.id,
       event_type: row.event_type,
       item_id: row.item_id,
+      edge_id: row.edge_id,
       tenant_id: row.tenant_id,
       payload: row.payload,
       created_at: row.created_at,

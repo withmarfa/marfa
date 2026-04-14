@@ -5,12 +5,20 @@ import type {
   WebhookStore,
   WebhookDeliveryStore,
 } from "../storage/interface.js";
-import { subscribe, type ItemEvent } from "../pubsub.js";
+import {
+  subscribe,
+  subscribeEdges,
+  wireEventName,
+  type EdgeEvent,
+  type ItemEvent,
+} from "../pubsub.js";
 import { log } from "../middleware/logger.js";
 
-/** Maps pubsub event types to webhook event names. */
-function toWebhookEvent(type: ItemEvent["type"]): string {
-  return `item.${type}`;
+/** Maps pubsub event types to webhook event names. Single entry point so
+ *  the wire strings (item.*, metadata.changed, edge.*) stay consistent
+ *  with SSE and the webhook VALID_EVENTS set. */
+function toWebhookEvent(type: ItemEvent["type"] | EdgeEvent["type"]): string {
+  return wireEventName(type);
 }
 
 /** Signs a payload with HMAC-SHA256 using the webhook secret. */
@@ -44,20 +52,77 @@ export class WebhookConsumer {
   }
 
   private async consume(): Promise<void> {
+    const itemLoop = (async () => {
+      try {
+        for await (const event of subscribe()) {
+          if (!this.running) break;
+          void this.dispatch(event);
+        }
+      } catch (err) {
+        if (this.running) {
+          log("error", "Webhook item consumer error", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    })();
+
+    const edgeLoop = (async () => {
+      try {
+        for await (const event of subscribeEdges()) {
+          if (!this.running) break;
+          void this.dispatchEdge(event);
+        }
+      } catch (err) {
+        if (this.running) {
+          log("error", "Webhook edge consumer error", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    })();
+
+    await Promise.allSettled([itemLoop, edgeLoop]);
+  }
+
+  private async dispatchEdge(event: EdgeEvent): Promise<void> {
+    let webhooks: Webhook[];
     try {
-      for await (const event of subscribe()) {
-        if (!this.running) break;
-        // Fire-and-forget delivery — don't block the event loop
-        void this.dispatch(event);
-      }
+      webhooks = await this.webhookStore.listActive();
     } catch (err) {
-      // AbortError on shutdown is expected
-      if (this.running) {
-        log("error", "Webhook consumer error", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      log("error", "Failed to load active webhooks", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
     }
+
+    const eventName = toWebhookEvent(event.type);
+    const matching = webhooks.filter((w) => {
+      if (!w.events.includes(eventName)) return false;
+      if (w.tenant_id && event.tenantId && w.tenant_id !== event.tenantId)
+        return false;
+      // Edge events don't carry an item type; any type_filter skips them.
+      if (w.type_filter) return false;
+      return true;
+    });
+    if (matching.length === 0) return;
+    const payload = JSON.stringify({
+      event: eventName,
+      edge: event.edge,
+      delivered_at: new Date().toISOString(),
+    });
+    await Promise.allSettled(
+      matching.map((w) =>
+        this.deliveryStore.schedule({
+          webhookId: w.id,
+          event: eventName,
+          payload,
+          webhookUrl: w.url,
+          webhookSecret: w.secret,
+          nextAttemptAt: new Date().toISOString(),
+        }),
+      ),
+    );
   }
 
   private async dispatch(event: ItemEvent): Promise<void> {

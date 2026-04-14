@@ -211,11 +211,13 @@ CREATE TABLE IF NOT EXISTS event_log (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   event_type TEXT NOT NULL,
   item_id TEXT NOT NULL,
+  edge_id TEXT,
   tenant_id TEXT,
   payload TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_event_log_edge_id ON event_log(edge_id);
 `;
 
 export async function createConnection(connectionString: string): Promise<{

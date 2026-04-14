@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { matchesTypePattern } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, computeTypeFilter } from "../middleware/auth.js";
-import { subscribe } from "../pubsub.js";
-import type { ItemEventWithId } from "../pubsub.js";
+import { subscribe, subscribeEdges, wireEventName } from "../pubsub.js";
+import type { EdgeEventWithId, ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 
 const KEEPALIVE_INTERVAL_MS = 30_000;
@@ -55,15 +55,6 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
         const events = subscribe({ typeFilter: typeParam, tenantId });
         const reader = events[Symbol.asyncIterator]();
 
-        // Map ItemEvent.type to the V0 spec wire string. Most event types
-        // are namespaced as `item.<type>` (item.created, item.updated,
-        // item.state_changed, …); metadata_changed is the exception per
-        // V0 spec — it surfaces as the bare `metadata.changed` because it
-        // describes a metadata-layer change rather than an item-level
-        // mutation.
-        const wireEventName = (type: ItemEventWithId["type"]): string =>
-          type === "metadata_changed" ? "metadata.changed" : `item.${type}`;
-
         const sendEvent = (
           eventId: number | undefined,
           event: ItemEventWithId,
@@ -89,7 +80,25 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
           );
         };
 
-        // Pump live events — either buffer during replay or send directly
+        // Edge events don't carry an item type; the type filter (/events?type=)
+        // applies to item events only. Edge events flow through unconditionally
+        // for subscribers in the same tenant.
+        const sendEdgeEvent = (
+          eventId: number | undefined,
+          event: EdgeEventWithId,
+        ) => {
+          if (typeParam) return;
+          const wireType = wireEventName(event.type);
+          const sseData = { type: wireType, edge: event.edge };
+          const idField =
+            eventId !== undefined ? `id: ${String(eventId)}\n` : "";
+          send(
+            `${idField}event: ${wireType}\ndata: ${JSON.stringify(sseData)}\n\n`,
+          );
+        };
+
+        // Pump live item events — either buffer during replay or send directly
+        const liveEdgeBuffer: EdgeEventWithId[] = [];
         const pump = () => {
           reader
             .next()
@@ -115,6 +124,27 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
 
         pump();
 
+        // Pump live edge events on a separate loop; replay pulls them from
+        // the same event_log so buffering semantics mirror the item path.
+        const edgeIter = subscribeEdges({ tenantId })[Symbol.asyncIterator]();
+        const pumpEdges = () => {
+          edgeIter
+            .next()
+            .then(({ value: event, done }) => {
+              if (done || state.closed) return;
+              if (replaying) {
+                liveEdgeBuffer.push(event);
+              } else {
+                sendEdgeEvent(event.eventId, event);
+              }
+              pumpEdges();
+            })
+            .catch(() => {
+              /* cleanup already handles termination */
+            });
+        };
+        pumpEdges();
+
         // Replay missed events if Last-Event-ID was provided
         if (lastEventId) {
           const afterId = parseInt(lastEventId, 10);
@@ -136,26 +166,41 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
                   for (const event of batch) {
                     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
                     if (state.closed) return;
-                    // Type filtering
-                    if (typeParam) {
+                    const isEdge = event.edge_id !== null;
+                    // Type filter (`?type=`) applies to item events only.
+                    // Edge events have no item type; skip them when the
+                    // subscriber asked for a specific item type.
+                    if (isEdge) {
+                      if (typeParam) {
+                        lastReplayedId = event.id;
+                        continue;
+                      }
+                    } else if (typeParam) {
                       const parsed = JSON.parse(event.payload) as {
                         item?: { type?: string };
                       };
-                      if (parsed.item?.type !== typeParam) continue;
+                      if (parsed.item?.type !== typeParam) {
+                        lastReplayedId = event.id;
+                        continue;
+                      }
                     }
-                    if (allowedTypes) {
+                    if (!isEdge && allowedTypes) {
                       const parsed = JSON.parse(event.payload) as {
                         item?: { type?: string };
                       };
                       if (
                         parsed.item?.type &&
                         !matchesTypePattern(parsed.item.type, allowedTypes)
-                      )
+                      ) {
+                        lastReplayedId = event.id;
                         continue;
+                      }
                     }
 
                     const replayWireType = wireEventName(
-                      event.event_type as ItemEventWithId["type"],
+                      event.event_type as
+                        | ItemEventWithId["type"]
+                        | EdgeEventWithId["type"],
                     );
                     send(
                       `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${event.payload}\n\n`,
@@ -178,10 +223,21 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
                   sendEvent(event.eventId, event);
                 }
                 liveBuffer.length = 0;
+                for (const event of liveEdgeBuffer) {
+                  if (state.closed) return;
+                  if (
+                    event.eventId !== undefined &&
+                    event.eventId <= lastReplayedId
+                  )
+                    continue;
+                  sendEdgeEvent(event.eventId, event);
+                }
+                liveEdgeBuffer.length = 0;
               } catch {
                 // Replay failed — switch to live-only mode
                 replaying = false;
                 liveBuffer.length = 0;
+                liveEdgeBuffer.length = 0;
               }
             })();
           } else {
@@ -193,6 +249,7 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
         c.req.raw.signal.addEventListener("abort", () => {
           cleanup();
           void reader.return(undefined);
+          void edgeIter.return(undefined);
         });
       },
     });

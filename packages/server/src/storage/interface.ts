@@ -398,6 +398,7 @@ export interface PersistedEvent {
   id: number;
   event_type: string;
   item_id: string;
+  edge_id: string | null;
   tenant_id: string | null;
   payload: string;
   created_at: string;
@@ -408,6 +409,9 @@ export interface EventLogStore {
   append(entry: {
     event_type: string;
     item_id: string;
+    /** Non-null for edge events; lets subscribers filter Last-Event-ID
+     *  replay by a specific edge in addition to by item. */
+    edge_id?: string;
     tenant_id?: string;
     payload: string;
   }): Promise<number>;

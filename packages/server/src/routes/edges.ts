@@ -13,6 +13,7 @@ import {
   OkResponseSchema,
 } from "../openapi.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
+import { publishEdge } from "../pubsub.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -195,6 +196,7 @@ export function edgeRoutes(storage: Storage) {
         tenantId,
       );
     });
+    await publishEdge({ type: "edge_created", edge, tenantId });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "edge.create",
@@ -241,6 +243,11 @@ export function edgeRoutes(storage: Storage) {
       throw new MymeError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     await storage.edges.delete(id);
+    await publishEdge({
+      type: "edge_deleted",
+      edge: existing,
+      tenantId: c.get("apiKey")?.tenant_id,
+    });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "edge.delete",

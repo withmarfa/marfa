@@ -339,9 +339,13 @@ export const eventLog = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     event_type: text("event_type").notNull(),
     item_id: text("item_id").notNull(),
+    edge_id: text("edge_id"),
     tenant_id: text("tenant_id"),
     payload: text("payload").notNull(),
     created_at: text("created_at").notNull(),
   },
-  (table) => [index("idx_event_log_created_at").on(table.created_at)],
+  (table) => [
+    index("idx_event_log_created_at").on(table.created_at),
+    index("idx_event_log_edge_id").on(table.edge_id),
+  ],
 );

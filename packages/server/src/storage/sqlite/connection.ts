@@ -248,11 +248,13 @@ export function createConnection(sqlitePath: string): {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       event_type TEXT NOT NULL,
       item_id TEXT NOT NULL,
+      edge_id TEXT,
       tenant_id TEXT,
       payload TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_event_log_edge_id ON event_log(edge_id);
   `);
 
   // Schema source of truth is the Drizzle migrations under drizzle/sqlite/.

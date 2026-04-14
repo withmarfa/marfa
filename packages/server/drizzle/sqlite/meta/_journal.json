@@ -78,6 +78,13 @@
       "when": 1777100000000,
       "tag": "0010_drop_legacy_rel_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1777200000000,
+      "tag": "0011_event_log_edge_id",
+      "breakpoints": true
     }
   ]
 }
