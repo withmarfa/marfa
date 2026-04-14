@@ -23,7 +23,7 @@ export function createSqliteStorage(
     versionSnapshotIntervalMs?: number;
     authMode?: "hosted" | "keys";
   },
-): Storage {
+): Storage & { __sqliteAll(query: string): unknown[] } {
   const { db, raw, close } = createConnection(sqlitePath);
 
   const versionStore = new SqliteVersionStore(db);
@@ -72,6 +72,10 @@ export function createSqliteStorage(
       // For async callbacks, we run without a transaction wrapper since
       // better-sqlite3 doesn't support async transactions.
       return fn();
+    },
+    /** Raw query escape hatch — used by the edge-backfill script. */
+    __sqliteAll(query: string): unknown[] {
+      return raw.prepare(query).all();
     },
     close() {
       close();

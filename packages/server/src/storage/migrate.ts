@@ -68,25 +68,52 @@ if (
       console.error("DATABASE_URL is required for Postgres migrations");
       process.exit(1);
     }
-    void runPgMigrations(url)
-      .then(() => {
+    void (async () => {
+      try {
+        await runPgMigrations(url);
         console.log("Migrations complete.");
+        await runBackfillEdges(dialect);
         process.exit(0);
-      })
-      .catch((err: unknown) => {
+      } catch (err) {
         console.error("Migration failed:", err);
         process.exit(1);
-      });
+      }
+    })();
   } else {
     const path = process.env.SQLITE_PATH ?? "./data/myme.db";
-    void runSqliteMigrations(path)
-      .then(() => {
+    void (async () => {
+      try {
+        await runSqliteMigrations(path);
         console.log("Migrations complete.");
+        await runBackfillEdges(dialect);
         process.exit(0);
-      })
-      .catch((err: unknown) => {
+      } catch (err) {
         console.error("Migration failed:", err);
         process.exit(1);
-      });
+      }
+    })();
   }
+}
+
+/**
+ * Post-migration backfill step for Wave 2 PR 4 (edges). Idempotent — safe to
+ * re-run. On a fresh DB with no legacy rows, this is a no-op.
+ */
+async function runBackfillEdges(dialect: "pg" | "sqlite"): Promise<void> {
+  const { backfillEdges } = await import("../../scripts/backfill-edges.js");
+  let storage;
+  if (dialect === "pg") {
+    const { createPgStorage } = await import("./pg/index.js");
+    storage = await createPgStorage(process.env.DATABASE_URL ?? "");
+  } else {
+    const { createSqliteStorage } = await import("./sqlite/index.js");
+    storage = createSqliteStorage(
+      process.env.SQLITE_PATH ?? "./data/myme.db",
+    );
+  }
+  const counts = await backfillEdges(storage);
+  console.log(
+    `backfill-edges: parent-of=${String(counts.parentOf)}  in-thread=${String(counts.inThread)}  about=${String(counts.about)}  skipped=${String(counts.skipped)}`,
+  );
+  await storage.close();
 }
