@@ -7,6 +7,7 @@ import {
   validateProperties,
   validateTransition,
 } from "./type-registry.js";
+import type { ItemState } from "@mymehq/types";
 
 describe("TYPE_REGISTRY", () => {
   it("contains exactly 21 core types", () => {
@@ -92,7 +93,7 @@ describe("getResolvedFields", () => {
     expect(fields).toHaveProperty("body");
     expect(fields).toHaveProperty("body.required", true);
     expect(fields).toHaveProperty("title");
-    expect(fields).toHaveProperty("format");
+    expect(fields).toHaveProperty("language");
     expect(fields).toHaveProperty("attachments");
     expect(fields).toHaveProperty("links");
   });
@@ -180,17 +181,17 @@ describe("validateProperties", () => {
   });
 
   it("validates enum values", () => {
-    const result = validateProperties("core.note", {
-      body: "Hello",
-      format: "invalid_format",
+    const result = validateProperties("core.highlight", {
+      text: "Passage",
+      color: "chartreuse",
     });
     expect(result.success).toBe(false);
   });
 
   it("accepts valid enum values", () => {
-    const result = validateProperties("core.note", {
-      body: "Hello",
-      format: "markdown",
+    const result = validateProperties("core.highlight", {
+      text: "Passage",
+      color: "yellow",
     });
     expect(result.success).toBe(true);
   });
@@ -271,18 +272,6 @@ describe("validateProperties", () => {
 });
 
 describe("validateTransition", () => {
-  it("allows new -> active", () => {
-    expect(validateTransition("core.note", "new", "active")).toBeNull();
-  });
-
-  it("allows new -> archived", () => {
-    expect(validateTransition("core.note", "new", "archived")).toBeNull();
-  });
-
-  it("allows new -> trashed", () => {
-    expect(validateTransition("core.note", "new", "trashed")).toBeNull();
-  });
-
   it("allows active -> archived", () => {
     expect(validateTransition("core.note", "active", "archived")).toBeNull();
   });
@@ -295,33 +284,44 @@ describe("validateTransition", () => {
     expect(validateTransition("core.note", "archived", "active")).toBeNull();
   });
 
+  it("allows archived -> trashed", () => {
+    expect(validateTransition("core.note", "archived", "trashed")).toBeNull();
+  });
+
   it("allows trashed -> active (restore)", () => {
     expect(validateTransition("core.note", "trashed", "active")).toBeNull();
   });
 
-  it("rejects active -> new", () => {
-    const error = validateTransition("core.note", "active", "new");
+  it("rejects trashed -> archived", () => {
+    const error = validateTransition("core.note", "trashed", "archived");
     expect(error).not.toBeNull();
   });
 
-  it("rejects archived -> new", () => {
-    const error = validateTransition("core.note", "archived", "new");
+  it("rejects active -> active (no-op)", () => {
+    const error = validateTransition("core.note", "active", "active");
     expect(error).not.toBeNull();
   });
 
   it("returns error for unknown type", () => {
-    const error = validateTransition("core.nonexistent", "new", "active");
+    const error = validateTransition("core.nonexistent", "active", "archived");
     expect(error).not.toBeNull();
   });
 
   it("returns error for invalid current state", () => {
-    const error = validateTransition("core.note", "bogus" as "new", "active");
+    const error = validateTransition(
+      "core.note",
+      "bogus" as ItemState,
+      "active",
+    );
     expect(error).not.toBeNull();
   });
 
   it("returns error for invalid target state", () => {
-    const error = validateTransition("core.note", "new", "bogus" as "active");
+    const error = validateTransition(
+      "core.note",
+      "active",
+      "bogus" as ItemState,
+    );
     expect(error).not.toBeNull();
   });
-
 });

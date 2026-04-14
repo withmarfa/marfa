@@ -12,7 +12,6 @@ const VALID_TYPES = [
 ];
 
 const VALID_FORMATS = ["url", "date", "datetime", "email", "bcp47", "iso3166"];
-const VALID_STATES = ["new", "active", "archived", "trashed"];
 
 interface FieldDef {
   type: string;
@@ -30,9 +29,6 @@ interface TypeSchema {
   version: number;
   fields: Record<string, FieldDef>;
   required: string[];
-  states: string[];
-  default_state: string;
-  transitions: Record<string, string[]>;
 }
 
 const coreDir = resolve(import.meta.dirname, "..", "core");
@@ -86,7 +82,8 @@ for (const file of files) {
     continue;
   }
 
-  // Check required top-level keys
+  // Check required top-level keys (lifecycle is metadata-layer now; schemas
+  // do not declare states/default_state/transitions).
   for (const key of [
     "id",
     "label",
@@ -94,9 +91,6 @@ for (const file of files) {
     "version",
     "fields",
     "required",
-    "states",
-    "default_state",
-    "transitions",
   ]) {
     if (!(key in schema)) {
       addError(file, `Missing required key: ${key}`);
@@ -124,41 +118,14 @@ for (const file of files) {
     addError(file, "`version` must be a positive integer");
   }
 
-  // Validate states
-  if (Array.isArray(schema.states)) {
-    for (const state of schema.states) {
-      const s = typeof state === "string" ? state : JSON.stringify(state);
-      if (!VALID_STATES.includes(s)) {
-        addError(file, `Invalid state: ${s}`);
-      }
-    }
-  }
-
-  // Validate default_state
-  if (
-    typeof schema.default_state === "string" &&
-    !VALID_STATES.includes(schema.default_state)
-  ) {
-    addError(file, `Invalid default_state: ${schema.default_state}`);
-  }
-
-  // Validate transitions
-  if (typeof schema.transitions === "object" && schema.transitions !== null) {
-    for (const [from, to] of Object.entries(
-      schema.transitions as Record<string, unknown>,
-    )) {
-      if (!VALID_STATES.includes(from)) {
-        addError(file, `Transition from invalid state: ${from}`);
-      }
-      if (Array.isArray(to)) {
-        for (const target of to) {
-          const t =
-            typeof target === "string" ? target : JSON.stringify(target);
-          if (!VALID_STATES.includes(t)) {
-            addError(file, `Transition to invalid state: ${t}`);
-          }
-        }
-      }
+  // Lifecycle lives at the metadata layer in V0 (active/archived/trashed)
+  // and is not declared per-type. Reject leftover schema-level state keys.
+  for (const legacyKey of ["states", "default_state", "transitions"]) {
+    if (legacyKey in schema) {
+      addError(
+        file,
+        `Schemas no longer declare \`${legacyKey}\`; lifecycle is universal.`,
+      );
     }
   }
 

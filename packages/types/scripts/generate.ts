@@ -24,9 +24,6 @@ interface JsonSchema {
   version: number;
   fields: Record<string, JsonField>;
   required: string[];
-  states: string[];
-  default_state: string;
-  transitions: Record<string, string[]>;
   _deferred?: boolean;
 }
 
@@ -94,9 +91,7 @@ const lines: string[] = [];
 lines.push("// Auto-generated from core/*.json — do not edit manually.");
 lines.push("// Run `pnpm --filter @mymehq/types generate` to regenerate.");
 lines.push("");
-lines.push(
-  'import type { TypeSchema, ItemState } from "../src/schema-types.js";',
-);
+lines.push('import type { TypeSchema } from "../src/schema-types.js";');
 lines.push("");
 
 // Build schema map for parent field resolution
@@ -138,13 +133,6 @@ for (const schema of schemas) {
   for (const [fieldName, fieldDef] of Object.entries(resolvedFields)) {
     const isReq = resolvedRequired.has(fieldName);
     lines.push(`    ${fieldName}: ${fieldLiteral(fieldDef, isReq)},`);
-  }
-  lines.push("  },");
-  lines.push(`  states: ${JSON.stringify(schema.states)} as ItemState[],`);
-  lines.push(`  default_state: "${schema.default_state}" as ItemState,`);
-  lines.push("  transitions: {");
-  for (const [from, to] of Object.entries(schema.transitions)) {
-    lines.push(`    ${from}: ${JSON.stringify(to)} as ItemState[],`);
   }
   lines.push("  },");
   lines.push("};");

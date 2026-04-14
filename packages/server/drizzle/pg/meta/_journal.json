@@ -8,6 +8,13 @@
       "when": 1775744578771,
       "tag": "0000_tranquil_white_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776125351075,
+      "tag": "0001_smart_living_lightning",
+      "breakpoints": true
     }
   ]
 }

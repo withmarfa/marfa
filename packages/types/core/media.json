@@ -21,11 +21,6 @@
       "description": "Web address",
       "format": "url"
     },
-    "format": {
-      "type": "enum",
-      "description": "How to interpret body",
-      "enum_values": ["plaintext", "markdown", "html"]
-    },
     "description": {
       "type": "string",
       "description": "Summary or blurb"
@@ -54,13 +49,7 @@
       "description": "Personal annotations"
     }
   },
-  "required": ["title"],
-  "states": ["new", "active", "archived", "trashed"],
-  "default_state": "new",
-  "transitions": {
-    "new": ["active", "archived", "trashed"],
-    "active": ["archived", "trashed"],
-    "archived": ["active", "trashed"],
-    "trashed": ["active"]
-  }
+  "required": [
+    "title"
+  ]
 }

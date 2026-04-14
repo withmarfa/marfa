@@ -16,11 +16,6 @@
       "type": "string",
       "description": "Detailed description"
     },
-    "format": {
-      "type": "enum",
-      "description": "How to interpret body",
-      "enum_values": ["plaintext", "markdown", "html"]
-    },
     "due_at": {
       "type": "string",
       "description": "Deadline",
@@ -43,7 +38,12 @@
     "priority": {
       "type": "enum",
       "description": "Task priority",
-      "enum_values": ["low", "medium", "high", "urgent"]
+      "enum_values": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ]
     },
     "place": {
       "type": "string",
@@ -52,7 +52,12 @@
     "precision": {
       "type": "enum",
       "description": "Temporal precision",
-      "enum_values": ["year", "month", "day", "time"]
+      "enum_values": [
+        "year",
+        "month",
+        "day",
+        "time"
+      ]
     },
     "url": {
       "type": "string",
@@ -64,13 +69,7 @@
       "description": "Personal annotations"
     }
   },
-  "required": ["title"],
-  "states": ["new", "active", "archived", "trashed"],
-  "default_state": "new",
-  "transitions": {
-    "new": ["active", "archived", "trashed"],
-    "active": ["archived", "trashed"],
-    "archived": ["active", "trashed"],
-    "trashed": ["active"]
-  }
+  "required": [
+    "title"
+  ]
 }

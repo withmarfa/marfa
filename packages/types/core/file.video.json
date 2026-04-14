@@ -35,13 +35,9 @@
       "format": "bcp47"
     }
   },
-  "required": ["width", "height", "duration"],
-  "states": ["new", "active", "archived", "trashed"],
-  "default_state": "new",
-  "transitions": {
-    "new": ["active", "archived", "trashed"],
-    "active": ["archived", "trashed"],
-    "archived": ["active", "trashed"],
-    "trashed": ["active"]
-  }
+  "required": [
+    "width",
+    "height",
+    "duration"
+  ]
 }

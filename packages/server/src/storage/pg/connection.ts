@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
   tenant_id TEXT,
   type TEXT NOT NULL,
-  state TEXT NOT NULL DEFAULT 'new',
+  state TEXT NOT NULL DEFAULT 'active',
   properties TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,

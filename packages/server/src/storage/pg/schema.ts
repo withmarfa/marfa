@@ -59,7 +59,7 @@ export const items = pgTable(
     id: text("id").primaryKey(),
     tenant_id: text("tenant_id"),
     type: text("type").notNull(),
-    state: text("state").notNull().default("new"),
+    state: text("state").notNull().default("active"),
     properties: text("properties").notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),

@@ -22,6 +22,7 @@ import {
   parseFilter,
   MymeError,
   ErrorCode,
+  SYSTEM_DEFAULT_STATE,
 } from "@mymehq/shared";
 import { filterToSqlConditions } from "../filter-sql.js";
 import type {
@@ -74,7 +75,7 @@ export class PgItemStore implements ItemStore {
     }
 
     const now = new Date().toISOString();
-    const state = input.state ?? typeSchema?.default_state ?? "new";
+    const state = input.state ?? SYSTEM_DEFAULT_STATE;
 
     return await this.db.transaction(async (tx) => {
       if (input.source && input.source_id) {

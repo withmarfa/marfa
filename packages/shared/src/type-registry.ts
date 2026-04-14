@@ -223,34 +223,50 @@ export function validateProperties(
 }
 
 // ---------------------------------------------------------------------------
-// State transition validation
+// Metadata-layer lifecycle — universal across every type
 // ---------------------------------------------------------------------------
 
+/** Default state for a newly-created item. */
+export const SYSTEM_DEFAULT_STATE: ItemState = "active";
+
+/** Allowed transitions keyed by current state. */
+export const SYSTEM_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> = {
+  active: ["archived", "trashed"],
+  archived: ["active", "trashed"],
+  trashed: ["active"],
+};
+
+const SYSTEM_STATES: ReadonlySet<ItemState> = new Set([
+  "active",
+  "archived",
+  "trashed",
+]);
+
 /**
- * Validates whether a state transition is allowed for the given type.
- * Returns null if valid, or an error message string if invalid.
+ * Validates whether a state transition is allowed. Universal — types do not
+ * declare their own state machines. The typeId argument is kept for API
+ * compatibility and to distinguish unknown-type from invalid-transition errors.
  */
 export function validateTransition(
   typeId: string,
   currentState: ItemState,
   nextState: ItemState,
 ): string | null {
-  const schema = TYPE_REGISTRY.get(typeId);
-  if (!schema) {
+  if (!TYPE_REGISTRY.has(typeId)) {
     return `Unknown type: ${typeId}`;
   }
 
-  if (!schema.states.includes(currentState)) {
-    return `Invalid current state "${currentState}" for type ${typeId}`;
+  if (!SYSTEM_STATES.has(currentState)) {
+    return `Invalid current state "${currentState}"`;
   }
 
-  if (!schema.states.includes(nextState)) {
-    return `Invalid target state "${nextState}" for type ${typeId}`;
+  if (!SYSTEM_STATES.has(nextState)) {
+    return `Invalid target state "${nextState}"`;
   }
 
-  const allowed = schema.transitions[currentState];
-  if (!allowed?.includes(nextState)) {
-    return `Transition from "${currentState}" to "${nextState}" is not allowed for type ${typeId}`;
+  const allowed = SYSTEM_TRANSITIONS[currentState];
+  if (!allowed.includes(nextState)) {
+    return `Transition from "${currentState}" to "${nextState}" is not allowed`;
   }
 
   return null;
@@ -342,60 +358,13 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     }
   }
 
-  // states (custom types can define their own states)
-  if (!Array.isArray(obj.states) || obj.states.length === 0) {
-    errors.push({ field: "states", message: "Required non-empty array" });
-  } else {
-    for (const s of obj.states) {
-      if (typeof s !== "string" || s.length === 0) {
-        errors.push({
-          field: "states",
-          message: `Invalid state "${String(s)}". Must be a non-empty string`,
-        });
-      }
-    }
-  }
-
-  // default_state
-  if (
-    typeof obj.default_state !== "string" ||
-    (Array.isArray(obj.states) &&
-      !(obj.states as string[]).includes(obj.default_state))
-  ) {
-    errors.push({
-      field: "default_state",
-      message: "Must be one of the defined states",
-    });
-  }
-
-  // transitions
-  if (typeof obj.transitions !== "object" || obj.transitions === null) {
-    errors.push({ field: "transitions", message: "Required object" });
-  } else if (Array.isArray(obj.states)) {
-    const states = obj.states as string[];
-    const transitions = obj.transitions as Record<string, unknown>;
-    for (const [from, toList] of Object.entries(transitions)) {
-      if (!states.includes(from)) {
-        errors.push({
-          field: `transitions.${from}`,
-          message: `Key "${from}" is not a valid state`,
-        });
-      }
-      if (!Array.isArray(toList)) {
-        errors.push({
-          field: `transitions.${from}`,
-          message: "Must be an array of states",
-        });
-      } else {
-        for (const to of toList) {
-          if (!states.includes(to as string)) {
-            errors.push({
-              field: `transitions.${from}`,
-              message: `Target "${String(to)}" is not a valid state`,
-            });
-          }
-        }
-      }
+  // Lifecycle is universal in V0 — reject stale state-machine declarations.
+  for (const legacyKey of ["states", "default_state", "transitions"]) {
+    if (legacyKey in obj) {
+      errors.push({
+        field: legacyKey,
+        message: `Schemas no longer declare \`${legacyKey}\`; lifecycle is universal (metadata-layer).`,
+      });
     }
   }
 
@@ -443,9 +412,6 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     label: typeof obj.label === "string" ? obj.label : undefined,
     version: typeof obj.version === "number" ? obj.version : 1,
     fields: obj.fields as Record<string, FieldDefinition>,
-    states: obj.states as ItemState[],
-    default_state: obj.default_state as ItemState,
-    transitions: obj.transitions as Record<string, ItemState[]>,
   };
   if (typeof obj.description === "string") {
     schema.description = obj.description;

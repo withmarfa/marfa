@@ -1,7 +1,7 @@
 // Auto-generated from core/*.json — do not edit manually.
 // Run `pnpm --filter @mymehq/types generate` to regenerate.
 
-import type { TypeSchema, ItemState } from "../src/schema-types.js";
+import type { TypeSchema } from "../src/schema-types.js";
 
 const coreBookmark: TypeSchema = {
   id: "core.bookmark",
@@ -12,7 +12,6 @@ const coreBookmark: TypeSchema = {
     body: { type: "string", description: "Captured text (a highlight, excerpt, or clipping)" },
     title: { type: "string", description: "Title of the saved content" },
     description: { type: "string", description: "Summary" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     source_url: { type: "url", description: "Where the content was sourced from" },
     source_title: { type: "string", description: "Title of the source" },
     author: { type: "string", description: "Who created the original content" },
@@ -20,14 +19,6 @@ const coreBookmark: TypeSchema = {
     image_url: { type: "url", description: "Preview image" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -46,14 +37,6 @@ const coreEntity: TypeSchema = {
     legal_name: { type: "string", description: "Official registered name" },
     founded: { type: "date", description: "Founding date (ISO 8601)" },
     notes: { type: "string", description: "Personal annotations" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -75,14 +58,6 @@ const coreEvent: TypeSchema = {
     status: { type: "string", description: "Recommended values: tentative, confirmed, cancelled, rescheduled" },
     notes: { type: "string", description: "Personal annotations" },
   },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
-  },
 };
 
 const coreFile: TypeSchema = {
@@ -100,14 +75,6 @@ const coreFile: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
   },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
-  },
 };
 
 const coreHighlight: TypeSchema = {
@@ -122,14 +89,6 @@ const coreHighlight: TypeSchema = {
     start_location: { type: "string", description: "Start locator, typed by locator_type" },
     end_location: { type: "string", description: "End locator, typed by locator_type" },
   },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
-  },
 };
 
 const coreMedia: TypeSchema = {
@@ -141,21 +100,12 @@ const coreMedia: TypeSchema = {
     body: { type: "string", description: "Text content or description" },
     author: { type: "string", description: "Who created the work" },
     url: { type: "url", description: "Web address" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
     published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -166,17 +116,8 @@ const coreNote: TypeSchema = {
   fields: {
     body: { type: "string", description: "The note text", required: true },
     title: { type: "string", description: "Heading or title" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -188,7 +129,6 @@ const coreTask: TypeSchema = {
     title: { type: "string", description: "What needs doing", required: true },
     description: { type: "string", description: "Brief context" },
     body: { type: "string", description: "Detailed description" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     due_at: { type: "datetime", description: "Deadline" },
     starts_at: { type: "datetime", description: "When to start" },
     completed_at: { type: "datetime", description: "When completed" },
@@ -198,14 +138,6 @@ const coreTask: TypeSchema = {
     precision: { type: "enum", description: "Temporal precision", enum_values: ["year", "month", "day", "time"] },
     url: { type: "url", description: "Related link" },
     notes: { type: "string", description: "Personal annotations" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -237,14 +169,6 @@ const coreEntityPerson: TypeSchema = {
     birthday: { type: "date", description: "Date of birth (ISO 8601)" },
     pronouns: { type: "string", description: "Pronouns" },
   },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
-  },
 };
 
 const coreEntityPlace: TypeSchema = {
@@ -273,14 +197,6 @@ const coreEntityPlace: TypeSchema = {
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters above sea level" },
   },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
-  },
 };
 
 const coreFileAudio: TypeSchema = {
@@ -299,14 +215,6 @@ const coreFileAudio: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code (for spoken content)" },
     notes: { type: "string", description: "Personal annotations" },
     duration: { type: "number", description: "Length in seconds", required: true },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -330,14 +238,6 @@ const coreFileImage: TypeSchema = {
     latitude: { type: "number", description: "Subject latitude" },
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -363,14 +263,6 @@ const coreFileVideo: TypeSchema = {
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters" },
   },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
-  },
 };
 
 const coreMediaAlbum: TypeSchema = {
@@ -383,7 +275,6 @@ const coreMediaAlbum: TypeSchema = {
     body: { type: "string", description: "Text content or description" },
     author: { type: "string", description: "Who created the work" },
     url: { type: "url", description: "Web address" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
     published_at: { type: "datetime", description: "When originally published or released" },
@@ -392,14 +283,6 @@ const coreMediaAlbum: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
     release_type: { type: "string", description: "Recommended values: album, ep, single" },
     num_tracks: { type: "integer", description: "Total track count" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -413,7 +296,6 @@ const coreMediaArticle: TypeSchema = {
     body: { type: "string", description: "The article text", required: true },
     author: { type: "string", description: "Who created the work" },
     url: { type: "url", description: "Web address" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
     published_at: { type: "datetime", description: "When originally published or released" },
@@ -422,14 +304,6 @@ const coreMediaArticle: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
     section: { type: "string", description: "Section of the publication" },
     word_count: { type: "integer", description: "Word count" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -443,7 +317,6 @@ const coreMediaBook: TypeSchema = {
     body: { type: "string", description: "Text content or description" },
     author: { type: "string", description: "Who created the work" },
     url: { type: "url", description: "Web address" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
     published_at: { type: "datetime", description: "When originally published or released" },
@@ -453,14 +326,6 @@ const coreMediaBook: TypeSchema = {
     isbn: { type: "string", description: "International Standard Book Number (ISO 2108)" },
     page_count: { type: "integer", description: "Number of pages" },
     edition: { type: "string", description: "Edition designation" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -474,7 +339,6 @@ const coreMediaFilm: TypeSchema = {
     body: { type: "string", description: "Text content or description" },
     author: { type: "string", description: "Who created the work" },
     url: { type: "url", description: "Web address" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
     published_at: { type: "datetime", description: "When originally published or released" },
@@ -484,14 +348,6 @@ const coreMediaFilm: TypeSchema = {
     duration: { type: "number", description: "Runtime in seconds" },
     director: { type: "string", description: "Primary director" },
     content_rating: { type: "string", description: "Age or content classification" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -505,7 +361,6 @@ const coreMediaPodcast: TypeSchema = {
     body: { type: "string", description: "Text content or description" },
     author: { type: "string", description: "Who created the work" },
     url: { type: "url", description: "Web address" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
     published_at: { type: "datetime", description: "When originally published or released" },
@@ -516,14 +371,6 @@ const coreMediaPodcast: TypeSchema = {
     season_number: { type: "integer", description: "Which season" },
     duration: { type: "number", description: "Episode length in seconds" },
     episode_type: { type: "string", description: "Recommended values: full, trailer, bonus" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -537,7 +384,6 @@ const coreMediaSeries: TypeSchema = {
     body: { type: "string", description: "Text content or description" },
     author: { type: "string", description: "Who created the work" },
     url: { type: "url", description: "Web address" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
     published_at: { type: "datetime", description: "When originally published or released" },
@@ -548,14 +394,6 @@ const coreMediaSeries: TypeSchema = {
     episode_count: { type: "integer", description: "Total episodes across all seasons" },
     status: { type: "string", description: "Recommended values: ongoing, ended, cancelled" },
     network: { type: "string", description: "Broadcasting network or streaming service" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -569,7 +407,6 @@ const coreMediaSong: TypeSchema = {
     body: { type: "string", description: "Text content or description" },
     author: { type: "string", description: "Who created the work" },
     url: { type: "url", description: "Web address" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
     published_at: { type: "datetime", description: "When originally published or released" },
@@ -580,14 +417,6 @@ const coreMediaSong: TypeSchema = {
     isrc: { type: "string", description: "International Standard Recording Code (ISO 3901)" },
     album: { type: "string", description: "Containing album name" },
     track_number: { type: "integer", description: "Position within the album" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 
@@ -601,7 +430,6 @@ const coreMediaTvEpisode: TypeSchema = {
     body: { type: "string", description: "Text content or description" },
     author: { type: "string", description: "Who created the work" },
     url: { type: "url", description: "Web address" },
-    format: { type: "enum", description: "How to interpret body", enum_values: ["plaintext", "markdown", "html"] },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
     published_at: { type: "datetime", description: "When originally published or released" },
@@ -612,14 +440,6 @@ const coreMediaTvEpisode: TypeSchema = {
     season_number: { type: "integer", description: "Which season" },
     duration: { type: "number", description: "Episode runtime in seconds" },
     director: { type: "string", description: "Episode director" },
-  },
-  states: ["new","active","archived","trashed"] as ItemState[],
-  default_state: "new" as ItemState,
-  transitions: {
-    new: ["active","archived","trashed"] as ItemState[],
-    active: ["archived","trashed"] as ItemState[],
-    archived: ["active","trashed"] as ItemState[],
-    trashed: ["active"] as ItemState[],
   },
 };
 

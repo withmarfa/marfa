@@ -28,7 +28,7 @@ describe("POST /items", () => {
     };
     expect(data.item.type).toBe("core.note");
     expect(data.item.version).toBe(1);
-    expect(data.item.state).toBe("new");
+    expect(data.item.state).toBe("active");
     expect(data.item).toHaveProperty("id");
     expect(data).toHaveProperty("metadata");
   });
@@ -341,7 +341,7 @@ describe("POST /items/:id/transition", () => {
       `/items/${created.item.id}/transition`,
       {
         key: ctx.adminKey,
-        body: { state: "active" },
+        body: { state: "archived" },
       },
     );
     expect(res.status).toBe(200);
@@ -349,7 +349,7 @@ describe("POST /items/:id/transition", () => {
       item: { state: string };
       metadata: unknown;
     };
-    expect(data.item.state).toBe("active");
+    expect(data.item.state).toBe("archived");
     expect(data).toHaveProperty("metadata");
   });
 
@@ -370,7 +370,7 @@ describe("POST /items/:id/transition", () => {
       `/items/${created.item.id}/transition`,
       {
         key: ctx.adminKey,
-        body: { state: "new" },
+        body: { state: "new" as unknown as "active" },
       },
     );
     expect(res.status).toBe(400);

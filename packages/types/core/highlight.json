@@ -15,12 +15,26 @@
     "color": {
       "type": "enum",
       "description": "Highlight colour",
-      "enum_values": ["yellow", "blue", "green", "pink", "orange", "purple"]
+      "enum_values": [
+        "yellow",
+        "blue",
+        "green",
+        "pink",
+        "orange",
+        "purple"
+      ]
     },
     "locator_type": {
       "type": "enum",
       "description": "How start_location / end_location are interpreted",
-      "enum_values": ["offset", "page", "time", "cfi", "order", "none"]
+      "enum_values": [
+        "offset",
+        "page",
+        "time",
+        "cfi",
+        "order",
+        "none"
+      ]
     },
     "start_location": {
       "type": "string",
@@ -31,13 +45,7 @@
       "description": "End locator, typed by locator_type"
     }
   },
-  "required": ["text"],
-  "states": ["new", "active", "archived", "trashed"],
-  "default_state": "new",
-  "transitions": {
-    "new": ["active", "archived", "trashed"],
-    "active": ["archived", "trashed"],
-    "archived": ["active", "trashed"],
-    "trashed": ["active"]
-  }
+  "required": [
+    "text"
+  ]
 }

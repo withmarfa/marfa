@@ -669,11 +669,7 @@ export function itemRoutes(storage: Storage) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid thread_id");
     }
     if (body.state) {
-      const typeSchema = getTypeSchema(type);
-      const validStates = typeSchema
-        ? (typeSchema.states as string[])
-        : (ITEM_STATES as readonly string[]);
-      if (!validStates.includes(body.state)) {
+      if (!(ITEM_STATES as readonly string[]).includes(body.state)) {
         throw new MymeError(
           ErrorCode.VALIDATION_ERROR,
           `Invalid state: ${body.state}`,

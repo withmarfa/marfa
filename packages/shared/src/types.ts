@@ -5,7 +5,6 @@ import type { ItemState } from "@mymehq/types";
 
 /** Valid item states as a readonly array, useful for validation. */
 export const ITEM_STATES: readonly ItemState[] = [
-  "new",
   "active",
   "archived",
   "trashed",

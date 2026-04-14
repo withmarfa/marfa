@@ -115,7 +115,7 @@ describe("items", () => {
     const item = await createNote();
     expect(item.type).toBe("core.note");
     expect(item.version).toBe(1);
-    expect(item.state).toBe("new");
+    expect(item.state).toBe("active");
     expect(item.id).toBeTruthy();
     expect(item.properties.title).toBe("Test note");
   });
@@ -169,8 +169,8 @@ describe("items", () => {
 
   it("transitions item state", async () => {
     const item = await createNote();
-    const active = await client.items.transition(item.id, "active");
-    expect(active.state).toBe("active");
+    const archived = await client.items.transition(item.id, "archived");
+    expect(archived.state).toBe("archived");
   });
 
   it("gets version history", async () => {
