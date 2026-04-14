@@ -174,6 +174,7 @@ export const apiKeys = sqliteTable(
     extension_permissions: text("extension_permissions")
       .notNull()
       .default("{}"),
+    edge_permissions: text("edge_permissions").notNull().default("{}"),
     created_at: text("created_at").notNull(),
     revoked_at: text("revoked_at"),
     last_used_at: text("last_used_at"),

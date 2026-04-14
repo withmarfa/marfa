@@ -154,6 +154,9 @@ export interface ItemEdgesBlock {
   next_cursor?: string;
 }
 
+/** Per-edge-type permission levels (V0 PR 4 fine-grained permissions). */
+export type EdgePermission = "read" | "write";
+
 /** An API key record (without the key value itself). */
 export interface ApiKey {
   id: string;
@@ -168,6 +171,14 @@ export interface ApiKey {
   default_library: boolean;
   type_permissions: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
+  /**
+   * Per-edge-type permissions map. Keyed by edge type id (`parent-of`,
+   * `about`, `karakeep.list-member`, …) or `*` for wildcard. Empty object
+   * means no edge permissions granted — non-admin keys with no entries
+   * cannot create/update/delete edges (reads fall back to the source
+   * item's type_permissions).
+   */
+  edge_permissions?: Record<string, EdgePermission>;
   created_at: string;
   last_used_at: string | null;
 }
@@ -181,6 +192,7 @@ export interface CreateKeyInput {
   default_library?: boolean;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
+  edge_permissions?: Record<string, EdgePermission>;
 }
 
 // ---------------------------------------------------------------------------

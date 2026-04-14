@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   default_library BOOLEAN NOT NULL DEFAULT false,
   type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
   extension_permissions TEXT NOT NULL DEFAULT '{}',
+  edge_permissions TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   revoked_at TEXT,
   last_used_at TEXT

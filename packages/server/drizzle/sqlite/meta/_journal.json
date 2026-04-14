@@ -85,6 +85,13 @@
       "when": 1777200000000,
       "tag": "0011_event_log_edge_id",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1777300000000,
+      "tag": "0012_api_keys_edge_permissions",
+      "breakpoints": true
     }
   ]
 }
