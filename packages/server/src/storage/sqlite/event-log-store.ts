@@ -11,17 +11,19 @@ export class SqliteEventLogStore implements EventLogStore {
 
   async append(entry: {
     event_type: string;
-    item_id: string;
+    item_id?: string | null;
+    edge_id?: string | null;
     tenant_id?: string;
     payload: string;
   }): Promise<number> {
     const stmt = this.raw.prepare(
-      `INSERT INTO event_log (event_type, item_id, tenant_id, payload, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO event_log (event_type, item_id, edge_id, tenant_id, payload, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     );
     const result = stmt.run(
       entry.event_type,
-      entry.item_id,
+      entry.item_id ?? null,
+      entry.edge_id ?? null,
       entry.tenant_id ?? null,
       entry.payload,
       new Date().toISOString(),
@@ -49,6 +51,7 @@ export class SqliteEventLogStore implements EventLogStore {
       id: row.id,
       event_type: row.event_type,
       item_id: row.item_id,
+      edge_id: row.edge_id,
       tenant_id: row.tenant_id,
       payload: row.payload,
       created_at: row.created_at,

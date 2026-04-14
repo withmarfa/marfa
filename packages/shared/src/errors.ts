@@ -38,6 +38,19 @@ export enum ErrorCode {
    * generic-reader contract. See `validateTypeSchema`.
    */
   INHERITANCE_VIOLATION = "inheritance_violation",
+  // ---------------------------------------------------------------------
+  // Edges (Wave 2 PR 4)
+  // ---------------------------------------------------------------------
+  /** Edge creation / update violated cardinality or type constraints. */
+  EDGE_CONSTRAINT_VIOLATION = "edge_constraint_violation",
+  /** An edge creation would close a cycle (parent-of or supersedes). */
+  EDGE_CYCLE = "edge_cycle",
+  /** The referenced edge_type is not in the core or custom registry. */
+  EDGE_TYPE_NOT_FOUND = "edge_type_not_found",
+  /** The caller lacks the required edge-type permission for this verb. */
+  EDGE_PERMISSION_DENIED = "edge_permission_denied",
+  /** The referenced edge id does not exist. */
+  EDGE_NOT_FOUND = "edge_not_found",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -72,6 +85,11 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INVALID_PROPERTIES]: 400,
   [ErrorCode.INVALID_SCHEMA]: 400,
   [ErrorCode.INHERITANCE_VIOLATION]: 400,
+  [ErrorCode.EDGE_CONSTRAINT_VIOLATION]: 400,
+  [ErrorCode.EDGE_CYCLE]: 400,
+  [ErrorCode.EDGE_TYPE_NOT_FOUND]: 404,
+  [ErrorCode.EDGE_PERMISSION_DENIED]: 403,
+  [ErrorCode.EDGE_NOT_FOUND]: 404,
 };
 
 /** Returns the HTTP status code for a given error code. */

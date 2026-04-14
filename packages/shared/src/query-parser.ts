@@ -34,7 +34,12 @@ export type LogicalOp = "AND" | "OR";
 export type FieldRef =
   | { kind: "system"; column: string }
   | { kind: "property"; path: string }
-  | { kind: "tags" };
+  | { kind: "tags" }
+  | {
+      kind: "edge";
+      edge_type: string;
+      direction: "outbound" | "backref";
+    };
 
 export interface FilterCondition {
   field: FieldRef;
@@ -92,7 +97,22 @@ const TAGS_ALLOWED_OPS = new Set<ComparisonOp>([
   "not_exists",
 ]);
 
+const EDGE_ALLOWED_OPS = new Set<ComparisonOp>([
+  "eq",
+  "neq",
+  "exists",
+  "not_exists",
+]);
+
 const PROPERTY_PATH_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+/**
+ * Edge field references take the form `edge[<type>]` (outbound) or
+ * `backref[<type>]` (inbound). The type segment is lax — it accepts the core
+ * edge-type identifiers (`parent-of`, `in-thread`, `authored-by`, etc.) and
+ * custom namespaced ones (`karakeep.list-member`).
+ */
+const EDGE_REF_RE = /^(edge|backref)\[([^\]\s]+)\]$/;
 
 // ---------------------------------------------------------------------------
 // Tokenizer
@@ -197,6 +217,24 @@ function tokenize(input: string): Token[] {
       }
     }
 
+    // Edge-ref shorthand: edge[<type>] or backref[<type>] — consumed as a
+    // single identifier token so parseFieldRef can detect the shape.
+    if (ch === "e" || ch === "b") {
+      const word = input.slice(i).split(/\s/, 1)[0] ?? "";
+      const match = EDGE_REF_RE.exec(word);
+      if (match) {
+        const raw = match[0];
+        tokens.push({
+          kind: TokenKind.Identifier,
+          value: raw,
+          raw,
+          pos: i,
+        });
+        i += raw.length;
+        continue;
+      }
+    }
+
     // Identifier (includes field paths like properties.author, operators, AND/OR, true/false/null)
     if (isAlpha(ch) || ch === "_") {
       const start = i;
@@ -258,6 +296,22 @@ function parseFieldRef(token: Token): FieldRef {
   }
 
   const name = token.value as string;
+
+  const edgeMatch = EDGE_REF_RE.exec(name);
+  if (edgeMatch) {
+    const [, kind, edgeType] = edgeMatch;
+    if (!edgeType) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        `Edge reference missing type at position ${String(token.pos)}`,
+      );
+    }
+    return {
+      kind: "edge",
+      edge_type: edgeType,
+      direction: kind === "backref" ? "backref" : "outbound",
+    };
+  }
 
   if (name === "tags") {
     return { kind: "tags" };
@@ -385,6 +439,13 @@ export function parseFilter(input: string): FilterExpression {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         `Operator "${op}" is not valid for "tags". Use: ${[...TAGS_ALLOWED_OPS].join(", ")}`,
+      );
+    }
+
+    if (field.kind === "edge" && !EDGE_ALLOWED_OPS.has(op)) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        `Operator "${op}" is not valid for edge references. Use: ${[...EDGE_ALLOWED_OPS].join(", ")}`,
       );
     }
 

@@ -36,7 +36,7 @@ import type {
 import type { ItemStore, ItemFilters } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { detectConflict } from "../conflict.js";
-import { items, metadata, threads } from "./schema.js";
+import { items, metadata } from "./schema.js";
 import type { PgDb } from "./connection.js";
 import type { PgVersionStore } from "./version-store.js";
 import type { PgSearchStore } from "./search-store.js";
@@ -97,29 +97,6 @@ export class PgItemStore implements ItemStore {
         }
       }
 
-      if (input.parent_id) {
-        const [parent] = await tx
-          .select({ id: items.id })
-          .from(items)
-          .where(eq(items.id, input.parent_id));
-        if (!parent) {
-          throw new MymeError(
-            ErrorCode.ITEM_NOT_FOUND,
-            "Parent item not found",
-          );
-        }
-      }
-
-      if (input.thread_id) {
-        const [thread] = await tx
-          .select({ id: threads.id })
-          .from(threads)
-          .where(eq(threads.id, input.thread_id));
-        if (!thread) {
-          throw new MymeError(ErrorCode.THREAD_NOT_FOUND, "Thread not found");
-        }
-      }
-
       const schemaVersion = getTypeSchema(input.type)?.version ?? 1;
 
       await tx.insert(items).values({
@@ -138,8 +115,6 @@ export class PgItemStore implements ItemStore {
         version: 1,
         schema_version: schemaVersion,
         device: input.device,
-        parent_id: input.parent_id,
-        thread_id: input.thread_id,
         capture_latitude: input.capture_latitude,
         capture_longitude: input.capture_longitude,
       });
@@ -147,17 +122,9 @@ export class PgItemStore implements ItemStore {
       await tx.insert(metadata).values({
         item_id: id,
         tags: JSON.stringify(input.tags ?? []),
-        about: JSON.stringify(input.about ?? []),
       });
 
       await this.searchStore.index(id, input.properties, input.type);
-
-      if (input.thread_id) {
-        await tx
-          .update(threads)
-          .set({ updated_at: now })
-          .where(eq(threads.id, input.thread_id));
-      }
 
       return {
         id,
@@ -174,8 +141,6 @@ export class PgItemStore implements ItemStore {
         ...(input.source_id != null && { source_id: input.source_id }),
         origin: input.origin ?? "user",
         ...(input.device != null && { device: input.device }),
-        parent_id: input.parent_id ?? null,
-        thread_id: input.thread_id ?? null,
         ...(input.capture_latitude != null && {
           capture_latitude: input.capture_latitude,
         }),
@@ -235,14 +200,24 @@ export class PgItemStore implements ItemStore {
     if (filters.tenantId)
       conditions.push(eq(items.tenant_id, filters.tenantId));
     if (filters.source) conditions.push(eq(items.source, filters.source));
-    if (filters.parent_id)
-      conditions.push(eq(items.parent_id, filters.parent_id));
-    if (filters.thread_id)
-      conditions.push(eq(items.thread_id, filters.thread_id));
 
-    // root_only: only items with no parent
+    // Legacy filters — parent_id / thread_id / root_only — now query the
+    // edges table since the columns were dropped in PR 4 commit 12.
+    if (filters.parent_id) {
+      conditions.push(
+        sql`EXISTS (SELECT 1 FROM edges e WHERE e.target_id = ${items.id} AND e.edge_type = 'parent-of' AND e.source_id = ${filters.parent_id})`,
+      );
+    }
+    if (filters.thread_id) {
+      conditions.push(
+        sql`EXISTS (SELECT 1 FROM edges e WHERE e.source_id = ${items.id} AND e.edge_type = 'in-thread' AND e.target_id = ${filters.thread_id})`,
+      );
+    }
+
     if (filters.root_only) {
-      conditions.push(sql`${items.parent_id} IS NULL`);
+      conditions.push(
+        sql`NOT EXISTS (SELECT 1 FROM edges e WHERE e.target_id = ${items.id} AND e.edge_type = 'parent-of')`,
+      );
     }
 
     if (filters.library !== undefined) {
@@ -417,12 +392,6 @@ export class PgItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
         };
-        if (input.parent_id !== undefined) {
-          setClause.parent_id = input.parent_id;
-        }
-        if (input.thread_id !== undefined) {
-          setClause.thread_id = input.thread_id;
-        }
 
         await tx
           .update(items)
@@ -437,12 +406,6 @@ export class PgItemStore implements ItemStore {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
-          ...(input.parent_id !== undefined && {
-            parent_id: input.parent_id,
-          }),
-          ...(input.thread_id !== undefined && {
-            thread_id: input.thread_id,
-          }),
         });
       }
 
@@ -505,12 +468,6 @@ export class PgItemStore implements ItemStore {
         version: newVersion,
         updated_at: now,
       };
-      if (input.parent_id !== undefined) {
-        mergeSet.parent_id = input.parent_id;
-      }
-      if (input.thread_id !== undefined) {
-        mergeSet.thread_id = input.thread_id;
-      }
 
       await tx
         .update(items)
@@ -525,12 +482,6 @@ export class PgItemStore implements ItemStore {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
-        ...(input.parent_id !== undefined && {
-          parent_id: input.parent_id,
-        }),
-        ...(input.thread_id !== undefined && {
-          thread_id: input.thread_id,
-        }),
       });
     });
   }

@@ -1,9 +1,9 @@
-import { eq, desc, or, and, lt } from "drizzle-orm";
+import { eq, desc, or, and, lt, inArray } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { Thread, PaginatedResult, Item } from "@mymehq/shared";
 import type { ThreadStore } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
-import { threads, items } from "./schema.js";
+import { threads, items, edges } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToItem } from "./helpers.js";
 
@@ -83,9 +83,19 @@ export class SqliteThreadStore implements ThreadStore {
   }
 
   async getItems(threadId: string, tenantId?: string): Promise<Item[]> {
+    // Thread membership via in-thread edges (source=member, target=thread).
+    const memberEdges = this.db
+      .select({ item_id: edges.source_id })
+      .from(edges)
+      .where(
+        and(eq(edges.target_id, threadId), eq(edges.edge_type, "in-thread")),
+      )
+      .all();
+    if (memberEdges.length === 0) return [];
+    const itemIds = memberEdges.map((e) => e.item_id);
     const where = tenantId
-      ? and(eq(items.thread_id, threadId), eq(items.tenant_id, tenantId))
-      : eq(items.thread_id, threadId);
+      ? and(inArray(items.id, itemIds), eq(items.tenant_id, tenantId))
+      : inArray(items.id, itemIds);
     const rows = this.db
       .select()
       .from(items)

@@ -187,3 +187,127 @@ mkdirSync(outDir, { recursive: true });
 const outPath = join(outDir, "type-registry.ts");
 writeFileSync(outPath, lines.join("\n") + "\n");
 console.log(`Generated ${String(schemas.length)} types -> ${outPath}`);
+
+// ---------------------------------------------------------------------------
+// Edge types
+// ---------------------------------------------------------------------------
+
+interface JsonFieldLike {
+  type: string;
+  description?: string;
+  enum_values?: string[];
+  items_type?: string;
+  format?: string;
+}
+
+interface JsonEdgeSchema {
+  id: string;
+  label?: string;
+  description?: string;
+  cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
+  source_type_constraints?: string[];
+  target_type_constraints?: string[];
+  cascade_on_delete?: "cascade" | "orphan" | "block";
+  property_schema?: Record<string, JsonFieldLike>;
+}
+
+const edgesDir = resolve(import.meta.dirname, "..", "core", "edges");
+
+function loadEdgeSchemas(): JsonEdgeSchema[] {
+  try {
+    const edgeFiles = readdirSync(edgesDir).filter((f) => f.endsWith(".json"));
+    return edgeFiles.map((f) => {
+      const raw = readFileSync(join(edgesDir, f), "utf-8");
+      return JSON.parse(raw) as JsonEdgeSchema;
+    });
+  } catch {
+    // No edges directory yet — emit empty registry.
+    return [];
+  }
+}
+
+const edgeSchemas: JsonEdgeSchema[] = loadEdgeSchemas();
+
+// Variable name: parent-of -> parentOf, in-thread -> inThread, authored-by -> authoredBy
+function edgeVarName(id: string): string {
+  return id
+    .split("-")
+    .map((s, i) => (i === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1)))
+    .join("");
+}
+
+function fieldLiteralForEdge(field: JsonFieldLike): string {
+  const effectiveType =
+    (field.format && FORMAT_TO_TYPE[field.format]) ?? field.type;
+  const parts: string[] = [`type: "${effectiveType}"`];
+  if (field.description) {
+    const escaped = field.description
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"');
+    parts.push(`description: "${escaped}"`);
+  }
+  if (field.enum_values) {
+    parts.push(
+      `enum_values: [${field.enum_values.map((v) => `"${v}"`).join(", ")}]`,
+    );
+  }
+  if (field.items_type) parts.push(`items_type: "${field.items_type}"`);
+  return `{ ${parts.join(", ")} }`;
+}
+
+const edgeLines: string[] = [];
+edgeLines.push(
+  "// Auto-generated from core/edges/*.json — do not edit manually.",
+);
+edgeLines.push("// Run `pnpm --filter @mymehq/types generate` to regenerate.");
+edgeLines.push("");
+edgeLines.push('import type { EdgeTypeSchema } from "../src/schema-types.js";');
+edgeLines.push("");
+
+for (const edge of edgeSchemas) {
+  const name = edgeVarName(edge.id);
+  edgeLines.push(`const ${name}: EdgeTypeSchema = {`);
+  edgeLines.push(`  id: "${edge.id}",`);
+  if (edge.label) edgeLines.push(`  label: "${edge.label}",`);
+  if (edge.description) {
+    const esc = edge.description.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    edgeLines.push(`  description: "${esc}",`);
+  }
+  edgeLines.push(`  cardinality: "${edge.cardinality}",`);
+  const src = edge.source_type_constraints ?? ["*"];
+  const tgt = edge.target_type_constraints ?? ["*"];
+  edgeLines.push(
+    `  source_type_constraints: [${src.map((t) => `"${t}"`).join(", ")}],`,
+  );
+  edgeLines.push(
+    `  target_type_constraints: [${tgt.map((t) => `"${t}"`).join(", ")}],`,
+  );
+  edgeLines.push(
+    `  cascade_on_delete: "${edge.cascade_on_delete ?? "orphan"}",`,
+  );
+  const propSchema = edge.property_schema ?? {};
+  if (Object.keys(propSchema).length === 0) {
+    edgeLines.push(`  property_schema: {},`);
+  } else {
+    edgeLines.push("  property_schema: {");
+    for (const [fieldName, fieldDef] of Object.entries(propSchema)) {
+      edgeLines.push(`    ${fieldName}: ${fieldLiteralForEdge(fieldDef)},`);
+    }
+    edgeLines.push("  },");
+  }
+  edgeLines.push("};");
+  edgeLines.push("");
+}
+
+edgeLines.push("export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [");
+for (const edge of edgeSchemas) {
+  edgeLines.push(`  ${edgeVarName(edge.id)},`);
+}
+edgeLines.push("];");
+edgeLines.push("");
+
+const edgeOutPath = join(outDir, "edge-type-registry.ts");
+writeFileSync(edgeOutPath, edgeLines.join("\n") + "\n");
+console.log(
+  `Generated ${String(edgeSchemas.length)} edge types -> ${edgeOutPath}`,
+);

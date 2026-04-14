@@ -72,16 +72,12 @@ export const items = sqliteTable(
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
     device: text("device"),
-    parent_id: text("parent_id"),
-    thread_id: text("thread_id").references(() => threads.id),
     capture_latitude: real("capture_latitude"),
     capture_longitude: real("capture_longitude"),
   },
   (table) => [
     index("idx_items_type").on(table.type),
     index("idx_items_state").on(table.state),
-    index("idx_items_thread_id").on(table.thread_id),
-    index("idx_items_parent_id").on(table.parent_id),
     index("idx_items_created_at").on(table.created_at),
     index("idx_items_timestamp").on(table.timestamp),
     uniqueIndex("idx_items_source_dedup")
@@ -99,9 +95,42 @@ export const metadata = sqliteTable("metadata", {
     .primaryKey()
     .references(() => items.id, { onDelete: "cascade" }),
   tags: text("tags").notNull().default("[]"),
-  about: text("about").notNull().default("[]"),
   extensions: text("extensions").notNull().default("{}"),
 });
+
+// ---------------------------------------------------------------------------
+// edges (first-class typed relationships between items)
+// ---------------------------------------------------------------------------
+
+export const edges = sqliteTable(
+  "edges",
+  {
+    id: text("id").primaryKey(),
+    tenant_id: text("tenant_id"),
+    // No FKs on source_id / target_id — see pg/schema.ts note. Most edges
+    // point between items, but in-thread edges target the threads table
+    // during the V0 legacy thread-API window. App-level checks run in
+    // assertEdgeCanBeCreated + planCascadeDelete.
+    source_id: text("source_id").notNull(),
+    target_id: text("target_id").notNull(),
+    edge_type: text("edge_type").notNull(),
+    properties: text("properties").notNull().default("{}"),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_edges_source").on(
+      table.tenant_id,
+      table.source_id,
+      table.edge_type,
+    ),
+    index("idx_edges_target").on(
+      table.tenant_id,
+      table.target_id,
+      table.edge_type,
+    ),
+  ],
+);
 
 // ---------------------------------------------------------------------------
 // versions (item property snapshots)
@@ -145,6 +174,7 @@ export const apiKeys = sqliteTable(
     extension_permissions: text("extension_permissions")
       .notNull()
       .default("{}"),
+    edge_permissions: text("edge_permissions").notNull().default("{}"),
     created_at: text("created_at").notNull(),
     revoked_at: text("revoked_at"),
     last_used_at: text("last_used_at"),
@@ -216,6 +246,14 @@ export const oauthTokens = sqliteTable(
 // ---------------------------------------------------------------------------
 
 export const customTypes = sqliteTable("custom_types", {
+  id: text("id").primaryKey(),
+  tenant_id: text("tenant_id"),
+  schema: text("schema").notNull(),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
+export const customEdgeTypes = sqliteTable("custom_edge_types", {
   id: text("id").primaryKey(),
   tenant_id: text("tenant_id"),
   schema: text("schema").notNull(),
@@ -309,10 +347,16 @@ export const eventLog = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     event_type: text("event_type").notNull(),
-    item_id: text("item_id").notNull(),
+    // Nullable — migration 0014. Edge events store edge_id only; item
+    // events store item_id only.
+    item_id: text("item_id"),
+    edge_id: text("edge_id"),
     tenant_id: text("tenant_id"),
     payload: text("payload").notNull(),
     created_at: text("created_at").notNull(),
   },
-  (table) => [index("idx_event_log_created_at").on(table.created_at)],
+  (table) => [
+    index("idx_event_log_created_at").on(table.created_at),
+    index("idx_event_log_edge_id").on(table.edge_id),
+  ],
 );

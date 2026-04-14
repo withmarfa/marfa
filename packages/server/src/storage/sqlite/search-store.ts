@@ -171,9 +171,9 @@ export class SqliteSearchStore implements SearchStore {
         bm25(items_fts) AS rank,
         i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.origin, i.version,
-        i.schema_version, i.device, i.parent_id, i.thread_id,
+        i.schema_version, i.device,
         i.capture_latitude, i.capture_longitude,
-        m.item_id AS meta_item_id, m.tags, m.about, m.extensions
+        m.item_id AS meta_item_id, m.tags, m.extensions
       FROM items_fts fts
       JOIN items i ON i.id = fts.item_id
       LEFT JOIN metadata m ON m.item_id = i.id
@@ -193,7 +193,6 @@ export class SqliteSearchStore implements SearchStore {
       metadata: rowToMetadata({
         item_id: row.id as string,
         tags: (row.tags as string | null) ?? "[]",
-        about: (row.about as string | null) ?? "[]",
         extensions: (row.extensions as string | null) ?? "{}",
       }),
       relevance_score: Math.abs(row.rank as number),

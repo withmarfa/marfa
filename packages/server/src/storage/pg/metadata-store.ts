@@ -16,8 +16,7 @@ export class PgMetadataStore implements MetadataStore {
       .where(inArray(metadata.item_id, itemIds));
     const map = new Map(rows.map((r) => [r.item_id, rowToMetadata(r)]));
     return itemIds.map(
-      (id) =>
-        map.get(id) ?? { item_id: id, tags: [], about: [], extensions: {} },
+      (id) => map.get(id) ?? { item_id: id, tags: [], extensions: {} },
     );
   }
 
@@ -27,31 +26,20 @@ export class PgMetadataStore implements MetadataStore {
       .from(metadata)
       .where(eq(metadata.item_id, itemId));
     if (!row) {
-      return { item_id: itemId, tags: [], about: [], extensions: {} };
+      return { item_id: itemId, tags: [], extensions: {} };
     }
     return rowToMetadata(row);
   }
 
-  async set(
-    itemId: string,
-    tags: string[],
-    about: string[],
-  ): Promise<Metadata> {
+  async set(itemId: string, tags: string[]): Promise<Metadata> {
     await this.db
       .update(metadata)
-      .set({
-        tags: JSON.stringify(tags),
-        about: JSON.stringify(about),
-      })
+      .set({ tags: JSON.stringify(tags) })
       .where(eq(metadata.item_id, itemId));
     return this.get(itemId);
   }
 
-  async merge(
-    itemId: string,
-    tags?: string[],
-    about?: string[],
-  ): Promise<Metadata> {
+  async merge(itemId: string, tags?: string[]): Promise<Metadata> {
     return this.db.transaction(async (tx) => {
       const [row] = await tx
         .select()
@@ -59,21 +47,15 @@ export class PgMetadataStore implements MetadataStore {
         .where(eq(metadata.item_id, itemId));
       const current: Metadata = row
         ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], about: [], extensions: {} };
+        : { item_id: itemId, tags: [], extensions: {} };
       const mergedTags = tags
         ? [...new Set([...current.tags, ...tags])]
         : current.tags;
-      const mergedAbout = about
-        ? [...new Set([...current.about, ...about])]
-        : current.about;
       await tx
         .update(metadata)
-        .set({
-          tags: JSON.stringify(mergedTags),
-          about: JSON.stringify(mergedAbout),
-        })
+        .set({ tags: JSON.stringify(mergedTags) })
         .where(eq(metadata.item_id, itemId));
-      return { ...current, tags: mergedTags, about: mergedAbout };
+      return { ...current, tags: mergedTags };
     });
   }
 
@@ -85,14 +67,11 @@ export class PgMetadataStore implements MetadataStore {
         .where(eq(metadata.item_id, itemId));
       const current: Metadata = row
         ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], about: [], extensions: {} };
+        : { item_id: itemId, tags: [], extensions: {} };
       const merged = [...new Set([...current.tags, ...tags])];
       await tx
         .update(metadata)
-        .set({
-          tags: JSON.stringify(merged),
-          about: JSON.stringify(current.about),
-        })
+        .set({ tags: JSON.stringify(merged) })
         .where(eq(metadata.item_id, itemId));
       return { ...current, tags: merged };
     });
@@ -106,14 +85,11 @@ export class PgMetadataStore implements MetadataStore {
         .where(eq(metadata.item_id, itemId));
       const current: Metadata = row
         ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], about: [], extensions: {} };
+        : { item_id: itemId, tags: [], extensions: {} };
       const filtered = current.tags.filter((t) => t !== tag);
       await tx
         .update(metadata)
-        .set({
-          tags: JSON.stringify(filtered),
-          about: JSON.stringify(current.about),
-        })
+        .set({ tags: JSON.stringify(filtered) })
         .where(eq(metadata.item_id, itemId));
       return { ...current, tags: filtered };
     });
@@ -138,7 +114,7 @@ export class PgMetadataStore implements MetadataStore {
         .where(eq(metadata.item_id, itemId));
       const current: Metadata = row
         ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], about: [], extensions: {} };
+        : { item_id: itemId, tags: [], extensions: {} };
       const extensions = { ...current.extensions, [namespace]: data };
       await tx
         .update(metadata)
@@ -159,7 +135,7 @@ export class PgMetadataStore implements MetadataStore {
         .where(eq(metadata.item_id, itemId));
       const current: Metadata = row
         ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], about: [], extensions: {} };
+        : { item_id: itemId, tags: [], extensions: {} };
       const rest = Object.fromEntries(
         Object.entries(current.extensions).filter(([k]) => k !== namespace),
       );

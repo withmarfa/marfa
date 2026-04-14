@@ -46,8 +46,6 @@ export interface Item {
   version: number;
   schema_version: number;
   device?: string;
-  parent_id: string | null;
-  thread_id: string | null;
   capture_latitude?: number;
   capture_longitude?: number;
 }
@@ -66,19 +64,14 @@ export interface CreateItemInput {
   source_id?: string;
   origin?: Origin;
   device?: string;
-  parent_id?: string;
-  thread_id?: string;
   capture_latitude?: number;
   capture_longitude?: number;
   tags?: string[];
-  about?: string[];
 }
 
 /** Input for updating an existing item. */
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
-  parent_id?: string | null;
-  thread_id?: string | null;
   version?: number;
   snapshot?: boolean;
 }
@@ -89,11 +82,12 @@ export interface ItemWithMetadata {
   metadata: Metadata;
 }
 
-/** Metadata sidecar — tags, entity references, and namespaced extensions. */
+/** Metadata sidecar — tags and namespaced extensions. About/entity
+ *  references moved to first-class edges in Wave 2 PR 4 (core edge type
+ *  `about`). Read via `item.edges.about` or `/items/:id/edges?edge_type=about`. */
 export interface Metadata {
   item_id: string;
   tags: string[];
-  about: string[];
   extensions: Record<string, Record<string, unknown>>;
 }
 
@@ -114,6 +108,55 @@ export interface Thread {
   updated_at: string;
 }
 
+// ---------------------------------------------------------------------------
+// Edges — first-class typed relationships between items
+// ---------------------------------------------------------------------------
+
+/**
+ * A typed edge between two items. Direction is spec-exact: source is the
+ * "from" side of the relationship, target is the "to" side. See
+ * Myme v0 Reference §Relationships for semantics per edge type.
+ */
+export interface Edge {
+  id: string;
+  tenant_id?: string | null;
+  source_id: string;
+  target_id: string;
+  edge_type: string;
+  properties: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Input for creating a new edge. */
+export interface CreateEdgeInput {
+  source_id: string;
+  target_id: string;
+  edge_type: string;
+  properties?: Record<string, unknown>;
+  /** Explicit id override (otherwise server-generated UUIDv7). */
+  id?: string;
+}
+
+/** Input for updating an existing edge (properties only — direction/type immutable). */
+export interface UpdateEdgeInput {
+  properties: Record<string, unknown>;
+}
+
+/**
+ * Hydrated edges block attached to an item response — one entry per edge
+ * type pointing out from (or into) this item. Truncated per-type with
+ * a pagination cursor.
+ */
+export interface ItemEdgesBlock {
+  edges: Edge[];
+  has_more: boolean;
+  next_cursor?: string;
+}
+
+/** Per-edge-type permission levels (V0 PR 4 fine-grained permissions). */
+export type EdgePermission = "read" | "write";
+
 /** An API key record (without the key value itself). */
 export interface ApiKey {
   id: string;
@@ -128,6 +171,14 @@ export interface ApiKey {
   default_library: boolean;
   type_permissions: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
+  /**
+   * Per-edge-type permissions map. Keyed by edge type id (`parent-of`,
+   * `about`, `karakeep.list-member`, …) or `*` for wildcard. Empty object
+   * means no edge permissions granted — non-admin keys with no entries
+   * cannot create/update/delete edges (reads fall back to the source
+   * item's type_permissions).
+   */
+  edge_permissions?: Record<string, EdgePermission>;
   created_at: string;
   last_used_at: string | null;
 }
@@ -141,6 +192,7 @@ export interface CreateKeyInput {
   default_library?: boolean;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
+  edge_permissions?: Record<string, EdgePermission>;
 }
 
 // ---------------------------------------------------------------------------

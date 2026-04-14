@@ -172,7 +172,6 @@ export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
               source: item.source as string | undefined,
               source_id: item.source_id as string | undefined,
               tags: item.tags as string[] | undefined,
-              about: item.about as string[] | undefined,
             },
             tenantId,
           );
@@ -544,7 +543,6 @@ async function handleArchiveImport(
             source: item.source as string | undefined,
             source_id: item.source_id as string | undefined,
             tags: item.tags as string[] | undefined,
-            about: item.about as string[] | undefined,
           },
           tenantId,
         );

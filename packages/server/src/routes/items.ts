@@ -6,6 +6,7 @@ import {
   isValidTimestamp,
   isValidTypeIdentifier,
   getTypeSchema,
+  getEdgeTypeSchema,
   validateProperties,
   ITEM_STATES,
 } from "@mymehq/shared";
@@ -15,10 +16,14 @@ import {
   requireAuth,
   requireAdmin,
   requireTypeAccess,
+  requireEdgePermission,
   getTypeFilter,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { planCascadeDelete } from "../storage/edge-cascade.js";
+import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publish } from "../pubsub.js";
+import { hydrateEdgesForItem, hydrateEdgesForItems } from "./_edges-hydrate.js";
 import {
   createOpenAPIRouter,
   ErrorResponseSchema,
@@ -89,12 +94,19 @@ const createItemRoute = createRoute({
             origin: z.enum(["user", "ai", "worker"]).optional(),
             library: z.boolean().optional(),
             device: z.string().optional(),
-            parent_id: z.string().optional(),
-            thread_id: z.string().optional(),
             capture_latitude: z.number().optional(),
             capture_longitude: z.number().optional(),
             tags: z.array(z.string()).optional(),
-            about: z.array(z.string()).optional(),
+            // Atomic item + edges write: for each edge type, the listed
+            // item ids become targets with the new item as source. Rejects
+            // all-or-nothing if any constraint violation surfaces.
+            //
+            // Replaces the legacy parent_id / thread_id / about wire fields
+            // dropped in PR 4 commit 12. Use:
+            //   edges: { "parent-of": [parentId] }   // was parent_id
+            //   edges: { "in-thread": [threadId] }   // was thread_id
+            //   edges: { about: [...ids] }           // was about[]
+            edges: z.record(z.string(), z.array(z.string())).optional(),
           }),
         },
       },
@@ -157,7 +169,7 @@ const listItemsRoute = createRoute({
       source: z.string().optional(),
       parent_id: z.string().optional(),
       thread_id: z.string().optional(),
-      library: z.enum(["true", "false"]).optional(),
+      library: z.enum(["true", "false", "all"]).optional(),
       tags: z.string().optional(),
       filter: z.string().optional(),
       root_only: z.enum(["true", "false"]).optional(),
@@ -241,10 +253,14 @@ const updateItemRoute = createRoute({
         "application/json": {
           schema: z.object({
             properties: z.record(z.string(), z.unknown()).optional(),
-            parent_id: z.string().nullable().optional(),
-            thread_id: z.string().nullable().optional(),
             version: z.number().int().min(0).optional(),
             snapshot: z.boolean().optional(),
+            // Replace-all-for-specified-types semantics: any edge_type
+            // listed wipes existing outbound edges of that type from
+            // this item, then creates new edges to each listed target.
+            // Empty array for an edge_type deletes all of that type.
+            // Unmentioned edge types are untouched.
+            edges: z.record(z.string(), z.array(z.string())).optional(),
           }),
         },
       },
@@ -439,7 +455,6 @@ const putMetadataRoute = createRoute({
         "application/json": {
           schema: z.object({
             tags: z.array(z.string()).optional().default([]),
-            about: z.array(z.string()).optional().default([]),
           }),
         },
       },
@@ -482,7 +497,6 @@ const patchMetadataRoute = createRoute({
         "application/json": {
           schema: z.object({
             tags: z.array(z.string()).optional(),
-            about: z.array(z.string()).optional(),
           }),
         },
       },
@@ -657,12 +671,6 @@ export function itemRoutes(storage: Storage) {
     if (body.timestamp && !isValidTimestamp(body.timestamp)) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid timestamp");
     }
-    if (body.parent_id && !isValidId(body.parent_id)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid parent_id");
-    }
-    if (body.thread_id && !isValidId(body.thread_id)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid thread_id");
-    }
     if (body.state) {
       if (!(ITEM_STATES as readonly string[]).includes(body.state)) {
         throw new MymeError(
@@ -681,12 +689,6 @@ export function itemRoutes(storage: Storage) {
         "Maximum 100 tags per item",
       );
     }
-    if (Array.isArray(body.about) && body.about.length > 100) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 about references per item",
-      );
-    }
 
     // source is non-forgeable: always stamped from the credential.
     // origin and library fall back to credential defaults when absent.
@@ -695,29 +697,91 @@ export function itemRoutes(storage: Storage) {
     const stampedOrigin = body.origin ?? credential?.default_origin;
     const libraryValue = body.library ?? credential?.default_library ?? false;
 
-    const item = await storage.items.create(
-      {
-        type,
-        properties,
-        id: body.id,
-        state: body.state as ItemState | undefined,
-        library: libraryValue,
-        timestamp: body.timestamp,
-        source: stampedSource,
-        source_id: body.source_id,
-        origin: stampedOrigin,
-        device: body.device,
-        parent_id: body.parent_id,
-        thread_id: body.thread_id,
-        capture_latitude: body.capture_latitude,
-        capture_longitude: body.capture_longitude,
-        tags: body.tags,
-        about: body.about,
-      },
-      tenantId,
-    );
+    // Validate edges payload up-front (shape only) so the write path doesn't
+    // have to double-check. Per-constraint validation runs inside the
+    // transaction against the just-created item.
+    if (body.edges) {
+      for (const [edgeType, targets] of Object.entries(body.edges)) {
+        if (!Array.isArray(targets)) {
+          throw new MymeError(
+            ErrorCode.VALIDATION_ERROR,
+            `edges.${edgeType} must be an array of item ids`,
+          );
+        }
+        for (const target of targets) {
+          if (!isValidId(target)) {
+            throw new MymeError(
+              ErrorCode.INVALID_ID,
+              `Invalid target id in edges.${edgeType}`,
+            );
+          }
+        }
+        // Permission gate: atomic POST /items edges require the same
+        // edge-type write permission as POST /edges. Item-type write is
+        // already enforced above via requireTypeAccess(type, "write").
+        if (targets.length > 0) {
+          requireEdgePermission(c, edgeType, "write");
+        }
+      }
+    }
 
-    const metadata = await storage.metadata.get(item.id);
+    const { item, metadata } = await storage.runInTransaction(async () => {
+      const created = await storage.items.create(
+        {
+          type,
+          properties,
+          id: body.id,
+          state: body.state as ItemState | undefined,
+          library: libraryValue,
+          timestamp: body.timestamp,
+          source: stampedSource,
+          source_id: body.source_id,
+          origin: stampedOrigin,
+          device: body.device,
+          capture_latitude: body.capture_latitude,
+          capture_longitude: body.capture_longitude,
+          tags: body.tags,
+        },
+        tenantId,
+      );
+
+      // Atomic edges: for each entry, this item is the source; listed ids
+      // are targets. assertEdgeCanBeCreated enforces cardinality / type
+      // constraints / cycle rules; failure rolls the entire transaction.
+      if (body.edges) {
+        for (const [edgeType, targets] of Object.entries(body.edges)) {
+          for (const targetId of targets) {
+            await assertEdgeCanBeCreated(
+              storage.edges,
+              storage.items,
+              {
+                source_id: created.id,
+                target_id: targetId,
+                edge_type: edgeType,
+                tenant_id: tenantId,
+              },
+              storage.threads,
+            );
+            await storage.edges.createRaw(
+              {
+                source_id: created.id,
+                target_id: targetId,
+                edge_type: edgeType,
+              },
+              tenantId,
+            );
+          }
+        }
+      }
+
+      const meta = await storage.metadata.get(created.id);
+      return { item: created, metadata: meta };
+    });
+
+    // Hydrate edges onto the response (always on single-item write/read).
+    const hydrated = await hydrateEdgesForItem(storage, item.id);
+    const itemWithEdges = { ...item, edges: hydrated };
+
     await publish({ type: "created", item, metadata, tenantId });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
@@ -726,7 +790,7 @@ export function itemRoutes(storage: Storage) {
       resource_id: item.id,
       details: { type: item.type },
     });
-    return c.json({ item, metadata }, 201);
+    return c.json({ item: itemWithEdges, metadata }, 201);
   });
 
   // GET /items/stats — item counts grouped by state
@@ -765,16 +829,50 @@ export function itemRoutes(storage: Storage) {
       ? tagsParam.split(",").map((t) => t.trim())
       : undefined;
 
-    const filter = query.filter ?? undefined;
+    // URL shorthand: `?edge[X]=Y` (outbound) and `?backref[X]=Y` (inbound)
+    // get translated into filter clauses and AND-composed with any existing
+    // `filter=` param. Multiple shorthand params are joined with AND — the
+    // parser rejects mixing AND and OR in a single expression, so any existing
+    // OR in `filter=` disqualifies the shorthand; document as a known limit.
+    const rawQuery = new URL(c.req.raw.url).searchParams;
+    const edgeClauses: string[] = [];
+    const shorthandRe = /^(edge|backref)\[([^\]]+)\]$/;
+    for (const [key, val] of rawQuery.entries()) {
+      // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec -- using String#match for boolean shape check; no captures needed
+      if (key.match(shorthandRe) && val) {
+        edgeClauses.push(`${key} eq "${val.replace(/"/g, '\\"')}"`);
+      }
+    }
+    let filter = query.filter ?? undefined;
+    if (edgeClauses.length > 0) {
+      filter = filter
+        ? `${filter} AND ${edgeClauses.join(" AND ")}`
+        : edgeClauses.join(" AND ");
+    }
     const rootOnly = query.root_only === "true";
     // Read library from the raw query string. zod-openapi's query
     // validation occasionally drops boolean-as-string enums (a quirk
     // independent of the schema being declared correctly); the raw
     // query lookup is the reliable source.
+    // V0 spec: default query scope is library-only. Explicit opt-outs:
+    //   ?library=false -> ambient-only
+    //   ?library=all   -> no filter (both library and ambient)
+    //   ?library=true or absent -> library-only
+    // See Myme v0 Reference §Library axis.
     const rawLibrary = c.req.query("library");
-    const library =
-      rawLibrary === "true" ? true : rawLibrary === "false" ? false : undefined;
-    const includeMetadata = query.include === "metadata";
+    const library: boolean | undefined =
+      rawLibrary === "all" ? undefined : rawLibrary === "false" ? false : true;
+    // `include` accepts a comma-separated list. "metadata" adds the sidecar
+    // object per item; "edges" hydrates outbound edges inline (opt-in — list
+    // reads skip edge hydration by default to avoid an N+1 on large lists).
+    const includeSet = new Set(
+      (query.include ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    );
+    const includeMetadata = includeSet.has("metadata");
+    const includeEdges = includeSet.has("edges");
 
     const result = await storage.items.list({
       tenantId: c.get("apiKey")?.tenant_id,
@@ -796,14 +894,20 @@ export function itemRoutes(storage: Storage) {
       cursor: query.cursor,
     });
 
+    const ids = result.data.map((item) => item.id);
+    const edgesMap = includeEdges
+      ? await hydrateEdgesForItems(storage, ids)
+      : null;
+    const decorate = (item: (typeof result.data)[number]) =>
+      edgesMap ? { ...item, edges: edgesMap.get(item.id) ?? {} } : item;
+
     if (includeMetadata) {
-      const ids = result.data.map((item) => item.id);
       const metadataList = await storage.metadata.getMany(ids);
       const metadataMap = new Map(metadataList.map((m) => [m.item_id, m]));
       return c.json(
         {
           data: result.data.map((item) => ({
-            item,
+            item: decorate(item),
             metadata: metadataMap.get(item.id) ?? {
               item_id: item.id,
               tags: [],
@@ -818,10 +922,18 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
-    return c.json(result, 200);
+    return c.json(
+      {
+        data: result.data.map(decorate),
+        cursor: result.cursor,
+        has_more: result.has_more,
+      },
+      200,
+    );
   });
 
-  // GET /items/:id — get single
+  // GET /items/:id — get single. Always hydrates outbound edges (capped per
+  // type) so callers see relationships without a second round-trip.
   router.openapi(getItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -836,7 +948,8 @@ export function itemRoutes(storage: Storage) {
 
     requireTypeAccess(c, item.type, "read");
     const metadata = await storage.metadata.get(id);
-    return c.json({ item, metadata }, 200);
+    const edges = await hydrateEdgesForItem(storage, id);
+    return c.json({ item: { ...item, edges }, metadata }, 200);
   });
 
   // PATCH /items/:id — update with conflict detection
@@ -849,13 +962,15 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const hasProperties =
       body.properties !== undefined && typeof body.properties === "object";
-    const hasParentId = "parent_id" in body;
-    const hasThreadId = "thread_id" in body;
+    const hasEdges =
+      body.edges !== undefined &&
+      typeof body.edges === "object" &&
+      Object.keys(body.edges).length > 0;
 
-    if (!hasProperties && !hasParentId && !hasThreadId) {
+    if (!hasProperties && !hasEdges) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of properties, parent_id, or thread_id is required",
+        "At least one of `properties` or `edges` is required. parent_id / thread_id were dropped in Wave 2 PR 4; relationship changes flow through the `edges` payload or direct /edges endpoints.",
       );
     }
     if (body.version !== undefined) {
@@ -871,45 +986,7 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    // Validate parent_id if provided
-    if (hasParentId && body.parent_id !== null) {
-      if (typeof body.parent_id !== "string" || !isValidId(body.parent_id)) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          "parent_id must be a valid ID or null",
-        );
-      }
-      if (body.parent_id === id) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          "An item cannot be its own parent",
-        );
-      }
-    }
-
-    // Validate thread_id if provided
-    if (hasThreadId && body.thread_id !== null) {
-      if (typeof body.thread_id !== "string" || !isValidId(body.thread_id)) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          "thread_id must be a valid ID or null",
-        );
-      }
-    }
-
     const tid = c.get("apiKey")?.tenant_id;
-
-    // Verify thread exists if setting a non-null thread_id
-    if (hasThreadId && typeof body.thread_id === "string") {
-      const threadId = body.thread_id;
-      const thread = await storage.threads.get(threadId, tid);
-      if (!thread) {
-        throw new MymeError(
-          ErrorCode.THREAD_NOT_FOUND,
-          `Thread ${threadId} not found`,
-        );
-      }
-    }
 
     const item = await storage.items.get(id, tid);
     if (!item) {
@@ -918,25 +995,33 @@ export function itemRoutes(storage: Storage) {
 
     requireTypeAccess(c, item.type, "write");
 
-    // Cycle detection: walk up from proposed parent to ensure this item isn't an ancestor
-    if (hasParentId && typeof body.parent_id === "string") {
-      let current: string = body.parent_id;
-      const visited = new Set<string>([id]);
-      while (current) {
-        if (visited.has(current)) {
+    // Shape-validate the edges payload up-front so the transaction path
+    // doesn't have to double-check. Permission gating also runs here
+    // (before any write) so a denied request doesn't touch state at all.
+    if (hasEdges && body.edges) {
+      for (const [edgeType, targets] of Object.entries(body.edges)) {
+        if (!Array.isArray(targets)) {
           throw new MymeError(
             ErrorCode.VALIDATION_ERROR,
-            "Setting this parent_id would create a cycle",
+            `edges.${edgeType} must be an array of item ids`,
           );
         }
-        visited.add(current);
-        const ancestor = await storage.items.get(current, tid);
-        if (!ancestor?.parent_id) break;
-        current = ancestor.parent_id;
+        for (const target of targets) {
+          if (!isValidId(target)) {
+            throw new MymeError(
+              ErrorCode.INVALID_ID,
+              `Invalid target id in edges.${edgeType}`,
+            );
+          }
+        }
+        // Dual gate: item-type write is already enforced above;
+        // edge-type write applies whether we're adding targets or
+        // wiping the type entirely (the action is mutating the set).
+        requireEdgePermission(c, edgeType, "write");
       }
     }
 
-    if (hasProperties && body.properties) {
+    if (body.properties) {
       const merged = {
         ...item.properties,
         ...body.properties,
@@ -955,40 +1040,135 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    const result = await storage.items.update(
-      id,
-      {
-        properties:
-          hasProperties && body.properties ? body.properties : undefined,
-        parent_id: hasParentId ? (body.parent_id as string | null) : undefined,
-        thread_id: hasThreadId ? (body.thread_id as string | null) : undefined,
-        version: body.version,
-        snapshot: body.snapshot === true ? true : undefined,
-      },
-      tid,
-    );
-
-    // Touch thread updated_at when thread assignment changes
-    if (hasThreadId && typeof body.thread_id === "string") {
-      await storage.threads.touch(body.thread_id);
+    // Pre-validate the edges payload before any mutation: edge type
+    // exists, each target item exists + type-constraint-compatible, and
+    // (after-delete) cardinality stays within bounds. Runs before the
+    // delete-and-create pass so sqlite (whose runInTransaction can't
+    // rollback async work) doesn't leave a half-applied state on a
+    // validation failure. pg's runInTransaction rollback still kicks
+    // in for lower-level surprises.
+    if (hasEdges && body.edges) {
+      for (const [edgeType, targets] of Object.entries(body.edges)) {
+        const schema = getEdgeTypeSchema(edgeType);
+        if (!schema) {
+          throw new MymeError(
+            ErrorCode.EDGE_TYPE_NOT_FOUND,
+            `Unknown edge type: ${edgeType}`,
+          );
+        }
+        // Detect duplicate target ids in the payload (same edge would
+        // fail existsExact after the first insert).
+        const uniqueTargets = new Set<string>();
+        for (const target of targets) {
+          if (target === id) {
+            throw new MymeError(
+              ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+              `Edge source and target must be different items`,
+              { edge_type: edgeType },
+            );
+          }
+          if (uniqueTargets.has(target)) {
+            throw new MymeError(
+              ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+              `Duplicate target ${target} in edges.${edgeType}`,
+            );
+          }
+          uniqueTargets.add(target);
+          const targetItem = await storage.items.get(target, tid);
+          if (!targetItem) {
+            // Try the thread-store fallback for in-thread edges.
+            const threadRecord =
+              edgeType === "in-thread"
+                ? await storage.threads.get(target, tid)
+                : null;
+            if (!threadRecord) {
+              throw new MymeError(
+                ErrorCode.ITEM_NOT_FOUND,
+                `Edge target not found: ${target}`,
+              );
+            }
+          }
+        }
+      }
     }
 
-    if ("error" in result) {
-      return c.json(result, 409);
+    const txResult = await storage.runInTransaction(async () => {
+      const updated = hasProperties
+        ? await storage.items.update(
+            id,
+            {
+              properties: body.properties,
+              version: body.version,
+              snapshot: body.snapshot === true ? true : undefined,
+            },
+            tid,
+          )
+        : item;
+      if (hasProperties && "error" in updated) {
+        return updated;
+      }
+
+      // Replace-all-for-specified-types: delete every existing outbound
+      // edge of the listed edge_type, then create fresh ones. Validation
+      // already ran above so this pass should not see constraint errors
+      // outside of concurrent mutation, which the pg transaction rolls
+      // back naturally.
+      if (hasEdges && body.edges) {
+        for (const [edgeType, targets] of Object.entries(body.edges)) {
+          await storage.edges.deleteBySource(id, edgeType);
+          for (const targetId of targets) {
+            await assertEdgeCanBeCreated(
+              storage.edges,
+              storage.items,
+              {
+                source_id: id,
+                target_id: targetId,
+                edge_type: edgeType,
+                tenant_id: tid,
+              },
+              storage.threads,
+            );
+            await storage.edges.createRaw(
+              {
+                source_id: id,
+                target_id: targetId,
+                edge_type: edgeType,
+              },
+              tid,
+            );
+          }
+        }
+      }
+
+      return updated;
+    });
+
+    if ("error" in txResult) {
+      return c.json(txResult, 409);
     }
 
     const metadata = await storage.metadata.get(id);
-    await publish({ type: "updated", item: result, metadata, tenantId: tid });
+    await publish({
+      type: "updated",
+      item: txResult,
+      metadata,
+      tenantId: tid,
+    });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.update",
       resource_type: "item",
       resource_id: id,
     });
-    return c.json({ item: result, metadata }, 200);
+    const hydrated = await hydrateEdgesForItem(storage, id);
+    return c.json({ item: { ...txResult, edges: hydrated }, metadata }, 200);
   });
 
   // DELETE /items/:id — soft delete
+  // Cascade-on-delete semantics: outbound edges with cascade_on_delete=cascade
+  // (parent-of in the V0 core set) recursively soft-delete their targets;
+  // block edges (none in V0 core set, but custom types may use them) reject
+  // the delete outright. Orphan is the no-op default.
   router.openapi(deleteItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -997,15 +1177,31 @@ export function itemRoutes(storage: Storage) {
 
     requireAuth(c);
     const tid = c.get("apiKey")?.tenant_id;
-    const existing = await storage.items.get(id, tid);
-    await storage.items.delete(id, tid);
-    if (existing) {
-      await publish({
-        type: "deleted",
-        item: { ...existing, state: "trashed" as ItemState },
-        tenantId: tid,
-      });
-    }
+
+    await storage.runInTransaction(async () => {
+      // Walk the edge graph to plan the cascade + reject block-edges.
+      const toDelete = await planCascadeDelete(storage.edges, id);
+
+      // Fetch snapshots before deletion for event payloads.
+      const snapshots = await Promise.all(
+        toDelete.map((delId) => storage.items.get(delId, tid)),
+      );
+
+      for (const delId of toDelete) {
+        await storage.items.delete(delId, tid);
+      }
+
+      // Publish one deleted event per item (post-order: leaves first).
+      for (const snapshot of snapshots) {
+        if (snapshot) {
+          await publish({
+            type: "deleted",
+            item: { ...snapshot, state: "trashed" as ItemState },
+            tenantId: tid,
+          });
+        }
+      }
+    });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.delete",
@@ -1120,7 +1316,6 @@ export function itemRoutes(storage: Storage) {
 
     const body = c.req.valid("json");
     const tags = body.tags;
-    const about = body.about;
 
     if (tags.length > 100) {
       throw new MymeError(
@@ -1128,14 +1323,8 @@ export function itemRoutes(storage: Storage) {
         "Maximum 100 tags per item",
       );
     }
-    if (about.length > 100) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 about references per item",
-      );
-    }
 
-    const metadata = await storage.metadata.set(id, tags, about);
+    const metadata = await storage.metadata.set(id, tags);
     await publish({
       type: "metadata_changed",
       item,
@@ -1161,7 +1350,6 @@ export function itemRoutes(storage: Storage) {
 
     const body = c.req.valid("json");
     const tags = body.tags;
-    const about = body.about;
 
     // Pre-merge bounds check on incoming arrays
     if (Array.isArray(tags) && tags.length > 100) {
@@ -1170,26 +1358,14 @@ export function itemRoutes(storage: Storage) {
         "Maximum 100 tags per item",
       );
     }
-    if (Array.isArray(about) && about.length > 100) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 about references per item",
-      );
-    }
 
-    const metadata = await storage.metadata.merge(id, tags, about);
+    const metadata = await storage.metadata.merge(id, tags);
 
     // Post-merge bounds check (incoming may be small but merge could exceed)
     if (metadata.tags.length > 100) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Maximum 100 tags per item (including existing tags)",
-      );
-    }
-    if (metadata.about.length > 100) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 about references per item (including existing)",
       );
     }
 
@@ -1251,6 +1427,10 @@ export function itemRoutes(storage: Storage) {
 
     requireAdmin(c);
     const tenantId = c.get("apiKey")?.tenant_id;
+    // Edges no longer carry a FK to items (thread-target compat window) so
+    // cascade cleanup must happen explicitly before the item row goes.
+    await storage.edges.deleteBySource(id);
+    await storage.edges.deleteByTarget(id);
     await storage.items.purge(id, tenantId);
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,

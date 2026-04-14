@@ -11,6 +11,9 @@ import type {
   SearchResult,
   ItemState,
   TenantConfig,
+  Edge,
+  CreateEdgeInput,
+  EdgeTypeSchema,
 } from "@mymehq/shared";
 import type {
   TypeSchema,
@@ -55,7 +58,6 @@ export interface ClientConfig {
 
 export interface UpdateOptions {
   version?: number;
-  thread_id?: string | null;
   /**
    * Override the client's default conflict strategy for this update.
    * - `"auto"`: auto-merge non-conflicting fields (default)
@@ -71,7 +73,13 @@ export interface ListFilters {
   type?: string;
   state?: ItemState;
   source?: string;
+  /** Filter to items whose parent-of source is this id. Kept as a
+   *  server-side convenience alias after the parent_id column was
+   *  dropped in Wave 2 PR 4; the server translates it into an
+   *  `edge[parent-of]` existence check. */
   parent_id?: string;
+  /** Filter to items in this thread. Server translates to
+   *  `edge[in-thread]` check after the thread_id column was dropped. */
   thread_id?: string;
   root_only?: boolean;
   /** When set, restricts the result to library items (true) or ambient
@@ -99,7 +107,6 @@ export interface SearchFilters {
 
 export interface MetadataInput {
   tags?: string[];
-  about?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +134,14 @@ export class MymeClient {
   // ---- Items ----
 
   readonly items = {
-    create: async (input: CreateItemInput): Promise<Item> => {
+    create: async (
+      input: CreateItemInput & {
+        /** Atomic edges payload: for each edge type, listed ids become
+         *  targets with the new item as source. Replaces legacy parent_id
+         *  / thread_id / about which were dropped in Wave 2 PR 4. */
+        edges?: Record<string, string[]>;
+      },
+    ): Promise<Item> => {
       const res = await this.transport.request<{ item: Item }>(
         "POST",
         "/items",
@@ -185,7 +199,6 @@ export class MymeClient {
         version,
         strategy,
         options?.resolve,
-        options?.thread_id,
       );
     },
 
@@ -233,6 +246,26 @@ export class MymeClient {
         "/items/stats",
       );
     },
+
+    /** Outbound edges from this item. Shortcut for edges.listFromSource. */
+    edges: (
+      itemId: string,
+      filters?: {
+        edge_type?: string | string[];
+        limit?: number;
+        cursor?: string;
+      },
+    ) => this.edges.listFromSource(itemId, filters),
+
+    /** Inbound edges targeting this item. Shortcut for edges.listToTarget. */
+    backrefs: (
+      itemId: string,
+      filters?: {
+        edge_type?: string | string[];
+        limit?: number;
+        cursor?: string;
+      },
+    ) => this.edges.listToTarget(itemId, filters),
   };
 
   // ---- Metadata ----
@@ -387,6 +420,112 @@ export class MymeClient {
         `/threads/${threadId}/items/${itemId}`,
       );
       return res.item;
+    },
+  };
+
+  // ---- Edges ----
+
+  readonly edges = {
+    /** Create a single edge. Server enforces cardinality / type
+     *  constraints / cycle prevention; throws on violation. */
+    create: async (input: CreateEdgeInput): Promise<Edge> => {
+      const res = await this.transport.request<{ edge: Edge }>(
+        "POST",
+        "/edges",
+        { body: input },
+      );
+      return res.edge;
+    },
+
+    /** Update properties on an existing edge. edge_type / source / target
+     *  are immutable; server rejects with 400. */
+    update: async (
+      id: string,
+      properties: Record<string, unknown>,
+    ): Promise<Edge> => {
+      const res = await this.transport.request<{ edge: Edge }>(
+        "PATCH",
+        `/edges/${id}`,
+        { body: { properties } },
+      );
+      return res.edge;
+    },
+
+    delete: async (id: string): Promise<void> => {
+      await this.transport.request<{ ok: true }>("DELETE", `/edges/${id}`);
+    },
+
+    /** Outbound edges — items where this id is source. Filter by edge type
+     *  (comma-separated string or array of type ids). */
+    listFromSource: async (
+      sourceId: string,
+      filters?: {
+        edge_type?: string | string[];
+        limit?: number;
+        cursor?: string;
+      },
+    ): Promise<PaginatedResult<Edge>> => {
+      const edgeType = Array.isArray(filters?.edge_type)
+        ? filters.edge_type.join(",")
+        : filters?.edge_type;
+      return this.transport.request<PaginatedResult<Edge>>(
+        "GET",
+        `/items/${sourceId}/edges`,
+        {
+          query: {
+            ...(edgeType && { edge_type: edgeType }),
+            ...(filters?.limit !== undefined && { limit: filters.limit }),
+            ...(filters?.cursor && { cursor: filters.cursor }),
+          },
+        },
+      );
+    },
+
+    /** Inbound edges — items where this id is target. */
+    listToTarget: async (
+      targetId: string,
+      filters?: {
+        edge_type?: string | string[];
+        limit?: number;
+        cursor?: string;
+      },
+    ): Promise<PaginatedResult<Edge>> => {
+      const edgeType = Array.isArray(filters?.edge_type)
+        ? filters.edge_type.join(",")
+        : filters?.edge_type;
+      return this.transport.request<PaginatedResult<Edge>>(
+        "GET",
+        `/items/${targetId}/backrefs`,
+        {
+          query: {
+            ...(edgeType && { edge_type: edgeType }),
+            ...(filters?.limit !== undefined && { limit: filters.limit }),
+            ...(filters?.cursor && { cursor: filters.cursor }),
+          },
+        },
+      );
+    },
+
+    /** Custom edge-type registration + listing. */
+    types: {
+      create: async (schema: EdgeTypeSchema): Promise<EdgeTypeSchema> => {
+        const res = await this.transport.request<{
+          edge_type: EdgeTypeSchema;
+        }>("POST", "/edges/types", { body: schema });
+        return res.edge_type;
+      },
+      list: async (): Promise<EdgeTypeSchema[]> => {
+        const res = await this.transport.request<{
+          edge_types: EdgeTypeSchema[];
+        }>("GET", "/edges/types");
+        return res.edge_types;
+      },
+      delete: async (id: string): Promise<void> => {
+        await this.transport.request<{ ok: true }>(
+          "DELETE",
+          `/edges/types/${id}`,
+        );
+      },
     },
   };
 

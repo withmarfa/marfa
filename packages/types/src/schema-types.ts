@@ -61,3 +61,56 @@ export interface TypeSchema {
   display_hints?: DisplayHints;
   version_policy?: VersionPolicy;
 }
+
+// ---------------------------------------------------------------------------
+// Edge types
+// ---------------------------------------------------------------------------
+
+/**
+ * Cardinality of an edge type. Enforced at edge-creation time.
+ * - one-to-one: each source and each target may appear at most once.
+ * - one-to-many: each target may appear at most once (e.g. parent-of: one parent per child).
+ * - many-to-one: each source may appear at most once (e.g. in-thread: each member in one thread).
+ * - many-to-many: no uniqueness constraint beyond exact (source, target, type) duplicates.
+ */
+export type EdgeCardinality =
+  | "one-to-one"
+  | "one-to-many"
+  | "many-to-one"
+  | "many-to-many";
+
+/**
+ * What happens to the edge and related items when one of the endpoint items
+ * is deleted.
+ * - cascade: when the source item is deleted, also delete the target item
+ *   (canonical use: parent-of — deleting the parent deletes the children).
+ * - orphan: when either endpoint is deleted, just remove the edge row; the
+ *   other endpoint stays.
+ * - block: reject the item delete if any edge of this type exists.
+ */
+export type EdgeCascade = "cascade" | "orphan" | "block";
+
+/**
+ * A complete edge type schema. Describes one named relationship kind —
+ * constraints, cascade, property shape.
+ */
+export interface EdgeTypeSchema {
+  id: string;
+  label?: string;
+  description?: string;
+  cardinality: EdgeCardinality;
+  /**
+   * Type identifiers (or `*`) that are valid on the source side. Inheritance-
+   * aware: subtypes satisfy an ancestor constraint.
+   */
+  source_type_constraints: string[];
+  /** As above, for the target side. */
+  target_type_constraints: string[];
+  /** Cascade behaviour when endpoints are deleted. */
+  cascade_on_delete: EdgeCascade;
+  /**
+   * JSON-schema-shaped map of allowed edge `properties`. Empty object means
+   * no validated properties (but arbitrary properties are still rejected).
+   */
+  property_schema: Record<string, FieldDefinition>;
+}

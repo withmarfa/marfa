@@ -49,16 +49,12 @@ CREATE TABLE IF NOT EXISTS items (
   version INTEGER NOT NULL DEFAULT 1,
   schema_version INTEGER,
   device TEXT,
-  parent_id TEXT,
-  thread_id TEXT REFERENCES threads(id),
   capture_latitude DOUBLE PRECISION,
   capture_longitude DOUBLE PRECISION
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
 CREATE INDEX IF NOT EXISTS idx_items_state ON items(state);
-CREATE INDEX IF NOT EXISTS idx_items_thread_id ON items(thread_id);
-CREATE INDEX IF NOT EXISTS idx_items_parent_id ON items(parent_id);
 CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at);
 CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_dedup
@@ -67,9 +63,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_dedup
 CREATE TABLE IF NOT EXISTS metadata (
   item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
   tags TEXT NOT NULL DEFAULT '[]',
-  about TEXT NOT NULL DEFAULT '[]',
   extensions TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS edges (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT,
+  source_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  edge_type TEXT NOT NULL,
+  properties TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(tenant_id, source_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(tenant_id, target_id, edge_type);
 
 CREATE TABLE IF NOT EXISTS versions (
   id TEXT PRIMARY KEY,
@@ -92,6 +100,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   default_library BOOLEAN NOT NULL DEFAULT false,
   type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
   extension_permissions TEXT NOT NULL DEFAULT '{}',
+  edge_permissions TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   revoked_at TEXT,
   last_used_at TEXT
@@ -107,6 +116,14 @@ CREATE TABLE IF NOT EXISTS blobs (
 );
 
 CREATE TABLE IF NOT EXISTS custom_types (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT,
+  schema TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS custom_edge_types (
   id TEXT PRIMARY KEY,
   tenant_id TEXT,
   schema TEXT NOT NULL,
@@ -202,12 +219,14 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_resource_type ON audit_log(resource_typ
 CREATE TABLE IF NOT EXISTS event_log (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   event_type TEXT NOT NULL,
-  item_id TEXT NOT NULL,
+  item_id TEXT,
+  edge_id TEXT,
   tenant_id TEXT,
   payload TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_event_log_edge_id ON event_log(edge_id);
 `;
 
 export async function createConnection(connectionString: string): Promise<{

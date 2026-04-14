@@ -1,4 +1,9 @@
-import { registerTypeSchema, isCoreType } from "@mymehq/shared";
+import {
+  registerTypeSchema,
+  isCoreType,
+  registerEdgeTypeSchema,
+  isCoreEdgeType,
+} from "@mymehq/shared";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
 import { PgItemStore } from "./item-store.js";
@@ -16,6 +21,8 @@ import { PgAuditStore } from "./audit-store.js";
 import { PgEventLogStore } from "./event-log-store.js";
 import { PgUserStore } from "./user-store.js";
 import { PgTenantStore } from "./tenant-store.js";
+import { PgEdgeStore } from "./edge-store.js";
+import { PgEdgeTypeStore } from "./edge-type-store.js";
 
 export async function createPgStorage(
   connectionString: string,
@@ -52,6 +59,16 @@ export async function createPgStorage(
   const deliveryStore = new PgWebhookDeliveryStore(db);
   const auditStore = new PgAuditStore(db);
   const eventLogStore = new PgEventLogStore(db);
+  const edgeStore = new PgEdgeStore(db);
+  const edgeTypeStore = new PgEdgeTypeStore(db);
+
+  // Load custom edge types into the in-memory registry on startup.
+  const loadedCustomEdgeTypes = await edgeTypeStore.loadCustomEdgeTypes();
+  for (const ct of loadedCustomEdgeTypes) {
+    if (!isCoreEdgeType(ct.id)) {
+      registerEdgeTypeSchema(ct);
+    }
+  }
 
   const storage = {
     items: itemStore,
@@ -62,6 +79,8 @@ export async function createPgStorage(
     search: searchStore,
     keys: keyStore,
     blobs: blobStore,
+    edges: edgeStore,
+    edgeTypes: edgeTypeStore,
     oauth: oauthStore,
     webhooks: webhookStore,
     webhookDeliveries: deliveryStore,
@@ -81,9 +100,16 @@ export async function createPgStorage(
     close,
     /** Truncate all tables — used by tests for isolation. */
     async _pgTruncate(): Promise<void> {
-      await client`TRUNCATE items, metadata, versions, threads, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, event_log, tenants, users CASCADE`;
+      await client`TRUNCATE items, metadata, versions, threads, edges, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, event_log, tenants, users CASCADE`;
     },
-  } satisfies Storage & { _pgTruncate(): Promise<void> };
+    /** Raw query escape hatch — used by the edge-backfill script. */
+    __pgClient(query: string): Promise<unknown[]> {
+      return client.unsafe(query);
+    },
+  } satisfies Storage & {
+    _pgTruncate(): Promise<void>;
+    __pgClient(query: string): Promise<unknown[]>;
+  };
 
   return storage;
 }

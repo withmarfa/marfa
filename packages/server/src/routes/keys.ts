@@ -20,6 +20,10 @@ function generateRawKey(): string {
 // Schemas
 // ---------------------------------------------------------------------------
 
+const EdgePermissionsSchema = z
+  .record(z.string(), z.enum(["read", "write"]))
+  .optional();
+
 const KeyResponseSchema = z.object({
   id: z.string(),
   key: z.string(),
@@ -32,6 +36,7 @@ const KeyResponseSchema = z.object({
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
+  edge_permissions: EdgePermissionsSchema,
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });
@@ -47,6 +52,7 @@ const KeyListItemSchema = z.object({
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
+  edge_permissions: EdgePermissionsSchema,
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });
@@ -80,6 +86,9 @@ const createKeyRoute = createRoute({
               .record(z.string(), z.enum(["read", "write", "none"]))
               .optional(),
             extension_permissions: z
+              .record(z.string(), z.enum(["read", "write"]))
+              .optional(),
+            edge_permissions: z
               .record(z.string(), z.enum(["read", "write"]))
               .optional(),
           }),
@@ -185,6 +194,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         default_library: body.default_library,
         type_permissions: typePermissions,
         extension_permissions: body.extension_permissions,
+        edge_permissions: body.edge_permissions,
       },
       keyHash,
     );
@@ -207,6 +217,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         default_library: stored.default_library,
         type_permissions: stored.type_permissions,
         extension_permissions: stored.extension_permissions,
+        edge_permissions: stored.edge_permissions,
         created_at: stored.created_at,
         last_used_at: stored.last_used_at,
       },

@@ -86,16 +86,12 @@ export function createConnection(sqlitePath: string): {
       version INTEGER NOT NULL DEFAULT 1,
       schema_version INTEGER,
       device TEXT,
-      parent_id TEXT,
-      thread_id TEXT REFERENCES threads(id),
       capture_latitude REAL,
       capture_longitude REAL
     );
 
     CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
     CREATE INDEX IF NOT EXISTS idx_items_state ON items(state);
-    CREATE INDEX IF NOT EXISTS idx_items_thread_id ON items(thread_id);
-    CREATE INDEX IF NOT EXISTS idx_items_parent_id ON items(parent_id);
     CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at);
     CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_dedup
@@ -104,9 +100,21 @@ export function createConnection(sqlitePath: string): {
     CREATE TABLE IF NOT EXISTS metadata (
       item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
       tags TEXT NOT NULL DEFAULT '[]',
-      about TEXT NOT NULL DEFAULT '[]',
       extensions TEXT NOT NULL DEFAULT '{}'
     );
+
+    CREATE TABLE IF NOT EXISTS edges (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT,
+      source_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      edge_type TEXT NOT NULL,
+      properties TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(tenant_id, source_id, edge_type);
+    CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(tenant_id, target_id, edge_type);
 
     CREATE TABLE IF NOT EXISTS versions (
       id TEXT PRIMARY KEY,
@@ -129,6 +137,7 @@ export function createConnection(sqlitePath: string): {
       default_library INTEGER NOT NULL DEFAULT 0,
       type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
       extension_permissions TEXT NOT NULL DEFAULT '{}',
+      edge_permissions TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       revoked_at TEXT,
       last_used_at TEXT
@@ -144,6 +153,14 @@ export function createConnection(sqlitePath: string): {
     );
 
     CREATE TABLE IF NOT EXISTS custom_types (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT,
+      schema TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_edge_types (
       id TEXT PRIMARY KEY,
       tenant_id TEXT,
       schema TEXT NOT NULL,
@@ -239,12 +256,14 @@ export function createConnection(sqlitePath: string): {
     CREATE TABLE IF NOT EXISTS event_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       event_type TEXT NOT NULL,
-      item_id TEXT NOT NULL,
+      item_id TEXT,
+      edge_id TEXT,
       tenant_id TEXT,
       payload TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_event_log_edge_id ON event_log(edge_id);
   `);
 
   // Schema source of truth is the Drizzle migrations under drizzle/sqlite/.

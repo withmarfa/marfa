@@ -17,8 +17,10 @@ import type {
   ItemState,
   User,
   Tenant,
+  Edge,
+  CreateEdgeInput,
 } from "@mymehq/shared";
-import type { TypeSchema } from "@mymehq/shared";
+import type { EdgeTypeSchema, TypeSchema } from "@mymehq/shared";
 import { MymeError, ErrorCode } from "@mymehq/shared";
 
 // ---------------------------------------------------------------------------
@@ -117,8 +119,8 @@ export interface ItemStore {
 export interface MetadataStore {
   get(itemId: string): Promise<Metadata>;
   getMany(itemIds: string[]): Promise<Metadata[]>;
-  set(itemId: string, tags: string[], about: string[]): Promise<Metadata>;
-  merge(itemId: string, tags?: string[], about?: string[]): Promise<Metadata>;
+  set(itemId: string, tags: string[]): Promise<Metadata>;
+  merge(itemId: string, tags?: string[]): Promise<Metadata>;
   addTags(itemId: string, tags: string[]): Promise<Metadata>;
   removeTag(itemId: string, tag: string): Promise<Metadata>;
   getExtensions(
@@ -172,6 +174,15 @@ export interface TypeStore {
   delete(id: string): Promise<void>;
   loadCustomTypes(): Promise<TypeSchema[]>;
   countCustom(): Promise<number>;
+}
+
+export interface EdgeTypeStore {
+  list(): Promise<EdgeTypeSchema[]>;
+  get(id: string): Promise<EdgeTypeSchema | undefined>;
+  create(schema: EdgeTypeSchema, tenantId?: string): Promise<EdgeTypeSchema>;
+  delete(id: string): Promise<void>;
+  /** Load every custom edge type for server-startup registry warmup. */
+  loadCustomEdgeTypes(): Promise<EdgeTypeSchema[]>;
 }
 
 export interface SearchStore {
@@ -395,7 +406,11 @@ export interface AuditStore {
 export interface PersistedEvent {
   id: number;
   event_type: string;
-  item_id: string;
+  /** Populated on item events; null on edge events. Migration 0014
+   *  relaxed this to nullable so edge events no longer reuse source_id
+   *  as a NOT NULL workaround. */
+  item_id: string | null;
+  edge_id: string | null;
   tenant_id: string | null;
   payload: string;
   created_at: string;
@@ -405,7 +420,11 @@ export interface EventLogStore {
   /** Append an event and return its assigned sequential ID. */
   append(entry: {
     event_type: string;
-    item_id: string;
+    /** Non-null for item events; null for edge events. */
+    item_id?: string | null;
+    /** Non-null for edge events; lets subscribers filter Last-Event-ID
+     *  replay by a specific edge in addition to by item. */
+    edge_id?: string | null;
     tenant_id?: string;
     payload: string;
   }): Promise<number>;
@@ -425,6 +444,65 @@ export interface EventLogStore {
 // Aggregate storage interface
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Edge store
+// ---------------------------------------------------------------------------
+
+export interface EdgeListFilters {
+  edge_type?: string | string[];
+  limit?: number;
+  cursor?: string;
+}
+
+export interface EdgeStore {
+  /** Create an edge. Constraint enforcement (cardinality / cycles / type) sits outside. */
+  createRaw(input: CreateEdgeInput, tenantId?: string): Promise<Edge>;
+  get(id: string): Promise<Edge | null>;
+  /** Outbound edges — this item is the source. */
+  listFromSource(
+    sourceId: string,
+    filters?: EdgeListFilters,
+  ): Promise<PaginatedResult<Edge>>;
+  /** Inbound edges — this item is the target. */
+  listToTarget(
+    targetId: string,
+    filters?: EdgeListFilters,
+  ): Promise<PaginatedResult<Edge>>;
+  updateProperties(
+    id: string,
+    properties: Record<string, unknown>,
+  ): Promise<Edge>;
+  delete(id: string): Promise<void>;
+  deleteBySource(sourceId: string, edgeType?: string): Promise<void>;
+  deleteByTarget(targetId: string, edgeType?: string): Promise<void>;
+  /** Count edges where the given item is source. Used for cardinality checks. */
+  countBySource(sourceId: string, edgeType: string): Promise<number>;
+  /** Count edges where the given item is target. Used for cardinality checks. */
+  countByTarget(targetId: string, edgeType: string): Promise<number>;
+  /** Exact-duplicate check (source_id, target_id, edge_type). */
+  existsExact(
+    sourceId: string,
+    targetId: string,
+    edgeType: string,
+  ): Promise<boolean>;
+  /**
+   * All outbound edges of a given type from sourceId. Used for cycle checks,
+   * cascade-on-delete, and edge hydration when the caller wants every entry.
+   */
+  listOutboundOfType(sourceId: string, edgeType: string): Promise<Edge[]>;
+  /**
+   * All edges touching the given item — outbound (item is source) and inbound
+   * (item is target). Used by cascade-on-delete to gather the full edge set
+   * around an item being deleted.
+   */
+  listAllByItem(itemId: string): Promise<{ outbound: Edge[]; inbound: Edge[] }>;
+  /** Batched outbound-by-types fetch for hydration on item reads. */
+  listFromSourcesBatched(
+    sourceIds: string[],
+    perTypeLimit: number,
+  ): Promise<Map<string, Edge[]>>;
+}
+
 export interface Storage {
   items: ItemStore;
   metadata: MetadataStore;
@@ -434,6 +512,8 @@ export interface Storage {
   search: SearchStore;
   keys: KeyStore;
   blobs: BlobStore;
+  edges: EdgeStore;
+  edgeTypes: EdgeTypeStore;
   oauth: OAuthStore;
   webhooks: WebhookStore;
   webhookDeliveries: WebhookDeliveryStore;
