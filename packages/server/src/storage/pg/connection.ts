@@ -213,34 +213,31 @@ export async function createConnection(connectionString: string): Promise<{
   });
   const db = drizzle(client, { schema });
 
-  // Apply schema — use advisory lock to prevent concurrent DDL race conditions
+  // Apply schema — use advisory lock to prevent concurrent DDL race conditions.
+  //
+  // Schema source of truth is the Drizzle migrations under drizzle/pg/. The
+  // SCHEMA_SQL block above is the fresh-database bootstrap path used when the
+  // server starts against an empty database (notably tests via :memory:); it
+  // mirrors what running `pnpm migrate` from 0000 would produce. Schema
+  // changes go in a Drizzle migration; do NOT add new inline DDL here.
+  //
+  // Two documented exceptions remain inline because Drizzle Kit cannot
+  // express them: the FTS5 virtual table in sqlite/connection.ts, and the
+  // RLS policies below (Postgres-only).
   await client.unsafe(`SELECT pg_advisory_lock(42)`);
   try {
     await client.unsafe(SCHEMA_SQL);
-    // Migrations for existing databases
-    await client.unsafe(`
-      ALTER TABLE metadata ADD COLUMN IF NOT EXISTS extensions TEXT NOT NULL DEFAULT '{}';
-      ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS extension_permissions TEXT NOT NULL DEFAULT '{}';
-      ALTER TABLE items ADD COLUMN IF NOT EXISTS tenant_id TEXT;
-      ALTER TABLE threads ADD COLUMN IF NOT EXISTS tenant_id TEXT;
-      ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS tenant_id TEXT;
-      ALTER TABLE custom_types ADD COLUMN IF NOT EXISTS tenant_id TEXT;
-      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS next_attempt_at TEXT;
-      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS payload TEXT;
-      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS webhook_url TEXT;
-      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
-      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 4;
-      ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
-    `);
-    await client.unsafe(`
-      CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending
-        ON webhook_deliveries(next_attempt_at) WHERE status = 'pending';
-    `);
 
     // Row Level Security — defense-in-depth for multi-tenant isolation.
-    // The table owner (used by this connection) bypasses RLS by default.
-    // For production hosted deployments, use a non-owner role (e.g. myme_app)
-    // that is subject to these policies.
+    //
+    // STATUS: dormant. The connection user is the table owner and bypasses
+    // RLS by default; the policies below have no runtime effect today. They
+    // are kept inline (Drizzle Kit cannot express RLS) so production hosted
+    // deployments that run as a non-owner role (e.g. `myme_app` granted
+    // SELECT/INSERT/UPDATE/DELETE on the relevant tables) inherit isolation
+    // automatically. The server is expected to set the per-request scope
+    // via `SET LOCAL myme.tenant_id = ...`. Activation is a deployment-side
+    // change (role swap), not a code change.
     await client.unsafe(`
       ALTER TABLE items ENABLE ROW LEVEL SECURITY;
       ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;

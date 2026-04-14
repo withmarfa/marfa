@@ -739,8 +739,9 @@ describe("metadata.changed pubsub event", () => {
     // first event after subscribing — race the route call against a 500ms
     // timeout to fail fast if no event fires.
     const iter = subscribe();
-    const nextEvent: Promise<{ type: string; item: { id: string } }> =
-      iter.next().then((r) => r.value as { type: string; item: { id: string } });
+    const nextEvent: Promise<{ type: string; item: { id: string } }> = iter
+      .next()
+      .then((r) => r.value as { type: string; item: { id: string } });
 
     const tagRes = await request(ctx.app, "POST", `/items/${item.id}/tags`, {
       key: ctx.adminKey,

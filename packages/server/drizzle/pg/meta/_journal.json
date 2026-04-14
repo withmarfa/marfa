@@ -50,6 +50,13 @@
       "when": 1776700000000,
       "tag": "0006_backfill_source_origin",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1776800000000,
+      "tag": "0007_webhook_deliveries_pending_index",
+      "breakpoints": true
     }
   ]
 }
