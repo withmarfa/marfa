@@ -348,7 +348,7 @@ const transitionItemRoute = createRoute({
       content: {
         "application/json": { schema: ItemWithMetadataSchema },
       },
-      description: "Item transitioned",
+      description: "Item state changed",
     },
     400: {
       content: { "application/json": { schema: ErrorResponseSchema } },
@@ -1049,7 +1049,7 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     const updated = await storage.items.transition(id, state, tenantId);
     const metadata = await storage.metadata.get(id);
-    await publish({ type: "transitioned", item: updated, metadata, tenantId });
+    await publish({ type: "state_changed", item: updated, metadata, tenantId });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.transition",

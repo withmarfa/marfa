@@ -3,7 +3,7 @@ import type { Item, Metadata } from "@mymehq/shared";
 import type { EventLogStore } from "./storage/interface.js";
 
 export interface ItemEvent {
-  type: "created" | "updated" | "deleted" | "restored" | "transitioned";
+  type: "created" | "updated" | "deleted" | "restored" | "state_changed";
   item: Item;
   metadata?: Metadata;
   tenantId?: string;

@@ -20,7 +20,7 @@ const VALID_EVENTS = new Set([
   "item.updated",
   "item.deleted",
   "item.restored",
-  "item.transitioned",
+  "item.state_changed",
   "*",
 ]);
 
