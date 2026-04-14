@@ -6,6 +6,7 @@ import {
   isSubtypeOf,
   validateProperties,
   validateTransition,
+  validateTypeSchema,
 } from "./type-registry.js";
 import type { ItemState } from "@mymehq/types";
 
@@ -323,5 +324,74 @@ describe("validateTransition", () => {
       "bogus" as ItemState,
     );
     expect(error).not.toBeNull();
+  });
+});
+
+describe("validateTypeSchema — inheritance rule", () => {
+  it("rejects a child type that redefines a direct parent field", () => {
+    const result = validateTypeSchema({
+      id: "acme.bookmark_ext",
+      parent: "core.bookmark",
+      version: 1,
+      fields: {
+        title: { type: "string", description: "Different title meaning" },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some(
+          (e) =>
+            e.field === "fields.title" && e.message.includes("core.bookmark"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects a child type that redefines a deep-ancestor field", () => {
+    // core.entity.person inherits name from core.entity; a child of
+    // core.entity.person must not redeclare name.
+    const result = validateTypeSchema({
+      id: "acme.employee",
+      parent: "core.entity.person",
+      version: 1,
+      fields: {
+        name: { type: "string", description: "Override" },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some(
+          (e) =>
+            e.field === "fields.name" && e.message.includes("core.entity"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("accepts a child type that adds new fields without collisions", () => {
+    const result = validateTypeSchema({
+      id: "acme.bookmark_ext",
+      parent: "core.bookmark",
+      version: 1,
+      fields: {
+        acme_category: { type: "string", description: "Internal tag" },
+        acme_score: { type: "integer", description: "Priority" },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a type without a parent regardless of field names", () => {
+    const result = validateTypeSchema({
+      id: "acme.thing",
+      version: 1,
+      fields: {
+        title: { type: "string", description: "A title" },
+        body: { type: "string", description: "Body text" },
+      },
+    });
+    expect(result.success).toBe(true);
   });
 });

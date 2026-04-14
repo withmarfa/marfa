@@ -325,6 +325,35 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     errors.push({ field: "fields", message: "Required object" });
   } else {
     const fields = obj.fields as Record<string, unknown>;
+
+    // Inheritance rule — a child type may not redefine a field declared by
+    // any ancestor in its parent chain. New-field addition remains allowed.
+    if (typeof obj.parent === "string" && obj.parent.length > 0) {
+      const ancestorFieldOwners = new Map<string, string>();
+      let cursor: string | undefined = obj.parent;
+      const seen = new Set<string>();
+      while (cursor && !seen.has(cursor)) {
+        seen.add(cursor);
+        const ancestor = TYPE_REGISTRY.get(cursor);
+        if (!ancestor) break;
+        for (const ancestorFieldName of Object.keys(ancestor.fields)) {
+          if (!ancestorFieldOwners.has(ancestorFieldName)) {
+            ancestorFieldOwners.set(ancestorFieldName, cursor);
+          }
+        }
+        cursor = ancestor.parent;
+      }
+      for (const fieldName of Object.keys(fields)) {
+        const owner = ancestorFieldOwners.get(fieldName);
+        if (owner) {
+          errors.push({
+            field: `fields.${fieldName}`,
+            message: `Field "${fieldName}" is already declared by ancestor "${owner}"; child types may not redefine ancestor fields.`,
+          });
+        }
+      }
+    }
+
     for (const [name, def] of Object.entries(fields)) {
       if (typeof def !== "object" || def === null) {
         errors.push({
