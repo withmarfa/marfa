@@ -19,6 +19,7 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
+import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publish } from "../pubsub.js";
 import {
   createOpenAPIRouter,
@@ -96,6 +97,12 @@ const createItemRoute = createRoute({
             capture_longitude: z.number().optional(),
             tags: z.array(z.string()).optional(),
             about: z.array(z.string()).optional(),
+            // Atomic item + edges write: for each edge type, the listed
+            // item ids become targets with the new item as source. Rejects
+            // all-or-nothing if any constraint violation surfaces.
+            edges: z
+              .record(z.string(), z.array(z.string()))
+              .optional(),
           }),
         },
       },
@@ -696,29 +703,79 @@ export function itemRoutes(storage: Storage) {
     const stampedOrigin = body.origin ?? credential?.default_origin;
     const libraryValue = body.library ?? credential?.default_library ?? false;
 
-    const item = await storage.items.create(
-      {
-        type,
-        properties,
-        id: body.id,
-        state: body.state as ItemState | undefined,
-        library: libraryValue,
-        timestamp: body.timestamp,
-        source: stampedSource,
-        source_id: body.source_id,
-        origin: stampedOrigin,
-        device: body.device,
-        parent_id: body.parent_id,
-        thread_id: body.thread_id,
-        capture_latitude: body.capture_latitude,
-        capture_longitude: body.capture_longitude,
-        tags: body.tags,
-        about: body.about,
-      },
-      tenantId,
-    );
+    // Validate edges payload up-front (shape only) so the write path doesn't
+    // have to double-check. Per-constraint validation runs inside the
+    // transaction against the just-created item.
+    if (body.edges) {
+      for (const [edgeType, targets] of Object.entries(body.edges)) {
+        if (!Array.isArray(targets)) {
+          throw new MymeError(
+            ErrorCode.VALIDATION_ERROR,
+            `edges.${edgeType} must be an array of item ids`,
+          );
+        }
+        for (const target of targets) {
+          if (!isValidId(target)) {
+            throw new MymeError(
+              ErrorCode.INVALID_ID,
+              `Invalid target id in edges.${edgeType}`,
+            );
+          }
+        }
+      }
+    }
 
-    const metadata = await storage.metadata.get(item.id);
+    const { item, metadata } = await storage.runInTransaction(async () => {
+      const created = await storage.items.create(
+        {
+          type,
+          properties,
+          id: body.id,
+          state: body.state as ItemState | undefined,
+          library: libraryValue,
+          timestamp: body.timestamp,
+          source: stampedSource,
+          source_id: body.source_id,
+          origin: stampedOrigin,
+          device: body.device,
+          parent_id: body.parent_id,
+          thread_id: body.thread_id,
+          capture_latitude: body.capture_latitude,
+          capture_longitude: body.capture_longitude,
+          tags: body.tags,
+          about: body.about,
+        },
+        tenantId,
+      );
+
+      // Atomic edges: for each entry, this item is the source; listed ids
+      // are targets. assertEdgeCanBeCreated enforces cardinality / type
+      // constraints / cycle rules; failure rolls the entire transaction.
+      if (body.edges) {
+        for (const [edgeType, targets] of Object.entries(body.edges)) {
+          for (const targetId of targets) {
+            await assertEdgeCanBeCreated(storage.edges, storage.items, {
+              source_id: created.id,
+              target_id: targetId,
+              edge_type: edgeType,
+              tenant_id: tenantId,
+            });
+            await storage.edges.createRaw(
+              {
+                source_id: created.id,
+                target_id: targetId,
+                edge_type: edgeType,
+              },
+              tenantId,
+            );
+          }
+        }
+      }
+
+      const meta = await storage.metadata.get(created.id);
+      return { item: created, metadata: meta };
+    });
+
     await publish({ type: "created", item, metadata, tenantId });
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
