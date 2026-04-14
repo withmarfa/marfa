@@ -2,7 +2,7 @@
 
 Typed data layer. This monorepo contains four active workspace packages:
 
-- **@mymehq/types** — JSON schemas for the core type set plus the validate/generate scripts that emit the TypeScript registry (`ALL_TYPES`). Consumed by `@mymehq/shared`; private (bundled into shared's dist, not published to npm)
+- **@mymehq/types** — JSON schemas for the core type set plus the validate/generate scripts that emit the TypeScript registries (`ALL_TYPES`, `ALL_EDGE_TYPES`). Consumed by `@mymehq/shared`; private (bundled into shared's dist, not published to npm)
 - **@mymehq/shared** — Wire types, Zod validation schemas, error codes, type registry consumer, ID utilities. The foundation imported by both server and SDK
 - **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published)
 - **@mymehq/sdk** — TypeScript HTTP client for consuming the Myme API
@@ -117,9 +117,35 @@ Types may declare an optional `display_hints: { title_field?, body_field? }` blo
 
 Lifecycle is universal — the metadata-layer `state` axis is `active | archived | trashed`. Types do not declare their own state machines; `SYSTEM_TRANSITIONS` in shared is the authoritative graph.
 
+## Edges (Wave 2 PR 4)
+
+Relationships between items are first-class typed edges, not embedded references. Eight core edge types live as JSON under `packages/types/core/edges/` and seed the in-memory registry at startup: `about`, `parent-of`, `in-thread`, `annotates`, `authored-by`, `derived-from`, `supersedes`, `pinned-to`. Each carries cardinality (`one-to-one` / `one-to-many` / `many-to-one` / `many-to-many`), `cascade_on_delete` (`cascade` / `orphan` / `block`), and source / target type constraints.
+
+**Direction is spec-exact.** For `parent-of` source = parent, target = child. For `in-thread` source = member, target = thread. Every consumer (backfill script, cycle-detection walks, filter SQL, cascade planner) obeys this.
+
+Custom edge types register at runtime via `POST /edges/types` (admin only) and persist in `custom_edge_types`. Core types cannot be redefined. No inheritance in V0 (the NQ-1 resolution).
+
+Atomic writes on `POST /items` accept `edges: { [type]: [target_ids] }`. Edge-only mutations go through `/edges` (create / update-properties-only / delete) or `/items/:id/edges` + `/backrefs` for listings. Single-item reads hydrate edges inline; list reads opt in via `?include=edges`.
+
+Query-language filters use `edge[<type>]=<target_id>` (outbound) and `backref[<type>]=<source_id>` (inbound). Both work on `GET /items` and `/search`.
+
+## Permissions
+
+Credentials carry three permission maps:
+
+- `type_permissions` — `{ "<type_pattern>": "read" | "write" | "none" }`. Pattern supports `*` wildcard and `parent.*` subtree.
+- `extension_permissions` — `{ "<namespace>": "read" | "write" }`. Scoped to `/items/:id/extensions/:namespace`.
+- `edge_permissions` — `{ "<edge_type>": "read" | "write" }` with `*` wildcard. Enforced via `requireEdgePermission` on `POST /edges`, `PATCH /edges/:id`, `DELETE /edges/:id`, and any `POST /items` carrying an `edges` payload.
+
+Edge mutations dual-gate: the caller needs **both** write on the source item's type AND write on the edge type. Admin keys bypass both.
+
+OAuth scope grammar mirrors these: `<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`. Scopes parse via `parseScope` in `@mymehq/shared`; the consent UI renders the resolved `typePattern` literally.
+
+**Grandfathering:** migration 0012 backfilled `edge_permissions = {"*":"write"}` onto every non-admin key that had any `type_permissions` at the time — pre-PR-4 keys implicitly had broad edge access through `parent_id` / `thread_id` / `about`, so the upgrade preserves it. New keys default to `{}` (opt-in).
+
 ## Webhooks
 
-Outbound webhooks fire on item events (`item.created`, `item.updated`, `item.deleted`, `item.restored`, `item.state_changed`) and metadata changes (`metadata.changed`). The `WebhookConsumer` subscribes to the pub/sub system and delivers to registered URLs with HMAC-SHA256 signatures, retry with exponential backoff.
+Outbound webhooks fire on item events (`item.created`, `item.updated`, `item.deleted`, `item.restored`, `item.state_changed`), metadata changes (`metadata.changed`), and edge lifecycle events (`edge.created`, `edge.deleted`). The `WebhookConsumer` runs one subscription per event family and delivers to registered URLs with HMAC-SHA256 signatures plus exponential-backoff retry.
 
 ## Code style
 
