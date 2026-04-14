@@ -141,6 +141,9 @@
                         "version": {
                           "type": "number"
                         },
+                        "schema_version": {
+                          "type": "integer"
+                        },
                         "thread_id": {
                           "type": "string",
                           "nullable": true
@@ -189,6 +192,7 @@
                         "state",
                         "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
                         "timestamp",
@@ -531,6 +535,9 @@
                               "version": {
                                 "type": "number"
                               },
+                              "schema_version": {
+                                "type": "integer"
+                              },
                               "thread_id": {
                                 "type": "string",
                                 "nullable": true
@@ -579,6 +586,7 @@
                               "state",
                               "library",
                               "version",
+                              "schema_version",
                               "thread_id",
                               "parent_id",
                               "timestamp",
@@ -633,6 +641,9 @@
                                   "version": {
                                     "type": "number"
                                   },
+                                  "schema_version": {
+                                    "type": "integer"
+                                  },
                                   "thread_id": {
                                     "type": "string",
                                     "nullable": true
@@ -681,6 +692,7 @@
                                   "state",
                                   "library",
                                   "version",
+                                  "schema_version",
                                   "thread_id",
                                   "parent_id",
                                   "timestamp",
@@ -938,6 +950,9 @@
                         "version": {
                           "type": "number"
                         },
+                        "schema_version": {
+                          "type": "integer"
+                        },
                         "thread_id": {
                           "type": "string",
                           "nullable": true
@@ -986,6 +1001,7 @@
                         "state",
                         "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
                         "timestamp",
@@ -1192,6 +1208,9 @@
                         "version": {
                           "type": "number"
                         },
+                        "schema_version": {
+                          "type": "integer"
+                        },
                         "thread_id": {
                           "type": "string",
                           "nullable": true
@@ -1240,6 +1259,7 @@
                         "state",
                         "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
                         "timestamp",
@@ -1613,6 +1633,9 @@
                         "version": {
                           "type": "number"
                         },
+                        "schema_version": {
+                          "type": "integer"
+                        },
                         "thread_id": {
                           "type": "string",
                           "nullable": true
@@ -1661,6 +1684,7 @@
                         "state",
                         "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
                         "timestamp",
@@ -1855,6 +1879,9 @@
                         "version": {
                           "type": "number"
                         },
+                        "schema_version": {
+                          "type": "integer"
+                        },
                         "thread_id": {
                           "type": "string",
                           "nullable": true
@@ -1903,6 +1930,7 @@
                         "state",
                         "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
                         "timestamp",
@@ -4274,6 +4302,9 @@
                           "version": {
                             "type": "number"
                           },
+                          "schema_version": {
+                            "type": "integer"
+                          },
                           "thread_id": {
                             "type": "string",
                             "nullable": true
@@ -4322,6 +4353,7 @@
                           "state",
                           "library",
                           "version",
+                          "schema_version",
                           "thread_id",
                           "parent_id",
                           "timestamp",
@@ -4485,6 +4517,9 @@
                         "version": {
                           "type": "number"
                         },
+                        "schema_version": {
+                          "type": "integer"
+                        },
                         "thread_id": {
                           "type": "string",
                           "nullable": true
@@ -4533,6 +4568,7 @@
                         "state",
                         "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
                         "timestamp",
@@ -4720,6 +4756,9 @@
                         "version": {
                           "type": "number"
                         },
+                        "schema_version": {
+                          "type": "integer"
+                        },
                         "thread_id": {
                           "type": "string",
                           "nullable": true
@@ -4768,6 +4807,7 @@
                         "state",
                         "library",
                         "version",
+                        "schema_version",
                         "thread_id",
                         "parent_id",
                         "timestamp",
@@ -4937,6 +4977,17 @@
                       "version": {
                         "type": "number"
                       },
+                      "display_hints": {
+                        "type": "object",
+                        "properties": {
+                          "title_field": {
+                            "type": "string"
+                          },
+                          "body_field": {
+                            "type": "string"
+                          }
+                        }
+                      },
                       "version_policy": {
                         "type": "object",
                         "properties": {
@@ -5057,6 +5108,17 @@
                         },
                         "version": {
                           "type": "number"
+                        },
+                        "display_hints": {
+                          "type": "object",
+                          "properties": {
+                            "title_field": {
+                              "type": "string"
+                            },
+                            "body_field": {
+                              "type": "string"
+                            }
+                          }
                         },
                         "version_policy": {
                           "type": "object",
@@ -5214,6 +5276,17 @@
                     },
                     "version": {
                       "type": "number"
+                    },
+                    "display_hints": {
+                      "type": "object",
+                      "properties": {
+                        "title_field": {
+                          "type": "string"
+                        },
+                        "body_field": {
+                          "type": "string"
+                        }
+                      }
                     },
                     "version_policy": {
                       "type": "object",
@@ -5380,6 +5453,17 @@
                         },
                         "version": {
                           "type": "number"
+                        },
+                        "display_hints": {
+                          "type": "object",
+                          "properties": {
+                            "title_field": {
+                              "type": "string"
+                            },
+                            "body_field": {
+                              "type": "string"
+                            }
+                          }
                         },
                         "version_policy": {
                           "type": "object",
@@ -6618,6 +6702,16 @@
                         "none"
                       ]
                     }
+                  },
+                  "extension_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    }
                   }
                 },
                 "required": [
@@ -6674,6 +6768,16 @@
                           "read",
                           "write",
                           "none"
+                        ]
+                      }
+                    },
+                    "extension_permissions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "write"
                         ]
                       }
                     },
@@ -6788,7 +6892,22 @@
                           "type_permissions": {
                             "type": "object",
                             "additionalProperties": {
-                              "type": "string"
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "write",
+                                "none"
+                              ]
+                            }
+                          },
+                          "extension_permissions": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "write"
+                              ]
                             }
                           },
                           "created_at": {
