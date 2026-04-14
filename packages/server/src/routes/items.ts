@@ -15,6 +15,7 @@ import {
   requireAuth,
   requireAdmin,
   requireTypeAccess,
+  requireEdgePermission,
   getTypeFilter,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -712,6 +713,12 @@ export function itemRoutes(storage: Storage) {
               `Invalid target id in edges.${edgeType}`,
             );
           }
+        }
+        // Permission gate: atomic POST /items edges require the same
+        // edge-type write permission as POST /edges. Item-type write is
+        // already enforced above via requireTypeAccess(type, "write").
+        if (targets.length > 0) {
+          requireEdgePermission(c, edgeType, "write");
         }
       }
     }

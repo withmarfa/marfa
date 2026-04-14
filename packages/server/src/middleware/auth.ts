@@ -6,6 +6,8 @@ import {
   ErrorCode,
   resolveTypePermission,
   scopesToTypePermissions,
+  scopesToEdgePermissions,
+  edgePermissionCovers,
 } from "@mymehq/shared";
 import type { ApiKey } from "@mymehq/shared";
 import type { Storage } from "../storage/interface.js";
@@ -84,6 +86,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       // V0 credential-default fields are synthesised; OAuth parity is a
       // Wave 1 follow-up (see monorepo work doc open questions).
       const typePermissions = scopesToTypePermissions(oauthToken.scopes);
+      const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
       c.set("apiKey", {
         id: oauthToken.id,
         label: `oauth:${oauthToken.grant_id}`,
@@ -93,6 +96,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         default_library: false,
         type_permissions: typePermissions,
         extension_permissions: {},
+        edge_permissions: edgePermissions,
         created_at: oauthToken.created_at,
         last_used_at: null,
       });
@@ -121,6 +125,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         default_library: stored.default_library,
         type_permissions: stored.type_permissions,
         extension_permissions: stored.extension_permissions,
+        edge_permissions: stored.edge_permissions,
         created_at: stored.created_at,
         last_used_at: stored.last_used_at,
       });
@@ -219,6 +224,31 @@ export function requireTypeAccess(
   level: "read" | "write",
 ): void {
   checkTypeAccess(c.get("apiKey"), type, level);
+}
+
+/**
+ * Enforces a per-edge-type permission check. Admin keys always pass.
+ * Non-admin keys need either the specific edge-type permission or the
+ * `*` wildcard at the requested level (write covers read). Reads fall
+ * back through edgePermissionCovers which also accepts wildcard.
+ *
+ * Throws EDGE_PERMISSION_DENIED (403) on failure — the discriminator
+ * code lets SDK clients route `forbidden` differently from specifically
+ * an edge-permission failure.
+ */
+export function requireEdgePermission(
+  c: Context<AppEnv>,
+  edgeType: string,
+  level: "read" | "write",
+): void {
+  const apiKey = checkAuth(c.get("apiKey"));
+  if (apiKey.role === "admin") return;
+  if (edgePermissionCovers(apiKey.edge_permissions, edgeType, level)) return;
+  throw new MymeError(
+    ErrorCode.EDGE_PERMISSION_DENIED,
+    `Missing edge.${edgeType}:${level} permission`,
+    { edge_type: edgeType, required: level },
+  );
 }
 
 export function getTypeFilter(c: Context<AppEnv>): string[] | undefined {

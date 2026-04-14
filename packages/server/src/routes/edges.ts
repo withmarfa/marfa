@@ -5,7 +5,11 @@ import {
   isValidId,
 } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import {
+  requireAuth,
+  requireEdgePermission,
+  requireTypeAccess,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -174,6 +178,18 @@ export function edgeRoutes(storage: Storage) {
     }
     const tenantId = c.get("apiKey")?.tenant_id;
 
+    // Dual gate: source item's type permission + edge type permission.
+    // Admin keys bypass both via the helpers.
+    const sourceItem = await storage.items.get(body.source_id, tenantId);
+    if (!sourceItem) {
+      throw new MymeError(
+        ErrorCode.ITEM_NOT_FOUND,
+        `Edge source item not found: ${body.source_id}`,
+      );
+    }
+    requireTypeAccess(c, sourceItem.type, "write");
+    requireEdgePermission(c, body.edge_type, "write");
+
     const edge = await storage.runInTransaction(async () => {
       await assertEdgeCanBeCreated(
         storage.edges,
@@ -219,6 +235,12 @@ export function edgeRoutes(storage: Storage) {
     if (!existing) {
       throw new MymeError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
+    const srcItem = await storage.items.get(
+      existing.source_id,
+      c.get("apiKey")?.tenant_id,
+    );
+    if (srcItem) requireTypeAccess(c, srcItem.type, "write");
+    requireEdgePermission(c, existing.edge_type, "write");
     // Reject attempts to change immutable fields — extra insurance beyond
     // the schema (Zod only accepts `properties` in the body, but guard against
     // future body-schema relaxation).
@@ -242,6 +264,12 @@ export function edgeRoutes(storage: Storage) {
     if (!existing) {
       throw new MymeError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
+    const srcItem = await storage.items.get(
+      existing.source_id,
+      c.get("apiKey")?.tenant_id,
+    );
+    if (srcItem) requireTypeAccess(c, srcItem.type, "write");
+    requireEdgePermission(c, existing.edge_type, "write");
     await storage.edges.delete(id);
     await publishEdge({
       type: "edge_deleted",

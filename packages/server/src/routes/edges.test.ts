@@ -431,6 +431,67 @@ describe("Query-language: edge[X]=Y and backref[X]=Y", () => {
   });
 });
 
+describe("Edge permission enforcement", () => {
+  it("rejects a non-admin key without edge permissions", async () => {
+    // Create a non-admin key with type_permissions but no edge_permissions.
+    const keyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "member-no-edge",
+        source: `member-no-edge-${String(Math.random())}`,
+        role: "member",
+        default_library: true,
+        type_permissions: { "core.note": "write" },
+        edge_permissions: {},
+      },
+    });
+    const keyData = (await keyRes.json()) as { key: string };
+    const memberKey = keyData.key;
+
+    const source = await createItem();
+    const target = await createItem();
+    const res = await request(ctx.app, "POST", "/edges", {
+      key: memberKey,
+      body: {
+        source_id: source,
+        target_id: target,
+        edge_type: "about",
+      },
+    });
+    expect(res.status).toBe(403);
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("edge_permission_denied");
+  });
+
+  it("accepts a non-admin key with edge.*:write wildcard", async () => {
+    const keyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "member-edge-all",
+        source: `member-edge-all-${String(Math.random())}`,
+        role: "member",
+        default_library: true,
+        type_permissions: { "core.note": "write" },
+        edge_permissions: { "*": "write" },
+      },
+    });
+    const keyData = (await keyRes.json()) as { key: string };
+    const memberKey = keyData.key;
+
+    const source = await createItem();
+    const target = await createItem();
+    const res = await request(ctx.app, "POST", "/edges", {
+      key: memberKey,
+      body: {
+        source_id: source,
+        target_id: target,
+        edge_type: "about",
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+});
+
 describe("Edge hydration on item reads", () => {
   it("hydrates outbound edges on GET /items/:id", async () => {
     const source = await createItem();
