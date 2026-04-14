@@ -153,7 +153,7 @@ export class SqliteSearchStore implements SearchStore {
         bm25(items_fts) AS rank,
         i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.origin, i.version,
-        i.schema_version, i.device_id, i.parent_id, i.thread_id,
+        i.schema_version, i.device, i.parent_id, i.thread_id,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.about, m.extensions
       FROM items_fts fts

@@ -37,7 +37,7 @@ export interface Item {
   origin?: string;
   version: number;
   schema_version?: number;
-  device_id?: string;
+  device?: string;
   parent_id: string | null;
   thread_id: string | null;
   capture_latitude?: number;
@@ -54,7 +54,7 @@ export interface CreateItemInput {
   source?: string;
   source_id?: string;
   origin?: string;
-  device_id?: string;
+  device?: string;
   parent_id?: string;
   thread_id?: string;
   capture_latitude?: number;
@@ -93,7 +93,7 @@ export interface Version {
   version: number;
   properties: Record<string, unknown>;
   created_at: string;
-  device_id?: string;
+  device?: string;
 }
 
 /** A sequential grouping of items. */

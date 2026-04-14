@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS items (
   origin TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   schema_version INTEGER,
-  device_id TEXT,
+  device TEXT,
   parent_id TEXT,
   thread_id TEXT REFERENCES threads(id),
   capture_latitude DOUBLE PRECISION,
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS versions (
   version INTEGER NOT NULL,
   properties TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  device_id TEXT
+  device TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_versions_item_id ON versions(item_id);
 

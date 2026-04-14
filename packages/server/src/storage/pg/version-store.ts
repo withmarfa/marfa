@@ -28,7 +28,7 @@ export class PgVersionStore implements VersionStore {
       version,
       properties: JSON.stringify(properties),
       created_at: now,
-      device_id: deviceId ?? null,
+      device: deviceId ?? null,
     };
     await executor.insert(versions).values(row);
     return {
@@ -37,7 +37,7 @@ export class PgVersionStore implements VersionStore {
       version,
       properties,
       created_at: now,
-      ...(deviceId != null && { device_id: deviceId }),
+      ...(deviceId != null && { device: deviceId }),
     };
   }
 

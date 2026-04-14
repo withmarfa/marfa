@@ -173,7 +173,7 @@ function coerceItem(row: Row): Item {
     origin: optStr(row.origin),
     version: num(row.version, 1),
     schema_version: optNum(row.schema_version),
-    device_id: optStr(row.device_id),
+    device: optStr(row.device),
     parent_id: optStr(row.parent_id) ?? null,
     thread_id: optStr(row.thread_id) ?? null,
     capture_latitude: optNum(row.capture_latitude),

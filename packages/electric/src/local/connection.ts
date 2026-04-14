@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS items (
   origin TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   schema_version INTEGER,
-  device_id TEXT,
+  device TEXT,
   parent_id TEXT,
   thread_id TEXT,
   capture_latitude REAL,

@@ -69,7 +69,7 @@ export const items = sqliteTable(
     origin: text("origin"),
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
-    device_id: text("device_id"),
+    device: text("device"),
     parent_id: text("parent_id"),
     thread_id: text("thread_id").references(() => threads.id),
     capture_latitude: real("capture_latitude"),
@@ -115,7 +115,7 @@ export const versions = sqliteTable(
     version: integer("version").notNull(),
     properties: text("properties").notNull(),
     created_at: text("created_at").notNull(),
-    device_id: text("device_id"),
+    device: text("device"),
   },
   (table) => [index("idx_versions_item_id").on(table.item_id)],
 );

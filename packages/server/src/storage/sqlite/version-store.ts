@@ -34,7 +34,7 @@ export class SqliteVersionStore implements VersionStore {
       version,
       properties: JSON.stringify(properties),
       created_at: now,
-      device_id: deviceId ?? null,
+      device: deviceId ?? null,
     };
     this.db.insert(versions).values(row).run();
     return {
@@ -43,7 +43,7 @@ export class SqliteVersionStore implements VersionStore {
       version,
       properties,
       created_at: now,
-      ...(deviceId != null && { device_id: deviceId }),
+      ...(deviceId != null && { device: deviceId }),
     };
   }
 

@@ -30,7 +30,7 @@ const ItemSchema = z.object({
   source: z.string().nullable(),
   source_id: z.string().nullable(),
   origin: z.string().nullable(),
-  device_id: z.string().nullable(),
+  device: z.string().nullable(),
   capture_latitude: z.number().nullable(),
   capture_longitude: z.number().nullable(),
   timestamp: z.string(),

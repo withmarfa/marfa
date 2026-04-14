@@ -15,6 +15,13 @@
       "when": 1776125351075,
       "tag": "0001_smart_living_lightning",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776300000000,
+      "tag": "0002_rename_device_id_to_device",
+      "breakpoints": true
     }
   ]
 }

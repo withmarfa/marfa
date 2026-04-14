@@ -24,7 +24,7 @@ export function rowToItem(row: ItemRow): Item {
     ...(row.source_id != null && { source_id: row.source_id }),
     ...(row.origin != null && { origin: row.origin }),
     ...(row.schema_version != null && { schema_version: row.schema_version }),
-    ...(row.device_id != null && { device_id: row.device_id }),
+    ...(row.device != null && { device: row.device }),
     parent_id: row.parent_id ?? null,
     thread_id: row.thread_id ?? null,
     ...(row.capture_latitude != null && {
@@ -64,6 +64,6 @@ export function rowToVersion(row: VersionRow): Version {
       `version ${row.id} properties`,
     ),
     created_at: row.created_at,
-    ...(row.device_id != null && { device_id: row.device_id }),
+    ...(row.device != null && { device: row.device }),
   };
 }

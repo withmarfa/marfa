@@ -24,7 +24,7 @@ export function rowToItem(row: Record<string, unknown>): Item {
     origin: (row.origin as string | null) ?? undefined,
     version: row.version as number,
     schema_version: (row.schema_version as number | null) ?? undefined,
-    device_id: (row.device_id as string | null) ?? undefined,
+    device: (row.device as string | null) ?? undefined,
     parent_id: (row.parent_id as string | null) ?? null,
     thread_id: (row.thread_id as string | null) ?? null,
     capture_latitude: (row.capture_latitude as number | null) ?? undefined,
