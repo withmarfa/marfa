@@ -106,6 +106,40 @@ export const metadata = pgTable("metadata", {
 });
 
 // ---------------------------------------------------------------------------
+// edges (first-class typed relationships between items)
+// ---------------------------------------------------------------------------
+
+export const edges = pgTable(
+  "edges",
+  {
+    id: text("id").primaryKey(),
+    tenant_id: text("tenant_id"),
+    source_id: text("source_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    target_id: text("target_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    edge_type: text("edge_type").notNull(),
+    properties: text("properties").notNull().default("{}"),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_edges_source").on(
+      table.tenant_id,
+      table.source_id,
+      table.edge_type,
+    ),
+    index("idx_edges_target").on(
+      table.tenant_id,
+      table.target_id,
+      table.edge_type,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // versions (item property snapshots)
 // ---------------------------------------------------------------------------
 

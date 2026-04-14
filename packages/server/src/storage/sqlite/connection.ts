@@ -108,6 +108,19 @@ export function createConnection(sqlitePath: string): {
       extensions TEXT NOT NULL DEFAULT '{}'
     );
 
+    CREATE TABLE IF NOT EXISTS edges (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT,
+      source_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      target_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      edge_type TEXT NOT NULL,
+      properties TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(tenant_id, source_id, edge_type);
+    CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(tenant_id, target_id, edge_type);
+
     CREATE TABLE IF NOT EXISTS versions (
       id TEXT PRIMARY KEY,
       item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
