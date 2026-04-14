@@ -34,13 +34,15 @@ export interface Item {
   id: string;
   type: string;
   state: ItemState;
+  /** Whether this item is part of the curated personal-data layer. */
+  library: boolean;
   properties: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   timestamp: string;
   source?: string;
   source_id?: string;
-  origin?: string;
+  origin?: Origin;
   version: number;
   schema_version?: number;
   device?: string;
@@ -56,10 +58,13 @@ export interface CreateItemInput {
   properties: Record<string, unknown>;
   id?: string;
   state?: ItemState;
+  /** Overrides the credential's default_library when supplied. */
+  library?: boolean;
   timestamp?: string;
+  /** Ignored on the wire — server always stamps source from the credential. */
   source?: string;
   source_id?: string;
-  origin?: string;
+  origin?: Origin;
   device?: string;
   parent_id?: string;
   thread_id?: string;
@@ -114,7 +119,13 @@ export interface ApiKey {
   id: string;
   tenant_id?: string;
   label: string;
+  /** Human-readable display name stamped onto items this credential writes. */
+  source: string;
   role: KeyRole;
+  /** Origin stamped onto items when the client doesn't supply one. */
+  default_origin: Origin;
+  /** Library flag stamped onto items when the client doesn't supply one. */
+  default_library: boolean;
   type_permissions: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   created_at: string;
@@ -124,7 +135,10 @@ export interface ApiKey {
 /** Input for creating a new API key. */
 export interface CreateKeyInput {
   label: string;
+  source: string;
   role: KeyRole;
+  default_origin?: Origin;
+  default_library?: boolean;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
 }

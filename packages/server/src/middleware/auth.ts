@@ -76,12 +76,17 @@ export function authMiddleware(storage: Storage, salt: string) {
         return next();
       }
 
-      // Build a synthetic ApiKey from the OAuth token's scopes
+      // Build a synthetic ApiKey from the OAuth token's scopes.
+      // V0 credential-default fields are synthesised; OAuth parity is a
+      // Wave 1 follow-up (see monorepo work doc open questions).
       const typePermissions = scopesToTypePermissions(oauthToken.scopes);
       c.set("apiKey", {
         id: oauthToken.id,
         label: `oauth:${oauthToken.grant_id}`,
+        source: `oauth:${oauthToken.grant_id}`,
         role: "member",
+        default_origin: "user",
+        default_library: false,
         type_permissions: typePermissions,
         created_at: oauthToken.created_at,
         last_used_at: null,
@@ -105,7 +110,10 @@ export function authMiddleware(storage: Storage, salt: string) {
         id: stored.id,
         tenant_id: stored.tenant_id ?? undefined,
         label: stored.label,
+        source: stored.source,
         role: stored.role,
+        default_origin: stored.default_origin,
+        default_library: stored.default_library,
         type_permissions: stored.type_permissions,
         created_at: stored.created_at,
         last_used_at: stored.last_used_at,

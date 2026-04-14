@@ -429,6 +429,7 @@ describe("keys", () => {
   it("creates and lists keys", async () => {
     const { id, key } = await client.keys.create({
       label: "test-key",
+      source: "test-key-source",
       role: "member",
     });
     expect(id).toBeTruthy();
@@ -443,6 +444,7 @@ describe("keys", () => {
   it("revokes a key", async () => {
     const { id, key } = await client.keys.create({
       label: "revoke-me",
+      source: "revoke-me-source",
       role: "member",
     });
     await client.keys.revoke(id);

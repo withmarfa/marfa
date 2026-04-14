@@ -74,7 +74,7 @@ describe("bootstrap mode", () => {
     });
 
     const res = await request(app, "POST", "/keys", {
-      body: { label: "bootstrap-admin" },
+      body: { label: "bootstrap-admin", source: "bootstrap-admin" },
     });
     expect(res.status).toBe(201);
     const data = (await res.json()) as Record<string, unknown>;
@@ -89,7 +89,7 @@ describe("key management", () => {
   it("creates and lists keys", async () => {
     const createRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
-      body: { label: "test-member", role: "member" },
+      body: { label: "test-member", source: "test-member-src", role: "member" },
     });
     expect(createRes.status).toBe(201);
     const created = (await createRes.json()) as Record<string, unknown>;
@@ -106,7 +106,7 @@ describe("key management", () => {
   it("revokes a key", async () => {
     const createRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
-      body: { label: "to-revoke" },
+      body: { label: "to-revoke", source: "to-revoke-src" },
     });
     const created = (await createRes.json()) as Record<string, unknown>;
 

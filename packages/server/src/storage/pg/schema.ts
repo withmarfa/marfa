@@ -2,6 +2,7 @@ import {
   pgTable,
   text,
   integer,
+  boolean,
   doublePrecision,
   index,
   uniqueIndex,
@@ -60,6 +61,7 @@ export const items = pgTable(
     tenant_id: text("tenant_id"),
     type: text("type").notNull(),
     state: text("state").notNull().default("active"),
+    library: boolean("library").notNull().default(false),
     properties: text("properties").notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
@@ -124,18 +126,29 @@ export const versions = pgTable(
 // api_keys
 // ---------------------------------------------------------------------------
 
-export const apiKeys = pgTable("api_keys", {
-  id: text("id").primaryKey(),
-  tenant_id: text("tenant_id"),
-  key_hash: text("key_hash").notNull().unique(),
-  label: text("label").notNull(),
-  role: text("role").notNull().default("member"),
-  type_permissions: text("type_permissions").notNull().default('{"*":"write"}'),
-  extension_permissions: text("extension_permissions").notNull().default("{}"),
-  created_at: text("created_at").notNull(),
-  revoked_at: text("revoked_at"),
-  last_used_at: text("last_used_at"),
-});
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: text("id").primaryKey(),
+    tenant_id: text("tenant_id"),
+    key_hash: text("key_hash").notNull().unique(),
+    label: text("label").notNull(),
+    source: text("source").notNull(),
+    role: text("role").notNull().default("member"),
+    default_origin: text("default_origin").notNull().default("user"),
+    default_library: boolean("default_library").notNull().default(false),
+    type_permissions: text("type_permissions").notNull().default('{"*":"write"}'),
+    extension_permissions: text("extension_permissions").notNull().default("{}"),
+    created_at: text("created_at").notNull(),
+    revoked_at: text("revoked_at"),
+    last_used_at: text("last_used_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_api_keys_source_per_tenant")
+      .on(table.tenant_id, table.source)
+      .where(sql`revoked_at IS NULL`),
+  ],
+);
 
 // ---------------------------------------------------------------------------
 // blobs (metadata only — actual files on filesystem)

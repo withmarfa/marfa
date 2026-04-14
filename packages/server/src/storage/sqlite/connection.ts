@@ -74,6 +74,7 @@ export function createConnection(sqlitePath: string): {
       tenant_id TEXT,
       type TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'active',
+      library INTEGER NOT NULL DEFAULT 0,
       properties TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -121,12 +122,18 @@ export function createConnection(sqlitePath: string): {
       tenant_id TEXT,
       key_hash TEXT NOT NULL UNIQUE,
       label TEXT NOT NULL,
+      source TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
+      default_origin TEXT NOT NULL DEFAULT 'user',
+      default_library INTEGER NOT NULL DEFAULT 0,
       type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
+      extension_permissions TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       revoked_at TEXT,
       last_used_at TEXT
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_source_per_tenant
+      ON api_keys(tenant_id, source) WHERE revoked_at IS NULL;
 
     CREATE TABLE IF NOT EXISTS blobs (
       hash TEXT PRIMARY KEY,

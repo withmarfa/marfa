@@ -208,6 +208,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     await storage.keys.create(
       {
         label: "admin",
+        source: "admin",
         role: "admin",
         type_permissions: { "*": "write" },
       },
@@ -245,6 +246,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
       await storage.keys.create(
         {
           label: "admin",
+          source: "admin",
           role: "admin",
           type_permissions: { "*": "write" },
         },
@@ -270,6 +272,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     await storage.keys.create(
       {
         label: "session",
+        source: "session",
         role: "admin",
         type_permissions: { "*": "write" },
       },

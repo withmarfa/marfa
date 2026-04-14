@@ -96,6 +96,7 @@ const createItemRoute = createRoute({
             source: z.string().optional(),
             source_id: z.string().optional(),
             origin: z.enum(["user", "ai", "worker"]).optional(),
+            library: z.boolean().optional(),
             device: z.string().optional(),
             parent_id: z.string().optional(),
             thread_id: z.string().optional(),
@@ -693,16 +694,24 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
+    // source is non-forgeable: always stamped from the credential.
+    // origin and library fall back to credential defaults when absent.
+    const credential = c.get("apiKey");
+    const stampedSource = credential?.source;
+    const stampedOrigin = body.origin ?? credential?.default_origin;
+    const libraryValue = body.library ?? credential?.default_library ?? false;
+
     const item = await storage.items.create(
       {
         type,
         properties,
         id: body.id as string | undefined,
         state: body.state as ItemState | undefined,
+        library: libraryValue,
         timestamp: body.timestamp as string | undefined,
-        source: body.source as string | undefined,
+        source: stampedSource,
         source_id: body.source_id as string | undefined,
-        origin: body.origin as string | undefined,
+        origin: stampedOrigin,
         device: body.device as string | undefined,
         parent_id: body.parent_id as string | undefined,
         thread_id: body.thread_id as string | undefined,
