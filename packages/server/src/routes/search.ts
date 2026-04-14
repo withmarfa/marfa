@@ -14,25 +14,16 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+import {
+  ItemSchema as BaseItemSchema,
+  MetadataSchema as BaseMetadataSchema,
+} from "./_schemas.js";
 
-const ItemSchema = z
-  .object({
-    id: z.string(),
-    type: z.string(),
-    state: z.string(),
-    properties: z.record(z.string(), z.unknown()),
-    created_at: z.string(),
-    updated_at: z.string(),
-    timestamp: z.string(),
-  })
-  .loose();
-
-const MetadataSchema = z
-  .object({
-    tags: z.array(z.string()),
-    about: z.array(z.string()),
-  })
-  .loose();
+// Search responses use loose() so the FTS5 ranker's extra columns
+// (e.g. relevance internals) don't trip strict validation. The
+// underlying field set is the canonical one in _schemas.ts.
+const ItemSchema = BaseItemSchema.loose();
+const MetadataSchema = BaseMetadataSchema.loose();
 
 const SearchResultSchema = z.object({
   item: ItemSchema,

@@ -24,38 +24,17 @@ import {
   ErrorResponseSchema,
   OkResponseSchema,
 } from "../openapi.js";
+import {
+  ItemSchema,
+  ItemWithMetadataSchema,
+  MetadataSchema,
+} from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
-// Reusable schemas
+// Reusable schemas (Item / Metadata / ItemWithMetadata live in _schemas.ts;
+// imported above. The conflict-response and version schemas are local to
+// items.ts since no other route uses them.)
 // ---------------------------------------------------------------------------
-
-const ItemSchema = z.object({
-  id: z.string(),
-  type: z.string(),
-  properties: z.record(z.string(), z.unknown()),
-  state: z.string(),
-  library: z.boolean(),
-  version: z.number(),
-  schema_version: z.number().int(),
-  thread_id: z.string().nullable(),
-  parent_id: z.string().nullable(),
-  source: z.string().optional(),
-  source_id: z.string().optional(),
-  origin: z.enum(["user", "ai", "worker"]).optional(),
-  device: z.string().optional(),
-  capture_latitude: z.number().optional(),
-  capture_longitude: z.number().optional(),
-  timestamp: z.string(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
-
-const MetadataSchema = z.object({
-  item_id: z.string(),
-  tags: z.array(z.string()),
-  about: z.array(z.string()),
-  extensions: z.record(z.string(), z.unknown()),
-});
 
 const ConflictSnapshotSchema = z.object({
   version: z.number(),
@@ -70,11 +49,6 @@ const ConflictResponseSchema = z.object({
   current: ConflictSnapshotSchema,
   ancestor: ConflictSnapshotSchema,
   conflicting_fields: z.array(z.string()),
-});
-
-const ItemWithMetadataSchema = z.object({
-  item: ItemSchema,
-  metadata: MetadataSchema,
 });
 
 const VersionSchema = z.object({
