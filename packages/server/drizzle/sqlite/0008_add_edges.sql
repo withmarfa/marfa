@@ -6,9 +6,7 @@ CREATE TABLE `edges` (
 	`edge_type` text NOT NULL,
 	`properties` text DEFAULT '{}' NOT NULL,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL,
-	FOREIGN KEY (`source_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade,
-	FOREIGN KEY (`target_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+	`updated_at` text NOT NULL
 );
 --> statement-breakpoint
 CREATE INDEX `idx_edges_source` ON `edges` (`tenant_id`,`source_id`,`edge_type`);--> statement-breakpoint

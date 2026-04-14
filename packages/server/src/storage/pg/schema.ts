@@ -74,16 +74,12 @@ export const items = pgTable(
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
     device: text("device"),
-    parent_id: text("parent_id"),
-    thread_id: text("thread_id").references(() => threads.id),
     capture_latitude: doublePrecision("capture_latitude"),
     capture_longitude: doublePrecision("capture_longitude"),
   },
   (table) => [
     index("idx_items_type").on(table.type),
     index("idx_items_state").on(table.state),
-    index("idx_items_thread_id").on(table.thread_id),
-    index("idx_items_parent_id").on(table.parent_id),
     index("idx_items_created_at").on(table.created_at),
     index("idx_items_timestamp").on(table.timestamp),
     uniqueIndex("idx_items_source_dedup")
@@ -101,7 +97,6 @@ export const metadata = pgTable("metadata", {
     .primaryKey()
     .references(() => items.id, { onDelete: "cascade" }),
   tags: text("tags").notNull().default("[]"),
-  about: text("about").notNull().default("[]"),
   extensions: text("extensions").notNull().default("{}"),
 });
 
@@ -114,12 +109,15 @@ export const edges = pgTable(
   {
     id: text("id").primaryKey(),
     tenant_id: text("tenant_id"),
-    source_id: text("source_id")
-      .notNull()
-      .references(() => items.id, { onDelete: "cascade" }),
-    target_id: text("target_id")
-      .notNull()
-      .references(() => items.id, { onDelete: "cascade" }),
+    // source_id and target_id are NOT foreign keys to items(id). Most edges
+    // point between items, but the in-thread edge type targets rows in the
+    // threads table during the V0 legacy thread-API window (see edge-
+    // constraints.ts). FKs would reject those. App-level existence checks
+    // run in assertEdgeCanBeCreated; orphan-edge cleanup on item delete is
+    // handled by planCascadeDelete + explicit edgeStore.deleteBySource /
+    // deleteByTarget calls.
+    source_id: text("source_id").notNull(),
+    target_id: text("target_id").notNull(),
     edge_type: text("edge_type").notNull(),
     properties: text("properties").notNull().default("{}"),
     created_at: text("created_at").notNull(),

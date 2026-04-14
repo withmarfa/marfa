@@ -72,16 +72,12 @@ export const items = sqliteTable(
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
     device: text("device"),
-    parent_id: text("parent_id"),
-    thread_id: text("thread_id").references(() => threads.id),
     capture_latitude: real("capture_latitude"),
     capture_longitude: real("capture_longitude"),
   },
   (table) => [
     index("idx_items_type").on(table.type),
     index("idx_items_state").on(table.state),
-    index("idx_items_thread_id").on(table.thread_id),
-    index("idx_items_parent_id").on(table.parent_id),
     index("idx_items_created_at").on(table.created_at),
     index("idx_items_timestamp").on(table.timestamp),
     uniqueIndex("idx_items_source_dedup")
@@ -99,7 +95,6 @@ export const metadata = sqliteTable("metadata", {
     .primaryKey()
     .references(() => items.id, { onDelete: "cascade" }),
   tags: text("tags").notNull().default("[]"),
-  about: text("about").notNull().default("[]"),
   extensions: text("extensions").notNull().default("{}"),
 });
 
@@ -112,12 +107,12 @@ export const edges = sqliteTable(
   {
     id: text("id").primaryKey(),
     tenant_id: text("tenant_id"),
-    source_id: text("source_id")
-      .notNull()
-      .references(() => items.id, { onDelete: "cascade" }),
-    target_id: text("target_id")
-      .notNull()
-      .references(() => items.id, { onDelete: "cascade" }),
+    // No FKs on source_id / target_id — see pg/schema.ts note. Most edges
+    // point between items, but in-thread edges target the threads table
+    // during the V0 legacy thread-API window. App-level checks run in
+    // assertEdgeCanBeCreated + planCascadeDelete.
+    source_id: text("source_id").notNull(),
+    target_id: text("target_id").notNull(),
     edge_type: text("edge_type").notNull(),
     properties: text("properties").notNull().default("{}"),
     created_at: text("created_at").notNull(),

@@ -304,7 +304,6 @@ describe("metadata", () => {
     const item = await createNote();
     const meta = await client.metadata.set(item.id, {
       tags: ["test", "sdk"],
-      about: [],
     });
     expect(meta.tags).toEqual(["test", "sdk"]);
   });
@@ -352,7 +351,7 @@ describe("threads", () => {
     await client.items.create({
       type: "core.note",
       properties: { title: "Thread note", body: "In thread" },
-      thread_id: thread.id,
+      edges: { "in-thread": [thread.id] },
     });
 
     const result = await client.threads.get(thread.id);

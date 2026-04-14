@@ -119,8 +119,8 @@ export interface ItemStore {
 export interface MetadataStore {
   get(itemId: string): Promise<Metadata>;
   getMany(itemIds: string[]): Promise<Metadata[]>;
-  set(itemId: string, tags: string[], about: string[]): Promise<Metadata>;
-  merge(itemId: string, tags?: string[], about?: string[]): Promise<Metadata>;
+  set(itemId: string, tags: string[]): Promise<Metadata>;
+  merge(itemId: string, tags?: string[]): Promise<Metadata>;
   addTags(itemId: string, tags: string[]): Promise<Metadata>;
   removeTag(itemId: string, tag: string): Promise<Metadata>;
   getExtensions(

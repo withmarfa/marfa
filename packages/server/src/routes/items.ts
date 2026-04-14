@@ -95,15 +95,18 @@ const createItemRoute = createRoute({
             origin: z.enum(["user", "ai", "worker"]).optional(),
             library: z.boolean().optional(),
             device: z.string().optional(),
-            parent_id: z.string().optional(),
-            thread_id: z.string().optional(),
             capture_latitude: z.number().optional(),
             capture_longitude: z.number().optional(),
             tags: z.array(z.string()).optional(),
-            about: z.array(z.string()).optional(),
             // Atomic item + edges write: for each edge type, the listed
             // item ids become targets with the new item as source. Rejects
             // all-or-nothing if any constraint violation surfaces.
+            //
+            // Replaces the legacy parent_id / thread_id / about wire fields
+            // dropped in PR 4 commit 12. Use:
+            //   edges: { "parent-of": [parentId] }   // was parent_id
+            //   edges: { "in-thread": [threadId] }   // was thread_id
+            //   edges: { about: [...ids] }           // was about[]
             edges: z
               .record(z.string(), z.array(z.string()))
               .optional(),
@@ -253,8 +256,6 @@ const updateItemRoute = createRoute({
         "application/json": {
           schema: z.object({
             properties: z.record(z.string(), z.unknown()).optional(),
-            parent_id: z.string().nullable().optional(),
-            thread_id: z.string().nullable().optional(),
             version: z.number().int().min(0).optional(),
             snapshot: z.boolean().optional(),
           }),
@@ -451,7 +452,6 @@ const putMetadataRoute = createRoute({
         "application/json": {
           schema: z.object({
             tags: z.array(z.string()).optional().default([]),
-            about: z.array(z.string()).optional().default([]),
           }),
         },
       },
@@ -494,7 +494,6 @@ const patchMetadataRoute = createRoute({
         "application/json": {
           schema: z.object({
             tags: z.array(z.string()).optional(),
-            about: z.array(z.string()).optional(),
           }),
         },
       },
@@ -669,12 +668,6 @@ export function itemRoutes(storage: Storage) {
     if (body.timestamp && !isValidTimestamp(body.timestamp)) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid timestamp");
     }
-    if (body.parent_id && !isValidId(body.parent_id)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid parent_id");
-    }
-    if (body.thread_id && !isValidId(body.thread_id)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid thread_id");
-    }
     if (body.state) {
       if (!(ITEM_STATES as readonly string[]).includes(body.state)) {
         throw new MymeError(
@@ -691,12 +684,6 @@ export function itemRoutes(storage: Storage) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Maximum 100 tags per item",
-      );
-    }
-    if (Array.isArray(body.about) && body.about.length > 100) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 about references per item",
       );
     }
 
@@ -742,12 +729,9 @@ export function itemRoutes(storage: Storage) {
           source_id: body.source_id,
           origin: stampedOrigin,
           device: body.device,
-          parent_id: body.parent_id,
-          thread_id: body.thread_id,
           capture_latitude: body.capture_latitude,
           capture_longitude: body.capture_longitude,
           tags: body.tags,
-          about: body.about,
         },
         tenantId,
       );
@@ -758,12 +742,17 @@ export function itemRoutes(storage: Storage) {
       if (body.edges) {
         for (const [edgeType, targets] of Object.entries(body.edges)) {
           for (const targetId of targets) {
-            await assertEdgeCanBeCreated(storage.edges, storage.items, {
-              source_id: created.id,
-              target_id: targetId,
-              edge_type: edgeType,
-              tenant_id: tenantId,
-            });
+            await assertEdgeCanBeCreated(
+              storage.edges,
+              storage.items,
+              {
+                source_id: created.id,
+                target_id: targetId,
+                edge_type: edgeType,
+                tenant_id: tenantId,
+              },
+              storage.threads,
+            );
             await storage.edges.createRaw(
               {
                 source_id: created.id,
@@ -959,13 +948,11 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const hasProperties =
       body.properties !== undefined && typeof body.properties === "object";
-    const hasParentId = "parent_id" in body;
-    const hasThreadId = "thread_id" in body;
 
-    if (!hasProperties && !hasParentId && !hasThreadId) {
+    if (!hasProperties) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of properties, parent_id, or thread_id is required",
+        "properties is required. Relationship changes (parent-of, in-thread, about) go through POST /edges or the `edges` payload — parent_id / thread_id were dropped in Wave 2 PR 4.",
       );
     }
     if (body.version !== undefined) {
@@ -981,45 +968,7 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    // Validate parent_id if provided
-    if (hasParentId && body.parent_id !== null) {
-      if (typeof body.parent_id !== "string" || !isValidId(body.parent_id)) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          "parent_id must be a valid ID or null",
-        );
-      }
-      if (body.parent_id === id) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          "An item cannot be its own parent",
-        );
-      }
-    }
-
-    // Validate thread_id if provided
-    if (hasThreadId && body.thread_id !== null) {
-      if (typeof body.thread_id !== "string" || !isValidId(body.thread_id)) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          "thread_id must be a valid ID or null",
-        );
-      }
-    }
-
     const tid = c.get("apiKey")?.tenant_id;
-
-    // Verify thread exists if setting a non-null thread_id
-    if (hasThreadId && typeof body.thread_id === "string") {
-      const threadId = body.thread_id;
-      const thread = await storage.threads.get(threadId, tid);
-      if (!thread) {
-        throw new MymeError(
-          ErrorCode.THREAD_NOT_FOUND,
-          `Thread ${threadId} not found`,
-        );
-      }
-    }
 
     const item = await storage.items.get(id, tid);
     if (!item) {
@@ -1028,25 +977,7 @@ export function itemRoutes(storage: Storage) {
 
     requireTypeAccess(c, item.type, "write");
 
-    // Cycle detection: walk up from proposed parent to ensure this item isn't an ancestor
-    if (hasParentId && typeof body.parent_id === "string") {
-      let current: string = body.parent_id;
-      const visited = new Set<string>([id]);
-      while (current) {
-        if (visited.has(current)) {
-          throw new MymeError(
-            ErrorCode.VALIDATION_ERROR,
-            "Setting this parent_id would create a cycle",
-          );
-        }
-        visited.add(current);
-        const ancestor = await storage.items.get(current, tid);
-        if (!ancestor?.parent_id) break;
-        current = ancestor.parent_id;
-      }
-    }
-
-    if (hasProperties && body.properties) {
+    if (body.properties) {
       const merged = {
         ...item.properties,
         ...body.properties,
@@ -1068,20 +999,12 @@ export function itemRoutes(storage: Storage) {
     const result = await storage.items.update(
       id,
       {
-        properties:
-          hasProperties && body.properties ? body.properties : undefined,
-        parent_id: hasParentId ? (body.parent_id as string | null) : undefined,
-        thread_id: hasThreadId ? (body.thread_id as string | null) : undefined,
+        properties: body.properties,
         version: body.version,
         snapshot: body.snapshot === true ? true : undefined,
       },
       tid,
     );
-
-    // Touch thread updated_at when thread assignment changes
-    if (hasThreadId && typeof body.thread_id === "string") {
-      await storage.threads.touch(body.thread_id);
-    }
 
     if ("error" in result) {
       return c.json(result, 409);
@@ -1250,7 +1173,6 @@ export function itemRoutes(storage: Storage) {
 
     const body = c.req.valid("json");
     const tags = body.tags;
-    const about = body.about;
 
     if (tags.length > 100) {
       throw new MymeError(
@@ -1258,14 +1180,8 @@ export function itemRoutes(storage: Storage) {
         "Maximum 100 tags per item",
       );
     }
-    if (about.length > 100) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 about references per item",
-      );
-    }
 
-    const metadata = await storage.metadata.set(id, tags, about);
+    const metadata = await storage.metadata.set(id, tags);
     await publish({
       type: "metadata_changed",
       item,
@@ -1291,7 +1207,6 @@ export function itemRoutes(storage: Storage) {
 
     const body = c.req.valid("json");
     const tags = body.tags;
-    const about = body.about;
 
     // Pre-merge bounds check on incoming arrays
     if (Array.isArray(tags) && tags.length > 100) {
@@ -1300,26 +1215,14 @@ export function itemRoutes(storage: Storage) {
         "Maximum 100 tags per item",
       );
     }
-    if (Array.isArray(about) && about.length > 100) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 about references per item",
-      );
-    }
 
-    const metadata = await storage.metadata.merge(id, tags, about);
+    const metadata = await storage.metadata.merge(id, tags);
 
     // Post-merge bounds check (incoming may be small but merge could exceed)
     if (metadata.tags.length > 100) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Maximum 100 tags per item (including existing tags)",
-      );
-    }
-    if (metadata.about.length > 100) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 about references per item (including existing)",
       );
     }
 
@@ -1381,6 +1284,10 @@ export function itemRoutes(storage: Storage) {
 
     requireAdmin(c);
     const tenantId = c.get("apiKey")?.tenant_id;
+    // Edges no longer carry a FK to items (thread-target compat window) so
+    // cascade cleanup must happen explicitly before the item row goes.
+    await storage.edges.deleteBySource(id);
+    await storage.edges.deleteByTarget(id);
     await storage.items.purge(id, tenantId);
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,

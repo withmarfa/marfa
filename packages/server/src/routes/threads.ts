@@ -259,15 +259,22 @@ export function threadRoutes(storage: Storage) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
-    const updated = await storage.items.update(
-      itemId,
-      { properties: item.properties, thread_id: threadId },
+    // Thread membership lives in the `in-thread` edge type now (Wave 2 PR 4).
+    // Create or upsert an in-thread edge with source=item, target=thread.
+    const existing = await storage.edges.listOutboundOfType(itemId, "in-thread");
+    if (existing.some((e) => e.target_id === threadId)) {
+      await storage.threads.touch(threadId);
+      return c.json({ item }, 200);
+    }
+    // Enforce the many-to-one cardinality: member was already in a different
+    // thread → remove that edge first so add-to-different-thread works.
+    for (const e of existing) {
+      await storage.edges.delete(e.id);
+    }
+    await storage.edges.createRaw(
+      { source_id: itemId, target_id: threadId, edge_type: "in-thread" },
       tid,
     );
-    if ("error" in updated) {
-      throw new MymeError(ErrorCode.CONFLICT, "Version conflict");
-    }
-
     await storage.threads.touch(threadId);
     await storage.audit.log({
       key_id: c.get("apiKey")?.id,
@@ -276,7 +283,7 @@ export function threadRoutes(storage: Storage) {
       resource_id: threadId,
       details: { item_id: itemId },
     });
-    return c.json({ item: updated }, 200);
+    return c.json({ item }, 200);
   });
 
   router.openapi(removeItemFromThreadRoute, async (c) => {
@@ -295,21 +302,15 @@ export function threadRoutes(storage: Storage) {
     if (!item) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
-    if (item.thread_id !== threadId) {
+    const edges = await storage.edges.listOutboundOfType(itemId, "in-thread");
+    const match = edges.find((e) => e.target_id === threadId);
+    if (!match) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Item is not in this thread",
       );
     }
-
-    const updated = await storage.items.update(
-      itemId,
-      { properties: item.properties, thread_id: null },
-      tid,
-    );
-    if ("error" in updated) {
-      throw new MymeError(ErrorCode.CONFLICT, "Version conflict");
-    }
+    await storage.edges.delete(match.id);
 
     await storage.threads.touch(threadId);
     await storage.audit.log({
@@ -319,7 +320,7 @@ export function threadRoutes(storage: Storage) {
       resource_id: threadId,
       details: { item_id: itemId },
     });
-    return c.json({ item: updated }, 200);
+    return c.json({ item }, 200);
   });
 
   return router;

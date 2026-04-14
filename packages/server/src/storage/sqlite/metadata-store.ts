@@ -21,8 +21,7 @@ export class SqliteMetadataStore implements MetadataStore {
     const map = new Map(rows.map((r) => [r.item_id, rowToMetadata(r)]));
     return Promise.resolve(
       itemIds.map(
-        (id) =>
-          map.get(id) ?? { item_id: id, tags: [], about: [], extensions: {} },
+        (id) => map.get(id) ?? { item_id: id, tags: [], extensions: {} },
       ),
     );
   }
@@ -37,30 +36,22 @@ export class SqliteMetadataStore implements MetadataStore {
       return Promise.resolve({
         item_id: itemId,
         tags: [],
-        about: [],
         extensions: {},
       });
     }
     return Promise.resolve(rowToMetadata(row));
   }
 
-  set(itemId: string, tags: string[], about: string[]): Promise<Metadata> {
+  set(itemId: string, tags: string[]): Promise<Metadata> {
     this.db
       .update(metadata)
-      .set({
-        tags: JSON.stringify(tags),
-        about: JSON.stringify(about),
-      })
+      .set({ tags: JSON.stringify(tags) })
       .where(eq(metadata.item_id, itemId))
       .run();
     return this.get(itemId);
   }
 
-  async merge(
-    itemId: string,
-    tags?: string[],
-    about?: string[],
-  ): Promise<Metadata> {
+  async merge(itemId: string, tags?: string[]): Promise<Metadata> {
     const mergeFn = this.raw.transaction(() => {
       const row = this.db
         .select()
@@ -69,19 +60,13 @@ export class SqliteMetadataStore implements MetadataStore {
         .get();
       const current: Metadata = row
         ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], about: [], extensions: {} };
+        : { item_id: itemId, tags: [], extensions: {} };
       const mergedTags = tags
         ? [...new Set([...current.tags, ...tags])]
         : current.tags;
-      const mergedAbout = about
-        ? [...new Set([...current.about, ...about])]
-        : current.about;
       this.db
         .update(metadata)
-        .set({
-          tags: JSON.stringify(mergedTags),
-          about: JSON.stringify(mergedAbout),
-        })
+        .set({ tags: JSON.stringify(mergedTags) })
         .where(eq(metadata.item_id, itemId))
         .run();
       return rowToMetadata(
@@ -105,14 +90,11 @@ export class SqliteMetadataStore implements MetadataStore {
         .get();
       const current: Metadata = row
         ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], about: [], extensions: {} };
+        : { item_id: itemId, tags: [], extensions: {} };
       const merged = [...new Set([...current.tags, ...tags])];
       this.db
         .update(metadata)
-        .set({
-          tags: JSON.stringify(merged),
-          about: JSON.stringify(current.about),
-        })
+        .set({ tags: JSON.stringify(merged) })
         .where(eq(metadata.item_id, itemId))
         .run();
       return rowToMetadata(
@@ -136,14 +118,11 @@ export class SqliteMetadataStore implements MetadataStore {
         .get();
       const current: Metadata = row
         ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], about: [], extensions: {} };
+        : { item_id: itemId, tags: [], extensions: {} };
       const filtered = current.tags.filter((t) => t !== tag);
       this.db
         .update(metadata)
-        .set({
-          tags: JSON.stringify(filtered),
-          about: JSON.stringify(current.about),
-        })
+        .set({ tags: JSON.stringify(filtered) })
         .where(eq(metadata.item_id, itemId))
         .run();
       return rowToMetadata(
@@ -178,7 +157,7 @@ export class SqliteMetadataStore implements MetadataStore {
         .get();
       const current: Metadata = row
         ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], about: [], extensions: {} };
+        : { item_id: itemId, tags: [], extensions: {} };
       const extensions = { ...current.extensions, [namespace]: data };
       this.db
         .update(metadata)
@@ -202,7 +181,7 @@ export class SqliteMetadataStore implements MetadataStore {
         .get();
       const current: Metadata = row
         ? rowToMetadata(row)
-        : { item_id: itemId, tags: [], about: [], extensions: {} };
+        : { item_id: itemId, tags: [], extensions: {} };
       const rest = Object.fromEntries(
         Object.entries(current.extensions).filter(([k]) => k !== namespace),
       );

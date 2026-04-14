@@ -46,8 +46,6 @@ export interface Item {
   version: number;
   schema_version: number;
   device?: string;
-  parent_id: string | null;
-  thread_id: string | null;
   capture_latitude?: number;
   capture_longitude?: number;
 }
@@ -66,19 +64,14 @@ export interface CreateItemInput {
   source_id?: string;
   origin?: Origin;
   device?: string;
-  parent_id?: string;
-  thread_id?: string;
   capture_latitude?: number;
   capture_longitude?: number;
   tags?: string[];
-  about?: string[];
 }
 
 /** Input for updating an existing item. */
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
-  parent_id?: string | null;
-  thread_id?: string | null;
   version?: number;
   snapshot?: boolean;
 }
@@ -89,11 +82,12 @@ export interface ItemWithMetadata {
   metadata: Metadata;
 }
 
-/** Metadata sidecar — tags, entity references, and namespaced extensions. */
+/** Metadata sidecar — tags and namespaced extensions. About/entity
+ *  references moved to first-class edges in Wave 2 PR 4 (core edge type
+ *  `about`). Read via `item.edges.about` or `/items/:id/edges?edge_type=about`. */
 export interface Metadata {
   item_id: string;
   tags: string[];
-  about: string[];
   extensions: Record<string, Record<string, unknown>>;
 }
 

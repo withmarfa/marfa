@@ -5,7 +5,7 @@ import {
   satisfiesEdgeConstraint,
 } from "@mymehq/shared";
 import type { Edge, EdgeTypeSchema } from "@mymehq/shared";
-import type { EdgeStore, ItemStore } from "./interface.js";
+import type { EdgeStore, ItemStore, ThreadStore } from "./interface.js";
 
 /**
  * Enforces edge-creation invariants documented in the PR 4 plan:
@@ -31,6 +31,15 @@ export async function assertEdgeCanBeCreated(
     edge_type: string;
     tenant_id?: string;
   },
+  /**
+   * Optional thread store. V0 spec says threads are implicit — the thread
+   * id IS an item id — but the legacy /threads endpoint created rows in a
+   * dedicated threads table that predates first-class edges. Passing a
+   * thread store lets the in-thread edge type target a thread record even
+   * though it doesn't sit in items. Outside that legacy path, endpoints
+   * can omit it.
+   */
+  threadStore?: ThreadStore,
 ): Promise<EdgeTypeSchema> {
   const schema = getEdgeTypeSchema(input.edge_type);
   if (!schema) {
@@ -58,7 +67,26 @@ export async function assertEdgeCanBeCreated(
       `Edge source item not found: ${input.source_id}`,
     );
   }
-  if (!target) {
+  // Resolve target type. The in-thread edge type targets a thread record
+  // (which lives in the `threads` table) during the V0 legacy thread API
+  // compatibility window. For every other edge type, the target must be an
+  // items-table row and type constraints must match its type.
+  let targetType: string | null;
+  if (target) {
+    targetType = target.type;
+  } else if (input.edge_type === "in-thread" && threadStore) {
+    const threadRecord = await threadStore.get(
+      input.target_id,
+      input.tenant_id,
+    );
+    if (!threadRecord) {
+      throw new MymeError(
+        ErrorCode.ITEM_NOT_FOUND,
+        `Edge target not found: ${input.target_id}`,
+      );
+    }
+    targetType = null; // thread records don't carry a content type
+  } else {
     throw new MymeError(
       ErrorCode.ITEM_NOT_FOUND,
       `Edge target item not found: ${input.target_id}`,
@@ -77,13 +105,20 @@ export async function assertEdgeCanBeCreated(
     );
   }
 
-  if (!satisfiesEdgeConstraint(target.type, schema.target_type_constraints)) {
+  // When the target is an item (not a thread record), enforce the
+  // target_type_constraints. Thread-record targets skip type enforcement
+  // because they carry no content type — the legacy /threads endpoint
+  // is the only case this applies to.
+  if (
+    targetType !== null &&
+    !satisfiesEdgeConstraint(targetType, schema.target_type_constraints)
+  ) {
     throw new MymeError(
       ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-      `Edge "${input.edge_type}" does not allow target type "${target.type}"`,
+      `Edge "${input.edge_type}" does not allow target type "${targetType}"`,
       {
         edge_type: input.edge_type,
-        target_type: target.type,
+        target_type: targetType,
         allowed: schema.target_type_constraints,
       },
     );

@@ -43,13 +43,14 @@ describe("threads", () => {
     };
     const threadId = threadData.thread.id as string;
 
-    // Add item to thread
+    // Add item to thread via the in-thread edge (thread_id column dropped
+    // in Wave 2 PR 4).
     await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "core.note",
         properties: { body: "In thread" },
-        thread_id: threadId,
+        edges: { "in-thread": [threadId] },
       },
     });
 

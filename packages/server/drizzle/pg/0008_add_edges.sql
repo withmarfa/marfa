@@ -9,17 +9,5 @@ CREATE TABLE IF NOT EXISTS "edges" (
 	"updated_at" text NOT NULL
 );
 --> statement-breakpoint
-DO $$ BEGIN
- ALTER TABLE "edges" ADD CONSTRAINT "edges_source_id_items_id_fk" FOREIGN KEY ("source_id") REFERENCES "items"("id") ON DELETE cascade ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
---> statement-breakpoint
-DO $$ BEGIN
- ALTER TABLE "edges" ADD CONSTRAINT "edges_target_id_items_id_fk" FOREIGN KEY ("target_id") REFERENCES "items"("id") ON DELETE cascade ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
---> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "idx_edges_source" ON "edges" ("tenant_id","source_id","edge_type");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "idx_edges_target" ON "edges" ("tenant_id","target_id","edge_type");

@@ -32,8 +32,6 @@ export function rowToItem(row: ItemRow): Item {
     origin: (row.origin as Origin | null) ?? "user",
     schema_version: row.schema_version ?? 1,
     ...(row.device != null && { device: row.device }),
-    parent_id: row.parent_id ?? null,
-    thread_id: row.thread_id ?? null,
     ...(row.capture_latitude != null && {
       capture_latitude: row.capture_latitude,
     }),
@@ -47,11 +45,6 @@ export function rowToMetadata(row: MetadataRow): Metadata {
   return {
     item_id: row.item_id,
     tags: safeJsonParse<string[]>(row.tags, [], `metadata ${row.item_id} tags`),
-    about: safeJsonParse<string[]>(
-      row.about,
-      [],
-      `metadata ${row.item_id} about`,
-    ),
     extensions: safeJsonParse<Record<string, Record<string, unknown>>>(
       row.extensions,
       {},

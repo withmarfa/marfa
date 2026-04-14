@@ -55,7 +55,6 @@ export interface ClientConfig {
 
 export interface UpdateOptions {
   version?: number;
-  thread_id?: string | null;
   /**
    * Override the client's default conflict strategy for this update.
    * - `"auto"`: auto-merge non-conflicting fields (default)
@@ -71,7 +70,13 @@ export interface ListFilters {
   type?: string;
   state?: ItemState;
   source?: string;
+  /** Filter to items whose parent-of source is this id. Kept as a
+   *  server-side convenience alias after the parent_id column was
+   *  dropped in Wave 2 PR 4; the server translates it into an
+   *  `edge[parent-of]` existence check. */
   parent_id?: string;
+  /** Filter to items in this thread. Server translates to
+   *  `edge[in-thread]` check after the thread_id column was dropped. */
   thread_id?: string;
   root_only?: boolean;
   /** When set, restricts the result to library items (true) or ambient
@@ -99,7 +104,6 @@ export interface SearchFilters {
 
 export interface MetadataInput {
   tags?: string[];
-  about?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +131,14 @@ export class MymeClient {
   // ---- Items ----
 
   readonly items = {
-    create: async (input: CreateItemInput): Promise<Item> => {
+    create: async (
+      input: CreateItemInput & {
+        /** Atomic edges payload: for each edge type, listed ids become
+         *  targets with the new item as source. Replaces legacy parent_id
+         *  / thread_id / about which were dropped in Wave 2 PR 4. */
+        edges?: Record<string, string[]>;
+      },
+    ): Promise<Item> => {
       const res = await this.transport.request<{ item: Item }>(
         "POST",
         "/items",
@@ -185,7 +196,6 @@ export class MymeClient {
         version,
         strategy,
         options?.resolve,
-        options?.thread_id,
       );
     },
 

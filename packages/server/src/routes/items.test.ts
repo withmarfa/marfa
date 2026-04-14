@@ -56,22 +56,33 @@ describe("POST /items", () => {
     expect(res.status).toBe(401);
   });
 
-  it("stores tags and about in metadata", async () => {
+  it("stores tags in metadata (about moved to edges in PR 4)", async () => {
+    const target = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "target" } },
+    });
+    const targetData = (await target.json()) as { item: { id: string } };
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "core.note",
         properties: { body: "Tagged" },
         tags: ["reading", "important"],
-        about: ["some-id"],
+        edges: { about: [targetData.item.id] },
       },
     });
     expect(res.status).toBe(201);
     const data = (await res.json()) as {
-      metadata: { tags: string[]; about: string[] };
+      item: {
+        edges?: Record<string, { edges: { target_id: string }[] }>;
+      };
+      metadata: { tags: string[] };
     };
     expect(data.metadata.tags).toEqual(["reading", "important"]);
-    expect(data.metadata.about).toEqual(["some-id"]);
+    expect(data.item.edges?.about?.edges.length).toBe(1);
+    expect(data.item.edges?.about?.edges[0]?.target_id).toBe(
+      targetData.item.id,
+    );
   });
 
   it("detects duplicate source", async () => {
