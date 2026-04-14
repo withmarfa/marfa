@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { createGzip, createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import * as tar from "tar-stream";
 import { createTestContext, request } from "../test-utils.js";

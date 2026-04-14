@@ -67,6 +67,7 @@ beforeAll(async () => {
     versionDailySnapshotDays: 90,
     versionWeeklySnapshotDays: 365,
     versionMaxVersions: 500,
+    errorWebhookUrl: "",
   });
 
   testFetchFn = createTestFetch(app);

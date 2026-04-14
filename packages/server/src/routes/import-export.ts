@@ -130,7 +130,8 @@ export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
       contentType === "application/x-gzip" ||
       c.req.query("format") === "archive"
     ) {
-      return handleArchiveImport(c, storage, blobBackend);
+      const result = await handleArchiveImport(c, storage, blobBackend);
+      return c.json(result, 200);
     }
 
     const body = c.req.valid("json");
@@ -431,7 +432,7 @@ async function handleArchiveImport(
   c: HonoContext,
   storage: Storage,
   blobBackend: BlobBackend,
-): Promise<Response> {
+): Promise<{ imported: number; duplicates: number; blobs_imported: number }> {
   const rawBody = await c.req.arrayBuffer();
   if (rawBody.byteLength === 0) {
     throw new MymeError(ErrorCode.VALIDATION_ERROR, "Empty archive");
@@ -588,9 +589,9 @@ async function handleArchiveImport(
     },
   });
 
-  return c.json({
+  return {
     imported: result.imported,
     duplicates: result.duplicates,
     blobs_imported: blobCount,
-  });
+  };
 }

@@ -1,4 +1,4 @@
-import type { Item, Metadata, Thread } from "@mymehq/shared";
+import type { Item, ItemState, Metadata, Origin, Thread } from "@mymehq/shared";
 
 /** Safely parse a JSON string, returning the fallback on error. */
 export function parseJson<T>(value: string, fallback: T): T {
@@ -14,14 +14,15 @@ export function rowToItem(row: Record<string, unknown>): Item {
   return {
     id: row.id as string,
     type: row.type as string,
-    state: row.state as "new" | "active" | "archived" | "trashed",
+    state: row.state as ItemState,
+    library: Boolean(row.library),
     properties: parseJson(row.properties as string, {}),
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
     timestamp: row.timestamp as string,
     source: (row.source as string | null) ?? undefined,
     source_id: (row.source_id as string | null) ?? undefined,
-    origin: (row.origin as string | null) ?? undefined,
+    origin: (row.origin as Origin | null) ?? undefined,
     version: row.version as number,
     schema_version: (row.schema_version as number | null) ?? undefined,
     device: (row.device as string | null) ?? undefined,

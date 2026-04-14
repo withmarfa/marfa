@@ -133,8 +133,9 @@ export function computeVersionsToDelete(
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
     const excess = kept.length - policy.maxVersions;
     for (let i = 0; i < excess; i++) {
-      if (kept[i].id !== mostRecent.id) {
-        keepIds.delete(kept[i].id);
+      const candidate = kept[i];
+      if (candidate && candidate.id !== mostRecent.id) {
+        keepIds.delete(candidate.id);
       }
     }
   }

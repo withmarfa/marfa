@@ -34,15 +34,16 @@ const ItemSchema = z.object({
   type: z.string(),
   properties: z.record(z.string(), z.unknown()),
   state: z.string(),
+  library: z.boolean(),
   version: z.number(),
   thread_id: z.string().nullable(),
   parent_id: z.string().nullable(),
-  source: z.string().nullable(),
-  source_id: z.string().nullable(),
-  origin: z.string().nullable(),
-  device: z.string().nullable(),
-  capture_latitude: z.number().nullable(),
-  capture_longitude: z.number().nullable(),
+  source: z.string().optional(),
+  source_id: z.string().optional(),
+  origin: z.enum(["user", "ai", "worker"]).optional(),
+  device: z.string().optional(),
+  capture_latitude: z.number().optional(),
+  capture_longitude: z.number().optional(),
   timestamp: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -55,6 +56,21 @@ const MetadataSchema = z.object({
   extensions: z.record(z.string(), z.unknown()),
 });
 
+const ConflictSnapshotSchema = z.object({
+  version: z.number(),
+  properties: z.record(z.string(), z.unknown()),
+});
+
+const ConflictResponseSchema = z.object({
+  error: z.object({
+    code: z.literal("version_conflict"),
+    status: z.literal(409),
+  }),
+  current: ConflictSnapshotSchema,
+  ancestor: ConflictSnapshotSchema,
+  conflicting_fields: z.array(z.string()),
+});
+
 const ItemWithMetadataSchema = z.object({
   item: ItemSchema,
   metadata: MetadataSchema,
@@ -65,8 +81,8 @@ const VersionSchema = z.object({
   item_id: z.string(),
   version: z.number(),
   properties: z.record(z.string(), z.unknown()),
-  snapshot: z.boolean(),
   created_at: z.string(),
+  device: z.string().optional(),
 });
 
 const IdParam = z.object({
@@ -278,7 +294,7 @@ const updateItemRoute = createRoute({
       description: "Item not found",
     },
     409: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: { "application/json": { schema: ConflictResponseSchema } },
       description: "Version conflict",
     },
   },

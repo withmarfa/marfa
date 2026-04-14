@@ -28,11 +28,12 @@ const UserSchema = z.object({
   provider_id: z.string(),
   tenant_id: z.string(),
   created_at: z.string(),
+  updated_at: z.string(),
 });
 
 const TenantSchema = z.object({
   id: z.string(),
-  name: z.string(),
+  name: z.string().nullable(),
   created_at: z.string(),
 });
 
