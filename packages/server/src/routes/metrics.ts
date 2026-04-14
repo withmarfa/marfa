@@ -14,7 +14,7 @@ let cachedAt = 0;
 const MetricsResponseSchema = z.object({
   items: z.object({
     total: z.number(),
-    by_state: z.record(z.number()),
+    by_state: z.record(z.string(), z.number()),
   }),
   blobs: z.object({
     count: z.number(),
