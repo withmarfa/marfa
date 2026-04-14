@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:fresh-sqlite": "bash scripts/test-fresh-sqlite.sh",
     "test:pg": "bash scripts/test-pg.sh",
+    "ci-local": "bash scripts/ci-local.sh",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
