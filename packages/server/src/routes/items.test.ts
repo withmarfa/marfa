@@ -685,6 +685,43 @@ describe("state lifecycle enum at the route boundary", () => {
   });
 });
 
+describe("query language: library system field", () => {
+  it("filters items by 'library eq true' via the filter query parameter", async () => {
+    // Two items with explicit library values
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "library item" },
+        library: true,
+      },
+    });
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "ambient item" },
+        library: false,
+      },
+    });
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/items?type=core.note&filter=library%20eq%20true&limit=200",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { library: boolean }[];
+    };
+    expect(body.data.length).toBeGreaterThan(0);
+    for (const item of body.data) {
+      expect(item.library).toBe(true);
+    }
+  });
+});
+
 describe("metadata.changed pubsub event", () => {
   it("fires from POST /items/:id/tags and surfaces with the V0 wire name", async () => {
     const { subscribe } = await import("../pubsub.js");

@@ -32,7 +32,7 @@ export type SqlDialect = "sqlite" | "pg";
 
 /** Table reference with the columns we need for condition generation. */
 interface ItemsTableRef {
-  id: { name: string };
+  id: unknown;
   state: unknown;
   type: unknown;
   source: unknown;
@@ -40,6 +40,9 @@ interface ItemsTableRef {
   timestamp: unknown;
   created_at: unknown;
   updated_at: unknown;
+  library: unknown;
+  device: unknown;
+  version: unknown;
   properties: unknown;
 }
 
@@ -62,6 +65,10 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
     timestamp: table.timestamp,
     created_at: table.created_at,
     updated_at: table.updated_at,
+    library: table.library,
+    device: table.device,
+    version: table.version,
+    id: table.id,
   };
   return map[column];
 }
@@ -90,20 +97,28 @@ function conditionToSql(
   return tagsFieldSql(table.id, op, value, dialect);
 }
 
+/** better-sqlite3 cannot bind booleans; coerce to 0/1 at the boundary.
+ * Postgres binds booleans natively, but the same coercion is harmless. */
+function bindable(value: unknown): unknown {
+  if (typeof value === "boolean") return value ? 1 : 0;
+  return value;
+}
+
 function systemFieldSql(col: unknown, op: ComparisonOp, value: unknown): SQL {
+  const v = bindable(value);
   switch (op) {
     case "eq":
-      return sql`${col} = ${value}`;
+      return sql`${col} = ${v}`;
     case "neq":
-      return sql`${col} != ${value}`;
+      return sql`${col} != ${v}`;
     case "gt":
-      return sql`${col} > ${value}`;
+      return sql`${col} > ${v}`;
     case "gte":
-      return sql`${col} >= ${value}`;
+      return sql`${col} >= ${v}`;
     case "lt":
-      return sql`${col} < ${value}`;
+      return sql`${col} < ${v}`;
     case "lte":
-      return sql`${col} <= ${value}`;
+      return sql`${col} <= ${v}`;
     case "contains":
       return sql`${col} LIKE ${"%" + escapeLike(String(value)) + "%"}`;
     case "starts_with":

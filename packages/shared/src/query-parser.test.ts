@@ -480,4 +480,40 @@ describe("parseFilter", () => {
       expect(result.conditions).toHaveLength(10);
     });
   });
+
+  describe("V0-spec system fields beyond the original seven", () => {
+    it("parses library eq true (the V0 spec example)", () => {
+      const result = parseFilter("library eq true");
+      expect(result.conditions[0]?.field).toEqual({
+        kind: "system",
+        column: "library",
+      });
+      expect(result.conditions[0]?.value).toBe(true);
+    });
+
+    it("parses combined library + tags filter (V0 spec example)", () => {
+      const result = parseFilter('tags contains "to-read" AND library eq true');
+      expect(result.conditions).toHaveLength(2);
+      expect(result.conditions[0]?.field).toEqual({ kind: "tags" });
+      expect(result.conditions[1]?.field).toEqual({
+        kind: "system",
+        column: "library",
+      });
+    });
+
+    it("parses device, version, id as system fields", () => {
+      expect(parseFilter('device eq "MacBook"').conditions[0]?.field).toEqual({
+        kind: "system",
+        column: "device",
+      });
+      expect(parseFilter("version eq 3").conditions[0]?.field).toEqual({
+        kind: "system",
+        column: "version",
+      });
+      expect(parseFilter('id eq "abc"').conditions[0]?.field).toEqual({
+        kind: "system",
+        column: "id",
+      });
+    });
+  });
 });
