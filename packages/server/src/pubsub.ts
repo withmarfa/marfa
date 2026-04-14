@@ -92,7 +92,9 @@ export async function publish(event: ItemEvent): Promise<number | undefined> {
  * item_id = edge.source_id and edge_id = edge.id so replay flows through
  * the same filtering machinery as item events.
  */
-export async function publishEdge(event: EdgeEvent): Promise<number | undefined> {
+export async function publishEdge(
+  event: EdgeEvent,
+): Promise<number | undefined> {
   let eventId: number | undefined;
 
   if (eventLogStore) {
@@ -133,9 +135,9 @@ export async function* subscribe(
 
 /** Subscribe to edge lifecycle events. Filters by tenant only; there is
  *  no typeFilter since edges don't carry a content type. */
-export async function* subscribeEdges(
-  options?: { tenantId?: string },
-): AsyncGenerator<EdgeEventWithId> {
+export async function* subscribeEdges(options?: {
+  tenantId?: string;
+}): AsyncGenerator<EdgeEventWithId> {
   const iter = on(emitter, "EDGE_CHANGED");
   for await (const [event] of iter) {
     const edgeEvent = event as EdgeEventWithId;

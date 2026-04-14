@@ -57,7 +57,13 @@ export async function backfillEdges(storage: Storage): Promise<BackfillCounts> {
         return false;
       }
       await storage.edges.createRaw(
-        { id: generateId(), source_id: sourceId, target_id: targetId, edge_type: edgeType, properties },
+        {
+          id: generateId(),
+          source_id: sourceId,
+          target_id: targetId,
+          edge_type: edgeType,
+          properties,
+        },
         tenantId,
       );
       return true;
@@ -140,9 +146,7 @@ export async function backfillEdges(storage: Storage): Promise<BackfillCounts> {
  * standard columns (id, tenant_id, parent_id, thread_id, created_at) and
  * metadata (item_id, about).
  */
-async function collectAllItemsWithParentOrThread(
-  storage: Storage,
-): Promise<{
+async function collectAllItemsWithParentOrThread(storage: Storage): Promise<{
   withParent: {
     id: string;
     tenant_id: string | null;
@@ -155,10 +159,7 @@ async function collectAllItemsWithParentOrThread(
     thread_id: string;
     created_at: string;
   }[];
-  metadataAbout: Map<
-    string,
-    { about: string[]; tenant_id: string | null }
-  >;
+  metadataAbout: Map<string, { about: string[]; tenant_id: string | null }>;
 }> {
   // Reach through to the underlying raw driver using a tiny
   // capability-probe shim. Every dialect-specific storage factory exposes a
@@ -260,10 +261,7 @@ function toGrouped(
     thread_id: string;
     created_at: string;
   }[];
-  metadataAbout: Map<
-    string,
-    { about: string[]; tenant_id: string | null }
-  >;
+  metadataAbout: Map<string, { about: string[]; tenant_id: string | null }>;
 } {
   const metadataAbout = new Map<
     string,
@@ -304,9 +302,8 @@ async function mainCli(): Promise<void> {
     }
     storage = await createPgStorage(url);
   } else {
-    const { createSqliteStorage } = await import(
-      "../src/storage/sqlite/index.js"
-    );
+    const { createSqliteStorage } =
+      await import("../src/storage/sqlite/index.js");
     const path = process.env.SQLITE_PATH ?? "./data/myme.db";
     storage = createSqliteStorage(path);
   }

@@ -1,13 +1,4 @@
-import {
-  eq,
-  and,
-  or,
-  desc,
-  inArray,
-  lt,
-  sql,
-  count,
-} from "drizzle-orm";
+import { eq, and, or, desc, inArray, lt, sql, count } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { Edge, CreateEdgeInput, PaginatedResult } from "@mymehq/shared";
 import type { EdgeStore, EdgeListFilters } from "../interface.js";
@@ -147,9 +138,7 @@ export class SqliteEdgeStore implements EdgeStore {
     const row = this.db
       .select({ c: count() })
       .from(edges)
-      .where(
-        and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType)),
-      )
+      .where(and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType)))
       .get();
     return row?.c ?? 0;
   }
@@ -158,9 +147,7 @@ export class SqliteEdgeStore implements EdgeStore {
     const row = this.db
       .select({ c: count() })
       .from(edges)
-      .where(
-        and(eq(edges.target_id, targetId), eq(edges.edge_type, edgeType)),
-      )
+      .where(and(eq(edges.target_id, targetId), eq(edges.edge_type, edgeType)))
       .get();
     return row?.c ?? 0;
   }
@@ -192,9 +179,7 @@ export class SqliteEdgeStore implements EdgeStore {
     const rows = this.db
       .select()
       .from(edges)
-      .where(
-        and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType)),
-      )
+      .where(and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType)))
       .all();
     return rows.map(rowToEdge);
   }
@@ -224,17 +209,16 @@ export class SqliteEdgeStore implements EdgeStore {
     // SQLite supports window functions since 3.25; use ROW_NUMBER() to cap per
     // (source_id, edge_type) bucket. Raw SQL because Drizzle lacks a first-
     // class windowed query builder.
-    const rows = this.db
-      .all<{
-        id: string;
-        tenant_id: string | null;
-        source_id: string;
-        target_id: string;
-        edge_type: string;
-        properties: string;
-        created_at: string;
-        updated_at: string;
-      }>(sql`
+    const rows = this.db.all<{
+      id: string;
+      tenant_id: string | null;
+      source_id: string;
+      target_id: string;
+      edge_type: string;
+      properties: string;
+      created_at: string;
+      updated_at: string;
+    }>(sql`
         SELECT id, tenant_id, source_id, target_id, edge_type, properties,
                created_at, updated_at
         FROM (

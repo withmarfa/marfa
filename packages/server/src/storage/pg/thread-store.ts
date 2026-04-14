@@ -91,10 +91,7 @@ export class PgThreadStore implements ThreadStore {
       })
       .from(edges)
       .where(
-        and(
-          eq(edges.target_id, threadId),
-          eq(edges.edge_type, "in-thread"),
-        ),
+        and(eq(edges.target_id, threadId), eq(edges.edge_type, "in-thread")),
       );
     if (memberEdges.length === 0) return [];
     const itemIds = memberEdges.map((e) => e.item_id);

@@ -1,9 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-  ErrorCode,
-  MymeError,
-  isValidId,
-} from "@mymehq/shared";
+import { ErrorCode, MymeError, isValidId } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -46,7 +42,9 @@ const MAX_EDGE_TYPE_FILTER = 10;
 // Helpers
 // ---------------------------------------------------------------------------
 
-function parseEdgeTypeFilter(raw: string | undefined): string | string[] | undefined {
+function parseEdgeTypeFilter(
+  raw: string | undefined,
+): string | string[] | undefined {
   if (!raw) return undefined;
   if (!raw.includes(",")) return raw;
   const parts = raw
@@ -89,7 +87,9 @@ const createEdgeRoute = createRoute({
   },
   responses: {
     201: {
-      content: { "application/json": { schema: z.object({ edge: EdgeSchema }) } },
+      content: {
+        "application/json": { schema: z.object({ edge: EdgeSchema }) },
+      },
       description: "Edge created",
     },
     400: {
@@ -111,7 +111,8 @@ const updateEdgeRoute = createRoute({
   method: "patch",
   path: "/{id}",
   tags: ["Edges"],
-  summary: "Update edge properties (edge_type, source_id, target_id are immutable)",
+  summary:
+    "Update edge properties (edge_type, source_id, target_id are immutable)",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string() }),
@@ -127,7 +128,9 @@ const updateEdgeRoute = createRoute({
   },
   responses: {
     200: {
-      content: { "application/json": { schema: z.object({ edge: EdgeSchema }) } },
+      content: {
+        "application/json": { schema: z.object({ edge: EdgeSchema }) },
+      },
       description: "Edge updated",
     },
     400: {

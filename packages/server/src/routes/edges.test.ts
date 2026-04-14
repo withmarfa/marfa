@@ -231,15 +231,10 @@ describe("PATCH /edges/:id — properties only", () => {
       },
     });
     const created = (await create.json()) as { edge: { id: string } };
-    const patch = await request(
-      ctx.app,
-      "PATCH",
-      `/edges/${created.edge.id}`,
-      {
-        key: ctx.adminKey,
-        body: { properties: { position: 2 } },
-      },
-    );
+    const patch = await request(ctx.app, "PATCH", `/edges/${created.edge.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { position: 2 } },
+    });
     expect(patch.status).toBe(200);
     const data = (await patch.json()) as {
       edge: { properties: { position: number } };
@@ -261,14 +256,9 @@ describe("DELETE /edges/:id", () => {
       },
     });
     const created = (await create.json()) as { edge: { id: string } };
-    const del = await request(
-      ctx.app,
-      "DELETE",
-      `/edges/${created.edge.id}`,
-      {
-        key: ctx.adminKey,
-      },
-    );
+    const del = await request(ctx.app, "DELETE", `/edges/${created.edge.id}`, {
+      key: ctx.adminKey,
+    });
     expect(del.status).toBe(200);
     const fetched = await request(
       ctx.app,

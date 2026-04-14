@@ -1,19 +1,7 @@
-import {
-  eq,
-  and,
-  or,
-  desc,
-  inArray,
-  lt,
-  sql,
-  count,
-} from "drizzle-orm";
+import { eq, and, or, desc, inArray, lt, sql, count } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { Edge, CreateEdgeInput, PaginatedResult } from "@mymehq/shared";
-import type {
-  EdgeStore,
-  EdgeListFilters,
-} from "../interface.js";
+import type { EdgeStore, EdgeListFilters } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { rowToEdge } from "../edge-constraints.js";
 import { edges } from "./schema.js";
@@ -148,9 +136,7 @@ export class PgEdgeStore implements EdgeStore {
     const [row] = await this.db
       .select({ c: count() })
       .from(edges)
-      .where(
-        and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType)),
-      );
+      .where(and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType)));
     return row?.c ?? 0;
   }
 
@@ -158,9 +144,7 @@ export class PgEdgeStore implements EdgeStore {
     const [row] = await this.db
       .select({ c: count() })
       .from(edges)
-      .where(
-        and(eq(edges.target_id, targetId), eq(edges.edge_type, edgeType)),
-      );
+      .where(and(eq(edges.target_id, targetId), eq(edges.edge_type, edgeType)));
     return row?.c ?? 0;
   }
 
@@ -190,9 +174,7 @@ export class PgEdgeStore implements EdgeStore {
     const rows = await this.db
       .select()
       .from(edges)
-      .where(
-        and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType)),
-      );
+      .where(and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType)));
     return rows.map(rowToEdge);
   }
 

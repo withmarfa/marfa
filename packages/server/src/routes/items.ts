@@ -22,10 +22,7 @@ import type { Storage } from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publish } from "../pubsub.js";
-import {
-  hydrateEdgesForItem,
-  hydrateEdgesForItems,
-} from "./_edges-hydrate.js";
+import { hydrateEdgesForItem, hydrateEdgesForItems } from "./_edges-hydrate.js";
 import {
   createOpenAPIRouter,
   ErrorResponseSchema,
@@ -108,9 +105,7 @@ const createItemRoute = createRoute({
             //   edges: { "parent-of": [parentId] }   // was parent_id
             //   edges: { "in-thread": [threadId] }   // was thread_id
             //   edges: { about: [...ids] }           // was about[]
-            edges: z
-              .record(z.string(), z.array(z.string()))
-              .optional(),
+            edges: z.record(z.string(), z.array(z.string())).optional(),
           }),
         },
       },
@@ -859,11 +854,7 @@ export function itemRoutes(storage: Storage) {
     // See Myme v0 Reference §Library axis.
     const rawLibrary = c.req.query("library");
     const library: boolean | undefined =
-      rawLibrary === "all"
-        ? undefined
-        : rawLibrary === "false"
-          ? false
-          : true;
+      rawLibrary === "all" ? undefined : rawLibrary === "false" ? false : true;
     // `include` accepts a comma-separated list. "metadata" adds the sidecar
     // object per item; "edges" hydrates outbound edges inline (opt-in — list
     // reads skip edge hydration by default to avoid an N+1 on large lists).

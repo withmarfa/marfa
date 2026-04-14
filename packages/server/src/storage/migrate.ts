@@ -107,9 +107,7 @@ async function runBackfillEdges(dialect: "pg" | "sqlite"): Promise<void> {
     storage = await createPgStorage(process.env.DATABASE_URL ?? "");
   } else {
     const { createSqliteStorage } = await import("./sqlite/index.js");
-    storage = createSqliteStorage(
-      process.env.SQLITE_PATH ?? "./data/myme.db",
-    );
+    storage = createSqliteStorage(process.env.SQLITE_PATH ?? "./data/myme.db");
   }
   const counts = await backfillEdges(storage);
   console.log(

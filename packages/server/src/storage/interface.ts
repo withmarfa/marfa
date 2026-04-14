@@ -491,9 +491,7 @@ export interface EdgeStore {
    * (item is target). Used by cascade-on-delete to gather the full edge set
    * around an item being deleted.
    */
-  listAllByItem(
-    itemId: string,
-  ): Promise<{ outbound: Edge[]; inbound: Edge[] }>;
+  listAllByItem(itemId: string): Promise<{ outbound: Edge[]; inbound: Edge[] }>;
   /** Batched outbound-by-types fetch for hydration on item reads. */
   listFromSourcesBatched(
     sourceIds: string[],

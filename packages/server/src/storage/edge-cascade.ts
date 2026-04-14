@@ -1,8 +1,4 @@
-import {
-  ErrorCode,
-  MymeError,
-  getEdgeTypeSchema,
-} from "@mymehq/shared";
+import { ErrorCode, MymeError, getEdgeTypeSchema } from "@mymehq/shared";
 import type { Edge } from "@mymehq/shared";
 import type { EdgeStore } from "./interface.js";
 

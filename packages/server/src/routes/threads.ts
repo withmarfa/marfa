@@ -261,7 +261,10 @@ export function threadRoutes(storage: Storage) {
 
     // Thread membership lives in the `in-thread` edge type now (Wave 2 PR 4).
     // Create or upsert an in-thread edge with source=item, target=thread.
-    const existing = await storage.edges.listOutboundOfType(itemId, "in-thread");
+    const existing = await storage.edges.listOutboundOfType(
+      itemId,
+      "in-thread",
+    );
     if (existing.some((e) => e.target_id === threadId)) {
       await storage.threads.touch(threadId);
       return c.json({ item }, 200);

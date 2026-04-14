@@ -94,13 +94,7 @@ function conditionToSql(
   }
 
   if (field.kind === "edge") {
-    return edgeFieldSql(
-      table.id,
-      field.edge_type,
-      field.direction,
-      op,
-      value,
-    );
+    return edgeFieldSql(table.id, field.edge_type, field.direction, op, value);
   }
 
   // tags

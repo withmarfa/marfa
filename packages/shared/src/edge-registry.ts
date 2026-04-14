@@ -21,7 +21,9 @@ export const EDGE_TYPE_REGISTRY: ReadonlyMap<string, EdgeTypeSchema> =
   _registry;
 
 /** Returns the edge-type schema for the given identifier, or undefined. */
-export function getEdgeTypeSchema(edgeTypeId: string): EdgeTypeSchema | undefined {
+export function getEdgeTypeSchema(
+  edgeTypeId: string,
+): EdgeTypeSchema | undefined {
   return _registry.get(edgeTypeId);
 }
 
