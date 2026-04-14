@@ -7,10 +7,14 @@
     "node": ">=20.0.0"
   },
   "scripts": {
+    "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config --local core.hooksPath hooks || true",
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:fresh-sqlite": "bash scripts/test-fresh-sqlite.sh",
+    "test:pg": "bash scripts/test-pg.sh",
+    "ci-local": "bash scripts/ci-local.sh",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

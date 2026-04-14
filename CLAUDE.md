@@ -92,6 +92,17 @@ The `openapi-freshness` CI job regenerates and diffs `openapi.json` on every PR;
 
 Every new HTTP route added under `packages/server/src/routes/` should ship with at least one smoke test in a sibling `*.test.ts` file (auth gate + happy path are the minimum). PR review enforces. Pre-existing untested routes are not subject to this rule until they're modified.
 
+## Before pushing
+
+Two local-validation paths exist, in increasing thoroughness:
+
+- **Pre-push git hook** — automatic. Runs `typecheck + lint + test:fresh-sqlite + test:pg` on every `git push`. Installed via `git config --local core.hooksPath hooks` which `pnpm install`'s `prepare` step sets automatically. Skippable with `git push --no-verify` for small fixes the author is confident about; not the default flow.
+- **`pnpm ci-local`** — explicit. Clean install (`rm -rf node_modules`) + everything the pre-push hook runs + `build + format:check`. The "before opening a PR" gate; mirrors CI exactly. Takes a few minutes.
+
+Both invoke `test:pg`, which boots a throw-away `postgres:17` container on port `55432` and runs the server suite against it. Requires Docker (OrbStack / Docker Desktop / compatible daemon); the script fails loudly with an actionable message if the daemon isn't reachable.
+
+Rationale: PR #7 shipped three classes of regression past a local green check — `SCHEMA_SQL` bootstrap gap (PG-only, local dev had cached columns), dialect-specific boolean coercion (pg vs sqlite), and workspace exclusions (Electric's lint + vitest coverage differed between cached dev deps and CI's fresh install). The dual-dialect + clean-slate local checks close that gap before push.
+
 ## Error handling
 
 The base error class is `MymeError` (in `@mymehq/shared`). All structured errors use this class with an `ErrorCode` enum and corresponding HTTP status.
@@ -108,7 +119,7 @@ Lifecycle is universal — the metadata-layer `state` axis is `active | archived
 
 ## Webhooks
 
-Outbound webhooks fire on item events (created, updated, deleted, restored, transitioned). The `WebhookConsumer` subscribes to the pub/sub system and delivers to registered URLs with HMAC-SHA256 signatures, retry with exponential backoff.
+Outbound webhooks fire on item events (`item.created`, `item.updated`, `item.deleted`, `item.restored`, `item.state_changed`) and metadata changes (`metadata.changed`). The `WebhookConsumer` subscribes to the pub/sub system and delivers to registered URLs with HMAC-SHA256 signatures, retry with exponential backoff.
 
 ## Code style
 
