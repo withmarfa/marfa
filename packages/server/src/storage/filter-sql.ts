@@ -86,7 +86,7 @@ function conditionToSql(
 
   if (field.kind === "system") {
     const col = getSystemColumn(table, field.column);
-    return systemFieldSql(col, op, value);
+    return systemFieldSql(col, op, value, dialect);
   }
 
   if (field.kind === "property") {
@@ -97,15 +97,23 @@ function conditionToSql(
   return tagsFieldSql(table.id, op, value, dialect);
 }
 
-/** better-sqlite3 cannot bind booleans; coerce to 0/1 at the boundary.
- * Postgres binds booleans natively, but the same coercion is harmless. */
-function bindable(value: unknown): unknown {
-  if (typeof value === "boolean") return value ? 1 : 0;
+/** better-sqlite3 cannot bind booleans natively (the column is INTEGER
+ * under the hood); coerce to 0/1 for the SQLite path. Postgres needs the
+ * boolean itself because boolean columns are real `bool` and `boolean =
+ * integer` is a type error. */
+function bindable(value: unknown, dialect: SqlDialect): unknown {
+  if (typeof value === "boolean" && dialect === "sqlite")
+    return value ? 1 : 0;
   return value;
 }
 
-function systemFieldSql(col: unknown, op: ComparisonOp, value: unknown): SQL {
-  const v = bindable(value);
+function systemFieldSql(
+  col: unknown,
+  op: ComparisonOp,
+  value: unknown,
+  dialect: SqlDialect,
+): SQL {
+  const v = bindable(value, dialect);
   switch (op) {
     case "eq":
       return sql`${col} = ${v}`;
