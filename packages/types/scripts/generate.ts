@@ -16,6 +16,11 @@ interface JsonField {
   format?: string;
 }
 
+interface JsonDisplayHints {
+  title_field?: string;
+  body_field?: string;
+}
+
 interface JsonSchema {
   id: string;
   parent?: string;
@@ -24,6 +29,7 @@ interface JsonSchema {
   version: number;
   fields: Record<string, JsonField>;
   required: string[];
+  display_hints?: JsonDisplayHints;
   _deferred?: boolean;
 }
 
@@ -118,6 +124,18 @@ function resolveFields(schema: JsonSchema): {
   return { fields, required };
 }
 
+// Resolve display_hints — own wins, else nearest ancestor with hints
+function resolveDisplayHints(
+  schema: JsonSchema,
+): JsonDisplayHints | undefined {
+  let current: JsonSchema | undefined = schema;
+  while (current) {
+    if (current.display_hints) return current.display_hints;
+    current = current.parent ? schemaMap.get(current.parent) : undefined;
+  }
+  return undefined;
+}
+
 // Emit each type
 for (const schema of schemas) {
   const name = varName(schema.id);
@@ -128,6 +146,12 @@ for (const schema of schemas) {
   lines.push(`  id: "${schema.id}",`);
   if (schema.parent) lines.push(`  parent: "${schema.parent}",`);
   lines.push(`  label: "${schema.label}",`);
+  if (schema.description) {
+    const escapedDescription = schema.description
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"');
+    lines.push(`  description: "${escapedDescription}",`);
+  }
   lines.push(`  version: ${String(schema.version)},`);
   lines.push("  fields: {");
   for (const [fieldName, fieldDef] of Object.entries(resolvedFields)) {
@@ -135,6 +159,19 @@ for (const schema of schemas) {
     lines.push(`    ${fieldName}: ${fieldLiteral(fieldDef, isReq)},`);
   }
   lines.push("  },");
+  const resolvedHints = resolveDisplayHints(schema);
+  if (resolvedHints) {
+    const parts: string[] = [];
+    if (resolvedHints.title_field) {
+      parts.push(`title_field: "${resolvedHints.title_field}"`);
+    }
+    if (resolvedHints.body_field) {
+      parts.push(`body_field: "${resolvedHints.body_field}"`);
+    }
+    if (parts.length > 0) {
+      lines.push(`  display_hints: { ${parts.join(", ")} },`);
+    }
+  }
   lines.push("};");
   lines.push("");
 }

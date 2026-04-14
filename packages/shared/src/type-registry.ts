@@ -397,6 +397,40 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     }
   }
 
+  // display_hints (optional)
+  if (obj.display_hints !== undefined) {
+    if (
+      typeof obj.display_hints !== "object" ||
+      obj.display_hints === null ||
+      Array.isArray(obj.display_hints)
+    ) {
+      errors.push({ field: "display_hints", message: "Must be an object" });
+    } else {
+      const hints = obj.display_hints as Record<string, unknown>;
+      const fieldMap =
+        typeof obj.fields === "object" && obj.fields !== null
+          ? (obj.fields as Record<string, unknown>)
+          : {};
+      for (const hintKey of ["title_field", "body_field"]) {
+        const value = hints[hintKey];
+        if (value === undefined) continue;
+        if (typeof value !== "string") {
+          errors.push({
+            field: `display_hints.${hintKey}`,
+            message: "Must be a string naming an existing field",
+          });
+          continue;
+        }
+        if (!(value in fieldMap)) {
+          errors.push({
+            field: `display_hints.${hintKey}`,
+            message: `References field "${value}" that does not exist on this type`,
+          });
+        }
+      }
+    }
+  }
+
   // version_policy (optional)
   if (obj.version_policy !== undefined) {
     if (
@@ -447,6 +481,19 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
   }
   if (typeof obj.parent === "string") {
     schema.parent = obj.parent;
+  }
+  if (
+    typeof obj.display_hints === "object" &&
+    obj.display_hints !== null &&
+    !Array.isArray(obj.display_hints)
+  ) {
+    const hints = obj.display_hints as Record<string, unknown>;
+    const dh: { title_field?: string; body_field?: string } = {};
+    if (typeof hints.title_field === "string") dh.title_field = hints.title_field;
+    if (typeof hints.body_field === "string") dh.body_field = hints.body_field;
+    if (Object.keys(dh).length > 0) {
+      schema.display_hints = dh;
+    }
   }
   if (
     typeof obj.version_policy === "object" &&

@@ -51,5 +51,8 @@
       "description": "Pronouns"
     }
   },
-  "required": []
+  "required": [],
+  "display_hints": {
+    "title_field": "name"
+  }
 }

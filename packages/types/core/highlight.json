@@ -47,5 +47,9 @@
   },
   "required": [
     "text"
-  ]
+  ],
+  "display_hints": {
+    "title_field": "text",
+    "body_field": "note"
+  }
 }

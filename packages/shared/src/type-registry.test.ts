@@ -395,3 +395,72 @@ describe("validateTypeSchema — inheritance rule", () => {
     expect(result.success).toBe(true);
   });
 });
+
+describe("validateTypeSchema — display_hints", () => {
+  const baseThing = {
+    id: "acme.hint_test",
+    version: 1,
+    fields: {
+      title: { type: "string", description: "Title" },
+      body: { type: "string", description: "Body text" },
+    },
+  };
+
+  it("accepts display_hints whose fields exist on the type", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      display_hints: { title_field: "title", body_field: "body" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.display_hints).toEqual({
+        title_field: "title",
+        body_field: "body",
+      });
+    }
+  });
+
+  it("accepts display_hints with only title_field", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      display_hints: { title_field: "title" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.display_hints?.title_field).toBe("title");
+      expect(result.data.display_hints?.body_field).toBeUndefined();
+    }
+  });
+
+  it("rejects display_hints referencing an unknown field", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      display_hints: { title_field: "nonexistent" },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some((e) => e.field === "display_hints.title_field"),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects display_hints that isn't an object", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      display_hints: "title",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.some((e) => e.field === "display_hints")).toBe(true);
+    }
+  });
+
+  it("accepts omitting display_hints entirely", () => {
+    const result = validateTypeSchema(baseThing);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.display_hints).toBeUndefined();
+    }
+  });
+});

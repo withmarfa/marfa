@@ -76,7 +76,7 @@ beforeAll(async () => {
   const bootstrapRes = await testFetch("http://localhost/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ label: "test-admin" }),
+    body: JSON.stringify({ label: "test-admin", source: "sdk-test-admin" }),
   });
   const { key } = (await bootstrapRes.json()) as { key: string };
 

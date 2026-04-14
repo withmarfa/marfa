@@ -43,5 +43,8 @@
       "description": "Altitude in meters above sea level"
     }
   },
-  "required": []
+  "required": [],
+  "display_hints": {
+    "title_field": "name"
+  }
 }

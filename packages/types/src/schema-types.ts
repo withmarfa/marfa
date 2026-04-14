@@ -38,6 +38,18 @@ export interface VersionPolicy {
   max_versions?: number;
 }
 
+/**
+ * Declarative hints for generic renderers that consume items of this type
+ * without type-specific code. Readers consult these first, then fall back in
+ * a fixed order: title → name → first non-empty string field → type id.
+ */
+export interface DisplayHints {
+  /** Field that carries this type's canonical display title. */
+  title_field?: string;
+  /** Field that carries this type's canonical body text. */
+  body_field?: string;
+}
+
 /** A complete type schema — the data contract for a Myme type. */
 export interface TypeSchema {
   id: string;
@@ -46,5 +58,6 @@ export interface TypeSchema {
   description?: string;
   version: number;
   fields: Record<string, FieldDefinition>;
+  display_hints?: DisplayHints;
   version_policy?: VersionPolicy;
 }

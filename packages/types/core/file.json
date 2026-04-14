@@ -47,5 +47,8 @@
   "required": [
     "blob_ref",
     "mime_type"
-  ]
+  ],
+  "display_hints": {
+    "title_field": "title"
+  }
 }

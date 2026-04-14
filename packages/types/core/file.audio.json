@@ -17,5 +17,8 @@
   },
   "required": [
     "duration"
-  ]
+  ],
+  "display_hints": {
+    "title_field": "title"
+  }
 }

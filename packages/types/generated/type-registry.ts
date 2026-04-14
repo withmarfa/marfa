@@ -6,6 +6,7 @@ import type { TypeSchema } from "../src/schema-types.js";
 const coreBookmark: TypeSchema = {
   id: "core.bookmark",
   label: "Bookmark",
+  description: "Content you captured from elsewhere — a saved URL, a highlight, an excerpt, a clipped paragraph.",
   version: 1,
   fields: {
     url: { type: "url", description: "The saved URL" },
@@ -20,11 +21,13 @@ const coreBookmark: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreEntity: TypeSchema = {
   id: "core.entity",
   label: "Entity",
+  description: "A non-person entity — a company, band, team, charity, brand, school.",
   version: 1,
   fields: {
     name: { type: "string", description: "Display name", required: true },
@@ -38,11 +41,13 @@ const coreEntity: TypeSchema = {
     founded: { type: "date", description: "Founding date (ISO 8601)" },
     notes: { type: "string", description: "Personal annotations" },
   },
+  display_hints: { title_field: "name" },
 };
 
 const coreEvent: TypeSchema = {
   id: "core.event",
   label: "Event",
+  description: "Something that happens at a time.",
   version: 1,
   fields: {
     title: { type: "string", description: "Event name", required: true },
@@ -58,11 +63,13 @@ const coreEvent: TypeSchema = {
     status: { type: "string", description: "Recommended values: tentative, confirmed, cancelled, rescheduled" },
     notes: { type: "string", description: "Personal annotations" },
   },
+  display_hints: { title_field: "title", body_field: "description" },
 };
 
 const coreFile: TypeSchema = {
   id: "core.file",
   label: "File",
+  description: "A file or binary reference — the generic fallback for non-media files.",
   version: 1,
   fields: {
     blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
@@ -75,11 +82,13 @@ const coreFile: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
   },
+  display_hints: { title_field: "title" },
 };
 
 const coreHighlight: TypeSchema = {
   id: "core.highlight",
   label: "Highlight",
+  description: "A user's engagement with content — the highlighted passage plus optional annotation. The canonical relationship (what was highlighted) is carried by an annotates edge; the moment of highlighting is the system timestamp.",
   version: 1,
   fields: {
     text: { type: "string", description: "The highlighted passage", required: true },
@@ -89,11 +98,13 @@ const coreHighlight: TypeSchema = {
     start_location: { type: "string", description: "Start locator, typed by locator_type" },
     end_location: { type: "string", description: "End locator, typed by locator_type" },
   },
+  display_hints: { title_field: "text", body_field: "note" },
 };
 
 const coreMedia: TypeSchema = {
   id: "core.media",
   label: "Media",
+  description: "Content produced by someone that the user engages with — a film, podcast, book, article, song, show.",
   version: 1,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
@@ -107,11 +118,13 @@ const coreMedia: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreNote: TypeSchema = {
   id: "core.note",
   label: "Note",
+  description: "Text content you created.",
   version: 1,
   fields: {
     body: { type: "string", description: "The note text", required: true },
@@ -119,11 +132,13 @@ const coreNote: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreTask: TypeSchema = {
   id: "core.task",
   label: "Task",
+  description: "Something to be done.",
   version: 1,
   fields: {
     title: { type: "string", description: "What needs doing", required: true },
@@ -139,12 +154,14 @@ const coreTask: TypeSchema = {
     url: { type: "url", description: "Related link" },
     notes: { type: "string", description: "Personal annotations" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreEntityPerson: TypeSchema = {
   id: "core.entity.person",
   parent: "core.entity",
   label: "Person",
+  description: "Contact information for an individual. Inherits all core.entity fields.",
   version: 1,
   fields: {
     name: { type: "string", description: "Display name", required: true },
@@ -169,12 +186,14 @@ const coreEntityPerson: TypeSchema = {
     birthday: { type: "date", description: "Date of birth (ISO 8601)" },
     pronouns: { type: "string", description: "Pronouns" },
   },
+  display_hints: { title_field: "name" },
 };
 
 const coreEntityPlace: TypeSchema = {
   id: "core.entity.place",
   parent: "core.entity",
   label: "Place",
+  description: "A location or venue. Inherits all core.entity fields.",
   version: 1,
   fields: {
     name: { type: "string", description: "Display name", required: true },
@@ -197,12 +216,14 @@ const coreEntityPlace: TypeSchema = {
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters above sea level" },
   },
+  display_hints: { title_field: "name" },
 };
 
 const coreFileAudio: TypeSchema = {
   id: "core.file.audio",
   parent: "core.file",
   label: "Audio",
+  description: "Recordings, music files, voice memos. Inherits all core.file fields.",
   version: 1,
   fields: {
     blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
@@ -216,12 +237,14 @@ const coreFileAudio: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
     duration: { type: "number", description: "Length in seconds", required: true },
   },
+  display_hints: { title_field: "title" },
 };
 
 const coreFileImage: TypeSchema = {
   id: "core.file.image",
   parent: "core.file",
   label: "Image",
+  description: "Photos, screenshots, diagrams. Inherits all core.file fields.",
   version: 1,
   fields: {
     blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
@@ -239,12 +262,14 @@ const coreFileImage: TypeSchema = {
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters" },
   },
+  display_hints: { title_field: "title" },
 };
 
 const coreFileVideo: TypeSchema = {
   id: "core.file.video",
   parent: "core.file",
   label: "Video",
+  description: "Video files. Inherits all core.file fields.",
   version: 1,
   fields: {
     blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
@@ -263,12 +288,14 @@ const coreFileVideo: TypeSchema = {
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters" },
   },
+  display_hints: { title_field: "title" },
 };
 
 const coreMediaAlbum: TypeSchema = {
   id: "core.media.album",
   parent: "core.media",
   label: "Album",
+  description: "An album. Inherits all core.media fields.",
   version: 1,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
@@ -284,12 +311,14 @@ const coreMediaAlbum: TypeSchema = {
     release_type: { type: "string", description: "Recommended values: album, ep, single" },
     num_tracks: { type: "integer", description: "Total track count" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreMediaArticle: TypeSchema = {
   id: "core.media.article",
   parent: "core.media",
   label: "Article",
+  description: "An article. Inherits all core.media fields.",
   version: 1,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
@@ -305,12 +334,14 @@ const coreMediaArticle: TypeSchema = {
     section: { type: "string", description: "Section of the publication" },
     word_count: { type: "integer", description: "Word count" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreMediaBook: TypeSchema = {
   id: "core.media.book",
   parent: "core.media",
   label: "Book",
+  description: "A book. Inherits all core.media fields.",
   version: 1,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
@@ -327,12 +358,14 @@ const coreMediaBook: TypeSchema = {
     page_count: { type: "integer", description: "Number of pages" },
     edition: { type: "string", description: "Edition designation" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreMediaFilm: TypeSchema = {
   id: "core.media.film",
   parent: "core.media",
   label: "Film",
+  description: "A film. Inherits all core.media fields.",
   version: 1,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
@@ -349,12 +382,14 @@ const coreMediaFilm: TypeSchema = {
     director: { type: "string", description: "Primary director" },
     content_rating: { type: "string", description: "Age or content classification" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreMediaPodcast: TypeSchema = {
   id: "core.media.podcast",
   parent: "core.media",
   label: "Podcast",
+  description: "A podcast episode. Inherits all core.media fields.",
   version: 1,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
@@ -372,12 +407,14 @@ const coreMediaPodcast: TypeSchema = {
     duration: { type: "number", description: "Episode length in seconds" },
     episode_type: { type: "string", description: "Recommended values: full, trailer, bonus" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreMediaSeries: TypeSchema = {
   id: "core.media.series",
   parent: "core.media",
   label: "Series",
+  description: "A TV show or series. Inherits all core.media fields.",
   version: 1,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
@@ -395,12 +432,14 @@ const coreMediaSeries: TypeSchema = {
     status: { type: "string", description: "Recommended values: ongoing, ended, cancelled" },
     network: { type: "string", description: "Broadcasting network or streaming service" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreMediaSong: TypeSchema = {
   id: "core.media.song",
   parent: "core.media",
   label: "Song",
+  description: "A song. Inherits all core.media fields.",
   version: 1,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
@@ -418,12 +457,14 @@ const coreMediaSong: TypeSchema = {
     album: { type: "string", description: "Containing album name" },
     track_number: { type: "integer", description: "Position within the album" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 const coreMediaTvEpisode: TypeSchema = {
   id: "core.media.tv_episode",
   parent: "core.media",
   label: "TV Episode",
+  description: "A TV episode. Inherits all core.media fields.",
   version: 1,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
@@ -441,6 +482,7 @@ const coreMediaTvEpisode: TypeSchema = {
     duration: { type: "number", description: "Episode runtime in seconds" },
     director: { type: "string", description: "Episode director" },
   },
+  display_hints: { title_field: "title", body_field: "body" },
 };
 
 export const ALL_TYPES: TypeSchema[] = [

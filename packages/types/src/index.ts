@@ -1,4 +1,5 @@
 export type {
+  DisplayHints,
   FieldDefinition,
   FieldType,
   ItemState,

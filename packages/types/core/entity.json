@@ -51,5 +51,8 @@
   },
   "required": [
     "name"
-  ]
+  ],
+  "display_hints": {
+    "title_field": "name"
+  }
 }

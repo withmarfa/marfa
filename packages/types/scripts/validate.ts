@@ -202,6 +202,21 @@ for (const file of files) {
     }
   }
 
+  // Validate display_hints shape if present
+  if ("display_hints" in schema) {
+    const hints = schema.display_hints;
+    if (typeof hints !== "object" || hints === null || Array.isArray(hints)) {
+      addError(file, "`display_hints` must be an object when present");
+    } else {
+      const hintsObj = hints as Record<string, unknown>;
+      for (const hintKey of ["title_field", "body_field"]) {
+        if (hintKey in hintsObj && typeof hintsObj[hintKey] !== "string") {
+          addError(file, `display_hints.${hintKey} must be a string`);
+        }
+      }
+    }
+  }
+
   schemas.set(schema.id, schema as unknown as TypeSchema);
   schemaFiles.set(schema.id, file);
 }
@@ -233,6 +248,26 @@ for (const [id, schema] of schemas) {
       addError(
         file,
         `Required field "${reqField}" not found in fields (own or inherited)`,
+      );
+    }
+  }
+
+  // display_hints must reference fields that exist in the resolved field set
+  const rawSchema = schema as unknown as Record<string, unknown>;
+  const hints = rawSchema.display_hints as
+    | { title_field?: string; body_field?: string }
+    | undefined;
+  if (hints) {
+    if (hints.title_field && !(hints.title_field in allFields)) {
+      addError(
+        file,
+        `display_hints.title_field "${hints.title_field}" does not exist in the resolved fields`,
+      );
+    }
+    if (hints.body_field && !(hints.body_field in allFields)) {
+      addError(
+        file,
+        `display_hints.body_field "${hints.body_field}" does not exist in the resolved fields`,
       );
     }
   }

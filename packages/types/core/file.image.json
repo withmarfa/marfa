@@ -29,5 +29,8 @@
   "required": [
     "width",
     "height"
-  ]
+  ],
+  "display_hints": {
+    "title_field": "title"
+  }
 }
