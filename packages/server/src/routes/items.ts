@@ -1161,10 +1161,7 @@ export function itemRoutes(storage: Storage) {
       resource_id: id,
     });
     const hydrated = await hydrateEdgesForItem(storage, id);
-    return c.json(
-      { item: { ...txResult, edges: hydrated }, metadata },
-      200,
-    );
+    return c.json({ item: { ...txResult, edges: hydrated }, metadata }, 200);
   });
 
   // DELETE /items/:id — soft delete

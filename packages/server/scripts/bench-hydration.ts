@@ -73,8 +73,7 @@ async function main(): Promise<void> {
   const source = await mk();
   for (let i = 0; i < 25; i++) {
     const t = await mk();
-    const edgeType =
-      i < 10 ? "about" : i < 20 ? "derived-from" : "authored-by";
+    const edgeType = i < 10 ? "about" : i < 20 ? "derived-from" : "authored-by";
     await req("POST", "/edges", {
       source_id: source,
       target_id: t,
@@ -94,14 +93,15 @@ async function main(): Promise<void> {
     samples.push(performance.now() - s);
   }
   samples.sort((a, b) => a - b);
-  const mean =
-    samples.reduce((a, b) => a + b, 0) / samples.length;
+  const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
   const p50 = samples[Math.floor(runs * 0.5)];
   const p95 = samples[Math.floor(runs * 0.95)];
   const p99 = samples[Math.floor(runs * 0.99)];
+  const fmt = (n: number | undefined): string =>
+    n === undefined ? "-" : n.toFixed(2);
   console.log(
     `GET /items/:id (hydrated, 25 edges across 3 types, sqlite in-process):\n` +
-      `  n=${String(runs)}  mean=${mean.toFixed(2)}ms  p50=${p50?.toFixed(2)}ms  p95=${p95?.toFixed(2)}ms  p99=${p99?.toFixed(2)}ms`,
+      `  n=${String(runs)}  mean=${mean.toFixed(2)}ms  p50=${fmt(p50)}ms  p95=${fmt(p95)}ms  p99=${fmt(p99)}ms`,
   );
   await storage.close();
 }

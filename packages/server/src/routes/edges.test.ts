@@ -652,7 +652,9 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
       data: { edge_type: string; target_id: string }[];
     };
     const aboutEdges = data.data.filter((e) => e.edge_type === "about");
-    const derivedEdges = data.data.filter((e) => e.edge_type === "derived-from");
+    const derivedEdges = data.data.filter(
+      (e) => e.edge_type === "derived-from",
+    );
     expect(aboutEdges.length).toBe(1);
     expect(aboutEdges[0]?.target_id).toBe(aboutTarget2);
     expect(derivedEdges.length).toBe(1);
@@ -736,7 +738,7 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
         edge_permissions: {}, // explicitly denies edges
       },
     });
-    const memberKey = (await keyRes.json() as { key: string }).key;
+    const memberKey = ((await keyRes.json()) as { key: string }).key;
 
     const source = await createItem();
     const target = await createItem();
@@ -765,7 +767,7 @@ describe("Edge permission matrix (admin / type-only / edge-only / both / neither
         ...(edgePerms && { edge_permissions: edgePerms }),
       },
     });
-    return (await res.json() as { key: string }).key;
+    return ((await res.json()) as { key: string }).key;
   }
 
   it("admin passes create + update + delete without permissions", async () => {
@@ -777,7 +779,7 @@ describe("Edge permission matrix (admin / type-only / edge-only / both / neither
       body: { source_id: a, target_id: b, edge_type: "about" },
     });
     expect(create.status).toBe(201);
-    const id = (await create.json() as { edge: { id: string } }).edge.id;
+    const id = ((await create.json()) as { edge: { id: string } }).edge.id;
     const patch = await request(ctx.app, "PATCH", `/edges/${id}`, {
       key: ctx.adminKey,
       body: { properties: { note: "admin" } },
