@@ -245,6 +245,10 @@ export class PgItemStore implements ItemStore {
       conditions.push(sql`${items.parent_id} IS NULL`);
     }
 
+    if (filters.library !== undefined) {
+      conditions.push(eq(items.library, filters.library));
+    }
+
     // Timestamp range filters — uses COALESCE(timestamp, created_at) as effective date
     if (filters.since) {
       conditions.push(

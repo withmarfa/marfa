@@ -8,7 +8,12 @@ import {
   FilesystemBlobBackend,
 } from "@mymehq/server";
 import { MymeClient } from "./client.js";
-import { ConflictError, NotFoundError, UnauthorizedError } from "./errors.js";
+import {
+  ConflictError,
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+} from "./errors.js";
 import type { Item } from "@mymehq/shared";
 
 // ---------------------------------------------------------------------------
@@ -473,5 +478,78 @@ describe("error handling", () => {
     });
 
     await expect(badClient.items.list()).rejects.toThrow(UnauthorizedError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V0 Wave 2 PR 2 SDK additions: library filter, purge, tenants, full keys.create
+// ---------------------------------------------------------------------------
+
+describe("Wave 2 SDK additions", () => {
+  it("items.list filters by library", async () => {
+    const created = await client.items.create({
+      type: "core.note",
+      properties: { body: "library marker" },
+      library: true,
+    });
+    expect(created.library).toBe(true);
+
+    const onlyLibrary = await client.items.list({
+      type: "core.note",
+      library: true,
+      limit: 200,
+    });
+    expect(onlyLibrary.data.length).toBeGreaterThan(0);
+    for (const item of onlyLibrary.data) {
+      expect(item.library).toBe(true);
+    }
+
+    const onlyAmbient = await client.items.list({
+      type: "core.note",
+      library: false,
+      limit: 200,
+    });
+    for (const item of onlyAmbient.data) {
+      expect(item.library).toBe(false);
+    }
+  });
+
+  it("items.purge hard-deletes a trashed item", async () => {
+    const item = await createNote();
+    await client.items.delete(item.id);
+    await client.items.purge(item.id);
+    await expect(client.items.get(item.id)).rejects.toThrow(NotFoundError);
+  });
+
+  it("tenants.getConfig returns the empty config in non-tenant mode", async () => {
+    const config = await client.tenants.getConfig();
+    expect(typeof config).toBe("object");
+  });
+
+  it("tenants.setConfig calls PUT /tenants/current/config", async () => {
+    // The test fixture runs in single-tenant SQLite mode (no tenant_id on
+    // the bootstrap key); the server route rejects PUT under that
+    // configuration with a clear validation error. Conformance against a
+    // real tenant-scoped credential is exercised by mock-myme. Here we
+    // just confirm the SDK invokes the endpoint and surfaces the
+    // server's response shape.
+    await expect(client.tenants.setConfig({})).rejects.toThrow(ValidationError);
+  });
+
+  it("keys.create returns the full ApiKey shape including credential defaults", async () => {
+    const created = await client.keys.create({
+      label: "wave2-sdk-test",
+      source: "wave2-sdk-test-src",
+      role: "member",
+      type_permissions: { "*": "write" },
+    });
+    expect(created.id).toBeTruthy();
+    expect(created.key.startsWith("myme_k1_")).toBe(true);
+    expect(created.label).toBe("wave2-sdk-test");
+    expect(created.source).toBe("wave2-sdk-test-src");
+    expect(created.role).toBe("member");
+    expect(created.default_origin).toBe("user");
+    expect(created.default_library).toBe(false);
+    expect(created.type_permissions).toEqual({ "*": "write" });
   });
 });

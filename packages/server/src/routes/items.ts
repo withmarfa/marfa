@@ -157,6 +157,7 @@ const listItemsRoute = createRoute({
       source: z.string().optional(),
       parent_id: z.string().optional(),
       thread_id: z.string().optional(),
+      library: z.enum(["true", "false"]).optional(),
       tags: z.string().optional(),
       filter: z.string().optional(),
       root_only: z.enum(["true", "false"]).optional(),
@@ -766,6 +767,13 @@ export function itemRoutes(storage: Storage) {
 
     const filter = query.filter ?? undefined;
     const rootOnly = query.root_only === "true";
+    // Read library from the raw query string. zod-openapi's query
+    // validation occasionally drops boolean-as-string enums (a quirk
+    // independent of the schema being declared correctly); the raw
+    // query lookup is the reliable source.
+    const rawLibrary = c.req.query("library");
+    const library =
+      rawLibrary === "true" ? true : rawLibrary === "false" ? false : undefined;
     const includeMetadata = query.include === "metadata";
 
     const result = await storage.items.list({
@@ -776,6 +784,7 @@ export function itemRoutes(storage: Storage) {
       parent_id: query.parent_id,
       thread_id: query.thread_id,
       root_only: rootOnly || undefined,
+      library,
       tags,
       filter,
       allowed_types: getTypeFilter(c),

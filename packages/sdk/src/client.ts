@@ -10,6 +10,7 @@ import type {
   PaginatedResult,
   SearchResult,
   ItemState,
+  TenantConfig,
 } from "@mymehq/shared";
 import type {
   TypeSchema,
@@ -73,6 +74,12 @@ export interface ListFilters {
   parent_id?: string;
   thread_id?: string;
   root_only?: boolean;
+  /** When set, restricts the result to library items (true) or ambient
+   * items (false). Per V0 spec, the default unrestricted view returns
+   * library items only on a fresh /items query — the explicit filter
+   * here lets callers opt into the ambient slice or be explicit about
+   * the library slice. */
+  library?: boolean;
   tags?: string[];
   filter?: string;
   sort?: "created_at" | "updated_at" | "timestamp";
@@ -184,6 +191,15 @@ export class MymeClient {
 
     delete: async (id: string): Promise<void> => {
       await this.transport.request<undefined>("DELETE", `/items/${id}`);
+    },
+
+    /** Permanently delete a trashed item (admin only). Item must already
+     * be in state "trashed"; returns 400 otherwise. Irreversible. */
+    purge: async (id: string): Promise<void> => {
+      await this.transport.request<{ ok: true }>(
+        "DELETE",
+        `/items/${id}/purge`,
+      );
     },
 
     restore: async (id: string): Promise<Item> => {
@@ -471,18 +487,18 @@ export class MymeClient {
   // ---- Keys ----
 
   readonly keys = {
+    /** Creates an API key. The raw key value is returned exactly once on
+     * creation; the rest of the shape mirrors the persisted ApiKey record
+     * (source, default_origin, default_library, type_permissions, and
+     * extension_permissions are all stamped at create time and visible
+     * here so the caller doesn't need a follow-up GET /keys to inspect
+     * them). */
     create: async (
       input: CreateKeyInput,
-    ): Promise<{ id: string; key: string }> => {
-      const res = await this.transport.request<{
-        id: string;
-        key: string;
-        label: string;
-        role: string;
-        type_permissions: Record<string, string>;
-        created_at: string;
-      }>("POST", "/keys", { body: input });
-      return { id: res.id, key: res.key };
+    ): Promise<ApiKey & { key: string }> => {
+      return this.transport.request<ApiKey & { key: string }>("POST", "/keys", {
+        body: input,
+      });
     },
 
     list: async (): Promise<ApiKey[]> => {
@@ -541,6 +557,32 @@ export class MymeClient {
         deliveries: WebhookDelivery[];
       }>("GET", `/webhooks/${id}/deliveries`, { query });
       return res.deliveries;
+    },
+  };
+
+  // ---- Tenants (admin) ----
+
+  /** Tenant-scoped configuration (per-type ambient retention overrides
+   * today; future tenant-level settings will live here). All endpoints
+   * are admin-only. */
+  readonly tenants = {
+    /** Returns the current tenant's config. Empty object when nothing
+     * is configured. */
+    getConfig: async (): Promise<TenantConfig> => {
+      return this.transport.request<TenantConfig>(
+        "GET",
+        "/tenants/current/config",
+      );
+    },
+
+    /** Replaces the current tenant's config. Server validates that any
+     * type IDs in retention overrides resolve in the registry. */
+    setConfig: async (config: TenantConfig): Promise<TenantConfig> => {
+      return this.transport.request<TenantConfig>(
+        "PUT",
+        "/tenants/current/config",
+        { body: config },
+      );
     },
   };
 

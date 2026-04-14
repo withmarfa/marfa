@@ -264,6 +264,13 @@ export class SqliteItemStore implements ItemStore {
       conditions.push(sql`${items.parent_id} IS NULL`);
     }
 
+    if (filters.library !== undefined) {
+      // better-sqlite3 cannot bind a JS boolean directly. The library column
+      // is INTEGER under the hood (Drizzle boolean()); coerce to 0/1 here so
+      // the eq() builder produces a bindable parameter.
+      conditions.push(sql`${items.library} = ${filters.library ? 1 : 0}`);
+    }
+
     // Timestamp range filters — uses COALESCE(timestamp, created_at) as effective date
     if (filters.since) {
       conditions.push(
