@@ -67,7 +67,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_dedup
 CREATE TABLE IF NOT EXISTS metadata (
   item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
   tags TEXT NOT NULL DEFAULT '[]',
-  about TEXT NOT NULL DEFAULT '[]'
+  about TEXT NOT NULL DEFAULT '[]',
+  extensions TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS versions (
@@ -173,9 +174,17 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   attempt INTEGER NOT NULL,
   success INTEGER NOT NULL DEFAULT 0,
   error TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  next_attempt_at TEXT,
+  payload TEXT,
+  webhook_url TEXT,
+  webhook_secret TEXT,
+  max_attempts INTEGER NOT NULL DEFAULT 4,
+  status TEXT NOT NULL DEFAULT 'pending'
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending
+  ON webhook_deliveries(next_attempt_at) WHERE status = 'pending';
 
 CREATE TABLE IF NOT EXISTS audit_log (
   id TEXT PRIMARY KEY,

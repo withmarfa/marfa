@@ -211,9 +211,17 @@ export function createConnection(sqlitePath: string): {
       attempt INTEGER NOT NULL,
       success INTEGER NOT NULL DEFAULT 0,
       error TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      next_attempt_at TEXT,
+      payload TEXT,
+      webhook_url TEXT,
+      webhook_secret TEXT,
+      max_attempts INTEGER NOT NULL DEFAULT 4,
+      status TEXT NOT NULL DEFAULT 'pending'
     );
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
+    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending
+      ON webhook_deliveries(next_attempt_at) WHERE status = 'pending';
 
     CREATE TABLE IF NOT EXISTS audit_log (
       id TEXT PRIMARY KEY,
