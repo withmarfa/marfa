@@ -160,6 +160,14 @@ export function createConnection(sqlitePath: string): {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS custom_edge_types (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT,
+      schema TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS oauth_clients (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,

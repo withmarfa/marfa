@@ -92,6 +92,13 @@
       "when": 1777300000000,
       "tag": "0012_api_keys_edge_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1777400000000,
+      "tag": "0013_custom_edge_types",
+      "breakpoints": true
     }
   ]
 }

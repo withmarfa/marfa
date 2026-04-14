@@ -431,6 +431,56 @@ describe("Query-language: edge[X]=Y and backref[X]=Y", () => {
   });
 });
 
+describe("Custom edge-type registration", () => {
+  it("admin registers a custom edge type via POST /edges/types", async () => {
+    const res = await request(ctx.app, "POST", "/edges/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.custom-link",
+        cardinality: "many-to-many",
+        cascade_on_delete: "orphan",
+      },
+    });
+    expect(res.status).toBe(201);
+
+    // Now edges of this type should be creatable
+    const a = await createItem();
+    const b = await createItem();
+    const useRes = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        source_id: a,
+        target_id: b,
+        edge_type: "test.custom-link",
+      },
+    });
+    expect(useRes.status).toBe(201);
+  });
+
+  it("rejects redefinition of a core edge type", async () => {
+    const res = await request(ctx.app, "POST", "/edges/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "about",
+        cardinality: "many-to-many",
+      },
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it("rejects `extends` on custom edge type", async () => {
+    const res = await request(ctx.app, "POST", "/edges/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.inherit",
+        cardinality: "many-to-many",
+        extends: "about",
+      },
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("Edge permission enforcement", () => {
   it("rejects a non-admin key without edge permissions", async () => {
     // Create a non-admin key with type_permissions but no edge_permissions.

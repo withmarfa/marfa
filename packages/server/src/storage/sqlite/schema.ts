@@ -253,6 +253,14 @@ export const customTypes = sqliteTable("custom_types", {
   updated_at: text("updated_at").notNull(),
 });
 
+export const customEdgeTypes = sqliteTable("custom_edge_types", {
+  id: text("id").primaryKey(),
+  tenant_id: text("tenant_id"),
+  schema: text("schema").notNull(),
+  created_at: text("created_at").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
 // ---------------------------------------------------------------------------
 // webhooks
 // ---------------------------------------------------------------------------

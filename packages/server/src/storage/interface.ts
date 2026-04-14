@@ -20,7 +20,7 @@ import type {
   Edge,
   CreateEdgeInput,
 } from "@mymehq/shared";
-import type { TypeSchema } from "@mymehq/shared";
+import type { EdgeTypeSchema, TypeSchema } from "@mymehq/shared";
 import { MymeError, ErrorCode } from "@mymehq/shared";
 
 // ---------------------------------------------------------------------------
@@ -174,6 +174,15 @@ export interface TypeStore {
   delete(id: string): Promise<void>;
   loadCustomTypes(): Promise<TypeSchema[]>;
   countCustom(): Promise<number>;
+}
+
+export interface EdgeTypeStore {
+  list(): Promise<EdgeTypeSchema[]>;
+  get(id: string): Promise<EdgeTypeSchema | undefined>;
+  create(schema: EdgeTypeSchema, tenantId?: string): Promise<EdgeTypeSchema>;
+  delete(id: string): Promise<void>;
+  /** Load every custom edge type for server-startup registry warmup. */
+  loadCustomEdgeTypes(): Promise<EdgeTypeSchema[]>;
 }
 
 export interface SearchStore {
@@ -502,6 +511,7 @@ export interface Storage {
   keys: KeyStore;
   blobs: BlobStore;
   edges: EdgeStore;
+  edgeTypes: EdgeTypeStore;
   oauth: OAuthStore;
   webhooks: WebhookStore;
   webhookDeliveries: WebhookDeliveryStore;

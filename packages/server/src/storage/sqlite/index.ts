@@ -16,6 +16,8 @@ import { SqliteEventLogStore } from "./event-log-store.js";
 import { SqliteUserStore } from "./user-store.js";
 import { SqliteTenantStore } from "./tenant-store.js";
 import { SqliteEdgeStore } from "./edge-store.js";
+import { SqliteEdgeTypeStore } from "./edge-type-store.js";
+import { registerEdgeTypeSchema, isCoreEdgeType } from "@mymehq/shared";
 
 export function createSqliteStorage(
   sqlitePath: string,
@@ -46,6 +48,16 @@ export function createSqliteStorage(
   const auditStore = new SqliteAuditStore(db);
   const eventLogStore = new SqliteEventLogStore(db, raw);
   const edgeStore = new SqliteEdgeStore(db);
+  const edgeTypeStore = new SqliteEdgeTypeStore(db);
+
+  // Warm up the in-memory edge-type registry from the custom_edge_types
+  // table. Fire-and-forget: if the DB is empty (fresh test) this is a
+  // no-op, and new rows added at runtime are registered on POST /edges/types.
+  void edgeTypeStore.loadCustomEdgeTypes().then((types) => {
+    for (const ct of types) {
+      if (!isCoreEdgeType(ct.id)) registerEdgeTypeSchema(ct);
+    }
+  });
 
   return {
     items: itemStore,
@@ -57,6 +69,7 @@ export function createSqliteStorage(
     keys: keyStore,
     blobs: blobStore,
     edges: edgeStore,
+    edgeTypes: edgeTypeStore,
     oauth: oauthStore,
     webhooks: webhookStore,
     webhookDeliveries: deliveryStore,
