@@ -67,6 +67,12 @@ const TypeSchemaResponse = z.object({
   parent: z.string().optional(),
   fields: z.record(z.string(), z.unknown()),
   version: z.number(),
+  display_hints: z
+    .object({
+      title_field: z.string().optional(),
+      body_field: z.string().optional(),
+    })
+    .optional(),
   version_policy: z
     .object({
       recent_days: z.number().optional(),
