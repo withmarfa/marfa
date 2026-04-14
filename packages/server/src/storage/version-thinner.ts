@@ -38,15 +38,14 @@ export class VersionThinner {
 
   private async poll(): Promise<void> {
     try {
-      const candidates =
-        await this.versionStore.listThinningCandidates(2, BATCH_SIZE);
+      const candidates = await this.versionStore.listThinningCandidates(
+        2,
+        BATCH_SIZE,
+      );
 
       let totalDeleted = 0;
       for (const candidate of candidates) {
-        const deleted = await this.thinItem(
-          candidate.itemId,
-          candidate.type,
-        );
+        const deleted = await this.thinItem(candidate.itemId, candidate.type);
         totalDeleted += deleted;
       }
 

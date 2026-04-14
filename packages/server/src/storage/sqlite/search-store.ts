@@ -16,7 +16,13 @@ const FTS_FIELDS = ["title", "body", "description", "name"] as const;
 function extractSearchableText(
   properties: Record<string, unknown>,
   typeId?: string,
-): { title: string; body: string; description: string; name: string; extra: string } {
+): {
+  title: string;
+  body: string;
+  description: string;
+  name: string;
+  extra: string;
+} {
   const result: Record<string, string> = {};
   for (const field of FTS_FIELDS) {
     const value = properties[field];
@@ -32,7 +38,13 @@ function extractSearchableText(
     }
   }
   result.extra = extraParts.join(" ");
-  return result as { title: string; body: string; description: string; name: string; extra: string };
+  return result as {
+    title: string;
+    body: string;
+    description: string;
+    name: string;
+    extra: string;
+  };
 }
 
 /**
@@ -82,7 +94,14 @@ export class SqliteSearchStore implements SearchStore {
         `INSERT INTO items_fts(item_id, title, body, description, name, extra)
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(itemId, text.title, text.body, text.description, text.name, text.extra);
+      .run(
+        itemId,
+        text.title,
+        text.body,
+        text.description,
+        text.name,
+        text.extra,
+      );
   }
 
   /** Synchronous version for use within SQLite transactions. */

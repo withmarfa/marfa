@@ -4,11 +4,11 @@ Myme runs on a server via launchd. Both environments use the same server binary 
 
 ## Environments
 
-|           | Production              | Staging                  |
-| --------- | ----------------------- | ------------------------ |
-| Port      | 8600                    | 8601                     |
-| Plist     | `com.myme.server.plist` | `com.myme.staging.plist` |
-| Database  | `myme`                  | `myme_staging`           |
+|          | Production              | Staging                  |
+| -------- | ----------------------- | ------------------------ |
+| Port     | 8600                    | 8601                     |
+| Plist    | `com.myme.server.plist` | `com.myme.staging.plist` |
+| Database | `myme`                  | `myme_staging`           |
 
 Both use Postgres (localhost:5432), S3 blob storage, and `KeepAlive: true`. Configuration (env vars, ports, database URLs) is embedded in the launchd plist XML at `~/Library/LaunchAgents/`.
 

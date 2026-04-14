@@ -44,10 +44,7 @@
       "description": "Personal annotations"
     }
   },
-  "required": [
-    "blob_ref",
-    "mime_type"
-  ],
+  "required": ["blob_ref", "mime_type"],
   "display_hints": {
     "title_field": "title"
   }

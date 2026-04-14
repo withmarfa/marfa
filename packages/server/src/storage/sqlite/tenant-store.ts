@@ -34,11 +34,7 @@ export class SqliteTenantStore implements TenantStore {
       .where(eq(tenants.id, id))
       .get();
     if (!row || !row.config) return null;
-    return safeJsonParse<TenantConfig>(
-      row.config,
-      {},
-      `tenant ${id} config`,
-    );
+    return safeJsonParse<TenantConfig>(row.config, {}, `tenant ${id} config`);
   }
 
   async updateConfig(id: string, config: TenantConfig): Promise<void> {

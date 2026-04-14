@@ -139,8 +139,12 @@ export const apiKeys = pgTable(
     role: text("role").notNull().default("member"),
     default_origin: text("default_origin").notNull().default("user"),
     default_library: boolean("default_library").notNull().default(false),
-    type_permissions: text("type_permissions").notNull().default('{"*":"write"}'),
-    extension_permissions: text("extension_permissions").notNull().default("{}"),
+    type_permissions: text("type_permissions")
+      .notNull()
+      .default('{"*":"write"}'),
+    extension_permissions: text("extension_permissions")
+      .notNull()
+      .default("{}"),
     created_at: text("created_at").notNull(),
     revoked_at: text("revoked_at"),
     last_used_at: text("last_used_at"),

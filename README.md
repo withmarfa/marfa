@@ -4,12 +4,12 @@ A typed data layer for structured personal data. Store, query, and sync items wi
 
 ## Packages
 
-| Package | Description |
-| --- | --- |
-| [`@mymehq/shared`](./packages/shared) | Protocol types, Zod validation schemas, error codes |
-| [`@mymehq/server`](./packages/server) | Hono HTTP server with SQLite and Postgres support |
-| [`@mymehq/sdk`](./packages/sdk) | TypeScript HTTP client |
-| [`@mymehq/electric`](./packages/electric) | Electric SQL sync client (experimental) |
+| Package                                   | Description                                         |
+| ----------------------------------------- | --------------------------------------------------- |
+| [`@mymehq/shared`](./packages/shared)     | Protocol types, Zod validation schemas, error codes |
+| [`@mymehq/server`](./packages/server)     | Hono HTTP server with SQLite and Postgres support   |
+| [`@mymehq/sdk`](./packages/sdk)           | TypeScript HTTP client                              |
+| [`@mymehq/electric`](./packages/electric) | Electric SQL sync client (experimental)             |
 
 ## Quick start
 

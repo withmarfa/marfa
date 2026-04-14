@@ -20,9 +20,7 @@
   "paths": {
     "/items": {
       "post": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Create an item",
         "security": [
           {
@@ -61,11 +59,7 @@
                   },
                   "origin": {
                     "type": "string",
-                    "enum": [
-                      "user",
-                      "ai",
-                      "worker"
-                    ]
+                    "enum": ["user", "ai", "worker"]
                   },
                   "library": {
                     "type": "boolean"
@@ -98,9 +92,7 @@
                     }
                   }
                 },
-                "required": [
-                  "type"
-                ]
+                "required": ["type"]
               }
             }
           }
@@ -220,18 +212,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "item_id",
-                        "tags",
-                        "about",
-                        "extensions"
-                      ]
+                      "required": ["item_id", "tags", "about", "extensions"]
                     }
                   },
-                  "required": [
-                    "item",
-                    "metadata"
-                  ]
+                  "required": ["item", "metadata"]
                 }
               }
             }
@@ -257,15 +241,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -291,15 +270,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -325,15 +299,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -341,9 +310,7 @@
         }
       },
       "get": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "List items with filtering and pagination",
         "security": [
           {
@@ -410,10 +377,7 @@
           {
             "schema": {
               "type": "string",
-              "enum": [
-                "true",
-                "false"
-              ]
+              "enum": ["true", "false"]
             },
             "required": false,
             "name": "root_only",
@@ -422,11 +386,7 @@
           {
             "schema": {
               "type": "string",
-              "enum": [
-                "created_at",
-                "updated_at",
-                "timestamp"
-              ]
+              "enum": ["created_at", "updated_at", "timestamp"]
             },
             "required": false,
             "name": "sort",
@@ -435,10 +395,7 @@
           {
             "schema": {
               "type": "string",
-              "enum": [
-                "asc",
-                "desc"
-              ]
+              "enum": ["asc", "desc"]
             },
             "required": false,
             "name": "direction",
@@ -591,11 +548,7 @@
                           "type": "boolean"
                         }
                       },
-                      "required": [
-                        "data",
-                        "cursor",
-                        "has_more"
-                      ]
+                      "required": ["data", "cursor", "has_more"]
                     },
                     {
                       "type": "object",
@@ -720,10 +673,7 @@
                                 ]
                               }
                             },
-                            "required": [
-                              "item",
-                              "metadata"
-                            ]
+                            "required": ["item", "metadata"]
                           }
                         },
                         "cursor": {
@@ -734,11 +684,7 @@
                           "type": "boolean"
                         }
                       },
-                      "required": [
-                        "data",
-                        "cursor",
-                        "has_more"
-                      ]
+                      "required": ["data", "cursor", "has_more"]
                     }
                   ]
                 }
@@ -766,15 +712,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -800,15 +741,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -818,9 +754,7 @@
     },
     "/items/stats": {
       "get": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Get item counts by state",
         "security": [
           {
@@ -862,15 +796,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -880,9 +809,7 @@
     },
     "/items/{id}": {
       "get": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Get a single item",
         "security": [
           {
@@ -1014,18 +941,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "item_id",
-                        "tags",
-                        "about",
-                        "extensions"
-                      ]
+                      "required": ["item_id", "tags", "about", "extensions"]
                     }
                   },
-                  "required": [
-                    "item",
-                    "metadata"
-                  ]
+                  "required": ["item", "metadata"]
                 }
               }
             }
@@ -1051,15 +970,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1085,15 +999,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1101,9 +1010,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Update an item with conflict detection",
         "security": [
           {
@@ -1267,18 +1174,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "item_id",
-                        "tags",
-                        "about",
-                        "extensions"
-                      ]
+                      "required": ["item_id", "tags", "about", "extensions"]
                     }
                   },
-                  "required": [
-                    "item",
-                    "metadata"
-                  ]
+                  "required": ["item", "metadata"]
                 }
               }
             }
@@ -1304,15 +1203,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1338,15 +1232,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1372,15 +1261,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1406,15 +1290,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1422,9 +1301,7 @@
         }
       },
       "delete": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Soft delete (trash) an item",
         "security": [
           {
@@ -1451,14 +1328,10 @@
                   "properties": {
                     "ok": {
                       "type": "boolean",
-                      "enum": [
-                        true
-                      ]
+                      "enum": [true]
                     }
                   },
-                  "required": [
-                    "ok"
-                  ]
+                  "required": ["ok"]
                 }
               }
             }
@@ -1484,15 +1357,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1502,9 +1370,7 @@
     },
     "/items/{id}/restore": {
       "post": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Restore a trashed item",
         "security": [
           {
@@ -1636,18 +1502,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "item_id",
-                        "tags",
-                        "about",
-                        "extensions"
-                      ]
+                      "required": ["item_id", "tags", "about", "extensions"]
                     }
                   },
-                  "required": [
-                    "item",
-                    "metadata"
-                  ]
+                  "required": ["item", "metadata"]
                 }
               }
             }
@@ -1673,15 +1531,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1707,15 +1560,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1725,9 +1573,7 @@
     },
     "/items/{id}/transition": {
       "post": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Transition item state",
         "security": [
           {
@@ -1755,9 +1601,7 @@
                     "minLength": 1
                   }
                 },
-                "required": [
-                  "state"
-                ]
+                "required": ["state"]
               }
             }
           }
@@ -1877,18 +1721,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "item_id",
-                        "tags",
-                        "about",
-                        "extensions"
-                      ]
+                      "required": ["item_id", "tags", "about", "extensions"]
                     }
                   },
-                  "required": [
-                    "item",
-                    "metadata"
-                  ]
+                  "required": ["item", "metadata"]
                 }
               }
             }
@@ -1914,15 +1750,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1948,15 +1779,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -1982,15 +1808,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2000,9 +1821,7 @@
     },
     "/items/{id}/versions": {
       "get": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "List version history for an item",
         "security": [
           {
@@ -2065,9 +1884,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "versions"
-                  ]
+                  "required": ["versions"]
                 }
               }
             }
@@ -2093,15 +1910,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2127,15 +1939,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2145,9 +1952,7 @@
     },
     "/items/{id}/metadata": {
       "get": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Get item metadata",
         "security": [
           {
@@ -2197,17 +2002,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "item_id",
-                        "tags",
-                        "about",
-                        "extensions"
-                      ]
+                      "required": ["item_id", "tags", "about", "extensions"]
                     }
                   },
-                  "required": [
-                    "metadata"
-                  ]
+                  "required": ["metadata"]
                 }
               }
             }
@@ -2233,15 +2031,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2267,15 +2060,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2283,9 +2071,7 @@
         }
       },
       "put": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Replace item metadata",
         "security": [
           {
@@ -2360,17 +2146,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "item_id",
-                        "tags",
-                        "about",
-                        "extensions"
-                      ]
+                      "required": ["item_id", "tags", "about", "extensions"]
                     }
                   },
-                  "required": [
-                    "metadata"
-                  ]
+                  "required": ["metadata"]
                 }
               }
             }
@@ -2396,15 +2175,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2430,15 +2204,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2464,15 +2233,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2480,9 +2244,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Merge metadata (set-union)",
         "security": [
           {
@@ -2555,17 +2317,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "item_id",
-                        "tags",
-                        "about",
-                        "extensions"
-                      ]
+                      "required": ["item_id", "tags", "about", "extensions"]
                     }
                   },
-                  "required": [
-                    "metadata"
-                  ]
+                  "required": ["metadata"]
                 }
               }
             }
@@ -2591,15 +2346,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2625,15 +2375,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2659,15 +2404,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2677,9 +2417,7 @@
     },
     "/items/{id}/tags": {
       "post": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Add tags to an item",
         "security": [
           {
@@ -2710,9 +2448,7 @@
                     "minItems": 1
                   }
                 },
-                "required": [
-                  "tags"
-                ]
+                "required": ["tags"]
               }
             }
           }
@@ -2750,17 +2486,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "item_id",
-                        "tags",
-                        "about",
-                        "extensions"
-                      ]
+                      "required": ["item_id", "tags", "about", "extensions"]
                     }
                   },
-                  "required": [
-                    "metadata"
-                  ]
+                  "required": ["metadata"]
                 }
               }
             }
@@ -2786,15 +2515,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2820,15 +2544,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2854,15 +2573,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2872,9 +2586,7 @@
     },
     "/items/{id}/purge": {
       "delete": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Permanently delete a trashed item (admin only)",
         "security": [
           {
@@ -2901,14 +2613,10 @@
                   "properties": {
                     "ok": {
                       "type": "boolean",
-                      "enum": [
-                        true
-                      ]
+                      "enum": [true]
                     }
                   },
-                  "required": [
-                    "ok"
-                  ]
+                  "required": ["ok"]
                 }
               }
             }
@@ -2934,15 +2642,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2968,15 +2671,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -2986,9 +2684,7 @@
     },
     "/items/{id}/tags/{tag}": {
       "delete": {
-        "tags": [
-          "Items"
-        ],
+        "tags": ["Items"],
         "summary": "Remove a tag from an item",
         "security": [
           {
@@ -3046,17 +2742,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "item_id",
-                        "tags",
-                        "about",
-                        "extensions"
-                      ]
+                      "required": ["item_id", "tags", "about", "extensions"]
                     }
                   },
-                  "required": [
-                    "metadata"
-                  ]
+                  "required": ["metadata"]
                 }
               }
             }
@@ -3082,15 +2771,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3116,15 +2800,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3134,9 +2813,7 @@
     },
     "/items/{id}/extensions": {
       "get": {
-        "tags": [
-          "Extensions"
-        ],
+        "tags": ["Extensions"],
         "summary": "List all extension namespaces for an item",
         "security": [
           {
@@ -3171,9 +2848,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "extensions"
-                  ]
+                  "required": ["extensions"]
                 }
               }
             }
@@ -3199,15 +2874,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3233,15 +2903,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3267,15 +2932,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3285,9 +2945,7 @@
     },
     "/items/{id}/extensions/{namespace}": {
       "get": {
-        "tags": [
-          "Extensions"
-        ],
+        "tags": ["Extensions"],
         "summary": "Read a specific extension namespace",
         "security": [
           {
@@ -3331,10 +2989,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "namespace",
-                    "data"
-                  ]
+                  "required": ["namespace", "data"]
                 }
               }
             }
@@ -3360,15 +3015,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3394,15 +3044,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3428,15 +3073,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3462,15 +3102,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3478,9 +3113,7 @@
         }
       },
       "put": {
-        "tags": [
-          "Extensions"
-        ],
+        "tags": ["Extensions"],
         "summary": "Write to a specific extension namespace (100KB limit)",
         "security": [
           {
@@ -3535,9 +3168,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "extensions"
-                  ]
+                  "required": ["extensions"]
                 }
               }
             }
@@ -3563,15 +3194,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3597,15 +3223,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3631,15 +3252,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3665,15 +3281,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3681,9 +3292,7 @@
         }
       },
       "delete": {
-        "tags": [
-          "Extensions"
-        ],
+        "tags": ["Extensions"],
         "summary": "Delete an extension namespace",
         "security": [
           {
@@ -3726,9 +3335,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "extensions"
-                  ]
+                  "required": ["extensions"]
                 }
               }
             }
@@ -3754,15 +3361,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3788,15 +3390,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3822,15 +3419,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3856,15 +3448,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3874,9 +3461,7 @@
     },
     "/threads": {
       "post": {
-        "tags": [
-          "Threads"
-        ],
+        "tags": ["Threads"],
         "summary": "Create a new thread",
         "security": [
           {
@@ -3916,9 +3501,7 @@
                       ]
                     }
                   },
-                  "required": [
-                    "thread"
-                  ]
+                  "required": ["thread"]
                 }
               }
             }
@@ -3944,15 +3527,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -3960,9 +3538,7 @@
         }
       },
       "get": {
-        "tags": [
-          "Threads"
-        ],
+        "tags": ["Threads"],
         "summary": "List threads with pagination",
         "security": [
           {
@@ -4033,11 +3609,7 @@
                       "type": "boolean"
                     }
                   },
-                  "required": [
-                    "data",
-                    "cursor",
-                    "has_more"
-                  ]
+                  "required": ["data", "cursor", "has_more"]
                 }
               }
             }
@@ -4063,15 +3635,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -4081,9 +3648,7 @@
     },
     "/threads/{id}": {
       "get": {
-        "tags": [
-          "Threads"
-        ],
+        "tags": ["Threads"],
         "summary": "Get a thread and its items",
         "security": [
           {
@@ -4218,10 +3783,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "thread",
-                    "items"
-                  ]
+                  "required": ["thread", "items"]
                 }
               }
             }
@@ -4247,15 +3809,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -4281,15 +3838,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -4299,9 +3851,7 @@
     },
     "/threads/{id}/items": {
       "post": {
-        "tags": [
-          "Threads"
-        ],
+        "tags": ["Threads"],
         "summary": "Add an item to a thread",
         "security": [
           {
@@ -4329,9 +3879,7 @@
                     "minLength": 1
                   }
                 },
-                "required": [
-                  "item_id"
-                ]
+                "required": ["item_id"]
               }
             }
           }
@@ -4427,9 +3975,7 @@
                       ]
                     }
                   },
-                  "required": [
-                    "item"
-                  ]
+                  "required": ["item"]
                 }
               }
             }
@@ -4455,15 +4001,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -4489,15 +4030,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -4523,15 +4059,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -4541,9 +4072,7 @@
     },
     "/threads/{id}/items/{itemId}": {
       "delete": {
-        "tags": [
-          "Threads"
-        ],
+        "tags": ["Threads"],
         "summary": "Remove an item from a thread",
         "security": [
           {
@@ -4659,9 +4188,7 @@
                       ]
                     }
                   },
-                  "required": [
-                    "item"
-                  ]
+                  "required": ["item"]
                 }
               }
             }
@@ -4687,15 +4214,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -4721,15 +4243,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -4755,15 +4272,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -4773,9 +4285,7 @@
     },
     "/types": {
       "get": {
-        "tags": [
-          "Types"
-        ],
+        "tags": ["Types"],
         "summary": "List all registered types",
         "description": "Returns all registered types including core and custom types.",
         "security": [
@@ -4832,11 +4342,7 @@
                         }
                       }
                     },
-                    "required": [
-                      "id",
-                      "fields",
-                      "version"
-                    ]
+                    "required": ["id", "fields", "version"]
                   }
                 }
               }
@@ -4863,15 +4369,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -4879,9 +4380,7 @@
         }
       },
       "post": {
-        "tags": [
-          "Types"
-        ],
+        "tags": ["Types"],
         "summary": "Register a custom type",
         "description": "Register a new custom type schema. Admin only. Body is validated via validateTypeSchema().",
         "security": [
@@ -4951,16 +4450,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "id",
-                        "fields",
-                        "version"
-                      ]
+                      "required": ["id", "fields", "version"]
                     }
                   },
-                  "required": [
-                    "type"
-                  ]
+                  "required": ["type"]
                 }
               }
             }
@@ -4986,15 +4479,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5020,15 +4508,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5038,9 +4521,7 @@
     },
     "/types/{id}": {
       "get": {
-        "tags": [
-          "Types"
-        ],
+        "tags": ["Types"],
         "summary": "Get a single type schema",
         "security": [
           {
@@ -5104,11 +4585,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "id",
-                    "fields",
-                    "version"
-                  ]
+                  "required": ["id", "fields", "version"]
                 }
               }
             }
@@ -5134,15 +4611,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5168,15 +4640,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5184,9 +4651,7 @@
         }
       },
       "put": {
-        "tags": [
-          "Types"
-        ],
+        "tags": ["Types"],
         "summary": "Update a custom type",
         "description": "Update an existing custom type schema. Admin only. Core types cannot be modified. Body is validated via validateTypeSchema().",
         "security": [
@@ -5266,16 +4731,10 @@
                           }
                         }
                       },
-                      "required": [
-                        "id",
-                        "fields",
-                        "version"
-                      ]
+                      "required": ["id", "fields", "version"]
                     }
                   },
-                  "required": [
-                    "type"
-                  ]
+                  "required": ["type"]
                 }
               }
             }
@@ -5301,15 +4760,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5335,15 +4789,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5351,9 +4800,7 @@
         }
       },
       "delete": {
-        "tags": [
-          "Types"
-        ],
+        "tags": ["Types"],
         "summary": "Delete a custom type",
         "description": "Delete a custom type. Admin only. Core types cannot be deleted. Use ?force=true to delete even if items exist.",
         "security": [
@@ -5373,10 +4820,7 @@
           {
             "schema": {
               "type": "string",
-              "enum": [
-                "true",
-                "false"
-              ]
+              "enum": ["true", "false"]
             },
             "required": false,
             "name": "force",
@@ -5393,14 +4837,10 @@
                   "properties": {
                     "ok": {
                       "type": "boolean",
-                      "enum": [
-                        true
-                      ]
+                      "enum": [true]
                     }
                   },
-                  "required": [
-                    "ok"
-                  ]
+                  "required": ["ok"]
                 }
               }
             }
@@ -5426,15 +4866,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5460,15 +4895,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5494,15 +4924,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5512,9 +4937,7 @@
     },
     "/search": {
       "get": {
-        "tags": [
-          "Search"
-        ],
+        "tags": ["Search"],
         "summary": "Full-text search across items",
         "security": [
           {
@@ -5542,11 +4965,7 @@
           {
             "schema": {
               "type": "string",
-              "enum": [
-                "active",
-                "archived",
-                "trashed"
-              ]
+              "enum": ["active", "archived", "trashed"]
             },
             "required": false,
             "name": "state",
@@ -5654,10 +5073,7 @@
                                 }
                               }
                             },
-                            "required": [
-                              "tags",
-                              "about"
-                            ],
+                            "required": ["tags", "about"],
                             "additionalProperties": {
                               "nullable": true
                             }
@@ -5672,17 +5088,11 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "item",
-                          "metadata",
-                          "relevance_score"
-                        ]
+                        "required": ["item", "metadata", "relevance_score"]
                       }
                     }
                   },
-                  "required": [
-                    "results"
-                  ]
+                  "required": ["results"]
                 }
               }
             }
@@ -5708,15 +5118,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5726,9 +5131,7 @@
     },
     "/blobs": {
       "post": {
-        "tags": [
-          "Blobs"
-        ],
+        "tags": ["Blobs"],
         "summary": "Upload a blob (multipart or raw binary)",
         "security": [
           {
@@ -5767,11 +5170,7 @@
                       "type": "number"
                     }
                   },
-                  "required": [
-                    "hash",
-                    "mime_type",
-                    "size"
-                  ]
+                  "required": ["hash", "mime_type", "size"]
                 }
               }
             }
@@ -5797,15 +5196,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5831,15 +5225,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5849,9 +5238,7 @@
     },
     "/blobs/{hash}": {
       "get": {
-        "tags": [
-          "Blobs"
-        ],
+        "tags": ["Blobs"],
         "summary": "Download blob binary",
         "security": [
           {
@@ -5900,15 +5287,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5934,15 +5316,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5968,15 +5345,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -5986,9 +5358,7 @@
     },
     "/blobs/{hash}/url": {
       "get": {
-        "tags": [
-          "Blobs"
-        ],
+        "tags": ["Blobs"],
         "summary": "Get a presigned download URL for a blob",
         "security": [
           {
@@ -6030,10 +5400,7 @@
                       "type": "number"
                     }
                   },
-                  "required": [
-                    "url",
-                    "expires_in"
-                  ]
+                  "required": ["url", "expires_in"]
                 }
               }
             }
@@ -6059,15 +5426,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6093,15 +5455,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6127,15 +5484,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6145,9 +5497,7 @@
     },
     "/blobs/cleanup": {
       "post": {
-        "tags": [
-          "Blobs"
-        ],
+        "tags": ["Blobs"],
         "summary": "Remove unreferenced blobs (admin only)",
         "security": [
           {
@@ -6158,10 +5508,7 @@
           {
             "schema": {
               "type": "string",
-              "enum": [
-                "true",
-                "false"
-              ],
+              "enum": ["true", "false"],
               "default": "false"
             },
             "required": false,
@@ -6225,15 +5572,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6243,9 +5585,7 @@
     },
     "/blobs/reconcile": {
       "post": {
-        "tags": [
-          "Blobs"
-        ],
+        "tags": ["Blobs"],
         "summary": "Reconcile blob storage against database (admin only)",
         "description": "Compares the blob storage backend against the database to find orphaned files (in storage but not DB) and missing files (in DB but not storage). Defaults to dry_run=true for safety.",
         "security": [
@@ -6257,10 +5597,7 @@
           {
             "schema": {
               "type": "string",
-              "enum": [
-                "true",
-                "false"
-              ],
+              "enum": ["true", "false"],
               "default": "true"
             },
             "required": false,
@@ -6346,15 +5683,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6380,15 +5712,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6398,9 +5725,7 @@
     },
     "/keys": {
       "post": {
-        "tags": [
-          "Keys"
-        ],
+        "tags": ["Keys"],
         "summary": "Create a new API key",
         "description": "Creates a new API key. In bootstrap mode (zero keys exist), no auth is required and the key is always admin.",
         "security": [
@@ -6425,18 +5750,11 @@
                   },
                   "role": {
                     "type": "string",
-                    "enum": [
-                      "admin",
-                      "member"
-                    ]
+                    "enum": ["admin", "member"]
                   },
                   "default_origin": {
                     "type": "string",
-                    "enum": [
-                      "user",
-                      "ai",
-                      "worker"
-                    ]
+                    "enum": ["user", "ai", "worker"]
                   },
                   "default_library": {
                     "type": "boolean"
@@ -6445,18 +5763,11 @@
                     "type": "object",
                     "additionalProperties": {
                       "type": "string",
-                      "enum": [
-                        "read",
-                        "write",
-                        "none"
-                      ]
+                      "enum": ["read", "write", "none"]
                     }
                   }
                 },
-                "required": [
-                  "label",
-                  "source"
-                ]
+                "required": ["label", "source"]
               }
             }
           }
@@ -6483,18 +5794,11 @@
                     },
                     "role": {
                       "type": "string",
-                      "enum": [
-                        "admin",
-                        "member"
-                      ]
+                      "enum": ["admin", "member"]
                     },
                     "default_origin": {
                       "type": "string",
-                      "enum": [
-                        "user",
-                        "ai",
-                        "worker"
-                      ]
+                      "enum": ["user", "ai", "worker"]
                     },
                     "default_library": {
                       "type": "boolean"
@@ -6503,11 +5807,7 @@
                       "type": "object",
                       "additionalProperties": {
                         "type": "string",
-                        "enum": [
-                          "read",
-                          "write",
-                          "none"
-                        ]
+                        "enum": ["read", "write", "none"]
                       }
                     },
                     "created_at": {
@@ -6555,15 +5855,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6571,9 +5866,7 @@
         }
       },
       "get": {
-        "tags": [
-          "Keys"
-        ],
+        "tags": ["Keys"],
         "summary": "List all API keys",
         "security": [
           {
@@ -6607,11 +5900,7 @@
                           },
                           "default_origin": {
                             "type": "string",
-                            "enum": [
-                              "user",
-                              "ai",
-                              "worker"
-                            ]
+                            "enum": ["user", "ai", "worker"]
                           },
                           "default_library": {
                             "type": "boolean"
@@ -6644,9 +5933,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "keys"
-                  ]
+                  "required": ["keys"]
                 }
               }
             }
@@ -6672,15 +5959,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6690,9 +5972,7 @@
     },
     "/keys/{id}": {
       "delete": {
-        "tags": [
-          "Keys"
-        ],
+        "tags": ["Keys"],
         "summary": "Revoke an API key",
         "security": [
           {
@@ -6719,14 +5999,10 @@
                   "properties": {
                     "ok": {
                       "type": "boolean",
-                      "enum": [
-                        true
-                      ]
+                      "enum": [true]
                     }
                   },
-                  "required": [
-                    "ok"
-                  ]
+                  "required": ["ok"]
                 }
               }
             }
@@ -6752,15 +6028,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6770,9 +6041,7 @@
     },
     "/tenants/current/config": {
       "get": {
-        "tags": [
-          "Tenants"
-        ],
+        "tags": ["Tenants"],
         "summary": "Get the current tenant's configuration",
         "description": "Admin only. Returns tenant-scoped config (per-type ambient retention overrides). An empty object is returned when nothing is configured.",
         "security": [
@@ -6799,9 +6068,7 @@
                             "exclusiveMinimum": true
                           }
                         },
-                        "required": [
-                          "ambient_days"
-                        ]
+                        "required": ["ambient_days"]
                       }
                     }
                   }
@@ -6830,15 +6097,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6864,15 +6126,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -6880,9 +6137,7 @@
         }
       },
       "put": {
-        "tags": [
-          "Tenants"
-        ],
+        "tags": ["Tenants"],
         "summary": "Replace the current tenant's configuration",
         "description": "Admin only. Overwrites the tenant's config with the supplied object. Validates that retention type IDs resolve in the registry.",
         "security": [
@@ -6907,9 +6162,7 @@
                           "exclusiveMinimum": true
                         }
                       },
-                      "required": [
-                        "ambient_days"
-                      ]
+                      "required": ["ambient_days"]
                     }
                   }
                 }
@@ -6936,9 +6189,7 @@
                             "exclusiveMinimum": true
                           }
                         },
-                        "required": [
-                          "ambient_days"
-                        ]
+                        "required": ["ambient_days"]
                       }
                     }
                   }
@@ -6967,15 +6218,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7001,15 +6247,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7035,15 +6276,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7053,9 +6289,7 @@
     },
     "/import": {
       "post": {
-        "tags": [
-          "Import/Export"
-        ],
+        "tags": ["Import/Export"],
         "summary": "Bulk import items or archive (admin only)",
         "security": [
           {
@@ -7078,9 +6312,7 @@
                     }
                   }
                 },
-                "required": [
-                  "items"
-                ]
+                "required": ["items"]
               }
             }
           }
@@ -7103,10 +6335,7 @@
                       "type": "number"
                     }
                   },
-                  "required": [
-                    "imported",
-                    "duplicates"
-                  ]
+                  "required": ["imported", "duplicates"]
                 }
               }
             }
@@ -7132,15 +6361,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7166,15 +6390,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7200,15 +6419,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7218,9 +6432,7 @@
     },
     "/export": {
       "get": {
-        "tags": [
-          "Import/Export"
-        ],
+        "tags": ["Import/Export"],
         "summary": "Streaming NDJSON or archive export with filters",
         "security": [
           {
@@ -7301,15 +6513,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7335,15 +6542,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7353,9 +6555,7 @@
     },
     "/webhooks": {
       "post": {
-        "tags": [
-          "Webhooks"
-        ],
+        "tags": ["Webhooks"],
         "summary": "Create a new webhook",
         "security": [
           {
@@ -7387,10 +6587,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "url",
-                  "events"
-                ]
+                "required": ["url", "events"]
               }
             }
           }
@@ -7466,15 +6663,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7500,15 +6692,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7516,9 +6703,7 @@
         }
       },
       "get": {
-        "tags": [
-          "Webhooks"
-        ],
+        "tags": ["Webhooks"],
         "summary": "List all webhooks",
         "security": [
           {
@@ -7579,9 +6764,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "webhooks"
-                  ]
+                  "required": ["webhooks"]
                 }
               }
             }
@@ -7607,15 +6790,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7625,9 +6803,7 @@
     },
     "/webhooks/{id}": {
       "get": {
-        "tags": [
-          "Webhooks"
-        ],
+        "tags": ["Webhooks"],
         "summary": "Get a single webhook",
         "security": [
           {
@@ -7715,15 +6891,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7749,15 +6920,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7765,9 +6931,7 @@
         }
       },
       "patch": {
-        "tags": [
-          "Webhooks"
-        ],
+        "tags": ["Webhooks"],
         "summary": "Partially update a webhook",
         "security": [
           {
@@ -7883,15 +7047,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7917,15 +7076,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7951,15 +7105,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -7967,9 +7116,7 @@
         }
       },
       "delete": {
-        "tags": [
-          "Webhooks"
-        ],
+        "tags": ["Webhooks"],
         "summary": "Delete a webhook",
         "security": [
           {
@@ -7996,14 +7143,10 @@
                   "properties": {
                     "ok": {
                       "type": "boolean",
-                      "enum": [
-                        true
-                      ]
+                      "enum": [true]
                     }
                   },
-                  "required": [
-                    "ok"
-                  ]
+                  "required": ["ok"]
                 }
               }
             }
@@ -8029,15 +7172,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -8063,15 +7201,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -8081,9 +7214,7 @@
     },
     "/webhooks/{id}/deliveries": {
       "get": {
-        "tags": [
-          "Webhooks"
-        ],
+        "tags": ["Webhooks"],
         "summary": "List recent delivery attempts for a webhook",
         "security": [
           {
@@ -8164,9 +7295,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "deliveries"
-                  ]
+                  "required": ["deliveries"]
                 }
               }
             }
@@ -8192,15 +7321,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -8226,15 +7350,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -8244,9 +7363,7 @@
     },
     "/audit": {
       "get": {
-        "tags": [
-          "Admin"
-        ],
+        "tags": ["Admin"],
         "summary": "List audit log entries",
         "security": [
           {
@@ -8371,11 +7488,7 @@
                       "type": "boolean"
                     }
                   },
-                  "required": [
-                    "data",
-                    "cursor",
-                    "has_more"
-                  ]
+                  "required": ["data", "cursor", "has_more"]
                 }
               }
             }
@@ -8401,15 +7514,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }
@@ -8419,9 +7527,7 @@
     },
     "/metrics": {
       "get": {
-        "tags": [
-          "Admin"
-        ],
+        "tags": ["Admin"],
         "summary": "Get server metrics and statistics",
         "security": [
           {
@@ -8447,10 +7553,7 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "total",
-                        "by_state"
-                      ]
+                      "required": ["total", "by_state"]
                     },
                     "blobs": {
                       "type": "object",
@@ -8462,10 +7565,7 @@
                           "type": "number"
                         }
                       },
-                      "required": [
-                        "count",
-                        "total_bytes"
-                      ]
+                      "required": ["count", "total_bytes"]
                     },
                     "types": {
                       "type": "object",
@@ -8477,10 +7577,7 @@
                           "type": "number"
                         }
                       },
-                      "required": [
-                        "core",
-                        "custom"
-                      ]
+                      "required": ["core", "custom"]
                     },
                     "keys": {
                       "type": "object",
@@ -8489,9 +7586,7 @@
                           "type": "number"
                         }
                       },
-                      "required": [
-                        "total"
-                      ]
+                      "required": ["total"]
                     },
                     "webhooks": {
                       "type": "object",
@@ -8500,9 +7595,7 @@
                           "type": "number"
                         }
                       },
-                      "required": [
-                        "total"
-                      ]
+                      "required": ["total"]
                     },
                     "uptime_seconds": {
                       "type": "number"
@@ -8545,15 +7638,10 @@
                           "additionalProperties": {}
                         }
                       },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
+                      "required": ["code", "message"]
                     }
                   },
-                  "required": [
-                    "error"
-                  ]
+                  "required": ["error"]
                 }
               }
             }

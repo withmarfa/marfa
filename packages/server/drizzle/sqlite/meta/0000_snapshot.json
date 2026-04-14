@@ -84,9 +84,7 @@
       "indexes": {
         "api_keys_key_hash_unique": {
           "name": "api_keys_key_hash_unique",
-          "columns": [
-            "key_hash"
-          ],
+          "columns": ["key_hash"],
           "isUnique": true
         }
       },
@@ -152,23 +150,17 @@
       "indexes": {
         "idx_audit_log_timestamp": {
           "name": "idx_audit_log_timestamp",
-          "columns": [
-            "timestamp"
-          ],
+          "columns": ["timestamp"],
           "isUnique": false
         },
         "idx_audit_log_action": {
           "name": "idx_audit_log_action",
-          "columns": [
-            "action"
-          ],
+          "columns": ["action"],
           "isUnique": false
         },
         "idx_audit_log_resource_type": {
           "name": "idx_audit_log_resource_type",
-          "columns": [
-            "resource_type"
-          ],
+          "columns": ["resource_type"],
           "isUnique": false
         }
       },
@@ -309,9 +301,7 @@
       "indexes": {
         "idx_event_log_created_at": {
           "name": "idx_event_log_created_at",
-          "columns": [
-            "created_at"
-          ],
+          "columns": ["created_at"],
           "isUnique": false
         }
       },
@@ -455,52 +445,37 @@
       "indexes": {
         "idx_items_type": {
           "name": "idx_items_type",
-          "columns": [
-            "type"
-          ],
+          "columns": ["type"],
           "isUnique": false
         },
         "idx_items_state": {
           "name": "idx_items_state",
-          "columns": [
-            "state"
-          ],
+          "columns": ["state"],
           "isUnique": false
         },
         "idx_items_thread_id": {
           "name": "idx_items_thread_id",
-          "columns": [
-            "thread_id"
-          ],
+          "columns": ["thread_id"],
           "isUnique": false
         },
         "idx_items_parent_id": {
           "name": "idx_items_parent_id",
-          "columns": [
-            "parent_id"
-          ],
+          "columns": ["parent_id"],
           "isUnique": false
         },
         "idx_items_created_at": {
           "name": "idx_items_created_at",
-          "columns": [
-            "created_at"
-          ],
+          "columns": ["created_at"],
           "isUnique": false
         },
         "idx_items_timestamp": {
           "name": "idx_items_timestamp",
-          "columns": [
-            "timestamp"
-          ],
+          "columns": ["timestamp"],
           "isUnique": false
         },
         "idx_items_source_dedup": {
           "name": "idx_items_source_dedup",
-          "columns": [
-            "source",
-            "source_id"
-          ],
+          "columns": ["source", "source_id"],
           "isUnique": true,
           "where": "source IS NOT NULL"
         }
@@ -510,12 +485,8 @@
           "name": "items_thread_id_threads_id_fk",
           "tableFrom": "items",
           "tableTo": "threads",
-          "columnsFrom": [
-            "thread_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["thread_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -565,12 +536,8 @@
           "name": "metadata_item_id_items_id_fk",
           "tableFrom": "metadata",
           "tableTo": "items",
-          "columnsFrom": [
-            "item_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["item_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -688,9 +655,7 @@
       "indexes": {
         "oauth_codes_code_hash_unique": {
           "name": "oauth_codes_code_hash_unique",
-          "columns": [
-            "code_hash"
-          ],
+          "columns": ["code_hash"],
           "isUnique": true
         }
       },
@@ -699,12 +664,8 @@
           "name": "oauth_codes_grant_id_oauth_grants_id_fk",
           "tableFrom": "oauth_codes",
           "tableTo": "oauth_grants",
-          "columnsFrom": [
-            "grant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["grant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -749,9 +710,7 @@
       "indexes": {
         "idx_oauth_grants_client_id": {
           "name": "idx_oauth_grants_client_id",
-          "columns": [
-            "client_id"
-          ],
+          "columns": ["client_id"],
           "isUnique": false
         }
       },
@@ -760,12 +719,8 @@
           "name": "oauth_grants_client_id_oauth_clients_id_fk",
           "tableFrom": "oauth_grants",
           "tableTo": "oauth_clients",
-          "columnsFrom": [
-            "client_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["client_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -837,23 +792,17 @@
       "indexes": {
         "oauth_tokens_token_hash_unique": {
           "name": "oauth_tokens_token_hash_unique",
-          "columns": [
-            "token_hash"
-          ],
+          "columns": ["token_hash"],
           "isUnique": true
         },
         "idx_oauth_tokens_grant_id": {
           "name": "idx_oauth_tokens_grant_id",
-          "columns": [
-            "grant_id"
-          ],
+          "columns": ["grant_id"],
           "isUnique": false
         },
         "idx_oauth_tokens_token_hash": {
           "name": "idx_oauth_tokens_token_hash",
-          "columns": [
-            "token_hash"
-          ],
+          "columns": ["token_hash"],
           "isUnique": false
         }
       },
@@ -862,12 +811,8 @@
           "name": "oauth_tokens_grant_id_oauth_grants_id_fk",
           "tableFrom": "oauth_tokens",
           "tableTo": "oauth_grants",
-          "columnsFrom": [
-            "grant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["grant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1015,17 +960,12 @@
       "indexes": {
         "users_email_unique": {
           "name": "users_email_unique",
-          "columns": [
-            "email"
-          ],
+          "columns": ["email"],
           "isUnique": true
         },
         "idx_users_provider": {
           "name": "idx_users_provider",
-          "columns": [
-            "provider",
-            "provider_id"
-          ],
+          "columns": ["provider", "provider_id"],
           "isUnique": true
         }
       },
@@ -1034,12 +974,8 @@
           "name": "users_tenant_id_tenants_id_fk",
           "tableFrom": "users",
           "tableTo": "tenants",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1097,9 +1033,7 @@
       "indexes": {
         "idx_versions_item_id": {
           "name": "idx_versions_item_id",
-          "columns": [
-            "item_id"
-          ],
+          "columns": ["item_id"],
           "isUnique": false
         }
       },
@@ -1108,12 +1042,8 @@
           "name": "versions_item_id_items_id_fk",
           "tableFrom": "versions",
           "tableTo": "items",
-          "columnsFrom": [
-            "item_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["item_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1230,9 +1160,7 @@
       "indexes": {
         "idx_webhook_deliveries_webhook_id": {
           "name": "idx_webhook_deliveries_webhook_id",
-          "columns": [
-            "webhook_id"
-          ],
+          "columns": ["webhook_id"],
           "isUnique": false
         }
       },

@@ -18,7 +18,5 @@
       "description": "Word count"
     }
   },
-  "required": [
-    "body"
-  ]
+  "required": ["body"]
 }

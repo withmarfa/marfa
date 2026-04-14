@@ -41,9 +41,6 @@ export class PgTenantStore implements TenantStore {
   }
 
   async updateConfig(id: string, config: TenantConfig): Promise<void> {
-    await this.db
-      .update(tenants)
-      .set({ config })
-      .where(eq(tenants.id, id));
+    await this.db.update(tenants).set({ config }).where(eq(tenants.id, id));
   }
 }

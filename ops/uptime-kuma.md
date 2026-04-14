@@ -44,10 +44,10 @@ Restrict access to the Tailscale subnet via firewall rules or Caddy's `remote_ip
 
 Add these monitors in the Uptime Kuma UI:
 
-| Name | Type | URL | Interval |
-|------|------|-----|----------|
-| Myme Production | HTTP | `http://localhost:8600/health` | 60s |
-| Myme Staging | HTTP | `http://localhost:8601/health` | 60s |
+| Name            | Type | URL                            | Interval |
+| --------------- | ---- | ------------------------------ | -------- |
+| Myme Production | HTTP | `http://localhost:8600/health` | 60s      |
+| Myme Staging    | HTTP | `http://localhost:8601/health` | 60s      |
 
 Both should check for HTTP 200 and the response keyword `"ok"`.
 

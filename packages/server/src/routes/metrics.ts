@@ -64,7 +64,10 @@ export function metricsRoutes(storage: Storage) {
 
     const now = Date.now();
     if (cachedResponse && now - cachedAt < CACHE_TTL_MS) {
-      return c.json(cachedResponse as z.infer<typeof MetricsResponseSchema>, 200);
+      return c.json(
+        cachedResponse as z.infer<typeof MetricsResponseSchema>,
+        200,
+      );
     }
 
     const [itemStats, blobStats, keyCount, webhookCount, customTypeCount] =

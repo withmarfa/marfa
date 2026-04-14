@@ -15,20 +15,24 @@ import {
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
-const ItemSchema = z.object({
-  id: z.string(),
-  type: z.string(),
-  state: z.string(),
-  properties: z.record(z.string(), z.unknown()),
-  created_at: z.string(),
-  updated_at: z.string(),
-  timestamp: z.string(),
-}).passthrough();
+const ItemSchema = z
+  .object({
+    id: z.string(),
+    type: z.string(),
+    state: z.string(),
+    properties: z.record(z.string(), z.unknown()),
+    created_at: z.string(),
+    updated_at: z.string(),
+    timestamp: z.string(),
+  })
+  .passthrough();
 
-const MetadataSchema = z.object({
-  tags: z.array(z.string()),
-  about: z.array(z.string()),
-}).passthrough();
+const MetadataSchema = z
+  .object({
+    tags: z.array(z.string()),
+    about: z.array(z.string()),
+  })
+  .passthrough();
 
 const SearchResultSchema = z.object({
   item: ItemSchema,
@@ -78,8 +82,7 @@ export function searchRoutes(storage: Storage) {
   router.openapi(searchRoute, async (c) => {
     requireAuth(c);
 
-    const { q, type, state, limit, offset, filter } =
-      c.req.valid("query");
+    const { q, type, state, limit, offset, filter } = c.req.valid("query");
 
     // Business logic validation beyond Zod
     if (type && !isValidTypeIdentifier(type)) {

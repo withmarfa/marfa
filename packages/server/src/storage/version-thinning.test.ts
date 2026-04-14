@@ -13,11 +13,7 @@ const DEFAULTS: ResolvedPolicy = {
   maxVersions: 500,
 };
 
-function makeVersion(
-  id: string,
-  version: number,
-  createdAt: string,
-): Version {
+function makeVersion(id: string, version: number, createdAt: string): Version {
   return {
     id,
     item_id: "item-1",

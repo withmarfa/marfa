@@ -17,9 +17,7 @@ export function getMigrationFolder(dialect: "pg" | "sqlite"): string {
   return join(__dirname, `../../drizzle/${dialect}`);
 }
 
-export async function runPgMigrations(
-  connectionString: string,
-): Promise<void> {
+export async function runPgMigrations(connectionString: string): Promise<void> {
   const { drizzle } = await import("drizzle-orm/postgres-js");
   const { migrate } = await import("drizzle-orm/postgres-js/migrator");
   const postgres = (await import("postgres")).default;
@@ -58,7 +56,9 @@ if (
 ) {
   const dialect = process.argv.includes("--dialect")
     ? (process.argv[process.argv.indexOf("--dialect") + 1] as "pg" | "sqlite")
-    : (process.env.STORAGE_DIALECT === "pg" ? "pg" : "sqlite");
+    : process.env.STORAGE_DIALECT === "pg"
+      ? "pg"
+      : "sqlite";
 
   console.log(`Running ${dialect} migrations...`);
 

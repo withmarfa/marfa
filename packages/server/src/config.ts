@@ -68,20 +68,17 @@ export function loadConfig(): AppConfig {
       Number(process.env.VERSION_SNAPSHOT_INTERVAL_MS) || 600_000,
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
-    auditRetentionDays:
-      Number(process.env.AUDIT_RETENTION_DAYS) || 90,
+    auditRetentionDays: Number(process.env.AUDIT_RETENTION_DAYS) || 90,
     auditCleanupIntervalMs:
       Number(process.env.AUDIT_CLEANUP_INTERVAL_MS) || 86_400_000,
     versionThinningIntervalMs:
       Number(process.env.VERSION_THINNING_INTERVAL_MS) || 3_600_000,
-    versionRecentDays:
-      Number(process.env.VERSION_RECENT_DAYS) || 30,
+    versionRecentDays: Number(process.env.VERSION_RECENT_DAYS) || 30,
     versionDailySnapshotDays:
       Number(process.env.VERSION_DAILY_SNAPSHOT_DAYS) || 90,
     versionWeeklySnapshotDays:
       Number(process.env.VERSION_WEEKLY_SNAPSHOT_DAYS) || 365,
-    versionMaxVersions:
-      Number(process.env.VERSION_MAX_VERSIONS) || 500,
+    versionMaxVersions: Number(process.env.VERSION_MAX_VERSIONS) || 500,
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
   };
 }

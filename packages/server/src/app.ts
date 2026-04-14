@@ -33,9 +33,7 @@ export function createApp(
   const app = new OpenAPIHono<AppEnv>();
 
   // Global error handler
-  app.onError(
-    createErrorHandler({ errorWebhookUrl: config.errorWebhookUrl }),
-  );
+  app.onError(createErrorHandler({ errorWebhookUrl: config.errorWebhookUrl }));
 
   // Structured logging (wraps entire request lifecycle)
   app.use("*", loggerMiddleware());
@@ -50,10 +48,7 @@ export function createApp(
           if (config.corsOrigins.includes(origin)) return origin;
           try {
             const url = new URL(origin);
-            if (
-              url.hostname === "localhost" ||
-              url.hostname === "127.0.0.1"
-            ) {
+            if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
               return origin;
             }
           } catch {

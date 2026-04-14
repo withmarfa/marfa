@@ -26,10 +26,7 @@
       "description": "Altitude in meters"
     }
   },
-  "required": [
-    "width",
-    "height"
-  ],
+  "required": ["width", "height"],
   "display_hints": {
     "title_field": "title"
   }

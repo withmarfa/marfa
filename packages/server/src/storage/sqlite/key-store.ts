@@ -1,10 +1,6 @@
 import { safeJsonParse } from "../json-utils.js";
 import { and, eq, isNull } from "drizzle-orm";
-import {
-  generateId,
-  MymeError,
-  ErrorCode,
-} from "@mymehq/shared";
+import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
 import type {
   ApiKey,
   CreateKeyInput,

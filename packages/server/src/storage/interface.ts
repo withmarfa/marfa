@@ -288,9 +288,7 @@ export interface UserStore {
 export interface TenantStore {
   create(name?: string): Promise<Tenant>;
   get(id: string): Promise<Tenant | null>;
-  getConfig(
-    id: string,
-  ): Promise<import("@mymehq/shared").TenantConfig | null>;
+  getConfig(id: string): Promise<import("@mymehq/shared").TenantConfig | null>;
   updateConfig(
     id: string,
     config: import("@mymehq/shared").TenantConfig,

@@ -313,9 +313,7 @@ export function createConnection(sqlitePath: string): {
     sqlite.exec(CREATE_FTS);
     // Re-index all items (extra defaults to empty since we don't have type context here)
     const allItems = sqlite
-      .prepare(
-        "SELECT id, properties FROM items WHERE state != 'trashed'",
-      )
+      .prepare("SELECT id, properties FROM items WHERE state != 'trashed'")
       .all() as { id: string; properties: string }[];
     const insertStmt = sqlite.prepare(
       `INSERT INTO items_fts(item_id, title, body, description, name, extra)
@@ -326,7 +324,8 @@ export function createConnection(sqlitePath: string): {
         const props = JSON.parse(row.properties) as Record<string, unknown>;
         const title = typeof props.title === "string" ? props.title : "";
         const body = typeof props.body === "string" ? props.body : "";
-        const desc = typeof props.description === "string" ? props.description : "";
+        const desc =
+          typeof props.description === "string" ? props.description : "";
         const name = typeof props.name === "string" ? props.name : "";
         insertStmt.run(row.id, title, body, desc, name, "");
       } catch {

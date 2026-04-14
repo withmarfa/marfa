@@ -49,9 +49,7 @@
       "description": "Personal annotations"
     }
   },
-  "required": [
-    "name"
-  ],
+  "required": ["name"],
   "display_hints": {
     "title_field": "name"
   }

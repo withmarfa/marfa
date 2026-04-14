@@ -3,10 +3,7 @@ import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import {
-  createOpenAPIRouter,
-  ErrorResponseSchema,
-} from "../openapi.js";
+import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
 // Schemas

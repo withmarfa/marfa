@@ -1,17 +1,10 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-  ErrorCode,
-  MymeError,
-  TYPE_REGISTRY,
-} from "@mymehq/shared";
+import { ErrorCode, MymeError, TYPE_REGISTRY } from "@mymehq/shared";
 import type { TenantConfig } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import {
-  createOpenAPIRouter,
-  ErrorResponseSchema,
-} from "../openapi.js";
+import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
 const RetentionOverrideSchema = z.object({
   ambient_days: z.number().int().positive(),

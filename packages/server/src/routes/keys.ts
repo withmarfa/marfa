@@ -160,9 +160,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     const body = c.req.valid("json");
 
-    const role = isBootstrap
-      ? "admin"
-      : (body.role ?? "member");
+    const role = isBootstrap ? "admin" : (body.role ?? "member");
 
     const typePermissions = body.type_permissions ?? {};
 

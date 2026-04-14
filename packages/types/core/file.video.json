@@ -35,11 +35,7 @@
       "format": "bcp47"
     }
   },
-  "required": [
-    "width",
-    "height",
-    "duration"
-  ],
+  "required": ["width", "height", "duration"],
   "display_hints": {
     "title_field": "title"
   }

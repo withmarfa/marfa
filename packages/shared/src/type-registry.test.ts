@@ -363,8 +363,7 @@ describe("validateTypeSchema — inheritance rule", () => {
     if (!result.success) {
       expect(
         result.errors.some(
-          (e) =>
-            e.field === "fields.name" && e.message.includes("core.entity"),
+          (e) => e.field === "fields.name" && e.message.includes("core.entity"),
         ),
       ).toBe(true);
     }

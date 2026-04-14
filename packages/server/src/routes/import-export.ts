@@ -21,10 +21,7 @@ import {
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
-import {
-  createOpenAPIRouter,
-  ErrorResponseSchema,
-} from "../openapi.js";
+import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
 const MAX_IMPORT_ITEMS = 5000;
 
@@ -137,10 +134,7 @@ export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
     const body = c.req.valid("json");
     const items = body.items;
     if (!Array.isArray(items)) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "items must be an array",
-      );
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "items must be an array");
     }
     if (items.length > MAX_IMPORT_ITEMS) {
       throw new MymeError(
@@ -319,17 +313,11 @@ async function handleArchiveExport(
 ): Promise<Response> {
   const type = c.req.query("type") as string | undefined;
   if (type && !isValidTypeIdentifier(type)) {
-    throw new MymeError(
-      ErrorCode.VALIDATION_ERROR,
-      "Invalid type identifier",
-    );
+    throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
   }
   const state = c.req.query("state") as ItemState | undefined;
   if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-    throw new MymeError(
-      ErrorCode.VALIDATION_ERROR,
-      `Invalid state: ${state}`,
-    );
+    throw new MymeError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${state}`);
   }
   const since = c.req.query("since") as string | undefined;
   const until = c.req.query("until") as string | undefined;
@@ -456,9 +444,7 @@ async function handleArchiveImport(
 
         if (header.name === "manifest.json") {
           try {
-            manifest = JSON.parse(
-              buf.toString("utf-8"),
-            ) as ArchiveManifest;
+            manifest = JSON.parse(buf.toString("utf-8")) as ArchiveManifest;
             if (manifest!.version !== 1) {
               reject(
                 new MymeError(
@@ -498,9 +484,11 @@ async function handleArchiveImport(
                 manifest?.blobs?.[hash]?.mime_type ??
                 "application/octet-stream";
               blobUploads.push(
-                blobBackend.put(hash, buf, mimeType).then(() =>
-                  storage.blobs.register(hash, mimeType, buf.length, hash),
-                ),
+                blobBackend
+                  .put(hash, buf, mimeType)
+                  .then(() =>
+                    storage.blobs.register(hash, mimeType, buf.length, hash),
+                  ),
               );
             }
           }

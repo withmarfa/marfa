@@ -548,7 +548,9 @@ const addTagsRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            tags: z.array(z.string()).min(1, "tags must be a non-empty array of strings"),
+            tags: z
+              .array(z.string())
+              .min(1, "tags must be a non-empty array of strings"),
           }),
         },
       },
@@ -803,13 +805,9 @@ export function itemRoutes(storage: Storage) {
       filter,
       allowed_types: getTypeFilter(c),
       sort:
-        (query.sort as
-          | "created_at"
-          | "updated_at"
-          | "timestamp"
-          | undefined) ?? undefined,
-      direction:
-        (query.direction as "asc" | "desc" | undefined) ?? undefined,
+        (query.sort as "created_at" | "updated_at" | "timestamp" | undefined) ??
+        undefined,
+      direction: (query.direction as "asc" | "desc" | undefined) ?? undefined,
       since: query.since,
       until: query.until,
       limit: query.limit,

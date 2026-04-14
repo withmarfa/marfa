@@ -153,7 +153,10 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
                 replaying = false;
                 for (const event of liveBuffer) {
                   if (closed) return;
-                  if (event.eventId !== undefined && event.eventId <= lastReplayedId)
+                  if (
+                    event.eventId !== undefined &&
+                    event.eventId <= lastReplayedId
+                  )
                     continue;
                   sendEvent(event.eventId, event);
                 }

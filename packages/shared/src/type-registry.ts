@@ -489,7 +489,8 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
   ) {
     const hints = obj.display_hints as Record<string, unknown>;
     const dh: { title_field?: string; body_field?: string } = {};
-    if (typeof hints.title_field === "string") dh.title_field = hints.title_field;
+    if (typeof hints.title_field === "string")
+      dh.title_field = hints.title_field;
     if (typeof hints.body_field === "string") dh.body_field = hints.body_field;
     if (Object.keys(dh).length > 0) {
       schema.display_hints = dh;

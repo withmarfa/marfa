@@ -125,9 +125,7 @@ function resolveFields(schema: JsonSchema): {
 }
 
 // Resolve display_hints — own wins, else nearest ancestor with hints
-function resolveDisplayHints(
-  schema: JsonSchema,
-): JsonDisplayHints | undefined {
+function resolveDisplayHints(schema: JsonSchema): JsonDisplayHints | undefined {
   let current: JsonSchema | undefined = schema;
   while (current) {
     if (current.display_hints) return current.display_hints;

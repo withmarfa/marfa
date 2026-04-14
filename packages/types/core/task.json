@@ -38,12 +38,7 @@
     "priority": {
       "type": "enum",
       "description": "Task priority",
-      "enum_values": [
-        "low",
-        "medium",
-        "high",
-        "urgent"
-      ]
+      "enum_values": ["low", "medium", "high", "urgent"]
     },
     "place": {
       "type": "string",
@@ -52,12 +47,7 @@
     "precision": {
       "type": "enum",
       "description": "Temporal precision",
-      "enum_values": [
-        "year",
-        "month",
-        "day",
-        "time"
-      ]
+      "enum_values": ["year", "month", "day", "time"]
     },
     "url": {
       "type": "string",
@@ -69,9 +59,7 @@
       "description": "Personal annotations"
     }
   },
-  "required": [
-    "title"
-  ],
+  "required": ["title"],
   "display_hints": {
     "title_field": "title",
     "body_field": "body"

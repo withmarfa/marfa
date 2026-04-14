@@ -222,7 +222,10 @@ async function buildArchive(
   pack.entry({ name: "items.ndjson", size: ndjsonBuf.length }, ndjsonBuf);
 
   for (const blob of blobs) {
-    pack.entry({ name: `blobs/${blob.hash}`, size: blob.data.length }, blob.data);
+    pack.entry(
+      { name: `blobs/${blob.hash}`, size: blob.data.length },
+      blob.data,
+    );
   }
 
   pack.finalize();
