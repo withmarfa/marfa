@@ -102,8 +102,7 @@ function conditionToSql(
  * boolean itself because boolean columns are real `bool` and `boolean =
  * integer` is a type error. */
 function bindable(value: unknown, dialect: SqlDialect): unknown {
-  if (typeof value === "boolean" && dialect === "sqlite")
-    return value ? 1 : 0;
+  if (typeof value === "boolean" && dialect === "sqlite") return value ? 1 : 0;
   return value;
 }
 
