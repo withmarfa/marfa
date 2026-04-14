@@ -10,6 +10,12 @@ export const ITEM_STATES: readonly ItemState[] = [
   "trashed",
 ] as const;
 
+/** Authorship class of an item's content. */
+export type Origin = "user" | "ai" | "worker";
+
+/** Valid origin values as a readonly array, useful for validation. */
+export const ORIGINS: readonly Origin[] = ["user", "ai", "worker"] as const;
+
 /** API key roles. */
 export type KeyRole = "admin" | "member";
 

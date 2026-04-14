@@ -95,7 +95,7 @@ const createItemRoute = createRoute({
             timestamp: z.string().optional(),
             source: z.string().optional(),
             source_id: z.string().optional(),
-            origin: z.string().optional(),
+            origin: z.enum(["user", "ai", "worker"]).optional(),
             device: z.string().optional(),
             parent_id: z.string().optional(),
             thread_id: z.string().optional(),
