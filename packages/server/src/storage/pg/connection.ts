@@ -9,6 +9,7 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS tenants (
   id TEXT PRIMARY KEY,
   name TEXT,
+  config JSONB,
   created_at TEXT NOT NULL
 );
 

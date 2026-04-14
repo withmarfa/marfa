@@ -311,6 +311,16 @@ export interface Tenant {
   created_at: string;
 }
 
+/** Per-type ambient retention override (days before ambient items expire). */
+export interface TenantRetentionOverride {
+  ambient_days: number;
+}
+
+/** Tenant-level configuration. Admin-writable via `/tenants/current/config`. */
+export interface TenantConfig {
+  retention?: Record<string, TenantRetentionOverride>;
+}
+
 /** A user account (hosted mode). Owns exactly one tenant. */
 export interface User {
   id: string;

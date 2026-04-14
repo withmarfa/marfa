@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 export const tenants = sqliteTable("tenants", {
   id: text("id").primaryKey(),
   name: text("name"),
+  config: text("config"),
   created_at: text("created_at").notNull(),
 });
 

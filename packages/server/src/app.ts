@@ -21,6 +21,7 @@ import { webhookRoutes } from "./routes/webhooks.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
+import { tenantRoutes } from "./routes/tenants.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { healthRoutes } from "./routes/health.js";
@@ -123,6 +124,7 @@ export function createApp(
   app.route("/search", searchRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
+  app.route("/tenants", tenantRoutes(storage));
   app.route("/import", importRoutes(storage, blobBackend));
   app.route("/export", exportRoutes(storage, blobBackend));
   app.route("/auth", authRoutes(storage, config.apiKeySalt));

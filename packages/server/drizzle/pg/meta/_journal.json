@@ -29,6 +29,13 @@
       "when": 1776400000000,
       "tag": "0003_library_and_credential_defaults",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776500000000,
+      "tag": "0004_tenant_config",
+      "breakpoints": true
     }
   ]
 }

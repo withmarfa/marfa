@@ -4,6 +4,7 @@ import {
   integer,
   boolean,
   doublePrecision,
+  jsonb,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
@@ -16,6 +17,7 @@ import { sql } from "drizzle-orm";
 export const tenants = pgTable("tenants", {
   id: text("id").primaryKey(),
   name: text("name"),
+  config: jsonb("config"),
   created_at: text("created_at").notNull(),
 });
 

@@ -46,6 +46,7 @@ export function createConnection(sqlitePath: string): {
     CREATE TABLE IF NOT EXISTS tenants (
       id TEXT PRIMARY KEY,
       name TEXT,
+      config TEXT,
       created_at TEXT NOT NULL
     );
 
