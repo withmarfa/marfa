@@ -1,8 +1,8 @@
 {
-  "id": "core.work.article",
-  "parent": "core.work",
+  "id": "core.media.article",
+  "parent": "core.media",
   "label": "Article",
-  "description": "An article. Inherits all core.work fields.",
+  "description": "An article. Inherits all core.media fields.",
   "version": 1,
   "fields": {
     "body": {

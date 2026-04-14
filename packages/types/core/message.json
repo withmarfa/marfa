@@ -1,7 +1,8 @@
 {
   "id": "core.message",
+  "_deferred": true,
   "label": "Message",
-  "description": "A communication — email, chat message, SMS.",
+  "description": "A communication — email, chat message, SMS. Deferred post-V0 (email/chat content is most faithfully stored as HTML, which pressures the markdown-universal body rule). Schema preserved for future reactivation; excluded from the active type registry.",
   "version": 1,
   "fields": {
     "body": {

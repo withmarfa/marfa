@@ -77,6 +77,15 @@ for (const file of files) {
 
   const schema = data as Record<string, unknown>;
 
+  // Dormant stubs: _deferred: true schemas are kept as a record of shape but
+  // excluded from the active registry. Skip the full validation pass.
+  if (schema._deferred === true) {
+    if (typeof schema.id === "string") {
+      schemaFiles.set(schema.id, file);
+    }
+    continue;
+  }
+
   // Check required top-level keys
   for (const key of [
     "id",

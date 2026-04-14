@@ -1,8 +1,8 @@
 {
-  "id": "core.work.series",
-  "parent": "core.work",
+  "id": "core.media.series",
+  "parent": "core.media",
   "label": "Series",
-  "description": "A TV show or series. Inherits all core.work fields.",
+  "description": "A TV show or series. Inherits all core.media fields.",
   "version": 1,
   "fields": {
     "season_count": {

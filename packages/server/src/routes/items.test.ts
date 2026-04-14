@@ -444,14 +444,14 @@ describe("GET /items?filter=...", () => {
     await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
-        type: "core.work.book",
+        type: "core.media.book",
         properties: { title: "1984", author: "Orwell", body: "" },
       },
     });
     await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
-        type: "core.work.book",
+        type: "core.media.book",
         properties: { title: "Fahrenheit 451", author: "Bradbury", body: "" },
       },
     });
@@ -476,7 +476,7 @@ describe("GET /items?filter=...", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/items?filter=${encodeURIComponent('state eq "active" AND type eq "core.work.book"')}`,
+      `/items?filter=${encodeURIComponent('state eq "active" AND type eq "core.media.book"')}`,
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
@@ -485,7 +485,7 @@ describe("GET /items?filter=...", () => {
     };
     for (const item of data.data) {
       expect(item.state).toBe("active");
-      expect(item.type).toBe("core.work.book");
+      expect(item.type).toBe("core.media.book");
     }
   });
 
@@ -509,7 +509,7 @@ describe("GET /items?filter=...", () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/items?type=core.work.book&filter=${encodeURIComponent('properties.author eq "Orwell"')}`,
+      `/items?type=core.media.book&filter=${encodeURIComponent('properties.author eq "Orwell"')}`,
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
@@ -517,7 +517,7 @@ describe("GET /items?filter=...", () => {
       data: { type: string; properties: Record<string, unknown> }[];
     };
     for (const item of data.data) {
-      expect(item.type).toBe("core.work.book");
+      expect(item.type).toBe("core.media.book");
       expect(item.properties.author).toBe("Orwell");
     }
   });

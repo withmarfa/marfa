@@ -1,8 +1,8 @@
 {
-  "id": "core.work.album",
-  "parent": "core.work",
+  "id": "core.media.album",
+  "parent": "core.media",
   "label": "Album",
-  "description": "An album. Inherits all core.work fields.",
+  "description": "An album. Inherits all core.media fields.",
   "version": 1,
   "fields": {
     "release_type": {

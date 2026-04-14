@@ -27,17 +27,20 @@ interface JsonSchema {
   states: string[];
   default_state: string;
   transitions: Record<string, string[]>;
+  _deferred?: boolean;
 }
 
 const coreDir = resolve(import.meta.dirname, "..", "core");
 const outDir = resolve(import.meta.dirname, "..", "generated");
 
-// Load all schemas
+// Load all schemas — skip dormant stubs (_deferred: true)
 const files = readdirSync(coreDir).filter((f) => f.endsWith(".json"));
-const schemas: JsonSchema[] = files.map((f) => {
-  const raw = readFileSync(join(coreDir, f), "utf-8");
-  return JSON.parse(raw) as JsonSchema;
-});
+const schemas: JsonSchema[] = files
+  .map((f) => {
+    const raw = readFileSync(join(coreDir, f), "utf-8");
+    return JSON.parse(raw) as JsonSchema;
+  })
+  .filter((s) => s._deferred !== true);
 
 // Sort: parents before children (no parent first, then by depth)
 schemas.sort((a, b) => {
@@ -46,7 +49,7 @@ schemas.sort((a, b) => {
   return depthA - depthB;
 });
 
-// Generate variable name from type ID: core.work.book -> coreWorkBook
+// Generate variable name from type ID: core.media.book -> coreMediaBook
 function varName(id: string): string {
   return id
     .split(".")

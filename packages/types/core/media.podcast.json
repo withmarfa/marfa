@@ -1,13 +1,13 @@
 {
-  "id": "core.work.tv_episode",
-  "parent": "core.work",
-  "label": "TV Episode",
-  "description": "A TV episode. Inherits all core.work fields.",
+  "id": "core.media.podcast",
+  "parent": "core.media",
+  "label": "Podcast",
+  "description": "A podcast episode. Inherits all core.media fields.",
   "version": 1,
   "fields": {
     "episode_number": {
       "type": "integer",
-      "description": "Position within the season"
+      "description": "Position in the show"
     },
     "season_number": {
       "type": "integer",
@@ -15,11 +15,11 @@
     },
     "duration": {
       "type": "number",
-      "description": "Episode runtime in seconds"
+      "description": "Episode length in seconds"
     },
-    "director": {
+    "episode_type": {
       "type": "string",
-      "description": "Episode director"
+      "description": "Recommended values: full, trailer, bonus"
     }
   },
   "required": [],

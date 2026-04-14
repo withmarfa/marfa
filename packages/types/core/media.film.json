@@ -1,8 +1,8 @@
 {
-  "id": "core.work.film",
-  "parent": "core.work",
+  "id": "core.media.film",
+  "parent": "core.media",
   "label": "Film",
-  "description": "A film. Inherits all core.work fields.",
+  "description": "A film. Inherits all core.media fields.",
   "version": 1,
   "fields": {
     "duration": {

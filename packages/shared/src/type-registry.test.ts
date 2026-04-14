@@ -9,23 +9,23 @@ import {
 } from "./type-registry.js";
 
 describe("TYPE_REGISTRY", () => {
-  it("contains exactly 22 core types", () => {
-    expect(TYPE_REGISTRY.size).toBe(22);
+  it("contains exactly 21 core types", () => {
+    expect(TYPE_REGISTRY.size).toBe(21);
   });
 
-  it("contains all work group types", () => {
-    const workTypes = [
-      "core.work",
-      "core.work.book",
-      "core.work.article",
-      "core.work.film",
-      "core.work.song",
-      "core.work.album",
-      "core.work.podcast",
-      "core.work.series",
-      "core.work.tv_episode",
+  it("contains all media group types", () => {
+    const mediaTypes = [
+      "core.media",
+      "core.media.book",
+      "core.media.article",
+      "core.media.film",
+      "core.media.song",
+      "core.media.album",
+      "core.media.podcast",
+      "core.media.series",
+      "core.media.tv_episode",
     ];
-    for (const id of workTypes) {
+    for (const id of mediaTypes) {
       expect(TYPE_REGISTRY.has(id), `missing ${id}`).toBe(true);
     }
   });
@@ -58,13 +58,18 @@ describe("TYPE_REGISTRY", () => {
       "core.note",
       "core.bookmark",
       "core.task",
-      "core.message",
       "core.event",
-      "core.collection",
+      "core.highlight",
     ];
     for (const id of standalone) {
       expect(TYPE_REGISTRY.has(id), `missing ${id}`).toBe(true);
     }
+  });
+
+  it("excludes deferred and removed V0 types", () => {
+    // core.message is deferred post-V0; core.collection is removed entirely.
+    expect(TYPE_REGISTRY.has("core.message")).toBe(false);
+    expect(TYPE_REGISTRY.has("core.collection")).toBe(false);
   });
 });
 
@@ -93,7 +98,7 @@ describe("getResolvedFields", () => {
   });
 
   it("merges parent fields into subtype", () => {
-    const fields = getResolvedFields("core.work.book");
+    const fields = getResolvedFields("core.media.book");
     expect(fields).toBeDefined();
     expect(fields).toHaveProperty("title");
     expect(fields).toHaveProperty("title.required", true);
@@ -104,7 +109,7 @@ describe("getResolvedFields", () => {
   });
 
   it("subtype fields override parent fields of the same name", () => {
-    const fields = getResolvedFields("core.work.article");
+    const fields = getResolvedFields("core.media.article");
     expect(fields).toHaveProperty("body.required", true);
   });
 
@@ -119,19 +124,19 @@ describe("isSubtypeOf", () => {
   });
 
   it("returns true for direct subtype", () => {
-    expect(isSubtypeOf("core.work.book", "core.work")).toBe(true);
+    expect(isSubtypeOf("core.media.book", "core.media")).toBe(true);
   });
 
   it("returns false for unrelated types", () => {
-    expect(isSubtypeOf("core.note", "core.work")).toBe(false);
+    expect(isSubtypeOf("core.note", "core.media")).toBe(false);
   });
 
   it("returns false when child and parent are reversed", () => {
-    expect(isSubtypeOf("core.work", "core.work.book")).toBe(false);
+    expect(isSubtypeOf("core.media", "core.media.book")).toBe(false);
   });
 
   it("returns false for unknown type", () => {
-    expect(isSubtypeOf("core.nonexistent", "core.work")).toBe(false);
+    expect(isSubtypeOf("core.nonexistent", "core.media")).toBe(false);
   });
 });
 
@@ -191,8 +196,8 @@ describe("validateProperties", () => {
   });
 
   it("validates subtype with inherited required fields", () => {
-    // core.work.book inherits title (required) from core.work
-    const result = validateProperties("core.work.book", {
+    // core.media.book inherits title (required) from core.media
+    const result = validateProperties("core.media.book", {
       isbn: "978-0-13-468599-1",
     });
     expect(result.success).toBe(false);
@@ -202,7 +207,7 @@ describe("validateProperties", () => {
   });
 
   it("accepts valid subtype properties including inherited fields", () => {
-    const result = validateProperties("core.work.book", {
+    const result = validateProperties("core.media.book", {
       title: "Clean Code",
       isbn: "978-0-13-468599-1",
       page_count: 464,
@@ -211,7 +216,7 @@ describe("validateProperties", () => {
   });
 
   it("validates integer fields reject floats", () => {
-    const result = validateProperties("core.work.book", {
+    const result = validateProperties("core.media.book", {
       title: "A Book",
       page_count: 3.5,
     });
@@ -319,8 +324,4 @@ describe("validateTransition", () => {
     expect(error).not.toBeNull();
   });
 
-  it("respects collection default state (active, not new)", () => {
-    const schema = getTypeSchema("core.collection");
-    expect(schema?.default_state).toBe("active");
-  });
 });

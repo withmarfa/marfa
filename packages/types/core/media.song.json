@@ -1,8 +1,8 @@
 {
-  "id": "core.work.song",
-  "parent": "core.work",
+  "id": "core.media.song",
+  "parent": "core.media",
   "label": "Song",
-  "description": "A song. Inherits all core.work fields.",
+  "description": "A song. Inherits all core.media fields.",
   "version": 1,
   "fields": {
     "duration": {

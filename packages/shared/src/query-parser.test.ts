@@ -116,7 +116,7 @@ describe("parseFilter", () => {
     });
 
     it("parses starts_with on system field", () => {
-      const result = parseFilter('type starts_with "core.work"');
+      const result = parseFilter('type starts_with "core.media"');
       expect(result.conditions[0]!.op).toBe("starts_with");
     });
 
@@ -212,7 +212,7 @@ describe("parseFilter", () => {
 
     it("parses three AND conditions", () => {
       const result = parseFilter(
-        'type eq "core.work.book" AND properties.author eq "Orwell" AND properties.year gt 1940',
+        'type eq "core.media.book" AND properties.author eq "Orwell" AND properties.year gt 1940',
       );
       expect(result.conditions).toHaveLength(3);
       expect(result.logical).toBe("AND");

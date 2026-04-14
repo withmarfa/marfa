@@ -1,8 +1,8 @@
 {
-  "id": "core.work.book",
-  "parent": "core.work",
+  "id": "core.media.book",
+  "parent": "core.media",
   "label": "Book",
-  "description": "A book. Inherits all core.work fields.",
+  "description": "A book. Inherits all core.media fields.",
   "version": 1,
   "fields": {
     "isbn": {
