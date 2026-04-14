@@ -6,27 +6,17 @@ import type { TypeSchema } from "../src/schema-types.js";
 const coreBookmark: TypeSchema = {
   id: "core.bookmark",
   label: "Bookmark",
-  description:
-    "Content you captured from elsewhere — a saved URL, a highlight, an excerpt, a clipped paragraph.",
+  description: "Content you captured from elsewhere — a saved URL, a highlight, an excerpt, a clipped paragraph.",
   version: 1,
   fields: {
     url: { type: "url", description: "The saved URL" },
-    body: {
-      type: "string",
-      description: "Captured text (a highlight, excerpt, or clipping)",
-    },
+    body: { type: "string", description: "Captured text (a highlight, excerpt, or clipping)" },
     title: { type: "string", description: "Title of the saved content" },
     description: { type: "string", description: "Summary" },
-    source_url: {
-      type: "url",
-      description: "Where the content was sourced from",
-    },
+    source_url: { type: "url", description: "Where the content was sourced from" },
     source_title: { type: "string", description: "Title of the source" },
     author: { type: "string", description: "Who created the original content" },
-    published_at: {
-      type: "datetime",
-      description: "When the original content was published",
-    },
+    published_at: { type: "datetime", description: "When the original content was published" },
     image_url: { type: "url", description: "Preview image" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
@@ -37,8 +27,7 @@ const coreBookmark: TypeSchema = {
 const coreEntity: TypeSchema = {
   id: "core.entity",
   label: "Entity",
-  description:
-    "A non-person entity — a company, band, team, charity, brand, school.",
+  description: "A non-person entity — a company, band, team, charity, brand, school.",
   version: 1,
   fields: {
     name: { type: "string", description: "Display name", required: true },
@@ -70,16 +59,8 @@ const coreEvent: TypeSchema = {
     latitude: { type: "number", description: "Venue latitude" },
     longitude: { type: "number", description: "Venue longitude" },
     url: { type: "url", description: "Event link" },
-    precision: {
-      type: "enum",
-      description: "Temporal precision",
-      enum_values: ["year", "month", "day", "time"],
-    },
-    status: {
-      type: "string",
-      description:
-        "Recommended values: tentative, confirmed, cancelled, rescheduled",
-    },
+    precision: { type: "enum", description: "Temporal precision", enum_values: ["year", "month", "day", "time"] },
+    status: { type: "string", description: "Recommended values: tentative, confirmed, cancelled, rescheduled" },
     notes: { type: "string", description: "Personal annotations" },
   },
   display_hints: { title_field: "title", body_field: "description" },
@@ -88,15 +69,10 @@ const coreEvent: TypeSchema = {
 const coreFile: TypeSchema = {
   id: "core.file",
   label: "File",
-  description:
-    "A file or binary reference — the generic fallback for non-media files.",
+  description: "A file or binary reference — the generic fallback for non-media files.",
   version: 1,
   fields: {
-    blob_ref: {
-      type: "string",
-      description: "Reference to the binary content (sha256:<hex>)",
-      required: true,
-    },
+    blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
     mime_type: { type: "string", description: "MIME type", required: true },
     title: { type: "string", description: "Filename or title" },
     description: { type: "string", description: "What the file contains" },
@@ -112,34 +88,15 @@ const coreFile: TypeSchema = {
 const coreHighlight: TypeSchema = {
   id: "core.highlight",
   label: "Highlight",
-  description:
-    "A user's engagement with content — the highlighted passage plus optional annotation. The canonical relationship (what was highlighted) is carried by an annotates edge; the moment of highlighting is the system timestamp.",
+  description: "A user's engagement with content — the highlighted passage plus optional annotation. The canonical relationship (what was highlighted) is carried by an annotates edge; the moment of highlighting is the system timestamp.",
   version: 1,
   fields: {
-    text: {
-      type: "string",
-      description: "The highlighted passage",
-      required: true,
-    },
+    text: { type: "string", description: "The highlighted passage", required: true },
     note: { type: "string", description: "User annotation on the highlight" },
-    color: {
-      type: "enum",
-      description: "Highlight colour",
-      enum_values: ["yellow", "blue", "green", "pink", "orange", "purple"],
-    },
-    locator_type: {
-      type: "enum",
-      description: "How start_location / end_location are interpreted",
-      enum_values: ["offset", "page", "time", "cfi", "order", "none"],
-    },
-    start_location: {
-      type: "string",
-      description: "Start locator, typed by locator_type",
-    },
-    end_location: {
-      type: "string",
-      description: "End locator, typed by locator_type",
-    },
+    color: { type: "enum", description: "Highlight colour", enum_values: ["yellow", "blue", "green", "pink", "orange", "purple"] },
+    locator_type: { type: "enum", description: "How start_location / end_location are interpreted", enum_values: ["offset", "page", "time", "cfi", "order", "none"] },
+    start_location: { type: "string", description: "Start locator, typed by locator_type" },
+    end_location: { type: "string", description: "End locator, typed by locator_type" },
   },
   display_hints: { title_field: "text", body_field: "note" },
 };
@@ -147,8 +104,7 @@ const coreHighlight: TypeSchema = {
 const coreMedia: TypeSchema = {
   id: "core.media",
   label: "Media",
-  description:
-    "Content produced by someone that the user engages with — a film, podcast, book, article, song, show.",
+  description: "Content produced by someone that the user engages with — a film, podcast, book, article, song, show.",
   version: 1,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
@@ -157,10 +113,7 @@ const coreMedia: TypeSchema = {
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
-    published_at: {
-      type: "datetime",
-      description: "When originally published or released",
-    },
+    published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
@@ -194,22 +147,10 @@ const coreTask: TypeSchema = {
     due_at: { type: "datetime", description: "Deadline" },
     starts_at: { type: "datetime", description: "When to start" },
     completed_at: { type: "datetime", description: "When completed" },
-    status: {
-      type: "string",
-      description:
-        "Recommended values: pending, in_progress, completed, cancelled",
-    },
-    priority: {
-      type: "enum",
-      description: "Task priority",
-      enum_values: ["low", "medium", "high", "urgent"],
-    },
+    status: { type: "string", description: "Recommended values: pending, in_progress, completed, cancelled" },
+    priority: { type: "enum", description: "Task priority", enum_values: ["low", "medium", "high", "urgent"] },
     place: { type: "string", description: "Location" },
-    precision: {
-      type: "enum",
-      description: "Temporal precision",
-      enum_values: ["year", "month", "day", "time"],
-    },
+    precision: { type: "enum", description: "Temporal precision", enum_values: ["year", "month", "day", "time"] },
     url: { type: "url", description: "Related link" },
     notes: { type: "string", description: "Personal annotations" },
   },
@@ -220,8 +161,7 @@ const coreEntityPerson: TypeSchema = {
   id: "core.entity.person",
   parent: "core.entity",
   label: "Person",
-  description:
-    "Contact information for an individual. Inherits all core.entity fields.",
+  description: "Contact information for an individual. Inherits all core.entity fields.",
   version: 1,
   fields: {
     name: { type: "string", description: "Display name", required: true },
@@ -242,10 +182,7 @@ const coreEntityPerson: TypeSchema = {
     nickname: { type: "string", description: "Familiar name or alias" },
     organization: { type: "string", description: "Associated organization" },
     job_title: { type: "string", description: "Position or job title" },
-    department: {
-      type: "string",
-      description: "Department within the organization",
-    },
+    department: { type: "string", description: "Department within the organization" },
     birthday: { type: "date", description: "Date of birth (ISO 8601)" },
     pronouns: { type: "string", description: "Pronouns" },
   },
@@ -277,10 +214,7 @@ const coreEntityPlace: TypeSchema = {
     timezone: { type: "string", description: "IANA timezone" },
     latitude: { type: "number", description: "Subject latitude" },
     longitude: { type: "number", description: "Subject longitude" },
-    altitude: {
-      type: "number",
-      description: "Altitude in meters above sea level",
-    },
+    altitude: { type: "number", description: "Altitude in meters above sea level" },
   },
   display_hints: { title_field: "name" },
 };
@@ -289,31 +223,19 @@ const coreFileAudio: TypeSchema = {
   id: "core.file.audio",
   parent: "core.file",
   label: "Audio",
-  description:
-    "Recordings, music files, voice memos. Inherits all core.file fields.",
+  description: "Recordings, music files, voice memos. Inherits all core.file fields.",
   version: 1,
   fields: {
-    blob_ref: {
-      type: "string",
-      description: "Reference to the binary content (sha256:<hex>)",
-      required: true,
-    },
+    blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
     mime_type: { type: "string", description: "MIME type", required: true },
     title: { type: "string", description: "Filename or title" },
     description: { type: "string", description: "What the file contains" },
     url: { type: "url", description: "Web address" },
     source_url: { type: "url", description: "Where the file was sourced from" },
     author: { type: "string", description: "Who created the file" },
-    language: {
-      type: "string",
-      description: "BCP 47 language code (for spoken content)",
-    },
+    language: { type: "string", description: "BCP 47 language code (for spoken content)" },
     notes: { type: "string", description: "Personal annotations" },
-    duration: {
-      type: "number",
-      description: "Length in seconds",
-      required: true,
-    },
+    duration: { type: "number", description: "Length in seconds", required: true },
   },
   display_hints: { title_field: "title" },
 };
@@ -325,11 +247,7 @@ const coreFileImage: TypeSchema = {
   description: "Photos, screenshots, diagrams. Inherits all core.file fields.",
   version: 1,
   fields: {
-    blob_ref: {
-      type: "string",
-      description: "Reference to the binary content (sha256:<hex>)",
-      required: true,
-    },
+    blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
     mime_type: { type: "string", description: "MIME type", required: true },
     title: { type: "string", description: "Filename or title" },
     description: { type: "string", description: "What the file contains" },
@@ -339,11 +257,7 @@ const coreFileImage: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
     width: { type: "integer", description: "Width in pixels", required: true },
-    height: {
-      type: "integer",
-      description: "Height in pixels",
-      required: true,
-    },
+    height: { type: "integer", description: "Height in pixels", required: true },
     latitude: { type: "number", description: "Subject latitude" },
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters" },
@@ -358,33 +272,18 @@ const coreFileVideo: TypeSchema = {
   description: "Video files. Inherits all core.file fields.",
   version: 1,
   fields: {
-    blob_ref: {
-      type: "string",
-      description: "Reference to the binary content (sha256:<hex>)",
-      required: true,
-    },
+    blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
     mime_type: { type: "string", description: "MIME type", required: true },
     title: { type: "string", description: "Filename or title" },
     description: { type: "string", description: "What the file contains" },
     url: { type: "url", description: "Web address" },
     source_url: { type: "url", description: "Where the file was sourced from" },
     author: { type: "string", description: "Who created the file" },
-    language: {
-      type: "string",
-      description: "BCP 47 language code (for spoken content)",
-    },
+    language: { type: "string", description: "BCP 47 language code (for spoken content)" },
     notes: { type: "string", description: "Personal annotations" },
     width: { type: "integer", description: "Width in pixels", required: true },
-    height: {
-      type: "integer",
-      description: "Height in pixels",
-      required: true,
-    },
-    duration: {
-      type: "number",
-      description: "Length in seconds",
-      required: true,
-    },
+    height: { type: "integer", description: "Height in pixels", required: true },
+    duration: { type: "number", description: "Length in seconds", required: true },
     latitude: { type: "number", description: "Subject latitude" },
     longitude: { type: "number", description: "Subject longitude" },
     altitude: { type: "number", description: "Altitude in meters" },
@@ -405,17 +304,11 @@ const coreMediaAlbum: TypeSchema = {
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
-    published_at: {
-      type: "datetime",
-      description: "When originally published or released",
-    },
+    published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
-    release_type: {
-      type: "string",
-      description: "Recommended values: album, ep, single",
-    },
+    release_type: { type: "string", description: "Recommended values: album, ep, single" },
     num_tracks: { type: "integer", description: "Total track count" },
   },
   display_hints: { title_field: "title", body_field: "body" },
@@ -434,10 +327,7 @@ const coreMediaArticle: TypeSchema = {
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
-    published_at: {
-      type: "datetime",
-      description: "When originally published or released",
-    },
+    published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
@@ -460,17 +350,11 @@ const coreMediaBook: TypeSchema = {
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
-    published_at: {
-      type: "datetime",
-      description: "When originally published or released",
-    },
+    published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
-    isbn: {
-      type: "string",
-      description: "International Standard Book Number (ISO 2108)",
-    },
+    isbn: { type: "string", description: "International Standard Book Number (ISO 2108)" },
     page_count: { type: "integer", description: "Number of pages" },
     edition: { type: "string", description: "Edition designation" },
   },
@@ -490,19 +374,13 @@ const coreMediaFilm: TypeSchema = {
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
-    published_at: {
-      type: "datetime",
-      description: "When originally published or released",
-    },
+    published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
     duration: { type: "number", description: "Runtime in seconds" },
     director: { type: "string", description: "Primary director" },
-    content_rating: {
-      type: "string",
-      description: "Age or content classification",
-    },
+    content_rating: { type: "string", description: "Age or content classification" },
   },
   display_hints: { title_field: "title", body_field: "body" },
 };
@@ -520,20 +398,14 @@ const coreMediaPodcast: TypeSchema = {
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
-    published_at: {
-      type: "datetime",
-      description: "When originally published or released",
-    },
+    published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
     episode_number: { type: "integer", description: "Position in the show" },
     season_number: { type: "integer", description: "Which season" },
     duration: { type: "number", description: "Episode length in seconds" },
-    episode_type: {
-      type: "string",
-      description: "Recommended values: full, trailer, bonus",
-    },
+    episode_type: { type: "string", description: "Recommended values: full, trailer, bonus" },
   },
   display_hints: { title_field: "title", body_field: "body" },
 };
@@ -551,26 +423,14 @@ const coreMediaSeries: TypeSchema = {
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
-    published_at: {
-      type: "datetime",
-      description: "When originally published or released",
-    },
+    published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
     season_count: { type: "integer", description: "Number of seasons" },
-    episode_count: {
-      type: "integer",
-      description: "Total episodes across all seasons",
-    },
-    status: {
-      type: "string",
-      description: "Recommended values: ongoing, ended, cancelled",
-    },
-    network: {
-      type: "string",
-      description: "Broadcasting network or streaming service",
-    },
+    episode_count: { type: "integer", description: "Total episodes across all seasons" },
+    status: { type: "string", description: "Recommended values: ongoing, ended, cancelled" },
+    network: { type: "string", description: "Broadcasting network or streaming service" },
   },
   display_hints: { title_field: "title", body_field: "body" },
 };
@@ -588,18 +448,12 @@ const coreMediaSong: TypeSchema = {
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
-    published_at: {
-      type: "datetime",
-      description: "When originally published or released",
-    },
+    published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
     duration: { type: "number", description: "Track length in seconds" },
-    isrc: {
-      type: "string",
-      description: "International Standard Recording Code (ISO 3901)",
-    },
+    isrc: { type: "string", description: "International Standard Recording Code (ISO 3901)" },
     album: { type: "string", description: "Containing album name" },
     track_number: { type: "integer", description: "Position within the album" },
   },
@@ -619,17 +473,11 @@ const coreMediaTvEpisode: TypeSchema = {
     url: { type: "url", description: "Web address" },
     description: { type: "string", description: "Summary or blurb" },
     publisher: { type: "string", description: "Who published the work" },
-    published_at: {
-      type: "datetime",
-      description: "When originally published or released",
-    },
+    published_at: { type: "datetime", description: "When originally published or released" },
     image_url: { type: "url", description: "Cover art, poster, or thumbnail" },
     language: { type: "string", description: "BCP 47 language code" },
     notes: { type: "string", description: "Personal annotations" },
-    episode_number: {
-      type: "integer",
-      description: "Position within the season",
-    },
+    episode_number: { type: "integer", description: "Position within the season" },
     season_number: { type: "integer", description: "Which season" },
     duration: { type: "number", description: "Episode runtime in seconds" },
     director: { type: "string", description: "Episode director" },
@@ -660,3 +508,4 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMediaSong,
   coreMediaTvEpisode,
 ];
+

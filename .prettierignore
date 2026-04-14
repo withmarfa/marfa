@@ -1,0 +1,8 @@
+**/dist/
+**/node_modules/
+**/coverage/
+**/seed/
+# Generated code — shape owned by the codegen, not Prettier.
+packages/types/generated/
+# Auto-generated OpenAPI spec — emitted as JSON from route definitions.
+openapi.json
