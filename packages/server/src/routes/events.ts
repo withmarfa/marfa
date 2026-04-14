@@ -55,6 +55,15 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
         const events = subscribe({ typeFilter: typeParam, tenantId });
         const reader = events[Symbol.asyncIterator]();
 
+        // Map ItemEvent.type to the V0 spec wire string. Most event types
+        // are namespaced as `item.<type>` (item.created, item.updated,
+        // item.state_changed, …); metadata_changed is the exception per
+        // V0 spec — it surfaces as the bare `metadata.changed` because it
+        // describes a metadata-layer change rather than an item-level
+        // mutation.
+        const wireEventName = (type: ItemEventWithId["type"]): string =>
+          type === "metadata_changed" ? "metadata.changed" : `item.${type}`;
+
         const sendEvent = (
           eventId: number | undefined,
           event: ItemEventWithId,
@@ -66,8 +75,9 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
             return;
           }
 
+          const wireType = wireEventName(event.type);
           const sseData = {
-            type: `item.${event.type}`,
+            type: wireType,
             item: event.item,
             ...(event.metadata && { metadata: event.metadata }),
           };
@@ -75,7 +85,7 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
           const idField =
             eventId !== undefined ? `id: ${String(eventId)}\n` : "";
           send(
-            `${idField}event: item.${event.type}\ndata: ${JSON.stringify(sseData)}\n\n`,
+            `${idField}event: ${wireType}\ndata: ${JSON.stringify(sseData)}\n\n`,
           );
         };
 
@@ -144,8 +154,11 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
                         continue;
                     }
 
+                    const replayWireType = wireEventName(
+                      event.event_type as ItemEventWithId["type"],
+                    );
                     send(
-                      `id: ${String(event.id)}\nevent: item.${event.event_type}\ndata: ${event.payload}\n\n`,
+                      `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${event.payload}\n\n`,
                     );
                     lastReplayedId = event.id;
                   }

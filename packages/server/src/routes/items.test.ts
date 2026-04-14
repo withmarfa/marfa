@@ -684,3 +684,43 @@ describe("state lifecycle enum at the route boundary", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("metadata.changed pubsub event", () => {
+  it("fires from POST /items/:id/tags and surfaces with the V0 wire name", async () => {
+    const { subscribe } = await import("../pubsub.js");
+
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Tag-event target" },
+      },
+    });
+    const { item } = (await createRes.json()) as { item: { id: string } };
+
+    // Subscribe before the mutation. The async generator yields on the
+    // first event after subscribing — race the route call against a 500ms
+    // timeout to fail fast if no event fires.
+    const iter = subscribe();
+    const nextEvent: Promise<{ type: string; item: { id: string } }> =
+      iter.next().then((r) => r.value as { type: string; item: { id: string } });
+
+    const tagRes = await request(ctx.app, "POST", `/items/${item.id}/tags`, {
+      key: ctx.adminKey,
+      body: { tags: ["interesting"] },
+    });
+    expect(tagRes.status).toBe(200);
+
+    const event = await Promise.race([
+      nextEvent,
+      new Promise<{ type: string; item: { id: string } }>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("no event in 500ms"));
+        }, 500);
+      }),
+    ]);
+    expect(event.type).toBe("metadata_changed");
+    expect(event.item.id).toBe(item.id);
+    await iter.return(undefined);
+  });
+});

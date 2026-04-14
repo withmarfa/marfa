@@ -1127,6 +1127,12 @@ export function itemRoutes(storage: Storage) {
     }
 
     const metadata = await storage.metadata.set(id, tags, about);
+    await publish({
+      type: "metadata_changed",
+      item,
+      metadata,
+      tenantId: c.get("apiKey")?.tenant_id,
+    });
     return c.json({ metadata }, 200);
   });
 
@@ -1178,6 +1184,12 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
+    await publish({
+      type: "metadata_changed",
+      item,
+      metadata,
+      tenantId: c.get("apiKey")?.tenant_id,
+    });
     return c.json({ metadata }, 200);
   });
 
@@ -1211,6 +1223,12 @@ export function itemRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
       details: { tags },
+    });
+    await publish({
+      type: "metadata_changed",
+      item,
+      metadata,
+      tenantId: c.get("apiKey")?.tenant_id,
     });
     return c.json({ metadata }, 200);
   });
@@ -1255,6 +1273,12 @@ export function itemRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
       details: { tag },
+    });
+    await publish({
+      type: "metadata_changed",
+      item,
+      metadata,
+      tenantId: c.get("apiKey")?.tenant_id,
     });
     return c.json({ metadata }, 200);
   });
