@@ -54,6 +54,15 @@ export default [
     },
   },
   {
-    ignores: ["**/dist/", "**/coverage/", "**/node_modules/", "**/seed/"],
+    ignores: [
+      "**/dist/",
+      "**/coverage/",
+      "**/node_modules/",
+      "**/seed/",
+      // @mymehq/electric is parked (see packages/electric/README.md). It is
+      // excluded from the workspace, so its dependencies aren't installed
+      // and its type-aware lint rules can't resolve. Skip it entirely.
+      "packages/electric/**",
+    ],
   },
 ];
