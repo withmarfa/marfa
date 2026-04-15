@@ -10,8 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -21,11 +20,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+          registry-url: "https://registry.npmjs.org"
 
       - run: pnpm install --frozen-lockfile
 
@@ -35,10 +30,17 @@ jobs:
 
       - run: pnpm test
 
-      # Publish shared first (sdk depends on it)
-      - run: pnpm --filter @mymehq/shared publish --no-git-checks
+      # Publish shared first (sdk depends on it). Auth is via OIDC trusted
+      # publisher configured on npm — no NPM_TOKEN. --provenance attaches
+      # the signed attestation proving the package was built from this
+      # commit in this workflow.
+      - run: pnpm --filter @mymehq/shared publish --no-git-checks --provenance
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
 
-      - run: pnpm --filter @mymehq/sdk publish --no-git-checks
+      - run: pnpm --filter @mymehq/sdk publish --no-git-checks --provenance
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
 
       # @mymehq/electric is parked (see packages/electric/README.md);
       # excluded from publish until/unless it's revived.
