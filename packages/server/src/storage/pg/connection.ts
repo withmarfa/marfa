@@ -26,13 +26,6 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
 
-CREATE TABLE IF NOT EXISTS threads (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
   tenant_id TEXT,
@@ -269,7 +262,6 @@ export async function createConnection(connectionString: string): Promise<{
     await client.unsafe(`
       ALTER TABLE items ENABLE ROW LEVEL SECURITY;
       ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE threads ENABLE ROW LEVEL SECURITY;
       ALTER TABLE metadata ENABLE ROW LEVEL SECURITY;
       ALTER TABLE versions ENABLE ROW LEVEL SECURITY;
 
@@ -280,11 +272,6 @@ export async function createConnection(connectionString: string): Promise<{
 
       DO $$ BEGIN
         CREATE POLICY tenant_isolation_api_keys ON api_keys
-          USING (tenant_id = current_setting('myme.tenant_id', true));
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-      DO $$ BEGIN
-        CREATE POLICY tenant_isolation_threads ON threads
           USING (tenant_id = current_setting('myme.tenant_id', true));
       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 

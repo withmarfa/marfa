@@ -101,13 +101,6 @@ export interface Version {
   device?: string;
 }
 
-/** A sequential grouping of items. */
-export interface Thread {
-  id: string;
-  created_at: string;
-  updated_at: string;
-}
-
 // ---------------------------------------------------------------------------
 // Edges — first-class typed relationships between items
 // ---------------------------------------------------------------------------

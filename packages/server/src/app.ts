@@ -10,7 +10,6 @@ import type { BlobBackend } from "./storage/blob-backend.js";
 import { itemRoutes } from "./routes/items.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
 import { edgeTypeRoutes } from "./routes/edge-types.js";
-import { threadRoutes } from "./routes/threads.js";
 import { typeRoutes } from "./routes/types.js";
 import { searchRoutes } from "./routes/search.js";
 import { blobRoutes } from "./routes/blobs.js";
@@ -77,7 +76,6 @@ export function createApp(
   // Public routes (before auth) — mounted directly to avoid prefix matching issues
   const features = [
     "items",
-    "threads",
     "search",
     "blobs",
     "types",
@@ -120,7 +118,6 @@ export function createApp(
   app.route("/items", itemEdgeListingRoutes(storage));
   app.route("/edges", edgeRoutes(storage));
   app.route("/edges", edgeTypeRoutes(storage));
-  app.route("/threads", threadRoutes(storage));
   app.route("/types", typeRoutes(storage));
   app.route("/search", searchRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend));

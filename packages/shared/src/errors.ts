@@ -4,7 +4,6 @@ import type { ErrorResponse } from "./types.js";
 export enum ErrorCode {
   NOT_FOUND = "not_found",
   ITEM_NOT_FOUND = "item_not_found",
-  THREAD_NOT_FOUND = "thread_not_found",
   BLOB_NOT_FOUND = "blob_not_found",
   VALIDATION_ERROR = "validation_error",
   MISSING_REQUIRED_FIELD = "missing_required_field",
@@ -57,7 +56,6 @@ export enum ErrorCode {
 const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.NOT_FOUND]: 404,
   [ErrorCode.ITEM_NOT_FOUND]: 404,
-  [ErrorCode.THREAD_NOT_FOUND]: 404,
   [ErrorCode.BLOB_NOT_FOUND]: 404,
   [ErrorCode.VALIDATION_ERROR]: 400,
   [ErrorCode.MISSING_REQUIRED_FIELD]: 400,

@@ -331,25 +331,10 @@ describe("metadata", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Threads
+// Edges
 // ---------------------------------------------------------------------------
 
-describe("threads", () => {
-  it("creates and retrieves a thread", async () => {
-    const thread = await client.threads.create();
-    expect(thread.id).toBeTruthy();
-
-    const result = await client.threads.get(thread.id);
-    expect(result.thread.id).toBe(thread.id);
-    expect(result.items).toEqual([]);
-  });
-
-  it("lists threads", async () => {
-    await client.threads.create();
-    const result = await client.threads.list();
-    expect(result.data.length).toBeGreaterThanOrEqual(1);
-  });
-
+describe("edges", () => {
   it("exposes edges CRUD + listings via the SDK", async () => {
     const a = await createNote({ title: "A" });
     const b = await createNote({ title: "B" });
@@ -371,6 +356,19 @@ describe("threads", () => {
     expect(afterDelete.data.length).toBe(0);
   });
 
+  it("supports in-thread edges pointing at any item", async () => {
+    const thread = await createNote({ title: "Thread opener" });
+    const reply = await createNote({ title: "Thread reply" });
+    await client.edges.create({
+      source_id: reply.id,
+      target_id: thread.id,
+      edge_type: "in-thread",
+    });
+
+    const members = await client.items.backrefs(thread.id);
+    expect(members.data.some((e) => e.source_id === reply.id)).toBe(true);
+  });
+
   it("registers a custom edge type via client.edges.types.create", async () => {
     const schema = await client.edges.types.create({
       id: "sdk.custom-rel",
@@ -384,19 +382,6 @@ describe("threads", () => {
 
     const all = await client.edges.types.list();
     expect(all.some((t) => t.id === "sdk.custom-rel")).toBe(true);
-  });
-
-  it("retrieves thread with its items", async () => {
-    const thread = await client.threads.create();
-    await client.items.create({
-      type: "core.note",
-      properties: { title: "Thread note", body: "In thread" },
-      edges: { "in-thread": [thread.id] },
-    });
-
-    const result = await client.threads.get(thread.id);
-    expect(result.items.length).toBe(1);
-    expect(result.items[0]?.properties.title).toBe("Thread note");
   });
 });
 

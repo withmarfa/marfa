@@ -42,17 +42,6 @@ export const users = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// threads (defined first because items references it)
-// ---------------------------------------------------------------------------
-
-export const threads = pgTable("threads", {
-  id: text("id").primaryKey(),
-  tenant_id: text("tenant_id"),
-  created_at: text("created_at").notNull(),
-  updated_at: text("updated_at").notNull(),
-});
-
-// ---------------------------------------------------------------------------
 // items
 // ---------------------------------------------------------------------------
 
@@ -109,13 +98,10 @@ export const edges = pgTable(
   {
     id: text("id").primaryKey(),
     tenant_id: text("tenant_id"),
-    // source_id and target_id are NOT foreign keys to items(id). Most edges
-    // point between items, but the in-thread edge type targets rows in the
-    // threads table during the V0 legacy thread-API window (see edge-
-    // constraints.ts). FKs would reject those. App-level existence checks
-    // run in assertEdgeCanBeCreated; orphan-edge cleanup on item delete is
-    // handled by planCascadeDelete + explicit edgeStore.deleteBySource /
-    // deleteByTarget calls.
+    // source_id and target_id are NOT foreign keys to items(id). App-level
+    // existence checks run in assertEdgeCanBeCreated; orphan-edge cleanup on
+    // item delete is handled by planCascadeDelete + explicit
+    // edgeStore.deleteBySource / deleteByTarget calls.
     source_id: text("source_id").notNull(),
     target_id: text("target_id").notNull(),
     edge_type: text("edge_type").notNull(),

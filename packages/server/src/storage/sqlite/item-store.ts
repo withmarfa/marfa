@@ -203,16 +203,11 @@ export class SqliteItemStore implements ItemStore {
 
     if (filters.source) conditions.push(eq(items.source, filters.source));
 
-    // Legacy filters — parent_id / thread_id / root_only — now query the
-    // edges table since the columns were dropped in PR 4 commit 12.
+    // parent_id / root_only filters query the edges table (parent relationships
+    // are expressed as parent-of edges).
     if (filters.parent_id) {
       conditions.push(
         sql`EXISTS (SELECT 1 FROM edges e WHERE e.target_id = ${items.id} AND e.edge_type = 'parent-of' AND e.source_id = ${filters.parent_id})`,
-      );
-    }
-    if (filters.thread_id) {
-      conditions.push(
-        sql`EXISTS (SELECT 1 FROM edges e WHERE e.source_id = ${items.id} AND e.edge_type = 'in-thread' AND e.target_id = ${filters.thread_id})`,
       );
     }
 

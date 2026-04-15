@@ -4,7 +4,6 @@ import type {
   UpdateItemInput,
   Metadata,
   Version,
-  Thread,
   ApiKey,
   CreateKeyInput,
   Webhook,
@@ -36,7 +35,6 @@ export interface ItemFilters {
   state?: ItemState;
   source?: string;
   parent_id?: string;
-  thread_id?: string;
   root_only?: boolean;
   /** Restrict to library items (true) or ambient items (false). */
   library?: boolean;
@@ -152,18 +150,6 @@ export interface VersionStore {
     threshold: number,
     limit: number,
   ): Promise<{ itemId: string; type: string; versionCount: number }[]>;
-}
-
-export interface ThreadStore {
-  create(tenantId?: string): Promise<Thread>;
-  get(id: string, tenantId?: string): Promise<Thread | null>;
-  list(
-    limit: number,
-    cursor?: string,
-    tenantId?: string,
-  ): Promise<PaginatedResult<Thread>>;
-  touch(id: string): Promise<void>;
-  getItems(threadId: string, tenantId?: string): Promise<Item[]>;
 }
 
 export interface TypeStore {
@@ -507,7 +493,6 @@ export interface Storage {
   items: ItemStore;
   metadata: MetadataStore;
   versions: VersionStore;
-  threads: ThreadStore;
   types: TypeStore;
   search: SearchStore;
   keys: KeyStore;

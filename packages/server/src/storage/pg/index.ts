@@ -9,7 +9,6 @@ import { createConnection } from "./connection.js";
 import { PgItemStore } from "./item-store.js";
 import { PgMetadataStore } from "./metadata-store.js";
 import { PgVersionStore } from "./version-store.js";
-import { PgThreadStore } from "./thread-store.js";
 import { PgTypeStore } from "./type-store.js";
 import { PgSearchStore } from "./search-store.js";
 import { PgKeyStore } from "./key-store.js";
@@ -42,7 +41,6 @@ export async function createPgStorage(
     options?.versionSnapshotIntervalMs,
   );
   const metadataStore = new PgMetadataStore(db);
-  const threadStore = new PgThreadStore(db);
   const typeStore = new PgTypeStore(db);
 
   // Load custom types from the database and register them in memory
@@ -74,7 +72,6 @@ export async function createPgStorage(
     items: itemStore,
     metadata: metadataStore,
     versions: versionStore,
-    threads: threadStore,
     types: typeStore,
     search: searchStore,
     keys: keyStore,
@@ -100,7 +97,7 @@ export async function createPgStorage(
     close,
     /** Truncate all tables — used by tests for isolation. */
     async _pgTruncate(): Promise<void> {
-      await client`TRUNCATE items, metadata, versions, threads, edges, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, event_log, tenants, users CASCADE`;
+      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, event_log, tenants, users CASCADE`;
     },
     /** Raw query escape hatch — used by the edge-backfill script. */
     __pgClient(query: string): Promise<unknown[]> {
