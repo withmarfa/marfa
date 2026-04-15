@@ -16,15 +16,13 @@ jobs:
 
       - uses: pnpm/action-setup@v4
 
+      # Node 24 ships with npm 11+, which has OIDC trusted-publisher
+      # support. Node 22 only has npm 10.x (no OIDC).
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
-
-      # Node 22 ships with npm 10.x; OIDC trusted-publisher support
-      # requires npm 11.5.1+.
-      - run: npm install -g npm@latest
 
       - run: pnpm install --frozen-lockfile
 
