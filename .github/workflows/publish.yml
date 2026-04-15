@@ -32,15 +32,21 @@ jobs:
 
       - run: pnpm test
 
-      # npm publish with OIDC trusted publishing. Provenance attaches
-      # automatically; no --provenance flag needed.
+      # Pack + publish pattern: pnpm pack resolves workspace:* specifiers
+      # to actual versions in the resulting tarball; npm publish gives us
+      # OIDC trusted-publisher auth. Neither tool alone does both.
+      # Provenance attaches automatically via OIDC.
       - name: Publish @mymehq/shared
         working-directory: packages/shared
-        run: npm publish --access=public
+        run: |
+          pnpm pack
+          npm publish mymehq-shared-*.tgz --access=public
 
       - name: Publish @mymehq/sdk
         working-directory: packages/sdk
-        run: npm publish --access=public
+        run: |
+          pnpm pack
+          npm publish mymehq-sdk-*.tgz --access=public
 
       # @mymehq/electric is parked (see packages/electric/README.md);
       # excluded from publish until/unless it's revived.
