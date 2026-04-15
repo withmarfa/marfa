@@ -7,9 +7,9 @@ Typed data layer. This monorepo contains four active workspace packages:
 - **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published)
 - **@mymehq/sdk** — TypeScript HTTP client for consuming the Myme API
 
-A fifth package, **@mymehq/electric** (Electric SQL sync client for local-first apps), lives at `packages/electric/` but is **parked**: excluded from `pnpm-workspace.yaml`, marked deprecated in its `package.json`, and skipped by every CI gate. Code stays on disk for future revival; see `packages/electric/README.md` for rationale and the revival recipe.
+A fifth package, **@mymehq/electric** (an Electric SQL sync client experiment), lives at `packages/electric/` but is **parked** — excluded from the workspace and all CI gates. See `packages/electric/README.md` for revival notes.
 
-Published to npm under the `@mymehq` scope. Version tags (`v1.0.0`) trigger the publish workflow.
+`@mymehq/shared` and `@mymehq/sdk` publish to npm under the `@mymehq` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes.
 
 ## Tech stack
 
@@ -73,12 +73,7 @@ When changing schema:
 4. Mirror the change into the bootstrap `SCHEMA_SQL` block in the corresponding `connection.ts` so fresh databases get it without the migrator.
 5. Run standalone migration on existing dbs: `pnpm --filter @mymehq/server run migrate`.
 
-**Two documented exceptions** remain inline because Drizzle Kit cannot express them:
-
-- **SQLite FTS5 virtual table** in `sqlite/connection.ts` — virtual tables aren't part of Drizzle's DSL.
-- **Postgres RLS policies** in `pg/connection.ts` — dormant by design today (the table-owner connection bypasses RLS); the policies are pre-installed so a production hosted deployment running as a non-owner role inherits isolation automatically.
-
-Do not add new inline DDL outside those exceptions.
+FTS5 virtual tables and Postgres RLS policies stay inline in `connection.ts` because Drizzle Kit can't express them. Don't add other inline DDL.
 
 ## OpenAPI
 
@@ -101,7 +96,6 @@ Two local-validation paths exist, in increasing thoroughness:
 
 Both invoke `test:pg`, which boots a throw-away `postgres:17` container on port `55432` and runs the server suite against it. Requires Docker (OrbStack / Docker Desktop / compatible daemon); the script fails loudly with an actionable message if the daemon isn't reachable.
 
-Rationale: PR #7 shipped three classes of regression past a local green check — `SCHEMA_SQL` bootstrap gap (PG-only, local dev had cached columns), dialect-specific boolean coercion (pg vs sqlite), and workspace exclusions (Electric's lint + vitest coverage differed between cached dev deps and CI's fresh install). The dual-dialect + clean-slate local checks close that gap before push.
 
 ## Error handling
 
@@ -109,7 +103,7 @@ The base error class is `MymeError` (in `@mymehq/shared`). All structured errors
 
 ## Type registration
 
-Core types (21 in the active V0 set; `core.message` is kept as a deferred stub in `packages/types/core/` but excluded from the runtime registry) live in `packages/types/core/*.json`. The codegen in `packages/types/scripts/generate.ts` emits `ALL_TYPES` into `generated/type-registry.ts`; shared bundles it at build time via tsup's `noExternal`. Custom types can be registered at runtime via `POST /types` (admin only) and are persisted in the `custom_types` table. Core types cannot be modified or deleted via the API.
+Core types live in `packages/types/core/*.json`. 21 types ship in the active registry; `core.message` is kept as a deferred stub (marked `_deferred: true`) and excluded from the runtime registry. The codegen in `packages/types/scripts/generate.ts` emits `ALL_TYPES` into `generated/type-registry.ts`; shared bundles it at build time via tsup's `noExternal`. Custom types can be registered at runtime via `POST /types` (admin only) and are persisted in the `custom_types` table. Core types cannot be modified or deleted via the API.
 
 Inheritance rule: child types may add new fields but cannot redefine fields declared by any ancestor in their parent chain. Enforced on `POST /types`.
 
@@ -117,13 +111,13 @@ Types may declare an optional `display_hints: { title_field?, body_field? }` blo
 
 Lifecycle is universal — the metadata-layer `state` axis is `active | archived | trashed`. Types do not declare their own state machines; `SYSTEM_TRANSITIONS` in shared is the authoritative graph.
 
-## Edges (Wave 2 PR 4)
+## Edges
 
 Relationships between items are first-class typed edges, not embedded references. Eight core edge types live as JSON under `packages/types/core/edges/` and seed the in-memory registry at startup: `about`, `parent-of`, `in-thread`, `annotates`, `authored-by`, `derived-from`, `supersedes`, `pinned-to`. Each carries cardinality (`one-to-one` / `one-to-many` / `many-to-one` / `many-to-many`), `cascade_on_delete` (`cascade` / `orphan` / `block`), and source / target type constraints.
 
-**Direction is spec-exact.** For `parent-of` source = parent, target = child. For `in-thread` source = member, target = thread. Every consumer (backfill script, cycle-detection walks, filter SQL, cascade planner) obeys this.
+**Direction is spec-exact.** For `parent-of` source = parent, target = child. For `in-thread` source = member, target = thread. Every consumer (cycle-detection walks, filter SQL, cascade planner) obeys this.
 
-Custom edge types register at runtime via `POST /edges/types` (admin only) and persist in `custom_edge_types`. Core types cannot be redefined. No inheritance in V0 (the NQ-1 resolution).
+Custom edge types register at runtime via `POST /edges/types` (admin only) and persist in `custom_edge_types`. Core types cannot be redefined. Custom edge types do not inherit.
 
 Atomic writes on `POST /items` accept `edges: { [type]: [target_ids] }`. Edge-only mutations go through `/edges` (create / update-properties-only / delete) or `/items/:id/edges` + `/backrefs` for listings. Single-item reads hydrate edges inline; list reads opt in via `?include=edges`.
 
@@ -141,7 +135,7 @@ Edge mutations dual-gate: the caller needs **both** write on the source item's t
 
 OAuth scope grammar mirrors these: `<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`. Scopes parse via `parseScope` in `@mymehq/shared`; the consent UI renders the resolved `typePattern` literally.
 
-**Grandfathering:** migration 0012 backfilled `edge_permissions = {"*":"write"}` onto every non-admin key that had any `type_permissions` at the time — pre-PR-4 keys implicitly had broad edge access through `parent_id` / `thread_id` / `about`, so the upgrade preserves it. New keys default to `{}` (opt-in).
+New keys default to `edge_permissions: {}` — edge access is opt-in; callers must grant explicitly.
 
 ## Webhooks
 
