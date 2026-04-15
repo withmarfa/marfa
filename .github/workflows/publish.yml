@@ -30,17 +30,17 @@ jobs:
 
       - run: pnpm test
 
-      # Publish shared first (sdk depends on it). Auth is via OIDC trusted
-      # publisher configured on npm — no NPM_TOKEN. --provenance attaches
-      # the signed attestation proving the package was built from this
-      # commit in this workflow.
-      - run: pnpm --filter @mymehq/shared publish --no-git-checks --provenance
-        env:
-          NPM_CONFIG_PROVENANCE: "true"
+      # Publish via `npm publish` — npm has first-class OIDC support
+      # for trusted publishers. Provenance is attached automatically
+      # when publishing from a trusted GitHub Actions workflow (no
+      # --provenance flag needed). shared first, sdk depends on it.
+      - name: Publish @mymehq/shared
+        working-directory: packages/shared
+        run: npm publish --access=public
 
-      - run: pnpm --filter @mymehq/sdk publish --no-git-checks --provenance
-        env:
-          NPM_CONFIG_PROVENANCE: "true"
+      - name: Publish @mymehq/sdk
+        working-directory: packages/sdk
+        run: npm publish --access=public
 
       # @mymehq/electric is parked (see packages/electric/README.md);
       # excluded from publish until/unless it's revived.
