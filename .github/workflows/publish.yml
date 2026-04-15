@@ -22,6 +22,10 @@ jobs:
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
 
+      # Node 22 ships with npm 10.x; OIDC trusted-publisher support
+      # requires npm 11.5.1+.
+      - run: npm install -g npm@latest
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm build
@@ -30,10 +34,8 @@ jobs:
 
       - run: pnpm test
 
-      # Publish via `npm publish` — npm has first-class OIDC support
-      # for trusted publishers. Provenance is attached automatically
-      # when publishing from a trusted GitHub Actions workflow (no
-      # --provenance flag needed). shared first, sdk depends on it.
+      # npm publish with OIDC trusted publishing. Provenance attaches
+      # automatically; no --provenance flag needed.
       - name: Publish @mymehq/shared
         working-directory: packages/shared
         run: npm publish --access=public
