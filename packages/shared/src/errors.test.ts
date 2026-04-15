@@ -5,7 +5,6 @@ describe("ErrorCode", () => {
   it("has all expected error codes", () => {
     expect(ErrorCode.NOT_FOUND).toBe("not_found");
     expect(ErrorCode.ITEM_NOT_FOUND).toBe("item_not_found");
-    expect(ErrorCode.THREAD_NOT_FOUND).toBe("thread_not_found");
     expect(ErrorCode.BLOB_NOT_FOUND).toBe("blob_not_found");
     expect(ErrorCode.VALIDATION_ERROR).toBe("validation_error");
     expect(ErrorCode.VERSION_CONFLICT).toBe("version_conflict");
@@ -21,7 +20,6 @@ describe("httpStatus", () => {
   it("maps error codes to HTTP status codes", () => {
     expect(httpStatus(ErrorCode.NOT_FOUND)).toBe(404);
     expect(httpStatus(ErrorCode.ITEM_NOT_FOUND)).toBe(404);
-    expect(httpStatus(ErrorCode.THREAD_NOT_FOUND)).toBe(404);
     expect(httpStatus(ErrorCode.BLOB_NOT_FOUND)).toBe(404);
     expect(httpStatus(ErrorCode.VALIDATION_ERROR)).toBe(400);
     expect(httpStatus(ErrorCode.VERSION_CONFLICT)).toBe(409);

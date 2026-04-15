@@ -40,17 +40,6 @@ export const users = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// threads (defined first because items references it)
-// ---------------------------------------------------------------------------
-
-export const threads = sqliteTable("threads", {
-  id: text("id").primaryKey(),
-  tenant_id: text("tenant_id"),
-  created_at: text("created_at").notNull(),
-  updated_at: text("updated_at").notNull(),
-});
-
-// ---------------------------------------------------------------------------
 // items
 // ---------------------------------------------------------------------------
 
@@ -107,10 +96,8 @@ export const edges = sqliteTable(
   {
     id: text("id").primaryKey(),
     tenant_id: text("tenant_id"),
-    // No FKs on source_id / target_id — see pg/schema.ts note. Most edges
-    // point between items, but in-thread edges target the threads table
-    // during the V0 legacy thread-API window. App-level checks run in
-    // assertEdgeCanBeCreated + planCascadeDelete.
+    // No FKs on source_id / target_id — see pg/schema.ts note. App-level
+    // checks run in assertEdgeCanBeCreated + planCascadeDelete.
     source_id: text("source_id").notNull(),
     target_id: text("target_id").notNull(),
     edge_type: text("edge_type").notNull(),

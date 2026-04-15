@@ -194,17 +194,12 @@ export function edgeRoutes(storage: Storage) {
     requireEdgePermission(c, body.edge_type, "write");
 
     const edge = await storage.runInTransaction(async () => {
-      await assertEdgeCanBeCreated(
-        storage.edges,
-        storage.items,
-        {
-          source_id: body.source_id,
-          target_id: body.target_id,
-          edge_type: body.edge_type,
-          tenant_id: tenantId,
-        },
-        storage.threads,
-      );
+      await assertEdgeCanBeCreated(storage.edges, storage.items, {
+        source_id: body.source_id,
+        target_id: body.target_id,
+        edge_type: body.edge_type,
+        tenant_id: tenantId,
+      });
       return storage.edges.createRaw(
         {
           source_id: body.source_id,

@@ -1,12 +1,6 @@
 /**
- * Reusable Zod schemas shared across route files.
- *
- * Lift-out from items.ts / threads.ts / search.ts (Wave 2 PR 2). Wave 1
- * had three separate ItemSchema declarations that drifted from the
- * runtime types and from each other; the response-schema fix-up commits
- * (14dc0ca / a093454) had to repair all three. Wave 2's edges work will
- * grow the Item shape further — extracting now keeps the addition local
- * to a single file rather than a four-way duplication.
+ * Reusable Zod schemas shared across route files (items.ts, search.ts,
+ * edges.ts). Centralised so the Item/Edge shape is declared once.
  */
 import { z } from "@hono/zod-openapi";
 

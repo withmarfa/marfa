@@ -63,13 +63,6 @@ export function createConnection(sqlitePath: string): {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
 
-    CREATE TABLE IF NOT EXISTS threads (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       tenant_id TEXT,

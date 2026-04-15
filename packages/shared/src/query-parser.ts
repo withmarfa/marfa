@@ -67,9 +67,9 @@ const SYSTEM_FIELDS = new Set([
   "timestamp",
   "created_at",
   "updated_at",
-  // V0-spec system fields. parent_id and thread_id are deliberately not
-  // listed — Wave 2 edges replaces them; filtering by them via the
-  // generic query language would be a short-lived API surface.
+  // V0-spec system fields. parent_id and in-thread membership are carried
+  // as edges, not as generic-query-language filters; use edge[<type>]=
+  // clauses for those.
   "library",
   "device",
   "version",

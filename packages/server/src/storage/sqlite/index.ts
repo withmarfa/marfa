@@ -3,7 +3,6 @@ import { createConnection } from "./connection.js";
 import { SqliteItemStore } from "./item-store.js";
 import { SqliteMetadataStore } from "./metadata-store.js";
 import { SqliteVersionStore } from "./version-store.js";
-import { SqliteThreadStore } from "./thread-store.js";
 import { SqliteTypeStore } from "./type-store.js";
 import { SqliteSearchStore } from "./search-store.js";
 import { SqliteKeyStore } from "./key-store.js";
@@ -38,7 +37,6 @@ export function createSqliteStorage(
     options?.versionSnapshotIntervalMs,
   );
   const metadataStore = new SqliteMetadataStore(db, raw);
-  const threadStore = new SqliteThreadStore(db);
   const typeStore = new SqliteTypeStore(db, raw);
   const keyStore = new SqliteKeyStore(db);
   const blobStore = new SqliteBlobStore(db);
@@ -63,7 +61,6 @@ export function createSqliteStorage(
     items: itemStore,
     metadata: metadataStore,
     versions: versionStore,
-    threads: threadStore,
     types: typeStore,
     search: searchStore,
     keys: keyStore,

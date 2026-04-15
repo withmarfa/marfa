@@ -31,7 +31,6 @@ export type {
   CreateItemInput,
   Metadata,
   Version,
-  Thread,
   ApiKey,
   CreateKeyInput,
   PaginatedResult,

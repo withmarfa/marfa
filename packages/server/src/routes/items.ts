@@ -100,12 +100,6 @@ const createItemRoute = createRoute({
             // Atomic item + edges write: for each edge type, the listed
             // item ids become targets with the new item as source. Rejects
             // all-or-nothing if any constraint violation surfaces.
-            //
-            // Replaces the legacy parent_id / thread_id / about wire fields
-            // dropped in PR 4 commit 12. Use:
-            //   edges: { "parent-of": [parentId] }   // was parent_id
-            //   edges: { "in-thread": [threadId] }   // was thread_id
-            //   edges: { about: [...ids] }           // was about[]
             edges: z.record(z.string(), z.array(z.string())).optional(),
           }),
         },
@@ -168,7 +162,6 @@ const listItemsRoute = createRoute({
       state: z.string().optional(),
       source: z.string().optional(),
       parent_id: z.string().optional(),
-      thread_id: z.string().optional(),
       library: z.enum(["true", "false", "all"]).optional(),
       tags: z.string().optional(),
       filter: z.string().optional(),
@@ -751,17 +744,12 @@ export function itemRoutes(storage: Storage) {
       if (body.edges) {
         for (const [edgeType, targets] of Object.entries(body.edges)) {
           for (const targetId of targets) {
-            await assertEdgeCanBeCreated(
-              storage.edges,
-              storage.items,
-              {
-                source_id: created.id,
-                target_id: targetId,
-                edge_type: edgeType,
-                tenant_id: tenantId,
-              },
-              storage.threads,
-            );
+            await assertEdgeCanBeCreated(storage.edges, storage.items, {
+              source_id: created.id,
+              target_id: targetId,
+              edge_type: edgeType,
+              tenant_id: tenantId,
+            });
             await storage.edges.createRaw(
               {
                 source_id: created.id,
@@ -880,7 +868,6 @@ export function itemRoutes(storage: Storage) {
       state,
       source: query.source,
       parent_id: query.parent_id,
-      thread_id: query.thread_id,
       root_only: rootOnly || undefined,
       library,
       tags,
@@ -970,7 +957,7 @@ export function itemRoutes(storage: Storage) {
     if (!hasProperties && !hasEdges) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of `properties` or `edges` is required. parent_id / thread_id were dropped in Wave 2 PR 4; relationship changes flow through the `edges` payload or direct /edges endpoints.",
+        "At least one of `properties` or `edges` is required. Relationship changes flow through the `edges` payload or direct /edges endpoints.",
       );
     }
     if (body.version !== undefined) {
@@ -1076,17 +1063,10 @@ export function itemRoutes(storage: Storage) {
           uniqueTargets.add(target);
           const targetItem = await storage.items.get(target, tid);
           if (!targetItem) {
-            // Try the thread-store fallback for in-thread edges.
-            const threadRecord =
-              edgeType === "in-thread"
-                ? await storage.threads.get(target, tid)
-                : null;
-            if (!threadRecord) {
-              throw new MymeError(
-                ErrorCode.ITEM_NOT_FOUND,
-                `Edge target not found: ${target}`,
-              );
-            }
+            throw new MymeError(
+              ErrorCode.ITEM_NOT_FOUND,
+              `Edge target not found: ${target}`,
+            );
           }
         }
       }
@@ -1117,17 +1097,12 @@ export function itemRoutes(storage: Storage) {
         for (const [edgeType, targets] of Object.entries(body.edges)) {
           await storage.edges.deleteBySource(id, edgeType);
           for (const targetId of targets) {
-            await assertEdgeCanBeCreated(
-              storage.edges,
-              storage.items,
-              {
-                source_id: id,
-                target_id: targetId,
-                edge_type: edgeType,
-                tenant_id: tid,
-              },
-              storage.threads,
-            );
+            await assertEdgeCanBeCreated(storage.edges, storage.items, {
+              source_id: id,
+              target_id: targetId,
+              edge_type: edgeType,
+              tenant_id: tid,
+            });
             await storage.edges.createRaw(
               {
                 source_id: id,

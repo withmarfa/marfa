@@ -4,7 +4,6 @@ import type {
   CreateItemInput,
   Metadata,
   Version,
-  Thread,
   ApiKey,
   CreateKeyInput,
   PaginatedResult,
@@ -74,13 +73,9 @@ export interface ListFilters {
   state?: ItemState;
   source?: string;
   /** Filter to items whose parent-of source is this id. Kept as a
-   *  server-side convenience alias after the parent_id column was
-   *  dropped in Wave 2 PR 4; the server translates it into an
-   *  `edge[parent-of]` existence check. */
+   *  server-side convenience alias for an `edge[parent-of]` existence
+   *  check. */
   parent_id?: string;
-  /** Filter to items in this thread. Server translates to
-   *  `edge[in-thread]` check after the thread_id column was dropped. */
-  thread_id?: string;
   root_only?: boolean;
   /** When set, restricts the result to library items (true) or ambient
    * items (false). Per V0 spec, the default unrestricted view returns
@@ -137,8 +132,7 @@ export class MymeClient {
     create: async (
       input: CreateItemInput & {
         /** Atomic edges payload: for each edge type, listed ids become
-         *  targets with the new item as source. Replaces legacy parent_id
-         *  / thread_id / about which were dropped in Wave 2 PR 4. */
+         *  targets with the new item as source. */
         edges?: Record<string, string[]>;
       },
     ): Promise<Item> => {
@@ -375,53 +369,6 @@ export class MymeClient {
     );
     return res.results;
   }
-
-  // ---- Threads ----
-
-  readonly threads = {
-    create: async (): Promise<Thread> => {
-      const res = await this.transport.request<{ thread: Thread }>(
-        "POST",
-        "/threads",
-      );
-      return res.thread;
-    },
-
-    list: async (filters?: {
-      limit?: number;
-      cursor?: string;
-    }): Promise<PaginatedResult<Thread>> => {
-      return this.transport.request<PaginatedResult<Thread>>(
-        "GET",
-        "/threads",
-        { query: filters },
-      );
-    },
-
-    get: async (id: string): Promise<{ thread: Thread; items: Item[] }> => {
-      return this.transport.request<{ thread: Thread; items: Item[] }>(
-        "GET",
-        `/threads/${id}`,
-      );
-    },
-
-    addItem: async (threadId: string, itemId: string): Promise<Item> => {
-      const res = await this.transport.request<{ item: Item }>(
-        "POST",
-        `/threads/${threadId}/items`,
-        { body: { item_id: itemId } },
-      );
-      return res.item;
-    },
-
-    removeItem: async (threadId: string, itemId: string): Promise<Item> => {
-      const res = await this.transport.request<{ item: Item }>(
-        "DELETE",
-        `/threads/${threadId}/items/${itemId}`,
-      );
-      return res.item;
-    },
-  };
 
   // ---- Edges ----
 
