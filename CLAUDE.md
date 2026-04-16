@@ -96,7 +96,6 @@ Two local-validation paths exist, in increasing thoroughness:
 
 Both invoke `test:pg`, which boots a throw-away `postgres:17` container on port `55432` and runs the server suite against it. Requires Docker (OrbStack / Docker Desktop / compatible daemon); the script fails loudly with an actionable message if the daemon isn't reachable.
 
-
 ## Error handling
 
 The base error class is `MymeError` (in `@mymehq/shared`). All structured errors use this class with an `ErrorCode` enum and corresponding HTTP status.
