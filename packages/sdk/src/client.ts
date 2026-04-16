@@ -72,11 +72,6 @@ export interface ListFilters {
   type?: string;
   state?: ItemState;
   source?: string;
-  /** Filter to items whose parent-of source is this id. Kept as a
-   *  server-side convenience alias for an `edge[parent-of]` existence
-   *  check. */
-  parent_id?: string;
-  root_only?: boolean;
   /** When set, restricts the result to library items (true) or ambient
    * items (false). Per V0 spec, the default unrestricted view returns
    * library items only on a fresh /items query — the explicit filter
@@ -84,6 +79,9 @@ export interface ListFilters {
    * the library slice. */
   library?: boolean;
   tags?: string[];
+  /** Filter-language expression, e.g. `edge[parent-of] eq "<id>"` or
+   *  `edge[parent-of] not_exists`. The filter language replaces the
+   *  previously-exposed `parent_id` and `root_only` convenience params. */
   filter?: string;
   sort?: "created_at" | "updated_at" | "timestamp";
   direction?: "asc" | "desc";

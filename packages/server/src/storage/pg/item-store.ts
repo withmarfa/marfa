@@ -201,20 +201,6 @@ export class PgItemStore implements ItemStore {
       conditions.push(eq(items.tenant_id, filters.tenantId));
     if (filters.source) conditions.push(eq(items.source, filters.source));
 
-    // parent_id / root_only filters query the edges table (parent relationships
-    // are expressed as parent-of edges).
-    if (filters.parent_id) {
-      conditions.push(
-        sql`EXISTS (SELECT 1 FROM edges e WHERE e.target_id = ${items.id} AND e.edge_type = 'parent-of' AND e.source_id = ${filters.parent_id})`,
-      );
-    }
-
-    if (filters.root_only) {
-      conditions.push(
-        sql`NOT EXISTS (SELECT 1 FROM edges e WHERE e.target_id = ${items.id} AND e.edge_type = 'parent-of')`,
-      );
-    }
-
     if (filters.library !== undefined) {
       conditions.push(eq(items.library, filters.library));
     }

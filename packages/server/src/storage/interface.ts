@@ -34,8 +34,6 @@ export interface ItemFilters {
   type?: string;
   state?: ItemState;
   source?: string;
-  parent_id?: string;
-  root_only?: boolean;
   /** Restrict to library items (true) or ambient items (false). */
   library?: boolean;
   tags?: string[];
