@@ -6,6 +6,7 @@ import type {
   Version,
   ApiKey,
   CreateKeyInput,
+  UpdateKeyInput,
   Webhook,
   WebhookDelivery,
   CreateWebhookInput,
@@ -200,9 +201,11 @@ export interface KeyStore {
     tenantId?: string,
   ): Promise<ApiKey>;
   list(): Promise<ApiKey[]>;
+  get(id: string): Promise<ApiKey | null>;
   validate(
     keyHash: string,
   ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;
+  update(id: string, input: UpdateKeyInput): Promise<ApiKey>;
   revoke(id: string): Promise<void>;
   updateLastUsed(id: string): Promise<void>;
   count(): Promise<number>;

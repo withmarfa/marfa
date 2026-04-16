@@ -188,6 +188,20 @@ export interface CreateKeyInput {
   edge_permissions?: Record<string, EdgePermission>;
 }
 
+/**
+ * Input for in-place updating an API key (PATCH). All fields optional;
+ * `source` and `role` are intentionally omitted — they are immutable after
+ * creation (source is baked into item provenance, role is security-critical).
+ */
+export interface UpdateKeyInput {
+  label?: string;
+  default_origin?: Origin;
+  default_library?: boolean;
+  type_permissions?: Record<string, TypePermission>;
+  extension_permissions?: Record<string, ExtensionPermission>;
+  edge_permissions?: Record<string, EdgePermission>;
+}
+
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
