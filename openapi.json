@@ -434,14 +434,6 @@
           },
           {
             "schema": {
-              "type": "string"
-            },
-            "required": false,
-            "name": "parent_id",
-            "in": "query"
-          },
-          {
-            "schema": {
               "type": "string",
               "enum": [
                 "true",
@@ -467,18 +459,6 @@
             },
             "required": false,
             "name": "filter",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "enum": [
-                "true",
-                "false"
-              ]
-            },
-            "required": false,
-            "name": "root_only",
             "in": "query"
           },
           {

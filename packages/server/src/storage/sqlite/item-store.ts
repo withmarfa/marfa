@@ -203,21 +203,6 @@ export class SqliteItemStore implements ItemStore {
 
     if (filters.source) conditions.push(eq(items.source, filters.source));
 
-    // parent_id / root_only filters query the edges table (parent relationships
-    // are expressed as parent-of edges).
-    if (filters.parent_id) {
-      conditions.push(
-        sql`EXISTS (SELECT 1 FROM edges e WHERE e.target_id = ${items.id} AND e.edge_type = 'parent-of' AND e.source_id = ${filters.parent_id})`,
-      );
-    }
-
-    // root_only: items not on the target side of any parent-of edge.
-    if (filters.root_only) {
-      conditions.push(
-        sql`NOT EXISTS (SELECT 1 FROM edges e WHERE e.target_id = ${items.id} AND e.edge_type = 'parent-of')`,
-      );
-    }
-
     if (filters.library !== undefined) {
       // better-sqlite3 cannot bind a JS boolean directly. The library column
       // is INTEGER under the hood (Drizzle boolean()); coerce to 0/1 here so
