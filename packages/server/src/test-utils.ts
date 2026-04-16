@@ -72,6 +72,10 @@ export async function createTestContext(): Promise<TestContext> {
     versionDailySnapshotDays: 90,
     versionWeeklySnapshotDays: 365,
     versionMaxVersions: 500,
+    trashRetentionDays: 60,
+    trashPurgeIntervalMs: 3_600_000,
+    ambientRetentionDays: 0,
+    ambientExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
   });
 

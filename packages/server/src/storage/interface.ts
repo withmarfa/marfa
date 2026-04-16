@@ -113,6 +113,17 @@ export interface ItemStore {
     tenantId?: string,
     allowedTypes?: string[],
   ): Promise<Record<string, number>>;
+  /** Hard-delete every trashed item whose `updated_at` is strictly older
+   *  than `beforeDate` (an ISO 8601 timestamp). Cleans the search index
+   *  for each row. Returns the number of rows deleted. */
+  purgeTrashedOlderThan(beforeDate: string, tenantId?: string): Promise<number>;
+  /** Hard-delete every ambient (`library: false`) item whose `updated_at`
+   *  is strictly older than `beforeDate`, regardless of state. Cleans the
+   *  search index for each row. Returns the number of rows deleted. */
+  expireAmbientOlderThan(
+    beforeDate: string,
+    tenantId?: string,
+  ): Promise<number>;
 }
 
 export interface MetadataStore {

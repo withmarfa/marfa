@@ -24,6 +24,14 @@ export interface AppConfig {
   versionDailySnapshotDays: number;
   versionWeeklySnapshotDays: number;
   versionMaxVersions: number;
+  /** Days a trashed item survives before it's hard-deleted by the trash
+   *  purger. `0` disables the job. Default: 60. */
+  trashRetentionDays: number;
+  trashPurgeIntervalMs: number;
+  /** Days an ambient (`library: false`) item survives before it's hard-
+   *  deleted, regardless of state. `0` disables the job (the default). */
+  ambientRetentionDays: number;
+  ambientExpiryIntervalMs: number;
   errorWebhookUrl: string;
 }
 
@@ -79,6 +87,18 @@ export function loadConfig(): AppConfig {
     versionWeeklySnapshotDays:
       Number(process.env.VERSION_WEEKLY_SNAPSHOT_DAYS) || 365,
     versionMaxVersions: Number(process.env.VERSION_MAX_VERSIONS) || 500,
+    trashRetentionDays:
+      process.env.TRASH_RETENTION_DAYS !== undefined
+        ? Number(process.env.TRASH_RETENTION_DAYS)
+        : 60,
+    trashPurgeIntervalMs:
+      Number(process.env.TRASH_PURGE_INTERVAL_MS) || 86_400_000,
+    ambientRetentionDays:
+      process.env.AMBIENT_RETENTION_DAYS !== undefined
+        ? Number(process.env.AMBIENT_RETENTION_DAYS)
+        : 0,
+    ambientExpiryIntervalMs:
+      Number(process.env.AMBIENT_EXPIRY_INTERVAL_MS) || 86_400_000,
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
   };
 }
