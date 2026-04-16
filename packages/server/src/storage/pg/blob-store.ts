@@ -44,15 +44,19 @@ export class PgBlobStore implements BlobStore {
   }
 
   async count(): Promise<{ count: number; total_size: number }> {
+    // count(*)::int returns a JS number; blob count safely fits in int.
+    // sum(size) must stay ::bigint (aggregate bytes can exceed INT_MAX), and
+    // node-postgres serializes bigint as a string — reflect that in the sql<>
+    // annotation and coerce on the way out.
     const [row] = await this.db
       .select({
-        count: sql<number>`count(*)::bigint`,
-        total_size: sql<number>`coalesce(sum(${blobs.size}), 0)::bigint`,
+        count: sql<number>`count(*)::int`,
+        total_size: sql<string>`coalesce(sum(${blobs.size}), 0)::bigint`,
       })
       .from(blobs);
     return {
       count: row?.count ?? 0,
-      total_size: row?.total_size ?? 0,
+      total_size: Number(row?.total_size ?? 0),
     };
   }
 }

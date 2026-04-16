@@ -623,10 +623,14 @@ export class PgItemStore implements ItemStore {
       conditions.push(inArray(items.type, allowedTypes));
     }
 
+    // Use ::int (matches sibling counters in version-store, webhook-store,
+    // type-store). ::bigint is serialized as a string by node-postgres, which
+    // breaks the numeric reduce in the /metrics route; ::int is returned as
+    // a JS number. Per-state item counts safely fit in int.
     const rows = await this.db
       .select({
         state: items.state,
-        count: sql<number>`count(*)::bigint`,
+        count: sql<number>`count(*)::int`,
       })
       .from(items)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
