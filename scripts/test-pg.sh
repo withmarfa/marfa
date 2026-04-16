@@ -17,11 +17,10 @@ PG_PASSWORD="myme"
 PG_DB="myme_test"
 
 if ! docker info >/dev/null 2>&1; then
-  echo "✗ Docker is not running. Start Docker Desktop / OrbStack / your daemon." >&2
-  echo "  test:pg boots a throw-away Postgres 17 container to mirror CI's" >&2
-  echo "  Postgres job. There is no SQLite fallback in this script — that's" >&2
-  echo "  test:fresh-sqlite." >&2
-  exit 1
+  echo "⊘ Docker is not running — skipping test:pg." >&2
+  echo "  Postgres-dialect tests still run in GitHub Actions on every PR." >&2
+  echo "  To run them locally, start OrbStack / Docker Desktop and retry." >&2
+  exit 0
 fi
 
 cleanup() {
