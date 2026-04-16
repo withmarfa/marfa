@@ -11,9 +11,8 @@ import type { TypePermission } from "./types.js";
  *   - edge scope:       "edge.parent-of:write" or "edge.*:write"
  *                       → kind="edge", edgeType="parent-of" or "*"
  *
- * The per-edge-type scope family was added in Wave 2 PR 4 commit 15 to
- * surface fine-grained edge permissions through OAuth. Mirrors the
- * `<type>:<verb>` shape used for item types.
+ * Per-edge-type scopes surface fine-grained edge permissions through OAuth,
+ * mirroring the `<type>:<verb>` shape used for item-type scopes.
  */
 export interface ParsedScope {
   typePattern: string;
@@ -153,7 +152,7 @@ export function scopeCovers(
 }
 
 // ---------------------------------------------------------------------------
-// Edge-scope helpers (Wave 2 PR 4 commit 15)
+// Edge-scope helpers
 // ---------------------------------------------------------------------------
 
 /** Projects edge-typed scopes into the edge_permissions map stored on keys. */

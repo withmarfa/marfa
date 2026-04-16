@@ -82,9 +82,9 @@ export interface ItemWithMetadata {
   metadata: Metadata;
 }
 
-/** Metadata sidecar — tags and namespaced extensions. About/entity
- *  references moved to first-class edges in Wave 2 PR 4 (core edge type
- *  `about`). Read via `item.edges.about` or `/items/:id/edges?edge_type=about`. */
+/** Metadata sidecar — tags and namespaced extensions. About / entity
+ *  references are carried as first-class `about` edges; read via
+ *  `item.edges.about` or `/items/:id/edges?edge_type=about`. */
 export interface Metadata {
   item_id: string;
   tags: string[];
@@ -147,7 +147,7 @@ export interface ItemEdgesBlock {
   next_cursor?: string;
 }
 
-/** Per-edge-type permission levels (V0 PR 4 fine-grained permissions). */
+/** Per-edge-type permission levels. */
 export type EdgePermission = "read" | "write";
 
 /** An API key record (without the key value itself). */

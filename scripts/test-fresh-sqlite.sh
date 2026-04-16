@@ -2,9 +2,8 @@
 # Wipe vitest + test-DB caches, then run the server test suite against SQLite.
 #
 # Catches the fresh-DB bootstrap class of regression — when SCHEMA_SQL in
-# connection.ts is missing a column (like pg's metadata.extensions in PR #7,
-# commit e087d99), persistent test state from prior runs can mask the bug.
-# This script makes every run start from a clean slate.
+# connection.ts is missing a column, persistent test state from prior runs
+# can mask the bug. This script makes every run start from a clean slate.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

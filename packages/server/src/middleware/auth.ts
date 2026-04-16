@@ -83,8 +83,9 @@ export function authMiddleware(storage: Storage, salt: string) {
       }
 
       // Build a synthetic ApiKey from the OAuth token's scopes.
-      // V0 credential-default fields are synthesised; OAuth parity is a
-      // Wave 1 follow-up (see monorepo work doc open questions).
+      // Credential-default fields (source, default_origin, default_library)
+      // are synthesised here; full parity with stored API keys remains
+      // outstanding.
       const typePermissions = scopesToTypePermissions(oauthToken.scopes);
       const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
       c.set("apiKey", {

@@ -898,7 +898,6 @@ export function itemRoutes(storage: Storage) {
             metadata: metadataMap.get(item.id) ?? {
               item_id: item.id,
               tags: [],
-              about: [],
               extensions: {},
             },
           })),

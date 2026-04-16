@@ -56,7 +56,7 @@ describe("POST /items", () => {
     expect(res.status).toBe(401);
   });
 
-  it("stores tags in metadata (about moved to edges in PR 4)", async () => {
+  it("stores tags in metadata (entity references live on edges)", async () => {
     const target = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: { type: "core.note", properties: { body: "target" } },

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Boot a throw-away Postgres 17 container, run the server test suite against
-# it, tear down. Mirrors the CI-Postgres job's env so dialect bugs (like the
-# boolean coercion in PR #7, commit a29ad6b, or the PG-only SCHEMA_SQL gap in
-# e087d99) surface locally before push.
+# it, tear down. Mirrors the CI-Postgres job's env so dialect-specific bugs
+# (boolean coercion differences, PG-only SCHEMA_SQL gaps, etc.) surface
+# locally before push.
 #
 # Container: postgres:17, same creds as the CI workflow.
 # Port: 55432 (deliberately non-standard to avoid collision with any local pg).

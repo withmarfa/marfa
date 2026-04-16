@@ -133,7 +133,7 @@ export class SqliteItemStore implements ItemStore {
         timestamp: input.timestamp ?? now,
         version: 1,
         schema_version: schemaVersion,
-        source: input.source ?? "<unknown>",
+        source: input.source ?? "unknown",
         ...(input.source_id != null && { source_id: input.source_id }),
         origin: input.origin ?? "user",
         ...(input.device != null && { device: input.device }),
