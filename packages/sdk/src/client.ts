@@ -72,11 +72,9 @@ export interface ListFilters {
   type?: string;
   state?: ItemState;
   source?: string;
-  /** When set, restricts the result to library items (true) or ambient
-   * items (false). Per V0 spec, the default unrestricted view returns
-   * library items only on a fresh /items query — the explicit filter
-   * here lets callers opt into the ambient slice or be explicit about
-   * the library slice. */
+  /** Tri-value library filter. `true` restricts to library items; `false`
+   * restricts to ambient items; omitting the field returns both (the V0
+   * default). */
   library?: boolean;
   tags?: string[];
   /** Filter-language expression, e.g. `edge[parent-of] eq "<id>"` or
@@ -94,6 +92,8 @@ export interface ListFilters {
 export interface SearchFilters {
   type?: string;
   state?: ItemState;
+  /** Tri-value library filter, matching `ListFilters.library`. */
+  library?: boolean;
   filter?: string;
   limit?: number;
 }

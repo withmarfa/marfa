@@ -733,6 +733,105 @@ describe("query language: library system field", () => {
   });
 });
 
+describe("library default and tri-value filter on GET /items", () => {
+  let libraryId: string;
+  let ambientId: string;
+
+  beforeAll(async () => {
+    const libRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "library marker for default test" },
+        library: true,
+      },
+    });
+    const libBody = (await libRes.json()) as { item: { id: string } };
+    libraryId = libBody.item.id;
+
+    const ambRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "ambient marker for default test" },
+        library: false,
+      },
+    });
+    const ambBody = (await ambRes.json()) as { item: { id: string } };
+    ambientId = ambBody.item.id;
+  });
+
+  it("returns both library and ambient items when no library param is supplied", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/items?type=core.note&limit=200",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { id: string; library: boolean }[];
+    };
+    const ids = new Set(body.data.map((item) => item.id));
+    expect(ids.has(libraryId)).toBe(true);
+    expect(ids.has(ambientId)).toBe(true);
+  });
+
+  it("returns library items only when ?library=true", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/items?type=core.note&library=true&limit=200",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { id: string; library: boolean }[];
+    };
+    const ids = new Set(body.data.map((item) => item.id));
+    expect(ids.has(libraryId)).toBe(true);
+    expect(ids.has(ambientId)).toBe(false);
+    for (const item of body.data) {
+      expect(item.library).toBe(true);
+    }
+  });
+
+  it("returns ambient items only when ?library=false", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/items?type=core.note&library=false&limit=200",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { id: string; library: boolean }[];
+    };
+    const ids = new Set(body.data.map((item) => item.id));
+    expect(ids.has(libraryId)).toBe(false);
+    expect(ids.has(ambientId)).toBe(true);
+    for (const item of body.data) {
+      expect(item.library).toBe(false);
+    }
+  });
+
+  it("treats ?library=all as a synonym for unfiltered", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/items?type=core.note&library=all&limit=200",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { id: string; library: boolean }[];
+    };
+    const ids = new Set(body.data.map((item) => item.id));
+    expect(ids.has(libraryId)).toBe(true);
+    expect(ids.has(ambientId)).toBe(true);
+  });
+});
+
 describe("metadata.changed pubsub event", () => {
   it("fires from POST /items/:id/tags and surfaces with the V0 wire name", async () => {
     const { subscribe } = await import("../pubsub.js");

@@ -51,6 +51,9 @@ export interface SearchFilters {
   tenantId?: string;
   type?: string;
   state?: ItemState;
+  /** Tri-value library filter, matching `/items`. `true` = library only,
+   *  `false` = ambient only, `undefined` = no filter (default). */
+  library?: boolean;
   filter?: string;
   allowed_types?: string[];
   limit?: number;

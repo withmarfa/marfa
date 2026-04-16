@@ -68,7 +68,7 @@ export class PgSearchStore implements SearchStore {
     const limit = Math.min(filters.limit ?? 20, 100);
     const offset = filters.offset ?? 0;
     const conditions: string[] = [];
-    const params: (string | number)[] = [];
+    const params: (string | number | boolean)[] = [];
     let paramIdx = 1;
 
     // The tsquery parameter — build prefix-aware query
@@ -106,6 +106,11 @@ export class PgSearchStore implements SearchStore {
     if (filters.type) {
       params.push(filters.type);
       conditions.push(`AND i.type = $${String(paramIdx++)}`);
+    }
+
+    if (filters.library !== undefined) {
+      params.push(filters.library);
+      conditions.push(`AND i.library = $${String(paramIdx++)}`);
     }
 
     // Type permission filtering
@@ -146,7 +151,7 @@ export class PgSearchStore implements SearchStore {
       SELECT
         i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.origin, i.version,
-        i.schema_version, i.device,
+        i.schema_version, i.device, i.library,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions,
         ts_rank(${tsvec}, ${tsqueryExpr}) AS rank,
