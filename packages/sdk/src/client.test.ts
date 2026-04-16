@@ -506,10 +506,10 @@ describe("error handling", () => {
 });
 
 // ---------------------------------------------------------------------------
-// V0 Wave 2 PR 2 SDK additions: library filter, purge, tenants, full keys.create
+// Extended SDK surface: library filter, purge, tenants, full keys.create.
 // ---------------------------------------------------------------------------
 
-describe("Wave 2 SDK additions", () => {
+describe("Extended SDK surface", () => {
   it("items.list filters by library", async () => {
     const created = await client.items.create({
       type: "core.note",

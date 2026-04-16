@@ -2,7 +2,7 @@
  * Standalone migration runner for Drizzle Kit migrations.
  *
  * Migration 0010 drops the legacy relationship columns (`items.parent_id`,
- * `items.thread_id`, `metadata.about`) that PR 4's edges model replaces.
+ * `items.thread_id`, `metadata.about`) that the typed-edges model replaces.
  * The app-layer backfill needs to read those columns, so we snapshot them
  * BEFORE running migrations and feed the snapshot into the post-migration
  * backfill. Once 0010 has applied on a DB, the snapshot returns empty and

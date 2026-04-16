@@ -51,8 +51,8 @@ export const ItemSchema = z.object({
   edges: z.record(z.string(), ItemEdgesBlockSchema).optional(),
 });
 
-// MetadataSchema no longer includes `about` — Wave 2 PR 4 dropped the
-// column and moved entity references to first-class `about` edges.
+// MetadataSchema does not include `about` — entity references are carried
+// as first-class `about` edges.
 export const MetadataSchema = z.object({
   item_id: z.string(),
   tags: z.array(z.string()),

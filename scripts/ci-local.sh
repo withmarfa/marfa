@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Clean-install + all CI gates + both dialects. The "before opening a PR"
 # check. Takes a few minutes but mirrors what CI will do on push, minimising
-# the surprise-class of regression PR #7 surfaced (pre-install cached state
-# masking real failures).
+# the class of regression where pre-install cached state masks real failures.
 #
 # Pre-push hook runs the faster subset (no clean install); this script is
 # the explicit pre-PR gate.

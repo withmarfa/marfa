@@ -8,7 +8,7 @@ import type { Edge, EdgeTypeSchema } from "@mymehq/shared";
 import type { EdgeStore, ItemStore } from "./interface.js";
 
 /**
- * Enforces edge-creation invariants documented in the PR 4 plan:
+ * Enforces edge-creation invariants:
  *
  * 1. Edge type exists (core or custom registry).
  * 2. Source and target items exist and belong to the same tenant.

@@ -38,7 +38,7 @@ export enum ErrorCode {
    */
   INHERITANCE_VIOLATION = "inheritance_violation",
   // ---------------------------------------------------------------------
-  // Edges (Wave 2 PR 4)
+  // Edge error codes
   // ---------------------------------------------------------------------
   /** Edge creation / update violated cardinality or type constraints. */
   EDGE_CONSTRAINT_VIOLATION = "edge_constraint_violation",
@@ -130,8 +130,3 @@ export class MymeError extends Error {
     return response;
   }
 }
-
-/** @deprecated Use MymeError instead. */
-export const ProtocolError = MymeError;
-/** @deprecated Use MymeError instead. */
-export type ProtocolError = MymeError;

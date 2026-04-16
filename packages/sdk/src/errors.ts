@@ -1,5 +1,19 @@
 import type { ConflictSnapshot } from "@mymehq/shared";
 
+/**
+ * Base error thrown from every SDK HTTP failure path. Consumers catch on
+ * this class or one of its typed subclasses (`NotFoundError`,
+ * `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).
+ *
+ * Deliberately distinct from the `MymeError` in `@mymehq/shared`. The
+ * shared version is constructed server-side from an `ErrorCode` enum and
+ * derives its HTTP status through an internal map; this SDK version is
+ * constructed from an error response on the wire, so `code` is an opaque
+ * string (forward-compatible with server codes the SDK hasn't been
+ * regenerated against yet) and `status` is the HTTP status the server
+ * actually returned. The two classes serve symmetrical but distinct
+ * roles; do not try to unify them.
+ */
 export class MymeError extends Error {
   readonly code: string;
   readonly status: number;

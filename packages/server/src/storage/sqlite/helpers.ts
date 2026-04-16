@@ -27,7 +27,7 @@ export function rowToItem(row: ItemRow): Item {
     updated_at: row.updated_at,
     timestamp: row.timestamp,
     version: row.version,
-    source: row.source ?? "<unknown>",
+    source: row.source ?? "unknown",
     ...(row.source_id != null && { source_id: row.source_id }),
     origin: (row.origin as Origin | null) ?? "user",
     schema_version: row.schema_version ?? 1,
