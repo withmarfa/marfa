@@ -99,13 +99,16 @@ export async function createPgStorage(
     async _pgTruncate(): Promise<void> {
       await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, event_log, tenants, users CASCADE`;
     },
-    /** Raw query escape hatch — used by the edge-backfill script. */
-    __pgClient(query: string): Promise<unknown[]> {
-      return client.unsafe(query);
+    /** Raw query escape hatch — used by the edge-backfill script and
+     *  retention tests. Optional params for parameterised mutations. */
+    __pgClient(query: string, params?: unknown[]): Promise<unknown[]> {
+      return params
+        ? client.unsafe(query, params as (string | number | boolean)[])
+        : client.unsafe(query);
     },
   } satisfies Storage & {
     _pgTruncate(): Promise<void>;
-    __pgClient(query: string): Promise<unknown[]>;
+    __pgClient(query: string, params?: unknown[]): Promise<unknown[]>;
   };
 
   return storage;

@@ -499,6 +499,60 @@ export class PgItemStore implements ItemStore {
     await this.searchStore.remove(id);
   }
 
+  async purgeTrashedOlderThan(
+    beforeDate: string,
+    tenantId?: string,
+  ): Promise<number> {
+    const baseConditions = [
+      eq(items.state, "trashed"),
+      lt(items.updated_at, beforeDate),
+    ];
+    if (tenantId) {
+      baseConditions.push(eq(items.tenant_id, tenantId));
+    }
+    const where = and(...baseConditions);
+
+    const idRows = await this.db
+      .select({ id: items.id })
+      .from(items)
+      .where(where);
+    if (idRows.length === 0) return 0;
+
+    const ids = idRows.map((row) => row.id);
+    for (const id of ids) {
+      await this.searchStore.remove(id);
+    }
+    await this.db.delete(items).where(inArray(items.id, ids));
+    return ids.length;
+  }
+
+  async expireAmbientOlderThan(
+    beforeDate: string,
+    tenantId?: string,
+  ): Promise<number> {
+    const baseConditions = [
+      eq(items.library, false),
+      lt(items.updated_at, beforeDate),
+    ];
+    if (tenantId) {
+      baseConditions.push(eq(items.tenant_id, tenantId));
+    }
+    const where = and(...baseConditions);
+
+    const idRows = await this.db
+      .select({ id: items.id })
+      .from(items)
+      .where(where);
+    if (idRows.length === 0) return 0;
+
+    const ids = idRows.map((row) => row.id);
+    for (const id of ids) {
+      await this.searchStore.remove(id);
+    }
+    await this.db.delete(items).where(inArray(items.id, ids));
+    return ids.length;
+  }
+
   async restore(id: string, tenantId?: string): Promise<Item> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {

@@ -59,6 +59,10 @@ Server package (not needed for shared or SDK development):
 - `VERSION_WEEKLY_SNAPSHOT_DAYS` — weekly thinning window end in days (default: 365)
 - `VERSION_MAX_VERSIONS` — hard cap per item (default: 500)
 - `VERSION_THINNING_INTERVAL_MS` — thinning job interval in ms (default: 3600000)
+- `TRASH_RETENTION_DAYS` — days a trashed item survives before hard-delete (default: 60; `0` disables)
+- `TRASH_PURGE_INTERVAL_MS` — trash purge job interval in ms (default: 86400000)
+- `AMBIENT_RETENTION_DAYS` — days an ambient (`library: false`) item survives before hard-delete, regardless of state (default: 0 / disabled)
+- `AMBIENT_EXPIRY_INTERVAL_MS` — ambient expiry job interval in ms (default: 86400000)
 - `ERROR_WEBHOOK_URL` — webhook URL for 500 error notifications (optional, debounced)
 
 ## Database migrations

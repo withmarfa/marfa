@@ -24,7 +24,10 @@ export function createSqliteStorage(
     versionSnapshotIntervalMs?: number;
     authMode?: "hosted" | "keys";
   },
-): Storage & { __sqliteAll(query: string): unknown[] } {
+): Storage & {
+  __sqliteAll(query: string): unknown[];
+  __sqliteRun(query: string, params: unknown[]): { changes: number };
+} {
   const { db, raw, close } = createConnection(sqlitePath);
 
   const versionStore = new SqliteVersionStore(db);
@@ -86,6 +89,12 @@ export function createSqliteStorage(
     /** Raw query escape hatch — used by the edge-backfill script. */
     __sqliteAll(query: string): unknown[] {
       return raw.prepare(query).all();
+    },
+    /** Parameterised raw mutation escape hatch — used by retention tests
+     *  that need to plant non-default `updated_at` values. */
+    __sqliteRun(query: string, params: unknown[]): { changes: number } {
+      const result = raw.prepare(query).run(...params) as { changes: number };
+      return { changes: result.changes };
     },
     close() {
       close();

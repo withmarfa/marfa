@@ -1,6 +1,18 @@
 import { shouldCreateVersion } from "../version-gating.js";
 import { safeJsonParse } from "../json-utils.js";
-import { eq, ne, and, or, lt, gt, desc, asc, like, sql } from "drizzle-orm";
+import {
+  eq,
+  ne,
+  and,
+  or,
+  lt,
+  gt,
+  desc,
+  asc,
+  like,
+  sql,
+  inArray,
+} from "drizzle-orm";
 import {
   generateId,
   isValidId,
@@ -486,6 +498,60 @@ export class SqliteItemStore implements ItemStore {
     this.db.delete(items).where(this.tenantWhere(id, tenantId)).run();
 
     this.searchStore.removeSync(id);
+  }
+
+  async purgeTrashedOlderThan(
+    beforeDate: string,
+    tenantId?: string,
+  ): Promise<number> {
+    const baseConditions = [
+      eq(items.state, "trashed"),
+      lt(items.updated_at, beforeDate),
+    ];
+    if (tenantId) {
+      baseConditions.push(eq(items.tenant_id, tenantId));
+    }
+    const where = and(...baseConditions);
+
+    const idRows = await this.db
+      .select({ id: items.id })
+      .from(items)
+      .where(where);
+    if (idRows.length === 0) return 0;
+
+    const ids = idRows.map((row) => row.id);
+    for (const id of ids) {
+      this.searchStore.removeSync(id);
+    }
+    this.db.delete(items).where(inArray(items.id, ids)).run();
+    return ids.length;
+  }
+
+  async expireAmbientOlderThan(
+    beforeDate: string,
+    tenantId?: string,
+  ): Promise<number> {
+    const baseConditions = [
+      sql`${items.library} = 0`,
+      lt(items.updated_at, beforeDate),
+    ];
+    if (tenantId) {
+      baseConditions.push(eq(items.tenant_id, tenantId));
+    }
+    const where = and(...baseConditions);
+
+    const idRows = await this.db
+      .select({ id: items.id })
+      .from(items)
+      .where(where);
+    if (idRows.length === 0) return 0;
+
+    const ids = idRows.map((row) => row.id);
+    for (const id of ids) {
+      this.searchStore.removeSync(id);
+    }
+    this.db.delete(items).where(inArray(items.id, ids)).run();
+    return ids.length;
   }
 
   async restore(id: string, tenantId?: string): Promise<Item> {

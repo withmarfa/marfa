@@ -40,6 +40,10 @@ async function main(): Promise<void> {
     versionDailySnapshotDays: 90,
     versionWeeklySnapshotDays: 365,
     versionMaxVersions: 500,
+    trashRetentionDays: 60,
+    trashPurgeIntervalMs: 86_400_000,
+    ambientRetentionDays: 0,
+    ambientExpiryIntervalMs: 86_400_000,
     errorWebhookUrl: "",
   });
   const raw = "myme_k1_bench";
