@@ -33,6 +33,7 @@ export type {
   Version,
   ApiKey,
   CreateKeyInput,
+  UpdateKeyInput,
   PaginatedResult,
   SearchResult,
   ConflictSnapshot,

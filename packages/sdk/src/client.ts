@@ -6,6 +6,7 @@ import type {
   Version,
   ApiKey,
   CreateKeyInput,
+  UpdateKeyInput,
   PaginatedResult,
   SearchResult,
   ItemState,
@@ -591,6 +592,16 @@ export class MymeClient {
         "/keys",
       );
       return res.keys;
+    },
+
+    /** Update mutable fields on an existing key (PATCH semantics —
+     * omitted fields are left untouched). `source` and `role` are
+     * immutable after creation and cannot be changed; the server rejects
+     * them with a 400. */
+    update: async (id: string, input: UpdateKeyInput): Promise<ApiKey> => {
+      return this.transport.request<ApiKey>("PATCH", `/keys/${id}`, {
+        body: input,
+      });
     },
 
     revoke: async (id: string): Promise<void> => {

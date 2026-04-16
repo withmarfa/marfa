@@ -163,6 +163,81 @@ const revokeKeyRoute = createRoute({
   },
 });
 
+// Passthrough — immutable fields (source, role) are rejected explicitly in the
+// handler with a readable error instead of a generic "unrecognized keys".
+const UpdateKeyBodySchema = z.object({
+  label: z.string().min(1).optional(),
+  default_origin: z.enum(["user", "ai", "worker"]).optional(),
+  default_library: z.boolean().optional(),
+  type_permissions: z
+    .record(z.string(), z.enum(["read", "write", "none"]))
+    .optional(),
+  extension_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+  edge_permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
+  source: z.unknown().optional(),
+  role: z.unknown().optional(),
+});
+
+const KeyDetailSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  source: z.string(),
+  role: z.enum(["admin", "member"]),
+  default_origin: z.enum(["user", "ai", "worker"]),
+  default_library: z.boolean(),
+  type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
+  extension_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+  edge_permissions: EdgePermissionsSchema,
+  created_at: z.string(),
+  last_used_at: z.string().nullable(),
+});
+
+const updateKeyRoute = createRoute({
+  method: "patch",
+  path: "/{id}",
+  tags: ["Keys"],
+  summary: "Update an API key in place",
+  description:
+    "Updates mutable fields on an API key. `source` and `role` are immutable after creation and rejected with 400 if present. Admin only.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({ id: z.string() }),
+    body: {
+      content: {
+        "application/json": {
+          schema: UpdateKeyBodySchema,
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: KeyDetailSchema } },
+      description: "Key updated",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Invalid update (e.g. attempt to mutate an immutable field)",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Admin only",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Key not found",
+    },
+  },
+});
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -247,6 +322,70 @@ export function keyRoutes(storage: Storage, salt: string) {
     });
 
     return c.json({ ok: true as const }, 200);
+  });
+
+  router.openapi(updateKeyRoute, async (c) => {
+    requireAdmin(c);
+    const { id } = c.req.valid("param");
+    const body = c.req.valid("json");
+
+    if (!isValidId(id)) {
+      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
+    }
+
+    if ("source" in body) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "`source` is immutable after creation — it is baked into item provenance. Revoke and issue a new key instead.",
+      );
+    }
+    if ("role" in body) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "`role` is immutable after creation for security reasons. Revoke and issue a new key instead.",
+      );
+    }
+
+    const existing = await storage.keys.get(id);
+    if (!existing) {
+      throw new MymeError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
+    }
+
+    const updated = await storage.keys.update(id, {
+      label: body.label,
+      default_origin: body.default_origin,
+      default_library: body.default_library,
+      type_permissions: body.type_permissions,
+      extension_permissions: body.extension_permissions,
+      edge_permissions: body.edge_permissions,
+    });
+
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "key.update",
+      resource_type: "key",
+      resource_id: id,
+      details: {
+        fields: Object.keys(body).filter((k) => k !== "source" && k !== "role"),
+      },
+    });
+
+    return c.json(
+      {
+        id: updated.id,
+        label: updated.label,
+        source: updated.source,
+        role: updated.role,
+        default_origin: updated.default_origin,
+        default_library: updated.default_library,
+        type_permissions: updated.type_permissions,
+        extension_permissions: updated.extension_permissions,
+        edge_permissions: updated.edge_permissions,
+        created_at: updated.created_at,
+        last_used_at: updated.last_used_at,
+      },
+      200,
+    );
   });
 
   return router;

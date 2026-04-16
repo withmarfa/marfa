@@ -4,6 +4,7 @@ import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
 import type {
   ApiKey,
   CreateKeyInput,
+  UpdateKeyInput,
   EdgePermission,
   ExtensionPermission,
   Origin,
@@ -108,6 +109,54 @@ export class PgKeyStore implements KeyStore {
       .from(apiKeys)
       .where(isNull(apiKeys.revoked_at));
     return rows.map(mapRow);
+  }
+
+  async get(id: string): Promise<ApiKey | null> {
+    const [row] = await this.db
+      .select()
+      .from(apiKeys)
+      .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)));
+    return row ? mapRow(row) : null;
+  }
+
+  async update(id: string, input: UpdateKeyInput): Promise<ApiKey> {
+    const [existing] = await this.db
+      .select()
+      .from(apiKeys)
+      .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)));
+    if (!existing) {
+      throw new MymeError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
+    }
+
+    const patch: Partial<typeof apiKeys.$inferInsert> = {};
+    if (input.label !== undefined) patch.label = input.label;
+    if (input.default_origin !== undefined)
+      patch.default_origin = input.default_origin;
+    if (input.default_library !== undefined)
+      patch.default_library = input.default_library;
+    if (input.type_permissions !== undefined)
+      patch.type_permissions = JSON.stringify(input.type_permissions);
+    if (input.extension_permissions !== undefined)
+      patch.extension_permissions = JSON.stringify(input.extension_permissions);
+    if (input.edge_permissions !== undefined)
+      patch.edge_permissions = JSON.stringify(input.edge_permissions);
+
+    if (Object.keys(patch).length > 0) {
+      await this.db.update(apiKeys).set(patch).where(eq(apiKeys.id, id));
+    }
+
+    const [refreshed] = await this.db
+      .select()
+      .from(apiKeys)
+      .where(eq(apiKeys.id, id));
+    if (!refreshed) {
+      // Shouldn't happen — existence was confirmed above. Defensive.
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        `Key ${id} disappeared mid-update`,
+      );
+    }
+    return mapRow(refreshed);
   }
 
   async validate(

@@ -4,6 +4,7 @@ import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
 import type {
   ApiKey,
   CreateKeyInput,
+  UpdateKeyInput,
   EdgePermission,
   ExtensionPermission,
   Origin,
@@ -110,6 +111,57 @@ export class SqliteKeyStore implements KeyStore {
       .where(isNull(apiKeys.revoked_at))
       .all();
     return Promise.resolve(rows.map(mapRow));
+  }
+
+  get(id: string): Promise<ApiKey | null> {
+    const row = this.db
+      .select()
+      .from(apiKeys)
+      .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
+      .get();
+    return Promise.resolve(row ? mapRow(row) : null);
+  }
+
+  update(id: string, input: UpdateKeyInput): Promise<ApiKey> {
+    const existing = this.db
+      .select()
+      .from(apiKeys)
+      .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
+      .get();
+    if (!existing) {
+      throw new MymeError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
+    }
+
+    const patch: Partial<typeof apiKeys.$inferInsert> = {};
+    if (input.label !== undefined) patch.label = input.label;
+    if (input.default_origin !== undefined)
+      patch.default_origin = input.default_origin;
+    if (input.default_library !== undefined)
+      patch.default_library = input.default_library;
+    if (input.type_permissions !== undefined)
+      patch.type_permissions = JSON.stringify(input.type_permissions);
+    if (input.extension_permissions !== undefined)
+      patch.extension_permissions = JSON.stringify(input.extension_permissions);
+    if (input.edge_permissions !== undefined)
+      patch.edge_permissions = JSON.stringify(input.edge_permissions);
+
+    if (Object.keys(patch).length > 0) {
+      this.db.update(apiKeys).set(patch).where(eq(apiKeys.id, id)).run();
+    }
+
+    const refreshed = this.db
+      .select()
+      .from(apiKeys)
+      .where(eq(apiKeys.id, id))
+      .get();
+    if (!refreshed) {
+      // Shouldn't happen — existence was confirmed above. Defensive.
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        `Key ${id} disappeared mid-update`,
+      );
+    }
+    return Promise.resolve(mapRow(refreshed));
   }
 
   validate(

@@ -491,6 +491,49 @@ describe("keys", () => {
     });
     await expect(revokedClient.items.list()).rejects.toThrow(UnauthorizedError);
   });
+
+  it("updates a key in place via PATCH", async () => {
+    const { id, source } = await client.keys.create({
+      label: "update-me",
+      source: "update-me-source",
+      role: "member",
+      default_origin: "user",
+      default_library: false,
+      type_permissions: { "core.note": "read" },
+    });
+
+    const updated = await client.keys.update(id, {
+      label: "renamed",
+      default_library: true,
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { "*": "read" },
+    });
+
+    expect(updated.id).toBe(id);
+    // source stays put — it's immutable
+    expect(updated.source).toBe(source);
+    expect(updated.label).toBe("renamed");
+    expect(updated.default_library).toBe(true);
+    expect(updated.type_permissions).toEqual({ "core.note": "write" });
+    expect(updated.edge_permissions).toEqual({ "*": "read" });
+  });
+
+  it("rejects attempts to mutate immutable fields via update", async () => {
+    const { id } = await client.keys.create({
+      label: "immut-check",
+      source: "immut-check-source",
+      role: "member",
+    });
+
+    // `source` and `role` are intentionally omitted from UpdateKeyInput. The
+    // double-cast routes around that to prove the server also rejects them
+    // at the wire level — defense in depth.
+    await expect(
+      client.keys.update(id, {
+        source: "renamed-source",
+      } as unknown as Parameters<typeof client.keys.update>[1]),
+    ).rejects.toThrow(ValidationError);
+  });
 });
 
 // ---------------------------------------------------------------------------
