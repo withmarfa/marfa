@@ -85,7 +85,7 @@ beforeAll(async () => {
     body: JSON.stringify({
       label: "test-admin",
       source: "sdk-test-admin",
-      default_library: true,
+      default_library: false,
     }),
   });
   const { key } = (await bootstrapRes.json()) as { key: string };

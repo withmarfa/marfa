@@ -85,11 +85,10 @@ export async function createTestContext(): Promise<TestContext> {
       source: `test-admin-${suffix}`,
       role: "admin",
       type_permissions: {},
-      // V0 library-only default: list reads without `?library=all` or
-      // `?library=false` filter to library items. Tests create items
-      // without specifying library explicitly; the test admin stamps
-      // default_library=true so pre-edges-era assertions still find them.
-      default_library: true,
+      // V0 default: items created without an explicit `library` flag are
+      // ambient (`library: false`). The test admin matches that — tests
+      // that need library items pass `library: true` on create.
+      default_library: false,
     },
     keyHash,
   );

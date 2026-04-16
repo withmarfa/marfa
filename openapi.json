@@ -6520,6 +6520,19 @@
           },
           {
             "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "all"
+              ]
+            },
+            "required": false,
+            "name": "library",
+            "in": "query"
+          },
+          {
+            "schema": {
               "type": "integer",
               "minimum": 1,
               "maximum": 100,
