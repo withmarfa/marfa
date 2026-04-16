@@ -3,8 +3,7 @@
 #
 # Skips the clean install (that's the explicit `pnpm ci-local`) so the hook
 # stays fast enough not to become the thing everyone --no-verifies past.
-# Enforces the dual-dialect check that PR #7 showed local "pnpm test" alone
-# cannot provide.
+# Enforces the dual-dialect check that local "pnpm test" alone cannot provide.
 #
 # Skippable: git push --no-verify. Do not ship that as the default flow.
 set -euo pipefail
