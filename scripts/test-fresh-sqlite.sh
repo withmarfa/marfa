@@ -26,9 +26,9 @@ rm -f \
   packages/server/data/*-test.db-wal
 
 echo "→ Running server tests (SQLite)"
-# The root `pnpm test` uses vitest projects (packages/*, !packages/electric)
-# which is how CI runs the suite. Running scoped to the server package fails
-# config resolution when the root vitest.config.ts owns the projects list.
+# The root `pnpm test` uses vitest projects (packages/*) which is how CI
+# runs the suite. Running scoped to the server package fails config
+# resolution when the root vitest.config.ts owns the projects list.
 pnpm test
 
 echo "✓ test:fresh-sqlite passed"

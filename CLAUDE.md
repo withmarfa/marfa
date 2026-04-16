@@ -7,8 +7,6 @@ Typed data layer. This monorepo contains four active workspace packages:
 - **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published)
 - **@mymehq/sdk** — TypeScript HTTP client for consuming the Myme API
 
-A fifth package, **@mymehq/electric** (an Electric SQL sync client experiment), lives at `packages/electric/` but is **parked** — excluded from the workspace and all CI gates. See `packages/electric/README.md` for revival notes.
-
 `@mymehq/shared` and `@mymehq/sdk` publish to npm under the `@mymehq` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes.
 
 ## Tech stack

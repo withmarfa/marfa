@@ -47,6 +47,3 @@ jobs:
         run: |
           pnpm pack
           npm publish mymehq-sdk-*.tgz --access=public
-
-      # @mymehq/electric is parked (see packages/electric/README.md);
-      # excluded from publish until/unless it's revived.

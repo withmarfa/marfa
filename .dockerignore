@@ -8,7 +8,6 @@ data/
 *.db-wal
 *.db-shm
 packages/sdk
-packages/electric
 .claude/
 .github/
 .playwright-cli/

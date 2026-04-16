@@ -1,6 +1,2 @@
 packages:
   - "packages/*"
-  # @mymehq/electric is parked — code stays on disk for future revival but
-  # is excluded from CI build / typecheck / lint / test. See
-  # packages/electric/README.md for the rationale.
-  - "!packages/electric"
