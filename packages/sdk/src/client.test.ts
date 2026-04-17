@@ -77,6 +77,7 @@ beforeAll(async () => {
     ambientRetentionDays: 0,
     ambientExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
+    trustedProxyCidrs: [],
   });
 
   testFetchFn = createTestFetch(app);
