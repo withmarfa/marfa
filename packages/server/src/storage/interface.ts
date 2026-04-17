@@ -55,6 +55,8 @@ export interface SearchFilters {
   /** Tri-value library filter, matching `/items`. `true` = library only,
    *  `false` = ambient only, `undefined` = no filter (default). */
   library?: boolean;
+  /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */
+  tags?: string[];
   filter?: string;
   allowed_types?: string[];
   limit?: number;
@@ -134,6 +136,16 @@ export interface MetadataStore {
   merge(itemId: string, tags?: string[]): Promise<Metadata>;
   addTags(itemId: string, tags: string[]): Promise<Metadata>;
   removeTag(itemId: string, tag: string): Promise<Metadata>;
+  /**
+   * Enumerate the distinct set of tags in use across items visible to the
+   * caller. Tenant-scoped; type-permission scoped when `allowedTypes` is
+   * provided (same pattern as `ItemStore.list`). Trashed items are excluded.
+   * Returns tags with their usage counts, sorted by count descending.
+   */
+  listTags(filters: {
+    tenantId?: string;
+    allowedTypes?: string[];
+  }): Promise<{ tag: string; count: number }[]>;
   getExtensions(
     itemId: string,
   ): Promise<Record<string, Record<string, unknown>>>;
@@ -468,6 +480,16 @@ export interface EdgeStore {
   listToTarget(
     targetId: string,
     filters?: EdgeListFilters,
+  ): Promise<PaginatedResult<Edge>>;
+  /**
+   * Global list of edges across the whole tenant. Used by clients that need
+   * "every edge of type X" (thread-root counting, taxonomy traversal, etc.)
+   * — replaces the N+1 walk-every-item pattern. Tenant-scoped; trashed-item
+   *  filtering is the caller's responsibility (edges to trashed items are
+   *  still real edges from a graph perspective).
+   */
+  list(
+    filters?: EdgeListFilters & { tenantId?: string },
   ): Promise<PaginatedResult<Edge>>;
   updateProperties(
     id: string,

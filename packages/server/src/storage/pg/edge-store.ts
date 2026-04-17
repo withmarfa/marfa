@@ -100,6 +100,43 @@ export class PgEdgeStore implements EdgeStore {
     return this.listByKey(edges.target_id, targetId, filters);
   }
 
+  async list(
+    filters?: EdgeListFilters & { tenantId?: string },
+  ): Promise<PaginatedResult<Edge>> {
+    const limit = clampLimit(filters?.limit);
+    const conditions = [];
+    if (filters?.tenantId) {
+      conditions.push(eq(edges.tenant_id, filters.tenantId));
+    }
+    const typed = typeFilter(filters?.edge_type);
+    if (typed) conditions.push(typed);
+
+    if (filters?.cursor) {
+      const { v, id } = decodeCursor(filters.cursor);
+      const cursorCondition = or(
+        lt(edges.created_at, v),
+        and(eq(edges.created_at, v), lt(edges.id, id)),
+      );
+      if (cursorCondition) conditions.push(cursorCondition);
+    }
+
+    const rows = await this.db
+      .select()
+      .from(edges)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(edges.created_at), desc(edges.id))
+      .limit(limit + 1);
+
+    const hasMore = rows.length > limit;
+    const slice = rows.slice(0, limit);
+    let cursor: string | null = null;
+    if (hasMore) {
+      const last = slice.at(-1);
+      if (last) cursor = encodeCursor(last.created_at, last.id);
+    }
+    return { data: slice.map(rowToEdge), cursor, has_more: hasMore };
+  }
+
   async updateProperties(
     id: string,
     properties: Record<string, unknown>,

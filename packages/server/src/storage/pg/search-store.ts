@@ -113,6 +113,15 @@ export class PgSearchStore implements SearchStore {
       conditions.push(`AND i.library = $${String(paramIdx++)}`);
     }
 
+    // Tags filter — items must have ALL specified tags. Mirrors the
+    // jsonb-containment pattern from /items.
+    if (filters.tags && filters.tags.length > 0) {
+      for (const tag of filters.tags) {
+        params.push(JSON.stringify([tag]));
+        conditions.push(`AND m.tags::jsonb @> $${String(paramIdx++)}::jsonb`);
+      }
+    }
+
     // Type permission filtering
     if (filters.allowed_types) {
       const typeClauses = filters.allowed_types.map((pattern) => {

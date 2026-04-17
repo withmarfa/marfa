@@ -11,6 +11,53 @@ export class SqliteMetadataStore implements MetadataStore {
     private raw: RawDb,
   ) {}
 
+  /**
+   * Aggregate distinct tags across items the caller can read. Uses
+   * `json_each` to unnest the tags JSON arrays; tenant + type-permission
+   * filtering applied via a join to `items`. Excludes trashed items.
+   */
+  listTags(filters: {
+    tenantId?: string;
+    allowedTypes?: string[];
+  }): Promise<{ tag: string; count: number }[]> {
+    const conditions: string[] = ["i.state != 'trashed'"];
+    const params: unknown[] = [];
+    if (filters.tenantId) {
+      conditions.push("i.tenant_id = ?");
+      params.push(filters.tenantId);
+    }
+    if (filters.allowedTypes && filters.allowedTypes.length > 0) {
+      const includesStar = filters.allowedTypes.includes("*");
+      if (!includesStar) {
+        const typeClauses = filters.allowedTypes.map((pattern) => {
+          if (pattern.endsWith(".*")) {
+            params.push(pattern.slice(0, -1) + "%");
+            return "i.type LIKE ?";
+          }
+          params.push(pattern);
+          return "i.type = ?";
+        });
+        if (typeClauses.length > 0) {
+          conditions.push(`(${typeClauses.join(" OR ")})`);
+        }
+      }
+    }
+    const where = conditions.join(" AND ");
+    const sqlText = `
+      SELECT je.value AS tag, COUNT(*) AS count
+      FROM metadata m
+      JOIN items i ON i.id = m.item_id, json_each(m.tags) je
+      WHERE ${where}
+      GROUP BY je.value
+      ORDER BY count DESC, tag ASC
+    `;
+    const rows = this.raw.prepare(sqlText).all(...params) as {
+      tag: string;
+      count: number;
+    }[];
+    return Promise.resolve(rows);
+  }
+
   getMany(itemIds: string[]): Promise<Metadata[]> {
     if (itemIds.length === 0) return Promise.resolve([]);
     const rows = this.db

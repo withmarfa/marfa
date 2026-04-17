@@ -289,6 +289,103 @@ describe("PATCH /items/:id", () => {
     });
     expect(res.status).toBe(409);
   });
+
+  it("flips library: false → true on PATCH", async () => {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "ambient" },
+        library: false,
+      },
+    });
+    const created = (await createRes.json()) as {
+      item: { id: string; library: boolean };
+    };
+    expect(created.item.library).toBe(false);
+
+    const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+      body: { library: true },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { item: { library: boolean } };
+    expect(data.item.library).toBe(true);
+  });
+
+  it("flips library: true → false on PATCH", async () => {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "library" },
+        library: true,
+      },
+    });
+    const created = (await createRes.json()) as { item: { id: string } };
+    const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+      body: { library: false },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { item: { library: boolean } };
+    expect(data.item.library).toBe(false);
+  });
+
+  it("library-only PATCH (no properties) succeeds and bumps version", async () => {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "x" }, library: false },
+    });
+    const created = (await createRes.json()) as {
+      item: { id: string; version: number };
+    };
+    const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+      body: { library: true },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      item: { library: boolean; version: number };
+    };
+    expect(data.item.library).toBe(true);
+    expect(data.item.version).toBe(created.item.version + 1);
+  });
+
+  it("PATCH with library + properties applies both", async () => {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "before" },
+        library: false,
+      },
+    });
+    const created = (await createRes.json()) as { item: { id: string } };
+    const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { body: "after" }, library: true },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      item: { library: boolean; properties: Record<string, unknown> };
+    };
+    expect(data.item.library).toBe(true);
+    expect(data.item.properties.body).toBe("after");
+  });
+
+  it("PATCH with no body fields returns 400", async () => {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "x" } },
+    });
+    const created = (await createRes.json()) as { item: { id: string } };
+    const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+      body: {},
+    });
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("DELETE /items/:id", () => {

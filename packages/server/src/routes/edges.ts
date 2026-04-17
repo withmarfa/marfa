@@ -65,6 +65,40 @@ function parseEdgeTypeFilter(
 // Routes
 // ---------------------------------------------------------------------------
 
+const listEdgesRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Edges"],
+  summary: "List all edges across the tenant, filtered by edge type",
+  security: [{ bearerAuth: [] }],
+  request: {
+    query: z.object({
+      edge_type: z
+        .string()
+        .optional()
+        .describe(
+          "Comma-separated edge types. Up to 10 entries. Omit to list every edge.",
+        ),
+      limit: z.coerce.number().int().min(1).max(500).optional(),
+      cursor: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: EdgeListSchema } },
+      description: "Edges, paginated",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error (e.g. too many edge types in filter)",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+  },
+});
+
 const createEdgeRoute = createRoute({
   method: "post",
   path: "/",
@@ -169,6 +203,19 @@ const deleteEdgeRoute = createRoute({
 
 export function edgeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
+
+  router.openapi(listEdgesRoute, async (c) => {
+    requireAuth(c);
+    const tenantId = c.get("apiKey")?.tenant_id;
+    const q = c.req.valid("query");
+    const result = await storage.edges.list({
+      tenantId,
+      edge_type: parseEdgeTypeFilter(q.edge_type),
+      limit: q.limit,
+      cursor: q.cursor,
+    });
+    return c.json(result, 200);
+  });
 
   router.openapi(createEdgeRoute, async (c) => {
     requireAuth(c);

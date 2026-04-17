@@ -140,6 +140,17 @@ export class SqliteSearchStore implements SearchStore {
       params.push(filters.library ? 1 : 0);
     }
 
+    // Tags filter — items must have ALL specified tags. Uses the same
+    // json_each pattern as /items.
+    if (filters.tags && filters.tags.length > 0) {
+      for (const tag of filters.tags) {
+        conditions.push(
+          "AND EXISTS (SELECT 1 FROM json_each(m.tags) je WHERE je.value = ?)",
+        );
+        params.push(tag);
+      }
+    }
+
     // Type permission filtering
     if (filters.allowed_types) {
       const typeClauses = filters.allowed_types.map((pattern) => {

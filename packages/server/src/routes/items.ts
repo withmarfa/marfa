@@ -246,6 +246,9 @@ const updateItemRoute = createRoute({
             properties: z.record(z.string(), z.unknown()).optional(),
             version: z.number().int().min(0).optional(),
             snapshot: z.boolean().optional(),
+            /** Toggle library / ambient state. Independent of the
+             *  properties merge path — last-writer-wins. */
+            library: z.boolean().optional(),
             // Replace-all-for-specified-types semantics: any edge_type
             // listed wipes existing outbound edges of that type from
             // this item, then creates new edges to each listed target.
@@ -947,11 +950,12 @@ export function itemRoutes(storage: Storage) {
       body.edges !== undefined &&
       typeof body.edges === "object" &&
       Object.keys(body.edges).length > 0;
+    const hasLibrary = body.library !== undefined;
 
-    if (!hasProperties && !hasEdges) {
+    if (!hasProperties && !hasEdges && !hasLibrary) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of `properties` or `edges` is required. Relationship changes flow through the `edges` payload or direct /edges endpoints.",
+        "At least one of `properties`, `edges`, or `library` is required.",
       );
     }
     if (body.version !== undefined) {
@@ -1067,18 +1071,20 @@ export function itemRoutes(storage: Storage) {
     }
 
     const txResult = await storage.runInTransaction(async () => {
-      const updated = hasProperties
-        ? await storage.items.update(
-            id,
-            {
-              properties: body.properties,
-              version: body.version,
-              snapshot: body.snapshot === true ? true : undefined,
-            },
-            tid,
-          )
-        : item;
-      if (hasProperties && "error" in updated) {
+      const updated =
+        hasProperties || hasLibrary
+          ? await storage.items.update(
+              id,
+              {
+                properties: body.properties,
+                version: body.version,
+                snapshot: body.snapshot === true ? true : undefined,
+                library: hasLibrary ? body.library : undefined,
+              },
+              tid,
+            )
+          : item;
+      if ((hasProperties || hasLibrary) && "error" in updated) {
         return updated;
       }
 

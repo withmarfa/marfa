@@ -74,6 +74,10 @@ export interface UpdateItemInput {
   properties?: Record<string, unknown>;
   version?: number;
   snapshot?: boolean;
+  /** Toggle library / ambient state. Independent of the version-merge path
+   *  for `properties`; flipping `library` doesn't conflict (it's a single
+   *  metadata-axis flag, last-writer-wins by design). */
+  library?: boolean;
 }
 
 /** An item paired with its metadata sidecar. */
