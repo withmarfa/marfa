@@ -137,3 +137,73 @@ describe("GET /search library filter", () => {
     expect(libraryFlags.has(false)).toBe(true);
   });
 });
+
+describe("GET /search?tags=", () => {
+  const corpus = `tagged-corpus-${String(Math.random()).slice(2, 8)}`;
+
+  beforeAll(async () => {
+    // Three notes with overlapping tags.
+    const make = async (tags: string[]) => {
+      const itemRes = await request(ctx.app, "POST", "/items", {
+        key: ctx.adminKey,
+        body: {
+          type: "core.note",
+          properties: { body: corpus },
+          tags,
+        },
+      });
+      return ((await itemRes.json()) as { item: { id: string } }).item.id;
+    };
+    await make(["red", "small"]);
+    await make(["red", "large"]);
+    await make(["blue", "small"]);
+  });
+
+  it("filters search results to items with a single tag", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/search?q=${corpus}&tags=red&limit=100`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      results: { metadata: { tags: string[] } }[];
+    };
+    expect(data.results.length).toBeGreaterThan(0);
+    for (const result of data.results) {
+      expect(result.metadata.tags).toContain("red");
+    }
+  });
+
+  it("requires ALL tags when multiple are supplied (AND semantics)", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/search?q=${corpus}&tags=red,small&limit=100`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      results: { metadata: { tags: string[] } }[];
+    };
+    for (const result of data.results) {
+      expect(result.metadata.tags).toContain("red");
+      expect(result.metadata.tags).toContain("small");
+    }
+    // Only the red+small note should match; not red+large or blue+small.
+    expect(data.results.length).toBe(1);
+  });
+
+  it("returns empty when no items have the requested tag", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/search?q=${corpus}&tags=nonexistent&limit=100`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { results: unknown[] };
+    expect(data.results).toHaveLength(0);
+  });
+});

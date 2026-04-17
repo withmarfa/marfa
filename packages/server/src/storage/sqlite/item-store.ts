@@ -388,11 +388,13 @@ export class SqliteItemStore implements ItemStore {
           ? { ...currentProps, ...input.properties }
           : currentProps;
         const newVersion = row.version + 1;
+        const newLibrary = input.library ?? row.library;
 
         const setClause: Record<string, unknown> = {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
+          ...(input.library !== undefined && { library: input.library }),
         };
 
         this.db.update(items).set(setClause).where(whereClause).run();
@@ -405,6 +407,7 @@ export class SqliteItemStore implements ItemStore {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
+          library: newLibrary,
         });
       }
 
@@ -448,11 +451,13 @@ export class SqliteItemStore implements ItemStore {
         this.versionStore.createSync(id, row.version, currentProps, deviceId);
       }
       const newVersion = row.version + 1;
+      const newLibrary = input.library ?? row.library;
 
       const mergeSet: Record<string, unknown> = {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
+        ...(input.library !== undefined && { library: input.library }),
       };
 
       this.db.update(items).set(mergeSet).where(whereClause).run();
@@ -465,6 +470,7 @@ export class SqliteItemStore implements ItemStore {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
+        library: newLibrary,
       });
     });
 

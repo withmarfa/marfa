@@ -372,11 +372,13 @@ export class PgItemStore implements ItemStore {
           ? { ...currentProps, ...input.properties }
           : currentProps;
         const newVersion = row.version + 1;
+        const newLibrary = input.library ?? row.library;
 
         const setClause: Record<string, unknown> = {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
+          ...(input.library !== undefined && { library: input.library }),
         };
 
         await tx
@@ -392,6 +394,7 @@ export class PgItemStore implements ItemStore {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
+          library: newLibrary,
         });
       }
 
@@ -448,11 +451,13 @@ export class PgItemStore implements ItemStore {
         );
       }
       const newVersion = row.version + 1;
+      const newLibrary = input.library ?? row.library;
 
       const mergeSet: Record<string, unknown> = {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
+        ...(input.library !== undefined && { library: input.library }),
       };
 
       await tx
@@ -468,6 +473,7 @@ export class PgItemStore implements ItemStore {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
+        library: newLibrary,
       });
     });
   }

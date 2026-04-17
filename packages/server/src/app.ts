@@ -12,6 +12,7 @@ import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
 import { edgeTypeRoutes } from "./routes/edge-types.js";
 import { typeRoutes } from "./routes/types.js";
 import { searchRoutes } from "./routes/search.js";
+import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
 import { keyRoutes } from "./routes/keys.js";
 import { importRoutes, exportRoutes } from "./routes/import-export.js";
@@ -128,6 +129,7 @@ export function createApp(
   app.route("/edges", edgeTypeRoutes(storage));
   app.route("/types", typeRoutes(storage));
   app.route("/search", searchRoutes(storage));
+  app.route("/metadata", metadataRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/tenants", tenantRoutes(storage));

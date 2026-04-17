@@ -45,6 +45,8 @@ const searchRoute = createRoute({
       type: z.string().optional(),
       state: z.enum(ITEM_STATES as unknown as [string, ...string[]]).optional(),
       library: z.enum(["true", "false", "all"]).optional(),
+      /** Comma-separated tag list. Items must have ALL specified tags. */
+      tags: z.string().optional(),
       limit: z.coerce.number().int().min(1).max(100).optional().default(20),
       offset: z.coerce.number().int().min(0).max(10000).optional().default(0),
       filter: z.string().optional(),
@@ -74,7 +76,7 @@ export function searchRoutes(storage: Storage) {
   router.openapi(searchRoute, async (c) => {
     requireAuth(c);
 
-    const { q, type, state, library, limit, offset, filter } =
+    const { q, type, state, library, tags, limit, offset, filter } =
       c.req.valid("query");
 
     // Business logic validation beyond Zod
@@ -94,11 +96,19 @@ export function searchRoutes(storage: Storage) {
     const libraryFilter: boolean | undefined =
       library === "true" ? true : library === "false" ? false : undefined;
 
+    const tagsFilter = tags
+      ? tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0)
+      : undefined;
+
     const results = await storage.search.search(q.trim(), {
       tenantId: c.get("apiKey")?.tenant_id,
       type,
       state: state as ItemState | undefined,
       library: libraryFilter,
+      tags: tagsFilter,
       filter,
       allowed_types,
       limit,

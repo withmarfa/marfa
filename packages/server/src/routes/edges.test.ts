@@ -874,3 +874,125 @@ describe("Cascade-on-delete for parent-of", () => {
     }
   });
 });
+
+describe("GET /edges", () => {
+  it("rejects unauthenticated", async () => {
+    const res = await request(ctx.app, "GET", "/edges");
+    expect(res.status).toBe(401);
+  });
+
+  it("lists edges of a given type across the tenant", async () => {
+    const tag = `globlist-${String(Math.random()).slice(2, 8)}`;
+    const root = await createItem();
+    const a = await createItem();
+    const b = await createItem();
+    // Two parent-of edges off `root`. The `tag` is just a property to
+    // identify the edges in this run.
+    for (const target of [a, b]) {
+      await request(ctx.app, "POST", "/edges", {
+        key: ctx.adminKey,
+        body: {
+          source_id: root,
+          target_id: target,
+          edge_type: "parent-of",
+          properties: { tag },
+        },
+      });
+    }
+    // Also create a different-typed edge that should not match the filter.
+    const other = await createItem();
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        source_id: root,
+        target_id: other,
+        edge_type: "supersedes",
+        properties: { tag },
+      },
+    });
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/edges?edge_type=parent-of&limit=500",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      data: { edge_type: string; properties: Record<string, unknown> }[];
+      cursor: string | null;
+      has_more: boolean;
+    };
+    const matching = data.data.filter(
+      (e) => (e.properties as { tag?: string }).tag === tag,
+    );
+    expect(matching).toHaveLength(2);
+    for (const edge of matching) {
+      expect(edge.edge_type).toBe("parent-of");
+    }
+  });
+
+  it("rejects edge_type with too many entries", async () => {
+    const tooMany = Array.from({ length: 11 }, (_, i) => `t${String(i)}`).join(
+      ",",
+    );
+    const res = await request(ctx.app, "GET", `/edges?edge_type=${tooMany}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("paginates with cursor", async () => {
+    // Create more than a small page worth of edges with a unique type so
+    // pagination can be reasoned about deterministically.
+    const edgeType = "parent-of";
+    const root = await createItem();
+    const tagged: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const child = await createItem();
+      const tag = `pag-${String(i)}-${String(Math.random()).slice(2, 6)}`;
+      tagged.push(tag);
+      await request(ctx.app, "POST", "/edges", {
+        key: ctx.adminKey,
+        body: {
+          source_id: root,
+          target_id: child,
+          edge_type: edgeType,
+          properties: { tag },
+        },
+      });
+    }
+    const first = await request(
+      ctx.app,
+      "GET",
+      `/edges?edge_type=${edgeType}&limit=2`,
+      { key: ctx.adminKey },
+    );
+    const firstData = (await first.json()) as {
+      data: { properties: Record<string, unknown> }[];
+      cursor: string | null;
+      has_more: boolean;
+    };
+    expect(firstData.data.length).toBe(2);
+    expect(firstData.has_more).toBe(true);
+    expect(firstData.cursor).toBeTruthy();
+
+    const second = await request(
+      ctx.app,
+      "GET",
+      `/edges?edge_type=${edgeType}&limit=2&cursor=${encodeURIComponent(firstData.cursor ?? "")}`,
+      { key: ctx.adminKey },
+    );
+    const secondData = (await second.json()) as {
+      data: { properties: Record<string, unknown> }[];
+    };
+    expect(secondData.data.length).toBe(2);
+    // The two pages should not overlap.
+    const firstTags = new Set(
+      firstData.data.map((e) => (e.properties as { tag?: string }).tag),
+    );
+    for (const e of secondData.data) {
+      expect(firstTags.has((e.properties as { tag?: string }).tag)).toBe(false);
+    }
+  });
+});

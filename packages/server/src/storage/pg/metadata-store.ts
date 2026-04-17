@@ -1,12 +1,68 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { Metadata } from "@mymehq/shared";
 import type { MetadataStore } from "../interface.js";
-import { metadata } from "./schema.js";
+import { items, metadata } from "./schema.js";
 import type { PgDb } from "./connection.js";
 import { rowToMetadata } from "./helpers.js";
 
 export class PgMetadataStore implements MetadataStore {
   constructor(private db: PgDb) {}
+
+  /**
+   * Aggregate distinct tags across items the caller can read.
+   * Joins metadata to items to apply tenant + type-permission filtering;
+   * excludes trashed items so the picker doesn't surface dead tags.
+   */
+  async listTags(filters: {
+    tenantId?: string;
+    allowedTypes?: string[];
+  }): Promise<{ tag: string; count: number }[]> {
+    const tenantClause = filters.tenantId
+      ? sql`AND i.tenant_id = ${filters.tenantId}`
+      : sql``;
+
+    let typesClause = sql``;
+    if (filters.allowedTypes && filters.allowedTypes.length > 0) {
+      const typed = filters.allowedTypes.filter((p) => p !== "*");
+      if (typed.length === 0) {
+        // includes "*" — no restriction
+        typesClause = sql``;
+      } else {
+        const exact = typed.filter((p) => !p.endsWith(".*"));
+        const wildcards = typed
+          .filter((p) => p.endsWith(".*"))
+          .map((p) => p.slice(0, -1) + "%");
+        const parts: ReturnType<typeof sql>[] = [];
+        if (exact.length > 0) parts.push(sql`i.type IN ${exact}`);
+        for (const w of wildcards) parts.push(sql`i.type LIKE ${w}`);
+        if (filters.allowedTypes.includes("*")) {
+          // "*" always matches — leave no restriction
+        } else if (parts.length > 0) {
+          const joined = parts.reduce(
+            (acc, part, idx) => (idx === 0 ? part : sql`${acc} OR ${part}`),
+            sql``,
+          );
+          typesClause = sql`AND (${joined})`;
+        }
+      }
+    }
+
+    const result = await this.db.execute(sql`
+      SELECT tag, COUNT(*)::int AS count
+      FROM (
+        SELECT jsonb_array_elements_text(m.tags::jsonb) AS tag
+        FROM metadata m
+        JOIN items i ON i.id = m.item_id
+        WHERE i.state != 'trashed'
+          ${tenantClause}
+          ${typesClause}
+      ) sub
+      GROUP BY tag
+      ORDER BY count DESC, tag ASC
+    `);
+    void items;
+    return result as unknown as { tag: string; count: number }[];
+  }
 
   async getMany(itemIds: string[]): Promise<Metadata[]> {
     if (itemIds.length === 0) return [];
