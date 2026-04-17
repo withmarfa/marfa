@@ -625,3 +625,77 @@ describe("Extended SDK surface", () => {
     expect(created.type_permissions).toEqual({ "*": "write" });
   });
 });
+
+describe("SDK round additions", () => {
+  it("metadata.listTags returns distinct tags with counts", async () => {
+    await client.items.create({
+      type: "core.note",
+      properties: { body: "with-tags-a" },
+      tags: ["alpha", "beta"],
+    });
+    await client.items.create({
+      type: "core.note",
+      properties: { body: "with-tags-b" },
+      tags: ["alpha"],
+    });
+    const tags = await client.metadata.listTags();
+    const lookup = new Map(tags.map((t) => [t.tag, t.count]));
+    expect(lookup.get("alpha") ?? 0).toBeGreaterThanOrEqual(2);
+    expect(lookup.get("beta") ?? 0).toBeGreaterThanOrEqual(1);
+  });
+
+  it("edges.list returns global tenant-scoped edges of a given type", async () => {
+    const root = await client.items.create({
+      type: "core.note",
+      properties: { body: "root" },
+    });
+    const child = await client.items.create({
+      type: "core.note",
+      properties: { body: "child" },
+    });
+    await client.edges.create({
+      source_id: root.id,
+      target_id: child.id,
+      edge_type: "parent-of",
+    });
+    const result = await client.edges.list({
+      edge_type: "parent-of",
+      limit: 500,
+    });
+    const matching = result.data.filter(
+      (e) => e.source_id === root.id && e.target_id === child.id,
+    );
+    expect(matching).toHaveLength(1);
+    expect(matching[0]?.edge_type).toBe("parent-of");
+  });
+
+  it("search supports tags filter (AND semantics)", async () => {
+    const corpusToken = `searchtags-${Math.random().toString(36).slice(2, 8)}`;
+    await client.items.create({
+      type: "core.note",
+      properties: { body: corpusToken },
+      tags: ["red", "small"],
+    });
+    await client.items.create({
+      type: "core.note",
+      properties: { body: corpusToken },
+      tags: ["red", "large"],
+    });
+    const results = await client.search(corpusToken, {
+      tags: ["red", "small"],
+      limit: 100,
+    });
+    expect(results.length).toBe(1);
+  });
+
+  it("items.update flips library via UpdateOptions", async () => {
+    const item = await client.items.create({
+      type: "core.note",
+      properties: { body: "lib-flip" },
+      library: false,
+    });
+    expect(item.library).toBe(false);
+    const updated = await client.items.update(item.id, {}, { library: true });
+    expect(updated.library).toBe(true);
+  });
+});

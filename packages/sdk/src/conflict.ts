@@ -70,6 +70,7 @@ export async function handleConflictUpdate(
   version: number,
   strategy: ConflictStrategy,
   resolver?: ConflictResolver,
+  library?: boolean,
 ): Promise<Item> {
   let properties = clientPatch;
   let currentVersion = version;
@@ -82,6 +83,7 @@ export async function handleConflictUpdate(
       body: {
         properties,
         version: currentVersion,
+        ...(library !== undefined && { library }),
       },
     });
 
