@@ -75,6 +75,7 @@ describe("bootstrap mode", () => {
       ambientRetentionDays: 0,
       ambientExpiryIntervalMs: 86_400_000,
       errorWebhookUrl: "",
+      trustedProxyCidrs: [],
     });
 
     const res = await request(app, "POST", "/keys", {

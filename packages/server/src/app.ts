@@ -106,7 +106,15 @@ export function createApp(
 
   // Rate limiting (before auth to protect all endpoints, default 1000 req/min)
   if (config.rateLimitEnabled) {
-    app.use("*", rateLimitMiddleware());
+    app.use(
+      "*",
+      rateLimitMiddleware({
+        defaultLimit: Number(process.env.RATE_LIMIT_REQUESTS) || 1000,
+        windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000,
+        pathLimits: { "/keys": 200, "/auth/token": 20 },
+        trustedProxyCidrs: config.trustedProxyCidrs,
+      }),
+    );
   }
 
   // Auth middleware

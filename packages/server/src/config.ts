@@ -1,3 +1,6 @@
+import { parseTrustedProxyCidrs } from "./middleware/client-ip.js";
+import type { CidrRange } from "./middleware/client-ip.js";
+
 export interface AppConfig {
   port: number;
   storageDialect: "sqlite" | "pg";
@@ -33,6 +36,9 @@ export interface AppConfig {
   ambientRetentionDays: number;
   ambientExpiryIntervalMs: number;
   errorWebhookUrl: string;
+  /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
+   *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
+  trustedProxyCidrs: CidrRange[];
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -100,5 +106,8 @@ export function loadConfig(): AppConfig {
     ambientExpiryIntervalMs:
       Number(process.env.AMBIENT_EXPIRY_INTERVAL_MS) || 86_400_000,
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
+    // Parse + validate at startup. Malformed CIDRs throw — we want bad
+    // config to surface immediately, not silently degrade.
+    trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),
   };
 }

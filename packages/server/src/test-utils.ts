@@ -77,6 +77,7 @@ export async function createTestContext(): Promise<TestContext> {
     ambientRetentionDays: 0,
     ambientExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
+    trustedProxyCidrs: [],
   });
 
   // Create a bootstrap admin key (unique per test context to avoid PG conflicts)

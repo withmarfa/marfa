@@ -45,6 +45,7 @@ async function main(): Promise<void> {
     ambientRetentionDays: 0,
     ambientExpiryIntervalMs: 86_400_000,
     errorWebhookUrl: "",
+    trustedProxyCidrs: [],
   });
   const raw = "myme_k1_bench";
   await storage.keys.create(
