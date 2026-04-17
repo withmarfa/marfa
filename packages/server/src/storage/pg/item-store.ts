@@ -246,7 +246,12 @@ export class PgItemStore implements ItemStore {
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const filterConds = filterToSqlConditions(expr, "pg", items);
+      const filterConds = filterToSqlConditions(
+        expr,
+        "pg",
+        items,
+        filters.tenantId,
+      );
       if (expr.logical === "OR") {
         const orClause = or(...filterConds);
         if (orClause) conditions.push(orClause);

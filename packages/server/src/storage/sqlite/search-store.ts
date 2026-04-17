@@ -163,6 +163,8 @@ export class SqliteSearchStore implements SearchStore {
         expr,
         "sqlite",
         "i",
+        1,
+        filters.tenantId,
       );
       conditions.push(`AND ${clause}`);
       params.push(...filterParams);

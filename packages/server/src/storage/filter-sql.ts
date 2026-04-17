@@ -81,6 +81,7 @@ function conditionToSql(
   condition: FilterCondition,
   dialect: SqlDialect,
   table: ItemsTableRef,
+  tenantId: string | undefined,
 ): SQL {
   const { field, op, value } = condition;
 
@@ -94,7 +95,14 @@ function conditionToSql(
   }
 
   if (field.kind === "edge") {
-    return edgeFieldSql(table.id, field.edge_type, field.direction, op, value);
+    return edgeFieldSql(
+      table.id,
+      field.edge_type,
+      field.direction,
+      op,
+      value,
+      tenantId,
+    );
   }
 
   // tags
@@ -105,6 +113,10 @@ function conditionToSql(
  * Edge-membership filter. Direction = "outbound" → item is the source of an
  * edge of the given type pointing to `value` (or any edge with exists op).
  * Direction = "backref" → item is the target of such an edge.
+ *
+ * `tenantId` (when provided) constrains the subquery to the caller's tenant —
+ * defense-in-depth alongside the outer query's `i.tenant_id = ?`. When
+ * undefined (admin / cross-tenant queries), no extra constraint is added.
  */
 function edgeFieldSql(
   idCol: unknown,
@@ -112,7 +124,14 @@ function edgeFieldSql(
   direction: "outbound" | "backref",
   op: ComparisonOp,
   value: unknown,
+  tenantId: string | undefined,
 ): SQL {
+  // Tenant scoping — only emit when a tenant is in scope. `sql.empty()` keeps
+  // the template stable when no tenant is set (prevents stray param binding).
+  const tenantClause = tenantId
+    ? sql` AND e.tenant_id = ${tenantId}`
+    : sql.empty();
+
   if (direction === "outbound") {
     switch (op) {
       case "eq":
@@ -120,24 +139,24 @@ function edgeFieldSql(
           SELECT 1 FROM edges e
           WHERE e.source_id = ${idCol}
             AND e.edge_type = ${edgeType}
-            AND e.target_id = ${value}
+            AND e.target_id = ${value}${tenantClause}
         )`;
       case "neq":
         return sql`NOT EXISTS (
           SELECT 1 FROM edges e
           WHERE e.source_id = ${idCol}
             AND e.edge_type = ${edgeType}
-            AND e.target_id = ${value}
+            AND e.target_id = ${value}${tenantClause}
         )`;
       case "exists":
         return sql`EXISTS (
           SELECT 1 FROM edges e
-          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}
+          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}${tenantClause}
         )`;
       case "not_exists":
         return sql`NOT EXISTS (
           SELECT 1 FROM edges e
-          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}
+          WHERE e.source_id = ${idCol} AND e.edge_type = ${edgeType}${tenantClause}
         )`;
       default:
         throw new Error(`Unsupported operator "${op}" for edge reference`);
@@ -150,24 +169,24 @@ function edgeFieldSql(
         SELECT 1 FROM edges e
         WHERE e.target_id = ${idCol}
           AND e.edge_type = ${edgeType}
-          AND e.source_id = ${value}
+          AND e.source_id = ${value}${tenantClause}
       )`;
     case "neq":
       return sql`NOT EXISTS (
         SELECT 1 FROM edges e
         WHERE e.target_id = ${idCol}
           AND e.edge_type = ${edgeType}
-          AND e.source_id = ${value}
+          AND e.source_id = ${value}${tenantClause}
       )`;
     case "exists":
       return sql`EXISTS (
         SELECT 1 FROM edges e
-        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}
+        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}${tenantClause}
       )`;
     case "not_exists":
       return sql`NOT EXISTS (
         SELECT 1 FROM edges e
-        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}
+        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}${tenantClause}
       )`;
     default:
       throw new Error(`Unsupported operator "${op}" for edge reference`);
@@ -326,13 +345,20 @@ function tagsFieldSql(
  * Convert a FilterExpression into Drizzle SQL conditions.
  * Returns an array of SQL conditions that should be composed with and()/or()
  * based on the expression's logical operator.
+ *
+ * `tenantId` (when provided) scopes edge subqueries to the caller's tenant —
+ * defense-in-depth alongside the outer query's tenant filter. Pass undefined
+ * for admin / cross-tenant queries.
  */
 export function filterToSqlConditions(
   expr: FilterExpression,
   dialect: SqlDialect,
   table: ItemsTableRef,
+  tenantId?: string,
 ): SQL[] {
-  return expr.conditions.map((c) => conditionToSql(c, dialect, table));
+  return expr.conditions.map((c) =>
+    conditionToSql(c, dialect, table, tenantId),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +371,7 @@ function conditionToRawSql(
   tableAlias: string,
   params: unknown[],
   paramIdx: number,
+  tenantId: string | undefined,
 ): { fragment: string; paramIdx: number } {
   const { field, op, value } = condition;
 
@@ -382,6 +409,7 @@ function conditionToRawSql(
       dialect,
       params,
       paramIdx,
+      tenantId,
     );
   }
 
@@ -398,6 +426,7 @@ function edgeFieldRawSql(
   dialect: SqlDialect,
   params: unknown[],
   idx: number,
+  tenantId: string | undefined,
 ): { fragment: string; paramIdx: number } {
   const idColumn = direction === "outbound" ? "e.source_id" : "e.target_id";
   const otherColumn = direction === "outbound" ? "e.target_id" : "e.source_id";
@@ -405,10 +434,18 @@ function edgeFieldRawSql(
   if (op === "exists" || op === "not_exists") {
     const typePh = placeholder(dialect, idx);
     params.push(edgeType);
+    let nextIdx = idx + 1;
+    let tenantFragment = "";
+    if (tenantId !== undefined) {
+      const tenantPh = placeholder(dialect, nextIdx);
+      params.push(tenantId);
+      tenantFragment = ` AND e.tenant_id = ${tenantPh}`;
+      nextIdx += 1;
+    }
     const prefix = op === "exists" ? "EXISTS" : "NOT EXISTS";
     return {
-      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh})`,
-      paramIdx: idx + 1,
+      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh}${tenantFragment})`,
+      paramIdx: nextIdx,
     };
   }
 
@@ -417,10 +454,18 @@ function edgeFieldRawSql(
     params.push(edgeType);
     const valPh = placeholder(dialect, idx + 1);
     params.push(value);
+    let nextIdx = idx + 2;
+    let tenantFragment = "";
+    if (tenantId !== undefined) {
+      const tenantPh = placeholder(dialect, nextIdx);
+      params.push(tenantId);
+      tenantFragment = ` AND e.tenant_id = ${tenantPh}`;
+      nextIdx += 1;
+    }
     const prefix = op === "eq" ? "EXISTS" : "NOT EXISTS";
     return {
-      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh} AND ${otherColumn} = ${valPh})`,
-      paramIdx: idx + 2,
+      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh} AND ${otherColumn} = ${valPh}${tenantFragment})`,
+      paramIdx: nextIdx,
     };
   }
 
@@ -646,6 +691,7 @@ function tagsFieldRawSql(
  * @param dialect - "sqlite" or "pg"
  * @param tableAlias - Table alias used in the query (e.g., "i")
  * @param startParamIdx - Starting parameter index (Postgres only, default 1)
+ * @param tenantId - Optional tenant scope for edge subqueries (defense-in-depth)
  * @returns The SQL clause, parameter values, and next parameter index
  */
 export function filterToRawSql(
@@ -653,6 +699,7 @@ export function filterToRawSql(
   dialect: SqlDialect,
   tableAlias: string,
   startParamIdx = 1,
+  tenantId?: string,
 ): RawSqlResult {
   const params: unknown[] = [];
   let paramIdx = startParamIdx;
@@ -665,6 +712,7 @@ export function filterToRawSql(
       tableAlias,
       params,
       paramIdx,
+      tenantId,
     );
     fragments.push(result.fragment);
     paramIdx = result.paramIdx;
