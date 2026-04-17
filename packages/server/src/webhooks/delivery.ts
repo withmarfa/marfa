@@ -29,6 +29,41 @@ function sign(payload: string, secret: string): string {
 /** Retry delays in milliseconds. */
 const RETRY_DELAYS = [1000, 5000, 25000];
 
+/** Maximum delay we'll honour from a Retry-After header. Prevents a
+ *  malicious or buggy receiver from pinning a worker indefinitely. */
+const RETRY_AFTER_CEILING_MS = 5 * 60 * 1000;
+
+/** 4xx status codes that mean "try again later" rather than "give up".
+ *  Everything else in the 4xx range is treated as a permanent client
+ *  error and dead-lettered. */
+const RETRYABLE_4XX = new Set([408, 429]);
+
+/** Parse a Retry-After header value. Supports both delta-seconds (RFC
+ *  9110 §10.2.3) and HTTP-date forms. Returns milliseconds, clamped to
+ *  RETRY_AFTER_CEILING_MS. Returns null on parse failure or zero/negative
+ *  values, signalling fall-through to the default backoff schedule.
+ *  Exported for testing. */
+export function parseRetryAfter(headerValue: string | null): number | null {
+  if (!headerValue) return null;
+  const trimmed = headerValue.trim();
+  if (!trimmed) return null;
+
+  // Delta-seconds form: integer number of seconds
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(Math.ceil(seconds * 1000), RETRY_AFTER_CEILING_MS);
+  }
+
+  // HTTP-date form
+  const dateMs = Date.parse(trimmed);
+  if (!isNaN(dateMs)) {
+    const delta = dateMs - Date.now();
+    if (delta > 0) return Math.min(delta, RETRY_AFTER_CEILING_MS);
+  }
+
+  return null;
+}
+
 export class WebhookConsumer {
   private running = false;
   private abortController: AbortController | null = null;
@@ -266,14 +301,28 @@ export class WebhookPoller {
         return;
       }
 
-      // 4xx: don't retry, mark as dead letter
-      if (response.status >= 400 && response.status < 500) {
+      // 4xx: dead-letter unless it's a "try again later" code (408, 429).
+      // 408 and 429 fall through to scheduleRetry; 429 also honours the
+      // server's Retry-After hint.
+      if (
+        response.status >= 400 &&
+        response.status < 500 &&
+        !RETRYABLE_4XX.has(response.status)
+      ) {
         await this.deliveryStore.markDeadLetter(delivery.id);
         return;
       }
 
-      // 5xx: retry if attempts remain
-      await this.scheduleRetry(delivery, nextAttempt, response.status);
+      // Retryable: 408, 429, all 5xx. Honour Retry-After when present
+      // (RFC 9110 §10.2.3); otherwise fall back to RETRY_DELAYS.
+      const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+      await this.scheduleRetry(
+        delivery,
+        nextAttempt,
+        response.status,
+        undefined,
+        retryAfterMs ?? undefined,
+      );
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       await this.scheduleRetry(delivery, nextAttempt, undefined, errMsg);
@@ -285,6 +334,7 @@ export class WebhookPoller {
     attempt: number,
     statusCode: number | undefined,
     error?: string,
+    overrideDelayMs?: number,
   ): Promise<void> {
     if (attempt >= delivery.max_attempts) {
       await this.deliveryStore.markFailed(
@@ -297,7 +347,7 @@ export class WebhookPoller {
       return;
     }
 
-    const delayMs = RETRY_DELAYS[attempt - 1] ?? 25000;
+    const delayMs = overrideDelayMs ?? RETRY_DELAYS[attempt - 1] ?? 25000;
     const nextAttemptAt = new Date(Date.now() + delayMs).toISOString();
     await this.deliveryStore.markFailed(
       delivery.id,
