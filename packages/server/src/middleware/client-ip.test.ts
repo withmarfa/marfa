@@ -13,7 +13,9 @@ function makeContext(args: {
   const headers = new Map<string, string>();
   if (args.xff !== undefined) headers.set("x-forwarded-for", args.xff);
   return {
-    env: args.peer ? { incoming: { socket: { remoteAddress: args.peer } } } : {},
+    env: args.peer
+      ? { incoming: { socket: { remoteAddress: args.peer } } }
+      : {},
     req: {
       header: (name: string) => headers.get(name.toLowerCase()),
     },

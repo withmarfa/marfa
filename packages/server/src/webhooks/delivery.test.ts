@@ -63,7 +63,9 @@ interface PendingDelivery {
   max_attempts: number;
 }
 
-function makeDelivery(overrides: Partial<PendingDelivery> = {}): PendingDelivery {
+function makeDelivery(
+  overrides: Partial<PendingDelivery> = {},
+): PendingDelivery {
   return {
     id: "del_1",
     webhook_id: "wh_1",
@@ -89,9 +91,10 @@ interface StoreCalls {
   markDeadLetter: { id: string }[];
 }
 
-function makeStubStore(
-  pending: PendingDelivery[],
-): { store: WebhookDeliveryStore; calls: StoreCalls } {
+function makeStubStore(pending: PendingDelivery[]): {
+  store: WebhookDeliveryStore;
+  calls: StoreCalls;
+} {
   const calls: StoreCalls = {
     markSuccess: [],
     markFailed: [],
@@ -149,7 +152,9 @@ describe("WebhookPoller retry behaviour", () => {
   });
 
   it("dead-letters generic 4xx (e.g. 400)", async () => {
-    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 400 })));
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 400 })),
+    );
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_400" })]);
@@ -161,7 +166,9 @@ describe("WebhookPoller retry behaviour", () => {
   });
 
   it("retries on 408 instead of dead-lettering", async () => {
-    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 408 })));
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 408 })),
+    );
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_408" })]);
@@ -175,7 +182,9 @@ describe("WebhookPoller retry behaviour", () => {
   });
 
   it("retries on 429 and falls back to default schedule when Retry-After is absent", async () => {
-    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 429 })));
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 429 })),
+    );
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_429" })]);
@@ -260,7 +269,9 @@ describe("WebhookPoller retry behaviour", () => {
   });
 
   it("marks success on 2xx", async () => {
-    const fetchSpy = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 204 })),
+    );
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     const { store, calls } = makeStubStore([makeDelivery({ id: "del_ok" })]);

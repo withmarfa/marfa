@@ -40,6 +40,7 @@ export function parseTrustedProxyCidrs(raw: string | undefined): CidrRange[] {
           `TRUSTED_PROXY_CIDRS: invalid CIDR "${cidr}": ${
             err instanceof Error ? err.message : String(err)
           }`,
+          { cause: err },
         );
       }
     });
@@ -48,9 +49,7 @@ export function parseTrustedProxyCidrs(raw: string | undefined): CidrRange[] {
 /** Normalise an address: strips IPv4-mapped IPv6 (`::ffff:1.2.3.4` →
  *  `1.2.3.4`) so CIDR comparisons across dual-stack peers and v4 chains
  *  work consistently. Returns null for unparseable input. */
-function normalise(
-  raw: string,
-): ipaddr.IPv4 | ipaddr.IPv6 | null {
+function normalise(raw: string): ipaddr.IPv4 | ipaddr.IPv6 | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   let parsed: ipaddr.IPv4 | ipaddr.IPv6;
@@ -126,7 +125,10 @@ export function getClientIp(
   // is the closest client IP we can verify. If the entire chain is
   // trusted we return the leftmost (the original client address as
   // vouched for by the trusted proxy stack).
-  const hops = xff.split(",").map((s) => s.trim()).filter(Boolean);
+  const hops = xff
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   for (let i = hops.length - 1; i >= 0; i--) {
     const hop = normalise(hops[i] ?? "");
     if (!hop) continue;
