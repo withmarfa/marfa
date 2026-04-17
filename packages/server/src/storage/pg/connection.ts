@@ -242,55 +242,33 @@ export async function createConnection(connectionString: string): Promise<{
   // mirrors what running `pnpm migrate` from 0000 would produce. Schema
   // changes go in a Drizzle migration; do NOT add new inline DDL here.
   //
-  // Two documented exceptions remain inline because Drizzle Kit cannot
-  // express them: the FTS5 virtual table in sqlite/connection.ts, and the
-  // RLS policies below (Postgres-only).
+  // The FTS5 virtual table in sqlite/connection.ts remains inline because
+  // Drizzle Kit cannot express it.
+  //
+  // ─── Postgres Row Level Security — intentionally NOT enabled ────────────
+  //
+  // A previous version of this file shipped dormant RLS policies on items,
+  // api_keys, metadata, and versions. They had no runtime effect: the pool
+  // user is the table owner and the table owner always bypasses RLS. To a
+  // reader that's a credibility trap — security primitives that look like
+  // they're guarding the data when they aren't.
+  //
+  // Real RLS would require three coordinated changes that we have not yet
+  // made:
+  //   1. A non-owner DB role (e.g. `myme_app`) granted CRUD on the tenant-
+  //      scoped tables.
+  //   2. `SET ROLE myme_app` on every connection check-out from the pool.
+  //   3. Middleware that issues `SET LOCAL myme.tenant_id = $tenant` per
+  //      request.
+  //
+  // Until those three land together, RLS provides nothing — so we don't
+  // ship it. Tenant scoping today is enforced in application code: every
+  // tenant-scoped query in item-store, search-store, key-store, and
+  // event-log-store carries `tenant_id = ?`. The Backlog tracks the full
+  // RLS plan for if/when hosted-multi-tenant becomes a concrete need.
   await client.unsafe(`SELECT pg_advisory_lock(42)`);
   try {
     await client.unsafe(SCHEMA_SQL);
-
-    // Row Level Security — defense-in-depth for multi-tenant isolation.
-    //
-    // STATUS: dormant. The connection user is the table owner and bypasses
-    // RLS by default; the policies below have no runtime effect today. They
-    // are kept inline (Drizzle Kit cannot express RLS) so production hosted
-    // deployments that run as a non-owner role (e.g. `myme_app` granted
-    // SELECT/INSERT/UPDATE/DELETE on the relevant tables) inherit isolation
-    // automatically. The server is expected to set the per-request scope
-    // via `SET LOCAL myme.tenant_id = ...`. Activation is a deployment-side
-    // change (role swap), not a code change.
-    await client.unsafe(`
-      ALTER TABLE items ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE metadata ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE versions ENABLE ROW LEVEL SECURITY;
-
-      DO $$ BEGIN
-        CREATE POLICY tenant_isolation_items ON items
-          USING (tenant_id = current_setting('myme.tenant_id', true));
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-      DO $$ BEGIN
-        CREATE POLICY tenant_isolation_api_keys ON api_keys
-          USING (tenant_id = current_setting('myme.tenant_id', true));
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-      DO $$ BEGIN
-        CREATE POLICY tenant_isolation_metadata ON metadata
-          USING (EXISTS (
-            SELECT 1 FROM items WHERE items.id = metadata.item_id
-            AND items.tenant_id = current_setting('myme.tenant_id', true)
-          ));
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-      DO $$ BEGIN
-        CREATE POLICY tenant_isolation_versions ON versions
-          USING (EXISTS (
-            SELECT 1 FROM items WHERE items.id = versions.item_id
-            AND items.tenant_id = current_setting('myme.tenant_id', true)
-          ));
-      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-    `);
   } finally {
     await client.unsafe(`SELECT pg_advisory_unlock(42)`);
   }

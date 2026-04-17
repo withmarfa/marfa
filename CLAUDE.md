@@ -50,6 +50,7 @@ Server package (not needed for shared or SDK development):
 - `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000). Rate limiting is always on
 - `RATE_LIMIT_ENABLED` — set to `false` to disable rate limiting entirely
 - `ENABLE_HSTS` — `true` to add Strict-Transport-Security header (only behind TLS)
+- `TRUSTED_PROXY_CIDRS` — comma-separated CIDRs (e.g. `10.0.0.0/8,127.0.0.1/32`) for opt-in `x-forwarded-for` trust. Unset = ignore the header (recommended when no reverse proxy is in front). Malformed CIDRs throw at startup.
 - `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90)
 - `AUDIT_CLEANUP_INTERVAL_MS` — audit cleanup interval in ms (default: 86400000)
 - `VERSION_RECENT_DAYS` — version recent window in days (default: 30)
@@ -75,7 +76,7 @@ When changing schema:
 4. Mirror the change into the bootstrap `SCHEMA_SQL` block in the corresponding `connection.ts` so fresh databases get it without the migrator.
 5. Run standalone migration on existing dbs: `pnpm --filter @mymehq/server run migrate`.
 
-FTS5 virtual tables and Postgres RLS policies stay inline in `connection.ts` because Drizzle Kit can't express them. Don't add other inline DDL.
+FTS5 virtual tables stay inline in `sqlite/connection.ts` because Drizzle Kit can't express them. Don't add other inline DDL.
 
 ## OpenAPI
 
