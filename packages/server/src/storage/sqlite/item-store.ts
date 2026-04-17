@@ -262,7 +262,12 @@ export class SqliteItemStore implements ItemStore {
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const filterConds = filterToSqlConditions(expr, "sqlite", items);
+      const filterConds = filterToSqlConditions(
+        expr,
+        "sqlite",
+        items,
+        filters.tenantId,
+      );
       if (expr.logical === "OR") {
         const orClause = or(...filterConds);
         if (orClause) conditions.push(orClause);

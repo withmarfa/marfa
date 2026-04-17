@@ -1,6 +1,8 @@
 import type { MiddlewareHandler } from "hono";
 import { MymeError, ErrorCode } from "@mymehq/shared";
 import type { AppEnv } from "./auth.js";
+import { getClientIp } from "./client-ip.js";
+import type { CidrRange } from "./client-ip.js";
 
 interface RateLimitConfig {
   /** Default requests per window (default: 100) */
@@ -9,6 +11,8 @@ interface RateLimitConfig {
   windowMs: number;
   /** Stricter limits by path prefix */
   pathLimits: Record<string, number>;
+  /** Trusted reverse-proxy CIDRs for safe x-forwarded-for handling. */
+  trustedProxyCidrs: CidrRange[];
 }
 
 interface WindowEntry {
@@ -23,6 +27,7 @@ const DEFAULT_CONFIG: RateLimitConfig = {
     "/keys": 200,
     "/auth/token": 20,
   },
+  trustedProxyCidrs: [],
 };
 
 /**
@@ -53,7 +58,8 @@ export function rateLimitMiddleware(
 
   return async (c, next) => {
     const apiKey = c.get("apiKey");
-    const identifier = apiKey?.id ?? c.req.header("x-forwarded-for") ?? "anon";
+    const identifier =
+      apiKey?.id ?? getClientIp(c, config.trustedProxyCidrs) ?? "anon";
     const path = c.req.path;
 
     // Determine limit for this path

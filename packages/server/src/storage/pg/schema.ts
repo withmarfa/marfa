@@ -2,6 +2,7 @@ import {
   pgTable,
   text,
   integer,
+  bigint,
   boolean,
   doublePrecision,
   jsonb,
@@ -334,7 +335,13 @@ export const auditLog = pgTable(
 export const eventLog = pgTable(
   "event_log",
   {
-    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    // BIGINT, not INT4: event_log is append-only and INT4 (~2.1B) is a
+    // foreseeable wrap. `mode: "number"` keeps the JS runtime type a
+    // number (safe to 2^53), matching consumer expectations in
+    // event-log-store.ts and routes/events.ts (Last-Event-ID parseInt).
+    id: bigint("id", { mode: "number" })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
     event_type: text("event_type").notNull(),
     // Nullable: item events set item_id and leave edge_id null; edge
     // events set edge_id and leave item_id null. Relaxed from NOT NULL

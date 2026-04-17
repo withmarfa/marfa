@@ -136,7 +136,7 @@ export class PgSearchStore implements SearchStore {
         clause,
         params: filterParams,
         nextParamIdx,
-      } = filterToRawSql(expr, "pg", "i", paramIdx);
+      } = filterToRawSql(expr, "pg", "i", paramIdx, filters.tenantId);
       conditions.push(`AND ${clause}`);
       params.push(...(filterParams as (string | number)[]));
       paramIdx = nextParamIdx;

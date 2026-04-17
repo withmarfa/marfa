@@ -43,6 +43,7 @@ const config: AppConfig = {
   ambientRetentionDays: 0,
   ambientExpiryIntervalMs: 86_400_000,
   errorWebhookUrl: "",
+  trustedProxyCidrs: [],
 };
 
 const storage = createSqliteStorage(":memory:");
