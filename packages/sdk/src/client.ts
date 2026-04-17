@@ -67,6 +67,9 @@ export interface UpdateOptions {
   conflict?: ConflictStrategy;
   /** Custom conflict resolver (required when `conflict` is `"callback"`). */
   resolve?: ConflictResolver;
+  /** Toggle library / ambient state. Independent of the version-merge path
+   *  for `properties`; a library-only update never conflicts. */
+  library?: boolean;
 }
 
 export interface ListFilters {
@@ -95,6 +98,9 @@ export interface SearchFilters {
   state?: ItemState;
   /** Tri-value library filter, matching `ListFilters.library`. */
   library?: boolean;
+  /** Items must have ALL specified tags (AND semantics). Matches
+   *  `ListFilters.tags` and `/items?tags=`. */
+  tags?: string[];
   filter?: string;
   limit?: number;
 }
@@ -192,6 +198,7 @@ export class MymeClient {
         version,
         strategy,
         options?.resolve,
+        options?.library,
       );
     },
 
@@ -309,6 +316,18 @@ export class MymeClient {
       );
     },
 
+    /**
+     * Enumerate the distinct set of tags in use across items the caller can
+     * read. Tenant-scoped, type-permission scoped, excludes trashed items.
+     * Returns tags with usage counts, sorted by count desc then tag asc.
+     */
+    listTags: async (): Promise<{ tag: string; count: number }[]> => {
+      const res = await this.transport.request<{
+        tags: { tag: string; count: number }[];
+      }>("GET", "/metadata/tags");
+      return res.tags;
+    },
+
     getExtensions: async (
       itemId: string,
       namespace?: string,
@@ -372,6 +391,30 @@ export class MymeClient {
   // ---- Edges ----
 
   readonly edges = {
+    /**
+     * Global edge listing across the tenant, filtered by edge type
+     * (comma-separated string or array of type ids). Use this when you
+     * need "all edges of type X" — replaces the walk-every-item
+     * pattern. Per-target filters live on `listFromSource` /
+     * `listToTarget`.
+     */
+    list: async (filters?: {
+      edge_type?: string | string[];
+      limit?: number;
+      cursor?: string;
+    }): Promise<PaginatedResult<Edge>> => {
+      const edgeType = Array.isArray(filters?.edge_type)
+        ? filters.edge_type.join(",")
+        : filters?.edge_type;
+      return this.transport.request<PaginatedResult<Edge>>("GET", "/edges", {
+        query: {
+          ...(edgeType && { edge_type: edgeType }),
+          ...(filters?.limit !== undefined && { limit: filters.limit }),
+          ...(filters?.cursor && { cursor: filters.cursor }),
+        },
+      });
+    },
+
     /** Create a single edge. Server enforces cardinality / type
      *  constraints / cycle prevention; throws on violation. */
     create: async (input: CreateEdgeInput): Promise<Edge> => {
