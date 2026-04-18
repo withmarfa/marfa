@@ -1,5 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
 import type {
   ApiKey,
@@ -13,6 +13,13 @@ import type {
 import type { KeyStore } from "../interface.js";
 import { apiKeys } from "./schema.js";
 import type { PgDb } from "./connection.js";
+
+/**
+ * Window within which repeated `last_used_at` writes for the same key
+ * collapse to a single DB write. Matches the in-memory debounce window in
+ * `middleware/auth.ts`; the DB layer is authoritative across instances.
+ */
+const LAST_USED_DEBOUNCE_MS = 3_600_000;
 
 function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
   return {
@@ -184,11 +191,31 @@ export class PgKeyStore implements KeyStore {
       .where(eq(apiKeys.id, id));
   }
 
+  /**
+   * Debounce `last_used_at` writes at the DB layer. Without this, every
+   * instance in a multi-instance deployment would write once per its own
+   * in-memory debounce window — so N instances producing N writes per
+   * window per key. The conditional WHERE collapses that to at most one
+   * write per `LAST_USED_DEBOUNCE_MS` per key, regardless of how many
+   * instances are hitting the endpoint.
+   *
+   * Callers can still layer an in-memory debounce for a free round-trip
+   * skip; the DB is now the authoritative floor.
+   */
   async updateLastUsed(id: string): Promise<void> {
+    const now = new Date();
+    const cutoff = new Date(
+      now.getTime() - LAST_USED_DEBOUNCE_MS,
+    ).toISOString();
     await this.db
       .update(apiKeys)
-      .set({ last_used_at: new Date().toISOString() })
-      .where(eq(apiKeys.id, id));
+      .set({ last_used_at: now.toISOString() })
+      .where(
+        and(
+          eq(apiKeys.id, id),
+          or(isNull(apiKeys.last_used_at), lt(apiKeys.last_used_at, cutoff)),
+        ),
+      );
   }
 
   async count(): Promise<number> {

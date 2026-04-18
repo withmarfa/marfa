@@ -132,7 +132,11 @@ export function authMiddleware(storage: Storage, salt: string) {
       });
       c.set("authType", "api_key");
 
-      // Debounced last_used_at update
+      // Debounced last_used_at update. The DB layer (KeyStore.updateLastUsed)
+      // now enforces the real floor via a conditional UPDATE, so this in-memory
+      // cache is a per-instance round-trip skip rather than the source of
+      // truth — multiple instances can't write more often than once per
+      // DEBOUNCE_MS per key regardless of what's in any given instance's cache.
       const now = Date.now();
       const lastTracked = lastUsedCache.get(stored.id) ?? 0;
       if (now - lastTracked > DEBOUNCE_MS) {
