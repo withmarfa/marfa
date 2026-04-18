@@ -91,7 +91,26 @@ export interface ListFilters {
   until?: string;
   limit?: number;
   cursor?: string;
+  /**
+   * Opt-in hydrations on the list response. Comma-separated values; each
+   * value widens the per-item shape. Prefer the typed helpers
+   * (`listWithMetadata`, `listWithExtensions`) over raw strings.
+   *
+   * - `metadata` — wraps each entry as `{ item, metadata }`.
+   * - `edges` — hydrates outbound edges per item grouped by type.
+   * - `extensions` — hydrates extension namespaces (filtered by caller
+   *   permissions, same rule as `GET /items/:id/extensions`).
+   *
+   * Lists are lean by default; opt into extras when the UI needs them
+   * to avoid N+1 per-item round trips.
+   */
+  include?: string;
 }
+
+/** Item paired with its hydrated extension namespaces. */
+export type ItemWithExtensions = Item & {
+  extensions: Record<string, Record<string, unknown>>;
+};
 
 export interface SearchFilters {
   type?: string;
@@ -173,6 +192,28 @@ export class MymeClient {
           query: {
             ...filters,
             include: "metadata",
+          },
+        },
+      );
+    },
+
+    /**
+     * List items with their extension namespaces hydrated inline. Avoids
+     * the N+1 pattern of listing then calling `GET /items/:id/extensions`
+     * per item. Extensions are filtered by the caller's permissions —
+     * admins see every namespace, members see what they can read or
+     * write.
+     */
+    listWithExtensions: async (
+      filters?: Omit<ListFilters, "include">,
+    ): Promise<PaginatedResult<ItemWithExtensions>> => {
+      return this.transport.request<PaginatedResult<ItemWithExtensions>>(
+        "GET",
+        "/items",
+        {
+          query: {
+            ...filters,
+            include: "extensions",
           },
         },
       );

@@ -24,6 +24,7 @@ import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publish } from "../pubsub.js";
 import { hydrateEdgesForItem, hydrateEdgesForItems } from "./_edges-hydrate.js";
+import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
   createOpenAPIRouter,
   ErrorResponseSchema,
@@ -857,9 +858,13 @@ export function itemRoutes(storage: Storage) {
     const rawLibrary = c.req.query("library");
     const library: boolean | undefined =
       rawLibrary === "true" ? true : rawLibrary === "false" ? false : undefined;
-    // `include` accepts a comma-separated list. "metadata" adds the sidecar
-    // object per item; "edges" hydrates outbound edges inline (opt-in — list
-    // reads skip edge hydration by default to avoid an N+1 on large lists).
+    // `include` accepts a comma-separated list. Lists are lean by default;
+    // each value is an opt-in hydration:
+    //   metadata    — tags sidecar (extensions always live under `extensions`
+    //                 per this endpoint's schema, not nested in metadata).
+    //   edges       — outbound edges grouped by edge type.
+    //   extensions  — namespaced extension data (filtered by caller
+    //                 permissions, same rule as `GET /items/:id/extensions`).
     const includeSet = new Set(
       (query.include ?? "")
         .split(",")
@@ -868,6 +873,7 @@ export function itemRoutes(storage: Storage) {
     );
     const includeMetadata = includeSet.has("metadata");
     const includeEdges = includeSet.has("edges");
+    const includeExtensions = includeSet.has("extensions");
 
     const result = await storage.items.list({
       tenantId: c.get("apiKey")?.tenant_id,
@@ -887,11 +893,21 @@ export function itemRoutes(storage: Storage) {
     });
 
     const ids = result.data.map((item) => item.id);
+    const apiKey = c.get("apiKey");
     const edgesMap = includeEdges
       ? await hydrateEdgesForItems(storage, ids)
       : null;
-    const decorate = (item: (typeof result.data)[number]) =>
-      edgesMap ? { ...item, edges: edgesMap.get(item.id) ?? {} } : item;
+    const extensionsMap = includeExtensions
+      ? await hydrateExtensionsForItems(storage, ids, apiKey)
+      : null;
+    const decorate = (item: (typeof result.data)[number]) => {
+      const withEdges = edgesMap
+        ? { ...item, edges: edgesMap.get(item.id) ?? {} }
+        : item;
+      return extensionsMap
+        ? { ...withEdges, extensions: extensionsMap.get(item.id) ?? {} }
+        : withEdges;
+    };
 
     if (includeMetadata) {
       const metadataList = await storage.metadata.getMany(ids);

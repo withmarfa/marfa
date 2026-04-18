@@ -6,6 +6,7 @@ export type {
   ListFilters,
   SearchFilters,
   MetadataInput,
+  ItemWithExtensions,
 } from "./client.js";
 
 // Errors

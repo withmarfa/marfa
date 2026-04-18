@@ -49,6 +49,15 @@ export const ItemSchema = z.object({
    * or hydration was skipped.
    */
   edges: z.record(z.string(), ItemEdgesBlockSchema).optional(),
+  /**
+   * Hydrated extension namespaces. Opt-in on list GETs via
+   * ?include=extensions; filtered by caller permissions (same rule as
+   * GET /items/:id/extensions). An empty object means no extensions or
+   * hydration was skipped. Absent when the caller did not opt in.
+   */
+  extensions: z
+    .record(z.string(), z.record(z.string(), z.unknown()))
+    .optional(),
 });
 
 // MetadataSchema does not include `about` — entity references are carried
