@@ -18,6 +18,37 @@ interface LogEntry {
 }
 
 // ---------------------------------------------------------------------------
+// Request-ID resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Safe character class for a client-provided `X-Request-ID`.
+ *
+ * Most request-ID conventions (UUIDv7, UUIDv4, Datadog trace IDs, opaque
+ * correlation keys) use only ASCII alphanumerics plus `-` / `_`. Capping at
+ * 128 chars avoids log amplification from a pathological client. Headers
+ * outside this pattern are discarded silently and the server generates its
+ * own ID — callers see their round-trip ID in the response header, so a
+ * dropped value is self-diagnosable.
+ */
+const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * Resolves the request ID for this request. Prefers the client's
+ * `X-Request-ID` header when present and well-formed so a stuck-mutation
+ * log line on the client pairs cleanly with the server entry; falls back
+ * to a server-generated UUIDv7 otherwise.
+ *
+ * Exported for unit testing.
+ */
+export function resolveRequestId(incomingHeader: string | undefined): string {
+  if (incomingHeader && CLIENT_REQUEST_ID_PATTERN.test(incomingHeader)) {
+    return incomingHeader;
+  }
+  return generateId();
+}
+
+// ---------------------------------------------------------------------------
 // Standalone logger for non-request contexts (startup, shutdown, background)
 // ---------------------------------------------------------------------------
 
@@ -43,7 +74,7 @@ export function log(
 
 export function loggerMiddleware() {
   return createMiddleware<AppEnv>(async (c, next) => {
-    const requestId = generateId();
+    const requestId = resolveRequestId(c.req.header("X-Request-ID"));
     c.set("requestId", requestId);
     c.header("X-Request-ID", requestId);
 
