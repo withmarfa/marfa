@@ -16,6 +16,7 @@ import { SqliteUserStore } from "./user-store.js";
 import { SqliteTenantStore } from "./tenant-store.js";
 import { SqliteEdgeStore } from "./edge-store.js";
 import { SqliteEdgeTypeStore } from "./edge-type-store.js";
+import { SqliteCoordinationStore } from "./coordination-store.js";
 import { registerEdgeTypeSchema, isCoreEdgeType } from "@mymehq/shared";
 
 export function createSqliteStorage(
@@ -75,6 +76,7 @@ export function createSqliteStorage(
     webhookDeliveries: deliveryStore,
     audit: auditStore,
     eventLog: eventLogStore,
+    coordination: new SqliteCoordinationStore(),
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),
       tenants: new SqliteTenantStore(db),

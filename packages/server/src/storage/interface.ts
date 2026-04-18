@@ -526,6 +526,22 @@ export interface EdgeStore {
   ): Promise<Map<string, Edge[]>>;
 }
 
+/**
+ * Cross-instance coordination primitives. On Postgres, `withJobLock` wraps
+ * `pg_try_advisory_lock` so a named background job runs on at most one
+ * instance per tick. On SQLite, every backing database is single-process
+ * by definition, so the implementation is a pass-through.
+ */
+export interface CoordinationStore {
+  /**
+   * Attempt to acquire a named coordination lock, run `fn`, release the
+   * lock. Returns `fn`'s result on acquisition, `undefined` when another
+   * instance already holds the lock (the caller should treat this as a
+   * no-op tick, not an error).
+   */
+  withJobLock<T>(name: string, fn: () => Promise<T>): Promise<T | undefined>;
+}
+
 export interface Storage {
   items: ItemStore;
   metadata: MetadataStore;
@@ -541,6 +557,7 @@ export interface Storage {
   webhookDeliveries: WebhookDeliveryStore;
   audit: AuditStore;
   eventLog: EventLogStore;
+  coordination: CoordinationStore;
   users?: UserStore;
   tenants?: TenantStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;

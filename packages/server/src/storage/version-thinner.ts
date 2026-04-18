@@ -1,5 +1,5 @@
 import { getTypeSchema } from "@mymehq/shared";
-import type { VersionStore } from "./interface.js";
+import type { CoordinationStore, VersionStore } from "./interface.js";
 import {
   computeVersionsToDelete,
   resolvePolicy,
@@ -18,6 +18,7 @@ export class VersionThinner {
     private versionStore: VersionStore,
     private globalDefaults: ResolvedPolicy,
     private intervalMs: number,
+    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -38,27 +39,37 @@ export class VersionThinner {
 
   private async poll(): Promise<void> {
     try {
-      const candidates = await this.versionStore.listThinningCandidates(
-        2,
-        BATCH_SIZE,
-      );
-
-      let totalDeleted = 0;
-      for (const candidate of candidates) {
-        const deleted = await this.thinItem(candidate.itemId, candidate.type);
-        totalDeleted += deleted;
-      }
-
-      if (totalDeleted > 0) {
-        log(
-          "info",
-          `Version thinning: pruned ${String(totalDeleted)} versions across ${String(candidates.length)} items`,
+      if (this.coordination) {
+        await this.coordination.withJobLock("version-thinning", () =>
+          this.doPoll(),
         );
+      } else {
+        await this.doPoll();
       }
     } catch (err) {
       log("error", "Version thinning error", {
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+  }
+
+  private async doPoll(): Promise<void> {
+    const candidates = await this.versionStore.listThinningCandidates(
+      2,
+      BATCH_SIZE,
+    );
+
+    let totalDeleted = 0;
+    for (const candidate of candidates) {
+      const deleted = await this.thinItem(candidate.itemId, candidate.type);
+      totalDeleted += deleted;
+    }
+
+    if (totalDeleted > 0) {
+      log(
+        "info",
+        `Version thinning: pruned ${String(totalDeleted)} versions across ${String(candidates.length)} items`,
+      );
     }
   }
 
