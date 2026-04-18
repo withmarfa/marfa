@@ -1133,3 +1133,145 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
     ]);
   });
 });
+
+describe("GET /items?include=extensions", () => {
+  async function createMemberKey(
+    extPerms: Record<string, "read" | "write">,
+    label: string,
+  ): Promise<string> {
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label,
+        source: `${label}-src`,
+        role: "member",
+        type_permissions: { "*": "write" },
+        extension_permissions: extPerms,
+      },
+    });
+    const { key } = (await res.json()) as { key: string };
+    return key;
+  }
+
+  async function seedItem(marker: string): Promise<string> {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: `include-ext-${marker}` },
+        tags: [`include-ext-${marker}`],
+      },
+    });
+    const { item } = (await createRes.json()) as { item: { id: string } };
+    for (const ns of ["visible.prefs", "hidden.prefs", "other.prefs"]) {
+      await request(ctx.app, "PUT", `/items/${item.id}/extensions/${ns}`, {
+        key: ctx.adminKey,
+        body: { flag: ns },
+      });
+    }
+    return item.id;
+  }
+
+  it("omits extensions when include is not set (lists stay lean)", async () => {
+    const id = await seedItem("lean");
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&tags=include-ext-lean`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { id: string; extensions?: unknown }[];
+    };
+    const row = body.data.find((r) => r.id === id);
+    expect(row).toBeDefined();
+    expect(row?.extensions).toBeUndefined();
+  });
+
+  it("hydrates extensions inline when include=extensions is set", async () => {
+    const id = await seedItem("admin");
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&tags=include-ext-admin&include=extensions`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { id: string; extensions?: Record<string, unknown> }[];
+    };
+    const row = body.data.find((r) => r.id === id);
+    expect(row).toBeDefined();
+    expect(Object.keys(row?.extensions ?? {}).sort()).toEqual([
+      "hidden.prefs",
+      "other.prefs",
+      "visible.prefs",
+    ]);
+  });
+
+  it("filters extensions per caller permissions", async () => {
+    const id = await seedItem("filtered");
+    const memberKey = await createMemberKey(
+      { "visible.prefs": "read" },
+      "include-ext-filtered",
+    );
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&tags=include-ext-filtered&include=extensions`,
+      { key: memberKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { id: string; extensions?: Record<string, unknown> }[];
+    };
+    const row = body.data.find((r) => r.id === id);
+    expect(row).toBeDefined();
+    expect(Object.keys(row?.extensions ?? {}).sort()).toEqual([
+      "visible.prefs",
+    ]);
+  });
+
+  it("composes with include=edges in a single request", async () => {
+    const targetRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "combo target" } },
+    });
+    const { item: target } = (await targetRes.json()) as {
+      item: { id: string };
+    };
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "combo source" },
+        tags: ["include-ext-combo"],
+        edges: { about: [target.id] },
+      },
+    });
+    const { item } = (await createRes.json()) as { item: { id: string } };
+    await request(ctx.app, "PUT", `/items/${item.id}/extensions/app.data`, {
+      key: ctx.adminKey,
+      body: { ok: true },
+    });
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&tags=include-ext-combo&include=edges,extensions`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: {
+        id: string;
+        edges?: Record<string, { edges: unknown[] }>;
+        extensions?: Record<string, unknown>;
+      }[];
+    };
+    const row = body.data.find((r) => r.id === item.id);
+    expect(row?.edges?.about?.edges.length).toBe(1);
+    expect(row?.extensions).toHaveProperty("app.data");
+  });
+});

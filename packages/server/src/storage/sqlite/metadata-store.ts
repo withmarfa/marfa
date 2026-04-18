@@ -191,6 +191,27 @@ export class SqliteMetadataStore implements MetadataStore {
     return current.extensions;
   }
 
+  getExtensionsForItems(
+    itemIds: string[],
+  ): Promise<Map<string, Record<string, Record<string, unknown>>>> {
+    const out = new Map<string, Record<string, Record<string, unknown>>>();
+    if (itemIds.length === 0) return Promise.resolve(out);
+    const rows = this.db
+      .select({ item_id: metadata.item_id, extensions: metadata.extensions })
+      .from(metadata)
+      .where(inArray(metadata.item_id, itemIds))
+      .all();
+    const byId = new Map(rows.map((r) => [r.item_id, r.extensions]));
+    for (const id of itemIds) {
+      const raw = byId.get(id);
+      out.set(
+        id,
+        raw ? (JSON.parse(raw) as Record<string, Record<string, unknown>>) : {},
+      );
+    }
+    return Promise.resolve(out);
+  }
+
   async setExtension(
     itemId: string,
     namespace: string,

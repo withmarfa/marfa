@@ -149,6 +149,17 @@ export interface MetadataStore {
   getExtensions(
     itemId: string,
   ): Promise<Record<string, Record<string, unknown>>>;
+  /**
+   * Batched read of extensions across many items in a single query. Used
+   * by the list-hydration path (`GET /items?include=extensions`) to
+   * avoid the N+1 pattern where a caller would otherwise hit
+   * `GET /items/:id/extensions` once per listed item. The map's keys are
+   * item ids; items with no persisted metadata row map to an empty
+   * record.
+   */
+  getExtensionsForItems(
+    itemIds: string[],
+  ): Promise<Map<string, Record<string, Record<string, unknown>>>>;
   setExtension(
     itemId: string,
     namespace: string,

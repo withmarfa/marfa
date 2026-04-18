@@ -236,6 +236,15 @@
                               "has_more"
                             ]
                           }
+                        },
+                        "extensions": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "nullable": true
+                            }
+                          }
                         }
                       },
                       "required": [
@@ -668,6 +677,15 @@
                                     "has_more"
                                   ]
                                 }
+                              },
+                              "extensions": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "nullable": true
+                                  }
+                                }
                               }
                             },
                             "required": [
@@ -833,6 +851,15 @@
                                         "edges",
                                         "has_more"
                                       ]
+                                    }
+                                  },
+                                  "extensions": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "object",
+                                      "additionalProperties": {
+                                        "nullable": true
+                                      }
                                     }
                                   }
                                 },
@@ -1196,6 +1223,15 @@
                               "has_more"
                             ]
                           }
+                        },
+                        "extensions": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "nullable": true
+                            }
+                          }
                         }
                       },
                       "required": [
@@ -1510,6 +1546,15 @@
                               "edges",
                               "has_more"
                             ]
+                          }
+                        },
+                        "extensions": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "nullable": true
+                            }
                           }
                         }
                       },
@@ -1989,6 +2034,15 @@
                               "has_more"
                             ]
                           }
+                        },
+                        "extensions": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "nullable": true
+                            }
+                          }
                         }
                       },
                       "required": [
@@ -2291,6 +2345,15 @@
                               "edges",
                               "has_more"
                             ]
+                          }
+                        },
+                        "extensions": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "nullable": true
+                            }
                           }
                         }
                       },
@@ -6896,6 +6959,15 @@
                                     "edges",
                                     "has_more"
                                   ]
+                                }
+                              },
+                              "extensions": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "nullable": true
+                                  }
                                 }
                               }
                             },

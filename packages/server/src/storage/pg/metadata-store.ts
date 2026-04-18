@@ -158,6 +158,26 @@ export class PgMetadataStore implements MetadataStore {
     return current.extensions;
   }
 
+  async getExtensionsForItems(
+    itemIds: string[],
+  ): Promise<Map<string, Record<string, Record<string, unknown>>>> {
+    const out = new Map<string, Record<string, Record<string, unknown>>>();
+    if (itemIds.length === 0) return out;
+    const rows = await this.db
+      .select({ item_id: metadata.item_id, extensions: metadata.extensions })
+      .from(metadata)
+      .where(inArray(metadata.item_id, itemIds));
+    const byId = new Map(rows.map((r) => [r.item_id, r.extensions]));
+    for (const id of itemIds) {
+      const raw = byId.get(id);
+      out.set(
+        id,
+        raw ? (JSON.parse(raw) as Record<string, Record<string, unknown>>) : {},
+      );
+    }
+    return out;
+  }
+
   async setExtension(
     itemId: string,
     namespace: string,
