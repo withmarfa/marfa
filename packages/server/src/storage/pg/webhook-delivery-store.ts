@@ -1,9 +1,18 @@
-import { eq, desc, and, lte, sql } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { WebhookDelivery } from "@mymehq/shared";
 import type { WebhookDeliveryStore } from "../interface.js";
 import { webhookDeliveries } from "./schema.js";
 import type { PgDb } from "./connection.js";
+
+/**
+ * Claim window — how long a polled row is hidden from other pollers.
+ * Tuned to be longer than the 10s HTTP attempt timeout so a single
+ * instance finishes delivery and writes markSuccess/markFailed before the
+ * row becomes visible again, but short enough that a crashed instance
+ * doesn't keep a delivery stalled.
+ */
+const CLAIM_LOCK_TTL_MS = 60_000;
 
 function rowToDelivery(
   row: typeof webhookDeliveries.$inferSelect,
@@ -81,6 +90,17 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
     return id;
   }
 
+  /**
+   * Atomic claim of pending deliveries. Two Myme instances pointed at the
+   * same database can both poll; without a claim each would see the same
+   * `status='pending'` rows and double-deliver. This statement wraps the
+   * eligibility SELECT in `FOR UPDATE SKIP LOCKED` and, in one trip,
+   * pushes each claimed row's `next_attempt_at` forward by
+   * CLAIM_LOCK_TTL_MS so it falls out of the "eligible" window for the
+   * duration of the HTTP attempt. If the process crashes before
+   * success/retry is written, the row naturally becomes claimable again
+   * after the TTL — no janitor needed.
+   */
   async getPending(
     now: string,
     limit = 50,
@@ -96,25 +116,29 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
       max_attempts: number;
     }[]
   > {
-    const rows = await this.db
-      .select({
-        id: webhookDeliveries.id,
-        webhook_id: webhookDeliveries.webhook_id,
-        event: webhookDeliveries.event,
-        payload: webhookDeliveries.payload,
-        webhook_url: webhookDeliveries.webhook_url,
-        webhook_secret: webhookDeliveries.webhook_secret,
-        attempt: webhookDeliveries.attempt,
-        max_attempts: webhookDeliveries.max_attempts,
-      })
-      .from(webhookDeliveries)
-      .where(
-        and(
-          sql`${webhookDeliveries.status} = 'pending'`,
-          lte(webhookDeliveries.next_attempt_at, now),
-        ),
+    const claimExpiry = new Date(Date.now() + CLAIM_LOCK_TTL_MS).toISOString();
+    const result = await this.db.execute(sql`
+      UPDATE webhook_deliveries
+      SET next_attempt_at = ${claimExpiry}
+      WHERE id IN (
+        SELECT id FROM webhook_deliveries
+        WHERE status = 'pending' AND next_attempt_at <= ${now}
+        ORDER BY next_attempt_at
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${limit}
       )
-      .limit(limit);
+      RETURNING id, webhook_id, event, payload, webhook_url, webhook_secret, attempt, max_attempts
+    `);
+    const rows = result as unknown as {
+      id: string;
+      webhook_id: string;
+      event: string;
+      payload: string | null;
+      webhook_url: string | null;
+      webhook_secret: string | null;
+      attempt: number;
+      max_attempts: number;
+    }[];
     return rows.map((r) => ({
       id: r.id,
       webhook_id: r.webhook_id,
