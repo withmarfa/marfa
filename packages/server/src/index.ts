@@ -62,28 +62,36 @@ async function main() {
   // Enable SSE event persistence
   initEventLog(storage.eventLog);
 
-  // Event log retention — clean up events older than 24 hours
+  // Event log retention — clean up events older than 24 hours.
+  // Advisory-locked so multi-instance deployments run the sweep once per
+  // tick cluster-wide.
   const runEventLogCleanup = () => {
-    void storage.eventLog.cleanup(24).then((deleted) => {
-      if (deleted > 0)
-        log(
-          "info",
-          `Purged ${String(deleted)} event_log entries older than 24 hours`,
-        );
-    });
+    void storage.coordination
+      .withJobLock("event-log-cleanup", () => storage.eventLog.cleanup(24))
+      .then((deleted) => {
+        if (deleted !== undefined && deleted > 0)
+          log(
+            "info",
+            `Purged ${String(deleted)} event_log entries older than 24 hours`,
+          );
+      });
   };
   const eventLogCleanupDelay = setTimeout(runEventLogCleanup, 10_000);
   const eventLogCleanupInterval = setInterval(runEventLogCleanup, 3_600_000);
 
   // Audit retention — run once after startup, then on a daily schedule
   const runAuditCleanup = () => {
-    void storage.audit.cleanup(config.auditRetentionDays).then((deleted) => {
-      if (deleted > 0)
-        log(
-          "info",
-          `Purged ${String(deleted)} audit entries older than ${String(config.auditRetentionDays)} days`,
-        );
-    });
+    void storage.coordination
+      .withJobLock("audit-cleanup", () =>
+        storage.audit.cleanup(config.auditRetentionDays),
+      )
+      .then((deleted) => {
+        if (deleted !== undefined && deleted > 0)
+          log(
+            "info",
+            `Purged ${String(deleted)} audit entries older than ${String(config.auditRetentionDays)} days`,
+          );
+      });
   };
   const auditCleanupDelay = setTimeout(runAuditCleanup, 5_000);
   const auditCleanupInterval = setInterval(
@@ -109,6 +117,7 @@ async function main() {
       maxVersions: config.versionMaxVersions,
     },
     config.versionThinningIntervalMs,
+    storage.coordination,
   );
   versionThinner.start();
 
@@ -116,6 +125,8 @@ async function main() {
     storage.items,
     config.trashRetentionDays,
     config.trashPurgeIntervalMs,
+    undefined,
+    storage.coordination,
   );
   trashPurger.start();
 
@@ -123,6 +134,8 @@ async function main() {
     storage.items,
     config.ambientRetentionDays,
     config.ambientExpiryIntervalMs,
+    undefined,
+    storage.coordination,
   );
   ambientExpirer.start();
 

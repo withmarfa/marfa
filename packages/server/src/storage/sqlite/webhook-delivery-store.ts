@@ -1,9 +1,16 @@
-import { eq, desc, and, lte, sql } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { WebhookDelivery } from "@mymehq/shared";
 import type { WebhookDeliveryStore } from "../interface.js";
 import { webhookDeliveries } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+
+/**
+ * See the PG store for rationale. SQLite deployments are single-process so
+ * the race this guards against cannot occur here, but the claim-forward
+ * semantics are preserved so the two backends stay behaviourally identical.
+ */
+const CLAIM_LOCK_TTL_MS = 60_000;
 
 function rowToDelivery(
   row: typeof webhookDeliveries.$inferSelect,
@@ -104,26 +111,29 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       max_attempts: number;
     }[]
   > {
-    const rows = this.db
-      .select({
-        id: webhookDeliveries.id,
-        webhook_id: webhookDeliveries.webhook_id,
-        event: webhookDeliveries.event,
-        payload: webhookDeliveries.payload,
-        webhook_url: webhookDeliveries.webhook_url,
-        webhook_secret: webhookDeliveries.webhook_secret,
-        attempt: webhookDeliveries.attempt,
-        max_attempts: webhookDeliveries.max_attempts,
-      })
-      .from(webhookDeliveries)
-      .where(
-        and(
-          sql`${webhookDeliveries.status} = 'pending'`,
-          lte(webhookDeliveries.next_attempt_at, now),
-        ),
-      )
-      .limit(limit)
-      .all();
+    const claimExpiry = new Date(Date.now() + CLAIM_LOCK_TTL_MS).toISOString();
+    const rows = this.db.all<{
+      id: string;
+      webhook_id: string;
+      event: string;
+      payload: string | null;
+      webhook_url: string | null;
+      webhook_secret: string | null;
+      attempt: number;
+      max_attempts: number;
+    }>(
+      sql`
+          UPDATE webhook_deliveries
+          SET next_attempt_at = ${claimExpiry}
+          WHERE id IN (
+            SELECT id FROM webhook_deliveries
+            WHERE status = 'pending' AND next_attempt_at <= ${now}
+            ORDER BY next_attempt_at
+            LIMIT ${limit}
+          )
+          RETURNING id, webhook_id, event, payload, webhook_url, webhook_secret, attempt, max_attempts
+        `,
+    );
     return Promise.resolve(
       rows.map((r) => ({
         id: r.id,

@@ -216,3 +216,37 @@ describe("extension_permissions wiring", () => {
     expect(putRes.status).toBe(200);
   });
 });
+
+describe("KeyStore.updateLastUsed — DB-side debounce", () => {
+  it("collapses rapid updates in the same window to a single write", async () => {
+    const createRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "last-used-debounce-key",
+        source: "last-used-debounce-src",
+        role: "member",
+      },
+    });
+    const { id } = (await createRes.json()) as { id: string };
+
+    // Three writes in rapid succession. With the old unconditional UPDATE
+    // every instance would stamp its own `last_used_at`; with the new
+    // conditional UPDATE the first write wins and subsequent attempts
+    // inside the debounce window are no-ops.
+    await ctx.storage.keys.updateLastUsed(id);
+    const firstKey = await ctx.storage.keys.get(id);
+    const firstStamp = firstKey?.last_used_at;
+    expect(firstStamp).not.toBeNull();
+
+    // A tiny pause so a naive always-overwrite would surface as a
+    // monotonic change — if the stamp still moves, the debounce isn't
+    // holding.
+    await new Promise((r) => setTimeout(r, 5));
+    await ctx.storage.keys.updateLastUsed(id);
+    await new Promise((r) => setTimeout(r, 5));
+    await ctx.storage.keys.updateLastUsed(id);
+
+    const afterKey = await ctx.storage.keys.get(id);
+    expect(afterKey?.last_used_at).toBe(firstStamp);
+  });
+});

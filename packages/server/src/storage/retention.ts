@@ -1,4 +1,4 @@
-import type { ItemStore } from "./interface.js";
+import type { CoordinationStore, ItemStore } from "./interface.js";
 import { log } from "../middleware/logger.js";
 
 const MS_PER_DAY = 86_400_000;
@@ -12,6 +12,10 @@ const MS_PER_DAY = 86_400_000;
  * If `retentionDays <= 0`, the job is a no-op — the operator can leave
  * the deployment running with no trash purge by setting the env var to 0.
  * The default at the config layer is 60.
+ *
+ * When a `coordination` store is supplied, each tick is gated by a named
+ * advisory lock so multi-instance deployments run the purge once per
+ * tick cluster-wide instead of once per instance.
  */
 export class TrashPurger {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -22,6 +26,7 @@ export class TrashPurger {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -55,8 +60,12 @@ export class TrashPurger {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = await this.runOnce();
-      if (deleted > 0) {
+      const deleted = this.coordination
+        ? await this.coordination.withJobLock("trash-purge", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (deleted !== undefined && deleted > 0) {
         log("info", "Trash purge", {
           deleted,
           retentionDays: this.retentionDays,
@@ -87,6 +96,7 @@ export class AmbientExpirer {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -115,8 +125,12 @@ export class AmbientExpirer {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = await this.runOnce();
-      if (deleted > 0) {
+      const deleted = this.coordination
+        ? await this.coordination.withJobLock("ambient-expiry", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (deleted !== undefined && deleted > 0) {
         log("info", "Ambient expiry", {
           deleted,
           retentionDays: this.retentionDays,

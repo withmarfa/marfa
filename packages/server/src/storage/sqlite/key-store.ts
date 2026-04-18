@@ -1,5 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
 import type {
   ApiKey,
@@ -13,6 +13,13 @@ import type {
 import type { KeyStore } from "../interface.js";
 import { apiKeys } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+
+/**
+ * Window within which repeated `last_used_at` writes for the same key
+ * collapse to a single DB write. Mirrors the PG store so the two backends
+ * stay behaviourally identical.
+ */
+const LAST_USED_DEBOUNCE_MS = 3_600_000;
 
 function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
   return {
@@ -192,11 +199,26 @@ export class SqliteKeyStore implements KeyStore {
     return Promise.resolve();
   }
 
+  /**
+   * DB-side debounce. See the pg key-store docstring — the conditional
+   * WHERE makes this safe to call unconditionally from the auth
+   * middleware across any number of instances without generating a write
+   * storm.
+   */
   updateLastUsed(id: string): Promise<void> {
+    const now = new Date();
+    const cutoff = new Date(
+      now.getTime() - LAST_USED_DEBOUNCE_MS,
+    ).toISOString();
     this.db
       .update(apiKeys)
-      .set({ last_used_at: new Date().toISOString() })
-      .where(eq(apiKeys.id, id))
+      .set({ last_used_at: now.toISOString() })
+      .where(
+        and(
+          eq(apiKeys.id, id),
+          or(isNull(apiKeys.last_used_at), lt(apiKeys.last_used_at, cutoff)),
+        ),
+      )
       .run();
     return Promise.resolve();
   }
