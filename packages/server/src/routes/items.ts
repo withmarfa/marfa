@@ -34,6 +34,7 @@ import {
   ItemWithMetadataSchema,
   MetadataSchema,
 } from "./_schemas.js";
+import { filterMetadataForCaller } from "./util.js";
 
 // ---------------------------------------------------------------------------
 // Reusable schemas (Item / Metadata / ItemWithMetadata live in _schemas.ts;
@@ -779,7 +780,13 @@ export function itemRoutes(storage: Storage) {
       resource_id: item.id,
       details: { type: item.type },
     });
-    return c.json({ item: itemWithEdges, metadata }, 201);
+    return c.json(
+      {
+        item: itemWithEdges,
+        metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+      },
+      201,
+    );
   });
 
   // GET /items/stats — item counts grouped by state
@@ -889,15 +896,19 @@ export function itemRoutes(storage: Storage) {
     if (includeMetadata) {
       const metadataList = await storage.metadata.getMany(ids);
       const metadataMap = new Map(metadataList.map((m) => [m.item_id, m]));
+      const apiKey = c.get("apiKey");
       return c.json(
         {
           data: result.data.map((item) => ({
             item: decorate(item),
-            metadata: metadataMap.get(item.id) ?? {
-              item_id: item.id,
-              tags: [],
-              extensions: {},
-            },
+            metadata: filterMetadataForCaller(
+              metadataMap.get(item.id) ?? {
+                item_id: item.id,
+                tags: [],
+                extensions: {},
+              },
+              apiKey,
+            ),
           })),
           cursor: result.cursor,
           has_more: result.has_more,
@@ -933,7 +944,13 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "read");
     const metadata = await storage.metadata.get(id);
     const edges = await hydrateEdgesForItem(storage, id);
-    return c.json({ item: { ...item, edges }, metadata }, 200);
+    return c.json(
+      {
+        item: { ...item, edges },
+        metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+      },
+      200,
+    );
   });
 
   // PATCH /items/:id — update with conflict detection
@@ -1136,7 +1153,13 @@ export function itemRoutes(storage: Storage) {
       resource_id: id,
     });
     const hydrated = await hydrateEdgesForItem(storage, id);
-    return c.json({ item: { ...txResult, edges: hydrated }, metadata }, 200);
+    return c.json(
+      {
+        item: { ...txResult, edges: hydrated },
+        metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+      },
+      200,
+    );
   });
 
   // DELETE /items/:id — soft delete
@@ -1205,7 +1228,13 @@ export function itemRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
     });
-    return c.json({ item: restored, metadata }, 200);
+    return c.json(
+      {
+        item: restored,
+        metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+      },
+      200,
+    );
   });
 
   // POST /items/:id/transition
@@ -1237,7 +1266,13 @@ export function itemRoutes(storage: Storage) {
       resource_id: id,
       details: { from_state: item.state, to_state: state },
     });
-    return c.json({ item: updated, metadata }, 200);
+    return c.json(
+      {
+        item: updated,
+        metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+      },
+      200,
+    );
   });
 
   // GET /items/:id/versions
@@ -1272,7 +1307,11 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "read");
-    return c.json({ metadata: await storage.metadata.get(id) }, 200);
+    const metadata = await storage.metadata.get(id);
+    return c.json(
+      { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      200,
+    );
   });
 
   // PUT /items/:id/metadata — full replacement
@@ -1306,7 +1345,10 @@ export function itemRoutes(storage: Storage) {
       metadata,
       tenantId: c.get("apiKey")?.tenant_id,
     });
-    return c.json({ metadata }, 200);
+    return c.json(
+      { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      200,
+    );
   });
 
   // PATCH /items/:id/metadata — set-union merge
@@ -1350,7 +1392,10 @@ export function itemRoutes(storage: Storage) {
       metadata,
       tenantId: c.get("apiKey")?.tenant_id,
     });
-    return c.json({ metadata }, 200);
+    return c.json(
+      { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      200,
+    );
   });
 
   // POST /items/:id/tags
@@ -1390,7 +1435,10 @@ export function itemRoutes(storage: Storage) {
       metadata,
       tenantId: c.get("apiKey")?.tenant_id,
     });
-    return c.json({ metadata }, 200);
+    return c.json(
+      { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      200,
+    );
   });
 
   // DELETE /items/:id/purge — permanently delete a trashed item (admin only)
@@ -1444,7 +1492,10 @@ export function itemRoutes(storage: Storage) {
       metadata,
       tenantId: c.get("apiKey")?.tenant_id,
     });
-    return c.json({ metadata }, 200);
+    return c.json(
+      { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      200,
+    );
   });
 
   return router;
