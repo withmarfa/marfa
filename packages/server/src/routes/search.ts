@@ -18,6 +18,7 @@ import {
   ItemSchema as BaseItemSchema,
   MetadataSchema as BaseMetadataSchema,
 } from "./_schemas.js";
+import { filterMetadataForCaller } from "./util.js";
 
 // Search responses use loose() so the FTS5 ranker's extra columns
 // (e.g. relevance internals) don't trip strict validation. The
@@ -115,7 +116,12 @@ export function searchRoutes(storage: Storage) {
       offset: offset > 0 ? offset : undefined,
     });
 
-    return c.json({ results }, 200);
+    const apiKey = c.get("apiKey");
+    const filtered = results.map((r) => ({
+      ...r,
+      metadata: filterMetadataForCaller(r.metadata, apiKey),
+    }));
+    return c.json({ results: filtered }, 200);
   });
 
   return router;

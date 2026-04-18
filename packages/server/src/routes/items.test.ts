@@ -969,3 +969,167 @@ describe("metadata.changed pubsub event", () => {
     await iter.return(undefined);
   });
 });
+
+describe("metadata.extensions are permission-filtered on every read path", () => {
+  async function createMemberKey(
+    extPerms: Record<string, "read" | "write">,
+    label: string,
+  ): Promise<string> {
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label,
+        source: `${label}-src`,
+        role: "member",
+        type_permissions: { "*": "write" },
+        extension_permissions: extPerms,
+      },
+    });
+    const { key } = (await res.json()) as { key: string };
+    return key;
+  }
+
+  async function seedItemWithExtensions(): Promise<string> {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "ext-leak-fixture" },
+        tags: ["ext-leak-fixture"],
+      },
+    });
+    const { item } = (await createRes.json()) as { item: { id: string } };
+    // Admin writes three extension namespaces. Member key below only has
+    // read on `visible-app.prefs`; the other two must be hidden.
+    for (const ns of [
+      "visible-app.prefs",
+      "hidden-app.prefs",
+      "other-app.prefs",
+    ]) {
+      await request(ctx.app, "PUT", `/items/${item.id}/extensions/${ns}`, {
+        key: ctx.adminKey,
+        body: { flag: ns },
+      });
+    }
+    return item.id;
+  }
+
+  it("GET /items/:id only surfaces extension namespaces the caller can read", async () => {
+    const id = await seedItemWithExtensions();
+    const memberKey = await createMemberKey(
+      { "visible-app.prefs": "read" },
+      "ext-leak-single",
+    );
+
+    const res = await request(ctx.app, "GET", `/items/${id}`, {
+      key: memberKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      metadata: { extensions: Record<string, unknown> };
+    };
+    expect(Object.keys(body.metadata.extensions).sort()).toEqual([
+      "visible-app.prefs",
+    ]);
+  });
+
+  it("GET /items?include=metadata filters extensions per item", async () => {
+    const id = await seedItemWithExtensions();
+    const memberKey = await createMemberKey(
+      { "visible-app.prefs": "read" },
+      "ext-leak-list",
+    );
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&include=metadata&limit=200`,
+      { key: memberKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: {
+        item: { id: string };
+        metadata: { extensions: Record<string, unknown> };
+      }[];
+    };
+    const row = body.data.find((r) => r.item.id === id);
+    expect(row).toBeDefined();
+    expect(Object.keys(row?.metadata.extensions ?? {}).sort()).toEqual([
+      "visible-app.prefs",
+    ]);
+  });
+
+  it("GET /items/:id/metadata filters extensions", async () => {
+    const id = await seedItemWithExtensions();
+    const memberKey = await createMemberKey(
+      { "visible-app.prefs": "read" },
+      "ext-leak-meta",
+    );
+
+    const res = await request(ctx.app, "GET", `/items/${id}/metadata`, {
+      key: memberKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      metadata: { extensions: Record<string, unknown> };
+    };
+    expect(Object.keys(body.metadata.extensions).sort()).toEqual([
+      "visible-app.prefs",
+    ]);
+  });
+
+  it("/search filters extensions on every result", async () => {
+    await seedItemWithExtensions();
+    const memberKey = await createMemberKey(
+      { "visible-app.prefs": "read" },
+      "ext-leak-search",
+    );
+
+    const res = await request(ctx.app, "GET", `/search?q=ext-leak-fixture`, {
+      key: memberKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      results: { metadata: { extensions: Record<string, unknown> } }[];
+    };
+    expect(body.results.length).toBeGreaterThan(0);
+    for (const result of body.results) {
+      const namespaces = Object.keys(result.metadata.extensions);
+      for (const ns of namespaces) {
+        expect(ns).toBe("visible-app.prefs");
+      }
+    }
+  });
+
+  it("admin keys still see every extension namespace", async () => {
+    const id = await seedItemWithExtensions();
+    const res = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    const body = (await res.json()) as {
+      metadata: { extensions: Record<string, unknown> };
+    };
+    expect(Object.keys(body.metadata.extensions).sort()).toEqual([
+      "hidden-app.prefs",
+      "other-app.prefs",
+      "visible-app.prefs",
+    ]);
+  });
+
+  it("implicit own-namespace rule still exposes a member's own namespace", async () => {
+    const id = await seedItemWithExtensions();
+    // Key with no explicit grants — the own-namespace rule should let it
+    // see an extension namespace that matches its label.
+    const ownerKey = await createMemberKey({}, "visible-app.prefs");
+    const res = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ownerKey,
+    });
+    const body = (await res.json()) as {
+      metadata: { extensions: Record<string, unknown> };
+    };
+    expect(Object.keys(body.metadata.extensions).sort()).toEqual([
+      "visible-app.prefs",
+    ]);
+  });
+});
