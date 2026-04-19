@@ -280,7 +280,12 @@ export function edgeRoutes(storage: Storage) {
     if (!existing) {
       throw new MymeError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
-    const srcItem = await storage.items.get(
+    // Use getIncludingTrashed so edges whose source item is trashed
+    // still run the source-type permission check. Previously
+    // storage.items.get() returned null for trashed sources, which
+    // silently skipped the gate and let a credential without the
+    // source type's write permission mutate the edge.
+    const srcItem = await storage.items.getIncludingTrashed(
       existing.source_id,
       c.get("apiKey")?.tenant_id,
     );
@@ -309,7 +314,12 @@ export function edgeRoutes(storage: Storage) {
     if (!existing) {
       throw new MymeError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
-    const srcItem = await storage.items.get(
+    // Use getIncludingTrashed so edges whose source item is trashed
+    // still run the source-type permission check. Previously
+    // storage.items.get() returned null for trashed sources, which
+    // silently skipped the gate and let a credential without the
+    // source type's write permission mutate the edge.
+    const srcItem = await storage.items.getIncludingTrashed(
       existing.source_id,
       c.get("apiKey")?.tenant_id,
     );

@@ -1200,6 +1200,16 @@ export function itemRoutes(storage: Storage) {
     requireAuth(c);
     const tid = c.get("apiKey")?.tenant_id;
 
+    // Gate on the item's type BEFORE entering the cascade-delete
+    // transaction. Previously DELETE had no type-permission check, so
+    // any authenticated credential could trash any item regardless of
+    // its `type_permissions`. Mirrors the PATCH /items handler above.
+    const targetItem = await storage.items.get(id, tid);
+    if (!targetItem) {
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+    }
+    requireTypeAccess(c, targetItem.type, "write");
+
     await storage.runInTransaction(async () => {
       // Walk the edge graph to plan the cascade + reject block-edges.
       const toDelete = await planCascadeDelete(storage.edges, id);
@@ -1242,8 +1252,17 @@ export function itemRoutes(storage: Storage) {
 
     requireAuth(c);
     const tenantId = c.get("apiKey")?.tenant_id;
+    // Fetch the (trashed) item to get its type, then run the permission
+    // gate BEFORE calling `restore()`. Previously the write happened
+    // first and then the gate — a throwing gate would leave the item
+    // restored with no rollback. `getIncludingTrashed` sees past the
+    // normal trashed-is-invisible filter.
+    const pending = await storage.items.getIncludingTrashed(id, tenantId);
+    if (!pending) {
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+    }
+    requireTypeAccess(c, pending.type, "write");
     const restored = await storage.items.restore(id, tenantId);
-    requireTypeAccess(c, restored.type, "write");
     const metadata = await storage.metadata.get(id);
     await publish({ type: "restored", item: restored, metadata, tenantId });
     void storage.audit.log({
@@ -1439,13 +1458,19 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const tags = body.tags;
 
-    const metadata = await storage.metadata.addTags(id, tags);
-    if (metadata.tags.length > 100) {
+    // Check the 100-tag cap BEFORE writing. Previously the write ran
+    // first and the cap was validated on the post-write metadata, so
+    // over-limit tags persisted after the error was thrown.
+    const existingMeta = await storage.metadata.get(id);
+    const projectedCount = new Set([...existingMeta.tags, ...tags]).size;
+    if (projectedCount > 100) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
         "Maximum 100 tags per item (including existing tags)",
       );
     }
+
+    const metadata = await storage.metadata.addTags(id, tags);
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "item.tag",

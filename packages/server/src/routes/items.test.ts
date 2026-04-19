@@ -1283,3 +1283,118 @@ describe("GET /items?include=extensions", () => {
     expect(row?.extensions).toHaveProperty("app.data");
   });
 });
+
+describe("permission-gate ordering (priority cluster)", () => {
+  async function createMemberKey(
+    permissions: Record<string, "read" | "write" | "none">,
+  ): Promise<string> {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: `gate-member-${suffix}`,
+        source: `gate-member-${suffix}`,
+        role: "member",
+        default_origin: "user",
+        default_library: false,
+        type_permissions: permissions,
+        extension_permissions: {},
+        edge_permissions: {},
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { key: string };
+    return body.key;
+  }
+
+  it("DELETE /items/:id returns 403 when the credential lacks write on the type", async () => {
+    // Admin creates an item.
+    const create = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "to-preserve" } },
+    });
+    const { item } = (await create.json()) as { item: { id: string } };
+
+    // Member credential with no core.note write.
+    const restrictedKey = await createMemberKey({ "core.note": "read" });
+
+    const del = await request(ctx.app, "DELETE", `/items/${item.id}`, {
+      key: restrictedKey,
+    });
+    expect(del.status).toBe(403);
+
+    // The item must still be readable with admin (i.e. not trashed).
+    const after = await request(ctx.app, "GET", `/items/${item.id}`, {
+      key: ctx.adminKey,
+    });
+    expect(after.status).toBe(200);
+  });
+
+  it("POST /items/:id/restore returns 403 without touching state when credential lacks write", async () => {
+    // Admin creates and trashes an item.
+    const create = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "soft-delete-me" } },
+    });
+    const { item } = (await create.json()) as { item: { id: string } };
+    const del = await request(ctx.app, "DELETE", `/items/${item.id}`, {
+      key: ctx.adminKey,
+    });
+    expect(del.status).toBe(200);
+
+    // Restore by a restricted credential must 403.
+    const restrictedKey = await createMemberKey({ "core.note": "read" });
+    const restore = await request(
+      ctx.app,
+      "POST",
+      `/items/${item.id}/restore`,
+      { key: restrictedKey },
+    );
+    expect(restore.status).toBe(403);
+
+    // Item must remain trashed — gate must fire before the write.
+    const getAfter = await request(ctx.app, "GET", `/items/${item.id}`, {
+      key: ctx.adminKey,
+    });
+    expect(getAfter.status).toBe(404);
+  });
+
+  it("POST /items/:id/tags rejects over-100 and does not write partial tags", async () => {
+    const create = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "tag-cap" } },
+    });
+    const { item } = (await create.json()) as { item: { id: string } };
+
+    // Seed 95 tags — under the cap.
+    const seed = Array.from({ length: 95 }, (_, i) => `t${String(i)}`);
+    const seedRes = await request(ctx.app, "POST", `/items/${item.id}/tags`, {
+      key: ctx.adminKey,
+      body: { tags: seed },
+    });
+    expect(seedRes.status).toBe(200);
+
+    // Try to add 10 more (total would be 105) — must 400.
+    const overflow = Array.from({ length: 10 }, (_, i) => `x${String(i)}`);
+    const overflowRes = await request(
+      ctx.app,
+      "POST",
+      `/items/${item.id}/tags`,
+      { key: ctx.adminKey, body: { tags: overflow } },
+    );
+    expect(overflowRes.status).toBe(400);
+
+    // None of the 10 overflow tags should have persisted. Reading metadata
+    // back, only the original 95 remain.
+    const metaRes = await request(ctx.app, "GET", `/items/${item.id}`, {
+      key: ctx.adminKey,
+    });
+    const metaBody = (await metaRes.json()) as {
+      metadata: { tags: string[] };
+    };
+    expect(metaBody.metadata.tags).toHaveLength(95);
+    for (const x of overflow) {
+      expect(metaBody.metadata.tags).not.toContain(x);
+    }
+  });
+});
