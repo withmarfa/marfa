@@ -502,6 +502,25 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
         typeof obj.fields === "object" && obj.fields !== null
           ? (obj.fields as Record<string, unknown>)
           : {};
+      // merge_policy.fields may reference fields declared on any ancestor —
+      // overriding an inherited field's strategy is a legitimate use case
+      // (e.g. a child of core.note that wants body to be last-writer-wins
+      // instead of the parent's keep-both). Collect the full visible field
+      // set by walking the parent chain via the registry.
+      const visibleFields = new Set(Object.keys(fieldMap));
+      if (typeof obj.parent === "string" && obj.parent.length > 0) {
+        const seen = new Set<string>();
+        let cursor: string | undefined = obj.parent;
+        while (cursor && !seen.has(cursor)) {
+          seen.add(cursor);
+          const ancestor = TYPE_REGISTRY.get(cursor);
+          if (!ancestor) break;
+          for (const fieldName of Object.keys(ancestor.fields)) {
+            visibleFields.add(fieldName);
+          }
+          cursor = ancestor.parent;
+        }
+      }
       if (mp.fields !== undefined) {
         if (
           typeof mp.fields !== "object" ||
@@ -531,7 +550,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
               });
               continue;
             }
-            if (!(fieldName in fieldMap)) {
+            if (!visibleFields.has(fieldName)) {
               errors.push({
                 field: `merge_policy.fields.${fieldName}`,
                 message: `References field "${fieldName}" that does not exist on this type`,
