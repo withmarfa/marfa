@@ -194,4 +194,49 @@ describe("merge_policy on type schemas", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("POST /types accepts a child of core.note overriding an inherited field's strategy", async () => {
+    // `body` lives on core.note. A child that doesn't redeclare the field
+    // but overrides its merge strategy is legitimate.
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.note_body_override",
+        label: "Note Override",
+        version: 1,
+        parent: "core.note",
+        fields: { extra: { type: "string" } },
+        merge_policy: { fields: { body: "last_writer_wins" } },
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { type: TypeSchema };
+    expect(body.type.merge_policy?.fields?.body).toBe("last_writer_wins");
+  });
+
+  it("POST /types rejects a child of core.note whose merge_policy references a nonexistent field", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.note_bad_override",
+        label: "Bad Override",
+        version: 1,
+        parent: "core.note",
+        fields: { extra: { type: "string" } },
+        merge_policy: { fields: { nonexistent: "keep_both_copies" } },
+      },
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as {
+      error: {
+        code: string;
+        details?: { errors?: { field: string }[] };
+      };
+    };
+    expect(payload.error.code).toBe("invalid_schema");
+    const errors = payload.error.details?.errors ?? [];
+    expect(
+      errors.some((e) => e.field.startsWith("merge_policy.fields.nonexistent")),
+    ).toBe(true);
+  });
 });

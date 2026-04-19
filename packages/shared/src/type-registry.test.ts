@@ -675,4 +675,46 @@ describe("validateTypeSchema — merge_policy", () => {
       expect(result.data.merge_policy).toBeUndefined();
     }
   });
+
+  it("accepts a child of core.note overriding an inherited field's strategy", () => {
+    // `body` is declared on core.note, not on this child. Overriding its
+    // merge strategy (without redeclaring the field itself) is legitimate.
+    const result = validateTypeSchema({
+      id: "acme.note_override",
+      version: 1,
+      parent: "core.note",
+      fields: {
+        extra: { type: "string" },
+      },
+      merge_policy: {
+        fields: { body: "last_writer_wins" },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.merge_policy?.fields?.body).toBe("last_writer_wins");
+    }
+  });
+
+  it("rejects merge_policy referencing a field on neither child nor ancestor", () => {
+    const result = validateTypeSchema({
+      id: "acme.note_bad_override",
+      version: 1,
+      parent: "core.note",
+      fields: {
+        extra: { type: "string" },
+      },
+      merge_policy: {
+        fields: { nonexistent: "keep_both_copies" },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some((e) =>
+          e.field.startsWith("merge_policy.fields.nonexistent"),
+        ),
+      ).toBe(true);
+    }
+  });
 });
