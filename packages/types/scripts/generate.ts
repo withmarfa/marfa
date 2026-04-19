@@ -21,6 +21,13 @@ interface JsonDisplayHints {
   body_field?: string;
 }
 
+type JsonMergeStrategy = "last_writer_wins" | "keep_both_copies";
+
+interface JsonMergePolicy {
+  fields?: Record<string, JsonMergeStrategy>;
+  default?: JsonMergeStrategy;
+}
+
 interface JsonSchema {
   id: string;
   parent?: string;
@@ -30,6 +37,7 @@ interface JsonSchema {
   fields: Record<string, JsonField>;
   required: string[];
   display_hints?: JsonDisplayHints;
+  merge_policy?: JsonMergePolicy;
   _deferred?: boolean;
 }
 
@@ -134,6 +142,34 @@ function resolveDisplayHints(schema: JsonSchema): JsonDisplayHints | undefined {
   return undefined;
 }
 
+// Resolve merge_policy — walk parent chain and merge field-by-field.
+// Child `fields` entries merge over parent `fields` (per-key); child `default`
+// replaces parent `default`. An absent `fields` on a child does not erase the
+// parent's entries.
+function resolveMergePolicy(schema: JsonSchema): JsonMergePolicy | undefined {
+  const chain: JsonSchema[] = [];
+  let current: JsonSchema | undefined = schema;
+  while (current) {
+    chain.unshift(current);
+    current = current.parent ? schemaMap.get(current.parent) : undefined;
+  }
+  const fields: Record<string, JsonMergeStrategy> = {};
+  let defaultStrategy: JsonMergeStrategy | undefined;
+  let saw = false;
+  for (const ancestor of chain) {
+    const p = ancestor.merge_policy;
+    if (!p) continue;
+    saw = true;
+    if (p.fields) Object.assign(fields, p.fields);
+    if (p.default) defaultStrategy = p.default;
+  }
+  if (!saw) return undefined;
+  const out: JsonMergePolicy = {};
+  if (Object.keys(fields).length > 0) out.fields = fields;
+  if (defaultStrategy) out.default = defaultStrategy;
+  return out;
+}
+
 // Emit each type
 for (const schema of schemas) {
   const name = varName(schema.id);
@@ -168,6 +204,25 @@ for (const schema of schemas) {
     }
     if (parts.length > 0) {
       lines.push(`  display_hints: { ${parts.join(", ")} },`);
+    }
+  }
+  const resolvedPolicy = resolveMergePolicy(schema);
+  if (resolvedPolicy) {
+    const parts: string[] = [];
+    if (
+      resolvedPolicy.fields &&
+      Object.keys(resolvedPolicy.fields).length > 0
+    ) {
+      const entries = Object.entries(resolvedPolicy.fields)
+        .map(([k, v]) => `${k}: "${v}"`)
+        .join(", ");
+      parts.push(`fields: { ${entries} }`);
+    }
+    if (resolvedPolicy.default) {
+      parts.push(`default: "${resolvedPolicy.default}"`);
+    }
+    if (parts.length > 0) {
+      lines.push(`  merge_policy: { ${parts.join(", ")} },`);
     }
   }
   lines.push("};");

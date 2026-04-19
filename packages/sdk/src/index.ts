@@ -24,6 +24,8 @@ export type {
   ConflictStrategy,
   ConflictData,
   ConflictResolver,
+  ConflictAutoMergedEvent,
+  ConflictAutoMergeListener,
 } from "./conflict.js";
 
 // Re-export key types from @mymehq/shared
@@ -39,5 +41,7 @@ export type {
   SearchResult,
   ConflictSnapshot,
   ItemState,
+  MergePolicy,
+  MergeStrategy,
 } from "@mymehq/shared";
 export type { TypeSchema } from "@mymehq/shared";

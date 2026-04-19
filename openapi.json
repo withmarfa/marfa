@@ -1784,13 +1784,36 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "merge_policy": {
+                      "type": "object",
+                      "properties": {
+                        "fields": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string",
+                            "enum": [
+                              "last_writer_wins",
+                              "keep_both_copies"
+                            ]
+                          }
+                        },
+                        "default": {
+                          "type": "string",
+                          "enum": [
+                            "last_writer_wins",
+                            "keep_both_copies"
+                          ]
+                        }
+                      }
                     }
                   },
                   "required": [
                     "error",
                     "current",
                     "ancestor",
-                    "conflicting_fields"
+                    "conflicting_fields",
+                    "merge_policy"
                   ]
                 }
               }
@@ -5993,6 +6016,28 @@
                             "type": "number"
                           }
                         }
+                      },
+                      "merge_policy": {
+                        "type": "object",
+                        "properties": {
+                          "fields": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string",
+                              "enum": [
+                                "last_writer_wins",
+                                "keep_both_copies"
+                              ]
+                            }
+                          },
+                          "default": {
+                            "type": "string",
+                            "enum": [
+                              "last_writer_wins",
+                              "keep_both_copies"
+                            ]
+                          }
+                        }
                       }
                     },
                     "required": [
@@ -6123,6 +6168,28 @@
                             },
                             "max_versions": {
                               "type": "number"
+                            }
+                          }
+                        },
+                        "merge_policy": {
+                          "type": "object",
+                          "properties": {
+                            "fields": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string",
+                                "enum": [
+                                  "last_writer_wins",
+                                  "keep_both_copies"
+                                ]
+                              }
+                            },
+                            "default": {
+                              "type": "string",
+                              "enum": [
+                                "last_writer_wins",
+                                "keep_both_copies"
+                              ]
                             }
                           }
                         }
@@ -6291,6 +6358,28 @@
                         },
                         "max_versions": {
                           "type": "number"
+                        }
+                      }
+                    },
+                    "merge_policy": {
+                      "type": "object",
+                      "properties": {
+                        "fields": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string",
+                            "enum": [
+                              "last_writer_wins",
+                              "keep_both_copies"
+                            ]
+                          }
+                        },
+                        "default": {
+                          "type": "string",
+                          "enum": [
+                            "last_writer_wins",
+                            "keep_both_copies"
+                          ]
                         }
                       }
                     }
@@ -6468,6 +6557,28 @@
                             },
                             "max_versions": {
                               "type": "number"
+                            }
+                          }
+                        },
+                        "merge_policy": {
+                          "type": "object",
+                          "properties": {
+                            "fields": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string",
+                                "enum": [
+                                  "last_writer_wins",
+                                  "keep_both_copies"
+                                ]
+                              }
+                            },
+                            "default": {
+                              "type": "string",
+                              "enum": [
+                                "last_writer_wins",
+                                "keep_both_copies"
+                              ]
                             }
                           }
                         }

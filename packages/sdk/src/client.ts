@@ -35,6 +35,7 @@ import {
   handleConflictUpdate,
   type ConflictStrategy,
   type ConflictResolver,
+  type ConflictAutoMergeListener,
 } from "./conflict.js";
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,13 @@ export interface ClientConfig {
    * use the server's value.
    */
   conflictStrategy?: ConflictStrategy;
+  /**
+   * Default listener invoked after the auto-merge path completes successfully.
+   * Receives a `ConflictAutoMergedEvent` describing the per-field outcome and
+   * any spawned conflicted-copy id. Per-call overridable via
+   * `UpdateOptions.onAutoMerge`.
+   */
+  onConflictAutoMerge?: ConflictAutoMergeListener;
   timeoutMs?: number;
   cdnBaseUrl?: string;
 }
@@ -70,6 +78,16 @@ export interface UpdateOptions {
   /** Toggle library / ambient state. Independent of the version-merge path
    *  for `properties`; a library-only update never conflicts. */
   library?: boolean;
+  /**
+   * Item type. Required by the `auto` strategy when a `keep_both_copies`
+   * conflict spawns a sibling item. Omit to let the SDK pre-fetch it.
+   */
+  type?: string;
+  /**
+   * Listener invoked after the auto-merge path completes successfully.
+   * Overrides the client's default `onConflictAutoMerge` for this call.
+   */
+  onAutoMerge?: ConflictAutoMergeListener;
 }
 
 export interface ListFilters {
@@ -135,6 +153,7 @@ export interface MetadataInput {
 export class MymeClient {
   private readonly transport: HttpTransport;
   private readonly defaultConflictStrategy: ConflictStrategy;
+  private readonly defaultOnConflictAutoMerge?: ConflictAutoMergeListener;
   private readonly apiBaseUrl: string;
   private readonly cdnBaseUrl?: string;
 
@@ -147,6 +166,7 @@ export class MymeClient {
       timeoutMs: config.timeoutMs,
     });
     this.defaultConflictStrategy = config.conflictStrategy ?? "auto";
+    this.defaultOnConflictAutoMerge = config.onConflictAutoMerge;
     this.cdnBaseUrl = config.cdnBaseUrl;
   }
 
@@ -225,21 +245,27 @@ export class MymeClient {
       options?: UpdateOptions,
     ): Promise<Item> => {
       let version = options?.version;
-      if (version === undefined) {
+      let type = options?.type;
+      if (version === undefined || type === undefined) {
         const item = await this.items.get(id);
-        version = item.version;
+        version ??= item.version;
+        type ??= item.type;
       }
 
       const strategy = options?.conflict ?? this.defaultConflictStrategy;
+      const onAutoMerge =
+        options?.onAutoMerge ?? this.defaultOnConflictAutoMerge;
 
       return handleConflictUpdate(
         this.transport,
         id,
+        type,
         properties,
         version,
         strategy,
         options?.resolve,
         options?.library,
+        onAutoMerge,
       );
     },
 

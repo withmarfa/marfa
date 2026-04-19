@@ -247,6 +247,14 @@ describe("PATCH /items/:id", () => {
     expect(conflict).toHaveProperty("conflicting_fields");
     expect(conflict).toHaveProperty("current");
     expect(conflict).toHaveProperty("ancestor");
+    expect(conflict).toHaveProperty("merge_policy");
+    const policy = conflict.merge_policy as {
+      fields?: Record<string, string>;
+      default?: string;
+    };
+    expect(policy.fields?.body).toBe("keep_both_copies");
+    expect(policy.fields?.notes).toBe("keep_both_copies");
+    expect(policy.default).toBe("last_writer_wins");
   });
 
   it("auto-merges non-conflicting field updates", async () => {

@@ -35,5 +35,11 @@
   "display_hints": {
     "title_field": "text",
     "body_field": "note"
+  },
+  "merge_policy": {
+    "fields": {
+      "note": "keep_both_copies"
+    },
+    "default": "last_writer_wins"
   }
 }

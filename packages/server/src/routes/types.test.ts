@@ -130,3 +130,68 @@ describe("inheritance rule enforcement", () => {
     expect(res.status).toBe(201);
   });
 });
+
+describe("merge_policy on type schemas", () => {
+  it("GET /types/core.note returns the resolved merge_policy", async () => {
+    const res = await request(ctx.app, "GET", "/types/core.note", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const schema = (await res.json()) as TypeSchema;
+    expect(schema.merge_policy).toBeDefined();
+    expect(schema.merge_policy?.fields?.body).toBe("keep_both_copies");
+    expect(schema.merge_policy?.fields?.notes).toBe("keep_both_copies");
+    expect(schema.merge_policy?.default).toBe("last_writer_wins");
+  });
+
+  it("POST /types accepts a custom type with a valid merge_policy", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.custom_with_policy",
+        label: "Custom",
+        version: 1,
+        fields: {
+          body: { type: "string" },
+          title: { type: "string" },
+        },
+        merge_policy: {
+          fields: { body: "keep_both_copies" },
+          default: "last_writer_wins",
+        },
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { type: TypeSchema };
+    expect(body.type.merge_policy?.fields?.body).toBe("keep_both_copies");
+    expect(body.type.merge_policy?.default).toBe("last_writer_wins");
+  });
+
+  it("POST /types rejects a merge_policy with an unknown strategy", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.bad_strategy",
+        label: "Bad",
+        version: 1,
+        fields: { body: { type: "string" } },
+        merge_policy: { fields: { body: "totally_made_up" } },
+      },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /types rejects a merge_policy referencing an unknown field", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.unknown_field_policy",
+        label: "Bad",
+        version: 1,
+        fields: { body: { type: "string" } },
+        merge_policy: { fields: { ghost: "keep_both_copies" } },
+      },
+    });
+    expect(res.status).toBe(400);
+  });
+});

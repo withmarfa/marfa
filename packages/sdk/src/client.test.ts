@@ -298,6 +298,129 @@ describe("conflict resolution", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Policy-aware conflict resolution (auto strategy honours merge_policy)
+// ---------------------------------------------------------------------------
+
+describe("conflict resolution — policy-aware auto strategy", () => {
+  it("core.note body conflict spawns a conflicted-copy sibling", async () => {
+    const item = await createNote({ title: "Original title", body: "Base" });
+    await client.items.update(item.id, { body: "Server body" }, { version: 1 });
+
+    const events: string[] = [];
+    const result = await client.items.update(
+      item.id,
+      { body: "Client body" },
+      {
+        version: 1,
+        conflict: "auto",
+        type: "core.note",
+        onAutoMerge: (e) => {
+          if (e.conflictedCopyId) events.push(e.conflictedCopyId);
+        },
+      },
+    );
+
+    expect(result.properties.body).toBe("Server body");
+    expect(events.length).toBe(1);
+
+    const sibling = await client.items.get(events[0]!);
+    expect(sibling.type).toBe("core.note");
+    expect(sibling.properties.body).toBe("Client body");
+    const meta = await client.metadata.get(events[0]!);
+    expect(meta.tags).toContain("conflicted-copy");
+  });
+
+  it("core.note title conflict (last-writer-wins) does not spawn a sibling", async () => {
+    const item = await createNote();
+    await client.items.update(
+      item.id,
+      { title: "Server title" },
+      { version: 1 },
+    );
+
+    let spawned: string | undefined;
+    const result = await client.items.update(
+      item.id,
+      { title: "Client title" },
+      {
+        version: 1,
+        conflict: "auto",
+        type: "core.note",
+        onAutoMerge: (e) => {
+          spawned = e.conflictedCopyId;
+        },
+      },
+    );
+
+    expect(result.properties.title).toBe("Server title");
+    expect(spawned).toBeUndefined();
+  });
+
+  it("core.note mixed conflict (body + title) spawns one sibling for body", async () => {
+    const item = await createNote({ title: "Original", body: "Base" });
+    await client.items.update(
+      item.id,
+      { body: "Server body", title: "Server title" },
+      { version: 1 },
+    );
+
+    let event: { conflictedCopyId?: string; fields: string[] } | undefined;
+    const result = await client.items.update(
+      item.id,
+      { body: "Client body", title: "Client title" },
+      {
+        version: 1,
+        conflict: "auto",
+        type: "core.note",
+        onAutoMerge: (e) => {
+          event = e;
+        },
+      },
+    );
+
+    expect(result.properties.title).toBe("Server title");
+    expect(result.properties.body).toBe("Server body");
+    expect(event?.conflictedCopyId).toBeDefined();
+    expect(event?.fields.sort()).toEqual(["body", "title"]);
+
+    const sibling = await client.items.get(event!.conflictedCopyId!);
+    expect(sibling.properties.body).toBe("Client body");
+    // Title is last-writer-wins, so the sibling carries the server's title.
+    expect(sibling.properties.title).toBe("Server title");
+  });
+
+  it("core.entity.person — no keep-both fields, no sibling spawned", async () => {
+    const item = await client.items.create({
+      type: "core.entity.person",
+      properties: { name: "Alice", given_name: "Alice" },
+    });
+
+    await client.items.update(
+      item.id,
+      { given_name: "Server Alice" },
+      { version: 1 },
+    );
+
+    let spawned: string | undefined;
+    const result = await client.items.update(
+      item.id,
+      { given_name: "Client Alice" },
+      {
+        version: 1,
+        conflict: "auto",
+        type: "core.entity.person",
+        onAutoMerge: (e) => {
+          spawned = e.conflictedCopyId;
+        },
+      },
+    );
+
+    expect(result.properties.given_name).toBe("Server Alice");
+    expect(spawned).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Metadata
 // ---------------------------------------------------------------------------
 

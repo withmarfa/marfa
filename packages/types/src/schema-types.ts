@@ -50,6 +50,39 @@ export interface DisplayHints {
   body_field?: string;
 }
 
+/**
+ * Per-field strategy for resolving concurrent edits on the same item.
+ *
+ * - `last_writer_wins` — server's current value wins on conflict; the
+ *   client's stale change is dropped. The historical default for every
+ *   field; matches single-value semantics like enums, scalars, IDs, and
+ *   timestamps.
+ * - `keep_both_copies` — preserve the client's edit by spawning a sibling
+ *   item of the same type tagged `conflicted-copy`. The original item
+ *   accepts the server's current value for the field. Reserved for the
+ *   conventional user-authored long-text fields (`body`, `notes`,
+ *   highlight `note`), where silently dropping a write is the worst
+ *   outcome.
+ */
+export type MergeStrategy = "last_writer_wins" | "keep_both_copies";
+
+/**
+ * Per-type conflict-resolution policy. Mirrors the `display_hints`
+ * uniform-object precedent: a `fields` map of field-name → strategy and
+ * an optional `default` for unlisted fields. Both keys are optional;
+ * unspecified strategies fall back to `last_writer_wins`.
+ *
+ * Inherited by descendant types: child `fields` entries merge over parent
+ * `fields` entries (child wins per key); child `default` replaces parent
+ * `default`. Empty `fields` on a child does not erase parent entries.
+ */
+export interface MergePolicy {
+  /** Per-field strategy. Field names must exist in the type's `fields` map. */
+  fields?: Record<string, MergeStrategy>;
+  /** Fallback strategy for fields not listed in `fields`. Defaults to `last_writer_wins`. */
+  default?: MergeStrategy;
+}
+
 /** A complete type schema — the data contract for a Myme type. */
 export interface TypeSchema {
   id: string;
@@ -60,6 +93,7 @@ export interface TypeSchema {
   fields: Record<string, FieldDefinition>;
   display_hints?: DisplayHints;
   version_policy?: VersionPolicy;
+  merge_policy?: MergePolicy;
 }
 
 // ---------------------------------------------------------------------------
