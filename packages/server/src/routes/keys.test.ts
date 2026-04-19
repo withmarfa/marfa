@@ -1,4 +1,10 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { createApp } from "../app.js";
+import { createSqliteStorage } from "../storage/sqlite/index.js";
+import { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -136,5 +142,120 @@ describe("PATCH /keys/{id}", () => {
       body: { label: "ghost" },
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("bootstrap sentinel", () => {
+  // Builds a fresh SQLite-backed app with NO existing key and NO
+  // sentinel set — mirrors a brand-new installation. Uses sqlite
+  // directly (not createTestContext) so we can go through POST /keys
+  // on a truly empty workspace.
+  function freshApp() {
+    const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-"));
+    const storage = createSqliteStorage(join(tmpDir, "test.db"));
+    const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
+    const app = createApp(storage, blobBackend, {
+      port: 0,
+      storageDialect: "sqlite",
+      sqlitePath: "",
+      databaseUrl: "",
+      blobPath: join(tmpDir, "blobs"),
+      blobBackend: "fs",
+      s3Bucket: "",
+      s3Region: "us-east-1",
+      s3Endpoint: "",
+      s3AccessKeyId: "",
+      s3SecretAccessKey: "",
+      apiKeySalt: "test-salt",
+      corsOrigins: [],
+      cdnBaseUrl: "",
+      authMode: "keys",
+      versionSnapshotIntervalMs: 600_000,
+      rateLimitEnabled: false,
+      enableHsts: false,
+      auditRetentionDays: 90,
+      auditCleanupIntervalMs: 86_400_000,
+      versionThinningIntervalMs: 3_600_000,
+      versionRecentDays: 30,
+      versionDailySnapshotDays: 90,
+      versionWeeklySnapshotDays: 365,
+      versionMaxVersions: 500,
+      trashRetentionDays: 60,
+      trashPurgeIntervalMs: 3_600_000,
+      ambientRetentionDays: 0,
+      ambientExpiryIntervalMs: 3_600_000,
+      errorWebhookUrl: "",
+      trustedProxyCidrs: [],
+    });
+    return { app, storage };
+  }
+
+  it("admits the first unauthenticated POST /keys as bootstrap", async () => {
+    const { app, storage } = freshApp();
+    try {
+      const res = await request(app, "POST", "/keys", {
+        body: {
+          label: "first-admin",
+          source: "first-admin",
+          role: "member",
+          default_origin: "user",
+          default_library: false,
+          type_permissions: { "*": "write" },
+          extension_permissions: {},
+          edge_permissions: {},
+        },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { role: string };
+      // Bootstrap key is coerced to admin regardless of requested role.
+      expect(body.role).toBe("admin");
+      // Sentinel must now be stamped.
+      const stamped = await storage.settings.get("bootstrapped");
+      expect(stamped).toBe("true");
+    } finally {
+      await storage.close();
+    }
+  });
+
+  it("does NOT re-open bootstrap after every key is revoked", async () => {
+    const { app, storage } = freshApp();
+    try {
+      // First unauthenticated POST succeeds as bootstrap.
+      const firstRes = await request(app, "POST", "/keys", {
+        body: {
+          label: "first-admin",
+          source: "first-admin",
+          role: "member",
+          default_origin: "user",
+          default_library: false,
+          type_permissions: { "*": "write" },
+          extension_permissions: {},
+          edge_permissions: {},
+        },
+      });
+      expect(firstRes.status).toBe(201);
+      const { id: firstId } = (await firstRes.json()) as { id: string };
+
+      // Revoke every key.
+      await storage.keys.revoke(firstId);
+
+      // Next unauthenticated POST must be rejected — this is the
+      // regression the persistent sentinel prevents.
+      const secondRes = await request(app, "POST", "/keys", {
+        body: {
+          label: "takeover",
+          source: "takeover",
+          role: "member",
+          default_origin: "user",
+          default_library: false,
+          type_permissions: { "*": "write" },
+          extension_permissions: {},
+          edge_permissions: {},
+        },
+      });
+      expect(secondRes.status).toBe(401);
+    } finally {
+      await storage.close();
+    }
   });
 });

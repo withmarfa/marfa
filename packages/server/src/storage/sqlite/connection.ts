@@ -257,6 +257,11 @@ export function createConnection(sqlitePath: string): {
     );
     CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_event_log_edge_id ON event_log(edge_id);
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 
   // Schema source of truth is the Drizzle migrations under drizzle/sqlite/.

@@ -11,6 +11,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, requireAuth, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { renderConsentScreen } from "./consent.js";
+import { constantTimeEqual } from "../utils/crypto.js";
 
 const ACCESS_TOKEN_PREFIX = "myme_at_";
 const REFRESH_TOKEN_PREFIX = "myme_rt_";
@@ -274,9 +275,12 @@ async function handleCodeExchange(
     );
   }
 
-  // PKCE verification: SHA256(code_verifier) must equal code_challenge
+  // PKCE verification: SHA256(code_verifier) must equal code_challenge.
+  // Compared with timing-safe equality — the attacker controls one side
+  // (code_verifier) and the challenge is derived deterministically from
+  // a server-issued secret, so any byte-level timing leak is exploitable.
   const computedChallenge = sha256(code_verifier);
-  if (computedChallenge !== codeRecord.code_challenge) {
+  if (!constantTimeEqual(computedChallenge, codeRecord.code_challenge)) {
     throw new MymeError(ErrorCode.INVALID_GRANT, "PKCE verification failed");
   }
 

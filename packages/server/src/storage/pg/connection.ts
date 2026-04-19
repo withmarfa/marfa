@@ -220,6 +220,11 @@ CREATE TABLE IF NOT EXISTS event_log (
 );
 CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_event_log_edge_id ON event_log(edge_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 export async function createConnection(connectionString: string): Promise<{

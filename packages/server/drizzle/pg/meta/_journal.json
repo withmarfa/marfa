@@ -127,6 +127,13 @@
       "when": 1777800000000,
       "tag": "0017_drop_dormant_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1777900000000,
+      "tag": "0018_add_settings_table",
+      "breakpoints": true
     }
   ]
 }

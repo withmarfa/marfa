@@ -22,6 +22,7 @@ import { PgUserStore } from "./user-store.js";
 import { PgTenantStore } from "./tenant-store.js";
 import { PgEdgeStore } from "./edge-store.js";
 import { PgEdgeTypeStore } from "./edge-type-store.js";
+import { PgSettingsStore } from "./settings-store.js";
 import { PgCoordinationStore } from "./coordination-store.js";
 
 export async function createPgStorage(
@@ -84,6 +85,7 @@ export async function createPgStorage(
     webhookDeliveries: deliveryStore,
     audit: auditStore,
     eventLog: eventLogStore,
+    settings: new PgSettingsStore(db),
     coordination: new PgCoordinationStore(client),
     ...(options?.authMode === "hosted" && {
       users: new PgUserStore(db),

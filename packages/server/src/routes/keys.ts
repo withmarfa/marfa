@@ -274,6 +274,14 @@ export function keyRoutes(storage: Storage, salt: string) {
       keyHash,
     );
 
+    // On the first (bootstrap) key creation, stamp the workspace as
+    // bootstrapped. From this point on, revoking every key must NOT
+    // re-open bootstrap — the auth middleware reads this sentinel
+    // instead of counting live keys.
+    if (isBootstrap) {
+      await storage.settings.set("bootstrapped", "true");
+    }
+
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "key.create",

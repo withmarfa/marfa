@@ -105,7 +105,12 @@ export function createApp(
   );
   app.route("/health", healthRoutes(storage, blobBackend, config));
 
-  // Rate limiting (before auth to protect all endpoints, default 1000 req/min)
+  // Auth middleware runs BEFORE rate limiting so the limiter can key on
+  // the credential id (per-credential enforcement). Anonymous requests
+  // still fall through to IP-based limiting inside rateLimitMiddleware.
+  app.use("*", authMiddleware(storage, config.apiKeySalt));
+
+  // Rate limiting (default 1000 req/min). Protects all endpoints.
   if (config.rateLimitEnabled) {
     app.use(
       "*",
@@ -117,9 +122,6 @@ export function createApp(
       }),
     );
   }
-
-  // Auth middleware
-  app.use("*", authMiddleware(storage, config.apiKeySalt));
 
   // Protected routes
   app.route("/items", itemRoutes(storage));

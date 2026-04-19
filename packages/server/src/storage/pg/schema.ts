@@ -329,6 +329,15 @@ export const auditLog = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// settings (generic single-row-per-key KV for workspace-wide flags)
+// ---------------------------------------------------------------------------
+
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+
+// ---------------------------------------------------------------------------
 // event_log (SSE event persistence for replay)
 // ---------------------------------------------------------------------------
 
