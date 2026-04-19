@@ -996,3 +996,127 @@ describe("GET /edges", () => {
     }
   });
 });
+
+describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () => {
+  async function createMemberKey(
+    typePermissions: Record<string, "read" | "write" | "none">,
+    edgePermissions: Record<string, "read" | "write"> = { "*": "write" },
+  ): Promise<string> {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: `edge-gate-${suffix}`,
+        source: `edge-gate-${suffix}`,
+        role: "member",
+        default_origin: "user",
+        default_library: false,
+        type_permissions: typePermissions,
+        extension_permissions: {},
+        edge_permissions: edgePermissions,
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { key: string };
+    return body.key;
+  }
+
+  it("PATCH /edges/:id still gates on source type when the source item is trashed", async () => {
+    // Admin creates a source and a target, then an edge between them.
+    const sourceId = await createItem("core.note");
+    const targetId = await createItem("core.note");
+    const createEdge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        source_id: sourceId,
+        target_id: targetId,
+        edge_type: "about",
+        properties: { note: "v1" },
+      },
+    });
+    const { edge } = (await createEdge.json()) as { edge: { id: string } };
+
+    // Admin trashes the source item.
+    const del = await request(ctx.app, "DELETE", `/items/${sourceId}`, {
+      key: ctx.adminKey,
+    });
+    expect(del.status).toBe(200);
+
+    // Restricted credential: no core.note write (read only), but broad edge write.
+    const restrictedKey = await createMemberKey(
+      { "core.note": "read" },
+      { "*": "write" },
+    );
+
+    // Previously: storage.items.get() returned null for trashed, so the
+    // type gate was silently skipped and PATCH would succeed. Now it
+    // must 403.
+    const patch = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
+      key: restrictedKey,
+      body: { properties: { note: "v2-should-fail" } },
+    });
+    expect(patch.status).toBe(403);
+  });
+
+  it("DELETE /edges/:id still gates on source type when the source item is trashed", async () => {
+    const sourceId = await createItem("core.note");
+    const targetId = await createItem("core.note");
+    const createEdge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        source_id: sourceId,
+        target_id: targetId,
+        edge_type: "about",
+      },
+    });
+    const { edge } = (await createEdge.json()) as { edge: { id: string } };
+
+    const del = await request(ctx.app, "DELETE", `/items/${sourceId}`, {
+      key: ctx.adminKey,
+    });
+    expect(del.status).toBe(200);
+
+    const restrictedKey = await createMemberKey(
+      { "core.note": "read" },
+      { "*": "write" },
+    );
+
+    const deleteEdge = await request(ctx.app, "DELETE", `/edges/${edge.id}`, {
+      key: restrictedKey,
+    });
+    expect(deleteEdge.status).toBe(403);
+
+    // Edge must still exist — the gate throws before the delete.
+    const listBackrefs = await request(
+      ctx.app,
+      "GET",
+      `/items/${targetId}/backrefs`,
+      { key: ctx.adminKey },
+    );
+    expect(listBackrefs.status).toBe(200);
+  });
+
+  it("admin DELETE /edges/:id succeeds when the source is trashed", async () => {
+    const sourceId = await createItem("core.note");
+    const targetId = await createItem("core.note");
+    const createEdge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        source_id: sourceId,
+        target_id: targetId,
+        edge_type: "about",
+      },
+    });
+    const { edge } = (await createEdge.json()) as { edge: { id: string } };
+
+    const trash = await request(ctx.app, "DELETE", `/items/${sourceId}`, {
+      key: ctx.adminKey,
+    });
+    expect(trash.status).toBe(200);
+
+    const deleteEdge = await request(ctx.app, "DELETE", `/edges/${edge.id}`, {
+      key: ctx.adminKey,
+    });
+    expect(deleteEdge.status).toBe(200);
+  });
+});

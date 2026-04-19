@@ -173,6 +173,10 @@ export class PgItemStore implements ItemStore {
     return rowToItem(row);
   }
 
+  getIncludingTrashed(id: string, tenantId?: string): Promise<Item | null> {
+    return this.getRaw(id, tenantId);
+  }
+
   async list(filters: ItemFilters): Promise<PaginatedResult<Item>> {
     const sortField = filters.sort ?? "created_at";
     const dir = filters.direction ?? "desc";

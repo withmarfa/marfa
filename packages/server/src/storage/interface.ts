@@ -102,6 +102,16 @@ export function decodeCursor(cursor: string): CursorPayload {
 export interface ItemStore {
   create(input: CreateItemInput, tenantId?: string): Promise<Item>;
   get(id: string, tenantId?: string): Promise<Item | null>;
+  /**
+   * Like `get`, but returns trashed items too. Intended for callers that
+   * need to read an item's metadata (e.g. its `type` for a permission
+   * check) even when the item has been soft-deleted — the edge
+   * PATCH/DELETE permission check is the canonical caller. Trashed
+   * items are not returned by `get`/`list`, and do not leak to this
+   * method via `restore` either; use the normal `restore()` to
+   * un-trash.
+   */
+  getIncludingTrashed(id: string, tenantId?: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
   update(
     id: string,
