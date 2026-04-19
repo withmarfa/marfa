@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHmac } from "node:crypto";
 import type { WebhookDelivery } from "@mymehq/shared";
 import type { WebhookDeliveryStore } from "../storage/interface.js";
-import { WebhookPoller, parseRetryAfter } from "./delivery.js";
+import {
+  WebhookPoller,
+  parseRetryAfter,
+  buildSignatureHeader,
+} from "./delivery.js";
 
 // ---------------------------------------------------------------------------
 // parseRetryAfter — header parsing
@@ -281,5 +286,48 @@ describe("WebhookPoller retry behaviour", () => {
     expect(calls.markSuccess).toEqual([
       { id: "del_ok", statusCode: 204, attempt: 1 },
     ]);
+  });
+
+  it("emits a Stripe-style X-Myme-Signature header signed over timestamp.body", async () => {
+    const captured: { header: string | null; body: string } = {
+      header: null,
+      body: "",
+    };
+    const fetchSpy = vi.fn(
+      (_url: string | URL, init?: RequestInit): Promise<Response> => {
+        const headers = new Headers(init?.headers);
+        captured.header = headers.get("x-myme-signature");
+        const b = init?.body;
+        captured.body = typeof b === "string" ? b : "";
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const payload = '{"event":"item.created","item":{"id":"abc"}}';
+    const secret = "whsec_delivery_test";
+    const { store } = makeStubStore([
+      makeDelivery({ id: "del_sig", payload, webhook_secret: secret }),
+    ]);
+    const poller = new WebhookPoller(store);
+    await pollOnce(poller);
+
+    expect(captured.body).toBe(payload);
+    expect(captured.header).not.toBeNull();
+    // Parse `t=<unix>,v1=<hex>` without regex so the test stays in the
+    // "no .exec() anywhere" camp the lint rule prefers.
+    const parts = captured.header!.split(",");
+    expect(parts).toHaveLength(2);
+    expect(parts[0]!.startsWith("t=")).toBe(true);
+    expect(parts[1]!.startsWith("v1=")).toBe(true);
+    const ts = parts[0]!.slice(2);
+    const sig = parts[1]!.slice(3);
+    // Re-derive the signature and assert equality.
+    const computed = createHmac("sha256", secret)
+      .update(`${ts}.${payload}`)
+      .digest("hex");
+    expect(sig).toBe(computed);
+    // Header should match buildSignatureHeader's output for the same inputs.
+    expect(buildSignatureHeader(ts, payload, secret)).toBe(captured.header);
   });
 });
