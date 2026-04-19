@@ -1,7 +1,7 @@
 // Myme types — the wire format for the Myme API.
 // These interfaces define what goes over the network between server and clients.
 
-import type { ItemState } from "@mymehq/types";
+import type { ItemState, MergePolicy } from "@mymehq/types";
 
 /** Valid item states as a readonly array, useful for validation. */
 export const ITEM_STATES: readonly ItemState[] = [
@@ -253,6 +253,14 @@ export interface ConflictResponse {
   current: ConflictSnapshot;
   ancestor: ConflictSnapshot;
   conflicting_fields: string[];
+  /**
+   * Resolved merge policy for the conflicting item's type, with inheritance
+   * applied. Always present — the server is the authoritative resolver, so
+   * SDKs read policy directly from the response without a side-fetch or a
+   * client-side cache. Strategies for fields not listed in `fields` fall back
+   * to `default`, which itself defaults to `last_writer_wins` when absent.
+   */
+  merge_policy: MergePolicy;
 }
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import {
   generateId,
   isValidId,
   getTypeSchema,
+  TYPE_REGISTRY,
   validateProperties,
   validateTransition,
   parseFilter,
@@ -24,6 +25,7 @@ import {
   ErrorCode,
   SYSTEM_DEFAULT_STATE,
 } from "@mymehq/shared";
+import { resolveMergePolicy } from "../policy.js";
 import { filterToSqlConditions } from "../filter-sql.js";
 import type {
   Item,
@@ -411,6 +413,7 @@ export class PgItemStore implements ItemStore {
           current: { version: row.version, properties: currentProps },
           ancestor: { version: input.version, properties: {} },
           conflicting_fields: Object.keys(input.properties ?? {}),
+          merge_policy: resolveMergePolicy(row.type, TYPE_REGISTRY),
         } satisfies ConflictResponse;
       }
 
@@ -429,6 +432,7 @@ export class PgItemStore implements ItemStore {
             properties: ancestor.properties,
           },
           conflicting_fields: result.conflicting_fields,
+          merge_policy: resolveMergePolicy(row.type, TYPE_REGISTRY),
         } satisfies ConflictResponse;
       }
 

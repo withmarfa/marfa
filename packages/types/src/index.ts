@@ -6,6 +6,8 @@ export type {
   FieldDefinition,
   FieldType,
   ItemState,
+  MergePolicy,
+  MergeStrategy,
   TypeSchema,
   VersionPolicy,
 } from "./schema-types.js";

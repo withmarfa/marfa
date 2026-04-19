@@ -48,6 +48,13 @@ const ConflictSnapshotSchema = z.object({
   properties: z.record(z.string(), z.unknown()),
 });
 
+const MergeStrategySchema = z.enum(["last_writer_wins", "keep_both_copies"]);
+
+const MergePolicySchema = z.object({
+  fields: z.record(z.string(), MergeStrategySchema).optional(),
+  default: MergeStrategySchema.optional(),
+});
+
 const ConflictResponseSchema = z.object({
   error: z.object({
     code: z.literal("version_conflict"),
@@ -56,6 +63,7 @@ const ConflictResponseSchema = z.object({
   current: ConflictSnapshotSchema,
   ancestor: ConflictSnapshotSchema,
   conflicting_fields: z.array(z.string()),
+  merge_policy: MergePolicySchema,
 });
 
 const VersionSchema = z.object({

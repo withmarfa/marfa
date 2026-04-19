@@ -4,6 +4,8 @@ import type {
   FieldDefinition,
   FieldType,
   ItemState,
+  MergePolicy,
+  MergeStrategy,
   TypeSchema,
   VersionPolicy,
 } from "@mymehq/types";
@@ -15,10 +17,17 @@ export type {
   FieldDefinition,
   FieldType,
   ItemState,
+  MergePolicy,
+  MergeStrategy,
   TypeSchema,
   VersionPolicy,
 };
 export { ALL_TYPES };
+
+const MERGE_STRATEGIES: ReadonlySet<MergeStrategy> = new Set([
+  "last_writer_wins",
+  "keep_both_copies",
+]);
 
 // ---------------------------------------------------------------------------
 // Universal fields (available on every type)
@@ -476,6 +485,75 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     }
   }
 
+  // merge_policy (optional)
+  if (obj.merge_policy !== undefined) {
+    if (
+      typeof obj.merge_policy !== "object" ||
+      obj.merge_policy === null ||
+      Array.isArray(obj.merge_policy)
+    ) {
+      errors.push({
+        field: "merge_policy",
+        message: "Must be an object",
+      });
+    } else {
+      const mp = obj.merge_policy as Record<string, unknown>;
+      const fieldMap =
+        typeof obj.fields === "object" && obj.fields !== null
+          ? (obj.fields as Record<string, unknown>)
+          : {};
+      if (mp.fields !== undefined) {
+        if (
+          typeof mp.fields !== "object" ||
+          mp.fields === null ||
+          Array.isArray(mp.fields)
+        ) {
+          errors.push({
+            field: "merge_policy.fields",
+            message:
+              "Must be an object mapping field names to merge strategies",
+          });
+        } else {
+          for (const [fieldName, strategy] of Object.entries(
+            mp.fields as Record<string, unknown>,
+          )) {
+            if (typeof strategy !== "string") {
+              errors.push({
+                field: `merge_policy.fields.${fieldName}`,
+                message: "Strategy must be a string",
+              });
+              continue;
+            }
+            if (!MERGE_STRATEGIES.has(strategy as MergeStrategy)) {
+              errors.push({
+                field: `merge_policy.fields.${fieldName}`,
+                message: `Strategy must be one of: ${Array.from(MERGE_STRATEGIES).join(", ")}`,
+              });
+              continue;
+            }
+            if (!(fieldName in fieldMap)) {
+              errors.push({
+                field: `merge_policy.fields.${fieldName}`,
+                message: `References field "${fieldName}" that does not exist on this type`,
+              });
+            }
+          }
+        }
+      }
+      if (mp.default !== undefined) {
+        if (
+          typeof mp.default !== "string" ||
+          !MERGE_STRATEGIES.has(mp.default as MergeStrategy)
+        ) {
+          errors.push({
+            field: "merge_policy.default",
+            message: `Must be one of: ${Array.from(MERGE_STRATEGIES).join(", ")}`,
+          });
+        }
+      }
+    }
+  }
+
   if (errors.length > 0) {
     return { success: false, errors };
   }
@@ -512,6 +590,13 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     !Array.isArray(obj.version_policy)
   ) {
     schema.version_policy = obj.version_policy as VersionPolicy;
+  }
+  if (
+    typeof obj.merge_policy === "object" &&
+    obj.merge_policy !== null &&
+    !Array.isArray(obj.merge_policy)
+  ) {
+    schema.merge_policy = obj.merge_policy as MergePolicy;
   }
 
   return { success: true, data: schema };

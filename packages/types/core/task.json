@@ -63,5 +63,12 @@
   "display_hints": {
     "title_field": "title",
     "body_field": "body"
+  },
+  "merge_policy": {
+    "fields": {
+      "body": "keep_both_copies",
+      "notes": "keep_both_copies"
+    },
+    "default": "last_writer_wins"
   }
 }

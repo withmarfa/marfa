@@ -22,6 +22,7 @@ const coreBookmark: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreEntity: TypeSchema = {
@@ -42,6 +43,7 @@ const coreEntity: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
   },
   display_hints: { title_field: "name" },
+  merge_policy: { default: "last_writer_wins" },
 };
 
 const coreEvent: TypeSchema = {
@@ -64,6 +66,7 @@ const coreEvent: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
   },
   display_hints: { title_field: "title", body_field: "description" },
+  merge_policy: { fields: { notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreFile: TypeSchema = {
@@ -83,6 +86,7 @@ const coreFile: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
   },
   display_hints: { title_field: "title" },
+  merge_policy: { default: "last_writer_wins" },
 };
 
 const coreHighlight: TypeSchema = {
@@ -99,6 +103,7 @@ const coreHighlight: TypeSchema = {
     end_location: { type: "string", description: "End locator, typed by locator_type" },
   },
   display_hints: { title_field: "text", body_field: "note" },
+  merge_policy: { fields: { note: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreMedia: TypeSchema = {
@@ -119,6 +124,7 @@ const coreMedia: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreNote: TypeSchema = {
@@ -133,6 +139,7 @@ const coreNote: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreTask: TypeSchema = {
@@ -155,6 +162,7 @@ const coreTask: TypeSchema = {
     notes: { type: "string", description: "Personal annotations" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreEntityPerson: TypeSchema = {
@@ -187,6 +195,7 @@ const coreEntityPerson: TypeSchema = {
     pronouns: { type: "string", description: "Pronouns" },
   },
   display_hints: { title_field: "name" },
+  merge_policy: { default: "last_writer_wins" },
 };
 
 const coreEntityPlace: TypeSchema = {
@@ -217,6 +226,7 @@ const coreEntityPlace: TypeSchema = {
     altitude: { type: "number", description: "Altitude in meters above sea level" },
   },
   display_hints: { title_field: "name" },
+  merge_policy: { default: "last_writer_wins" },
 };
 
 const coreFileAudio: TypeSchema = {
@@ -238,6 +248,7 @@ const coreFileAudio: TypeSchema = {
     duration: { type: "number", description: "Length in seconds", required: true },
   },
   display_hints: { title_field: "title" },
+  merge_policy: { default: "last_writer_wins" },
 };
 
 const coreFileImage: TypeSchema = {
@@ -263,6 +274,7 @@ const coreFileImage: TypeSchema = {
     altitude: { type: "number", description: "Altitude in meters" },
   },
   display_hints: { title_field: "title" },
+  merge_policy: { default: "last_writer_wins" },
 };
 
 const coreFileVideo: TypeSchema = {
@@ -289,6 +301,7 @@ const coreFileVideo: TypeSchema = {
     altitude: { type: "number", description: "Altitude in meters" },
   },
   display_hints: { title_field: "title" },
+  merge_policy: { default: "last_writer_wins" },
 };
 
 const coreMediaAlbum: TypeSchema = {
@@ -312,6 +325,7 @@ const coreMediaAlbum: TypeSchema = {
     num_tracks: { type: "integer", description: "Total track count" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreMediaArticle: TypeSchema = {
@@ -335,6 +349,7 @@ const coreMediaArticle: TypeSchema = {
     word_count: { type: "integer", description: "Word count" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreMediaBook: TypeSchema = {
@@ -359,6 +374,7 @@ const coreMediaBook: TypeSchema = {
     edition: { type: "string", description: "Edition designation" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreMediaFilm: TypeSchema = {
@@ -383,6 +399,7 @@ const coreMediaFilm: TypeSchema = {
     content_rating: { type: "string", description: "Age or content classification" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreMediaPodcast: TypeSchema = {
@@ -408,6 +425,7 @@ const coreMediaPodcast: TypeSchema = {
     episode_type: { type: "string", description: "Recommended values: full, trailer, bonus" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreMediaSeries: TypeSchema = {
@@ -433,6 +451,7 @@ const coreMediaSeries: TypeSchema = {
     network: { type: "string", description: "Broadcasting network or streaming service" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreMediaSong: TypeSchema = {
@@ -458,6 +477,7 @@ const coreMediaSong: TypeSchema = {
     track_number: { type: "integer", description: "Position within the album" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 const coreMediaTvEpisode: TypeSchema = {
@@ -483,6 +503,7 @@ const coreMediaTvEpisode: TypeSchema = {
     director: { type: "string", description: "Episode director" },
   },
   display_hints: { title_field: "title", body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
 export const ALL_TYPES: TypeSchema[] = [

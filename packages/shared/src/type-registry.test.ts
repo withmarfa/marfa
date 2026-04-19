@@ -463,3 +463,216 @@ describe("validateTypeSchema — display_hints", () => {
     }
   });
 });
+
+describe("merge_policy — per-type registry snapshot", () => {
+  // Source of truth: the per-type table in
+  // ~/aic-vault/Projects/myme-A1ZB0/Artifacts/30-swift-app-development-notes/
+  // Sync Conflict Resolution.md (lines 43–58).
+  const cases: {
+    typeId: string;
+    expectedKeepBoth: string[];
+    expectedDefault: string;
+  }[] = [
+    {
+      typeId: "core.note",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.bookmark",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.task",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.event",
+      expectedKeepBoth: ["notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.highlight",
+      expectedKeepBoth: ["note"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.entity",
+      expectedKeepBoth: [],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.entity.person",
+      expectedKeepBoth: [],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.entity.place",
+      expectedKeepBoth: [],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.media",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.media.book",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.media.article",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.media.film",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.media.song",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.media.album",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.media.podcast",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.media.series",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.media.tv_episode",
+      expectedKeepBoth: ["body", "notes"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.file",
+      expectedKeepBoth: [],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.file.image",
+      expectedKeepBoth: [],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.file.audio",
+      expectedKeepBoth: [],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.file.video",
+      expectedKeepBoth: [],
+      expectedDefault: "last_writer_wins",
+    },
+  ];
+
+  for (const { typeId, expectedKeepBoth, expectedDefault } of cases) {
+    it(`${typeId} — declares the artifact's policy`, () => {
+      const schema = getTypeSchema(typeId);
+      expect(schema, `missing schema for ${typeId}`).toBeDefined();
+      const policy = schema?.merge_policy;
+      expect(policy, `missing policy for ${typeId}`).toBeDefined();
+      expect(policy?.default).toBe(expectedDefault);
+      const keepBoth = Object.entries(policy?.fields ?? {})
+        .filter(([, strategy]) => strategy === "keep_both_copies")
+        .map(([field]) => field)
+        .sort();
+      expect(keepBoth).toEqual([...expectedKeepBoth].sort());
+    });
+  }
+});
+
+describe("validateTypeSchema — merge_policy", () => {
+  const baseThing = {
+    id: "acme.merge_test",
+    version: 1,
+    fields: {
+      title: { type: "string", description: "Title" },
+      body: { type: "string", description: "Body text" },
+    },
+  };
+
+  it("accepts merge_policy whose fields exist and use known strategies", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      merge_policy: {
+        fields: { body: "keep_both_copies" },
+        default: "last_writer_wins",
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.merge_policy?.fields?.body).toBe("keep_both_copies");
+      expect(result.data.merge_policy?.default).toBe("last_writer_wins");
+    }
+  });
+
+  it("accepts merge_policy with only a default", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      merge_policy: { default: "last_writer_wins" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects merge_policy referencing an unknown field", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      merge_policy: { fields: { nonexistent: "keep_both_copies" } },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some((e) =>
+          e.field.startsWith("merge_policy.fields.nonexistent"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects merge_policy with an unknown strategy", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      merge_policy: { fields: { body: "made_up_strategy" } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects merge_policy with an unknown default strategy", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      merge_policy: { default: "made_up" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects merge_policy that isn't an object", () => {
+    const result = validateTypeSchema({
+      ...baseThing,
+      merge_policy: "keep_both_copies",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts omitting merge_policy entirely", () => {
+    const result = validateTypeSchema(baseThing);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.merge_policy).toBeUndefined();
+    }
+  });
+});

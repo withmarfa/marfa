@@ -60,6 +60,8 @@ function validateParentChain(typeId: string, parentId: string): void {
 // Schemas
 // ---------------------------------------------------------------------------
 
+const MergeStrategySchema = z.enum(["last_writer_wins", "keep_both_copies"]);
+
 const TypeSchemaResponse = z.object({
   id: z.string(),
   label: z.string().optional(),
@@ -79,6 +81,12 @@ const TypeSchemaResponse = z.object({
       daily_snapshot_days: z.number().optional(),
       weekly_snapshot_days: z.number().optional(),
       max_versions: z.number().optional(),
+    })
+    .optional(),
+  merge_policy: z
+    .object({
+      fields: z.record(z.string(), MergeStrategySchema).optional(),
+      default: MergeStrategySchema.optional(),
     })
     .optional(),
 });
