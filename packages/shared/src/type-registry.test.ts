@@ -462,6 +462,66 @@ describe("validateTypeSchema — display_hints", () => {
       expect(result.data.display_hints).toBeUndefined();
     }
   });
+
+  it("accepts a child of core.note whose display_hints point at an inherited field", () => {
+    // `title` and `body` are declared on core.note, not on this child.
+    // Pointing display_hints at inherited fields is legitimate — the
+    // validator must walk the parent chain, matching merge_policy's
+    // behaviour for the same reason.
+    const result = validateTypeSchema({
+      id: "acme.note_hinted",
+      version: 1,
+      parent: "core.note",
+      fields: {
+        extra: { type: "string" },
+      },
+      display_hints: { title_field: "title", body_field: "body" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.display_hints).toEqual({
+        title_field: "title",
+        body_field: "body",
+      });
+    }
+  });
+
+  it("accepts a grandchild pointing display_hints at a grandparent field", () => {
+    // core.entity.person inherits `name` from core.entity. A child of
+    // core.entity.person can reach the grandparent field — confirms the
+    // walk traverses the full parent chain, not just the immediate parent.
+    const result = validateTypeSchema({
+      id: "acme.person_hinted",
+      version: 1,
+      parent: "core.entity.person",
+      fields: {
+        extra: { type: "string" },
+      },
+      display_hints: { title_field: "name" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.display_hints?.title_field).toBe("name");
+    }
+  });
+
+  it("rejects a child whose display_hints reference a field on neither child nor ancestor", () => {
+    const result = validateTypeSchema({
+      id: "acme.note_bad_hint",
+      version: 1,
+      parent: "core.note",
+      fields: {
+        extra: { type: "string" },
+      },
+      display_hints: { title_field: "nonexistent" },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some((e) => e.field === "display_hints.title_field"),
+      ).toBe(true);
+    }
+  });
 });
 
 describe("merge_policy — per-type registry snapshot", () => {

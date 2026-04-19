@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ALL_TYPES } from "@mymehq/types";
 import type {
+  DisplayHints,
   FieldDefinition,
   FieldType,
   ItemState,
@@ -14,6 +15,7 @@ import { isValidTypeIdentifier } from "./validation.js";
 // Re-export schema-shape types and ALL_TYPES so consumers of @mymehq/shared
 // don't need to reach into @mymehq/types directly.
 export type {
+  DisplayHints,
   FieldDefinition,
   FieldType,
   ItemState,
@@ -432,6 +434,24 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
         typeof obj.fields === "object" && obj.fields !== null
           ? (obj.fields as Record<string, unknown>)
           : {};
+      // display_hints.{title_field,body_field} may point at fields declared on
+      // any ancestor — a child of core.note that wants to surface the inherited
+      // `title` field as its title hint is a legitimate use case. Collect the
+      // full visible field set by walking the parent chain via the registry.
+      const visibleFields = new Set(Object.keys(fieldMap));
+      if (typeof obj.parent === "string" && obj.parent.length > 0) {
+        const seen = new Set<string>();
+        let cursor: string | undefined = obj.parent;
+        while (cursor && !seen.has(cursor)) {
+          seen.add(cursor);
+          const ancestor = TYPE_REGISTRY.get(cursor);
+          if (!ancestor) break;
+          for (const fieldName of Object.keys(ancestor.fields)) {
+            visibleFields.add(fieldName);
+          }
+          cursor = ancestor.parent;
+        }
+      }
       for (const hintKey of ["title_field", "body_field"]) {
         const value = hints[hintKey];
         if (value === undefined) continue;
@@ -442,7 +462,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
           });
           continue;
         }
-        if (!(value in fieldMap)) {
+        if (!visibleFields.has(value)) {
           errors.push({
             field: `display_hints.${hintKey}`,
             message: `References field "${value}" that does not exist on this type`,

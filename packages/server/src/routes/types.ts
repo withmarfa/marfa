@@ -11,6 +11,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { resolveTypeSchema } from "../storage/policy.js";
 import {
   createOpenAPIRouter,
   ErrorResponseSchema,
@@ -279,11 +280,15 @@ export function typeRoutes(storage: Storage) {
     return c.json(Array.from(TYPE_REGISTRY.values()), 200);
   });
 
-  // GET /types/:id — get a single type schema
+  // GET /types/:id — get a single type schema, inheritance-resolved.
+  // Walks the parent chain and returns the effective view of `fields`,
+  // `display_hints`, `version_policy`, and `merge_policy` so callers don't
+  // have to resolve inheritance themselves. Mirrors the resolver already used
+  // at 409-conflict assembly time.
   router.openapi(getTypeRoute, (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    const schema = getTypeSchema(id);
+    const schema = resolveTypeSchema(id, TYPE_REGISTRY);
     if (!schema) {
       throw new MymeError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }

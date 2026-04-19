@@ -240,3 +240,166 @@ describe("merge_policy on type schemas", () => {
     ).toBe(true);
   });
 });
+
+describe("GET /types/:id — inheritance resolution", () => {
+  it("returns merged fields for a child of core.note", async () => {
+    // Register a custom child that adds one field on top of core.note.
+    // GET should return the union of core.note's fields and the child's.
+    const postRes = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.note_with_tag",
+        label: "Note With Tag",
+        version: 1,
+        parent: "core.note",
+        fields: { tag: { type: "string" } },
+      },
+    });
+    expect(postRes.status).toBe(201);
+
+    const getRes = await request(ctx.app, "GET", "/types/test.note_with_tag", {
+      key: ctx.adminKey,
+    });
+    expect(getRes.status).toBe(200);
+    const schema = (await getRes.json()) as TypeSchema;
+
+    // Child's own field is present.
+    expect(schema.fields.tag).toBeDefined();
+    // Inherited fields from core.note are present.
+    expect(schema.fields.body).toBeDefined();
+    expect(schema.fields.title).toBeDefined();
+    expect(schema.fields.notes).toBeDefined();
+    expect(schema.fields.language).toBeDefined();
+  });
+
+  it("inherits display_hints from the nearest ancestor", async () => {
+    const postRes = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.note_inherit_hints",
+        label: "Note Inheriting Hints",
+        version: 1,
+        parent: "core.note",
+        fields: { extra: { type: "string" } },
+      },
+    });
+    expect(postRes.status).toBe(201);
+
+    const getRes = await request(
+      ctx.app,
+      "GET",
+      "/types/test.note_inherit_hints",
+      { key: ctx.adminKey },
+    );
+    expect(getRes.status).toBe(200);
+    const schema = (await getRes.json()) as TypeSchema;
+
+    // core.note declares title_field: "title", body_field: "body".
+    expect(schema.display_hints?.title_field).toBe("title");
+    expect(schema.display_hints?.body_field).toBe("body");
+  });
+
+  it("child display_hints override parent hints (nearest-ancestor-wins)", async () => {
+    const postRes = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.note_own_hints",
+        label: "Note With Own Hints",
+        version: 1,
+        parent: "core.note",
+        fields: { extra: { type: "string" } },
+        // Override: point title at the inherited notes field, drop body_field.
+        display_hints: { title_field: "notes" },
+      },
+    });
+    expect(postRes.status).toBe(201);
+
+    const getRes = await request(ctx.app, "GET", "/types/test.note_own_hints", {
+      key: ctx.adminKey,
+    });
+    expect(getRes.status).toBe(200);
+    const schema = (await getRes.json()) as TypeSchema;
+    expect(schema.display_hints?.title_field).toBe("notes");
+    // Whole-block replacement: parent's body_field is not inherited when
+    // the child declares its own display_hints block.
+    expect(schema.display_hints?.body_field).toBeUndefined();
+  });
+
+  it("inherits merge_policy from parent when child omits it", async () => {
+    const postRes = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.note_inherit_policy",
+        label: "Note Inheriting Policy",
+        version: 1,
+        parent: "core.note",
+        fields: { extra: { type: "string" } },
+      },
+    });
+    expect(postRes.status).toBe(201);
+
+    const getRes = await request(
+      ctx.app,
+      "GET",
+      "/types/test.note_inherit_policy",
+      { key: ctx.adminKey },
+    );
+    expect(getRes.status).toBe(200);
+    const schema = (await getRes.json()) as TypeSchema;
+    expect(schema.merge_policy?.fields?.body).toBe("keep_both_copies");
+    expect(schema.merge_policy?.fields?.notes).toBe("keep_both_copies");
+    expect(schema.merge_policy?.default).toBe("last_writer_wins");
+  });
+
+  it("merges version_policy field-by-field across the chain", async () => {
+    // Parent sets recent_days + max_versions.
+    const parentRes = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.vp_parent",
+        label: "VP Parent",
+        version: 1,
+        fields: { body: { type: "string" } },
+        version_policy: { recent_days: 7, max_versions: 100 },
+      },
+    });
+    expect(parentRes.status).toBe(201);
+
+    // Child overrides only max_versions.
+    const childRes = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.vp_child",
+        label: "VP Child",
+        version: 1,
+        parent: "test.vp_parent",
+        fields: { extra: { type: "string" } },
+        version_policy: { max_versions: 250 },
+      },
+    });
+    expect(childRes.status).toBe(201);
+
+    const getRes = await request(ctx.app, "GET", "/types/test.vp_child", {
+      key: ctx.adminKey,
+    });
+    expect(getRes.status).toBe(200);
+    const schema = (await getRes.json()) as TypeSchema;
+    // Parent's recent_days is preserved; child's max_versions wins.
+    expect(schema.version_policy?.recent_days).toBe(7);
+    expect(schema.version_policy?.max_versions).toBe(250);
+  });
+
+  it("root type schema is unchanged by resolution (no-op on core.note)", async () => {
+    const res = await request(ctx.app, "GET", "/types/core.note", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const schema = (await res.json()) as TypeSchema;
+    expect(schema.id).toBe("core.note");
+    expect(schema.parent).toBeUndefined();
+    // Own fields present, own display_hints preserved, own merge_policy preserved.
+    expect(schema.fields.body).toBeDefined();
+    expect(schema.display_hints?.title_field).toBe("title");
+    expect(schema.merge_policy?.fields?.body).toBe("keep_both_copies");
+  });
+});
