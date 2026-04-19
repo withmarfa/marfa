@@ -28,6 +28,14 @@ export type {
   ConflictAutoMergeListener,
 } from "./conflict.js";
 
+// Webhook signature verification (inbound — for receivers)
+export { verifyWebhookSignature } from "./webhooks.js";
+export type {
+  WebhookVerifyResult,
+  WebhookVerifyReason,
+  VerifyWebhookSignatureInput,
+} from "./webhooks.js";
+
 // Re-export key types from @mymehq/shared
 export type {
   Item,

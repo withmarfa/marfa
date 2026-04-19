@@ -21,9 +21,24 @@ function toWebhookEvent(type: ItemEvent["type"] | EdgeEvent["type"]): string {
   return wireEventName(type);
 }
 
-/** Signs a payload with HMAC-SHA256 using the webhook secret. */
-function sign(payload: string, secret: string): string {
-  return "sha256=" + createHmac("sha256", secret).update(payload).digest("hex");
+/**
+ * Stripe-style webhook signature. The HMAC is computed over
+ * `<timestamp>.<rawBody>` (NOT the raw body alone), and the header
+ * value embeds the timestamp so the receiver can re-derive the signed
+ * string and enforce a replay window. Matches the documented contract
+ * in docs/api/webhooks.mdx. Header format: `t=<unix>,v1=<hex-sha256>`.
+ *
+ * Returns the full header value. Callers set it as `X-Myme-Signature`.
+ */
+export function buildSignatureHeader(
+  timestamp: string,
+  rawBody: string,
+  secret: string,
+): string {
+  const sig = createHmac("sha256", secret)
+    .update(`${timestamp}.${rawBody}`)
+    .digest("hex");
+  return `t=${timestamp},v1=${sig}`;
 }
 
 /** Retry delays in milliseconds. */
@@ -271,7 +286,12 @@ export class WebhookPoller {
 
   private async attempt(delivery: PendingDelivery): Promise<void> {
     const nextAttempt = delivery.attempt + 1;
-    const signature = sign(delivery.payload, delivery.webhook_secret);
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = buildSignatureHeader(
+      timestamp,
+      delivery.payload,
+      delivery.webhook_secret,
+    );
 
     try {
       const controller = new AbortController();
