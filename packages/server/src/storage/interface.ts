@@ -465,6 +465,17 @@ export interface EventLogStore {
 }
 
 // ---------------------------------------------------------------------------
+// Settings store (workspace-wide KV for bootstrap sentinel etc.)
+// ---------------------------------------------------------------------------
+
+export interface SettingsStore {
+  /** Returns null when the key has not been set. */
+  get(key: string): Promise<string | null>;
+  /** Upsert — overwrites any existing value for the key. */
+  set(key: string, value: string): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
 // Aggregate storage interface
 // ---------------------------------------------------------------------------
 
@@ -568,6 +579,7 @@ export interface Storage {
   webhookDeliveries: WebhookDeliveryStore;
   audit: AuditStore;
   eventLog: EventLogStore;
+  settings: SettingsStore;
   coordination: CoordinationStore;
   users?: UserStore;
   tenants?: TenantStore;

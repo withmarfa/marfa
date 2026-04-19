@@ -22,6 +22,7 @@ import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+import { constantTimeEqual } from "../utils/crypto.js";
 
 const MAX_IMPORT_ITEMS = 5000;
 
@@ -473,10 +474,12 @@ async function handleArchiveImport(
         } else if (header.name.startsWith("blobs/")) {
           const hash = header.name.slice("blobs/".length);
           if (isValidBlobHash(hash)) {
-            // Verify hash integrity
+            // Verify hash integrity. Timing-safe comparison is not strictly
+            // required here (blob hash is not attacker-secret) but we use
+            // it uniformly across all hash-equality checks for clarity.
             const hex = createHash("sha256").update(buf).digest("hex");
             const computed = `sha256:${hex}`;
-            if (computed === hash) {
+            if (constantTimeEqual(computed, hash)) {
               blobCount++;
               const mimeType =
                 manifest?.blobs[hash]?.mime_type ?? "application/octet-stream";

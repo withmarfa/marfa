@@ -49,10 +49,14 @@ export function authMiddleware(storage: Storage, salt: string) {
   const lastUsedCache = new Map<string, number>();
 
   return createMiddleware<AppEnv>(async (c, next) => {
-    // Bootstrap detection: POST /keys with no existing keys
+    // Bootstrap detection: POST /keys on a workspace that has never
+    // had a key. The gate is a persistent `settings.bootstrapped`
+    // sentinel, NOT a live `keys.count() === 0` check — revoking every
+    // key must not re-open bootstrap (would let an unauthenticated
+    // caller mint an admin key and take over the workspace).
     if (c.req.method === "POST" && c.req.path === "/keys") {
-      const keyCount = await storage.keys.count();
-      if (keyCount === 0) {
+      const bootstrapped = await storage.settings.get("bootstrapped");
+      if (bootstrapped !== "true") {
         c.set("apiKey", undefined);
         c.set("isBootstrap", true);
         c.set("authType", undefined);
