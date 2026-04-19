@@ -255,18 +255,18 @@ const SYSTEM_STATES: ReadonlySet<ItemState> = new Set([
 
 /**
  * Validates whether a state transition is allowed. Universal — types do not
- * declare their own state machines. The typeId argument is kept for API
- * compatibility and to distinguish unknown-type from invalid-transition errors.
+ * declare their own state machines, so the typeId is only kept for API
+ * parity and potential future use. It is NOT used to reject transitions on
+ * custom (registered) types: the server-side item-store enforces type
+ * existence at create time, so by the time `validateTransition` is called
+ * the type is already known, and custom types share the same state graph
+ * as core types.
  */
 export function validateTransition(
-  typeId: string,
+  _typeId: string,
   currentState: ItemState,
   nextState: ItemState,
 ): string | null {
-  if (!TYPE_REGISTRY.has(typeId)) {
-    return `Unknown type: ${typeId}`;
-  }
-
   if (!SYSTEM_STATES.has(currentState)) {
     return `Invalid current state "${currentState}"`;
   }

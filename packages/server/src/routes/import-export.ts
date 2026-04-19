@@ -158,6 +158,11 @@ export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
     }
 
     const tenantId = c.get("apiKey")?.tenant_id;
+    // Import must stamp `source` from the credential, same as POST /items.
+    // Previously `source` was taken from the payload, which let an import
+    // forge provenance (spoof an item's origin app). `source_id` is
+    // user-provided metadata and passes through unchanged.
+    const stampedSource = c.get("apiKey")?.source;
 
     const result = await storage.runInTransaction(async () => {
       let imported = 0;
@@ -170,7 +175,7 @@ export function importRoutes(storage: Storage, blobBackend: BlobBackend) {
             {
               type: item.type as string,
               properties: (item.properties ?? {}) as Record<string, unknown>,
-              source: item.source as string | undefined,
+              source: stampedSource,
               source_id: item.source_id as string | undefined,
               tags: item.tags as string[] | undefined,
             },
