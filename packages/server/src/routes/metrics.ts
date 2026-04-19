@@ -8,8 +8,16 @@ import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 const CACHE_TTL_MS = 60_000;
 const startedAt = Date.now();
 
-let cachedResponse: Record<string, unknown> | null = null;
-let cachedAt = 0;
+// Per-tenant cache. Previously this was a module-level response + timestamp,
+// which let one tenant's admin see another tenant's item/blob/etc counts for
+// up to CACHE_TTL_MS. Key = tenant_id or a sentinel when the caller's key
+// has no tenant_id (single-tenant/keys-mode installs).
+interface CacheEntry {
+  response: Record<string, unknown>;
+  at: number;
+}
+const NO_TENANT_KEY = "__no_tenant__";
+const tenantCache = new Map<string, CacheEntry>();
 
 const MetricsResponseSchema = z.object({
   items: z.object({
@@ -63,16 +71,19 @@ export function metricsRoutes(storage: Storage) {
     requireAdmin(c);
 
     const now = Date.now();
-    if (cachedResponse && now - cachedAt < CACHE_TTL_MS) {
+    const tenantId = c.get("apiKey")?.tenant_id;
+    const cacheKey = tenantId ?? NO_TENANT_KEY;
+    const cached = tenantCache.get(cacheKey);
+    if (cached && now - cached.at < CACHE_TTL_MS) {
       return c.json(
-        cachedResponse as z.infer<typeof MetricsResponseSchema>,
+        cached.response as z.infer<typeof MetricsResponseSchema>,
         200,
       );
     }
 
     const [itemStats, blobStats, keyCount, webhookCount, customTypeCount] =
       await Promise.all([
-        storage.items.stats(c.get("apiKey")?.tenant_id),
+        storage.items.stats(tenantId),
         storage.blobs.count(),
         storage.keys.count(),
         storage.webhooks.count(),
@@ -104,8 +115,7 @@ export function metricsRoutes(storage: Storage) {
       cached_at: new Date().toISOString(),
     };
 
-    cachedResponse = response;
-    cachedAt = now;
+    tenantCache.set(cacheKey, { response, at: now });
 
     return c.json(response, 200);
   });

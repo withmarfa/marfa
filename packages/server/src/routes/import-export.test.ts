@@ -93,6 +93,58 @@ describe("POST /import", () => {
     });
     expect(res.status).toBe(403);
   });
+
+  it("stamps `source` from the credential and ignores a forged payload source", async () => {
+    // Unique suffix so this item is addressable without depending on
+    // whatever other items the suite has created.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const forgedSource = "forged.origin";
+    const payloadSourceId = `srcid-${suffix}`;
+
+    const res = await request(ctx.app, "POST", "/import", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.note",
+            properties: { body: `stamp test ${suffix}` },
+            source: forgedSource,
+            source_id: payloadSourceId,
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+
+    // The admin credential's `source` starts with `test-admin-` (see
+    // test-utils). Find the imported item by source_id, then assert:
+    //  - source does NOT equal forgedSource
+    //  - source starts with the credential-stamped prefix
+    //  - source_id WAS preserved (user-provided metadata)
+    const listRes = await request(
+      ctx.app,
+      "GET",
+      `/items?source=${encodeURIComponent(forgedSource)}`,
+      { key: ctx.adminKey },
+    );
+    const listBody = (await listRes.json()) as { data: unknown[] };
+    expect(listBody.data).toHaveLength(0);
+
+    // Find the imported item by source_id instead. Admin query lists all.
+    const allRes = await request(ctx.app, "GET", "/items?limit=200", {
+      key: ctx.adminKey,
+    });
+    const allBody = (await allRes.json()) as {
+      data: { source?: string; source_id?: string }[];
+    };
+    const imported = allBody.data.find(
+      (it) => it.source_id === payloadSourceId,
+    );
+    expect(imported).toBeTruthy();
+    expect(imported?.source).not.toBe(forgedSource);
+    expect(imported?.source?.startsWith("test-admin-")).toBe(true);
+    expect(imported?.source_id).toBe(payloadSourceId);
+  });
 });
 
 describe("GET /export", () => {

@@ -303,8 +303,32 @@ describe("validateTransition", () => {
     expect(error).not.toBeNull();
   });
 
-  it("returns error for unknown type", () => {
-    const error = validateTransition("core.nonexistent", "active", "archived");
+  it("allows custom (non-core) types to transition", () => {
+    // Previously validateTransition rejected any type not in TYPE_REGISTRY
+    // with "Unknown type", which broke the universal lifecycle for types
+    // registered at runtime via POST /types. Type existence is enforced
+    // at item creation, so by the time this function runs the type is
+    // known; gating here added nothing.
+    expect(
+      validateTransition("demo.custom_thing", "active", "archived"),
+    ).toBeNull();
+    expect(
+      validateTransition("demo.custom_thing", "archived", "active"),
+    ).toBeNull();
+    expect(
+      validateTransition("demo.custom_thing", "active", "trashed"),
+    ).toBeNull();
+    expect(
+      validateTransition("demo.custom_thing", "trashed", "active"),
+    ).toBeNull();
+  });
+
+  it("still blocks invalid transitions for custom types (trashed -> archived)", () => {
+    const error = validateTransition(
+      "demo.custom_thing",
+      "trashed",
+      "archived",
+    );
     expect(error).not.toBeNull();
   });
 
