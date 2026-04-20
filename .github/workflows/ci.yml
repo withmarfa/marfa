@@ -3,12 +3,36 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
+  # Freshness jobs are also triggerable manually so agents can verify
+  # generated-artefact drift (types registry, openapi.json) before merging
+  # a PR that touches schema or shared-type sources. See myme/CLAUDE.md for
+  # when to fire this.
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # Freshness jobs — catch generated-artefact drift. Run on main pushes and
+  # on manual dispatch, but NOT on every PR push. Agents are expected to
+  # fire these via `gh workflow run ci.yml --ref <branch>` before merging
+  # a PR that modifies type or schema source files.
   types-freshness:
     name: Types codegen freshness
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -36,6 +60,7 @@ jobs:
 
   openapi-freshness:
     name: OpenAPI spec freshness
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -63,8 +88,11 @@ jobs:
             exit 1
           fi
 
+  # Test jobs — run on every PR and on main pushes. These are the fast
+  # pre-merge signal and are considered load-bearing for merge decisions.
   ci-sqlite:
     name: CI (SQLite)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -89,6 +117,7 @@ jobs:
 
   ci-pg:
     name: CI (Postgres)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -133,6 +162,7 @@ jobs:
   # breakage on PR before it lands.
   ci-fresh-migrate-sqlite:
     name: CI (Fresh migrate, SQLite)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -162,6 +192,7 @@ jobs:
 
   ci-fresh-migrate-pg:
     name: CI (Fresh migrate, Postgres)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
