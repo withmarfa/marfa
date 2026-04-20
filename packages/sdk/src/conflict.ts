@@ -9,6 +9,17 @@ import type {
 import type { HttpTransport } from "./transport.js";
 import { ConflictError } from "./errors.js";
 
+async function fetchItemType(
+  transport: HttpTransport,
+  itemId: string,
+): Promise<string> {
+  const res = await transport.request<{ item: Item }>(
+    "GET",
+    `/items/${itemId}`,
+  );
+  return res.item.type;
+}
+
 /**
  * Conflict resolution strategy for item updates.
  *
@@ -156,7 +167,7 @@ function toConflictError(
 export async function handleConflictUpdate(
   transport: HttpTransport,
   itemId: string,
-  itemType: string,
+  itemType: string | undefined,
   clientPatch: Record<string, unknown>,
   version: number,
   strategy: ConflictStrategy,
@@ -207,9 +218,14 @@ export async function handleConflictUpdate(
       const plan = planAutoMerge(conflict);
       let conflictedCopyId: string | undefined;
       if (plan.keepBothFields.length > 0) {
+        // When the caller skipped the upfront GET via `expectedVersion`, the
+        // type wasn't pre-fetched. Pay the extra round-trip only here, on
+        // the conflict path that actually needs it.
+        const effectiveType =
+          itemType ?? (await fetchItemType(transport, itemId));
         const sibling = await keepBothFlow(
           transport,
-          itemType,
+          effectiveType,
           result.current.properties,
           clientPatch,
           plan.keepBothFields,

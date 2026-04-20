@@ -22,6 +22,7 @@ import type { Item } from "@mymehq/shared";
 
 let client: MymeClient;
 let testFetchFn: typeof globalThis.fetch;
+let adminKey: string;
 let cleanup: () => void;
 
 function createTestFetch(app: {
@@ -94,6 +95,7 @@ beforeAll(async () => {
     }),
   });
   const { key } = (await bootstrapRes.json()) as { key: string };
+  adminKey = key;
 
   client = new MymeClient({
     url: "http://localhost",
@@ -417,6 +419,146 @@ describe("conflict resolution — policy-aware auto strategy", () => {
 
     expect(result.properties.given_name).toBe("Server Alice");
     expect(spawned).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// items.update — expectedVersion skip-GET fast path
+// ---------------------------------------------------------------------------
+
+describe("items.update expectedVersion", () => {
+  function instrumentFetch(): {
+    fetch: typeof globalThis.fetch;
+    calls: { method: string; path: string }[];
+  } {
+    const calls: { method: string; path: string }[] = [];
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const urlStr =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const url = new URL(urlStr);
+      calls.push({
+        method: (init?.method ?? "GET").toUpperCase(),
+        path: url.pathname,
+      });
+      return testFetchFn(input, init);
+    };
+    return { fetch, calls };
+  }
+
+  function newClient(): {
+    client: MymeClient;
+    calls: { method: string; path: string }[];
+  } {
+    const { fetch, calls } = instrumentFetch();
+    const c = new MymeClient({
+      url: "http://localhost",
+      apiKey: adminKey,
+      fetch,
+    });
+    return { client: c, calls };
+  }
+
+  it("skips the GET when expectedVersion is provided", async () => {
+    const item = await createNote();
+    const { client: c, calls } = newClient();
+
+    const updated = await c.items.update(
+      item.id,
+      { title: "Patched" },
+      { expectedVersion: item.version },
+    );
+
+    expect(updated.version).toBe(item.version + 1);
+    const itemCalls = calls.filter((c) => c.path === `/items/${item.id}`);
+    expect(itemCalls).toEqual([{ method: "PATCH", path: `/items/${item.id}` }]);
+  });
+
+  it("propagates 409 on a stale expectedVersion", async () => {
+    const item = await createNote();
+    await client.items.update(
+      item.id,
+      { title: "Server title" },
+      { expectedVersion: item.version },
+    );
+
+    await expect(
+      client.items.update(
+        item.id,
+        { title: "Client title" },
+        { expectedVersion: item.version, conflict: "manual" },
+      ),
+    ).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("lazy-fetches type only when keep_both_copies conflict needs it", async () => {
+    const item = await createNote({ body: "Base" });
+    // Bump server version.
+    await client.items.update(
+      item.id,
+      { body: "Server body" },
+      { expectedVersion: 1 },
+    );
+
+    const { client: c, calls } = newClient();
+
+    let spawned: string | undefined;
+    const result = await c.items.update(
+      item.id,
+      { body: "Client body" },
+      {
+        expectedVersion: 1,
+        conflict: "auto",
+        // type deliberately omitted — must be lazy-fetched on conflict.
+        onAutoMerge: (e) => {
+          spawned = e.conflictedCopyId;
+        },
+      },
+    );
+
+    expect(result.properties.body).toBe("Server body");
+    expect(spawned).toBeDefined();
+
+    // A GET on the item id must have happened (the lazy fetch), but only
+    // after the PATCH — not as an upfront pre-fetch.
+    const itemCalls = calls.filter((c) => c.path === `/items/${item.id}`);
+    const firstPatchIdx = itemCalls.findIndex((c) => c.method === "PATCH");
+    const firstGetIdx = itemCalls.findIndex((c) => c.method === "GET");
+    expect(firstPatchIdx).toBe(0);
+    expect(firstGetIdx).toBeGreaterThan(firstPatchIdx);
+  });
+
+  it("legacy options.version still skips the GET (backward compat)", async () => {
+    const item = await createNote();
+    const { client: c, calls } = newClient();
+
+    const updated = await c.items.update(
+      item.id,
+      { title: "Patched" },
+      { version: item.version, type: "core.note" },
+    );
+
+    expect(updated.version).toBe(item.version + 1);
+    const itemCalls = calls.filter((c) => c.path === `/items/${item.id}`);
+    expect(itemCalls).toEqual([{ method: "PATCH", path: `/items/${item.id}` }]);
+  });
+
+  it("falls back to GET-then-PATCH when no version is provided", async () => {
+    const item = await createNote();
+    const { client: c, calls } = newClient();
+
+    const updated = await c.items.update(item.id, { title: "Patched" });
+
+    expect(updated.version).toBe(item.version + 1);
+    const itemCalls = calls.filter((c) => c.path === `/items/${item.id}`);
+    expect(itemCalls[0]).toEqual({ method: "GET", path: `/items/${item.id}` });
+    expect(itemCalls[1]).toEqual({
+      method: "PATCH",
+      path: `/items/${item.id}`,
+    });
   });
 });
 

@@ -65,6 +65,21 @@ export interface ClientConfig {
 }
 
 export interface UpdateOptions {
+  /**
+   * Version the caller expects the item to currently be at. When provided,
+   * the SDK skips the upfront `GET /items/:id` and PATCHes directly. If the
+   * server's actual version differs, the update 409s through the usual
+   * conflict path — the caller's retry policy is out of scope here.
+   *
+   * Prefer `expectedVersion` for bulk importers and sync loops that already
+   * know the version locally; one request instead of two.
+   */
+  expectedVersion?: number;
+  /**
+   * Legacy alias for `expectedVersion`. Kept for backwards compatibility;
+   * new code should use `expectedVersion`.
+   * @deprecated Use `expectedVersion`.
+   */
   version?: number;
   /**
    * Override the client's default conflict strategy for this update.
@@ -80,7 +95,10 @@ export interface UpdateOptions {
   library?: boolean;
   /**
    * Item type. Required by the `auto` strategy when a `keep_both_copies`
-   * conflict spawns a sibling item. Omit to let the SDK pre-fetch it.
+   * conflict spawns a sibling item. Omit to let the SDK pre-fetch it —
+   * when `expectedVersion` is also omitted the pre-fetch happens upfront;
+   * when `expectedVersion` is provided the fetch is deferred until a
+   * `keep_both_copies` conflict actually needs it.
    */
   type?: string;
   /**
@@ -244,11 +262,18 @@ export class MymeClient {
       properties: Record<string, unknown>,
       options?: UpdateOptions,
     ): Promise<Item> => {
-      let version = options?.version;
-      let type = options?.type;
-      if (version === undefined || type === undefined) {
+      // Skip the upfront GET when the caller has supplied an expected
+      // version. `type` stays optional — the conflict handler lazy-fetches
+      // it only if a `keep_both_copies` path needs to spawn a sibling item.
+      // eslint-disable-next-line @typescript-eslint/no-deprecated
+      const expected = options?.expectedVersion ?? options?.version;
+      let version: number;
+      let type: string | undefined = options?.type;
+      if (expected !== undefined) {
+        version = expected;
+      } else {
         const item = await this.items.get(id);
-        version ??= item.version;
+        version = item.version;
         type ??= item.type;
       }
 
