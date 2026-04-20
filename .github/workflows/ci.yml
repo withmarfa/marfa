@@ -4,17 +4,17 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.github/ISSUE_TEMPLATE/**'
-      - 'LICENSE'
+      - "**/*.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - "LICENSE"
   pull_request:
     branches: [main]
     paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.github/ISSUE_TEMPLATE/**'
-      - 'LICENSE'
+      - "**/*.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - "LICENSE"
   # Freshness jobs are also triggerable manually so agents can verify
   # generated-artefact drift (types registry, openapi.json) before merging
   # a PR that touches schema or shared-type sources. See myme/CLAUDE.md for

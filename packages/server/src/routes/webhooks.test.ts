@@ -170,12 +170,9 @@ describe("GET /webhooks/:id", () => {
   });
 
   it("returns 404 for a missing webhook", async () => {
-    const res = await request(
-      ctx.app,
-      "GET",
-      "/webhooks/does-not-exist-xyz",
-      { key: ctx.adminKey },
-    );
+    const res = await request(ctx.app, "GET", "/webhooks/does-not-exist-xyz", {
+      key: ctx.adminKey,
+    });
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("webhook_not_found");
@@ -318,12 +315,9 @@ describe("GET /webhooks/:id/deliveries", () => {
   });
 
   it("returns 404 when the webhook does not exist", async () => {
-    const res = await request(
-      ctx.app,
-      "GET",
-      "/webhooks/ghost-id/deliveries",
-      { key: ctx.adminKey },
-    );
+    const res = await request(ctx.app, "GET", "/webhooks/ghost-id/deliveries", {
+      key: ctx.adminKey,
+    });
     expect(res.status).toBe(404);
   });
 });
