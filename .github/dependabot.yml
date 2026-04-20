@@ -8,19 +8,22 @@ updates:
       - "/packages/shared"
       - "/packages/types"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
     groups:
-      dev-dependencies:
-        dependency-type: "development"
-      prod-dependencies:
-        dependency-type: "production"
-    open-pull-requests-limit: 5
+      all-npm:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 1
     labels:
       - "dependencies"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"
+    groups:
+      all-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 1
     labels:
       - "dependencies"
