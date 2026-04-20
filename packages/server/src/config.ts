@@ -22,6 +22,11 @@ export interface AppConfig {
   enableHsts: boolean;
   auditRetentionDays: number;
   auditCleanupIntervalMs: number;
+  /** Hours an event_log entry survives before the cleanup job purges it.
+   *  Default 168 (7 days). Controls how far back a client's SSE replay
+   *  cursor can reach; requests with `Last-Event-ID` older than the
+   *  oldest retained event get a terminal `catchup_too_old` event. */
+  eventLogRetentionHours: number;
   versionThinningIntervalMs: number;
   versionRecentDays: number;
   versionDailySnapshotDays: number;
@@ -42,6 +47,27 @@ export interface AppConfig {
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
+
+const DEFAULT_EVENT_LOG_RETENTION_HOURS = 168;
+
+/**
+ * Parses `MYME_EVENT_LOG_RETENTION_HOURS`. Unset → default (168 / 7 days).
+ * Non-positive, non-integer, or unparseable values log a warning and fall
+ * back to the default rather than throwing — cleanup is belt-and-braces
+ * and we'd rather run the server with sensible retention than fail boot.
+ * Exported for direct unit testing.
+ */
+export function parseEventLogRetentionHours(raw: string | undefined): number {
+  if (raw === undefined || raw === "") return DEFAULT_EVENT_LOG_RETENTION_HOURS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+    console.warn(
+      `Invalid MYME_EVENT_LOG_RETENTION_HOURS=${raw}, falling back to ${String(DEFAULT_EVENT_LOG_RETENTION_HOURS)}`,
+    );
+    return DEFAULT_EVENT_LOG_RETENTION_HOURS;
+  }
+  return parsed;
+}
 
 export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
@@ -85,6 +111,9 @@ export function loadConfig(): AppConfig {
     auditRetentionDays: Number(process.env.AUDIT_RETENTION_DAYS) || 90,
     auditCleanupIntervalMs:
       Number(process.env.AUDIT_CLEANUP_INTERVAL_MS) || 86_400_000,
+    eventLogRetentionHours: parseEventLogRetentionHours(
+      process.env.MYME_EVENT_LOG_RETENTION_HOURS,
+    ),
     versionThinningIntervalMs:
       Number(process.env.VERSION_THINNING_INTERVAL_MS) || 3_600_000,
     versionRecentDays: Number(process.env.VERSION_RECENT_DAYS) || 30,

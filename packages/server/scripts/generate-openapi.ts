@@ -33,6 +33,7 @@ const config: AppConfig = {
   enableHsts: false,
   auditRetentionDays: 90,
   auditCleanupIntervalMs: 86_400_000,
+  eventLogRetentionHours: 168,
   versionThinningIntervalMs: 3_600_000,
   versionRecentDays: 30,
   versionDailySnapshotDays: 90,

@@ -472,6 +472,13 @@ export interface EventLogStore {
 
   /** Delete events older than the given retention period. Returns count deleted. */
   cleanup(retentionHours: number): Promise<number>;
+
+  /** Smallest surviving event id, scoped to a tenant when provided.
+   *  Returns null when no events match. Used by the SSE route to
+   *  detect clients whose `Last-Event-ID` predates the retention
+   *  window so it can emit a terminal `catchup_too_old` event
+   *  instead of silently resuming mid-stream. */
+  getMinRetainedId(tenantId?: string): Promise<number | null>;
 }
 
 // ---------------------------------------------------------------------------

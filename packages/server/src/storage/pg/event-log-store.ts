@@ -1,4 +1,4 @@
-import { gt, and, eq, lt } from "drizzle-orm";
+import { gt, and, eq, lt, sql } from "drizzle-orm";
 import type { EventLogStore, PersistedEvent } from "../interface.js";
 import { eventLog } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -65,5 +65,18 @@ export class PgEventLogStore implements EventLogStore {
       .where(lt(eventLog.created_at, cutoff))
       .returning({ id: eventLog.id });
     return rows.length;
+  }
+
+  async getMinRetainedId(tenantId?: string): Promise<number | null> {
+    const query = this.db
+      .select({ min: sql<number | null>`MIN(${eventLog.id})` })
+      .from(eventLog);
+    const rows = tenantId
+      ? await query.where(eq(eventLog.tenant_id, tenantId))
+      : await query;
+    const min = rows[0]?.min ?? null;
+    if (min === null) return null;
+    // pg may drive us back a string/bigint for the aggregate; normalise.
+    return typeof min === "number" ? min : Number(min);
   }
 }

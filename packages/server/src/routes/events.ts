@@ -151,6 +151,47 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
           if (!isNaN(afterId)) {
             void (async () => {
               try {
+                // Detect stale cursors — clients whose `Last-Event-ID`
+                // predates the retention window can't be faithfully caught
+                // up from the event log. Emit a terminal `catchup_too_old`
+                // control event and close the stream; the client is
+                // expected to re-sync state and reconnect without a
+                // Last-Event-ID. Scoped by tenant so a fresh tenant with
+                // no events never trips the check.
+                {
+                  const minRetained = await storage.eventLog.getMinRetainedId(
+                    tenantId ?? undefined,
+                  );
+                  if (minRetained !== null && afterId < minRetained) {
+                    const payload = JSON.stringify({
+                      type: "catchup_too_old",
+                      min_retained_id: minRetained,
+                      requested: afterId,
+                    });
+                    // Emit the terminal event using the same SSE framing
+                    // (id / event / data / blank-line) as every other event
+                    // on this stream. The id is the min retained id so a
+                    // naive EventSource client won't store a cursor older
+                    // than what the log can serve.
+                    send(
+                      `id: ${String(minRetained)}\nevent: catchup_too_old\ndata: ${payload}\n\n`,
+                    );
+                    // Close the stream: stop pumps, release iterators,
+                    // end the underlying controller. No further events
+                    // will be delivered — the client must re-sync state
+                    // before reconnecting.
+                    cleanup();
+                    void reader.return(undefined);
+                    void edgeIter.return(undefined);
+                    try {
+                      controller.close();
+                    } catch {
+                      /* already closed */
+                    }
+                    return;
+                  }
+                }
+
                 let lastReplayedId = afterId;
 
                 // Replay in batches

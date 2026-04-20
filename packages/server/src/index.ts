@@ -62,17 +62,21 @@ async function main() {
   // Enable SSE event persistence
   initEventLog(storage.eventLog);
 
-  // Event log retention — clean up events older than 24 hours.
+  // Event log retention — clean up events older than the configured
+  // window (default 168h / 7d; override via MYME_EVENT_LOG_RETENTION_HOURS).
   // Advisory-locked so multi-instance deployments run the sweep once per
   // tick cluster-wide.
+  const eventLogRetentionHours = config.eventLogRetentionHours;
   const runEventLogCleanup = () => {
     void storage.coordination
-      .withJobLock("event-log-cleanup", () => storage.eventLog.cleanup(24))
+      .withJobLock("event-log-cleanup", () =>
+        storage.eventLog.cleanup(eventLogRetentionHours),
+      )
       .then((deleted) => {
         if (deleted !== undefined && deleted > 0)
           log(
             "info",
-            `Purged ${String(deleted)} event_log entries older than 24 hours`,
+            `Purged ${String(deleted)} event_log entries older than ${String(eventLogRetentionHours)} hours`,
           );
       });
   };
