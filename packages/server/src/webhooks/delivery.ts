@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { matchesTypePattern } from "@mymehq/shared";
 import type { Webhook } from "@mymehq/shared";
 import type {
+  PendingWebhookDelivery,
   WebhookStore,
   WebhookDeliveryStore,
 } from "../storage/interface.js";
@@ -53,6 +54,27 @@ const RETRY_AFTER_CEILING_MS = 5 * 60 * 1000;
  *  error and dead-lettered. */
 const RETRYABLE_4XX = new Set([408, 429]);
 
+/** HTTP timeout for the background poller. Generous so a slow receiver
+ *  doesn't cascade into retry churn. */
+const POLLER_TIMEOUT_MS = 10_000;
+
+/** HTTP timeout for the best-effort direct-dispatch fast path. Kept
+ *  short so a slow receiver cannot stall the event handler's task; if
+ *  this deadline is missed, the row stays claimed only until the claim
+ *  TTL expires, and the 30-second poller catches it on its next tick. */
+const DIRECT_DISPATCH_TIMEOUT_MS = 5_000;
+
+/**
+ * How long a claimed `webhook_deliveries` row is hidden from the
+ * eligibility window. Set generously so a single instance's full HTTP
+ * attempt (≤ 10s poller timeout) finishes and writes its outcome before
+ * the row becomes visible again; short enough that a crashed worker
+ * doesn't stall a delivery indefinitely. Single source of truth — both
+ * store implementations import this value from here so the poller and
+ * the direct-dispatcher can never disagree on the reclaim deadline.
+ */
+export const CLAIM_LOCK_TTL_MS = 60_000;
+
 /** Parse a Retry-After header value. Supports both delta-seconds (RFC
  *  9110 §10.2.3) and HTTP-date forms. Returns milliseconds, clamped to
  *  RETRY_AFTER_CEILING_MS. Returns null on parse failure or zero/negative
@@ -77,6 +99,150 @@ export function parseRetryAfter(headerValue: string | null): number | null {
   }
 
   return null;
+}
+
+/**
+ * Shared HTTP-attempt logic used by both the 30-second poller and the
+ * best-effort direct-dispatch fast path. Signs, posts, and updates the
+ * delivery row via `markSuccess` / `markDeadLetter` / `markFailed`. Never
+ * throws — all errors are logged and written to the store. The `direct`
+ * flag only influences log tagging so operators can distinguish the two
+ * paths; the state transitions are identical.
+ */
+export async function deliverWebhookAttempt(
+  store: WebhookDeliveryStore,
+  delivery: PendingWebhookDelivery,
+  timeoutMs: number,
+  direct: boolean,
+): Promise<void> {
+  const nextAttempt = delivery.attempt + 1;
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = buildSignatureHeader(
+    timestamp,
+    delivery.payload,
+    delivery.webhook_secret,
+  );
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+
+    const response = await fetch(delivery.webhook_url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Myme-Signature": signature,
+        "X-Myme-Event": delivery.event,
+      },
+      body: delivery.payload,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (response.ok) {
+      await store.markSuccess(delivery.id, response.status, nextAttempt);
+      log("info", "Webhook delivered", {
+        delivery_id: delivery.id,
+        webhook_id: delivery.webhook_id,
+        event: delivery.event,
+        status: response.status,
+        attempt: nextAttempt,
+        direct,
+      });
+      return;
+    }
+
+    if (
+      response.status >= 400 &&
+      response.status < 500 &&
+      !RETRYABLE_4XX.has(response.status)
+    ) {
+      await store.markDeadLetter(delivery.id);
+      log("error", "Webhook dead-lettered", {
+        delivery_id: delivery.id,
+        webhook_id: delivery.webhook_id,
+        event: delivery.event,
+        status: response.status,
+        attempt: nextAttempt,
+        direct,
+      });
+      return;
+    }
+
+    const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+    await scheduleDeliveryRetry(
+      store,
+      delivery,
+      nextAttempt,
+      response.status,
+      undefined,
+      retryAfterMs ?? undefined,
+      direct,
+    );
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    await scheduleDeliveryRetry(
+      store,
+      delivery,
+      nextAttempt,
+      undefined,
+      errMsg,
+      undefined,
+      direct,
+    );
+  }
+}
+
+async function scheduleDeliveryRetry(
+  store: WebhookDeliveryStore,
+  delivery: PendingWebhookDelivery,
+  attempt: number,
+  statusCode: number | undefined,
+  error: string | undefined,
+  overrideDelayMs: number | undefined,
+  direct: boolean,
+): Promise<void> {
+  if (attempt >= delivery.max_attempts) {
+    await store.markFailed(
+      delivery.id,
+      statusCode,
+      error ?? "Max attempts reached",
+      attempt,
+      null,
+    );
+    log("error", "Webhook max attempts reached", {
+      delivery_id: delivery.id,
+      webhook_id: delivery.webhook_id,
+      event: delivery.event,
+      status: statusCode ?? null,
+      attempt,
+      error: error ?? null,
+      direct,
+    });
+    return;
+  }
+
+  const delayMs = overrideDelayMs ?? RETRY_DELAYS[attempt - 1] ?? 25000;
+  const nextAttemptAt = new Date(Date.now() + delayMs).toISOString();
+  await store.markFailed(
+    delivery.id,
+    statusCode,
+    error ?? `HTTP ${String(statusCode)}`,
+    attempt,
+    nextAttemptAt,
+  );
+  log("info", "Webhook retry scheduled", {
+    delivery_id: delivery.id,
+    webhook_id: delivery.webhook_id,
+    event: delivery.event,
+    status: statusCode ?? null,
+    attempt,
+    next_attempt_at: nextAttemptAt,
+    direct,
+  });
 }
 
 export class WebhookConsumer {
@@ -161,7 +327,7 @@ export class WebhookConsumer {
       edge: event.edge,
       delivered_at: new Date().toISOString(),
     });
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       matching.map((w) =>
         this.deliveryStore.schedule({
           webhookId: w.id,
@@ -173,6 +339,9 @@ export class WebhookConsumer {
         }),
       ),
     );
+    for (const r of results) {
+      if (r.status === "fulfilled") void this.tryDirectDispatch(r.value);
+    }
   }
 
   private async dispatch(event: ItemEvent): Promise<void> {
@@ -213,7 +382,7 @@ export class WebhookConsumer {
     });
 
     // Schedule deliveries in the database for durable retry
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       matching.map((w) =>
         this.deliveryStore
           .schedule({
@@ -229,9 +398,54 @@ export class WebhookConsumer {
               webhook_id: w.id,
               error: err instanceof Error ? err.message : String(err),
             });
+            return undefined;
           }),
       ),
     );
+    for (const r of results) {
+      if (r.status === "fulfilled" && typeof r.value === "string") {
+        void this.tryDirectDispatch(r.value);
+      }
+    }
+  }
+
+  /**
+   * Best-effort direct HTTP dispatch for a just-scheduled delivery.
+   * Atomically claims the row via `claimById` (CAS guarded by
+   * `status = 'pending'` and `next_attempt_at <= now`). If the claim
+   * fails — e.g. the poller raced us to it — returns silently; the other
+   * worker is already responsible. If the claim succeeds, the HTTP
+   * attempt runs with a shorter timeout than the poller; outcomes go
+   * through the same `markSuccess` / `markFailed` / `markDeadLetter`
+   * state transitions, so on a network error / 5xx the poller picks the
+   * row up on its next tick exactly as it would today.
+   *
+   * Fire-and-forget from the caller's perspective; all errors are logged
+   * by `deliverWebhookAttempt`.
+   */
+  private async tryDirectDispatch(deliveryId: string): Promise<void> {
+    try {
+      const nowMs = Date.now();
+      const now = new Date(nowMs).toISOString();
+      const claimExpiry = new Date(nowMs + CLAIM_LOCK_TTL_MS).toISOString();
+      const claimed = await this.deliveryStore.claimById(
+        deliveryId,
+        claimExpiry,
+        now,
+      );
+      if (!claimed) return;
+      await deliverWebhookAttempt(
+        this.deliveryStore,
+        claimed,
+        DIRECT_DISPATCH_TIMEOUT_MS,
+        true,
+      );
+    } catch (err) {
+      log("error", "Direct webhook dispatch failed", {
+        delivery_id: deliveryId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }
 
@@ -239,17 +453,6 @@ export class WebhookConsumer {
 // WebhookPoller — picks up pending deliveries from the database and attempts
 // HTTP delivery with durable retry. Survives server restarts.
 // ---------------------------------------------------------------------------
-
-interface PendingDelivery {
-  id: string;
-  webhook_id: string;
-  event: string;
-  payload: string;
-  webhook_url: string;
-  webhook_secret: string;
-  attempt: number;
-  max_attempts: number;
-}
 
 export class WebhookPoller {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -276,105 +479,20 @@ export class WebhookPoller {
         new Date().toISOString(),
         50,
       );
-      await Promise.allSettled(pending.map((d) => this.attempt(d)));
+      await Promise.allSettled(
+        pending.map((d) =>
+          deliverWebhookAttempt(
+            this.deliveryStore,
+            d,
+            POLLER_TIMEOUT_MS,
+            false,
+          ),
+        ),
+      );
     } catch (err) {
       log("error", "Webhook poller error", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
-  }
-
-  private async attempt(delivery: PendingDelivery): Promise<void> {
-    const nextAttempt = delivery.attempt + 1;
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const signature = buildSignatureHeader(
-      timestamp,
-      delivery.payload,
-      delivery.webhook_secret,
-    );
-
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => {
-        controller.abort();
-      }, 10_000);
-
-      const response = await fetch(delivery.webhook_url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Myme-Signature": signature,
-          "X-Myme-Event": delivery.event,
-        },
-        body: delivery.payload,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (response.ok) {
-        await this.deliveryStore.markSuccess(
-          delivery.id,
-          response.status,
-          nextAttempt,
-        );
-        return;
-      }
-
-      // 4xx: dead-letter unless it's a "try again later" code (408, 429).
-      // 408 and 429 fall through to scheduleRetry; 429 also honours the
-      // server's Retry-After hint.
-      if (
-        response.status >= 400 &&
-        response.status < 500 &&
-        !RETRYABLE_4XX.has(response.status)
-      ) {
-        await this.deliveryStore.markDeadLetter(delivery.id);
-        return;
-      }
-
-      // Retryable: 408, 429, all 5xx. Honour Retry-After when present
-      // (RFC 9110 §10.2.3); otherwise fall back to RETRY_DELAYS.
-      const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
-      await this.scheduleRetry(
-        delivery,
-        nextAttempt,
-        response.status,
-        undefined,
-        retryAfterMs ?? undefined,
-      );
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      await this.scheduleRetry(delivery, nextAttempt, undefined, errMsg);
-    }
-  }
-
-  private async scheduleRetry(
-    delivery: PendingDelivery,
-    attempt: number,
-    statusCode: number | undefined,
-    error?: string,
-    overrideDelayMs?: number,
-  ): Promise<void> {
-    if (attempt >= delivery.max_attempts) {
-      await this.deliveryStore.markFailed(
-        delivery.id,
-        statusCode,
-        error ?? "Max attempts reached",
-        attempt,
-        null,
-      );
-      return;
-    }
-
-    const delayMs = overrideDelayMs ?? RETRY_DELAYS[attempt - 1] ?? 25000;
-    const nextAttemptAt = new Date(Date.now() + delayMs).toISOString();
-    await this.deliveryStore.markFailed(
-      delivery.id,
-      statusCode,
-      error ?? `HTTP ${String(statusCode)}`,
-      attempt,
-      nextAttemptAt,
-    );
   }
 }

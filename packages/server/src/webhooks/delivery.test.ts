@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
-import type { WebhookDelivery } from "@mymehq/shared";
-import type { WebhookDeliveryStore } from "../storage/interface.js";
+import type { Item, Webhook, WebhookDelivery } from "@mymehq/shared";
+import type {
+  PendingWebhookDelivery,
+  WebhookDeliveryStore,
+  WebhookStore,
+} from "../storage/interface.js";
+import { publish, type ItemEvent } from "../pubsub.js";
 import {
+  WebhookConsumer,
   WebhookPoller,
+  deliverWebhookAttempt,
   parseRetryAfter,
   buildSignatureHeader,
 } from "./delivery.js";
@@ -111,6 +118,9 @@ function makeStubStore(pending: PendingDelivery[]): {
     list: () => Promise.resolve([] as WebhookDelivery[]),
     schedule: () => Promise.resolve("del_x"),
     getPending: () => Promise.resolve(pending),
+    // Tests that don't exercise the direct path leave this unused; the
+    // direct-dispatch tests override with their own stub.
+    claimById: () => Promise.resolve(null),
     markSuccess: (id, statusCode, attempt) => {
       calls.markSuccess.push({ id, statusCode, attempt });
       return Promise.resolve();
@@ -329,5 +339,248 @@ describe("WebhookPoller retry behaviour", () => {
     expect(sig).toBe(computed);
     // Header should match buildSignatureHeader's output for the same inputs.
     expect(buildSignatureHeader(ts, payload, secret)).toBe(captured.header);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deliverWebhookAttempt — shared helper used by both the poller and the
+// direct-dispatch fast path. Verifies the `direct` flag and the short
+// timeout behaviour the consumer relies on.
+// ---------------------------------------------------------------------------
+
+describe("deliverWebhookAttempt (direct fast path)", () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.useRealTimers();
+  });
+
+  it("writes markSuccess on 2xx when invoked with direct=true", async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 200 })),
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { store, calls } = makeStubStore([]);
+    const delivery = makeDelivery({ id: "del_direct_ok" });
+    await deliverWebhookAttempt(store, delivery, 5_000, true);
+
+    expect(calls.markSuccess).toEqual([
+      { id: "del_direct_ok", statusCode: 200, attempt: 1 },
+    ]);
+    expect(calls.markFailed).toEqual([]);
+  });
+
+  it("aborts on the shorter 5s direct timeout without hanging the caller", async () => {
+    // Resolve only when the AbortSignal fires — simulates a slow receiver.
+    const fetchSpy = vi.fn(
+      (_url: string | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    vi.useFakeTimers();
+    const { store, calls } = makeStubStore([]);
+    const delivery = makeDelivery({ id: "del_direct_slow" });
+    const attemptP = deliverWebhookAttempt(store, delivery, 5_000, true);
+    await vi.advanceTimersByTimeAsync(5_001);
+    await attemptP;
+
+    // No success, one retry scheduled (not dead-letter — network errors
+    // follow the retry path).
+    expect(calls.markSuccess).toEqual([]);
+    expect(calls.markFailed).toHaveLength(1);
+    expect(calls.markFailed[0]?.nextAttemptAt).not.toBeNull();
+  });
+
+  it("when claimById returns null, tryDirectDispatch is a silent no-op", async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 200 })),
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    // A store whose `schedule` returns an id, but whose `claimById`
+    // always returns null — i.e. the poller or another direct worker
+    // got there first.
+    const store: WebhookDeliveryStore = {
+      log: () => Promise.resolve(),
+      list: () => Promise.resolve([] as WebhookDelivery[]),
+      schedule: () => Promise.resolve("del_raced"),
+      getPending: () => Promise.resolve([]),
+      claimById: () => Promise.resolve(null),
+      markSuccess: () => Promise.resolve(),
+      markFailed: () => Promise.resolve(),
+      markDeadLetter: () => Promise.resolve(),
+    };
+
+    const webhook: Webhook = {
+      id: "wh_raced",
+      url: "https://example.test/hook",
+      secret: "s",
+      events: ["item.created"],
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const webhookStore: WebhookStore = {
+      create: () => Promise.resolve(webhook),
+      list: () => Promise.resolve([webhook]),
+      get: () => Promise.resolve(webhook),
+      update: () => Promise.resolve(webhook),
+      delete: () => Promise.resolve(),
+      listActive: () => Promise.resolve([webhook]),
+      count: () => Promise.resolve(1),
+    };
+
+    const consumer = new WebhookConsumer(webhookStore, store);
+    consumer.start();
+
+    const event: ItemEvent = {
+      type: "created",
+      item: {
+        id: "01HXXXXXXXXXXXXXXXXXXXXXXX",
+        type: "core.note",
+        version: 1,
+        state: "active",
+        library: true,
+        source: "test",
+        properties: { title: "x" },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as unknown as Item,
+    };
+    await publish(event);
+    // Let the consumer's async iterator tick and the fire-and-forget
+    // direct-dispatch attempt settle.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    consumer.stop();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("when claimById returns the row, tryDirectDispatch fires HTTP", async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 200 })),
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    let markedSuccess = false;
+    const claimed: PendingWebhookDelivery = {
+      id: "del_fast",
+      webhook_id: "wh_fast",
+      event: "item.created",
+      payload: '{"event":"item.created"}',
+      webhook_url: "https://example.test/hook",
+      webhook_secret: "s",
+      attempt: 0,
+      max_attempts: 4,
+    };
+    const store: WebhookDeliveryStore = {
+      log: () => Promise.resolve(),
+      list: () => Promise.resolve([] as WebhookDelivery[]),
+      schedule: () => Promise.resolve(claimed.id),
+      getPending: () => Promise.resolve([]),
+      claimById: () => Promise.resolve(claimed),
+      markSuccess: () => {
+        markedSuccess = true;
+        return Promise.resolve();
+      },
+      markFailed: () => Promise.resolve(),
+      markDeadLetter: () => Promise.resolve(),
+    };
+
+    const webhook: Webhook = {
+      id: "wh_fast",
+      url: "https://example.test/hook",
+      secret: "s",
+      events: ["item.created"],
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const webhookStore: WebhookStore = {
+      create: () => Promise.resolve(webhook),
+      list: () => Promise.resolve([webhook]),
+      get: () => Promise.resolve(webhook),
+      update: () => Promise.resolve(webhook),
+      delete: () => Promise.resolve(),
+      listActive: () => Promise.resolve([webhook]),
+      count: () => Promise.resolve(1),
+    };
+
+    const consumer = new WebhookConsumer(webhookStore, store);
+    consumer.start();
+
+    const event: ItemEvent = {
+      type: "created",
+      item: {
+        id: "01HYYYYYYYYYYYYYYYYYYYYYYY",
+        type: "core.note",
+        version: 1,
+        state: "active",
+        library: true,
+        source: "test",
+        properties: { title: "x" },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as unknown as Item,
+    };
+    const t0 = Date.now();
+    await publish(event);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    consumer.stop();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(markedSuccess).toBe(true);
+    // Sub-second on the happy path — the whole point of direct dispatch.
+    expect(Date.now() - t0).toBeLessThan(500);
+  });
+
+  it("direct path produces byte-identical signatures to the poller path", async () => {
+    const captured: { headers: string[] } = { headers: [] };
+    const fetchSpy = vi.fn(
+      (_url: string | URL, init?: RequestInit): Promise<Response> => {
+        const h = new Headers(init?.headers);
+        const sig = h.get("x-myme-signature");
+        if (sig) captured.headers.push(sig);
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const { store } = makeStubStore([]);
+    const delivery: PendingWebhookDelivery = makeDelivery({
+      id: "del_sig_parity",
+      payload: '{"event":"item.created"}',
+      webhook_secret: "whsec_parity",
+    });
+
+    await deliverWebhookAttempt(store, delivery, 5_000, true);
+    await deliverWebhookAttempt(store, delivery, 10_000, false);
+
+    // Both paths hit the same signing helper; headers differ only in the
+    // embedded timestamp, and the HMAC is derived from that timestamp plus
+    // the identical payload. Re-derive and assert equality.
+    expect(captured.headers).toHaveLength(2);
+    for (const header of captured.headers) {
+      const [tPart, v1Part] = header.split(",");
+      const ts = tPart!.slice(2);
+      const sig = v1Part!.slice(3);
+      const expected = createHmac("sha256", delivery.webhook_secret)
+        .update(`${ts}.${delivery.payload}`)
+        .digest("hex");
+      expect(sig).toBe(expected);
+    }
   });
 });

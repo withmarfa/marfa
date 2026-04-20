@@ -1,18 +1,13 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { WebhookDelivery } from "@mymehq/shared";
-import type { WebhookDeliveryStore } from "../interface.js";
+import type {
+  PendingWebhookDelivery,
+  WebhookDeliveryStore,
+} from "../interface.js";
+import { CLAIM_LOCK_TTL_MS } from "../../webhooks/delivery.js";
 import { webhookDeliveries } from "./schema.js";
 import type { PgDb } from "./connection.js";
-
-/**
- * Claim window — how long a polled row is hidden from other pollers.
- * Tuned to be longer than the 10s HTTP attempt timeout so a single
- * instance finishes delivery and writes markSuccess/markFailed before the
- * row becomes visible again, but short enough that a crashed instance
- * doesn't keep a delivery stalled.
- */
-const CLAIM_LOCK_TTL_MS = 60_000;
 
 function rowToDelivery(
   row: typeof webhookDeliveries.$inferSelect,
@@ -101,21 +96,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
    * success/retry is written, the row naturally becomes claimable again
    * after the TTL — no janitor needed.
    */
-  async getPending(
-    now: string,
-    limit = 50,
-  ): Promise<
-    {
-      id: string;
-      webhook_id: string;
-      event: string;
-      payload: string;
-      webhook_url: string;
-      webhook_secret: string;
-      attempt: number;
-      max_attempts: number;
-    }[]
-  > {
+  async getPending(now: string, limit = 50): Promise<PendingWebhookDelivery[]> {
     const claimExpiry = new Date(Date.now() + CLAIM_LOCK_TTL_MS).toISOString();
     const result = await this.db.execute(sql`
       UPDATE webhook_deliveries
@@ -149,6 +130,54 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
       attempt: r.attempt,
       max_attempts: r.max_attempts,
     }));
+  }
+
+  /**
+   * Single-row atomic claim used by the direct-dispatch fast path. The
+   * `WHERE id = ? AND status = 'pending' AND next_attempt_at <= now` guard
+   * acts as a CAS: if the poller has already claimed the row (its
+   * `next_attempt_at` is in the future) or the row was successfully
+   * delivered (`status = 'success'`), zero rows match and `null` comes
+   * back. On a successful claim, `next_attempt_at` is pushed to the claim
+   * expiry so the poller's next tick doesn't re-pick the same row.
+   * Postgres row-level locking serialises concurrent UPDATEs to the same
+   * id — no explicit `FOR UPDATE` transaction needed.
+   */
+  async claimById(
+    id: string,
+    claimExpiry: string,
+    now: string,
+  ): Promise<PendingWebhookDelivery | null> {
+    const result = await this.db.execute(sql`
+      UPDATE webhook_deliveries
+      SET next_attempt_at = ${claimExpiry}
+      WHERE id = ${id}
+        AND status = 'pending'
+        AND next_attempt_at <= ${now}
+      RETURNING id, webhook_id, event, payload, webhook_url, webhook_secret, attempt, max_attempts
+    `);
+    const rows = result as unknown as {
+      id: string;
+      webhook_id: string;
+      event: string;
+      payload: string | null;
+      webhook_url: string | null;
+      webhook_secret: string | null;
+      attempt: number;
+      max_attempts: number;
+    }[];
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      webhook_id: row.webhook_id,
+      event: row.event,
+      payload: row.payload ?? "",
+      webhook_url: row.webhook_url ?? "",
+      webhook_secret: row.webhook_secret ?? "",
+      attempt: row.attempt,
+      max_attempts: row.max_attempts,
+    };
   }
 
   async markSuccess(

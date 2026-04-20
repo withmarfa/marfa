@@ -104,3 +104,81 @@ describe.skipIf(!isPg || !url)(
     });
   },
 );
+
+describe.skipIf(!isPg || !url)(
+  "PgWebhookDeliveryStore.claimById (direct-dispatch fast path)",
+  () => {
+    it("only one of two concurrent claimById calls wins", async () => {
+      // Two connection pools against the same DB, mirroring two
+      // processes hitting the direct path on the same row. The CAS guard
+      // in the UPDATE (`status = 'pending' AND next_attempt_at <= now`)
+      // plus Postgres row-level locking means exactly one wins.
+      const a = await createPgStorage(url);
+      const b = await createPgStorage(url);
+      try {
+        await truncate(a);
+        const webhook = await a.webhooks.create({
+          url: "https://example.invalid/hook",
+          events: ["item.created"],
+        });
+        // Seed the delivery row in the past so `next_attempt_at <= now`
+        // holds for both concurrent claimers.
+        const pastIso = new Date(Date.now() - 5_000).toISOString();
+        await a.webhookDeliveries.schedule({
+          webhookId: webhook.id,
+          event: "item.created",
+          payload: `{"i":0}`,
+          webhookUrl: "https://example.invalid/hook",
+          webhookSecret: "s",
+          nextAttemptAt: pastIso,
+        });
+
+        // Fetch the id via a listing — no atomic claim yet.
+        const deliveries = await a.webhookDeliveries.list(webhook.id, 1);
+        const id = deliveries[0]?.id;
+        expect(id).toBeTruthy();
+
+        const now = new Date().toISOString();
+        const claimExpiry = new Date(Date.now() + 60_000).toISOString();
+        const [resA, resB] = await Promise.all([
+          a.webhookDeliveries.claimById(id!, claimExpiry, now),
+          b.webhookDeliveries.claimById(id!, claimExpiry, now),
+        ]);
+
+        const winners = [resA, resB].filter((r) => r !== null);
+        expect(winners.length).toBe(1);
+      } finally {
+        await a.close();
+        await b.close();
+      }
+    });
+
+    it("returns null when the row is already claimed by the poller", async () => {
+      const storage = await createPgStorage(url);
+      try {
+        await truncate(storage);
+        const webhook = await storage.webhooks.create({
+          url: "https://example.invalid/hook",
+          events: ["item.created"],
+        });
+        await seedPendingDeliveries(storage, 1, webhook.id);
+
+        // Poller claims it first.
+        const now = new Date().toISOString();
+        const [claimed] = await storage.webhookDeliveries.getPending(now, 1);
+        expect(claimed).toBeDefined();
+
+        // Direct path arrives after — must see the bumped next_attempt_at
+        // and back off.
+        const result = await storage.webhookDeliveries.claimById(
+          claimed!.id,
+          new Date(Date.now() + 60_000).toISOString(),
+          now,
+        );
+        expect(result).toBeNull();
+      } finally {
+        await storage.close();
+      }
+    });
+  },
+);
