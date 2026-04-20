@@ -19,9 +19,9 @@
     "generate": "tsx scripts/generate.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.6.0",
     "tsup": "^8.5.1",
     "tsx": "^4.19.4",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.3"
   }
 }
