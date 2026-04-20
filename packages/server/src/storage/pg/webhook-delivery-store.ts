@@ -5,17 +5,9 @@ import type {
   PendingWebhookDelivery,
   WebhookDeliveryStore,
 } from "../interface.js";
+import { CLAIM_LOCK_TTL_MS } from "../../webhooks/delivery.js";
 import { webhookDeliveries } from "./schema.js";
 import type { PgDb } from "./connection.js";
-
-/**
- * Claim window — how long a polled row is hidden from other pollers.
- * Tuned to be longer than the 10s HTTP attempt timeout so a single
- * instance finishes delivery and writes markSuccess/markFailed before the
- * row becomes visible again, but short enough that a crashed instance
- * doesn't keep a delivery stalled.
- */
-const CLAIM_LOCK_TTL_MS = 60_000;
 
 function rowToDelivery(
   row: typeof webhookDeliveries.$inferSelect,

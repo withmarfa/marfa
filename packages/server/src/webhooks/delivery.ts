@@ -64,9 +64,16 @@ const POLLER_TIMEOUT_MS = 10_000;
  *  TTL expires, and the 30-second poller catches it on its next tick. */
 const DIRECT_DISPATCH_TIMEOUT_MS = 5_000;
 
-/** Claim window — must match the TTL baked into the store's `getPending`
- *  so the poller and the direct-dispatcher agree on the reclaim deadline. */
-const CLAIM_LOCK_TTL_MS = 60_000;
+/**
+ * How long a claimed `webhook_deliveries` row is hidden from the
+ * eligibility window. Set generously so a single instance's full HTTP
+ * attempt (≤ 10s poller timeout) finishes and writes its outcome before
+ * the row becomes visible again; short enough that a crashed worker
+ * doesn't stall a delivery indefinitely. Single source of truth — both
+ * store implementations import this value from here so the poller and
+ * the direct-dispatcher can never disagree on the reclaim deadline.
+ */
+export const CLAIM_LOCK_TTL_MS = 60_000;
 
 /** Parse a Retry-After header value. Supports both delta-seconds (RFC
  *  9110 §10.2.3) and HTTP-date forms. Returns milliseconds, clamped to

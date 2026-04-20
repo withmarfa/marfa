@@ -5,15 +5,9 @@ import type {
   PendingWebhookDelivery,
   WebhookDeliveryStore,
 } from "../interface.js";
+import { CLAIM_LOCK_TTL_MS } from "../../webhooks/delivery.js";
 import { webhookDeliveries } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
-
-/**
- * See the PG store for rationale. SQLite deployments are single-process so
- * the race this guards against cannot occur here, but the claim-forward
- * semantics are preserved so the two backends stay behaviourally identical.
- */
-const CLAIM_LOCK_TTL_MS = 60_000;
 
 function rowToDelivery(
   row: typeof webhookDeliveries.$inferSelect,
