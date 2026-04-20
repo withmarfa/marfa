@@ -36,13 +36,49 @@ jobs:
       # to actual versions in the resulting tarball; npm publish gives us
       # OIDC trusted-publisher auth. Neither tool alone does both.
       # Provenance attaches automatically via OIDC.
+      #
+      # Each package is gated by a pre-check against the npm registry: if
+      # the local version is already published, the publish step is
+      # skipped cleanly (instead of npm rejecting the republish and
+      # turning the job red). Tag pushes often bump only one package's
+      # version, so skipping unchanged packages is the common case.
+      - name: Check @mymehq/shared publish status
+        id: check_shared
+        working-directory: packages/shared
+        run: |
+          local_version=$(node -p "require('./package.json').version")
+          published_versions=$(npm view @mymehq/shared versions --json 2>/dev/null || echo '[]')
+          if echo "$published_versions" | grep -q "\"$local_version\""; then
+            echo "@mymehq/shared@$local_version is already published — skipping"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "@mymehq/shared@$local_version is new — will publish"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish @mymehq/shared
+        if: steps.check_shared.outputs.should_publish == 'true'
         working-directory: packages/shared
         run: |
           pnpm pack
           npm publish mymehq-shared-*.tgz --access=public
 
+      - name: Check @mymehq/sdk publish status
+        id: check_sdk
+        working-directory: packages/sdk
+        run: |
+          local_version=$(node -p "require('./package.json').version")
+          published_versions=$(npm view @mymehq/sdk versions --json 2>/dev/null || echo '[]')
+          if echo "$published_versions" | grep -q "\"$local_version\""; then
+            echo "@mymehq/sdk@$local_version is already published — skipping"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "@mymehq/sdk@$local_version is new — will publish"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish @mymehq/sdk
+        if: steps.check_sdk.outputs.should_publish == 'true'
         working-directory: packages/sdk
         run: |
           pnpm pack
