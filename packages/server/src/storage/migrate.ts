@@ -337,8 +337,16 @@ function buildSnapshot(
  * because 0010 drops the source columns). Idempotent — safe to re-run.
  */
 async function runBackfillEdges(dialect: "pg" | "sqlite"): Promise<void> {
-  const { backfillEdges } = await import("../../scripts/backfill-edges.js");
   const snapshot = consumeSnapshot();
+  // No snapshot means either a fresh DB (no legacy data) or a DB already past
+  // 0010 (columns are gone). Either way there's nothing to convert. Skipping
+  // also avoids backfill-edges' live-fallback path from querying columns that
+  // no longer exist post-0010.
+  if (!snapshot) {
+    console.log("backfill-edges: no legacy relationships to convert, skipping");
+    return;
+  }
+  const { backfillEdges } = await import("../../scripts/backfill-edges.js");
   let storage;
   if (dialect === "pg") {
     const { createPgStorage } = await import("./pg/index.js");
@@ -347,7 +355,7 @@ async function runBackfillEdges(dialect: "pg" | "sqlite"): Promise<void> {
     const { createSqliteStorage } = await import("./sqlite/index.js");
     storage = createSqliteStorage(process.env.SQLITE_PATH ?? "./data/myme.db");
   }
-  const counts = await backfillEdges(storage, snapshot ?? undefined);
+  const counts = await backfillEdges(storage, snapshot);
   console.log(
     `backfill-edges: parent-of=${String(counts.parentOf)}  in-thread=${String(counts.inThread)}  about=${String(counts.about)}  skipped=${String(counts.skipped)}`,
   );
