@@ -131,20 +131,9 @@ jobs:
   # jobs run the app test suite, which can mask migration breakage when tests
   # bootstrap via SCHEMA_SQL. This job exists to catch future migration-chain
   # breakage on PR before it lands.
-  #
-  # Temporarily non-blocking (continue-on-error: true) while the backlog item
-  # "Drizzle sqlite migration 0010 — DROP COLUMN FK rewrite" is pending:
-  # `0010_drop_legacy_rel_columns.sql` currently fails on fresh sqlite because
-  # `DROP COLUMN thread_id` can't execute while the dangling FK from 0001
-  # still references it (needs a PRAGMA foreign_keys=OFF rebuild dance).
-  # See ~/aic-vault/Projects/myme-A1ZB0/Backlog.md (server section).
-  #
-  # Follow-up: after 0010 is rewritten and lands, open a PR that flips
-  # `continue-on-error` off so these jobs become blocking gates.
   ci-fresh-migrate-sqlite:
     name: CI (Fresh migrate, SQLite)
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       STORAGE_DIALECT: sqlite
@@ -174,7 +163,6 @@ jobs:
   ci-fresh-migrate-pg:
     name: CI (Fresh migrate, Postgres)
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       STORAGE_DIALECT: pg
