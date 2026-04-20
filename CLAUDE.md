@@ -91,6 +91,30 @@ The `openapi-freshness` CI job regenerates and diffs `openapi.json` on every PR;
 
 Every new HTTP route added under `packages/server/src/routes/` should ship with at least one smoke test in a sibling `*.test.ts` file (auth gate + happy path are the minimum). PR review enforces. Pre-existing untested routes are not subject to this rule until they're modified.
 
+## Freshness checks before merging
+
+The `types-freshness` and `openapi-freshness` CI jobs do not run on pull-request events — only on merges to `main` and manual dispatch. This keeps PR CI cheap. If your PR modifies any of the source files below, you **must** fire the freshness workflow manually against the PR branch and confirm it passes before merging.
+
+**Trigger files** — any change under these paths means you owe a freshness run before merge:
+
+- `packages/types/core/**` — core type and edge-type JSON
+- `packages/types/scripts/**` — type-registry generator
+- `packages/shared/src/**` — wire schemas, error codes, ID utilities
+- `packages/server/src/routes/**` — route definitions that feed the OpenAPI spec
+- `packages/server/src/openapi/**` — OpenAPI generator
+- Any file touched by `pnpm --filter @mymehq/types generate` or `pnpm --silent --filter @mymehq/server generate:openapi`
+
+**Command** — run this from inside the `myme` repo after pushing your PR branch:
+
+```bash
+gh workflow run ci.yml --ref <your-branch-name>
+gh run watch $(gh run list --workflow=ci.yml --branch=<your-branch-name> --limit=1 --json databaseId --jq '.[0].databaseId')
+```
+
+If either `types-freshness` or `openapi-freshness` fails, regenerate locally (`pnpm --filter @mymehq/types generate` or `pnpm --silent --filter @mymehq/server generate:openapi > openapi.json`), commit the delta, and re-run. Only merge once both jobs are green.
+
+**Why this exists.** Freshness jobs catch drift between generated artefacts and source files. They used to run on every PR push and were a major CI cost driver (~$5/month on the `myme` repo alone). Moving them to manual-trigger halves the PR-time bill; this rule is the tripwire that keeps the safety net effective.
+
 ## Before pushing
 
 Two local-validation paths exist, in increasing thoroughness:

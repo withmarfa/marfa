@@ -5,6 +5,13 @@ on:
     tags:
       - "v*"
 
+# Publish is tag-triggered — never cancel an in-flight publish. The
+# concurrency key is per-tag so parallel tag pushes queue rather than
+# cancel. Added for parity with other workflows in the org.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest

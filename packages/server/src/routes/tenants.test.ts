@@ -218,12 +218,9 @@ describe("Tenant config — hosted mode", () => {
     expect(body.retention["core.note"].ambient_days).toBe(45);
 
     // Round-trip: GET must return the persisted value.
-    const getRes = await request(
-      hosted.app,
-      "GET",
-      "/tenants/current/config",
-      { key: hosted.tenantAdminKey },
-    );
+    const getRes = await request(hosted.app, "GET", "/tenants/current/config", {
+      key: hosted.tenantAdminKey,
+    });
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as typeof config;
     expect(getBody.retention["core.note"].ambient_days).toBe(45);
