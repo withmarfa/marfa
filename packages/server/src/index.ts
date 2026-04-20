@@ -66,7 +66,7 @@ async function main() {
   // window (default 168h / 7d; override via MYME_EVENT_LOG_RETENTION_HOURS).
   // Advisory-locked so multi-instance deployments run the sweep once per
   // tick cluster-wide.
-  const eventLogRetentionHours = config.eventLogRetentionHours;
+  const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
   const runEventLogCleanup = () => {
     void storage.coordination
       .withJobLock("event-log-cleanup", () =>
