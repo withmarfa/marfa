@@ -1,7 +1,10 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { WebhookDelivery } from "@mymehq/shared";
-import type { WebhookDeliveryStore } from "../interface.js";
+import type {
+  PendingWebhookDelivery,
+  WebhookDeliveryStore,
+} from "../interface.js";
 import { webhookDeliveries } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
@@ -96,21 +99,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     return Promise.resolve(id);
   }
 
-  getPending(
-    now: string,
-    limit = 50,
-  ): Promise<
-    {
-      id: string;
-      webhook_id: string;
-      event: string;
-      payload: string;
-      webhook_url: string;
-      webhook_secret: string;
-      attempt: number;
-      max_attempts: number;
-    }[]
-  > {
+  getPending(now: string, limit = 50): Promise<PendingWebhookDelivery[]> {
     const claimExpiry = new Date(Date.now() + CLAIM_LOCK_TTL_MS).toISOString();
     const rows = this.db.all<{
       id: string;
@@ -146,6 +135,46 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         max_attempts: r.max_attempts,
       })),
     );
+  }
+
+  /** See PG store for rationale. SQLite is single-process so the CAS
+   *  serialises trivially at the statement level. */
+  claimById(
+    id: string,
+    claimExpiry: string,
+    now: string,
+  ): Promise<PendingWebhookDelivery | null> {
+    const rows = this.db.all<{
+      id: string;
+      webhook_id: string;
+      event: string;
+      payload: string | null;
+      webhook_url: string | null;
+      webhook_secret: string | null;
+      attempt: number;
+      max_attempts: number;
+    }>(
+      sql`
+          UPDATE webhook_deliveries
+          SET next_attempt_at = ${claimExpiry}
+          WHERE id = ${id}
+            AND status = 'pending'
+            AND next_attempt_at <= ${now}
+          RETURNING id, webhook_id, event, payload, webhook_url, webhook_secret, attempt, max_attempts
+        `,
+    );
+    const row = rows[0];
+    if (!row) return Promise.resolve(null);
+    return Promise.resolve({
+      id: row.id,
+      webhook_id: row.webhook_id,
+      event: row.event,
+      payload: row.payload ?? "",
+      webhook_url: row.webhook_url ?? "",
+      webhook_secret: row.webhook_secret ?? "",
+      attempt: row.attempt,
+      max_attempts: row.max_attempts,
+    });
   }
 
   markSuccess(id: string, statusCode: number, attempt: number): Promise<void> {

@@ -269,6 +269,22 @@ export interface WebhookStore {
   count(): Promise<number>;
 }
 
+/**
+ * Row shape returned by `getPending` and `claimById` — the subset of the
+ * delivery row that the poller / direct-dispatcher needs to make an HTTP
+ * attempt and write its outcome.
+ */
+export interface PendingWebhookDelivery {
+  id: string;
+  webhook_id: string;
+  event: string;
+  payload: string;
+  webhook_url: string;
+  webhook_secret: string;
+  attempt: number;
+  max_attempts: number;
+}
+
 export interface WebhookDeliveryStore {
   log(entry: {
     webhookId: string;
@@ -287,21 +303,19 @@ export interface WebhookDeliveryStore {
     webhookSecret: string;
     nextAttemptAt: string;
   }): Promise<string>;
-  getPending(
+  getPending(now: string, limit?: number): Promise<PendingWebhookDelivery[]>;
+  /**
+   * Atomic single-row claim for best-effort direct dispatch. Succeeds only
+   * when the row is still `status = 'pending'` and still past its
+   * `next_attempt_at` — otherwise returns `null`. On success, the row's
+   * `next_attempt_at` is pushed forward to `claimExpiry` so the poller's
+   * next tick doesn't see it. Same lock-ttl semantics as `getPending`.
+   */
+  claimById(
+    id: string,
+    claimExpiry: string,
     now: string,
-    limit?: number,
-  ): Promise<
-    {
-      id: string;
-      webhook_id: string;
-      event: string;
-      payload: string;
-      webhook_url: string;
-      webhook_secret: string;
-      attempt: number;
-      max_attempts: number;
-    }[]
-  >;
+  ): Promise<PendingWebhookDelivery | null>;
   markSuccess(id: string, statusCode: number, attempt: number): Promise<void>;
   markFailed(
     id: string,
