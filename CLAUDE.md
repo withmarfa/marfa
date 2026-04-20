@@ -53,6 +53,7 @@ Server package (not needed for shared or SDK development):
 - `TRUSTED_PROXY_CIDRS` — comma-separated CIDRs (e.g. `10.0.0.0/8,127.0.0.1/32`) for opt-in `x-forwarded-for` trust. Unset = ignore the header (recommended when no reverse proxy is in front). Malformed CIDRs throw at startup.
 - `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90)
 - `AUDIT_CLEANUP_INTERVAL_MS` — audit cleanup interval in ms (default: 86400000)
+- `MYME_EVENT_LOG_RETENTION_HOURS` — hours an event_log entry survives before the cleanup job purges it (default: 168 / 7 days). Controls how far back an SSE client's `Last-Event-ID` can reach; older cursors receive a terminal `catchup_too_old` event.
 - `VERSION_RECENT_DAYS` — version recent window in days (default: 30)
 - `VERSION_DAILY_SNAPSHOT_DAYS` — daily thinning window end in days (default: 90)
 - `VERSION_WEEKLY_SNAPSHOT_DAYS` — weekly thinning window end in days (default: 365)

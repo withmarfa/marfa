@@ -68,4 +68,16 @@ export class SqliteEventLogStore implements EventLogStore {
       .run();
     return result.changes;
   }
+
+  async getMinRetainedId(tenantId?: string): Promise<number | null> {
+    const row = (
+      tenantId
+        ? this.raw
+            .prepare(`SELECT MIN(id) AS min FROM event_log WHERE tenant_id = ?`)
+            .get(tenantId)
+        : this.raw.prepare(`SELECT MIN(id) AS min FROM event_log`).get()
+    ) as { min: number | null } | undefined;
+    if (row?.min == null) return null;
+    return typeof row.min === "number" ? row.min : Number(row.min);
+  }
 }

@@ -35,6 +35,7 @@ async function main(): Promise<void> {
     enableHsts: false,
     auditRetentionDays: 90,
     auditCleanupIntervalMs: 86400000,
+    eventLogRetentionHours: 168,
     versionThinningIntervalMs: 3600000,
     versionRecentDays: 30,
     versionDailySnapshotDays: 90,
