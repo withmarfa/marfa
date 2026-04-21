@@ -45,7 +45,7 @@ export class HttpTransport {
       return undefined as T;
     }
 
-    const body = (await response.json()) as T;
+    const body = await this.parseJson<T>(response);
 
     if (!response.ok) {
       this.throwForError(response.status, body);
@@ -70,7 +70,7 @@ export class HttpTransport {
     },
   ): Promise<T | ConflictResponse> {
     const response = await this.rawRequest(method, path, options);
-    const body = (await response.json()) as T | ConflictResponse;
+    const body = await this.parseJson<T | ConflictResponse>(response);
 
     if (response.status === 409) {
       return body;
@@ -117,8 +117,41 @@ export class HttpTransport {
 
     try {
       return await this.fetch(url, init);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new MymeError(
+          "timeout",
+          `Request to ${path} timed out after ${String(this.timeoutMs)}ms`,
+          0,
+          { path, timeoutMs: this.timeoutMs },
+          err,
+        );
+      }
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new MymeError(
+        "network_error",
+        `Network request to ${path} failed: ${reason}`,
+        0,
+        { path },
+        err,
+      );
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  private async parseJson<T>(response: Response): Promise<T> {
+    try {
+      return (await response.json()) as T;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new MymeError(
+        "parse_error",
+        `Failed to parse response body as JSON (HTTP ${String(response.status)}): ${reason}`,
+        0,
+        { httpStatus: response.status },
+        err,
+      );
     }
   }
 

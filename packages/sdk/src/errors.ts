@@ -24,8 +24,9 @@ export class MymeError extends Error {
     message: string,
     status: number,
     details?: Record<string, unknown>,
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, cause !== undefined ? { cause } : undefined);
     this.name = "MymeError";
     this.code = code;
     this.status = status;

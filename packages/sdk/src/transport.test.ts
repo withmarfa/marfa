@@ -7,10 +7,11 @@ import { MymeError } from "./errors.js";
 // happy-path tests in client.test.ts do not exercise. Every case injects a
 // mock fetch via TransportConfig.fetch; no server is booted.
 //
-// These tests document the SDK's *current* behaviour. Three gaps are flagged
-// in the PR body (timeout/network/parse errors escape as raw DOMException /
-// TypeError / SyntaxError rather than being wrapped as MymeError). Locking
-// that in here ensures any future wrapping change is a deliberate choice.
+// These tests pin the SDK's wrapped-error contract: timeouts, network
+// failures, and body-parse failures all surface as `MymeError` with a
+// stable `code`, `status: 0`, and the original platform error preserved
+// on `err.cause`. Server-reported errors (4xx/5xx with a JSON body) map
+// to `MymeError` with the real HTTP status and the server's `error.code`.
 // ---------------------------------------------------------------------------
 
 function makeJsonResponse(
@@ -64,7 +65,11 @@ describe("HttpTransport — timeout wiring", () => {
     const start = Date.now();
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
-        err instanceof DOMException && err.name === "AbortError",
+        err instanceof MymeError &&
+        err.code === "timeout" &&
+        err.status === 0 &&
+        err.cause instanceof DOMException &&
+        err.cause.name === "AbortError",
     );
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(150);
@@ -73,14 +78,20 @@ describe("HttpTransport — timeout wiring", () => {
 });
 
 describe("HttpTransport — network errors", () => {
-  it("propagates the original TypeError when fetch rejects", async () => {
+  it("wraps a rejected fetch in MymeError with code='network_error' and preserves the original on err.cause", async () => {
     const networkError = new TypeError("fetch failed");
     const mockFetch = vi.fn().mockRejectedValue(networkError);
     const transport = makeTransport(
       mockFetch as unknown as typeof globalThis.fetch,
     );
 
-    await expect(transport.request("GET", "/items")).rejects.toBe(networkError);
+    await expect(transport.request("GET", "/items")).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof MymeError &&
+        err.code === "network_error" &&
+        err.status === 0 &&
+        err.cause === networkError,
+    );
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
@@ -122,8 +133,8 @@ describe("HttpTransport — error-body mapping", () => {
   });
 });
 
-describe("HttpTransport — body-parse failures (current behaviour, flagged)", () => {
-  it("surfaces a SyntaxError when an error response body is not valid JSON", async () => {
+describe("HttpTransport — body-parse failures", () => {
+  it("wraps a malformed JSON error body in MymeError with code='parse_error' and records the real HTTP status in details", async () => {
     const mockFetch = vi.fn().mockResolvedValue(
       new Response("<html>internal error</html>", {
         status: 500,
@@ -134,12 +145,17 @@ describe("HttpTransport — body-parse failures (current behaviour, flagged)", (
       mockFetch as unknown as typeof globalThis.fetch,
     );
 
-    await expect(transport.request("GET", "/items")).rejects.toBeInstanceOf(
-      SyntaxError,
+    await expect(transport.request("GET", "/items")).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof MymeError &&
+        err.code === "parse_error" &&
+        err.status === 0 &&
+        err.cause instanceof SyntaxError &&
+        err.details?.httpStatus === 500,
     );
   });
 
-  it("surfaces a SyntaxError when a 200 response body is not valid JSON", async () => {
+  it("wraps a non-JSON 200 body in MymeError with code='parse_error' and records the real HTTP status in details", async () => {
     const mockFetch = vi.fn().mockResolvedValue(
       new Response("plain text", {
         status: 200,
@@ -150,8 +166,13 @@ describe("HttpTransport — body-parse failures (current behaviour, flagged)", (
       mockFetch as unknown as typeof globalThis.fetch,
     );
 
-    await expect(transport.request("GET", "/items")).rejects.toBeInstanceOf(
-      SyntaxError,
+    await expect(transport.request("GET", "/items")).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof MymeError &&
+        err.code === "parse_error" &&
+        err.status === 0 &&
+        err.cause instanceof SyntaxError &&
+        err.details?.httpStatus === 200,
     );
   });
 });
@@ -187,7 +208,9 @@ describe("HttpTransport — no silent retry", () => {
       20,
     );
 
-    await expect(transport.request("GET", "/items")).rejects.toBeDefined();
+    await expect(transport.request("GET", "/items")).rejects.toBeInstanceOf(
+      MymeError,
+    );
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
