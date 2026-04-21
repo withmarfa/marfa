@@ -1,0 +1,85 @@
+import { createRoute, z } from "@hono/zod-openapi";
+import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
+import type { AppEnv } from "../middleware/auth.js";
+import { requireTypeAccess } from "../middleware/auth.js";
+import type { Storage } from "../storage/interface.js";
+import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+
+// ---------------------------------------------------------------------------
+// Local schemas
+// ---------------------------------------------------------------------------
+
+const IdParam = z.object({
+  id: z.string(),
+});
+
+const VersionSchema = z.object({
+  id: z.string(),
+  item_id: z.string(),
+  version: z.number(),
+  properties: z.record(z.string(), z.unknown()),
+  created_at: z.string(),
+  device: z.string().optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Route definitions
+// ---------------------------------------------------------------------------
+
+const listVersionsRoute = createRoute({
+  method: "get",
+  path: "/{id}/versions",
+  tags: ["Items"],
+  summary: "List version history for an item",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            versions: z.array(VersionSchema),
+          }),
+        },
+      },
+      description: "Version history",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Item not found",
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+export function itemsVersionsRoutes(storage: Storage) {
+  const router = createOpenAPIRouter<AppEnv>();
+
+  // GET /items/:id/versions
+  router.openapi(listVersionsRoute, async (c) => {
+    const { id } = c.req.valid("param");
+    if (!isValidId(id)) {
+      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+    }
+
+    const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
+    if (!item) {
+      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+    }
+
+    requireTypeAccess(c, item.type, "read");
+    const versions = await storage.versions.list(id);
+    return c.json({ versions }, 200);
+  });
+
+  return router;
+}
