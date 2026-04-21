@@ -1,0 +1,58 @@
+name: Sync openapi.json to docs
+
+# Copies the canonical openapi.json from mymehq/myme to mymehq/docs whenever
+# it changes on main. Opens (or updates) a pull request on a stable branch
+# `sync/openapi-spec` in the docs repo — never commits directly. Re-runs with
+# no spec change are a no-op: peter-evans/create-pull-request does not open
+# empty PRs and does not push an empty commit.
+#
+# Auth: requires a fine-grained PAT stored as the `DOCS_SYNC_TOKEN` repo
+# secret. Scope: repository `mymehq/docs`, permissions `Contents: write` and
+# `Pull requests: write`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - openapi.json
+  workflow_dispatch:
+
+concurrency:
+  group: sync-openapi-to-docs
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync openapi.json to mymehq/docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout myme (source of truth)
+        uses: actions/checkout@v4
+
+      - name: Checkout mymehq/docs
+        uses: actions/checkout@v4
+        with:
+          repository: mymehq/docs
+          token: ${{ secrets.DOCS_SYNC_TOKEN }}
+          path: docs-repo
+          ref: main
+
+      - name: Copy openapi.json into docs checkout
+        run: cp openapi.json docs-repo/openapi.json
+
+      - name: Open / update docs PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          path: docs-repo
+          token: ${{ secrets.DOCS_SYNC_TOKEN }}
+          branch: sync/openapi-spec
+          delete-branch: true
+          commit-message: "chore: sync openapi.json from myme"
+          title: "chore: sync openapi.json from myme"
+          body: |
+            Automated sync of `openapi.json` from mymehq/myme.
+
+            Source commit: `${{ github.sha }}`
+            Triggered by workflow run ${{ github.run_id }}.
