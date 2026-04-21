@@ -204,6 +204,108 @@ export class PgEdgeStore implements EdgeStore {
     return !!row;
   }
 
+  async countsBySourceBatch(
+    pairs: { source_id: string; edge_type: string }[],
+  ): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (pairs.length === 0) return out;
+    const byType = new Map<string, Set<string>>();
+    for (const p of pairs) {
+      const bucket = byType.get(p.edge_type) ?? new Set<string>();
+      bucket.add(p.source_id);
+      byType.set(p.edge_type, bucket);
+    }
+    for (const [edgeType, sourceIds] of byType) {
+      const ids = Array.from(sourceIds);
+      const rows = await this.db
+        .select({
+          source_id: edges.source_id,
+          c: count(),
+        })
+        .from(edges)
+        .where(
+          and(eq(edges.edge_type, edgeType), inArray(edges.source_id, ids)),
+        )
+        .groupBy(edges.source_id);
+      for (const row of rows) {
+        out.set(`${row.source_id}|${edgeType}`, row.c);
+      }
+    }
+    return out;
+  }
+
+  async countsByTargetBatch(
+    pairs: { target_id: string; edge_type: string }[],
+  ): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (pairs.length === 0) return out;
+    const byType = new Map<string, Set<string>>();
+    for (const p of pairs) {
+      const bucket = byType.get(p.edge_type) ?? new Set<string>();
+      bucket.add(p.target_id);
+      byType.set(p.edge_type, bucket);
+    }
+    for (const [edgeType, targetIds] of byType) {
+      const ids = Array.from(targetIds);
+      const rows = await this.db
+        .select({
+          target_id: edges.target_id,
+          c: count(),
+        })
+        .from(edges)
+        .where(
+          and(eq(edges.edge_type, edgeType), inArray(edges.target_id, ids)),
+        )
+        .groupBy(edges.target_id);
+      for (const row of rows) {
+        out.set(`${row.target_id}|${edgeType}`, row.c);
+      }
+    }
+    return out;
+  }
+
+  async existsExactBatch(
+    pairs: {
+      source_id: string;
+      target_id: string;
+      edge_type: string;
+    }[],
+  ): Promise<Set<string>> {
+    const out = new Set<string>();
+    if (pairs.length === 0) return out;
+    const byType = new Map<string, { s: string; t: string }[]>();
+    for (const p of pairs) {
+      const bucket = byType.get(p.edge_type) ?? [];
+      bucket.push({ s: p.source_id, t: p.target_id });
+      byType.set(p.edge_type, bucket);
+    }
+    for (const [edgeType, entries] of byType) {
+      const sourceIds = Array.from(new Set(entries.map((e) => e.s)));
+      const targetIds = Array.from(new Set(entries.map((e) => e.t)));
+      const wanted = new Set(entries.map((e) => `${e.s}|${e.t}`));
+      const rows = await this.db
+        .select({
+          source_id: edges.source_id,
+          target_id: edges.target_id,
+        })
+        .from(edges)
+        .where(
+          and(
+            eq(edges.edge_type, edgeType),
+            inArray(edges.source_id, sourceIds),
+            inArray(edges.target_id, targetIds),
+          ),
+        );
+      for (const row of rows) {
+        const key = `${row.source_id}|${row.target_id}`;
+        if (wanted.has(key)) {
+          out.add(`${row.source_id}|${row.target_id}|${edgeType}`);
+        }
+      }
+    }
+    return out;
+  }
+
   async listOutboundOfType(
     sourceId: string,
     edgeType: string,

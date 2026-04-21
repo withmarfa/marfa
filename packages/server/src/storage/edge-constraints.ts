@@ -8,20 +8,281 @@ import type { Edge, EdgeTypeSchema } from "@mymehq/shared";
 import type { EdgeStore, ItemStore } from "./interface.js";
 
 /**
- * Enforces edge-creation invariants:
+ * Edge types that can introduce graph cycles — hierarchy for `parent-of`,
+ * version chain for `supersedes`. BFS cycle-detection is skipped for every
+ * other edge type where the graph is DAG-by-construction or unordered.
+ */
+const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
+
+export interface EdgeProposal {
+  source_id: string;
+  target_id: string;
+  edge_type: string;
+}
+
+/**
+ * Enforces edge-creation invariants across a batch of proposed edges:
  *
  * 1. Edge type exists (core or custom registry).
  * 2. Source and target items exist and belong to the same tenant.
  * 3. Source type satisfies source_type_constraints (inheritance-aware).
  * 4. Target type satisfies target_type_constraints (inheritance-aware).
- * 5. Cardinality holds per edge type.
- * 6. Exact duplicate (source, target, edge_type) rejected.
- * 7. Cycles rejected for parent-of and supersedes.
+ * 5. Cardinality holds per edge type (DB edges + earlier proposals in the batch).
+ * 6. Exact duplicate (source, target, edge_type) rejected — both DB and in-batch.
+ * 7. Cycles rejected for parent-of and supersedes, considering proposed edges
+ *    as part of the graph.
  *
- * Throws MymeError with EDGE_CONSTRAINT_VIOLATION, EDGE_TYPE_NOT_FOUND,
- * EDGE_CYCLE, or ITEM_NOT_FOUND. Run inside the caller's transaction so a
- * failed check rolls back the whole write.
+ * Throws `MymeError` on the first failure encountered in input order, matching
+ * the sequential-validation behaviour the single-edge entry point exposed.
+ * Returns the resolved edge-type schemas in input order.
+ *
+ * Runs inside the caller's transaction so a failed check rolls back the write.
  */
+export async function assertEdgesCanBeCreated(
+  edgeStore: EdgeStore,
+  itemStore: ItemStore,
+  proposals: EdgeProposal[],
+  opts: { tenant_id?: string } = {},
+): Promise<EdgeTypeSchema[]> {
+  if (proposals.length === 0) return [];
+
+  // Step 1 + 2: schema resolve (in-memory) + self-edge guard. Zip each
+  // proposal with its schema once so downstream loops never have to realign.
+  interface ResolvedProposal {
+    p: EdgeProposal;
+    schema: EdgeTypeSchema;
+  }
+  const resolved: ResolvedProposal[] = [];
+  for (const p of proposals) {
+    const schema = getEdgeTypeSchema(p.edge_type);
+    if (!schema) {
+      throw new MymeError(
+        ErrorCode.EDGE_TYPE_NOT_FOUND,
+        `Unknown edge type: ${p.edge_type}`,
+      );
+    }
+    if (p.source_id === p.target_id) {
+      throw new MymeError(
+        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+        `Edge source and target must be different items`,
+        { edge_type: p.edge_type },
+      );
+    }
+    resolved.push({ p, schema });
+  }
+
+  // Step 3: item existence + type in one batched fetch.
+  const itemIds = new Set<string>();
+  for (const { p } of resolved) {
+    itemIds.add(p.source_id);
+    itemIds.add(p.target_id);
+  }
+  const itemMap = await itemStore.getMany(Array.from(itemIds), opts.tenant_id);
+  for (const { p, schema } of resolved) {
+    const source = itemMap.get(p.source_id);
+    const target = itemMap.get(p.target_id);
+    if (!source) {
+      throw new MymeError(
+        ErrorCode.ITEM_NOT_FOUND,
+        `Edge source item not found: ${p.source_id}`,
+      );
+    }
+    if (!target) {
+      throw new MymeError(
+        ErrorCode.ITEM_NOT_FOUND,
+        `Edge target item not found: ${p.target_id}`,
+      );
+    }
+    if (!satisfiesEdgeConstraint(source.type, schema.source_type_constraints)) {
+      throw new MymeError(
+        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+        `Edge "${p.edge_type}" does not allow source type "${source.type}"`,
+        {
+          edge_type: p.edge_type,
+          source_type: source.type,
+          allowed: schema.source_type_constraints,
+        },
+      );
+    }
+    if (!satisfiesEdgeConstraint(target.type, schema.target_type_constraints)) {
+      throw new MymeError(
+        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+        `Edge "${p.edge_type}" does not allow target type "${target.type}"`,
+        {
+          edge_type: p.edge_type,
+          target_type: target.type,
+          allowed: schema.target_type_constraints,
+        },
+      );
+    }
+  }
+
+  // Step 4 + 5: pre-fetch existence + cardinality counts in grouped queries.
+  const existsSet = await edgeStore.existsExactBatch(proposals);
+
+  const needSourceCount = new Map<
+    string,
+    { source_id: string; edge_type: string }
+  >();
+  const needTargetCount = new Map<
+    string,
+    { target_id: string; edge_type: string }
+  >();
+  for (const { p, schema } of resolved) {
+    const needsSource =
+      schema.cardinality === "one-to-one" ||
+      schema.cardinality === "many-to-one";
+    const needsTarget =
+      schema.cardinality === "one-to-one" ||
+      schema.cardinality === "one-to-many";
+    if (needsSource) {
+      const key = `${p.source_id}|${p.edge_type}`;
+      if (!needSourceCount.has(key)) {
+        needSourceCount.set(key, {
+          source_id: p.source_id,
+          edge_type: p.edge_type,
+        });
+      }
+    }
+    if (needsTarget) {
+      const key = `${p.target_id}|${p.edge_type}`;
+      if (!needTargetCount.has(key)) {
+        needTargetCount.set(key, {
+          target_id: p.target_id,
+          edge_type: p.edge_type,
+        });
+      }
+    }
+  }
+  const [sourceCounts, targetCounts] = await Promise.all([
+    edgeStore.countsBySourceBatch(Array.from(needSourceCount.values())),
+    edgeStore.countsByTargetBatch(Array.from(needTargetCount.values())),
+  ]);
+
+  // In-batch accumulators — each proposal that passes validation counts
+  // toward the next proposal's cardinality check, matching the old
+  // sequential "create, next check sees it" behaviour.
+  const seen = new Set<string>();
+  const inBatchSourceCount = new Map<string, number>();
+  const inBatchTargetCount = new Map<string, number>();
+
+  // Cycle-check walker — cached DB reads + layered in-batch edges.
+  const outboundCache = new Map<string, Edge[]>();
+  const pendingByType = new Map<
+    string,
+    { source_id: string; target_id: string }[]
+  >();
+
+  for (const { p, schema } of resolved) {
+    // Exact duplicate — in-batch repeat or existing DB row.
+    const dupKey = `${p.source_id}|${p.target_id}|${p.edge_type}`;
+    if (seen.has(dupKey) || existsSet.has(dupKey)) {
+      throw new MymeError(
+        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+        `Edge "${p.edge_type}" already exists between these items`,
+        {
+          edge_type: p.edge_type,
+          source_id: p.source_id,
+          target_id: p.target_id,
+        },
+      );
+    }
+
+    // Cardinality — direction-correct per plan §Critical. Combine the DB
+    // pre-count with any in-batch proposals that already passed.
+    const srcKey = `${p.source_id}|${p.edge_type}`;
+    const tgtKey = `${p.target_id}|${p.edge_type}`;
+    const dbSourceCount = sourceCounts.get(srcKey) ?? 0;
+    const dbTargetCount = targetCounts.get(tgtKey) ?? 0;
+    const batchSourceCount = inBatchSourceCount.get(srcKey) ?? 0;
+    const batchTargetCount = inBatchTargetCount.get(tgtKey) ?? 0;
+    const totalSource = dbSourceCount + batchSourceCount;
+    const totalTarget = dbTargetCount + batchTargetCount;
+
+    switch (schema.cardinality) {
+      case "one-to-one": {
+        if (totalSource > 0) {
+          throw new MymeError(
+            ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+            `Edge "${p.edge_type}" is one-to-one; source already has one outbound edge of this type`,
+            { edge_type: p.edge_type, source_id: p.source_id },
+          );
+        }
+        if (totalTarget > 0) {
+          throw new MymeError(
+            ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+            `Edge "${p.edge_type}" is one-to-one; target already has one inbound edge of this type`,
+            { edge_type: p.edge_type, target_id: p.target_id },
+          );
+        }
+        break;
+      }
+      case "one-to-many": {
+        if (totalTarget > 0) {
+          throw new MymeError(
+            ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+            `Edge "${p.edge_type}" is one-to-many on the target side; target already has an inbound edge of this type`,
+            { edge_type: p.edge_type, target_id: p.target_id },
+          );
+        }
+        break;
+      }
+      case "many-to-one": {
+        if (totalSource > 0) {
+          throw new MymeError(
+            ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+            `Edge "${p.edge_type}" is many-to-one on the source side; source already has an outbound edge of this type`,
+            { edge_type: p.edge_type, source_id: p.source_id },
+          );
+        }
+        break;
+      }
+      case "many-to-many":
+        // No uniqueness beyond the exact-duplicate guard handled above.
+        break;
+    }
+
+    // Cycle check — only the two edge types that can form them. BFS sees the
+    // DB graph plus every prior in-batch proposal of the same type.
+    if (CYCLE_RISK_EDGE_TYPES.has(p.edge_type)) {
+      const pending = pendingByType.get(p.edge_type) ?? [];
+      if (
+        await wouldCreateCycle(
+          edgeStore,
+          p.edge_type,
+          p.source_id,
+          p.target_id,
+          outboundCache,
+          pending,
+        )
+      ) {
+        throw new MymeError(
+          ErrorCode.EDGE_CYCLE,
+          `Edge "${p.edge_type}" would close a cycle`,
+          {
+            edge_type: p.edge_type,
+            source_id: p.source_id,
+            target_id: p.target_id,
+          },
+        );
+      }
+    }
+
+    // Proposal cleared — register it for subsequent in-batch checks.
+    seen.add(dupKey);
+    inBatchSourceCount.set(srcKey, batchSourceCount + 1);
+    inBatchTargetCount.set(tgtKey, batchTargetCount + 1);
+    if (CYCLE_RISK_EDGE_TYPES.has(p.edge_type)) {
+      const pending = pendingByType.get(p.edge_type) ?? [];
+      pending.push({ source_id: p.source_id, target_id: p.target_id });
+      pendingByType.set(p.edge_type, pending);
+    }
+  }
+
+  return resolved.map((r) => r.schema);
+}
+
+/** Thin single-edge wrapper — preserves the pre-batch call shape. */
 export async function assertEdgeCanBeCreated(
   edgeStore: EdgeStore,
   itemStore: ItemStore,
@@ -32,170 +293,32 @@ export async function assertEdgeCanBeCreated(
     tenant_id?: string;
   },
 ): Promise<EdgeTypeSchema> {
-  const schema = getEdgeTypeSchema(input.edge_type);
-  if (!schema) {
-    throw new MymeError(
-      ErrorCode.EDGE_TYPE_NOT_FOUND,
-      `Unknown edge type: ${input.edge_type}`,
-    );
-  }
-
-  if (input.source_id === input.target_id) {
-    throw new MymeError(
-      ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-      `Edge source and target must be different items`,
-      { edge_type: input.edge_type },
-    );
-  }
-
-  const [source, target] = await Promise.all([
-    itemStore.get(input.source_id, input.tenant_id),
-    itemStore.get(input.target_id, input.tenant_id),
-  ]);
-  if (!source) {
-    throw new MymeError(
-      ErrorCode.ITEM_NOT_FOUND,
-      `Edge source item not found: ${input.source_id}`,
-    );
-  }
-  if (!target) {
-    throw new MymeError(
-      ErrorCode.ITEM_NOT_FOUND,
-      `Edge target item not found: ${input.target_id}`,
-    );
-  }
-
-  if (!satisfiesEdgeConstraint(source.type, schema.source_type_constraints)) {
-    throw new MymeError(
-      ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-      `Edge "${input.edge_type}" does not allow source type "${source.type}"`,
+  const schemas = await assertEdgesCanBeCreated(
+    edgeStore,
+    itemStore,
+    [
       {
-        edge_type: input.edge_type,
-        source_type: source.type,
-        allowed: schema.source_type_constraints,
-      },
-    );
-  }
-
-  if (!satisfiesEdgeConstraint(target.type, schema.target_type_constraints)) {
-    throw new MymeError(
-      ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-      `Edge "${input.edge_type}" does not allow target type "${target.type}"`,
-      {
-        edge_type: input.edge_type,
-        target_type: target.type,
-        allowed: schema.target_type_constraints,
-      },
-    );
-  }
-
-  // Exact-duplicate guard — same source/target/type pair.
-  const duplicate = await edgeStore.existsExact(
-    input.source_id,
-    input.target_id,
-    input.edge_type,
-  );
-  if (duplicate) {
-    throw new MymeError(
-      ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-      `Edge "${input.edge_type}" already exists between these items`,
-      {
-        edge_type: input.edge_type,
         source_id: input.source_id,
         target_id: input.target_id,
+        edge_type: input.edge_type,
       },
+    ],
+    { tenant_id: input.tenant_id },
+  );
+  const [only] = schemas;
+  if (!only) {
+    throw new Error(
+      "assertEdgesCanBeCreated returned empty schema list for single-edge input",
     );
   }
-
-  // Cardinality — direction-correct per plan §Critical.
-  switch (schema.cardinality) {
-    case "one-to-one": {
-      // No other edge of this type from this source OR to this target.
-      const [sourceCount, targetCount] = await Promise.all([
-        edgeStore.countBySource(input.source_id, input.edge_type),
-        edgeStore.countByTarget(input.target_id, input.edge_type),
-      ]);
-      if (sourceCount > 0) {
-        throw new MymeError(
-          ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-          `Edge "${input.edge_type}" is one-to-one; source already has one outbound edge of this type`,
-          { edge_type: input.edge_type, source_id: input.source_id },
-        );
-      }
-      if (targetCount > 0) {
-        throw new MymeError(
-          ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-          `Edge "${input.edge_type}" is one-to-one; target already has one inbound edge of this type`,
-          { edge_type: input.edge_type, target_id: input.target_id },
-        );
-      }
-      break;
-    }
-    case "one-to-many": {
-      // Each target has at most one inbound edge (e.g. parent-of: one parent per child).
-      const targetCount = await edgeStore.countByTarget(
-        input.target_id,
-        input.edge_type,
-      );
-      if (targetCount > 0) {
-        throw new MymeError(
-          ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-          `Edge "${input.edge_type}" is one-to-many on the target side; target already has an inbound edge of this type`,
-          { edge_type: input.edge_type, target_id: input.target_id },
-        );
-      }
-      break;
-    }
-    case "many-to-one": {
-      // Each source has at most one outbound edge (e.g. in-thread: each member in one thread).
-      const sourceCount = await edgeStore.countBySource(
-        input.source_id,
-        input.edge_type,
-      );
-      if (sourceCount > 0) {
-        throw new MymeError(
-          ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-          `Edge "${input.edge_type}" is many-to-one on the source side; source already has an outbound edge of this type`,
-          { edge_type: input.edge_type, source_id: input.source_id },
-        );
-      }
-      break;
-    }
-    case "many-to-many":
-      // No uniqueness beyond the exact-duplicate guard handled above.
-      break;
-  }
-
-  // Cycle prevention for parent-of and supersedes. Walk outbound edges of the
-  // type starting from the proposed target; if the proposed source is reached,
-  // creating the edge would close a cycle.
-  if (input.edge_type === "parent-of" || input.edge_type === "supersedes") {
-    if (
-      await wouldCreateCycle(
-        edgeStore,
-        input.edge_type,
-        input.source_id,
-        input.target_id,
-      )
-    ) {
-      throw new MymeError(
-        ErrorCode.EDGE_CYCLE,
-        `Edge "${input.edge_type}" would close a cycle`,
-        {
-          edge_type: input.edge_type,
-          source_id: input.source_id,
-          target_id: input.target_id,
-        },
-      );
-    }
-  }
-
-  return schema;
+  return only;
 }
 
 /**
  * Cycle check (iterative BFS). Returns true if an edge source->target would
- * close a loop on the given edge_type.
+ * close a loop on the given edge_type. Layers in-batch pending edges on top
+ * of the DB graph so multi-edge batches whose individual edges are each
+ * acyclic but which together close a cycle are still rejected.
  *
  * For parent-of: source=parent, target=child. Walk outbound parent-of from
  * target (child): those are the child's own children, grandchildren, etc.
@@ -212,6 +335,8 @@ async function wouldCreateCycle(
   edgeType: string,
   proposedSource: string,
   proposedTarget: string,
+  outboundCache: Map<string, Edge[]>,
+  pendingEdges: { source_id: string; target_id: string }[],
 ): Promise<boolean> {
   const visited = new Set<string>();
   const frontier: string[] = [proposedTarget];
@@ -224,9 +349,19 @@ async function wouldCreateCycle(
     if (visited.has(next)) continue;
     visited.add(next);
     if (next === proposedSource) return true;
-    const outbound = await edgeStore.listOutboundOfType(next, edgeType);
+    let outbound = outboundCache.get(next);
+    if (!outbound) {
+      outbound = await edgeStore.listOutboundOfType(next, edgeType);
+      outboundCache.set(next, outbound);
+    }
     for (const e of outbound) {
       if (!visited.has(e.target_id)) frontier.push(e.target_id);
+    }
+    // Layer earlier in-batch proposals into the traversal.
+    for (const pending of pendingEdges) {
+      if (pending.source_id === next && !visited.has(pending.target_id)) {
+        frontier.push(pending.target_id);
+      }
     }
     steps++;
   }

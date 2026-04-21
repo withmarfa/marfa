@@ -103,6 +103,13 @@ export interface ItemStore {
   create(input: CreateItemInput, tenantId?: string): Promise<Item>;
   get(id: string, tenantId?: string): Promise<Item | null>;
   /**
+   * Batched `get` — returns a map keyed by item id for every id in `ids` that
+   * resolves to a non-trashed item in the caller's tenant scope. Missing ids
+   * are simply absent from the map; no errors. Used by the edge-validation
+   * batcher to collapse per-pair item fetches into a single IN query.
+   */
+  getMany(ids: string[], tenantId?: string): Promise<Map<string, Item>>;
+  /**
    * Like `get`, but returns trashed items too. Intended for callers that
    * need to read an item's metadata (e.g. its `type` for a permission
    * check) even when the item has been soft-deleted — the edge
@@ -555,12 +562,41 @@ export interface EdgeStore {
   countBySource(sourceId: string, edgeType: string): Promise<number>;
   /** Count edges where the given item is target. Used for cardinality checks. */
   countByTarget(targetId: string, edgeType: string): Promise<number>;
+  /**
+   * Batched `countBySource` — for each distinct `(source_id, edge_type)` pair
+   * returns the row count. Key format: `${source_id}|${edge_type}`. Pairs
+   * absent from the result map have count zero. One SQL query per distinct
+   * `edge_type` in `pairs`.
+   */
+  countsBySourceBatch(
+    pairs: { source_id: string; edge_type: string }[],
+  ): Promise<Map<string, number>>;
+  /**
+   * Batched `countByTarget` — mirror of `countsBySourceBatch`, keyed as
+   * `${target_id}|${edge_type}`.
+   */
+  countsByTargetBatch(
+    pairs: { target_id: string; edge_type: string }[],
+  ): Promise<Map<string, number>>;
   /** Exact-duplicate check (source_id, target_id, edge_type). */
   existsExact(
     sourceId: string,
     targetId: string,
     edgeType: string,
   ): Promise<boolean>;
+  /**
+   * Batched `existsExact` — returns the subset of triples that already exist.
+   * Key format: `${source_id}|${target_id}|${edge_type}`. Callers check
+   * membership to decide whether to reject a proposed edge as a duplicate.
+   * One SQL query per distinct `edge_type`.
+   */
+  existsExactBatch(
+    pairs: {
+      source_id: string;
+      target_id: string;
+      edge_type: string;
+    }[],
+  ): Promise<Set<string>>;
   /**
    * All outbound edges of a given type from sourceId. Used for cycle checks,
    * cascade-on-delete, and edge hydration when the caller wants every entry.

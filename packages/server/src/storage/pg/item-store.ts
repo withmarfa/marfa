@@ -177,6 +177,21 @@ export class PgItemStore implements ItemStore {
     return this.getRaw(id, tenantId);
   }
 
+  async getMany(ids: string[], tenantId?: string): Promise<Map<string, Item>> {
+    const out = new Map<string, Item>();
+    if (ids.length === 0) return out;
+    const unique = Array.from(new Set(ids));
+    const where = tenantId
+      ? and(inArray(items.id, unique), eq(items.tenant_id, tenantId))
+      : inArray(items.id, unique);
+    const rows = await this.db.select().from(items).where(where);
+    for (const row of rows) {
+      if (row.state === "trashed") continue;
+      out.set(row.id, rowToItem(row));
+    }
+    return out;
+  }
+
   async list(filters: ItemFilters): Promise<PaginatedResult<Item>> {
     const sortField = filters.sort ?? "created_at";
     const dir = filters.direction ?? "desc";
