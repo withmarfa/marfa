@@ -132,7 +132,7 @@ export function createApp(
   app.route("/types", typeRoutes(storage));
   app.route("/search", searchRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
-  app.route("/blobs", blobRoutes(storage, blobBackend));
+  app.route("/blobs", blobRoutes(storage, blobBackend, config.maxBlobSize));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/tenants", tenantRoutes(storage));
   app.route("/import", importRoutes(storage, blobBackend));

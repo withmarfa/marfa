@@ -21,6 +21,7 @@ async function main(): Promise<void> {
     databaseUrl: "",
     blobPath: "",
     blobBackend: "fs",
+    maxBlobSize: 50 * 1024 * 1024,
     s3Bucket: "",
     s3Region: "us-east-1",
     s3Endpoint: "",

@@ -8,6 +8,9 @@ export interface AppConfig {
   databaseUrl: string;
   blobPath: string;
   blobBackend: "fs" | "s3";
+  /** Maximum blob upload size in bytes. Uploads exceeding this are rejected
+   *  with HTTP 413 `blob_too_large`. Default: 50MB. */
+  maxBlobSize: number;
   s3Bucket: string;
   s3Region: string;
   s3Endpoint: string;
@@ -97,6 +100,7 @@ export function loadConfig(): AppConfig {
     databaseUrl: process.env.DATABASE_URL ?? "",
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
+    maxBlobSize: Number(process.env.MAX_BLOB_SIZE) || 50 * 1024 * 1024,
     s3Bucket: process.env.S3_BUCKET ?? "",
     s3Region: process.env.S3_REGION ?? "us-east-1",
     s3Endpoint: process.env.S3_ENDPOINT ?? "",

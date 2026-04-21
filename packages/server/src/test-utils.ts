@@ -1,4 +1,5 @@
 import { createApp } from "./app.js";
+import type { AppConfig } from "./config.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
@@ -28,7 +29,9 @@ async function truncatePg(storage: Storage): Promise<void> {
   }
 }
 
-export async function createTestContext(): Promise<TestContext> {
+export async function createTestContext(
+  overrides?: Partial<AppConfig>,
+): Promise<TestContext> {
   const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
   const tmpDir = mkdtempSync(join(tmpdir(), "myme-test-"));
   const blobPath = join(tmpDir, "blobs");
@@ -46,13 +49,14 @@ export async function createTestContext(): Promise<TestContext> {
   }
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
-  const app = createApp(storage, blobBackend, {
+  const config: AppConfig = {
     port: 0,
     storageDialect: dialect as "sqlite" | "pg",
     sqlitePath: "",
     databaseUrl: "",
     blobPath,
     blobBackend: "fs",
+    maxBlobSize: 50 * 1024 * 1024,
     s3Bucket: "",
     s3Region: "us-east-1",
     s3Endpoint: "",
@@ -79,7 +83,9 @@ export async function createTestContext(): Promise<TestContext> {
     ambientExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
-  });
+    ...overrides,
+  };
+  const app = createApp(storage, blobBackend, config);
 
   // Create a bootstrap admin key (unique per test context to avoid PG conflicts)
   const suffix = Math.random().toString(36).slice(2, 14);

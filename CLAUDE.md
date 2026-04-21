@@ -43,6 +43,7 @@ Server package (not needed for shared or SDK development):
 - `SQLITE_PATH` — database file path (default: `./data/myme.db`)
 - `BLOB_BACKEND` — `filesystem` or `s3` (default: filesystem)
 - `BLOB_PATH` — blob storage directory (default: `./data/blobs`)
+- `MAX_BLOB_SIZE` — maximum blob upload size in bytes (default: `52428800` / 50MB). Oversized uploads return HTTP 413 `blob_too_large`
 - `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` — S3 config
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated

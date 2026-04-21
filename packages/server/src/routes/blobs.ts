@@ -8,8 +8,6 @@ import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
-const MAX_BLOB_SIZE = Number(process.env.MAX_BLOB_SIZE) || 50 * 1024 * 1024; // 50MB default
-
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
@@ -226,12 +224,27 @@ const reconcileBlobsRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
-export function blobRoutes(storage: Storage, blobBackend: BlobBackend) {
+export function blobRoutes(
+  storage: Storage,
+  blobBackend: BlobBackend,
+  maxBlobSize: number,
+) {
   const router = createOpenAPIRouter<AppEnv>();
 
   // POST /blobs — upload blob
   router.openapi(uploadBlobRoute, async (c) => {
     requireAuth(c);
+
+    // Cheap pre-read check: reject based on declared Content-Length before
+    // buffering the body. Closes the "advertise huge body, force allocation"
+    // case. Absent/invalid header falls through to the post-buffer check.
+    const declaredLength = Number(c.req.header("Content-Length"));
+    if (Number.isFinite(declaredLength) && declaredLength > maxBlobSize) {
+      throw new MymeError(
+        ErrorCode.BLOB_TOO_LARGE,
+        `Blob exceeds maximum size of ${String(maxBlobSize)} bytes`,
+      );
+    }
 
     const contentType =
       c.req.header("Content-Type") ?? "application/octet-stream";
@@ -258,10 +271,10 @@ export function blobRoutes(storage: Storage, blobBackend: BlobBackend) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Empty blob");
     }
 
-    if (data.length > MAX_BLOB_SIZE) {
+    if (data.length > maxBlobSize) {
       throw new MymeError(
         ErrorCode.BLOB_TOO_LARGE,
-        `Blob exceeds maximum size of ${String(MAX_BLOB_SIZE)} bytes`,
+        `Blob exceeds maximum size of ${String(maxBlobSize)} bytes`,
       );
     }
 
