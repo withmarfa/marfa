@@ -217,6 +217,69 @@ describe("Cycle detection — parent-of", () => {
   });
 });
 
+describe("POST /items — batched atomic edge validation", () => {
+  it("rejects the whole request when one edge target is missing", async () => {
+    // Mixed batch: one valid target, one missing. Batched validator must
+    // surface the missing-item error rather than silently accepting the
+    // half that would have succeeded.
+    const validTarget = await createItem();
+    const missingTarget = "019d0000-0000-7000-a000-000000000000";
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "batch fails atomically" },
+        edges: { about: [validTarget, missingTarget] },
+      },
+    });
+    expect(res.status).toBe(404);
+    const data = (await res.json()) as { error: { code: string } };
+    expect(data.error.code).toBe("item_not_found");
+  });
+
+  it("rejects cardinality violations discovered across a single batch", async () => {
+    // parent-of is one-to-many on the target — a single child can have at
+    // most one parent. Batching [target, target] under parent-of means the
+    // first proposal consumes the target's single inbound slot; the second
+    // must see the in-batch accumulator and reject.
+    const target = await createItem();
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "cardinality in-batch" },
+        edges: { "parent-of": [target, target] },
+      },
+    });
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { error: { code: string } };
+    expect(data.error.code).toBe("edge_constraint_violation");
+  });
+});
+
+describe("PATCH /items — batched replace triggers cycle detection", () => {
+  it("rejects a parent-of replacement that would close a cycle", async () => {
+    // A parent-of B already exists. PATCH B with edges { parent-of: [A] }
+    // would make B a parent of A while A is still B's ancestor — the
+    // batched validator must still catch the cycle after the delete-by-
+    // source pass that the PATCH handler runs first.
+    const a = await createItem();
+    const b = await createItem();
+    const ab = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: a, target_id: b, edge_type: "parent-of" },
+    });
+    expect(ab.status).toBe(201);
+    const cyclePatch = await request(ctx.app, "PATCH", `/items/${b}`, {
+      key: ctx.adminKey,
+      body: { edges: { "parent-of": [a] } },
+    });
+    expect(cyclePatch.status).toBe(400);
+    const data = (await cyclePatch.json()) as { error: { code: string } };
+    expect(data.error.code).toBe("edge_cycle");
+  });
+});
+
 describe("PATCH /edges/:id — properties only", () => {
   it("updates properties", async () => {
     const source = await createItem();

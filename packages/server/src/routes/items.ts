@@ -21,7 +21,7 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
-import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
+import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { publish } from "../pubsub.js";
 import { hydrateEdgesForItem, hydrateEdgesForItems } from "./_edges-hydrate.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
@@ -645,22 +645,31 @@ export function itemRoutes(storage: Storage) {
       );
 
       // Atomic edges: for each entry, this item is the source; listed ids
-      // are targets. assertEdgeCanBeCreated enforces cardinality / type
-      // constraints / cycle rules; failure rolls the entire transaction.
+      // are targets. assertEdgesCanBeCreated enforces cardinality / type
+      // constraints / cycle rules across the whole batch in grouped queries;
+      // failure rolls the entire transaction.
       if (body.edges) {
-        for (const [edgeType, targets] of Object.entries(body.edges)) {
-          for (const targetId of targets) {
-            await assertEdgeCanBeCreated(storage.edges, storage.items, {
+        const proposals = Object.entries(body.edges).flatMap(
+          ([edgeType, targets]) =>
+            targets.map((targetId) => ({
               source_id: created.id,
               target_id: targetId,
               edge_type: edgeType,
-              tenant_id: tenantId,
-            });
+            })),
+        );
+        if (proposals.length > 0) {
+          await assertEdgesCanBeCreated(
+            storage.edges,
+            storage.items,
+            proposals,
+            { tenant_id: tenantId },
+          );
+          for (const p of proposals) {
             await storage.edges.createRaw(
               {
-                source_id: created.id,
-                target_id: targetId,
-                edge_type: edgeType,
+                source_id: p.source_id,
+                target_id: p.target_id,
+                edge_type: p.edge_type,
               },
               tenantId,
             );
@@ -1025,25 +1034,36 @@ export function itemRoutes(storage: Storage) {
       }
 
       // Replace-all-for-specified-types: delete every existing outbound
-      // edge of the listed edge_type, then create fresh ones. Validation
-      // already ran above so this pass should not see constraint errors
-      // outside of concurrent mutation, which the pg transaction rolls
+      // edge of the listed edge_type first (so cardinality/cycle checks see
+      // the post-delete state), then batched validate, then recreate.
+      // Validation already ran above so this pass should not see constraint
+      // errors outside of concurrent mutation, which the pg transaction rolls
       // back naturally.
       if (hasEdges && body.edges) {
-        for (const [edgeType, targets] of Object.entries(body.edges)) {
+        for (const edgeType of Object.keys(body.edges)) {
           await storage.edges.deleteBySource(id, edgeType);
-          for (const targetId of targets) {
-            await assertEdgeCanBeCreated(storage.edges, storage.items, {
+        }
+        const proposals = Object.entries(body.edges).flatMap(
+          ([edgeType, targets]) =>
+            targets.map((targetId) => ({
               source_id: id,
               target_id: targetId,
               edge_type: edgeType,
-              tenant_id: tid,
-            });
+            })),
+        );
+        if (proposals.length > 0) {
+          await assertEdgesCanBeCreated(
+            storage.edges,
+            storage.items,
+            proposals,
+            { tenant_id: tid },
+          );
+          for (const p of proposals) {
             await storage.edges.createRaw(
               {
-                source_id: id,
-                target_id: targetId,
-                edge_type: edgeType,
+                source_id: p.source_id,
+                target_id: p.target_id,
+                edge_type: p.edge_type,
               },
               tid,
             );
