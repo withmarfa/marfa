@@ -54,6 +54,12 @@ export default [
     },
   },
   {
-    ignores: ["**/dist/", "**/coverage/", "**/node_modules/", "**/seed/"],
+    ignores: [
+      "**/dist/",
+      "**/coverage/",
+      "**/node_modules/",
+      "**/seed/",
+      "packages/*/scripts/*.mjs",
+    ],
   },
 ];
