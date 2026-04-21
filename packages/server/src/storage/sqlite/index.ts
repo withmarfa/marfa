@@ -90,7 +90,7 @@ export function createSqliteStorage(
       // better-sqlite3 doesn't support async transactions.
       return fn();
     },
-    /** Raw query escape hatch — used by the edge-backfill script. */
+    /** Raw query escape hatch — used by retention tests. */
     __sqliteAll(query: string): unknown[] {
       return raw.prepare(query).all();
     },
