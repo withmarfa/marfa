@@ -165,6 +165,138 @@ export interface MetadataInput {
 }
 
 // ---------------------------------------------------------------------------
+// Bulk operations
+// ---------------------------------------------------------------------------
+
+/** One item to create or upsert in a `POST /items/bulk` call. Shape is
+ *  `CreateItemInput` plus compact outbound-only inline `edges`. */
+export interface BulkItemInput {
+  id?: string;
+  type: string;
+  properties?: Record<string, unknown>;
+  state?: ItemState;
+  library?: boolean;
+  timestamp?: string;
+  /** Ignored on the wire — server stamps `source` from the credential.
+   *  Kept on the input shape for round-trip parity with /export output. */
+  source?: string;
+  source_id?: string;
+  origin?: "user" | "ai" | "worker";
+  device?: string;
+  tags?: string[];
+  /** Outbound edges to reconcile in the same transaction as the item
+   *  write. Replace-all semantics per edge_type. Absent = untouched. */
+  edges?: Record<string, string[]>;
+}
+
+export type BulkMode = "upsert" | "create_only";
+
+export interface BulkInput {
+  items: BulkItemInput[];
+  /** Default: `"upsert"`. */
+  mode?: BulkMode;
+  /** Default: `true`. When false, errors are collected per item and the
+   *  batch continues past failures. */
+  atomic?: boolean;
+  /** Default: `false`. Per-item events are suppressed on bulk writes
+   *  unless the caller opts in. */
+  emit_events?: boolean;
+}
+
+export type BulkOutcome = "created" | "updated" | "skipped" | "errored";
+
+export interface BulkResultEntry {
+  index: number;
+  outcome: BulkOutcome;
+  id?: string;
+  reason?: string;
+  error?: { code: string; message: string };
+}
+
+export interface BulkResult {
+  counts: {
+    created: number;
+    updated: number;
+    skipped: number;
+    errored: number;
+  };
+  results: BulkResultEntry[];
+  /** Present only on archive-restore paths. */
+  blobs_imported?: number;
+}
+
+/** Filter shape for `POST /items/bulk_action`. Mirrors the `GET /items`
+ *  query grammar — every field is AND-composed, `filter` accepts the
+ *  full filter-SQL DSL. */
+export interface BulkActionFilter {
+  type?: string;
+  state?: ItemState;
+  source?: string;
+  library?: boolean;
+  tags?: string[];
+  since?: string;
+  until?: string;
+  /** Same grammar as `GET /items?filter=`. `edge[type]=id` shorthand
+   *  becomes `edge[type] eq "id"` here. */
+  filter?: string;
+}
+
+/** Shared knobs every bulk action accepts. */
+interface BulkActionBase {
+  filter?: BulkActionFilter;
+  dry_run?: boolean;
+  max_items?: number;
+  emit_events?: boolean;
+}
+
+/** Discriminated union over the six bulk actions. The compiler pins the
+ *  per-case parameters at the call site — no runtime string fiddling. */
+export type BulkActionInput =
+  | (BulkActionBase & {
+      action: "transition";
+      state: "active" | "archived" | "trashed";
+    })
+  | (BulkActionBase & {
+      action: "purge";
+      /** Required literal. The server returns `400 bulk_confirmation_required`
+       *  without it; the SDK throws the same shape before sending. */
+      confirm: "PURGE";
+    })
+  | (BulkActionBase & {
+      action: "update_tags";
+      add?: string[];
+      remove?: string[];
+    })
+  | (BulkActionBase & { action: "update_library"; library: boolean })
+  | (BulkActionBase & {
+      action: "update_properties";
+      patch: Record<string, unknown>;
+    })
+  | (BulkActionBase & { action: "update_timestamp"; timestamp: string });
+
+export interface BulkActionErrorEntry {
+  id: string;
+  code: string;
+  message: string;
+}
+
+export interface BulkActionResult {
+  action: string;
+  matched: number;
+  succeeded: number;
+  errored: number;
+  dry_run: boolean;
+  /** Present when matched / succeeded is small enough to be useful
+   *  (dry-run always, otherwise when succeeded ≤ 100). */
+  ids?: string[];
+  errors?: BulkActionErrorEntry[];
+  /** Unique blob hashes referenced by items in a `purge` action. Not a
+   *  strict orphan count — callers that need that should wait for blob
+   *  GC to land. Omitted for non-purge actions. */
+  blob_hashes_referenced?: number;
+}
+
+// ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
 
@@ -336,6 +468,51 @@ export class MymeClient {
       return this.transport.request<Record<string, number>>(
         "GET",
         "/items/stats",
+      );
+    },
+
+    /**
+     * Create or upsert many items in one call (admin-only). Replaces the
+     * historical `/import` endpoint. Up to 5000 items per call.
+     *
+     * Modes: `"upsert"` (default) updates matching `(source, source_id)`
+     * rows in place; `"create_only"` surfaces matches as `skipped`.
+     * `atomic: true` (default) rolls back the whole batch on any failure.
+     */
+    bulk: async (input: BulkInput): Promise<BulkResult> => {
+      return this.transport.request<BulkResult>("POST", "/items/bulk", {
+        body: input,
+      });
+    },
+
+    /**
+     * Apply one action to every item matching a filter. Six actions
+     * discriminated on `action`. Purge is admin-only and requires
+     * `confirm: "PURGE"` — the SDK throws a `bulk_confirmation_required`
+     * `MymeError` client-side if you forget, matching the server's 400.
+     *
+     * Non-admin callers see their match set narrowed to writable types
+     * for every action except `purge`, which hard-403s.
+     */
+    bulkAction: async (input: BulkActionInput): Promise<BulkActionResult> => {
+      if (input.action === "purge") {
+        // Runtime guard for JS callers — the TS discriminated union
+        // pins `confirm: "PURGE"` at compile time, but nothing stops a
+        // plain-JS caller from omitting it. Mirrors the server's 400
+        // bulk_confirmation_required so both error paths feel the same.
+        const confirm = (input as { confirm?: string }).confirm;
+        if (confirm !== "PURGE") {
+          throw new MymeError(
+            "bulk_confirmation_required",
+            "bulkAction({ action: 'purge' }) requires confirm: 'PURGE'",
+            400,
+          );
+        }
+      }
+      return this.transport.request<BulkActionResult>(
+        "POST",
+        "/items/bulk_action",
+        { body: input },
       );
     },
 
