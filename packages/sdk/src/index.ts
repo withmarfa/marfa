@@ -7,6 +7,16 @@ export type {
   SearchFilters,
   MetadataInput,
   ItemWithExtensions,
+  BulkInput,
+  BulkItemInput,
+  BulkMode,
+  BulkResult,
+  BulkResultEntry,
+  BulkOutcome,
+  BulkActionInput,
+  BulkActionFilter,
+  BulkActionResult,
+  BulkActionErrorEntry,
 } from "./client.js";
 
 // Errors

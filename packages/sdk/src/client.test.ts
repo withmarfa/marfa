@@ -965,3 +965,301 @@ describe("SDK round additions", () => {
     expect(updated.library).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bulk operations — items.bulk and items.bulkAction
+// ---------------------------------------------------------------------------
+
+describe("items.bulk", () => {
+  it("creates items in bulk with counts and per-item results", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const result = await client.items.bulk({
+      items: [
+        {
+          type: "core.note",
+          properties: { body: "b1" },
+          source_id: `bulk-${suffix}-1`,
+        },
+        {
+          type: "core.note",
+          properties: { body: "b2" },
+          source_id: `bulk-${suffix}-2`,
+        },
+      ],
+    });
+    expect(result.counts.created).toBe(2);
+    expect(result.counts.errored).toBe(0);
+    expect(result.results).toHaveLength(2);
+    for (const r of result.results) {
+      expect(r.outcome).toBe("created");
+      expect(r.id).toBeDefined();
+    }
+  });
+
+  it("upsert mode updates existing (source, source_id) rows in place", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const sourceId = `upsert-${suffix}`;
+
+    const first = await client.items.bulk({
+      items: [
+        { type: "core.note", properties: { body: "v1" }, source_id: sourceId },
+      ],
+    });
+    const originalId = first.results[0]?.id;
+    expect(originalId).toBeDefined();
+
+    const second = await client.items.bulk({
+      items: [
+        { type: "core.note", properties: { body: "v2" }, source_id: sourceId },
+      ],
+      mode: "upsert",
+    });
+    expect(second.counts.updated).toBe(1);
+    expect(second.counts.created).toBe(0);
+    expect(second.results[0]?.id).toBe(originalId);
+
+    const fetched = await client.items.get(originalId!);
+    expect(fetched.properties.body).toBe("v2");
+  });
+
+  it("create_only mode surfaces matches as skipped", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const sourceId = `co-${suffix}`;
+
+    await client.items.bulk({
+      items: [{ type: "core.note", properties: {}, source_id: sourceId }],
+      mode: "create_only",
+    });
+
+    const second = await client.items.bulk({
+      items: [
+        {
+          type: "core.note",
+          properties: { body: "nope" },
+          source_id: sourceId,
+        },
+      ],
+      mode: "create_only",
+    });
+    expect(second.counts.skipped).toBe(1);
+    expect(second.counts.created).toBe(0);
+    expect(second.results[0]?.outcome).toBe("skipped");
+    expect(second.results[0]?.reason).toBe("duplicate_source");
+  });
+
+  it("atomic=true rolls back the whole batch on validation error", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const tag = `atomic-${suffix}`;
+
+    await expect(
+      client.items.bulk({
+        items: [
+          {
+            type: "core.note",
+            properties: { body: "good" },
+            tags: [tag],
+            source_id: `${tag}-good`,
+          },
+          {
+            type: "NOT a valid type id",
+            properties: {},
+            tags: [tag],
+            source_id: `${tag}-bad`,
+          },
+        ],
+        atomic: true,
+      }),
+    ).rejects.toThrow(/rolled back/i);
+
+    // Rollback verified — nothing with the tag should exist.
+    const list = await client.items.list({ tags: [tag] });
+    expect(list.data).toHaveLength(0);
+  });
+
+  it("atomic=false returns per-item error entries without throwing", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const result = await client.items.bulk({
+      items: [
+        {
+          type: "core.note",
+          properties: { body: "ok" },
+          source_id: `nonatomic-${suffix}-1`,
+        },
+        {
+          type: "NOT a valid type",
+          properties: {},
+          source_id: `nonatomic-${suffix}-bad`,
+        },
+      ],
+      atomic: false,
+    });
+    expect(result.counts.created).toBe(1);
+    expect(result.counts.errored).toBe(1);
+    expect(result.results[1]?.outcome).toBe("errored");
+    expect(result.results[1]?.error?.code).toBe("invalid_type");
+  });
+
+  it("supports inline edges on bulk create", async () => {
+    const target = await client.items.create({
+      type: "core.entity",
+      properties: { name: "edge target" },
+    });
+
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const result = await client.items.bulk({
+      items: [
+        {
+          type: "core.note",
+          properties: { body: "with edges" },
+          source_id: `inline-${suffix}`,
+          edges: { about: [target.id] },
+        },
+      ],
+    });
+    const createdId = result.results[0]?.id;
+    expect(createdId).toBeDefined();
+
+    const edges = await client.items.edges(createdId!, {
+      edge_type: "about",
+    });
+    expect(edges.data.map((e) => e.target_id)).toContain(target.id);
+  });
+});
+
+describe("items.bulkAction", () => {
+  async function seedTagged(count: number, tag: string): Promise<string[]> {
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const item = await client.items.create({
+        type: "core.note",
+        properties: { body: `seed-${String(i)}` },
+        tags: [tag],
+      });
+      ids.push(item.id);
+    }
+    return ids;
+  }
+
+  it("transition action archives every match", async () => {
+    const tag = `ba-trans-${Math.random().toString(36).slice(2, 8)}`;
+    const ids = await seedTagged(3, tag);
+
+    const result = await client.items.bulkAction({
+      action: "transition",
+      state: "archived",
+      filter: { tags: [tag] },
+    });
+    expect(result.succeeded).toBe(3);
+    expect(result.errored).toBe(0);
+
+    const fetched = await client.items.get(ids[0]!);
+    expect(fetched.state).toBe("archived");
+  });
+
+  it("dry_run returns matched ids and succeeded=0", async () => {
+    const tag = `ba-dry-${Math.random().toString(36).slice(2, 8)}`;
+    const ids = await seedTagged(2, tag);
+
+    const result = await client.items.bulkAction({
+      action: "transition",
+      state: "archived",
+      filter: { tags: [tag] },
+      dry_run: true,
+    });
+    expect(result.dry_run).toBe(true);
+    expect(result.matched).toBe(2);
+    expect(result.succeeded).toBe(0);
+    expect(result.ids?.sort()).toEqual(ids.slice().sort());
+
+    const fetched = await client.items.get(ids[0]!);
+    expect(fetched.state).toBe("active");
+  });
+
+  it("purge action removes matching items (with confirm)", async () => {
+    const tag = `ba-purge-${Math.random().toString(36).slice(2, 8)}`;
+    const ids = await seedTagged(2, tag);
+
+    const result = await client.items.bulkAction({
+      action: "purge",
+      confirm: "PURGE",
+      filter: { tags: [tag] },
+    });
+    expect(result.succeeded).toBe(2);
+    expect(result.blob_hashes_referenced).toBeDefined();
+
+    await expect(client.items.get(ids[0]!)).rejects.toThrow(NotFoundError);
+  });
+
+  it("purge without confirm throws client-side before sending", async () => {
+    // Cast to bypass the compiler — this is the JS-caller path where
+    // the literal is dropped at runtime.
+    const bad = {
+      action: "purge",
+      filter: { type: "core.note" },
+    } as unknown as Parameters<typeof client.items.bulkAction>[0];
+
+    await expect(client.items.bulkAction(bad)).rejects.toMatchObject({
+      code: "bulk_confirmation_required",
+    });
+  });
+
+  it("update_tags adds and removes on every match", async () => {
+    const tag = `ba-tags-${Math.random().toString(36).slice(2, 8)}`;
+    const ids = await seedTagged(2, tag);
+
+    const result = await client.items.bulkAction({
+      action: "update_tags",
+      add: [`${tag}-added`],
+      remove: [tag],
+      filter: { tags: [tag] },
+    });
+    expect(result.succeeded).toBe(2);
+
+    const md = await client.metadata.get(ids[0]!);
+    expect(md.tags).toContain(`${tag}-added`);
+    expect(md.tags).not.toContain(tag);
+  });
+
+  it("update_library, update_properties, update_timestamp all land", async () => {
+    const tag = `ba-multi-${Math.random().toString(36).slice(2, 8)}`;
+    const ids = await seedTagged(1, tag);
+
+    await client.items.bulkAction({
+      action: "update_library",
+      library: false,
+      filter: { tags: [tag] },
+    });
+    await client.items.bulkAction({
+      action: "update_properties",
+      patch: { extra_bulk: "patched" },
+      filter: { tags: [tag] },
+    });
+    const iso = "2001-09-11T08:46:00.000Z";
+    await client.items.bulkAction({
+      action: "update_timestamp",
+      timestamp: iso,
+      filter: { tags: [tag] },
+    });
+
+    const fetched = await client.items.get(ids[0]!);
+    expect(fetched.library).toBe(false);
+    expect((fetched.properties as { extra_bulk?: string }).extra_bulk).toBe(
+      "patched",
+    );
+    expect(fetched.timestamp).toBe(iso);
+  });
+
+  it("max_items cap exceeded surfaces as bulk_cap_exceeded", async () => {
+    const tag = `ba-cap-${Math.random().toString(36).slice(2, 8)}`;
+    await seedTagged(5, tag);
+
+    await expect(
+      client.items.bulkAction({
+        action: "transition",
+        state: "archived",
+        filter: { tags: [tag] },
+        max_items: 2,
+      }),
+    ).rejects.toThrow(/matched more than/i);
+  });
+});
