@@ -184,19 +184,24 @@ export class HttpTransport {
     const errObj = parsed?.error;
     const message = errObj?.message ?? `HTTP ${String(status)}`;
     const details = errObj?.details;
-    const code = errObj?.code ?? "unknown";
+    // Server-supplied code, passed through to preserve specificity
+    // (bulk_cap_exceeded, edge_not_found, reset_disabled, …). Typed
+    // subclasses fall back to their canonical code when the server
+    // omits one; the generic MymeError path surfaces "unknown" in that
+    // case to preserve the shape tested in transport.test.ts.
+    const serverCode = errObj?.code;
 
     switch (status) {
       case 400:
-        throw new ValidationError(message, details);
+        throw new ValidationError(message, details, serverCode);
       case 401:
-        throw new UnauthorizedError(message, details);
+        throw new UnauthorizedError(message, details, serverCode);
       case 403:
-        throw new ForbiddenError(message, details);
+        throw new ForbiddenError(message, details, serverCode);
       case 404:
-        throw new NotFoundError(message, details);
+        throw new NotFoundError(message, details, serverCode);
       default:
-        throw new MymeError(code, message, status, details);
+        throw new MymeError(serverCode ?? "unknown", message, status, details);
     }
   }
 }

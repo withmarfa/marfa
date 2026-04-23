@@ -34,30 +34,55 @@ export class MymeError extends Error {
   }
 }
 
+/**
+ * Status-coded subclasses preserve the server-supplied `code` so callers
+ * can branch on specific codes (`bulk_cap_exceeded`, `edge_not_found`,
+ * `reset_disabled`, …) while still matching `instanceof NotFoundError`
+ * etc. for generic handling. The status family (4xx bucket) is
+ * communicated by the class; the specific code is communicated by the
+ * `code` field. When the server omits a code, the canonical value for
+ * the status family is used as a fallback.
+ */
 export class NotFoundError extends MymeError {
-  constructor(message: string, details?: Record<string, unknown>) {
-    super("not_found", message, 404, details);
+  constructor(
+    message: string,
+    details?: Record<string, unknown>,
+    code?: string,
+  ) {
+    super(code ?? "not_found", message, 404, details);
     this.name = "NotFoundError";
   }
 }
 
 export class ValidationError extends MymeError {
-  constructor(message: string, details?: Record<string, unknown>) {
-    super("validation_error", message, 400, details);
+  constructor(
+    message: string,
+    details?: Record<string, unknown>,
+    code?: string,
+  ) {
+    super(code ?? "validation_error", message, 400, details);
     this.name = "ValidationError";
   }
 }
 
 export class UnauthorizedError extends MymeError {
-  constructor(message: string, details?: Record<string, unknown>) {
-    super("unauthorized", message, 401, details);
+  constructor(
+    message: string,
+    details?: Record<string, unknown>,
+    code?: string,
+  ) {
+    super(code ?? "unauthorized", message, 401, details);
     this.name = "UnauthorizedError";
   }
 }
 
 export class ForbiddenError extends MymeError {
-  constructor(message: string, details?: Record<string, unknown>) {
-    super("forbidden", message, 403, details);
+  constructor(
+    message: string,
+    details?: Record<string, unknown>,
+    code?: string,
+  ) {
+    super(code ?? "forbidden", message, 403, details);
     this.name = "ForbiddenError";
   }
 }
