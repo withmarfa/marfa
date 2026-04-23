@@ -190,6 +190,26 @@ export class SqliteItemStore implements ItemStore {
     return Promise.resolve(this.getRaw(id, tenantId));
   }
 
+  findBySourceId(
+    source: string,
+    sourceId: string,
+    tenantId?: string,
+  ): Promise<Item | null> {
+    const conditions = [
+      eq(items.source, source),
+      eq(items.source_id, sourceId),
+    ];
+    if (tenantId) conditions.push(eq(items.tenant_id, tenantId));
+    const row = this.db
+      .select()
+      .from(items)
+      .where(and(...conditions))
+      .get();
+    if (!row) return Promise.resolve(null);
+    if (row.state === "trashed") return Promise.resolve(null);
+    return Promise.resolve(rowToItem(row));
+  }
+
   async getMany(ids: string[], tenantId?: string): Promise<Map<string, Item>> {
     const out = new Map<string, Item>();
     if (ids.length === 0) return out;
@@ -416,6 +436,7 @@ export class SqliteItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
           ...(input.library !== undefined && { library: input.library }),
+          ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
         };
 
         this.db.update(items).set(setClause).where(whereClause).run();
@@ -481,6 +502,7 @@ export class SqliteItemStore implements ItemStore {
         version: newVersion,
         updated_at: now,
         ...(input.library !== undefined && { library: input.library }),
+        ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
       };
 
       this.db.update(items).set(mergeSet).where(whereClause).run();
@@ -532,6 +554,25 @@ export class SqliteItemStore implements ItemStore {
     this.db.delete(items).where(this.tenantWhere(id, tenantId)).run();
 
     this.searchStore.removeSync(id);
+  }
+
+  async bulkPurge(ids: string[], tenantId?: string): Promise<number> {
+    if (ids.length === 0) return 0;
+    const unique = Array.from(new Set(ids));
+    const conditions = [inArray(items.id, unique)];
+    if (tenantId) conditions.push(eq(items.tenant_id, tenantId));
+    const scopedWhere = and(...conditions);
+
+    const scopedIds = (
+      await this.db.select({ id: items.id }).from(items).where(scopedWhere)
+    ).map((row) => row.id);
+    if (scopedIds.length === 0) return 0;
+
+    for (const id of scopedIds) {
+      this.searchStore.removeSync(id);
+    }
+    this.db.delete(items).where(inArray(items.id, scopedIds)).run();
+    return scopedIds.length;
   }
 
   async purgeTrashedOlderThan(

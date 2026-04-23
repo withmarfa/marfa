@@ -78,6 +78,10 @@ export interface UpdateItemInput {
    *  for `properties`; flipping `library` doesn't conflict (it's a single
    *  metadata-axis flag, last-writer-wins by design). */
   library?: boolean;
+  /** Override the user-meaningful timestamp. Settable on create; this
+   *  field lets importers fix dates retroactively without rewriting
+   *  properties. Independent of the version-merge path. */
+  timestamp?: string;
 }
 
 /** An item paired with its metadata sidecar. */
