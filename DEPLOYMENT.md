@@ -4,14 +4,14 @@ Myme runs on Atlas via launchd. Two instances share one source tree with separat
 
 ## Environments
 
-|                 | Active               | Conformance mock    |
-| --------------- | -------------------- | ------------------- |
-| Port            | 8602                 | 8601                |
-| Launchd label   | `com.myme.v0`        | `com.myme.mock`     |
-| Postgres DB     | `myme_v0`            | `myme_mock`         |
-| Plist location  | `~/Library/LaunchAgents/com.myme.v0.plist`   | `~/Library/LaunchAgents/com.myme.mock.plist` |
-| Working dir     | `~/Services/myme-v0` (shared with mock)      | `~/Services/myme-v0` (shared with active)    |
-| Logs            | `~/Services/myme-v0/logs/`                   | `~/Services/myme-mock/logs/`                 |
+|                | Active                                     | Conformance mock                             |
+| -------------- | ------------------------------------------ | -------------------------------------------- |
+| Port           | 8602                                       | 8601                                         |
+| Launchd label  | `com.myme.v0`                              | `com.myme.mock`                              |
+| Postgres DB    | `myme_v0`                                  | `myme_mock`                                  |
+| Plist location | `~/Library/LaunchAgents/com.myme.v0.plist` | `~/Library/LaunchAgents/com.myme.mock.plist` |
+| Working dir    | `~/Services/myme-v0` (shared with mock)    | `~/Services/myme-v0` (shared with active)    |
+| Logs           | `~/Services/myme-v0/logs/`                 | `~/Services/myme-mock/logs/`                 |
 
 Both instances use Postgres on `localhost:5432`, S3 blob storage, and `KeepAlive: true`. Configuration (env vars, ports, database URLs) is embedded in each plist XML.
 
