@@ -1069,7 +1069,9 @@ describe("items.bulk", () => {
         ],
         atomic: true,
       }),
-    ).rejects.toThrow(/rolled back/i);
+    ).rejects.toMatchObject({
+      code: "bulk_atomic_rollback",
+    });
 
     // Rollback verified — nothing with the tag should exist.
     const list = await client.items.list({ tags: [tag] });
@@ -1260,6 +1262,8 @@ describe("items.bulkAction", () => {
         filter: { tags: [tag] },
         max_items: 2,
       }),
-    ).rejects.toThrow(/matched more than/i);
+    ).rejects.toMatchObject({
+      code: "bulk_cap_exceeded",
+    });
   });
 });

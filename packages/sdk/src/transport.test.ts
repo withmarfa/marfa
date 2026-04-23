@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { HttpTransport } from "./transport.js";
-import { MymeError } from "./errors.js";
+import {
+  ForbiddenError,
+  MymeError,
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+} from "./errors.js";
 
 // ---------------------------------------------------------------------------
 // Adversarial coverage for HttpTransport — transport-layer edge cases that
@@ -129,6 +135,132 @@ describe("HttpTransport — error-body mapping", () => {
         err.status === 500 &&
         err.code === "unknown" &&
         err.message === "HTTP 500",
+    );
+  });
+});
+
+describe("HttpTransport — typed error subclasses preserve server code", () => {
+  // 4xx responses surface as the right `instanceof` class (so `catch (e as
+  // NotFoundError)` still works) AND carry the server's real `code` so
+  // callers can branch on specific codes like `bulk_cap_exceeded`,
+  // `edge_not_found`, `reset_disabled` instead of regexing on message.
+
+  it("400 with a specific server code throws ValidationError with that code, not the generic 'validation_error'", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      makeJsonResponse(400, {
+        error: {
+          code: "bulk_cap_exceeded",
+          message: "Matched 12000 items; cap is 10000.",
+          details: { matched: 12000, cap: 10000 },
+        },
+      }),
+    );
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    await expect(
+      transport.request("POST", "/items/bulk_action"),
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof ValidationError &&
+        err.code === "bulk_cap_exceeded" &&
+        err.status === 400 &&
+        err.message === "Matched 12000 items; cap is 10000." &&
+        err.details?.matched === 12000 &&
+        err.details.cap === 10000,
+    );
+  });
+
+  it("400 without a server code falls back to the canonical 'validation_error'", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(makeJsonResponse(400, { error: { message: "bad" } }));
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    await expect(transport.request("GET", "/items")).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof ValidationError &&
+        err.code === "validation_error" &&
+        err.status === 400 &&
+        err.message === "bad",
+    );
+  });
+
+  it("404 with a specific server code throws NotFoundError with that code", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      makeJsonResponse(404, {
+        error: { code: "edge_not_found", message: "Edge edg_123 not found" },
+      }),
+    );
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    await expect(
+      transport.request("DELETE", "/edges/edg_123"),
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof NotFoundError &&
+        err.code === "edge_not_found" &&
+        err.status === 404,
+    );
+  });
+
+  it("404 without a server code falls back to the canonical 'not_found'", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(makeJsonResponse(404, { error: { message: "gone" } }));
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    await expect(transport.request("GET", "/items/x")).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof NotFoundError &&
+        err.code === "not_found" &&
+        err.status === 404,
+    );
+  });
+
+  it("403 with a specific server code throws ForbiddenError with that code", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      makeJsonResponse(403, {
+        error: {
+          code: "edge_permission_denied",
+          message: "No write on edge type about",
+        },
+      }),
+    );
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    await expect(transport.request("POST", "/edges")).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof ForbiddenError &&
+        err.code === "edge_permission_denied" &&
+        err.status === 403,
+    );
+  });
+
+  it("401 with a specific server code throws UnauthorizedError with that code", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      makeJsonResponse(401, {
+        error: { code: "token_expired", message: "Access token expired" },
+      }),
+    );
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    await expect(transport.request("GET", "/items")).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof UnauthorizedError &&
+        err.code === "token_expired" &&
+        err.status === 401,
     );
   });
 });
