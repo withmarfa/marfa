@@ -4,19 +4,33 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Myme deploy script
 #
-# Deploys the Myme server to a remote host via SSH + git pull.
-# Both production (:8600) and staging (:8601) share the same code directory
-# with different launchd plists, so a deploy updates both environments.
+# Deploys the Myme server to Atlas via SSH + git pull.
+#
+# Topology (as of April 2026):
+#   - :8602  com.myme.v0    — active instance (Postgres: myme_v0)
+#   - :8601  com.myme.mock  — conformance mock (Postgres: myme_mock)
+#
+# Both services share a single source tree at ~/Services/myme-v0/ and
+# separate launchd plists. A deploy rebuilds once and restarts both
+# launchd services.
+#
+# :8600 com.myme.server is legacy and is NOT touched by this script.
 #
 # Usage:
-#   ./deploy.sh                Deploy latest main
-#   ./deploy.sh --rollback     Rollback to previous SHA
+#   ./deploy.sh                Deploy latest main (restarts both services)
+#   ./deploy.sh --rollback     Rollback to previous SHA recorded in version.json
+#   ./deploy.sh --host myhost  Override SSH host (default: aic-atlas)
 # ---------------------------------------------------------------------------
 
 # --- Configuration (override via environment) ---
-ATLAS_HOST="${ATLAS_HOST:-atlas}"
-SERVICE_DIR="${SERVICE_DIR:-\$HOME/Services/myme}"
+ATLAS_HOST="${ATLAS_HOST:-aic-atlas}"
+SERVICE_DIR="${SERVICE_DIR:-\$HOME/Services/myme-v0}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
+
+# Services managed by this script. Paired arrays: label / port.
+SERVICE_LABELS=("com.myme.v0" "com.myme.mock")
+SERVICE_NAMES=("active" "mock")
+SERVICE_PORTS=(8602 8601)
 
 # --- Defaults ---
 ROLLBACK=false
@@ -40,6 +54,13 @@ while [[ $# -gt 0 ]]; do
       ;;
     --help|-h)
       echo "Usage: ./deploy.sh [--rollback] [--host hostname]"
+      echo ""
+      echo "Deploys both active (:8602) and conformance mock (:8601) from main."
+      echo ""
+      echo "Environment:"
+      echo "  ATLAS_HOST      SSH host (default: aic-atlas)"
+      echo "  SERVICE_DIR     Source tree on Atlas (default: \$HOME/Services/myme-v0)"
+      echo "  REPO_BRANCH     Branch to deploy (default: main)"
       exit 0
       ;;
     *)
@@ -49,7 +70,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# --- Helper: run a command on the remote host ---
+# --- Helpers ---
 remote() {
   # shellcheck disable=SC2029
   ssh "$ATLAS_HOST" "cd $SERVICE_DIR && $1"
@@ -64,24 +85,26 @@ timestamp() {
 }
 
 restart_services() {
-  echo "  Restarting production..."
-  remote_raw "launchctl unload ~/Library/LaunchAgents/com.myme.server.plist 2>/dev/null; sleep 1; launchctl load ~/Library/LaunchAgents/com.myme.server.plist"
-  echo "  Restarting staging..."
-  remote_raw "launchctl unload ~/Library/LaunchAgents/com.myme.staging.plist 2>/dev/null; sleep 1; launchctl load ~/Library/LaunchAgents/com.myme.staging.plist"
+  for i in "${!SERVICE_LABELS[@]}"; do
+    local label="${SERVICE_LABELS[$i]}"
+    local name="${SERVICE_NAMES[$i]}"
+    echo "  Restarting $name ($label)..."
+    remote_raw "launchctl unload ~/Library/LaunchAgents/$label.plist 2>/dev/null; sleep 1; launchctl load ~/Library/LaunchAgents/$label.plist"
+  done
 }
 
 health_check() {
-  local label="$1"
+  local name="$1"
   local port="$2"
   for i in 1 2 3; do
     sleep 2
     if remote_raw "curl -sf http://localhost:$port/health" > /dev/null 2>&1; then
-      echo -e "  ${GREEN}$label: ok${NC}"
+      echo -e "  ${GREEN}$name (:$port): ok${NC}"
       return 0
     fi
-    echo "  $label: attempt $i/3 failed, retrying..."
+    echo "  $name (:$port): attempt $i/3 failed, retrying..."
   done
-  echo -e "  ${RED}$label: health check failed${NC}"
+  echo -e "  ${RED}$name (:$port): health check failed${NC}"
   return 1
 }
 
@@ -93,8 +116,8 @@ echo "1/6 Pre-flight checks..."
 if ! ssh -o ConnectTimeout=5 "$ATLAS_HOST" "echo ok" > /dev/null 2>&1; then
   echo -e "${RED}Cannot connect to $ATLAS_HOST via SSH.${NC}"
   echo "  Configure SSH access in ~/.ssh/config:"
-  echo "    Host atlas"
-  echo "      HostName <your-tailscale-ip>"
+  echo "    Host aic-atlas"
+  echo "      HostName <tailscale-ip-or-hostname>"
   echo "      User <your-user>"
   exit 1
 fi
@@ -126,8 +149,15 @@ if [ "$ROLLBACK" = true ]; then
   restart_services
 
   echo "6/6 Health checks..."
-  health_check "Production" 8600
-  health_check "Staging" 8601
+  FAILED=false
+  for i in "${!SERVICE_NAMES[@]}"; do
+    health_check "${SERVICE_NAMES[$i]}" "${SERVICE_PORTS[$i]}" || FAILED=true
+  done
+
+  if [ "$FAILED" = true ]; then
+    echo -e "${RED}One or more health checks failed after rollback.${NC}"
+    exit 1
+  fi
 
   echo -e "${GREEN}Rollback complete.${NC}"
   remote "echo \"$(timestamp) ROLLBACK $ROLLBACK_SHA (from $PREVIOUS_SHA)\" >> deploy.log"
@@ -162,8 +192,9 @@ restart_services
 # --- Step 6: Health checks ---
 echo "6/6 Health checks..."
 FAILED=false
-health_check "Production" 8600 || FAILED=true
-health_check "Staging" 8601 || FAILED=true
+for i in "${!SERVICE_NAMES[@]}"; do
+  health_check "${SERVICE_NAMES[$i]}" "${SERVICE_PORTS[$i]}" || FAILED=true
+done
 
 if [ "$FAILED" = true ]; then
   echo -e "${RED}One or more health checks failed. Consider rolling back:${NC}"

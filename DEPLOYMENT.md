@@ -1,68 +1,80 @@
 # Deployment
 
-Myme runs on a server via launchd. Both environments use the same server binary built from this monorepo.
+Myme runs on Atlas via launchd. Two instances share one source tree with separate launchd plists; a single deploy rebuilds once and restarts both.
 
 ## Environments
 
-|          | Production              | Staging                  |
-| -------- | ----------------------- | ------------------------ |
-| Port     | 8600                    | 8601                     |
-| Plist    | `com.myme.server.plist` | `com.myme.staging.plist` |
-| Database | `myme`                  | `myme_staging`           |
+|                 | Active               | Conformance mock    |
+| --------------- | -------------------- | ------------------- |
+| Port            | 8602                 | 8601                |
+| Launchd label   | `com.myme.v0`        | `com.myme.mock`     |
+| Postgres DB     | `myme_v0`            | `myme_mock`         |
+| Plist location  | `~/Library/LaunchAgents/com.myme.v0.plist`   | `~/Library/LaunchAgents/com.myme.mock.plist` |
+| Working dir     | `~/Services/myme-v0` (shared with mock)      | `~/Services/myme-v0` (shared with active)    |
+| Logs            | `~/Services/myme-v0/logs/`                   | `~/Services/myme-mock/logs/`                 |
 
-Both use Postgres (localhost:5432), S3 blob storage, and `KeepAlive: true`. Configuration (env vars, ports, database URLs) is embedded in the launchd plist XML at `~/Library/LaunchAgents/`.
+Both instances use Postgres on `localhost:5432`, S3 blob storage, and `KeepAlive: true`. Configuration (env vars, ports, database URLs) is embedded in each plist XML.
+
+`:8600 com.myme.server` is a legacy instance. It is historical only, not targeted by this deploy flow, and not to be relied on for any product work.
 
 ## Deploying
 
-Both production and staging share the same code directory with different launchd plists. A single deploy updates both environments.
+Both services share one source tree at `~/Services/myme-v0/`. A single deploy rebuilds it and restarts both.
 
 ```bash
-# Deploy latest main (restarts both production and staging)
+# Deploy latest main — restarts both active and mock
 ./deploy.sh
 
-# Rollback to previous SHA
+# Rollback to the SHA recorded as `previous_sha` in version.json
 ./deploy.sh --rollback
+
+# Override SSH host alias
+./deploy.sh --host <hostname>
 ```
 
-The deploy script SSHs to the server, pulls from git, builds, writes a `version.json` with the git SHA, restarts both launchd services, and verifies both health endpoints.
+The script SSHs to Atlas, pulls `main`, runs `pnpm install --frozen-lockfile && pnpm build`, writes `version.json` (current SHA + previous SHA + timestamp), restarts both launchd services, and verifies each health endpoint.
 
 ### Prerequisites
 
-1. **SSH access** — configure your `~/.ssh/config` with a host alias:
+1. **SSH access** — the default host alias is `aic-atlas`. Configure in `~/.ssh/config`:
    ```
-   Host atlas
-     HostName <server-tailscale-ip>
-     User <username>
+   Host aic-atlas
+     HostName <tailscale-hostname-or-ip>
+     User <your-user>
    ```
-2. **Git repo on the server** — clone the monorepo once:
+2. **Source tree on Atlas** — clone once:
    ```bash
-   ssh atlas "git clone <repo-url> ~/Services/myme"
+   ssh aic-atlas "git clone <repo-url> ~/Services/myme-v0"
    ```
-3. **pnpm** installed on the server
+3. **pnpm** installed on Atlas (via fnm / nvm / Homebrew).
 
 ### Configuration
 
-The deploy script uses these environment variables (all optional):
+All optional, all environment-overridable:
 
-- `ATLAS_HOST` — SSH hostname/alias for the server (default: `atlas`). Override with `--host` flag or env var
-- `SERVICE_DIR` — service directory on the server (default: `$HOME/Services/myme`)
-- `REPO_BRANCH` — git branch to deploy (default: `main`)
+- `ATLAS_HOST` — SSH alias (default: `aic-atlas`). Also settable via `--host`.
+- `SERVICE_DIR` — source tree on Atlas (default: `$HOME/Services/myme-v0`).
+- `REPO_BRANCH` — branch to deploy (default: `main`).
 
 ## Service management
 
 ```bash
-# Check health
-ssh $ATLAS_HOST "curl -s http://localhost:8600/health"
-ssh $ATLAS_HOST "curl -s http://localhost:8601/health"
+# Health
+ssh aic-atlas "curl -s http://localhost:8602/health"    # active
+ssh aic-atlas "curl -s http://localhost:8601/health"    # mock
 
-# View logs
-ssh $ATLAS_HOST "tail -50 ~/Services/myme/stderr.log"
+# Logs
+ssh aic-atlas "tail -50 ~/Services/myme-v0/logs/stderr.log"    # active
+ssh aic-atlas "tail -50 ~/Services/myme-mock/logs/stderr.log"  # mock
 
-# Verify running version
-ssh $ATLAS_HOST "cat ~/Services/myme/version.json"
+# Version
+ssh aic-atlas "cat ~/Services/myme-v0/version.json"
 
-# Restart
-ssh $ATLAS_HOST "launchctl unload ~/Library/LaunchAgents/com.myme.server.plist && sleep 1 && launchctl load ~/Library/LaunchAgents/com.myme.server.plist"
+# Manual restart (active)
+ssh aic-atlas "launchctl unload ~/Library/LaunchAgents/com.myme.v0.plist && sleep 1 && launchctl load ~/Library/LaunchAgents/com.myme.v0.plist"
+
+# Manual restart (mock)
+ssh aic-atlas "launchctl unload ~/Library/LaunchAgents/com.myme.mock.plist && sleep 1 && launchctl load ~/Library/LaunchAgents/com.myme.mock.plist"
 ```
 
 ## Infrastructure setup
