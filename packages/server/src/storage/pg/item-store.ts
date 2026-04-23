@@ -177,6 +177,25 @@ export class PgItemStore implements ItemStore {
     return this.getRaw(id, tenantId);
   }
 
+  async findBySourceId(
+    source: string,
+    sourceId: string,
+    tenantId?: string,
+  ): Promise<Item | null> {
+    const conditions = [
+      eq(items.source, source),
+      eq(items.source_id, sourceId),
+    ];
+    if (tenantId) conditions.push(eq(items.tenant_id, tenantId));
+    const [row] = await this.db
+      .select()
+      .from(items)
+      .where(and(...conditions));
+    if (!row) return null;
+    if (row.state === "trashed") return null;
+    return rowToItem(row);
+  }
+
   async getMany(ids: string[], tenantId?: string): Promise<Map<string, Item>> {
     const out = new Map<string, Item>();
     if (ids.length === 0) return out;
@@ -400,6 +419,7 @@ export class PgItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
           ...(input.library !== undefined && { library: input.library }),
+          ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
         };
 
         await tx
@@ -481,6 +501,7 @@ export class PgItemStore implements ItemStore {
         version: newVersion,
         updated_at: now,
         ...(input.library !== undefined && { library: input.library }),
+        ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
       };
 
       await tx
@@ -531,6 +552,25 @@ export class PgItemStore implements ItemStore {
     // Search index must be removed explicitly.
     await this.db.delete(items).where(this.tenantWhere(id, tenantId));
     await this.searchStore.remove(id);
+  }
+
+  async bulkPurge(ids: string[], tenantId?: string): Promise<number> {
+    if (ids.length === 0) return 0;
+    const unique = Array.from(new Set(ids));
+    const conditions = [inArray(items.id, unique)];
+    if (tenantId) conditions.push(eq(items.tenant_id, tenantId));
+    const scopedWhere = and(...conditions);
+
+    const scopedIds = (
+      await this.db.select({ id: items.id }).from(items).where(scopedWhere)
+    ).map((row) => row.id);
+    if (scopedIds.length === 0) return 0;
+
+    for (const id of scopedIds) {
+      await this.searchStore.remove(id);
+    }
+    await this.db.delete(items).where(inArray(items.id, scopedIds));
+    return scopedIds.length;
   }
 
   async purgeTrashedOlderThan(

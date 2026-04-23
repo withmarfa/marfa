@@ -120,6 +120,16 @@ export interface ItemStore {
    */
   getIncludingTrashed(id: string, tenantId?: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
+  /**
+   * Look up a single non-trashed item by `(source, source_id)` within a
+   * tenant. Returns null if no row matches. Used by `/items/bulk` upsert
+   * to decide create-vs-update without round-tripping a full `list`.
+   */
+  findBySourceId(
+    source: string,
+    sourceId: string,
+    tenantId?: string,
+  ): Promise<Item | null>;
   update(
     id: string,
     input: UpdateItemInput,
@@ -127,6 +137,16 @@ export interface ItemStore {
   ): Promise<Item | ConflictResponse>;
   delete(id: string, tenantId?: string): Promise<void>;
   purge(id: string, tenantId?: string): Promise<void>;
+  /**
+   * Hard-delete every id in `ids` within the tenant scope. Bypasses the
+   * "must be trashed" gate that single-item `purge` enforces — bulk is an
+   * admin cleanup primitive with explicit confirm. Cascades metadata and
+   * versions via ON DELETE CASCADE; caller must have already wiped edges
+   * (source + target directions). Cleans the search index for each id.
+   * Returns the number of rows actually deleted (rows not in tenant are
+   * silently skipped).
+   */
+  bulkPurge(ids: string[], tenantId?: string): Promise<number>;
   restore(id: string, tenantId?: string): Promise<Item>;
   transition(id: string, state: ItemState, tenantId?: string): Promise<Item>;
   stats(

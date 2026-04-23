@@ -1,0 +1,189 @@
+import { createGunzip } from "node:zlib";
+import { Readable } from "node:stream";
+import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import * as tar from "tar-stream";
+import { createTestContext, request } from "../test-utils.js";
+import type { TestContext } from "../test-utils.js";
+
+let ctx: TestContext;
+
+beforeAll(async () => {
+  ctx = await createTestContext();
+});
+
+afterAll(() => {
+  ctx.cleanup();
+});
+
+describe("GET /export", () => {
+  it("exports items as NDJSON", async () => {
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Export test" },
+        source: "export-test",
+        source_id: "exp-1",
+      },
+    });
+
+    const res = await request(ctx.app, "GET", "/export", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("ndjson");
+
+    const text = await res.text();
+    const lines = text.trim().split("\n");
+    expect(lines.length).toBeGreaterThan(0);
+
+    const first = JSON.parse(lines[0] ?? "{}") as { item: { id: string } };
+    expect(first.item.id).toBeDefined();
+  });
+
+  it("filters export by type", async () => {
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.bookmark",
+        properties: { url: "https://example.com" },
+      },
+    });
+
+    const res = await request(ctx.app, "GET", "/export?type=core.bookmark", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+
+    const text = await res.text();
+    const lines = text.trim().split("\n");
+    for (const line of lines) {
+      const parsed = JSON.parse(line) as { item: { type: string } };
+      expect(parsed.item.type).toBe("core.bookmark");
+    }
+  });
+
+  it("round-trips: export then /items/bulk produces same items", async () => {
+    // Round-trip via the new /items/bulk endpoint (replaces /import).
+    // Use a new source_id on the bulk side so the insert doesn't dedupe.
+    const sourceId = `rt-${Math.random().toString(36).slice(2)}`;
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Round trip note", title: "RT" },
+        source_id: sourceId,
+        tags: ["roundtrip"],
+      },
+    });
+
+    const exportRes = await request(ctx.app, "GET", `/export?type=core.note`, {
+      key: ctx.adminKey,
+    });
+    const exportText = await exportRes.text();
+    const lines = exportText.trim().split("\n");
+    const exported = lines.map(
+      (l) =>
+        JSON.parse(l) as {
+          item: Record<string, unknown>;
+          metadata: Record<string, unknown>;
+        },
+    );
+
+    const ours = exported.find(
+      (e) => (e.item as { source_id?: string }).source_id === sourceId,
+    );
+    expect(ours).toBeDefined();
+
+    const bulkRes = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.note",
+            properties: ours?.item.properties,
+            source_id: `${sourceId}-copy`,
+          },
+        ],
+        mode: "create_only",
+      },
+    });
+    expect(bulkRes.status).toBe(200);
+    const bulkData = (await bulkRes.json()) as {
+      counts: { created: number };
+    };
+    expect(bulkData.counts.created).toBe(1);
+  });
+});
+
+describe("GET /export?format=archive", () => {
+  it("produces a valid tar.gz with manifest, items, and blobs", async () => {
+    const blobContent = new TextEncoder().encode("archive-export-blob");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: blobContent,
+    });
+    const { hash: blobHash } = (await uploadRes.json()) as { hash: string };
+
+    const source = `archive-export-${Math.random().toString(36).slice(2)}`;
+    await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Has a blob", blob_ref: blobHash },
+        source,
+        source_id: "ae-1",
+      },
+    });
+
+    const res = await request(ctx.app, "GET", "/export?format=archive", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("application/gzip");
+
+    const archiveData = Buffer.from(await res.arrayBuffer());
+    const entries = new Map<string, Buffer>();
+
+    const extract = tar.extract();
+    const gunzip = createGunzip();
+
+    await new Promise<void>((resolve, reject) => {
+      extract.on("entry", (header, stream, next) => {
+        const chunks: Buffer[] = [];
+        stream.on("data", (c: Buffer) => chunks.push(c));
+        stream.on("end", () => {
+          entries.set(header.name, Buffer.concat(chunks));
+          next();
+        });
+        stream.resume();
+      });
+      extract.on("finish", resolve);
+      extract.on("error", reject);
+      Readable.from(archiveData).pipe(gunzip).pipe(extract);
+    });
+
+    expect(entries.has("manifest.json")).toBe(true);
+    const manifest = JSON.parse(entries.get("manifest.json")!.toString()) as {
+      version: number;
+      format: string;
+      item_count: number;
+      blob_count: number;
+    };
+    expect(manifest.version).toBe(1);
+    expect(manifest.format).toBe("myme-archive-v1");
+    expect(manifest.item_count).toBeGreaterThan(0);
+
+    expect(entries.has("items.ndjson")).toBe(true);
+    const ndjson = entries.get("items.ndjson")!.toString().trim();
+    expect(ndjson.length).toBeGreaterThan(0);
+
+    expect(entries.has(`blobs/${blobHash}`)).toBe(true);
+    const blobData = entries.get(`blobs/${blobHash}`)!;
+    expect(blobData.toString()).toBe("archive-export-blob");
+  });
+});

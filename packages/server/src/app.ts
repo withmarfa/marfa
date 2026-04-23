@@ -8,6 +8,7 @@ import { createErrorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import { itemRoutes } from "./routes/items.js";
+import { bulkRoutes } from "./routes/bulk.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
 import { edgeTypeRoutes } from "./routes/edge-types.js";
 import { typeRoutes } from "./routes/types.js";
@@ -15,7 +16,8 @@ import { searchRoutes } from "./routes/search.js";
 import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
 import { keyRoutes } from "./routes/keys.js";
-import { importRoutes, exportRoutes } from "./routes/import-export.js";
+import { exportRoutes } from "./routes/export.js";
+import { adminArchiveRoutes } from "./routes/admin-archive.js";
 import { authRoutes } from "./routes/oauth.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
@@ -81,7 +83,7 @@ export function createApp(
     "blobs",
     "types",
     "keys",
-    "import",
+    "bulk",
     "export",
     "oauth",
     "extensions",
@@ -91,6 +93,7 @@ export function createApp(
     "audit",
     "metrics",
     "edges",
+    "admin_archive",
   ];
   if (config.authMode === "hosted") {
     features.push("users");
@@ -125,6 +128,7 @@ export function createApp(
 
   // Protected routes
   app.route("/items", itemRoutes(storage));
+  app.route("/items", bulkRoutes(storage));
   app.route("/items", extensionRoutes(storage));
   app.route("/items", itemEdgeListingRoutes(storage));
   app.route("/edges", edgeRoutes(storage));
@@ -135,7 +139,7 @@ export function createApp(
   app.route("/blobs", blobRoutes(storage, blobBackend, config.maxBlobSize));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/tenants", tenantRoutes(storage));
-  app.route("/import", importRoutes(storage, blobBackend));
+  app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   app.route("/export", exportRoutes(storage, blobBackend));
   app.route("/auth", authRoutes(storage, config.apiKeySalt));
   if (config.authMode === "hosted" && storage.users && storage.tenants) {

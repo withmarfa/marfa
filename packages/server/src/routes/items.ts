@@ -252,6 +252,9 @@ const updateItemRoute = createRoute({
             /** Toggle library / ambient state. Independent of the
              *  properties merge path — last-writer-wins. */
             library: z.boolean().optional(),
+            /** Override the user-meaningful timestamp (ISO 8601).
+             *  Last-writer-wins like `library`. */
+            timestamp: z.string().optional(),
             // Replace-all-for-specified-types semantics: any edge_type
             // listed wipes existing outbound edges of that type from
             // this item, then creates new edges to each listed target.
@@ -896,11 +899,18 @@ export function itemRoutes(storage: Storage) {
       typeof body.edges === "object" &&
       Object.keys(body.edges).length > 0;
     const hasLibrary = body.library !== undefined;
+    const hasTimestamp = body.timestamp !== undefined;
 
-    if (!hasProperties && !hasEdges && !hasLibrary) {
+    if (!hasProperties && !hasEdges && !hasLibrary && !hasTimestamp) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of `properties`, `edges`, or `library` is required.",
+        "At least one of `properties`, `edges`, `library`, or `timestamp` is required.",
+      );
+    }
+    if (body.timestamp !== undefined && !isValidTimestamp(body.timestamp)) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "timestamp must be an ISO 8601 string",
       );
     }
     if (body.version !== undefined) {
@@ -1017,7 +1027,7 @@ export function itemRoutes(storage: Storage) {
 
     const txResult = await storage.runInTransaction(async () => {
       const updated =
-        hasProperties || hasLibrary
+        hasProperties || hasLibrary || hasTimestamp
           ? await storage.items.update(
               id,
               {
@@ -1025,11 +1035,12 @@ export function itemRoutes(storage: Storage) {
                 version: body.version,
                 snapshot: body.snapshot === true ? true : undefined,
                 library: hasLibrary ? body.library : undefined,
+                timestamp: hasTimestamp ? body.timestamp : undefined,
               },
               tid,
             )
           : item;
-      if ((hasProperties || hasLibrary) && "error" in updated) {
+      if ((hasProperties || hasLibrary || hasTimestamp) && "error" in updated) {
         return updated;
       }
 

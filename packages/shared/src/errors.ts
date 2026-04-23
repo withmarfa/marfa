@@ -50,6 +50,15 @@ export enum ErrorCode {
   EDGE_PERMISSION_DENIED = "edge_permission_denied",
   /** The referenced edge id does not exist. */
   EDGE_NOT_FOUND = "edge_not_found",
+  // ---------------------------------------------------------------------
+  // Bulk operations
+  // ---------------------------------------------------------------------
+  /** A destructive bulk action was called without the required `confirm` literal. */
+  BULK_CONFIRMATION_REQUIRED = "bulk_confirmation_required",
+  /** A bulk action matched more items than `max_items` permits. */
+  BULK_CAP_EXCEEDED = "bulk_cap_exceeded",
+  /** An atomic bulk upsert failed on one item and rolled back the whole batch. */
+  BULK_ATOMIC_ROLLBACK = "bulk_atomic_rollback",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -88,6 +97,9 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.EDGE_TYPE_NOT_FOUND]: 404,
   [ErrorCode.EDGE_PERMISSION_DENIED]: 403,
   [ErrorCode.EDGE_NOT_FOUND]: 404,
+  [ErrorCode.BULK_CONFIRMATION_REQUIRED]: 400,
+  [ErrorCode.BULK_CAP_EXCEEDED]: 400,
+  [ErrorCode.BULK_ATOMIC_ROLLBACK]: 400,
 };
 
 /** Returns the HTTP status code for a given error code. */

@@ -1399,6 +1399,9 @@
                   "library": {
                     "type": "boolean"
                   },
+                  "timestamp": {
+                    "type": "string"
+                  },
                   "edges": {
                     "type": "object",
                     "additionalProperties": {
@@ -3622,6 +3625,921 @@
           },
           "404": {
             "description": "Item not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/bulk": {
+      "post": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Create or upsert many items in one call (admin only). Replaces /import.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        },
+                        "properties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "archived",
+                            "trashed"
+                          ]
+                        },
+                        "library": {
+                          "type": "boolean"
+                        },
+                        "timestamp": {
+                          "type": "string"
+                        },
+                        "source": {
+                          "type": "string"
+                        },
+                        "source_id": {
+                          "type": "string"
+                        },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "ai",
+                            "worker"
+                          ]
+                        },
+                        "device": {
+                          "type": "string"
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "edges": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "required": [
+                        "type"
+                      ]
+                    }
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "upsert",
+                      "create_only"
+                    ]
+                  },
+                  "atomic": {
+                    "type": "boolean"
+                  },
+                  "emit_events": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "items"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk upsert result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "created": {
+                          "type": "integer"
+                        },
+                        "updated": {
+                          "type": "integer"
+                        },
+                        "skipped": {
+                          "type": "integer"
+                        },
+                        "errored": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "created",
+                        "updated",
+                        "skipped",
+                        "errored"
+                      ]
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "index": {
+                            "type": "integer"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "created",
+                              "updated",
+                              "skipped",
+                              "errored"
+                            ]
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "message"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "index",
+                          "outcome"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "counts",
+                    "results"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error or atomic rollback",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/bulk_action": {
+      "post": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Apply one action to every item matching a filter.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "filter": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "archived",
+                              "trashed"
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "library": {
+                            "type": "boolean"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "since": {
+                            "type": "string"
+                          },
+                          "until": {
+                            "type": "string"
+                          },
+                          "filter": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "dry_run": {
+                        "type": "boolean"
+                      },
+                      "max_items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true
+                      },
+                      "emit_events": {
+                        "type": "boolean"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "transition"
+                        ]
+                      },
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "active",
+                          "archived",
+                          "trashed"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "state"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "filter": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "archived",
+                              "trashed"
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "library": {
+                            "type": "boolean"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "since": {
+                            "type": "string"
+                          },
+                          "until": {
+                            "type": "string"
+                          },
+                          "filter": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "dry_run": {
+                        "type": "boolean"
+                      },
+                      "max_items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true
+                      },
+                      "emit_events": {
+                        "type": "boolean"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "purge"
+                        ]
+                      },
+                      "confirm": {
+                        "type": "string",
+                        "enum": [
+                          "PURGE"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "action"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "filter": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "archived",
+                              "trashed"
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "library": {
+                            "type": "boolean"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "since": {
+                            "type": "string"
+                          },
+                          "until": {
+                            "type": "string"
+                          },
+                          "filter": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "dry_run": {
+                        "type": "boolean"
+                      },
+                      "max_items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true
+                      },
+                      "emit_events": {
+                        "type": "boolean"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "update_tags"
+                        ]
+                      },
+                      "add": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "remove": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "action"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "filter": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "archived",
+                              "trashed"
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "library": {
+                            "type": "boolean"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "since": {
+                            "type": "string"
+                          },
+                          "until": {
+                            "type": "string"
+                          },
+                          "filter": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "dry_run": {
+                        "type": "boolean"
+                      },
+                      "max_items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true
+                      },
+                      "emit_events": {
+                        "type": "boolean"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "update_library"
+                        ]
+                      },
+                      "library": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "library"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "filter": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "archived",
+                              "trashed"
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "library": {
+                            "type": "boolean"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "since": {
+                            "type": "string"
+                          },
+                          "until": {
+                            "type": "string"
+                          },
+                          "filter": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "dry_run": {
+                        "type": "boolean"
+                      },
+                      "max_items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true
+                      },
+                      "emit_events": {
+                        "type": "boolean"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "update_properties"
+                        ]
+                      },
+                      "patch": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "patch"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "filter": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "archived",
+                              "trashed"
+                            ]
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "library": {
+                            "type": "boolean"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "since": {
+                            "type": "string"
+                          },
+                          "until": {
+                            "type": "string"
+                          },
+                          "filter": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "dry_run": {
+                        "type": "boolean"
+                      },
+                      "max_items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true
+                      },
+                      "emit_events": {
+                        "type": "boolean"
+                      },
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "update_timestamp"
+                        ]
+                      },
+                      "timestamp": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "timestamp"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk action result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "action": {
+                      "type": "string"
+                    },
+                    "matched": {
+                      "type": "integer"
+                    },
+                    "succeeded": {
+                      "type": "integer"
+                    },
+                    "errored": {
+                      "type": "integer"
+                    },
+                    "dry_run": {
+                      "type": "boolean"
+                    },
+                    "ids": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "code",
+                          "message"
+                        ]
+                      }
+                    },
+                    "blob_hashes_referenced": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "action",
+                    "matched",
+                    "succeeded",
+                    "errored",
+                    "dry_run"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error, missing confirm, or cap exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin required (purge only)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9025,12 +9943,12 @@
         }
       }
     },
-    "/import": {
+    "/admin/restore-archive": {
       "post": {
         "tags": [
-          "Import/Export"
+          "Admin"
         ],
-        "summary": "Bulk import items or archive (admin only)",
+        "summary": "Restore items and blobs from a myme-archive-v1 tar.gz (admin only)",
         "security": [
           {
             "bearerAuth": []
@@ -9038,30 +9956,16 @@
         ],
         "requestBody": {
           "content": {
-            "application/json": {
+            "application/gzip": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "items": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": {
-                        "nullable": true
-                      }
-                    }
-                  }
-                },
-                "required": [
-                  "items"
-                ]
+                "nullable": true
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Import result",
+            "description": "Restore result",
             "content": {
               "application/json": {
                 "schema": {
@@ -9079,14 +9983,15 @@
                   },
                   "required": [
                     "imported",
-                    "duplicates"
+                    "duplicates",
+                    "blobs_imported"
                   ]
                 }
               }
             }
           },
           "400": {
-            "description": "Validation error",
+            "description": "Invalid archive or unsupported version",
             "content": {
               "application/json": {
                 "schema": {
@@ -9199,7 +10104,7 @@
     "/export": {
       "get": {
         "tags": [
-          "Import/Export"
+          "Export"
         ],
         "summary": "Streaming NDJSON or archive export with filters",
         "security": [
