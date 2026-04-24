@@ -1267,3 +1267,156 @@ describe("items.bulkAction", () => {
     });
   });
 });
+
+describe("edges.bulk", () => {
+  async function makePair(): Promise<{ sourceId: string; targetId: string }> {
+    const source = await client.items.create({
+      type: "core.note",
+      properties: { body: "source" },
+    });
+    const target = await client.items.create({
+      type: "core.entity",
+      properties: { name: "target" },
+    });
+    return { sourceId: source.id, targetId: target.id };
+  }
+
+  it("creates edges in bulk with counts and per-edge results", async () => {
+    const a = await makePair();
+    const b = await makePair();
+
+    const result = await client.edges.bulk({
+      edges: [
+        {
+          source_id: a.sourceId,
+          target_id: a.targetId,
+          edge_type: "about",
+        },
+        {
+          source_id: b.sourceId,
+          target_id: b.targetId,
+          edge_type: "about",
+        },
+      ],
+    });
+    expect(result.counts.created).toBe(2);
+    expect(result.counts.errored).toBe(0);
+    expect(result.results).toHaveLength(2);
+    for (const r of result.results) {
+      expect(r.outcome).toBe("created");
+      expect(r.id).toBeDefined();
+    }
+  });
+
+  it("upsert mode replaces properties on existing triples", async () => {
+    const { sourceId, targetId } = await makePair();
+
+    const first = await client.edges.bulk({
+      edges: [
+        {
+          source_id: sourceId,
+          target_id: targetId,
+          edge_type: "about",
+          properties: { weight: 1 },
+        },
+      ],
+    });
+    const originalId = first.results[0]?.id;
+    expect(originalId).toBeDefined();
+
+    const second = await client.edges.bulk({
+      edges: [
+        {
+          source_id: sourceId,
+          target_id: targetId,
+          edge_type: "about",
+          properties: { weight: 99 },
+        },
+      ],
+      mode: "upsert",
+    });
+    expect(second.counts.updated).toBe(1);
+    expect(second.counts.created).toBe(0);
+    expect(second.results[0]?.id).toBe(originalId);
+
+    const outbound = await client.edges.listFromSource(sourceId, {
+      edge_type: "about",
+    });
+    const hit = outbound.data.find((e) => e.id === originalId);
+    expect(hit?.properties.weight).toBe(99);
+  });
+
+  it("create_only surfaces duplicates as skipped with reason duplicate_edge", async () => {
+    const { sourceId, targetId } = await makePair();
+
+    await client.edges.bulk({
+      edges: [{ source_id: sourceId, target_id: targetId, edge_type: "about" }],
+      mode: "create_only",
+    });
+
+    const second = await client.edges.bulk({
+      edges: [
+        {
+          source_id: sourceId,
+          target_id: targetId,
+          edge_type: "about",
+          properties: { nope: true },
+        },
+      ],
+      mode: "create_only",
+    });
+    expect(second.counts.skipped).toBe(1);
+    expect(second.counts.created).toBe(0);
+    expect(second.results[0]?.outcome).toBe("skipped");
+    expect(second.results[0]?.reason).toBe("duplicate_edge");
+  });
+
+  it("atomic=true rolls back the whole batch on error", async () => {
+    const a = await makePair();
+
+    await expect(
+      client.edges.bulk({
+        edges: [
+          {
+            source_id: a.sourceId,
+            target_id: a.targetId,
+            edge_type: "about",
+          },
+          {
+            source_id: a.sourceId,
+            target_id: "not-a-valid-id",
+            edge_type: "about",
+          },
+        ],
+        atomic: true,
+      }),
+    ).rejects.toMatchObject({ code: "bulk_atomic_rollback" });
+
+    const edges = await client.edges.listFromSource(a.sourceId, {
+      edge_type: "about",
+    });
+    expect(edges.data).toHaveLength(0);
+  });
+
+  it("atomic=false returns per-edge errors without throwing", async () => {
+    const a = await makePair();
+    const b = await makePair();
+
+    const result = await client.edges.bulk({
+      edges: [
+        { source_id: a.sourceId, target_id: a.targetId, edge_type: "about" },
+        {
+          source_id: a.sourceId,
+          target_id: "not-a-valid-id",
+          edge_type: "about",
+        },
+        { source_id: b.sourceId, target_id: b.targetId, edge_type: "about" },
+      ],
+      atomic: false,
+    });
+    expect(result.counts.created).toBe(2);
+    expect(result.counts.errored).toBe(1);
+    expect(result.results[1]?.outcome).toBe("errored");
+    expect(result.results[1]?.error?.code).toBe("invalid_id");
+  });
+});
