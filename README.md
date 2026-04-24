@@ -4,11 +4,14 @@ A typed data layer for structured personal data. Store, query, and sync items wi
 
 ## Packages
 
-| Package                               | Description                                       |
-| ------------------------------------- | ------------------------------------------------- |
-| [`@mymehq/shared`](./packages/shared) | Wire types, Zod validation schemas, error codes   |
-| [`@mymehq/server`](./packages/server) | Hono HTTP server with SQLite and Postgres support |
-| [`@mymehq/sdk`](./packages/sdk)       | TypeScript HTTP client                            |
+| Package                               | Description                                                 |
+| ------------------------------------- | ----------------------------------------------------------- |
+| [`@mymehq/types`](./packages/types)   | Core type + edge JSON schemas; emits the runtime registries |
+| [`@mymehq/shared`](./packages/shared) | Wire types, Zod validation schemas, error codes             |
+| [`@mymehq/server`](./packages/server) | Hono HTTP server with SQLite and Postgres support           |
+| [`@mymehq/sdk`](./packages/sdk)       | TypeScript HTTP client                                      |
+
+`@mymehq/shared` and `@mymehq/sdk` publish to npm; `@mymehq/types` and `@mymehq/server` stay private.
 
 ## Quick start
 
@@ -26,7 +29,7 @@ cd packages/server
 pnpm dev    # http://localhost:8600
 ```
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full development guide.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full development guide and [CLAUDE.md](./CLAUDE.md) for architecture, conventions, and workflow rules.
 
 ## Docker
 
@@ -59,10 +62,6 @@ curl -X POST http://localhost:8600/items \
 
 # List items
 curl http://localhost:8600/items -H "Authorization: Bearer <your-key>"
-
-# Restart and verify persistence
-docker compose restart server
-curl http://localhost:8600/items -H "Authorization: Bearer <your-key>"
 ```
 
 ### Clean up
@@ -72,9 +71,12 @@ docker compose down      # Stop containers (data persists in volumes)
 docker compose down -v   # Stop and delete all data
 ```
 
-## Deployment
+## Documentation
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for production deployment to a server.
+- Architecture, conventions, and workflow rules: [`CLAUDE.md`](./CLAUDE.md)
+- Contributor guide: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
+- Production deployment: [`DEPLOYMENT.md`](./DEPLOYMENT.md)
+- Product docs and guides: <https://docs.myme.so>
 
 ## License
 
