@@ -45,3 +45,6 @@ data/
 # Deploy artifacts (generated on server, not in repo)
 version.json
 deploy.log
+.claude/settings.local.json
+.claude/plans/
+.claude/scheduled_tasks.lock
