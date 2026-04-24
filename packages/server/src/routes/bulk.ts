@@ -338,12 +338,26 @@ async function processBulkItem(
   const sourceId = raw.source_id;
 
   let existing: Item | null = null;
+  let matchedBy: "source_id" | "id" | null = null;
   if (stampedSource && sourceId) {
     existing = await storage.items.findBySourceId(
       stampedSource,
       sourceId,
       tenantId,
     );
+    if (existing) matchedBy = "source_id";
+  }
+  // Fall back to primary-id lookup when no (source, source_id) match was
+  // found AND the caller supplied an id. This is the path offline-first
+  // clients take: the Swift / TS SDKs assign UUIDs locally and expect
+  // `mode: upsert` to update by id when the row already exists
+  // server-side (e.g. migrating a local-mode Notes store that was
+  // partially synced earlier). Without this fallback the code below
+  // would fall through to `storage.items.create(...)`, which trips a
+  // unique-constraint violation and surfaces as an opaque 500.
+  if (!existing && raw.id !== undefined) {
+    existing = await storage.items.get(raw.id, tenantId);
+    if (existing) matchedBy = "id";
   }
 
   // create_only: existing match → skipped. No writes.
@@ -352,7 +366,7 @@ async function processBulkItem(
       index,
       outcome: "skipped",
       id: existing.id,
-      reason: "duplicate_source",
+      reason: matchedBy === "id" ? "duplicate_id" : "duplicate_source",
     };
   }
 

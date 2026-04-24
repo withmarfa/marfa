@@ -105,6 +105,113 @@ describe("POST /items/bulk", () => {
     expect(itemBody.item.properties.body).toBe("updated");
   });
 
+  it("upsert mode updates existing rows matched by id (no source_id)", async () => {
+    // Offline-first clients (Swift / TS SDKs) assign UUIDs locally and
+    // expect `mode: upsert` to update by primary id when a row already
+    // exists server-side — e.g. migrating a local-mode Notes store whose
+    // items were seeded earlier. Before this path existed, the second
+    // call fell through to `items.create` and tripped a unique-
+    // constraint violation (opaque 500).
+    const suffix = Math.random().toString(36).slice(2, 8);
+
+    const first = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.note",
+            properties: { body: "initial by id" },
+            // No source_id — exercises the id-only match path.
+          },
+        ],
+      },
+    });
+    const firstBody = (await first.json()) as {
+      results: { id: string }[];
+    };
+    const assignedId = firstBody.results[0]!.id;
+
+    const second = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            id: assignedId,
+            type: "core.note",
+            properties: { body: `updated by id ${suffix}` },
+          },
+        ],
+      },
+    });
+    expect(second.status).toBe(200);
+    const body = (await second.json()) as {
+      counts: { created: number; updated: number };
+      results: { outcome: string; id: string }[];
+    };
+    expect(body.counts.updated).toBe(1);
+    expect(body.counts.created).toBe(0);
+    expect(body.results[0]!.id).toBe(assignedId);
+
+    const getRes = await request(ctx.app, "GET", `/items/${assignedId}`, {
+      key: ctx.adminKey,
+    });
+    const itemBody = (await getRes.json()) as {
+      item: { properties: { body: string } };
+    };
+    expect(itemBody.item.properties.body).toBe(`updated by id ${suffix}`);
+  });
+
+  it("create_only mode skips existing rows matched by id with duplicate_id reason", async () => {
+    const first = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.note",
+            properties: { body: "seed" },
+          },
+        ],
+      },
+    });
+    const firstBody = (await first.json()) as {
+      results: { id: string }[];
+    };
+    const assignedId = firstBody.results[0]!.id;
+
+    const second = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            id: assignedId,
+            type: "core.note",
+            properties: { body: "should be skipped" },
+          },
+        ],
+        mode: "create_only",
+      },
+    });
+    expect(second.status).toBe(200);
+    const body = (await second.json()) as {
+      counts: { skipped: number; created: number; updated: number };
+      results: { outcome: string; id: string; reason?: string }[];
+    };
+    expect(body.counts.skipped).toBe(1);
+    expect(body.counts.created).toBe(0);
+    expect(body.counts.updated).toBe(0);
+    expect(body.results[0]!.outcome).toBe("skipped");
+    expect(body.results[0]!.id).toBe(assignedId);
+    expect(body.results[0]!.reason).toBe("duplicate_id");
+
+    const getRes = await request(ctx.app, "GET", `/items/${assignedId}`, {
+      key: ctx.adminKey,
+    });
+    const itemBody = (await getRes.json()) as {
+      item: { properties: { body: string } };
+    };
+    expect(itemBody.item.properties.body).toBe("seed");
+  });
+
   it("create_only mode skips matching rows without updating", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const sourceId = `createonly-${suffix}`;
