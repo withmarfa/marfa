@@ -618,6 +618,21 @@ export interface EdgeStore {
     }[],
   ): Promise<Set<string>>;
   /**
+   * Batched triple-to-Edge lookup. For each `(source_id, target_id, edge_type)`
+   * that matches an existing row, returns the full `Edge` keyed as
+   * `${source_id}|${target_id}|${edge_type}`. Triples with no match are
+   * absent. Used by `POST /edges/bulk` upsert to resolve duplicate edges to
+   * their ids for in-place property updates. One SQL query per distinct
+   * `edge_type`.
+   */
+  findByTriplesBatch(
+    pairs: {
+      source_id: string;
+      target_id: string;
+      edge_type: string;
+    }[],
+  ): Promise<Map<string, Edge>>;
+  /**
    * All outbound edges of a given type from sourceId. Used for cycle checks,
    * cascade-on-delete, and edge hydration when the caller wants every entry.
    */

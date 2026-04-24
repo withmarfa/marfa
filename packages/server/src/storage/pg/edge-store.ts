@@ -306,6 +306,48 @@ export class PgEdgeStore implements EdgeStore {
     return out;
   }
 
+  async findByTriplesBatch(
+    pairs: {
+      source_id: string;
+      target_id: string;
+      edge_type: string;
+    }[],
+  ): Promise<Map<string, Edge>> {
+    const out = new Map<string, Edge>();
+    if (pairs.length === 0) return out;
+    const byType = new Map<string, { s: string; t: string }[]>();
+    for (const p of pairs) {
+      const bucket = byType.get(p.edge_type) ?? [];
+      bucket.push({ s: p.source_id, t: p.target_id });
+      byType.set(p.edge_type, bucket);
+    }
+    for (const [edgeType, entries] of byType) {
+      const sourceIds = Array.from(new Set(entries.map((e) => e.s)));
+      const targetIds = Array.from(new Set(entries.map((e) => e.t)));
+      const wanted = new Set(entries.map((e) => `${e.s}|${e.t}`));
+      const rows = await this.db
+        .select()
+        .from(edges)
+        .where(
+          and(
+            eq(edges.edge_type, edgeType),
+            inArray(edges.source_id, sourceIds),
+            inArray(edges.target_id, targetIds),
+          ),
+        );
+      for (const row of rows) {
+        const key = `${row.source_id}|${row.target_id}`;
+        if (wanted.has(key)) {
+          out.set(
+            `${row.source_id}|${row.target_id}|${edgeType}`,
+            rowToEdge(row),
+          );
+        }
+      }
+    }
+    return out;
+  }
+
   async listOutboundOfType(
     sourceId: string,
     edgeType: string,

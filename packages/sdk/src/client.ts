@@ -225,6 +225,48 @@ export interface BulkResult {
   blobs_imported?: number;
 }
 
+/** One edge to create or upsert in a `POST /edges/bulk` call. */
+export interface BulkEdgeInputItem {
+  /** Optional server-id override. Server-generated UUIDv7 otherwise. */
+  id?: string;
+  source_id: string;
+  target_id: string;
+  edge_type: string;
+  properties?: Record<string, unknown>;
+}
+
+export interface BulkEdgeInput {
+  edges: BulkEdgeInputItem[];
+  /** Default: `"upsert"`. On duplicate `(source_id, target_id, edge_type)`:
+   *  `"upsert"` replaces properties in place; `"create_only"` skips with
+   *  reason `"duplicate_edge"`. */
+  mode?: BulkMode;
+  /** Default: `true`. When false, errors are collected per edge and the
+   *  batch continues past failures. */
+  atomic?: boolean;
+  /** Default: `false`. Per-edge `edge.created` / `edge.deleted` webhook
+   *  events are suppressed on bulk writes unless the caller opts in. */
+  emit_events?: boolean;
+}
+
+export interface BulkEdgeResultEntry {
+  index: number;
+  outcome: BulkOutcome;
+  id?: string;
+  reason?: string;
+  error?: { code: string; message: string };
+}
+
+export interface BulkEdgeResult {
+  counts: {
+    created: number;
+    updated: number;
+    skipped: number;
+    errored: number;
+  };
+  results: BulkEdgeResultEntry[];
+}
+
 /** Filter shape for `POST /items/bulk_action`. Mirrors the `GET /items`
  *  query grammar — every field is AND-composed, `filter` accepts the
  *  full filter-SQL DSL. */
@@ -711,6 +753,26 @@ export class MymeClient {
 
     delete: async (id: string): Promise<void> => {
       await this.transport.request<{ ok: true }>("DELETE", `/edges/${id}`);
+    },
+
+    /**
+     * Create or upsert many edges in one call (admin-only). Up to 5000
+     * edges per call.
+     *
+     * Modes: `"upsert"` (default) replaces properties on existing
+     * `(source_id, target_id, edge_type)` triples; `"create_only"` surfaces
+     * duplicates as `skipped` with reason `"duplicate_edge"`. `atomic: true`
+     * (default) rolls back the whole batch on any failure — per-edge errors
+     * for non-atomic mode land in each result entry.
+     *
+     * Sibling to `items.bulk` for the edges half of mode-transition
+     * migrations (where cross-item edges can't reliably ride along as
+     * inline-edge payloads on the item writes).
+     */
+    bulk: async (input: BulkEdgeInput): Promise<BulkEdgeResult> => {
+      return this.transport.request<BulkEdgeResult>("POST", "/edges/bulk", {
+        body: input,
+      });
     },
 
     /** Outbound edges — items where this id is source. Filter by edge type

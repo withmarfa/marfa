@@ -10,6 +10,7 @@ import type { BlobBackend } from "./storage/blob-backend.js";
 import { itemRoutes } from "./routes/items.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
+import { edgesBulkRoutes } from "./routes/edges-bulk.js";
 import { edgeTypeRoutes } from "./routes/edge-types.js";
 import { typeRoutes } from "./routes/types.js";
 import { searchRoutes } from "./routes/search.js";
@@ -132,6 +133,7 @@ export function createApp(
   app.route("/items", extensionRoutes(storage));
   app.route("/items", itemEdgeListingRoutes(storage));
   app.route("/edges", edgeRoutes(storage));
+  app.route("/edges", edgesBulkRoutes(storage));
   app.route("/edges", edgeTypeRoutes(storage));
   app.route("/types", typeRoutes(storage));
   app.route("/search", searchRoutes(storage));

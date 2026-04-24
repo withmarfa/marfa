@@ -17,6 +17,10 @@ export type {
   BulkActionFilter,
   BulkActionResult,
   BulkActionErrorEntry,
+  BulkEdgeInput,
+  BulkEdgeInputItem,
+  BulkEdgeResult,
+  BulkEdgeResultEntry,
 } from "./client.js";
 
 // Errors
