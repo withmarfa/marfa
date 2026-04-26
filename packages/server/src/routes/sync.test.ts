@@ -33,7 +33,12 @@ function makeFakeFetch(
 ): { fetch: typeof fetch; calls: CapturedRequest[] } {
   const calls: CapturedRequest[] = [];
   const fakeFetch: typeof fetch = (input, init) => {
-    const url = typeof input === "string" ? input : input.toString();
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
     calls.push({
       url,
       method: init?.method ?? "GET",

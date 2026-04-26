@@ -44,7 +44,7 @@ function mountWithIdempotency(
   app.use("*", idempotencyMiddleware(ctx.storage, { retentionHours: 24 }));
 
   // POST handler — JSON 201 by default, or whatever the test asks for.
-  app.post("/probe", async (c) => {
+  app.post("/probe", (c) => {
     options.handlerProbe.calls += 1;
     const status = options.handlerStatus ?? 201;
     if (options.handlerContentType === "text/event-stream") {
@@ -60,14 +60,14 @@ function mountWithIdempotency(
   });
 
   // DELETE handler — same probe pattern, returns 204 with no body.
-  app.delete("/probe/:id", async (c) => {
+  app.delete("/probe/:id", (c) => {
     options.handlerProbe.calls += 1;
     return c.json({ ok: true, deleted: c.req.param("id") }, 200);
   });
 
   // GET handler — should NEVER hit idempotency caching even if the
   // header is present.
-  app.get("/probe", async (c) => {
+  app.get("/probe", (c) => {
     options.handlerProbe.calls += 1;
     return c.json({ ok: true });
   });

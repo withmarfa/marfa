@@ -63,7 +63,7 @@ function BlobOfflineToast() {
   if (!latest || latest.id === dismissed) return null;
   if (latest.kind !== "createItem") return null;
   return (
-    <div className="toast" onClick={() => setDismissed(latest.id)}>
+    <div className="toast" onClick={() => { setDismissed(latest.id); }}>
       Local change rejected ({latest.error.code}). Click to dismiss.
     </div>
   );
@@ -86,14 +86,14 @@ function NoteList() {
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <input
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => { setDraft(e.target.value); }}
           placeholder="New note…"
           style={{ flex: 1, padding: 8 }}
         />
         <button
           disabled={!draft || isPending}
           onClick={() => {
-            void mutate(draft).then(() => setDraft(""));
+            void mutate(draft).then(() => { setDraft(""); });
           }}
         >
           Add

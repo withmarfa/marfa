@@ -266,7 +266,7 @@ export class MymeSyncClient {
   }
 
   /** AsyncIterable of sync events. Late subscribers do not see history. */
-  events(): AsyncIterableIterator<SyncEventEnvelope<SyncEventName>> {
+  events(): AsyncIterableIterator<SyncEventEnvelope> {
     return this.emitter.events();
   }
 

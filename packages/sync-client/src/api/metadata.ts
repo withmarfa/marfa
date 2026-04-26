@@ -142,8 +142,9 @@ export class MetadataApi {
 
   async deleteExtension(itemId: string, namespace: string): Promise<void> {
     const existing = await this.get(itemId);
-    const nextExt = { ...existing.extensions };
-    delete nextExt[namespace];
+    const nextExt = Object.fromEntries(
+      Object.entries(existing.extensions).filter(([k]) => k !== namespace),
+    );
     await this.options.pg.query(
       `INSERT INTO metadata (item_id, tags, extensions)
        VALUES ($1, '[]', $2)

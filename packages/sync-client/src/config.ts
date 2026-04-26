@@ -94,11 +94,15 @@ export interface SyncLogger {
   error(message: string, fields?: Record<string, unknown>): void;
 }
 
+// Each method is intentionally a no-op; the package-level logger is
+// opt-in and the noop fallback should be allocation-free.
+/* eslint-disable @typescript-eslint/no-empty-function */
 export const noopLogger: SyncLogger = {
   debug() {},
   info() {},
   warn() {},
   error() {},
 };
+/* eslint-enable @typescript-eslint/no-empty-function */
 
 export const DEFAULT_SOURCE = "@mymehq/sync-client";

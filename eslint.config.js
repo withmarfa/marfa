@@ -60,6 +60,12 @@ export default [
       "**/node_modules/",
       "**/seed/",
       "packages/*/scripts/*.mjs",
+      // Reference example apps depend on host packages (electron,
+      // react-dom) that aren't installed in CI's lint environment —
+      // typed lint sees them as `any`, so every import looks unsafe.
+      // The TS project itself covers correctness when run with deps
+      // locally; lint sees nothing useful here.
+      "packages/*/examples/**",
     ],
   },
 ];

@@ -14,7 +14,7 @@ type Listener<K extends SyncEventName> = (payload: SyncEventMap[K]) => void;
 export class SyncEventEmitter {
   private listeners = new Map<SyncEventName, Set<Listener<SyncEventName>>>();
   private streamSinks = new Set<
-    (envelope: SyncEventEnvelope<SyncEventName>) => void
+    (envelope: SyncEventEnvelope) => void
   >();
 
   on<K extends SyncEventName>(event: K, listener: Listener<K>): () => void {
@@ -24,8 +24,9 @@ export class SyncEventEmitter {
       this.listeners.set(event, set);
     }
     set.add(listener as Listener<SyncEventName>);
+    const captured = set;
     return () => {
-      set?.delete(listener as Listener<SyncEventName>);
+      captured.delete(listener as Listener<SyncEventName>);
     };
   }
 
@@ -45,7 +46,7 @@ export class SyncEventEmitter {
     const envelope: SyncEventEnvelope<K> = { type: event, payload };
     for (const sink of this.streamSinks) {
       try {
-        sink(envelope as SyncEventEnvelope<SyncEventName>);
+        sink(envelope as SyncEventEnvelope);
       } catch {
         // ditto
       }
@@ -57,12 +58,12 @@ export class SyncEventEmitter {
    * after subscription — late subscribers do not see history. Mirrors
    * the Swift SDK's `events: AsyncStream<SyncEvent>` shape.
    */
-  events(): AsyncIterableIterator<SyncEventEnvelope<SyncEventName>> {
-    const queue: SyncEventEnvelope<SyncEventName>[] = [];
-    let resolveNext: ((value: SyncEventEnvelope<SyncEventName>) => void) | null =
+  events(): AsyncIterableIterator<SyncEventEnvelope> {
+    const queue: SyncEventEnvelope[] = [];
+    let resolveNext: ((value: SyncEventEnvelope) => void) | null =
       null;
 
-    const sink = (env: SyncEventEnvelope<SyncEventName>) => {
+    const sink = (env: SyncEventEnvelope) => {
       if (resolveNext) {
         const r = resolveNext;
         resolveNext = null;
@@ -73,7 +74,7 @@ export class SyncEventEmitter {
     };
     this.streamSinks.add(sink);
 
-    const iterator: AsyncIterableIterator<SyncEventEnvelope<SyncEventName>> = {
+    const iterator: AsyncIterableIterator<SyncEventEnvelope> = {
       next: () => {
         if (queue.length > 0) {
           const env = queue.shift();
@@ -89,9 +90,11 @@ export class SyncEventEmitter {
         this.streamSinks.delete(sink);
         return Promise.resolve({ value: undefined, done: true });
       },
-      throw: (err) => {
+      throw: (err: unknown) => {
         this.streamSinks.delete(sink);
-        return Promise.reject(err);
+        return Promise.reject(
+          err instanceof Error ? err : new Error(String(err)),
+        );
       },
       [Symbol.asyncIterator]() {
         return this;

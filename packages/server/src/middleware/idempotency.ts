@@ -119,7 +119,11 @@ export function idempotencyMiddleware(
     // Cache miss. Let the route handler run.
     await next();
 
+    // Hono guarantees `c.res` is a Response after `next()` resolves
+    // for any non-throwing handler; the explicit guard is belt-and-
+    // braces.
     const response = c.res;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (!response) return;
     const status = response.status;
 

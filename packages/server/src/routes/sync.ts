@@ -201,11 +201,12 @@ export function buildShapeFilter(
         });
         conditions.push(`edge_type IN (${edgeParams.join(", ")})`);
       }
-    } else if (family === "metadata") {
-      // metadata has no `type` or `state` columns. Filter via subquery
-      // on items.id. Electric's WHERE supports subqueries (experimental
-      // as of Electric 1.5.x — see Sources in the build plan). If that
-      // proves unstable, revert to admin-only metadata replication.
+    } else {
+      // family === "metadata" — metadata has no `type` or `state`
+      // columns. Filter via subquery on items.id. Electric's WHERE
+      // supports subqueries (experimental as of Electric 1.5.x — see
+      // Sources in the build plan). If that proves unstable, revert
+      // to admin-only metadata replication.
       const allowed = expandReadableTypes(apiKey);
       if (allowed.length === 0) return EMPTY_FILTER;
       const typeParams = allowed.map((t) => {
@@ -278,13 +279,13 @@ export function expandReadableEdgeTypes(apiKey: ApiKey): string[] | null {
   }
 
   const out: string[] = [];
-  for (const [edgeType, level] of Object.entries(perms)) {
+  for (const edgeType of Object.keys(perms)) {
     if (edgeType === "*") continue;
-    if (level === "read" || level === "write") {
-      // Defensive: only include types that exist in the registry.
-      if (EDGE_TYPE_REGISTRY.has(edgeType)) {
-        out.push(edgeType);
-      }
+    // Defensive: only include types that exist in the registry. The
+    // `level` value is always read or write at this point — we already
+    // resolved `none` upstream — so we only need to check membership.
+    if (EDGE_TYPE_REGISTRY.has(edgeType)) {
+      out.push(edgeType);
     }
   }
   return out;

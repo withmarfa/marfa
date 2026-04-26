@@ -9,7 +9,7 @@ import { useMymeSyncClient } from "./provider.js";
  */
 export function useSyncState(): SyncStateInfo {
   const client = useMymeSyncClient();
-  const [info, setInfo] = useState<SyncStateInfo>(client.syncState);
+  const [info, setInfo] = useState(client.syncState);
   useEffect(() => {
     return client.observeSyncState((next) => {
       setInfo(next);

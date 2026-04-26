@@ -61,11 +61,13 @@ export function useEdges(filters: UseEdgesFilters = {}): UseEdgesResult {
           `SELECT id FROM edges LIMIT 1`,
           [],
           () => {
-            void refetch();
+            refetch().catch(() => {
+              // surfaced via setError above
+            });
           },
         );
         unsubscribe = () => {
-          liveQuery.unsubscribe();
+          void liveQuery.unsubscribe();
         };
       } catch (err) {
         if (!cancelled) {

@@ -39,7 +39,7 @@ export function useItems(
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
 
-    const run = async () => {
+    const run = async (): Promise<void> => {
       try {
         const refetch = async () => {
           const list = await client.items.list({ ...filters, type });
@@ -60,11 +60,14 @@ export function useItems(
           `SELECT id FROM items LIMIT 1`,
           [],
           () => {
-            void refetch();
+            refetch().catch(() => {
+              // refetch errors are surfaced via setError above; here we
+              // just need to satisfy no-floating-promises.
+            });
           },
         );
         unsubscribe = () => {
-          liveQuery.unsubscribe();
+          void liveQuery.unsubscribe();
         };
       } catch (err) {
         if (!cancelled) {
@@ -106,7 +109,7 @@ export function useItem(id: string | undefined): UseItemResult {
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
 
-    const run = async () => {
+    const run = async (): Promise<void> => {
       try {
         const refetch = async () => {
           const item = await client.items.get(id);
@@ -121,11 +124,14 @@ export function useItem(id: string | undefined): UseItemResult {
           `SELECT id FROM items WHERE id = $1`,
           [id],
           () => {
-            void refetch();
+            refetch().catch(() => {
+              // refetch errors are surfaced via setError above; here we
+              // just need to satisfy no-floating-promises.
+            });
           },
         );
         unsubscribe = () => {
-          liveQuery.unsubscribe();
+          void liveQuery.unsubscribe();
         };
       } catch (err) {
         if (!cancelled) {

@@ -12,21 +12,7 @@
 
 import type { MymeClient } from "@mymehq/sdk";
 import type { MutationQueue, QueueRow } from "./queue.js";
-import type {
-  MutationPayload,
-  CreateItemPayload,
-  UpdateItemPayload,
-  IdPayload,
-  TransitionItemPayload,
-  CreateEdgePayload,
-  UpdateEdgePayload,
-  SetMetadataPayload,
-  MergeMetadataPayload,
-  TagPayload,
-  RemoveTagPayload,
-  SetExtensionPayload,
-  DeleteExtensionPayload,
-} from "./mutations.js";
+import type { MutationPayload } from "./mutations.js";
 import type { SyncEventEmitter } from "../events/emitter.js";
 import type { SyncLogger } from "../config.js";
 import { nextReconnectDelay } from "../sync/reconnect.js";
@@ -206,12 +192,12 @@ export class DrainLoop {
     const sdk = this.options.sdk;
     switch (mutation.kind) {
       case "createItem": {
-        const p = mutation.payload as CreateItemPayload;
+        const p = mutation.payload;
         await sdk.items.create(p.input);
         return;
       }
       case "updateItem": {
-        const p = mutation.payload as UpdateItemPayload;
+        const p = mutation.payload;
         await sdk.items.update(p.id, p.properties, {
           expectedVersion: p.expectedVersion,
           library: p.library,
@@ -220,67 +206,67 @@ export class DrainLoop {
         return;
       }
       case "deleteItem": {
-        const p = mutation.payload as IdPayload;
+        const p = mutation.payload;
         await sdk.items.delete(p.id);
         return;
       }
       case "restoreItem": {
-        const p = mutation.payload as IdPayload;
+        const p = mutation.payload;
         await sdk.items.restore(p.id);
         return;
       }
       case "transitionItem": {
-        const p = mutation.payload as TransitionItemPayload;
+        const p = mutation.payload;
         await sdk.items.transition(p.id, p.state);
         return;
       }
       case "purgeItem": {
-        const p = mutation.payload as IdPayload;
+        const p = mutation.payload;
         await sdk.items.purge(p.id);
         return;
       }
       case "createEdge": {
-        const p = mutation.payload as CreateEdgePayload;
+        const p = mutation.payload;
         await sdk.edges.create(p.input);
         return;
       }
       case "updateEdge": {
-        const p = mutation.payload as UpdateEdgePayload;
+        const p = mutation.payload;
         await sdk.edges.update(p.id, p.properties);
         return;
       }
       case "deleteEdge": {
-        const p = mutation.payload as IdPayload;
+        const p = mutation.payload;
         await sdk.edges.delete(p.id);
         return;
       }
       case "setMetadata": {
-        const p = mutation.payload as SetMetadataPayload;
+        const p = mutation.payload;
         await sdk.metadata.set(p.itemId, { tags: p.tags });
         return;
       }
       case "mergeMetadata": {
-        const p = mutation.payload as MergeMetadataPayload;
+        const p = mutation.payload;
         await sdk.metadata.merge(p.itemId, { tags: p.tags });
         return;
       }
       case "addTags": {
-        const p = mutation.payload as TagPayload;
+        const p = mutation.payload;
         await sdk.metadata.addTags(p.itemId, p.tags);
         return;
       }
       case "removeTag": {
-        const p = mutation.payload as RemoveTagPayload;
+        const p = mutation.payload;
         await sdk.metadata.removeTag(p.itemId, p.tag);
         return;
       }
       case "setExtension": {
-        const p = mutation.payload as SetExtensionPayload;
+        const p = mutation.payload;
         await sdk.metadata.setExtension(p.itemId, p.namespace, p.data);
         return;
       }
       case "deleteExtension": {
-        const p = mutation.payload as DeleteExtensionPayload;
+        const p = mutation.payload;
         await sdk.metadata.deleteExtension(p.itemId, p.namespace);
         return;
       }
