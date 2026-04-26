@@ -561,16 +561,21 @@ export class PgItemStore implements ItemStore {
     if (tenantId) conditions.push(eq(items.tenant_id, tenantId));
     const scopedWhere = and(...conditions);
 
-    const scopedIds = (
-      await this.db.select({ id: items.id }).from(items).where(scopedWhere)
-    ).map((row) => row.id);
-    if (scopedIds.length === 0) return 0;
+    return await this.db.transaction(async (tx) => {
+      const scopedIds = (
+        await tx.select({ id: items.id }).from(items).where(scopedWhere)
+      ).map((row) => row.id);
+      if (scopedIds.length === 0) return 0;
 
-    for (const id of scopedIds) {
-      await this.searchStore.remove(id);
-    }
-    await this.db.delete(items).where(inArray(items.id, scopedIds));
-    return scopedIds.length;
+      // No-op on Postgres (tsvector is computed at query time), but kept
+      // to mirror the SQLite path and stay correct if the search store
+      // ever materialises rows.
+      for (const id of scopedIds) {
+        await this.searchStore.remove(id);
+      }
+      await tx.delete(items).where(inArray(items.id, scopedIds));
+      return scopedIds.length;
+    });
   }
 
   async purgeTrashedOlderThan(
@@ -586,18 +591,18 @@ export class PgItemStore implements ItemStore {
     }
     const where = and(...baseConditions);
 
-    const idRows = await this.db
-      .select({ id: items.id })
-      .from(items)
-      .where(where);
-    if (idRows.length === 0) return 0;
+    return await this.db.transaction(async (tx) => {
+      const idRows = await tx.select({ id: items.id }).from(items).where(where);
+      if (idRows.length === 0) return 0;
 
-    const ids = idRows.map((row) => row.id);
-    for (const id of ids) {
-      await this.searchStore.remove(id);
-    }
-    await this.db.delete(items).where(inArray(items.id, ids));
-    return ids.length;
+      const ids = idRows.map((row) => row.id);
+      // No-op on Postgres — see bulkPurge.
+      for (const id of ids) {
+        await this.searchStore.remove(id);
+      }
+      await tx.delete(items).where(inArray(items.id, ids));
+      return ids.length;
+    });
   }
 
   async expireAmbientOlderThan(
@@ -613,18 +618,18 @@ export class PgItemStore implements ItemStore {
     }
     const where = and(...baseConditions);
 
-    const idRows = await this.db
-      .select({ id: items.id })
-      .from(items)
-      .where(where);
-    if (idRows.length === 0) return 0;
+    return await this.db.transaction(async (tx) => {
+      const idRows = await tx.select({ id: items.id }).from(items).where(where);
+      if (idRows.length === 0) return 0;
 
-    const ids = idRows.map((row) => row.id);
-    for (const id of ids) {
-      await this.searchStore.remove(id);
-    }
-    await this.db.delete(items).where(inArray(items.id, ids));
-    return ids.length;
+      const ids = idRows.map((row) => row.id);
+      // No-op on Postgres — see bulkPurge.
+      for (const id of ids) {
+        await this.searchStore.remove(id);
+      }
+      await tx.delete(items).where(inArray(items.id, ids));
+      return ids.length;
+    });
   }
 
   async restore(id: string, tenantId?: string): Promise<Item> {

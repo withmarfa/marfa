@@ -563,16 +563,22 @@ export class SqliteItemStore implements ItemStore {
     if (tenantId) conditions.push(eq(items.tenant_id, tenantId));
     const scopedWhere = and(...conditions);
 
-    const scopedIds = (
-      await this.db.select({ id: items.id }).from(items).where(scopedWhere)
-    ).map((row) => row.id);
-    if (scopedIds.length === 0) return 0;
+    const purgeFn = this.raw.transaction(() => {
+      const scopedIds = this.db
+        .select({ id: items.id })
+        .from(items)
+        .where(scopedWhere)
+        .all()
+        .map((row) => row.id);
+      if (scopedIds.length === 0) return 0;
 
-    for (const id of scopedIds) {
-      this.searchStore.removeSync(id);
-    }
-    this.db.delete(items).where(inArray(items.id, scopedIds)).run();
-    return scopedIds.length;
+      for (const id of scopedIds) {
+        this.searchStore.removeSync(id);
+      }
+      this.db.delete(items).where(inArray(items.id, scopedIds)).run();
+      return scopedIds.length;
+    });
+    return purgeFn();
   }
 
   async purgeTrashedOlderThan(
@@ -588,18 +594,22 @@ export class SqliteItemStore implements ItemStore {
     }
     const where = and(...baseConditions);
 
-    const idRows = await this.db
-      .select({ id: items.id })
-      .from(items)
-      .where(where);
-    if (idRows.length === 0) return 0;
+    const purgeFn = this.raw.transaction(() => {
+      const idRows = this.db
+        .select({ id: items.id })
+        .from(items)
+        .where(where)
+        .all();
+      if (idRows.length === 0) return 0;
 
-    const ids = idRows.map((row) => row.id);
-    for (const id of ids) {
-      this.searchStore.removeSync(id);
-    }
-    this.db.delete(items).where(inArray(items.id, ids)).run();
-    return ids.length;
+      const ids = idRows.map((row) => row.id);
+      for (const id of ids) {
+        this.searchStore.removeSync(id);
+      }
+      this.db.delete(items).where(inArray(items.id, ids)).run();
+      return ids.length;
+    });
+    return purgeFn();
   }
 
   async expireAmbientOlderThan(
@@ -615,18 +625,22 @@ export class SqliteItemStore implements ItemStore {
     }
     const where = and(...baseConditions);
 
-    const idRows = await this.db
-      .select({ id: items.id })
-      .from(items)
-      .where(where);
-    if (idRows.length === 0) return 0;
+    const expireFn = this.raw.transaction(() => {
+      const idRows = this.db
+        .select({ id: items.id })
+        .from(items)
+        .where(where)
+        .all();
+      if (idRows.length === 0) return 0;
 
-    const ids = idRows.map((row) => row.id);
-    for (const id of ids) {
-      this.searchStore.removeSync(id);
-    }
-    this.db.delete(items).where(inArray(items.id, ids)).run();
-    return ids.length;
+      const ids = idRows.map((row) => row.id);
+      for (const id of ids) {
+        this.searchStore.removeSync(id);
+      }
+      this.db.delete(items).where(inArray(items.id, ids)).run();
+      return ids.length;
+    });
+    return expireFn();
   }
 
   async restore(id: string, tenantId?: string): Promise<Item> {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseFilter } from "./query-parser.js";
 import type { FilterExpression } from "./query-parser.js";
+import { ErrorCode, MymeError } from "./errors.js";
 
 describe("parseFilter", () => {
   // ---------------------------------------------------------------------------
@@ -478,6 +479,58 @@ describe("parseFilter", () => {
       );
       const result = parseFilter(conditions.join(" AND "));
       expect(result.conditions).toHaveLength(10);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Adversarial input — defense-in-depth tripwires. None of these are known
+  // bugs; the assertions lock in the current parser contract so that a future
+  // change weakening the parsers fails loudly. Assertions target the stable
+  // MymeError.code, never message text.
+  // ---------------------------------------------------------------------------
+
+  describe("adversarial input", () => {
+    function expectValidationError(input: string): void {
+      let caught: unknown;
+      try {
+        parseFilter(input);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(MymeError);
+      expect((caught as MymeError).code).toBe(ErrorCode.VALIDATION_ERROR);
+    }
+
+    it("rejects unterminated string literal with VALIDATION_ERROR", () => {
+      expectValidationError('properties.foo eq "unterminated');
+    });
+
+    it("rejects malformed edge bracket — empty type", () => {
+      expectValidationError("edge[]=foo");
+    });
+
+    it("rejects malformed edge bracket — missing closing bracket", () => {
+      expectValidationError("edge[parent-of=");
+    });
+
+    it("rejects malformed backref bracket — missing closing bracket", () => {
+      expectValidationError("backref[in-thread");
+    });
+
+    it("rejects parenthesised expression (parens are not part of the grammar)", () => {
+      expectValidationError('(state eq "active")');
+    });
+
+    it("rejects two-level nested parens", () => {
+      expectValidationError('((state eq "active"))');
+    });
+
+    it("rejects three-level nested parens", () => {
+      expectValidationError('(((state eq "active")))');
+    });
+
+    it("rejects four-level nested parens", () => {
+      expectValidationError('((((state eq "active"))))');
     });
   });
 
