@@ -1,13 +1,14 @@
 # Myme
 
-Typed data layer. This monorepo contains four active workspace packages:
+Typed data layer. This monorepo contains five active workspace packages:
 
 - **@mymehq/types** — JSON schemas for the core type set plus the validate/generate scripts that emit the TypeScript registries (`ALL_TYPES`, `ALL_EDGE_TYPES`). Consumed by `@mymehq/shared`; private (bundled into shared's dist, not published to npm)
 - **@mymehq/shared** — Wire types, Zod validation schemas, error codes, type registry consumer, ID utilities. The foundation imported by both server and SDK
 - **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published)
 - **@mymehq/sdk** — TypeScript HTTP client for consuming the Myme API
+- **@mymehq/sync-client** — Local-first reactive client for JavaScript apps (Electron, browser). PGlite + ElectricSQL + a durable mutation queue. Public; React bindings under `@mymehq/sync-client/react`
 
-`@mymehq/shared` and `@mymehq/sdk` publish to npm under the `@mymehq` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes.
+`@mymehq/shared`, `@mymehq/sdk`, and `@mymehq/sync-client` publish to npm under the `@mymehq` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes.
 
 ## Tech stack
 
