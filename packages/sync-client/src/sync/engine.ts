@@ -88,7 +88,7 @@ export class SyncEngine {
       key: "myme.all",
       shapes,
       onInitialSync: () => {
-        this.options.logger.info("sync-engine initial snapshot applied");
+        this.options.logger.debug("sync-engine initial snapshot applied");
         this.transition({
           ...this.state,
           state: "idle",

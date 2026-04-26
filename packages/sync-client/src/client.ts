@@ -80,7 +80,10 @@ export class MymeSyncClient {
    */
   async start(): Promise<void> {
     if (this.started) return;
-    this.logger.info("sync-client starting", { source: this.source });
+    // Lifecycle telemetry — debug-level so consumers wiring a logger
+    // that maps levels to console don't see boot noise unless they
+    // opt in. `info` is reserved for events worth surfacing to humans.
+    this.logger.debug("sync-client starting", { source: this.source });
 
     this.pg = await createPGlite(this.options.storage ?? "memory");
     this.transition({
@@ -185,7 +188,7 @@ export class MymeSyncClient {
    */
   async stop(): Promise<void> {
     if (!this.started) return;
-    this.logger.info("sync-client stopping");
+    this.logger.debug("sync-client stopping");
     this.engine?.stop();
     this.engine = null;
     this.drain?.stop();
