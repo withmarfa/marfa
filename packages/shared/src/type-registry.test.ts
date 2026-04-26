@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   TYPE_REGISTRY,
   getTypeSchema,
   getResolvedFields,
   isSubtypeOf,
+  registerTypeSchema,
+  unregisterTypeSchema,
   validateProperties,
   validateTransition,
   validateTypeSchema,
@@ -416,6 +418,83 @@ describe("validateTypeSchema — inheritance rule", () => {
       },
     });
     expect(result.success).toBe(true);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Adversarial input — a cyclical parent chain. Real TYPE_REGISTRY entries are
+// generated from JSON and cannot cycle, but a future runtime registration path
+// could in theory plant one. validateTypeSchema's parent-chain walk has a
+// `seen` guard (type-registry.ts) that keeps it finite — these tests lock that
+// behaviour in. Assertions target the stable error code, never message text.
+// -----------------------------------------------------------------------------
+describe("validateTypeSchema — circular inheritance", () => {
+  beforeEach(() => {
+    registerTypeSchema({
+      id: "cycle.a",
+      parent: "cycle.b",
+      version: 1,
+      fields: { afield: { type: "string", description: "A field" } },
+    });
+    registerTypeSchema({
+      id: "cycle.b",
+      parent: "cycle.a",
+      version: 1,
+      fields: { bfield: { type: "string", description: "B field" } },
+    });
+  });
+
+  afterEach(() => {
+    unregisterTypeSchema("cycle.a");
+    unregisterTypeSchema("cycle.b");
+  });
+
+  it("terminates on a cyclical parent chain — no infinite loop", () => {
+    // Validating a child of cycle.a means walking cycle.a → cycle.b → cycle.a.
+    // The `seen` guard breaks the loop. Reaching this assertion at all proves
+    // the guard fired; with no field collisions the validation succeeds.
+    const result = validateTypeSchema({
+      id: "test.cycle_descendant",
+      parent: "cycle.a",
+      version: 1,
+      fields: { newfield: { type: "string", description: "new" } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("still surfaces inheritance violations from the immediate parent in a cycle", () => {
+    // afield is declared on cycle.a. A child of cycle.a redeclaring it must
+    // be caught — even though the walker enters a cycle.
+    const result = validateTypeSchema({
+      id: "test.cycle_redeclare_a",
+      parent: "cycle.a",
+      version: 1,
+      fields: { afield: { type: "string", description: "override" } },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some((e) => e.code === "inheritance_violation"),
+      ).toBe(true);
+    }
+  });
+
+  it("still surfaces inheritance violations from across the cycle", () => {
+    // bfield is declared on cycle.b, reachable from cycle.a only via the
+    // cyclical edge. The walker must traverse it before the `seen` guard
+    // breaks; otherwise this redeclaration would slip through.
+    const result = validateTypeSchema({
+      id: "test.cycle_redeclare_b",
+      parent: "cycle.a",
+      version: 1,
+      fields: { bfield: { type: "string", description: "override" } },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.errors.some((e) => e.code === "inheritance_violation"),
+      ).toBe(true);
+    }
   });
 });
 

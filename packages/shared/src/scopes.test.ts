@@ -44,6 +44,49 @@ describe("parseScope", () => {
   });
 });
 
+// -----------------------------------------------------------------------------
+// Adversarial input — defense-in-depth tripwires. parseScope's contract is
+// "returns null on invalid input"; these lock that down for shapes a future
+// regex relaxation might accidentally accept.
+// -----------------------------------------------------------------------------
+describe("parseScope — adversarial input", () => {
+  it("rejects empty type pattern", () => {
+    expect(parseScope(":read")).toBeNull();
+  });
+
+  it("rejects empty operation", () => {
+    expect(parseScope("core.note:")).toBeNull();
+  });
+
+  it("rejects double colon", () => {
+    expect(parseScope("core.note::read")).toBeNull();
+  });
+
+  it("rejects leading whitespace", () => {
+    expect(parseScope(" core.note:read")).toBeNull();
+  });
+
+  it("rejects whitespace before colon", () => {
+    expect(parseScope("core.note :read")).toBeNull();
+  });
+
+  it("rejects whitespace after colon", () => {
+    expect(parseScope("core.note: read")).toBeNull();
+  });
+
+  it("rejects unknown verb 'execute'", () => {
+    expect(parseScope("core.note:execute")).toBeNull();
+  });
+
+  it("rejects unknown verb 'delete'", () => {
+    expect(parseScope("core.note:delete")).toBeNull();
+  });
+
+  it("rejects unknown verb 'admin'", () => {
+    expect(parseScope("core.note:admin")).toBeNull();
+  });
+});
+
 describe("isValidScope", () => {
   it("accepts valid scopes", () => {
     expect(isValidScope("core.note:read")).toBe(true);
