@@ -22,12 +22,14 @@ import { adminArchiveRoutes } from "./routes/admin-archive.js";
 import { authRoutes } from "./routes/oauth.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
+import { syncRoutes } from "./routes/sync.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
 import { tenantRoutes } from "./routes/tenants.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
+import { idempotencyMiddleware } from "./middleware/idempotency.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { healthRoutes } from "./routes/health.js";
 export function createApp(
@@ -99,6 +101,9 @@ export function createApp(
   if (config.authMode === "hosted") {
     features.push("users");
   }
+  if (config.electricUrl) {
+    features.push("sync");
+  }
   app.get("/", (c) =>
     c.json({
       name: "myme",
@@ -127,6 +132,17 @@ export function createApp(
     );
   }
 
+  // Idempotency-Key middleware. Opt-in via the `Idempotency-Key` header.
+  // Sits after auth + rate limiting so it scopes cache entries to a
+  // specific api_key_id. Sync-client write queue uses this to make
+  // mutation replays safe across network partitions.
+  app.use(
+    "*",
+    idempotencyMiddleware(storage, {
+      retentionHours: config.idempotencyRetentionHours,
+    }),
+  );
+
   // Protected routes
   app.route("/items", itemRoutes(storage));
   app.route("/items", bulkRoutes(storage));
@@ -148,6 +164,12 @@ export function createApp(
     app.route("/auth", userAuthRoutes(storage, config.apiKeySalt));
   }
   app.route("/events", eventRoutes(storage));
+  // Mount the sync proxy only when an upstream Electric URL is
+  // configured. Fresh / HTTP-only deployments keep the route absent
+  // rather than 502-ing on every shape request.
+  if (config.electricUrl) {
+    app.route("/sync", syncRoutes({ electricUrl: config.electricUrl }));
+  }
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));

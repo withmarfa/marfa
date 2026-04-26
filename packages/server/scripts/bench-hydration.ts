@@ -47,6 +47,9 @@ async function main(): Promise<void> {
     ambientRetentionDays: 0,
     ambientExpiryIntervalMs: 86_400_000,
     errorWebhookUrl: "",
+    electricUrl: "",
+    idempotencyRetentionHours: 24,
+    idempotencyCleanupIntervalMs: 3_600_000,
     trustedProxyCidrs: [],
   });
   const raw = "myme_k1_bench";

@@ -49,6 +49,20 @@ export interface AppConfig {
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
   trustedProxyCidrs: CidrRange[];
+  /**
+   * Base URL of the ElectricSQL service this Myme instance proxies to
+   * for `/sync/shapes/:family`. Empty string disables the route — fresh
+   * deployments without Electric stay on the HTTP-only path.
+   *
+   * Per the deployment plan: `:8602` (active) points at `http://localhost:8603`,
+   * `:8601` (mock) points at `http://localhost:8604`.
+   */
+  electricUrl: string;
+  /** Hours an `Idempotency-Key` cache entry survives before the cleanup
+   *  job purges it. Default 24h. */
+  idempotencyRetentionHours: number;
+  /** Idempotency cache cleanup interval in ms. Default 1h. */
+  idempotencyCleanupIntervalMs: number;
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -144,5 +158,10 @@ export function loadConfig(): AppConfig {
     // Parse + validate at startup. Malformed CIDRs throw — we want bad
     // config to surface immediately, not silently degrade.
     trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),
+    electricUrl: process.env.ELECTRIC_URL ?? "",
+    idempotencyRetentionHours:
+      Number(process.env.IDEMPOTENCY_RETENTION_HOURS) || 24,
+    idempotencyCleanupIntervalMs:
+      Number(process.env.IDEMPOTENCY_CLEANUP_INTERVAL_MS) || 3_600_000,
   };
 }

@@ -77,6 +77,9 @@ describe("bootstrap mode", () => {
       ambientRetentionDays: 0,
       ambientExpiryIntervalMs: 86_400_000,
       errorWebhookUrl: "",
+      electricUrl: "",
+      idempotencyRetentionHours: 24,
+      idempotencyCleanupIntervalMs: 3_600_000,
       trustedProxyCidrs: [],
     });
 

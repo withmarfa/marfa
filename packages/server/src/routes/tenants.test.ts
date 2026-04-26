@@ -82,6 +82,9 @@ async function createHostedContext(): Promise<HostedContext> {
     ambientRetentionDays: 0,
     ambientExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
+    electricUrl: "",
+    idempotencyRetentionHours: 24,
+    idempotencyCleanupIntervalMs: 3_600_000,
     trustedProxyCidrs: [],
   });
 

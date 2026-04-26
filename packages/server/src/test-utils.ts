@@ -83,6 +83,9 @@ export async function createTestContext(
     ambientExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
+    electricUrl: "",
+    idempotencyRetentionHours: 24,
+    idempotencyCleanupIntervalMs: 3_600_000,
     ...overrides,
   };
   const app = createApp(storage, blobBackend, config);
