@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.myme.electric.mock — ElectricSQL replication service for myme_mock Postgres.
+  Exposes the Shape API on :8604. Used by mock-myme conformance and
+  sync-client integration tests.
+
+  TEMPLATE — replace REPLACE_WITH_DB_PASS before installing on Atlas.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.myme.electric.mock</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/docker</string>
+    <string>run</string>
+    <string>--rm</string>
+    <string>--name</string>
+    <string>myme-electric-mock</string>
+    <string>-p</string>
+    <string>8604:3000</string>
+    <string>-e</string>
+    <string>DATABASE_URL=postgres://myme:REPLACE_WITH_DB_PASS@host.docker.internal:5432/myme_mock?sslmode=disable</string>
+    <string>-e</string>
+    <string>ELECTRIC_INSECURE=true</string>
+    <string>-e</string>
+    <string>ELECTRIC_SERVICE_NAME=myme-mock</string>
+    <string>electricsql/electric:1.5.1</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/myme-electric-mock.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/myme-electric-mock.err</string>
+</dict>
+</plist>

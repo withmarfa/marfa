@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.myme.electric.v0 — ElectricSQL replication service for myme_v0 Postgres.
+  Exposes the Shape API on :8603. The Myme server's /sync/shapes/:family
+  proxy forwards permission-filtered requests here.
+
+  TEMPLATE — replace REPLACE_WITH_DB_PASS before installing on Atlas.
+  Image tag is pinned; bumps go through PR.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.myme.electric.v0</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/docker</string>
+    <string>run</string>
+    <string>--rm</string>
+    <string>--name</string>
+    <string>myme-electric-v0</string>
+    <string>-p</string>
+    <string>8603:3000</string>
+    <string>-e</string>
+    <string>DATABASE_URL=postgres://myme:REPLACE_WITH_DB_PASS@host.docker.internal:5432/myme_v0?sslmode=disable</string>
+    <string>-e</string>
+    <string>ELECTRIC_INSECURE=true</string>
+    <string>-e</string>
+    <string>ELECTRIC_SERVICE_NAME=myme-v0</string>
+    <string>electricsql/electric:1.5.1</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/myme-electric-v0.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/myme-electric-v0.err</string>
+</dict>
+</plist>
