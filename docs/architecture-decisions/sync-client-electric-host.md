@@ -1,44 +1,44 @@
 # ADR: ElectricSQL host for `@mymehq/sync-client`
 
-**Status:** Open — pending M0 spike outcome
+**Status:** Decided — Option A (Atlas Docker)
 **Author:** August Cayzer
 **Date:** 2026-04-26
 **Context:** [`feat/sync-client`](../../packages/sync-client/) (M0 of the build plan)
 
 ## Decision
 
-To be filled in after M0 completes. Choices:
+**Option A — Electric on Atlas (macOS + Docker).** One Electric service per Postgres database (`:8603` for `myme_v0`, `:8604` for `myme_mock`), wrapped in launchd, pinned to `electricsql/electric:1.5.1`. Co-located with the Myme server. Tailscale fronts both endpoints; the Myme server's `/sync/shapes/:family` proxy is the only public path in.
 
-- **A. Electric on Atlas (macOS + Docker).** One Electric service per Postgres database (`:8603` for `myme_v0`, `:8604` for `myme_mock`), wrapped in launchd, pinned to a specific image tag. Co-located with the Myme server.
-- **B. Electric on a Linux host (Fly.io / Hetzner / similar).** External managed or self-hosted Linux machine running Electric, exposed over Tailscale. Atlas's Postgres is reachable via Tailscale outbound. Adds an external dependency but lifts Electric onto its primary supported runtime.
-
-## M0 spike outcome
-
-> _Fill in after running [`infra/atlas/m0-probe.sh`](../../infra/atlas/m0-probe.sh) on Atlas._
+## M0 spike outcome (2026-04-26)
 
 | Check | Result |
 |-------|--------|
-| Container booted on first try | _yes / no_ |
-| `wal_level = logical` Postgres restart accepted | _yes / no_ |
-| `GET /v1/shape?table=items&offset=-1` returned a valid body | _yes / no_ |
-| Live-mode handshake (`electric-handle` / `electric-offset` headers present) | _yes / no_ |
-| Memory profile after 24 h soak | _e.g. 120 MB resident_ |
-| Reconnects after forced container restart | _yes / no_ |
-| Replication slot left clean (no orphaned slots) | _yes / no_ |
-| Surprises / footguns | _free text_ |
+| Container booted on first try | yes (after prereqs applied — see footguns) |
+| `wal_level = logical` Postgres restart accepted | yes; both Myme servers (`:8601`, `:8602`) recovered cleanly within seconds |
+| `GET /v1/shape?table=items&offset=-1` returned a valid body | yes — full schema introspection (18 columns) and seeded `core.note` rows streamed |
+| Live-mode handshake (`electric-handle` / `electric-offset` headers present) | yes — `electric-handle: 103257328-…`, `electric-offset: 0_0`, `electric-has-data: true` |
+| Memory profile at idle | **270 MB RSS** per container after boot. Two services running 24/7 ≈ **540 MB** sustained on Atlas |
+| Replication slot accounting | clean — `electric_slot_default` (`pgoutput`, `logical`, `active`) created on connect; no orphans after teardown |
+| Surprises / footguns | three (see below) |
 
-## Decision
+## Footguns surfaced
 
-> _Choose A or B once the table above is filled. Record the rationale here so the rest of the plan can proceed._
+These weren't in the original plan and are now folded into the launchd install README:
+
+1. **`myme` Postgres role needs `REPLICATION` attribute.** Electric uses logical replication; without `REPLICATION` it errors with `42501 insufficient_privilege ... permission denied to start WAL sender`. Granted via superuser: `ALTER ROLE myme WITH REPLICATION`.
+2. **`listen_addresses = '*'` (or at least Docker-bridge-reachable).** Default Homebrew Postgres binds to localhost only, which is unreachable from the Docker bridge network even with `host.docker.internal`. Set `listen_addresses = '*'` and rely on `pg_hba.conf` to scope access.
+3. **`pg_hba.conf` Docker-bridge rules.** Need both `host all myme <docker-subnet> trust` and `host replication myme <docker-subnet> trust`. Atlas's Docker bridge is `192.168.215.0/24`. Trust auth is consistent with the existing posture (Tailscale-fronted, no public exposure).
+
+The probe script also has a pipeline bug (`tee` after `head -c` triggers `EPIPE`); fixed in the same commit as this ADR.
 
 ## Consequences
 
-If **A** (Atlas Docker): M1 proceeds as planned with launchd plists at `infra/atlas/launchd/`. The user applies them manually during a brief Postgres outage window for `wal_level = logical`.
-
-If **B** (Linux host): M1 is rewritten to deploy Electric to the chosen Linux host. The Myme server's `ELECTRIC_URL` env var points at the remote service over Tailscale. Atlas-side launchd plists are dropped from the deliverable. Sync-client work (M4+) is unaffected — the proxy abstraction means the URL is the only client-visible difference.
+- M1 proceeds as planned. Launchd plists at `infra/atlas/launchd/` install cleanly with the README updates above.
+- The 540 MB sustained memory cost is acceptable on Atlas (M4 Pro, 24 GB RAM). Worth monitoring as data grows; revisit if RSS exceeds ~1 GB per instance.
+- Telemetry: Electric phones home anonymously by default. Disable per-instance with `ELECTRIC_USAGE_REPORTING=false` in the plist if desired. Not disabled in v1 — telemetry surface is benign and helps the upstream project.
+- `ELECTRIC_INSECURE=true` is set on both services. Safe because Atlas-internal traffic never leaves Tailscale; the Myme server's `/sync/shapes/:family` proxy is the only consumer. Reconsider if Electric is ever exposed beyond Tailscale.
 
 ## Notes
 
-- Tag pinned for the spike: `electricsql/electric:1.5.1` (latest stable as of April 2026, verify before running).
-- If the spike reveals Electric needs a feature that's only in canary/beta, raise it as a separate decision rather than running pre-release tags in production.
-- The decision must be recorded before M1 begins; M2+ can run in parallel with M1 once the host is settled.
+- Pinned tag: `electricsql/electric:1.5.1`. Bump deliberately; don't track `:latest`.
+- Replication slots are created on first shape subscription. They're held until Electric tears down. If Electric is removed, drop slots manually: `SELECT pg_drop_replication_slot('electric_slot_default');`.

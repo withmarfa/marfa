@@ -18,15 +18,46 @@ The Myme server's `/sync/shapes/:family` proxy is the only thing that should rea
    # then restart postgres. Repeat for myme_mock.
    ```
 
-2. **Run the publication migration.** From inside this repo:
+2. **Grant `REPLICATION` to the `myme` Postgres role.** Electric uses logical replication; without this attribute it errors with `42501 insufficient_privilege ... permission denied to start WAL sender`. Run as a Postgres superuser (the OS user on Homebrew installs):
 
    ```bash
-   pnpm --filter @mymehq/server run migrate
+   psql -h localhost -U aicayzer -d postgres -c "ALTER ROLE myme WITH REPLICATION;"
+   psql -h localhost -U myme -d postgres -tAc "SELECT rolname, rolreplication FROM pg_roles WHERE rolname = 'myme';"
+   # expect: myme|t
    ```
 
-   This adds the `myme_electric_pub` publication (covers `items`, `edges`, `metadata`) to the active database. Idempotent. Repeat for the mock instance via the appropriate `DATABASE_URL`.
+3. **Allow Docker-bridge connections in `pg_hba.conf` and bind Postgres broadly.** Default Homebrew Postgres binds to localhost only and rejects connections from the Docker bridge. Append to `postgresql.conf`:
 
-3. **Docker available on Atlas.** OrbStack or Docker Desktop. The same daemon `test:pg` uses.
+   ```
+   wal_level = logical
+   listen_addresses = '*'
+   ```
+
+   Append to `pg_hba.conf` (Atlas's Docker bridge is `192.168.215.0/24` — verify with `docker network inspect bridge --format '{{(index .IPAM.Config 0).Subnet}}'`):
+
+   ```
+   host    all          myme    192.168.215.0/24    trust
+   host    replication  myme    192.168.215.0/24    trust
+   ```
+
+   Trust auth is consistent with the existing posture (Tailscale-fronted, no public exposure).
+
+4. **Run the publication migration.** From inside this repo, against each database in turn (`myme_v0` and `myme_mock`):
+
+   ```bash
+   psql -h localhost -U myme -d myme_v0   -f packages/server/drizzle/pg/0019_create_electric_publication.sql
+   psql -h localhost -U myme -d myme_mock -f packages/server/drizzle/pg/0019_create_electric_publication.sql
+   ```
+
+   Adds the `myme_electric_pub` publication (covers `items`, `edges`, `metadata`). Idempotent.
+
+5. **Docker available on Atlas.** OrbStack or Docker Desktop. The same daemon `test:pg` uses.
+
+6. **Drop any pre-existing `electric_slot_default` slot.** If you ran the M0 probe (which uses Electric's default slot name), drop the slot before starting the long-running services — they use namespaced slot names (`electric_slot_v0`, `electric_slot_mock`) and won't collide, but the probe's leftover slot will hold WAL until cleaned:
+
+   ```bash
+   psql -h localhost -U myme -d myme_mock -c "SELECT pg_drop_replication_slot('electric_slot_default');"
+   ```
 
 ## Install
 

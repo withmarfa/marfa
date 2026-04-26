@@ -27,6 +27,8 @@
     <string>ELECTRIC_INSECURE=true</string>
     <string>-e</string>
     <string>ELECTRIC_SERVICE_NAME=myme-v0</string>
+    <string>-e</string>
+    <string>ELECTRIC_REPLICATION_STREAM_ID=v0</string>
     <string>electricsql/electric:1.5.1</string>
   </array>
   <key>RunAtLoad</key>

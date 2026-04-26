@@ -93,12 +93,14 @@ if ! curl -fsSI "http://localhost:${PROBE_PORT}/v1/shape?table=items&offset=-1" 
 fi
 
 # Probe 2: confirm the shape body parses (response is an array of log entries)
-body=$(curl -fs "http://localhost:${PROBE_PORT}/v1/shape?table=items&offset=-1")
-if ! echo "$body" | head -c 200 | tee -a "$LOG" >/dev/null; then
+body=$(curl -fs "http://localhost:${PROBE_PORT}/v1/shape?table=items&offset=-1" || true)
+if [ -z "$body" ]; then
   log "FAIL: could not read shape body"
   exit 4
 fi
-log "shape body sample: $(echo "$body" | head -c 200)"
+sample=$(printf '%s' "$body" | cut -c 1-200)
+log "shape body sample: $sample"
+printf '%s\n' "$sample" >> "$LOG"
 
 # Probe 3: live mode reconnect — extract handle/offset from the response
 # headers and confirm long-poll endpoint accepts them.
