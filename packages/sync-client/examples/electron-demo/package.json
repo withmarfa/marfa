@@ -1,0 +1,22 @@
+{
+  "name": "@mymehq/sync-client-electron-demo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.cjs",
+  "description": "Reference Electron app for @mymehq/sync-client. Demonstrates offline-first reads, optimistic UI, conflict surfacing, and the `Idempotency-Key`-aware drain loop.",
+  "scripts": {
+    "dev": "echo 'See README.md for development setup'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mymehq/sync-client": "workspace:*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^6.0.2"
+  }
+}

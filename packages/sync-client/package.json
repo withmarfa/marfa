@@ -1,0 +1,55 @@
+{
+  "name": "@mymehq/sync-client",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local-first reactive client for Myme — PGlite + ElectricSQL + TanStack DB",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "react": ">=18 <20"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@electric-sql/client": "1.0.14",
+    "@electric-sql/pglite": "0.4.4",
+    "@electric-sql/pglite-sync": "0.5.4",
+    "@mymehq/sdk": "workspace:*",
+    "@mymehq/shared": "workspace:*",
+    "@tanstack/db": "0.6.5",
+    "uuidv7": "^1.2.1"
+  },
+  "devDependencies": {
+    "@tanstack/react-db": "0.1.83",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.0",
+    "react": "^19.2.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}
