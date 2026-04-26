@@ -45,11 +45,13 @@ Server package (not needed for shared or SDK development):
 - `BLOB_PATH` — blob storage directory (default: `./data/blobs`)
 - `MAX_BLOB_SIZE` — maximum blob upload size in bytes (default: `52428800` / 50MB). Oversized uploads return HTTP 413 `blob_too_large`
 - `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` — S3 config
+- `S3_ENDPOINT` — custom S3-compatible endpoint (MinIO, R2, etc.); optional
+- `CDN_BASE_URL` — public CDN prefix rewritten onto blob URLs in responses; optional
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
 - `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
-- `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000). Rate limiting is always on
-- `RATE_LIMIT_ENABLED` — set to `false` to disable rate limiting entirely
+- `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000)
+- `RATE_LIMIT_ENABLED` — set to `false` to disable rate limiting entirely (on by default)
 - `ENABLE_HSTS` — `true` to add Strict-Transport-Security header (only behind TLS)
 - `TRUSTED_PROXY_CIDRS` — comma-separated CIDRs (e.g. `10.0.0.0/8,127.0.0.1/32`) for opt-in `x-forwarded-for` trust. Unset = ignore the header (recommended when no reverse proxy is in front). Malformed CIDRs throw at startup.
 - `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90)
