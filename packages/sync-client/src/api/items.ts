@@ -2,15 +2,21 @@
  * Items API namespace. Mirrors `@mymehq/sdk`'s items namespace, with
  * the local-first reshaping:
  *
- *   - **Reads** (`get`, `list`) come from the local PGlite — synced by
- *     Electric. They never round-trip to the server.
+ *   - **Reads** (`get`, `list`) merge the optimistic in-memory store
+ *     on top of PGlite (the canonical, Electric-replicated layer).
  *   - **Writes** (`create`, `update`, `delete`, `restore`, `transition`,
- *     `purge`) are enqueued for the drain loop. They optimistically
- *     return the local representation; the canonical version arrives
- *     when Electric replicates the server-confirmed row back.
- *   - **Bulk operations** are pass-through to the server. They run
- *     synchronously on the API call (no optimistic local apply) but
- *     the queue still stamps an Idempotency-Key so retries are safe.
+ *     `purge`) stage in the optimistic store and enqueue for the
+ *     drain loop. They never touch PGlite directly — that's reserved
+ *     for `@electric-sql/pglite-sync`. When the server confirms the
+ *     write and Electric replicates the canonical row, the
+ *     reconciler clears the optimistic delta. On 4xx the rollback
+ *     path drops the optimistic delta.
+ *
+ * This split is the v0.1 fix for Bug 2 (optimistic-write PK
+ * collision). Edges + metadata writes still hit PGlite directly and
+ * have the same latent bug for replicate-back operations; v0.2 will
+ * extend the OptimisticItemStore pattern there. See
+ * `CHANGELOG.md` for the precise list of operations still affected.
  */
 
 import { uuidv7 } from "uuidv7";
@@ -23,12 +29,14 @@ import type { PGliteWithSync } from "../storage/pglite.js";
 import type { MutationQueue } from "../queue/queue.js";
 import type { DrainLoop } from "../queue/drain.js";
 import type { SyncEventEmitter } from "../events/emitter.js";
+import type { OptimisticItemStore } from "../optimistic/store.js";
 
 export interface ItemsApiOptions {
   pg: PGliteWithSync;
   queue: MutationQueue;
   drain: DrainLoop;
   emitter: SyncEventEmitter;
+  optimistic: OptimisticItemStore;
   source: string;
   device: string | undefined;
   defaultOrigin: "user" | "ai" | "worker";
@@ -45,9 +53,14 @@ export interface ListFilters {
 export class ItemsApi {
   constructor(private readonly options: ItemsApiOptions) {}
 
-  // ── reads (PGlite-backed) ──────────────────────────────────────────
+  // ── reads (PGlite + optimistic overlay) ────────────────────────────
 
   async get(id: string): Promise<Item | null> {
+    // Optimistic store wins — it represents the user's intent that
+    // hasn't yet been confirmed by the server. `undefined` means the
+    // store has no opinion; fall through to PGlite.
+    const optimistic = this.options.optimistic.get(id);
+    if (optimistic !== undefined) return optimistic;
     const result = await this.options.pg.query<ItemRow>(
       `SELECT * FROM items WHERE id = $1 LIMIT 1`,
       [id],
@@ -85,21 +98,36 @@ export class ItemsApi {
        LIMIT ${String(limit)}`,
       params,
     );
-    return result.rows.map(rowToItem);
+    const canonical = result.rows.map(rowToItem);
+
+    // Overlay optimistic state on top of the canonical rows. The
+    // overlay drops tombstoned ids, replaces matching applies, and
+    // appends optimistic-only rows. Filters are then re-applied so
+    // the optimistic apply respects the same predicate (e.g., a
+    // staged item with `type = 'core.note'` shows up under
+    // `list({ type: 'core.note' })` even before Electric replays).
+    const merged = this.options.optimistic.overlay(canonical);
+    const filtered = merged.filter((item) => matchesFilters(item, filters));
+    // Re-sort + re-limit. `updated_at` desc is the canonical order
+    // for both PGlite and optimistic (the optimistic apply stamps
+    // `updated_at = now()` on every mutation).
+    filtered.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+    return filtered.slice(0, limit);
   }
 
-  // ── writes (optimistic local apply + enqueue) ──────────────────────
+  // ── writes (optimistic in-memory + enqueue) ────────────────────────
 
   /**
    * Optimistically create an item. Returns the local representation
    * with a client-generated UUIDv7 id. The mutation is queued; on
    * server confirmation, Electric replicates the canonical row back
-   * and PGlite's row replaces the optimistic version.
+   * to PGlite and the reconciler clears the optimistic delta. On
+   * 4xx, the client's `mutation.rejected` handler clears the delta
+   * (rollback).
    *
-   * For v0.1 the optimistic apply is to the **PGlite items table
-   * directly**. A future TanStack DB collection layer will hold
-   * optimistic state in memory instead, leaving Electric as the sole
-   * writer to the items table; tracking under v0.2 in CHANGELOG.
+   * **Important:** the row is NOT written to PGlite. PGlite is
+   * exclusively written by `@electric-sql/pglite-sync`. This is the
+   * key invariant that resolves Bug 2.
    */
   async create(
     input: CreateItemInput & { edges?: Record<string, string[]> },
@@ -125,10 +153,7 @@ export class ItemsApi {
         : {}),
     };
 
-    // Optimistic local insert. We use ON CONFLICT to be idempotent in
-    // case Electric has already replicated this id (e.g. when the user
-    // re-creates an item by sourceId after a hard reload).
-    await this.upsertItemLocally(item);
+    this.options.optimistic.applyItem(item);
 
     const writeId = await this.options.queue.enqueue(
       {
@@ -170,7 +195,7 @@ export class ItemsApi {
       updated_at: new Date().toISOString(),
       library: options.library ?? existing.library,
     };
-    await this.upsertItemLocally(merged);
+    this.options.optimistic.applyItem(merged);
 
     const writeId = await this.options.queue.enqueue(
       {
@@ -195,12 +220,12 @@ export class ItemsApi {
   }
 
   async delete(id: string): Promise<void> {
-    // Optimistic: state -> trashed. Electric will replicate the
-    // canonical state on confirm.
-    await this.options.pg.query(
-      `UPDATE items SET state = 'trashed', updated_at = $2 WHERE id = $1`,
-      [id, new Date().toISOString()],
-    );
+    // Optimistic tombstone; the item disappears from local reads
+    // immediately. Electric eventually replicates `state = 'trashed'`
+    // (the items shape filter excludes trashed rows), so the
+    // canonical row drops out of PGlite, and the reconciler clears
+    // the tombstone.
+    this.options.optimistic.applyTombstone(id);
     const writeId = await this.options.queue.enqueue(
       { kind: "deleteItem", payload: { id } },
       { targetId: id },
@@ -214,10 +239,18 @@ export class ItemsApi {
   }
 
   async restore(id: string): Promise<Item> {
-    await this.options.pg.query(
-      `UPDATE items SET state = 'active', updated_at = $2 WHERE id = $1`,
-      [id, new Date().toISOString()],
-    );
+    const existing = await this.get(id);
+    if (!existing) {
+      throw new Error(
+        `restore: item ${id} is not present in the local store.`,
+      );
+    }
+    const restored: Item = {
+      ...existing,
+      state: "active",
+      updated_at: new Date().toISOString(),
+    };
+    this.options.optimistic.applyItem(restored);
     const writeId = await this.options.queue.enqueue(
       { kind: "restoreItem", payload: { id } },
       { targetId: id },
@@ -228,16 +261,26 @@ export class ItemsApi {
       enqueuedAt: new Date(),
     });
     this.options.drain.wake();
-    const restored = await this.get(id);
-    if (!restored) throw new Error(`restore: item ${id} disappeared locally`);
     return restored;
   }
 
   async transition(id: string, state: ItemState): Promise<Item> {
-    await this.options.pg.query(
-      `UPDATE items SET state = $2, updated_at = $3 WHERE id = $1`,
-      [id, state, new Date().toISOString()],
-    );
+    const existing = await this.get(id);
+    if (!existing) {
+      throw new Error(
+        `transition: item ${id} is not present in the local store.`,
+      );
+    }
+    const transitioned: Item = {
+      ...existing,
+      state,
+      updated_at: new Date().toISOString(),
+    };
+    if (state === "trashed") {
+      this.options.optimistic.applyTombstone(id);
+    } else {
+      this.options.optimistic.applyItem(transitioned);
+    }
     const writeId = await this.options.queue.enqueue(
       { kind: "transitionItem", payload: { id, state } },
       { targetId: id },
@@ -248,13 +291,14 @@ export class ItemsApi {
       enqueuedAt: new Date(),
     });
     this.options.drain.wake();
-    const updated = await this.get(id);
-    if (!updated) throw new Error(`transition: item ${id} disappeared`);
-    return updated;
+    return transitioned;
   }
 
   async purge(id: string): Promise<void> {
-    await this.options.pg.query(`DELETE FROM items WHERE id = $1`, [id]);
+    // Purge is a hard-delete on the server. Tombstone locally so the
+    // row reads as gone immediately; the canonical row will
+    // disappear from PGlite when Electric stops replicating it.
+    this.options.optimistic.applyTombstone(id);
     const writeId = await this.options.queue.enqueue(
       { kind: "purgeItem", payload: { id } },
       { targetId: id },
@@ -265,41 +309,6 @@ export class ItemsApi {
       enqueuedAt: new Date(),
     });
     this.options.drain.wake();
-  }
-
-  private async upsertItemLocally(item: Item): Promise<void> {
-    await this.options.pg.query(
-      `INSERT INTO items (
-         id, type, state, library, properties, created_at, updated_at,
-         timestamp, source, source_id, origin, version, device
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       ON CONFLICT (id) DO UPDATE SET
-         state = EXCLUDED.state,
-         library = EXCLUDED.library,
-         properties = EXCLUDED.properties,
-         updated_at = EXCLUDED.updated_at,
-         timestamp = EXCLUDED.timestamp,
-         source = EXCLUDED.source,
-         source_id = EXCLUDED.source_id,
-         origin = EXCLUDED.origin,
-         version = EXCLUDED.version,
-         device = EXCLUDED.device`,
-      [
-        item.id,
-        item.type,
-        item.state,
-        item.library,
-        JSON.stringify(item.properties),
-        item.created_at,
-        item.updated_at,
-        item.timestamp,
-        item.source,
-        item.source_id ?? null,
-        item.origin,
-        item.version,
-        item.device ?? null,
-      ],
-    );
   }
 }
 
@@ -351,4 +360,23 @@ function rowToItem(row: ItemRow): Item {
   if (row.capture_longitude !== null)
     item.capture_longitude = row.capture_longitude;
   return item;
+}
+
+function matchesFilters(item: Item, filters: ListFilters): boolean {
+  // Replicates the SQL WHERE clause in JS so the optimistic overlay
+  // respects the same predicate. Default `state != 'trashed'`
+  // applies when no explicit state filter is set.
+  if (filters.state !== undefined) {
+    if (item.state !== filters.state) return false;
+  } else if (item.state === "trashed") {
+    return false;
+  }
+  if (filters.type !== undefined && item.type !== filters.type) return false;
+  if (filters.source !== undefined && item.source !== filters.source) {
+    return false;
+  }
+  if (filters.library !== undefined && item.library !== filters.library) {
+    return false;
+  }
+  return true;
 }

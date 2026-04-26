@@ -39,6 +39,11 @@ import { ItemsApi } from "./api/items.js";
 import { EdgesApi } from "./api/edges.js";
 import { MetadataApi } from "./api/metadata.js";
 import { BlobsApi } from "./api/blobs.js";
+import { OptimisticItemStore } from "./optimistic/store.js";
+import {
+  OptimisticReconciler,
+  rebuildOptimisticStore,
+} from "./optimistic/reconcile.js";
 
 type StateListener = (info: SyncStateInfo) => void;
 
@@ -56,6 +61,14 @@ export class MymeSyncClient {
   private edgesApi: EdgesApi | null = null;
   private metadataApi: MetadataApi | null = null;
   private blobsApi: BlobsApi | null = null;
+  private optimistic: OptimisticItemStore | null = null;
+  private reconciler: OptimisticReconciler | null = null;
+  /**
+   * Subscriptions registered in `start()` and torn down in `stop()`.
+   * Currently: `mutation.confirmed` (drives reconcile pre-empt) and
+   * `mutation.rejected` (drives optimistic rollback).
+   */
+  private internalUnsubscribes: Array<() => void> = [];
   private state: SyncStateInfo = { ...INITIAL_SYNC_STATE };
   private started = false;
 
@@ -114,6 +127,25 @@ export class MymeSyncClient {
       fetch: fetchWithIdempotency,
     });
     this.queue = new MutationQueue(this.pg);
+    this.optimistic = new OptimisticItemStore();
+    // Re-attach any listeners registered before start().
+    for (const listener of this.deferredOptimisticListeners) {
+      this.internalUnsubscribes.push(this.optimistic.subscribe(listener));
+    }
+    this.deferredOptimisticListeners.clear();
+    this.reconciler = new OptimisticReconciler(this.pg, this.optimistic);
+    // Replay the persistent queue into the optimistic store before
+    // anything else reads `client.items.*`. Without this step an app
+    // that restarted with pending writes would have the queue
+    // intact (durable in PGlite) but the optimistic UI state lost,
+    // so the user would see canonical-stale rows until drain
+    // finished. v0.1 replays synchronously; large queues will block
+    // start. Acceptable for the documented v0.1 scale (≤ a few
+    // dozen pending mutations).
+    await rebuildOptimisticStore(this.pg, this.optimistic, {
+      source: this.source,
+      defaultOrigin: "user",
+    });
     this.drain = new DrainLoop({
       queue: this.queue,
       sdk: this.sdk,
@@ -128,6 +160,7 @@ export class MymeSyncClient {
       queue: this.queue,
       drain: this.drain,
       emitter: this.emitter,
+      optimistic: this.optimistic,
       source: this.source,
       device: this.options.device,
       defaultOrigin: "user",
@@ -145,8 +178,50 @@ export class MymeSyncClient {
       emitter: this.emitter,
     });
     this.blobsApi = new BlobsApi({ sdk: this.sdk });
+
+    // Optimistic rollback on permanent rejection. Drain already
+    // emits `mutation.rejected` for 4xx and the cascade-drop
+    // emits `mutation.dropped` for the cascading creates. Each
+    // payload carries a `targetId` (delivered as `localValue` for
+    // diagnostic surface; the queue row's `target_id` is what
+    // identifies the optimistic entry). We clear by reading the
+    // payload — for items we know the id structure.
+    this.internalUnsubscribes.push(
+      this.emitter.on("mutation.rejected", (payload) => {
+        const id = extractItemTargetId(payload.kind, payload.localValue);
+        if (id && this.optimistic) this.optimistic.clear(id);
+      }),
+      this.emitter.on("mutation.dropped", (payload) => {
+        // Cascade drops only fire today for createItem; the queue
+        // row's target_id was used to drop dependent rows. We don't
+        // currently surface that target_id on the dropped event —
+        // a future improvement. The reconciler will still clear
+        // the optimistic entry when the canonical row never
+        // materializes (no Electric replay → no clear) plus a
+        // safety net would be welcome but is out of scope for
+        // this fix. See CHANGELOG v0.2 entry.
+        void payload;
+      }),
+      // Pre-empt the live-query-driven reconcile when the drain
+      // confirms a write. The canonical row may already be in
+      // PGlite by the time `mutation.confirmed` fires (Electric is
+      // typically faster than the SDK round-trip on shared infra),
+      // so a forced reconcile pass clears the optimistic entry
+      // immediately rather than waiting for the live query to
+      // observe the next change.
+      this.emitter.on("mutation.confirmed", () => {
+        void this.reconciler?.reconcile();
+      }),
+    );
+
     if (this.options.autoStartSync !== false) {
       this.drain.start();
+    }
+    // Reconciler runs whenever sync is on — it's also useful in
+    // pure-write tests so the apply→confirm→clear cycle is
+    // observable without a real Electric stream. Cheap to keep on.
+    if (this.options.autoStartSync !== false) {
+      void this.reconciler.start();
     }
 
     // Spin up the read-path sync engine. We don't await its initial
@@ -189,10 +264,18 @@ export class MymeSyncClient {
   async stop(): Promise<void> {
     if (!this.started) return;
     this.logger.debug("sync-client stopping");
+    for (const u of this.internalUnsubscribes) u();
+    this.internalUnsubscribes = [];
     this.engine?.stop();
     this.engine = null;
     this.drain?.stop();
     this.drain = null;
+    if (this.reconciler) {
+      await this.reconciler.stop();
+      this.reconciler = null;
+    }
+    this.optimistic?.clearAll();
+    this.optimistic = null;
     this.queue = null;
     this.itemsApi = null;
     this.edgesApi = null;
@@ -274,6 +357,31 @@ export class MymeSyncClient {
   }
 
   /**
+   * Subscribe to optimistic-item-store changes. Fires per-id whenever
+   * an item is applied, tombstoned, or cleared. Returns an
+   * unsubscribe function. Used by the React hooks (`useItems`,
+   * `useItem`) so reads re-render on optimistic mutations even
+   * before Electric replays the canonical row.
+   *
+   * Stable across `start()`/`stop()` lifecycles: subscribing before
+   * `start()` records the listener and applies it once the store is
+   * built; subscribing after `stop()` is a no-op until the next
+   * `start()`.
+   */
+  observeOptimisticItems(listener: (id: string) => void): () => void {
+    if (!this.optimistic) {
+      // No store yet — caller subscribed before start. Defer.
+      this.deferredOptimisticListeners.add(listener);
+      return () => {
+        this.deferredOptimisticListeners.delete(listener);
+      };
+    }
+    return this.optimistic.subscribe(listener);
+  }
+
+  private readonly deferredOptimisticListeners = new Set<(id: string) => void>();
+
+  /**
    * Whether the durable mutation queue has pending writes. Consumers
    * (e.g. SyncIndicator) call this to know whether closing the app
    * would lose data. Implemented in M6.
@@ -334,4 +442,36 @@ export class MymeSyncClient {
     }
     return this.blobsApi;
   }
+}
+
+/**
+ * Extract the affected item id from a `mutation.rejected` payload's
+ * `localValue`. The drain loop forwards the queue row's parsed
+ * payload as `localValue` (one of the typed shapes in
+ * `queue/mutations.ts`). For items mutations we know the id is
+ * either `payload.id` (most kinds) or `payload.input.id` (createItem,
+ * which carries the full input).
+ *
+ * Returns `null` for non-items kinds — edges and metadata don't go
+ * through the OptimisticItemStore in v0.1, so there's nothing to
+ * roll back here.
+ */
+function extractItemTargetId(kind: string, payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  if (kind === "createItem") {
+    const p = payload as { input?: { id?: unknown } };
+    if (typeof p.input?.id === "string") return p.input.id;
+    return null;
+  }
+  if (
+    kind === "updateItem" ||
+    kind === "deleteItem" ||
+    kind === "restoreItem" ||
+    kind === "transitionItem" ||
+    kind === "purgeItem"
+  ) {
+    const p = payload as { id?: unknown };
+    if (typeof p.id === "string") return p.id;
+  }
+  return null;
 }

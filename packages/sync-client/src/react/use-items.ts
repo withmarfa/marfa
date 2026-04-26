@@ -53,9 +53,13 @@ export function useItems(
         // Initial load.
         await refetch();
 
-        // Live subscription — PGlite's live.changes fires when any row
-        // in `items` changes. We don't bother filtering at this layer;
-        // the refetch is cheap and the filter is reapplied there.
+        // Live subscription — PGlite's live query fires when any row
+        // in `items` changes (canonical layer, written by
+        // pglite-sync). Optimistic in-memory writes don't touch
+        // PGlite, so the live query alone misses them; subscribe to
+        // the optimistic store too. Either signal triggers a
+        // refetch; the merged read inside `client.items.list`
+        // overlays both layers.
         const liveQuery = await client.db.live.query<Item>(
           `SELECT id FROM items LIMIT 1`,
           [],
@@ -66,8 +70,14 @@ export function useItems(
             });
           },
         );
+        const unsubscribeOptimistic = client.observeOptimisticItems(() => {
+          refetch().catch(() => {
+            // surfaced via setError above
+          });
+        });
         unsubscribe = () => {
           void liveQuery.unsubscribe();
+          unsubscribeOptimistic();
         };
       } catch (err) {
         if (!cancelled) {
@@ -130,8 +140,20 @@ export function useItem(id: string | undefined): UseItemResult {
             });
           },
         );
+        // Re-render on optimistic changes too. We filter to this id
+        // — the optimistic store fires per-id, so no other row's
+        // change triggers an unnecessary refetch here.
+        const unsubscribeOptimistic = client.observeOptimisticItems(
+          (changedId) => {
+            if (changedId !== id) return;
+            refetch().catch(() => {
+              // surfaced via setError above
+            });
+          },
+        );
         unsubscribe = () => {
           void liveQuery.unsubscribe();
+          unsubscribeOptimistic();
         };
       } catch (err) {
         if (!cancelled) {

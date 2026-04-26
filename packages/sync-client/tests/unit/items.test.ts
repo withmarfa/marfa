@@ -58,14 +58,21 @@ describe("ItemsApi — optimistic local writes", () => {
     expect(updated.properties).toEqual({ title: "new", body: "x" });
   });
 
-  it("delete sets state to trashed locally", async () => {
+  it("delete tombstones the item — local reads return null until rejected", async () => {
+    // Post-Bug-2 semantics: delete stages a tombstone in the
+    // optimistic store. Reads return null. The canonical row, when
+    // it arrives via Electric in the trashed state, is filtered out
+    // by `list({state != trashed})` and the reconciler clears the
+    // tombstone. Pre-fix behaviour was to write `state = 'trashed'`
+    // directly to PGlite — see the items_pkey collision test in
+    // tests/integration/writes.integration.test.ts for why that was
+    // changed.
     const item = await client.items.create({
       type: "core.note",
       properties: { title: "x" },
     });
     await client.items.delete(item.id);
-    const fetched = await client.items.get(item.id);
-    expect(fetched?.state).toBe("trashed");
+    expect(await client.items.get(item.id)).toBeNull();
   });
 
   it("transition changes the state", async () => {
