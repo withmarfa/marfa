@@ -651,6 +651,44 @@ export interface EdgeStore {
 }
 
 /**
+ * Cached responses for the Idempotency-Key middleware. Each entry is a
+ * snapshot of the original handler response keyed by (api_key_id, key);
+ * a replay with the same key + matching request body returns the cached
+ * status and body, short-circuiting the handler so audit and webhook
+ * side-effects don't double-fire.
+ */
+export interface IdempotencyEntry {
+  api_key_id: string;
+  key: string;
+  request_hash: string;
+  status: number;
+  response_body: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface IdempotencyStore {
+  /**
+   * Look up a cached entry. Returns `null` when no entry exists OR when
+   * the entry has expired (the cleanup job is belt-and-braces; a stale
+   * entry slipping through gets ignored at read time).
+   */
+  get(apiKeyId: string, key: string): Promise<IdempotencyEntry | null>;
+  /**
+   * Cache the response for a (api_key_id, key) pair. Expected behaviour
+   * is "first writer wins" — racing handlers may both insert; the unique
+   * index forces a conflict, which the implementation swallows so the
+   * already-stored entry stays canonical.
+   */
+  put(entry: IdempotencyEntry): Promise<void>;
+  /**
+   * Delete every entry whose `expires_at` is at or before the cutoff
+   * timestamp. Returns the number of rows deleted (used for logging).
+   */
+  cleanup(cutoffIso: string): Promise<number>;
+}
+
+/**
  * Cross-instance coordination primitives. On Postgres, `withJobLock` wraps
  * `pg_try_advisory_lock` so a named background job runs on at most one
  * instance per tick. On SQLite, every backing database is single-process
@@ -682,6 +720,7 @@ export interface Storage {
   audit: AuditStore;
   eventLog: EventLogStore;
   settings: SettingsStore;
+  idempotency: IdempotencyStore;
   coordination: CoordinationStore;
   users?: UserStore;
   tenants?: TenantStore;

@@ -326,6 +326,27 @@ export const auditLog = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// idempotency_keys (Idempotency-Key middleware: cached responses for replay)
+// ---------------------------------------------------------------------------
+
+export const idempotencyKeys = sqliteTable(
+  "idempotency_keys",
+  {
+    api_key_id: text("api_key_id").notNull(),
+    key: text("key").notNull(),
+    request_hash: text("request_hash").notNull(),
+    status: integer("status").notNull(),
+    response_body: text("response_body").notNull(),
+    created_at: text("created_at").notNull(),
+    expires_at: text("expires_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_idempotency_keys_pk").on(table.api_key_id, table.key),
+    index("idx_idempotency_keys_expires_at").on(table.expires_at),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // settings (generic single-row-per-key KV for workspace-wide flags)
 // ---------------------------------------------------------------------------
 

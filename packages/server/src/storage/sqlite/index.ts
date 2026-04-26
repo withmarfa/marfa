@@ -17,6 +17,7 @@ import { SqliteTenantStore } from "./tenant-store.js";
 import { SqliteEdgeStore } from "./edge-store.js";
 import { SqliteEdgeTypeStore } from "./edge-type-store.js";
 import { SqliteSettingsStore } from "./settings-store.js";
+import { SqliteIdempotencyStore } from "./idempotency-store.js";
 import { SqliteCoordinationStore } from "./coordination-store.js";
 import { registerEdgeTypeSchema, isCoreEdgeType } from "@mymehq/shared";
 
@@ -78,6 +79,7 @@ export function createSqliteStorage(
     audit: auditStore,
     eventLog: eventLogStore,
     settings: new SqliteSettingsStore(db),
+    idempotency: new SqliteIdempotencyStore(db),
     coordination: new SqliteCoordinationStore(),
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),

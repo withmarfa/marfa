@@ -103,6 +103,26 @@ async function main() {
     config.auditCleanupIntervalMs,
   );
 
+  // Idempotency-Key cache cleanup. Purges expired entries on a coarse
+  // tick (default 1h) so the table doesn't grow unbounded under steady
+  // sync-client write traffic. Advisory-locked so multi-instance
+  // deployments only run the sweep on one instance per tick.
+  const runIdempotencyCleanup = () => {
+    void storage.coordination
+      .withJobLock("idempotency-cleanup", () =>
+        storage.idempotency.cleanup(new Date().toISOString()),
+      )
+      .then((deleted) => {
+        if (deleted !== undefined && deleted > 0)
+          log("info", `Purged ${String(deleted)} expired idempotency entries`);
+      });
+  };
+  const idempotencyCleanupDelay = setTimeout(runIdempotencyCleanup, 7_500);
+  const idempotencyCleanupInterval = setInterval(
+    runIdempotencyCleanup,
+    config.idempotencyCleanupIntervalMs,
+  );
+
   const webhookConsumer = new WebhookConsumer(
     storage.webhooks,
     storage.webhookDeliveries,
@@ -158,6 +178,8 @@ async function main() {
     clearInterval(eventLogCleanupInterval);
     clearTimeout(auditCleanupDelay);
     clearInterval(auditCleanupInterval);
+    clearTimeout(idempotencyCleanupDelay);
+    clearInterval(idempotencyCleanupInterval);
     versionThinner.stop();
     trashPurger.stop();
     ambientExpirer.stop();

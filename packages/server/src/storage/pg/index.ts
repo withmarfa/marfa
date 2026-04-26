@@ -23,6 +23,7 @@ import { PgTenantStore } from "./tenant-store.js";
 import { PgEdgeStore } from "./edge-store.js";
 import { PgEdgeTypeStore } from "./edge-type-store.js";
 import { PgSettingsStore } from "./settings-store.js";
+import { PgIdempotencyStore } from "./idempotency-store.js";
 import { PgCoordinationStore } from "./coordination-store.js";
 
 export async function createPgStorage(
@@ -86,6 +87,7 @@ export async function createPgStorage(
     audit: auditStore,
     eventLog: eventLogStore,
     settings: new PgSettingsStore(db),
+    idempotency: new PgIdempotencyStore(db),
     coordination: new PgCoordinationStore(client),
     ...(options?.authMode === "hosted" && {
       users: new PgUserStore(db),
@@ -101,7 +103,7 @@ export async function createPgStorage(
     close,
     /** Truncate all tables — used by tests for isolation. */
     async _pgTruncate(): Promise<void> {
-      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, event_log, tenants, users CASCADE`;
+      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, event_log, idempotency_keys, tenants, users CASCADE`;
     },
     /** Raw query escape hatch — used by retention tests for parameterised mutations. */
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]> {

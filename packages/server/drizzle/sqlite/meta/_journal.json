@@ -120,6 +120,13 @@
       "when": 1777700000000,
       "tag": "0016_add_settings_table",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1777800000000,
+      "tag": "0017_idempotency_keys",
+      "breakpoints": true
     }
   ]
 }
