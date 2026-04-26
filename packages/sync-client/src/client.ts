@@ -68,7 +68,7 @@ export class MymeSyncClient {
    * Currently: `mutation.confirmed` (drives reconcile pre-empt) and
    * `mutation.rejected` (drives optimistic rollback).
    */
-  private internalUnsubscribes: Array<() => void> = [];
+  private internalUnsubscribes: (() => void)[] = [];
   private state: SyncStateInfo = { ...INITIAL_SYNC_STATE };
   private started = false;
 

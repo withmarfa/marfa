@@ -123,7 +123,7 @@ export async function startMymeServer(
   }
 
   const exited = new Promise<{ code: number | null }>((resolveExit) => {
-    child.once("exit", (code) => resolveExit({ code }));
+    child.once("exit", (code) => { resolveExit({ code }); });
   });
 
   try {

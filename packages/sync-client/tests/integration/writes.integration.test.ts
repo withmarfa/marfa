@@ -183,7 +183,7 @@ function captureSyncFailures(client: MymeSyncClient): {
 function captureMutationEvents(client: MymeSyncClient): {
   rejected: SyncEventMap["mutation.rejected"][];
   confirmed: SyncEventMap["mutation.confirmed"][];
-  unsubscribers: Array<() => void>;
+  unsubscribers: (() => void)[];
 } {
   const rejected: SyncEventMap["mutation.rejected"][] = [];
   const confirmed: SyncEventMap["mutation.confirmed"][] = [];

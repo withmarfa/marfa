@@ -80,6 +80,29 @@ function NoteList() {
 }
 ```
 
+## Testing
+
+Two tiers:
+
+```bash
+# Unit — runs in `pnpm test`, in-process PGlite, no network. Fast.
+pnpm --filter @mymehq/sync-client test
+
+# Integration — opt-in. Spawns the local Myme server (worktree code)
+# against Atlas Postgres + Atlas Electric. Self-skips when Atlas is
+# unreachable.
+pnpm --filter @mymehq/sync-client test:integration
+```
+
+The integration suite needs four env vars:
+
+- `MYME_INTEGRATION_DATABASE_URL` — e.g. `postgres://myme@aic-atlas:5432/myme_mock?sslmode=disable`
+- `MYME_INTEGRATION_ELECTRIC_URL` — e.g. `http://aic-atlas:8604`
+- `MYME_INTEGRATION_SALT` — the API key salt of the Atlas mock instance
+- `MYME_INTEGRATION_API_KEY` — a `myme_k1_…` key valid against the same instance
+
+If any are missing, or if Atlas Postgres / Electric are unreachable, the suite skips cleanly with a warning rather than producing red CI. Mirrors the freshness-job precedent in the repo's `CLAUDE.md`.
+
 ## Status
 
 This package is in active development. The API may change until 1.0.

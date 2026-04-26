@@ -48,8 +48,8 @@ describe("OptimisticItemStore", () => {
     store.applyItem(makeItem("a", 2, { v: "new" }));
     const merged = store.overlay(canonical);
     expect(merged).toHaveLength(1);
-    expect((merged[0] as Item).properties).toEqual({ v: "new" });
-    expect((merged[0] as Item).version).toBe(2);
+    expect((merged[0]!).properties).toEqual({ v: "new" });
+    expect((merged[0]!).version).toBe(2);
   });
 
   it("overlay drops tombstoned canonical rows", () => {

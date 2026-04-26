@@ -52,10 +52,10 @@ export async function waitFor<T>(
   const deadline = Date.now() + timeoutMs;
   let lastValue: T | undefined;
   while (Date.now() < deadline) {
-    const value = await predicate();
-    if (value) return value as NonNullable<T>;
+    const value: T = await predicate();
+    if (value) return value;
     lastValue = value;
-    await new Promise((r) => setTimeout(r, intervalMs));
+    await new Promise<void>((r) => setTimeout(r, intervalMs));
   }
   throw new Error(
     `waitFor: ${description} did not become truthy within ${String(timeoutMs)}ms` +

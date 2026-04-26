@@ -63,7 +63,7 @@ describe("queue replay rebuilds OptimisticItemStore", () => {
             properties: { title: `n${String(i)}` },
           },
         },
-        ids[i] as string,
+        ids[i]!,
       );
     }
     // 3 updates on ids 0..2 — compose with the prior creates via
@@ -76,20 +76,20 @@ describe("queue replay rebuilds OptimisticItemStore", () => {
           properties: { title: `n${String(i)}-updated` },
           expectedVersion: 1,
         },
-        ids[i] as string,
+        ids[i]!,
       );
     }
     // 1 transition on id 14 → 'archived' (composes with create).
     await enqueueRaw(
       "transitionItem",
       { id: ids[14], state: "archived" },
-      ids[14] as string,
+      ids[14]!,
     );
     // 1 ghost delete on ids[15] (no prior) — the rebuild applies
     // the tombstone unconditionally; drain will 404 on the actual
     // server call. This is the same shape as the integration
     // suite's 4xx test.
-    await enqueueRaw("deleteItem", { id: ids[15] }, ids[15] as string);
+    await enqueueRaw("deleteItem", { id: ids[15] }, ids[15]!);
 
     // Total queue rows: 15 + 3 + 1 + 1 = 20.
 
@@ -105,22 +105,22 @@ describe("queue replay rebuilds OptimisticItemStore", () => {
 
     // Ids 0..14: applies.
     for (let i = 0; i < 15; i++) {
-      const entry = snapshot.get(ids[i] as string);
+      const entry = snapshot.get(ids[i]!);
       expect(entry?.kind).toBe("apply");
     }
     // The 3 updates compose: title is the updated form, version=2.
     for (let i = 0; i < 3; i++) {
-      const entry = snapshot.get(ids[i] as string);
+      const entry = snapshot.get(ids[i]!);
       if (entry?.kind !== "apply") throw new Error("expected apply");
       expect(entry.item.version).toBe(2);
       expect(entry.item.properties).toEqual({ title: `n${String(i)}-updated` });
     }
     // Id 14: transition to 'archived' composes with the prior create.
-    const archived = snapshot.get(ids[14] as string);
+    const archived = snapshot.get(ids[14]!);
     if (archived?.kind !== "apply") throw new Error("expected apply");
     expect(archived.item.state).toBe("archived");
     // Id 15: tombstone.
-    expect(snapshot.get(ids[15] as string)?.kind).toBe("tombstone");
+    expect(snapshot.get(ids[15]!)?.kind).toBe("tombstone");
   });
 
   it("transition-to-trashed produces a tombstone, not an apply", async () => {

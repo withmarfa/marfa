@@ -48,8 +48,10 @@ interface HostPort {
 function parsePostgresUrl(value: string): HostPort | null {
   // postgres://[user[:pass]@]host[:port]/db[?…]
   const stripped = value.replace(/^postgres(ql)?:\/\//, "");
-  const afterAt = stripped.includes("@") ? stripped.split("@")[1]! : stripped;
-  const hostPort = afterAt.split("/")[0]!;
+  const atIdx = stripped.indexOf("@");
+  const afterAt = atIdx >= 0 ? stripped.slice(atIdx + 1) : stripped;
+  const slashIdx = afterAt.indexOf("/");
+  const hostPort = slashIdx >= 0 ? afterAt.slice(0, slashIdx) : afterAt;
   const [host, portStr] = hostPort.split(":");
   if (!host) return null;
   const port = portStr ? Number(portStr) : 5432;

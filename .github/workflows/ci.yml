@@ -88,6 +88,39 @@ jobs:
             exit 1
           fi
 
+  # Sync-client integration — opt-in like the freshness jobs. Runs on
+  # main pushes and on manual dispatch, NOT on every PR. Self-skips
+  # when Atlas Postgres + Atlas Electric are unreachable from the
+  # runner so an Atlas outage doesn't go red. Real coverage runs
+  # locally on the developer MBP via:
+  #   pnpm --filter @mymehq/sync-client test:integration
+  sync-client-integration:
+    name: Sync-client integration (Atlas)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MYME_INTEGRATION_DATABASE_URL: ${{ secrets.MYME_INTEGRATION_DATABASE_URL }}
+      MYME_INTEGRATION_ELECTRIC_URL: ${{ secrets.MYME_INTEGRATION_ELECTRIC_URL }}
+      MYME_INTEGRATION_SALT: ${{ secrets.MYME_INTEGRATION_SALT }}
+      MYME_INTEGRATION_API_KEY: ${{ secrets.MYME_INTEGRATION_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Run integration suite
+        run: pnpm --filter @mymehq/sync-client test:integration
+
   # Test jobs — run on every PR and on main pushes. These are the fast
   # pre-merge signal and are considered load-bearing for merge decisions.
   ci-sqlite:
