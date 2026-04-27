@@ -337,18 +337,27 @@ export function typeRoutes(storage: Storage) {
 
     const result = validateTypeSchema(body);
     if (!result.success) {
-      // If any error carries the inheritance_violation discriminator, surface
-      // the specific code so clients (e.g. mock-myme conformance) can
-      // disambiguate from generic schema-shape failures.
+      // Surface specific discriminators so clients (e.g. mock-myme
+      // conformance) can disambiguate from generic schema-shape failures.
       const hasInheritanceViolation = result.errors.some(
         (e) => e.code === "inheritance_violation",
       );
-      const code = hasInheritanceViolation
-        ? ErrorCode.INHERITANCE_VIOLATION
-        : ErrorCode.INVALID_SCHEMA;
-      const message = hasInheritanceViolation
-        ? "Child type redefines a field declared by an ancestor"
-        : "Invalid type schema";
+      const hasCompatibleWithViolation = result.errors.some(
+        (e) => e.code === "compatible_with_violation",
+      );
+      let code: ErrorCode;
+      let message: string;
+      if (hasInheritanceViolation) {
+        code = ErrorCode.INHERITANCE_VIOLATION;
+        message = "Child type redefines a field declared by an ancestor";
+      } else if (hasCompatibleWithViolation) {
+        code = ErrorCode.COMPATIBLE_WITH_VIOLATION;
+        message =
+          "Type does not satisfy the structural-superset of its compatible_with target";
+      } else {
+        code = ErrorCode.INVALID_SCHEMA;
+        message = "Invalid type schema";
+      }
       throw new MymeError(code, message, { errors: result.errors });
     }
 

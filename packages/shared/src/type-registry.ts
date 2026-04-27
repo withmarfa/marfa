@@ -769,6 +769,55 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     }
   }
 
+  // compatible_with (TSC42 §3) — structural-superset check at registration.
+  // Only enforced after the rest of the schema is well-formed; errors here
+  // are emitted as `compatible_with_violation` so callers can disambiguate.
+  if (obj.compatible_with !== undefined) {
+    if (typeof obj.compatible_with !== "string") {
+      errors.push({
+        field: "compatible_with",
+        message: "Must be a type identifier string",
+      });
+    } else {
+      const target = TYPE_REGISTRY.get(obj.compatible_with);
+      if (!target) {
+        errors.push({
+          field: "compatible_with",
+          message: `Target type "${obj.compatible_with}" does not exist`,
+          code: "compatible_with_violation",
+        });
+      } else if (
+        typeof obj.fields === "object" &&
+        obj.fields !== null &&
+        !Array.isArray(obj.fields)
+      ) {
+        const declaredFields = obj.fields as Record<string, unknown>;
+        for (const [fieldName, targetField] of Object.entries(target.fields)) {
+          const required = targetField.required === true;
+          if (!required) continue;
+          const own = declaredFields[fieldName];
+          if (own === undefined) {
+            errors.push({
+              field: `compatible_with.${fieldName}`,
+              message: `Missing required field "${fieldName}" from compatible target "${obj.compatible_with}"`,
+              code: "compatible_with_violation",
+            });
+            continue;
+          }
+          if (typeof own !== "object" || own === null) continue;
+          const ownDef = own as Record<string, unknown>;
+          if (ownDef.type !== targetField.type) {
+            errors.push({
+              field: `compatible_with.${fieldName}`,
+              message: `Field "${fieldName}" type "${String(ownDef.type)}" does not match target "${targetField.type}"`,
+              code: "compatible_with_violation",
+            });
+          }
+        }
+      }
+    }
+  }
+
   if (errors.length > 0) {
     return { success: false, errors };
   }
@@ -784,6 +833,9 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
   }
   if (typeof obj.parent === "string") {
     schema.parent = obj.parent;
+  }
+  if (typeof obj.compatible_with === "string") {
+    schema.compatible_with = obj.compatible_with;
   }
   if (
     typeof obj.display_hints === "object" &&

@@ -97,6 +97,14 @@ export interface TypeSchema {
   display_hints?: DisplayHints;
   version_policy?: VersionPolicy;
   merge_policy?: MergePolicy;
+  /**
+   * Sibling-type compatibility declaration (TSC42 §3). When set, this type
+   * asserts a structural-superset relationship with the named target — every
+   * required field on the target is present here with a matching shape.
+   * Server verifies at registration; mismatched claims are rejected with
+   * `compatible_with_violation`.
+   */
+  compatible_with?: string;
 }
 
 // ---------------------------------------------------------------------------
