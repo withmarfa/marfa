@@ -245,6 +245,10 @@ export class PgItemStore implements ItemStore {
       conditions.push(eq(items.tier, filters.tier));
     }
 
+    if (filters.exclude_system_types) {
+      conditions.push(sql`${items.type} NOT LIKE 'system.%'`);
+    }
+
     // Timestamp range filters — uses COALESCE(timestamp, created_at) as effective date
     if (filters.since) {
       conditions.push(

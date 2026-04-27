@@ -113,6 +113,10 @@ export class PgSearchStore implements SearchStore {
       conditions.push(`AND i.tier = $${String(paramIdx++)}`);
     }
 
+    if (filters.exclude_system_types) {
+      conditions.push(`AND i.type NOT LIKE 'system.%'`);
+    }
+
     // Tags filter — items must have ALL specified tags. Mirrors the
     // jsonb-containment pattern from /items.
     if (filters.tags && filters.tags.length > 0) {

@@ -13,8 +13,12 @@ import {
 import type { ItemState } from "@mymehq/types";
 
 describe("TYPE_REGISTRY", () => {
-  it("contains exactly 21 core types", () => {
-    expect(TYPE_REGISTRY.size).toBe(21);
+  it("contains 21 core types and 4 system types (TSC42 §4)", () => {
+    expect(TYPE_REGISTRY.size).toBe(25);
+    expect(TYPE_REGISTRY.has("system.device")).toBe(true);
+    expect(TYPE_REGISTRY.has("system.credential")).toBe(true);
+    expect(TYPE_REGISTRY.has("system.webhook")).toBe(true);
+    expect(TYPE_REGISTRY.has("system.app")).toBe(true);
   });
 
   it("contains all media group types", () => {

@@ -42,16 +42,30 @@ interface JsonSchema {
 }
 
 const coreDir = resolve(import.meta.dirname, "..", "core");
+const systemDir = resolve(coreDir, "system");
 const outDir = resolve(import.meta.dirname, "..", "generated");
 
-// Load all schemas — skip dormant stubs (_deferred: true)
-const files = readdirSync(coreDir).filter((f) => f.endsWith(".json"));
-const schemas: JsonSchema[] = files
+// Load all schemas — skip dormant stubs (_deferred: true). Top-level core/*.json
+// is the regular type set; core/system/*.json is the platform-internal
+// `system.*` set (TSC42 §4) which gets emitted into a separate registry.
+const coreFiles = readdirSync(coreDir).filter((f) => f.endsWith(".json"));
+const schemas: JsonSchema[] = coreFiles
   .map((f) => {
     const raw = readFileSync(join(coreDir, f), "utf-8");
     return JSON.parse(raw) as JsonSchema;
   })
   .filter((s) => s._deferred !== true);
+
+let systemFiles: string[];
+try {
+  systemFiles = readdirSync(systemDir).filter((f) => f.endsWith(".json"));
+} catch {
+  systemFiles = [];
+}
+const systemSchemas: JsonSchema[] = systemFiles.map((f) => {
+  const raw = readFileSync(join(systemDir, f), "utf-8");
+  return JSON.parse(raw) as JsonSchema;
+});
 
 // Sort: parents before children (no parent first, then by depth)
 schemas.sort((a, b) => {
@@ -237,11 +251,47 @@ for (const schema of schemas) {
 lines.push("];");
 lines.push("");
 
+// system.* set (TSC42 §4) — emitted as a separate registry; the consuming
+// runtime registers these alongside ALL_TYPES but tracks them separately so
+// search defaults can exclude them and the lifecycle override
+// (`active | revoked`) applies only to this set.
+for (const schema of systemSchemas) {
+  const name = varName(schema.id);
+  lines.push(`const ${name}: TypeSchema = {`);
+  lines.push(`  id: "${schema.id}",`);
+  if (schema.parent) lines.push(`  parent: "${schema.parent}",`);
+  lines.push(`  label: "${schema.label}",`);
+  if (schema.description) {
+    const escapedDescription = schema.description
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"');
+    lines.push(`  description: "${escapedDescription}",`);
+  }
+  lines.push(`  version: ${String(schema.version)},`);
+  lines.push("  fields: {");
+  for (const [fieldName, fieldDef] of Object.entries(schema.fields)) {
+    const isReq = (schema.required ?? []).includes(fieldName);
+    lines.push(`    ${fieldName}: ${fieldLiteral(fieldDef, isReq)},`);
+  }
+  lines.push("  },");
+  lines.push("};");
+  lines.push("");
+}
+
+lines.push("export const ALL_SYSTEM_TYPES: TypeSchema[] = [");
+for (const schema of systemSchemas) {
+  lines.push(`  ${varName(schema.id)},`);
+}
+lines.push("];");
+lines.push("");
+
 // Write output
 mkdirSync(outDir, { recursive: true });
 const outPath = join(outDir, "type-registry.ts");
 writeFileSync(outPath, lines.join("\n") + "\n");
-console.log(`Generated ${String(schemas.length)} types -> ${outPath}`);
+console.log(
+  `Generated ${String(schemas.length)} core types + ${String(systemSchemas.length)} system types -> ${outPath}`,
+);
 
 // ---------------------------------------------------------------------------
 // Edge types

@@ -37,6 +37,11 @@ export interface ItemFilters {
   source?: string;
   /** Restrict to a specific tier. Omit for the default unfiltered scope. */
   tier?: "library" | "feed";
+  /** When true, items whose type starts with `system.` are excluded from
+   *  the result set. The route layer flips this on by default; callers
+   *  opt back in by listing `?include=system` or filtering on a specific
+   *  `system.*` type. */
+  exclude_system_types?: boolean;
   tags?: string[];
   filter?: string;
   allowed_types?: string[];
@@ -54,6 +59,8 @@ export interface SearchFilters {
   state?: ItemState;
   /** Tier filter, matching `/items`. Omit for unfiltered. */
   tier?: "library" | "feed";
+  /** Mirrors `ItemFilters.exclude_system_types`. */
+  exclude_system_types?: boolean;
   /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */
   tags?: string[];
   filter?: string;

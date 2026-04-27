@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ALL_TYPES } from "@mymehq/types";
+import { ALL_TYPES, ALL_SYSTEM_TYPES } from "@mymehq/types";
 import type {
   DisplayHints,
   FieldDefinition,
@@ -24,7 +24,7 @@ export type {
   TypeSchema,
   VersionPolicy,
 };
-export { ALL_TYPES };
+export { ALL_TYPES, ALL_SYSTEM_TYPES };
 
 const MERGE_STRATEGIES: ReadonlySet<MergeStrategy> = new Set([
   "last_writer_wins",
@@ -41,8 +41,17 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
 };
 
 // Internal mutable map — exposed as ReadonlyMap to prevent accidental mutation.
+// Holds both the canonical core.* types and the platform-internal system.*
+// set; the system set is also tracked separately via SYSTEM_TYPE_IDS so
+// downstream consumers (search default-exclude, lifecycle override, tier
+// rejection) can recognize them without re-classifying namespaces.
 const _registry = new Map<string, TypeSchema>(
-  ALL_TYPES.map((schema) => [schema.id, schema]),
+  [...ALL_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [schema.id, schema]),
+);
+
+/** The set of type IDs in the platform `system.*` registry (TSC42 §4). */
+export const SYSTEM_TYPE_IDS: ReadonlySet<string> = new Set(
+  ALL_SYSTEM_TYPES.map((schema) => schema.id),
 );
 
 /** The type registry — all registered type schemas indexed by type identifier. */
@@ -317,6 +326,20 @@ export const SYSTEM_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> = {
   revoked: [],
 };
 
+/**
+ * Lifecycle override for `system.*` types (TSC42 §4): bounded to
+ * `active | revoked`, where `revoked` is terminal. Archived / trashed do not
+ * apply to operational platform records.
+ */
+export const SYSTEM_TYPE_TRANSITIONS: Readonly<
+  Record<ItemState, ItemState[]>
+> = {
+  active: ["revoked"],
+  archived: [],
+  trashed: [],
+  revoked: [],
+};
+
 const SYSTEM_STATES: ReadonlySet<ItemState> = new Set([
   "active",
   "archived",
@@ -334,7 +357,7 @@ const SYSTEM_STATES: ReadonlySet<ItemState> = new Set([
  * as core types.
  */
 export function validateTransition(
-  _typeId: string,
+  typeId: string,
   currentState: ItemState,
   nextState: ItemState,
 ): string | null {
@@ -346,7 +369,12 @@ export function validateTransition(
     return `Invalid target state "${nextState}"`;
   }
 
-  const allowed = SYSTEM_TRANSITIONS[currentState];
+  // `system.*` items use the bounded active → revoked lifecycle. All other
+  // types follow the canonical three-state graph.
+  const transitions = SYSTEM_TYPE_IDS.has(typeId)
+    ? SYSTEM_TYPE_TRANSITIONS
+    : SYSTEM_TRANSITIONS;
+  const allowed = transitions[currentState];
   if (!allowed.includes(nextState)) {
     return `Transition from "${currentState}" to "${nextState}" is not allowed`;
   }

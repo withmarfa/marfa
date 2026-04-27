@@ -46,6 +46,10 @@ const searchRoute = createRoute({
       type: z.string().optional(),
       state: z.enum(ITEM_STATES as unknown as [string, ...string[]]).optional(),
       tier: z.enum(["library", "feed", "all"]).optional(),
+      /** Opt-in inclusions, comma-separated. `system` includes the platform
+       *  `system.*` records, which are excluded from search results by
+       *  default per TSC42 §4. */
+      include: z.string().optional(),
       /** Comma-separated tag list. Items must have ALL specified tags. */
       tags: z.string().optional(),
       limit: z.coerce.number().int().min(1).max(100).optional().default(20),
@@ -77,7 +81,7 @@ export function searchRoutes(storage: Storage) {
   router.openapi(searchRoute, async (c) => {
     requireAuth(c);
 
-    const { q, type, state, tier, tags, limit, offset, filter } =
+    const { q, type, state, tier, tags, limit, offset, filter, include } =
       c.req.valid("query");
 
     // Business logic validation beyond Zod
@@ -104,11 +108,23 @@ export function searchRoutes(storage: Storage) {
           .filter((t) => t.length > 0)
       : undefined;
 
+    const includeSet = new Set(
+      (include ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    );
+    const includeSystemTypes = includeSet.has("system");
+    const typeIsSystemTarget =
+      typeof type === "string" && type.startsWith("system.");
+    const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
+
     const results = await storage.search.search(q.trim(), {
       tenantId: c.get("apiKey")?.tenant_id,
       type,
       state: state as ItemState | undefined,
       tier: tierFilter,
+      exclude_system_types: excludeSystemTypes,
       tags: tagsFilter,
       filter,
       allowed_types,

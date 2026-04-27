@@ -9,6 +9,7 @@ import {
   getEdgeTypeSchema,
   validateProperties,
   ITEM_STATES,
+  SYSTEM_TYPE_IDS,
 } from "@mymehq/shared";
 import type { ItemState } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -600,8 +601,19 @@ export function itemRoutes(storage: Storage) {
     const credential = c.get("apiKey");
     const stampedSource = credential?.source;
     const stampedOrigin = body.origin ?? credential?.default_origin;
-    const tierValue: "library" | "feed" =
-      body.tier ?? credential?.default_tier ?? "library";
+    // TSC42 §4: `system.*` items have no tier; reject explicit values on
+    // write, and stamp `undefined` rather than the library default.
+    const isSystemTypeWrite = SYSTEM_TYPE_IDS.has(type);
+    if (isSystemTypeWrite && body.tier !== undefined) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "tier is not applicable to system.* items",
+        { field: "tier" },
+      );
+    }
+    const tierValue: "library" | "feed" | undefined = isSystemTypeWrite
+      ? undefined
+      : (body.tier ?? credential?.default_tier ?? "library");
 
     // Validate edges payload up-front (shape only) so the write path doesn't
     // have to double-check. Per-constraint validation runs inside the
@@ -792,6 +804,15 @@ export function itemRoutes(storage: Storage) {
     const includeMetadata = includeSet.has("metadata");
     const includeEdges = includeSet.has("edges");
     const includeExtensions = includeSet.has("extensions");
+    const includeSystemTypes = includeSet.has("system");
+
+    // TSC42 §4: `system.*` items are operational; default lists exclude them.
+    // Caller opts in via `?include=system` or by filtering for a specific
+    // `system.<X>` type — that explicit selection bypasses the default
+    // exclude clause regardless of the include flag.
+    const typeIsSystemTarget =
+      typeof type === "string" && type.startsWith("system.");
+    const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
 
     const result = await storage.items.list({
       tenantId: c.get("apiKey")?.tenant_id,
@@ -799,6 +820,7 @@ export function itemRoutes(storage: Storage) {
       state,
       source: query.source,
       tier,
+      exclude_system_types: excludeSystemTypes,
       tags,
       filter,
       allowed_types: getTypeFilter(c),

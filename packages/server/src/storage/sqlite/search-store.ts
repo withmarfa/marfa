@@ -138,6 +138,10 @@ export class SqliteSearchStore implements SearchStore {
       params.push(filters.tier);
     }
 
+    if (filters.exclude_system_types) {
+      conditions.push("AND i.type NOT LIKE 'system.%'");
+    }
+
     // Tags filter — items must have ALL specified tags. Uses the same
     // json_each pattern as /items.
     if (filters.tags && filters.tags.length > 0) {
