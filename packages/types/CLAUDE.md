@@ -15,7 +15,7 @@ JSON schemas for the platform-shipped type set, plus the codegen that produces T
 
 - **JSON-first.** Add a new field by editing `core/<type>.json`, then run `pnpm --filter @mymehq/types generate`. Don't hand-edit `generated/*`.
 - **Inheritance is single-parent, additive-only.** A child type may add fields; it cannot redefine fields from its parent chain. Resolved fields and merge policies are computed during codegen.
-- **`_deferred: true`** marks a JSON file that should NOT be emitted into the runtime registry. Reserved for stubs we want to ship later. Currently unused in the active set (was used for `core.message`, removed when TSC42 dropped it from the reserved set).
+- **`_deferred: true`** marks a JSON file that should NOT be emitted into the runtime registry. Reserved for stubs we want to ship later.
 - **`compatible_with`** — TSC42 §3 structural-superset declaration. Server validates at registration; the codegen passes the field through verbatim.
 - **`system.*` types** carry the operational restrictions in their JSON (the description names them); the runtime applies the lifecycle/search/tier overrides via `SYSTEM_TYPE_IDS` in `@mymehq/shared/type-registry.ts`.
 

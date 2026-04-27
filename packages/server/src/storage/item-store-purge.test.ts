@@ -120,7 +120,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
     expect(after.some((h) => h.item.id === itemId)).toBe(false);
   });
 
-  it("expireFeedOlderThan removes FTS entries for expired ambient items", async () => {
+  it("expireFeedOlderThan removes FTS entries for expired feed items", async () => {
     const itemId = id("aaa3");
     await ctx.storage.items.create(
       {

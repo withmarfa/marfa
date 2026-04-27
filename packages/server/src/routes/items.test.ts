@@ -303,7 +303,7 @@ describe("PATCH /items/:id", () => {
       key: ctx.adminKey,
       body: {
         type: "core.note",
-        properties: { body: "ambient" },
+        properties: { body: "feed" },
         tier: "feed",
       },
     });
@@ -816,7 +816,7 @@ describe("query language: tier system field", () => {
       key: ctx.adminKey,
       body: {
         type: "core.note",
-        properties: { body: "ambient item" },
+        properties: { body: "feed item" },
         tier: "feed",
       },
     });

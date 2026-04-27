@@ -842,12 +842,12 @@ describe("Extended SDK surface", () => {
       expect(item.tier).toBe("library");
     }
 
-    const onlyAmbient = await client.items.list({
+    const onlyFeed = await client.items.list({
       type: "core.note",
       tier: "feed",
       limit: 200,
     });
-    for (const item of onlyAmbient.data) {
+    for (const item of onlyFeed.data) {
       expect(item.tier).toBe("feed");
     }
   });
