@@ -104,7 +104,7 @@ export class PgKeyStore implements KeyStore {
       source: row.source,
       role: input.role,
       default_origin: row.default_origin,
-      default_tier: row.default_tier as Tier,
+      default_tier: row.default_tier,
       is_platform: row.is_platform,
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},

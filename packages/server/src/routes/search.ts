@@ -123,13 +123,15 @@ export function searchRoutes(storage: Storage) {
 
     // TSC42 §5 source-filter lever — only narrows when a specific type is
     // requested.
+    const callerKeyForSearch = c.get("apiKey");
+    const callerTenantIdForSearch = callerKeyForSearch?.tenant_id;
     const tenantConfigForSearch =
-      c.get("apiKey")?.tenant_id && storage.tenants
-        ? await storage.tenants.getConfig(c.get("apiKey")!.tenant_id!)
+      callerTenantIdForSearch && storage.tenants
+        ? await storage.tenants.getConfig(callerTenantIdForSearch)
         : null;
     const enforcementForSearch = resolveEnforcement(
       tenantConfigForSearch,
-      c.get("apiKey"),
+      callerKeyForSearch,
     );
     const sourcesFilter =
       typeof type === "string"

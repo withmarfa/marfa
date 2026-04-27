@@ -270,7 +270,7 @@ for (const schema of systemSchemas) {
   lines.push(`  version: ${String(schema.version)},`);
   lines.push("  fields: {");
   for (const [fieldName, fieldDef] of Object.entries(schema.fields)) {
-    const isReq = (schema.required ?? []).includes(fieldName);
+    const isReq = schema.required.includes(fieldName);
     lines.push(`    ${fieldName}: ${fieldLiteral(fieldDef, isReq)},`);
   }
   lines.push("  },");

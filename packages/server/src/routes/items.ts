@@ -871,13 +871,15 @@ export function itemRoutes(storage: Storage) {
     // type, narrow results to items whose source is in the allow-list.
     // Only applies when a specific type filter is supplied — the lever is
     // per-type, so filterless reads see no source narrowing.
+    const callerKeyForRead = c.get("apiKey");
+    const callerTenantIdForRead = callerKeyForRead?.tenant_id;
     const tenantConfigForRead =
-      c.get("apiKey")?.tenant_id && storage.tenants
-        ? await storage.tenants.getConfig(c.get("apiKey")!.tenant_id!)
+      callerTenantIdForRead && storage.tenants
+        ? await storage.tenants.getConfig(callerTenantIdForRead)
         : null;
     const enforcementForRead = resolveEnforcement(
       tenantConfigForRead,
-      c.get("apiKey"),
+      callerKeyForRead,
     );
     const sourcesFilter =
       typeof type === "string"

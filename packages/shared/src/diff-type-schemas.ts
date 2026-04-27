@@ -49,8 +49,8 @@ export function diffTypeSchemas(prev: TypeSchema, next: TypeSchema): DiffClass {
   let minor = false;
   let descriptive = false;
 
-  const prevFields = prev.fields ?? {};
-  const nextFields = next.fields ?? {};
+  const prevFields = prev.fields;
+  const nextFields = next.fields;
 
   for (const [name, prevField] of Object.entries(prevFields)) {
     const nextField = nextFields[name];
