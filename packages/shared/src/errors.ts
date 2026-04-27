@@ -37,6 +37,18 @@ export enum ErrorCode {
    * generic-reader contract. See `validateTypeSchema`.
    */
   INHERITANCE_VIOLATION = "inheritance_violation",
+  /**
+   * Server-side semver-diff at type registration (TSC42 §7): the submitted
+   * version doesn't match the diff class against the existing schema. E.g.
+   * removing a field while bumping a "patch" version, or re-submitting an
+   * identical schema (no-op).
+   */
+  VERSION_BUMP_MISMATCH = "version_bump_mismatch",
+  /**
+   * `compatible-with` declaration on a type (TSC42 §3) doesn't satisfy the
+   * structural-superset rule against the named target.
+   */
+  COMPATIBLE_WITH_VIOLATION = "compatible_with_violation",
   // ---------------------------------------------------------------------
   // Edge error codes
   // ---------------------------------------------------------------------
@@ -88,6 +100,8 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.TYPE_IN_USE]: 409,
   [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,
   [ErrorCode.WEBHOOK_NOT_FOUND]: 404,
+  [ErrorCode.VERSION_BUMP_MISMATCH]: 422,
+  [ErrorCode.COMPATIBLE_WITH_VIOLATION]: 422,
   [ErrorCode.BLOB_TOO_LARGE]: 413,
   [ErrorCode.INVALID_PROPERTIES]: 400,
   [ErrorCode.INVALID_SCHEMA]: 400,

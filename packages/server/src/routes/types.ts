@@ -8,6 +8,8 @@ import {
   validateTypeSchema,
   isValidTypeIdentifier,
   classifyNamespace,
+  diffTypeSchemas,
+  isValidVersionBump,
 } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
@@ -420,19 +422,33 @@ export function typeRoutes(storage: Storage) {
       validateParentChain(schema.id, schema.parent);
     }
 
-    // Reject field removal — updates must be backward-compatible
-    for (const fieldName of Object.keys(existing.fields)) {
-      if (!(fieldName in schema.fields)) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          `Cannot remove field "${fieldName}". Type updates must be backward-compatible.`,
-        );
-      }
+    // TSC42 §7: server-side semver diff. Replaces the historical
+    // auto-increment with a structural classifier — no-op submissions are
+    // rejected, descriptive-only changes accept the existing version,
+    // additive and breaking changes require an explicit bump. The classifier
+    // returns the diff class for telemetry / SDK error messages.
+    const diff = diffTypeSchemas(existing, schema);
+    if (diff === "noop") {
+      throw new MymeError(
+        ErrorCode.VERSION_BUMP_MISMATCH,
+        "No structural or descriptive changes — re-submitting an identical schema is rejected",
+        { diff },
+      );
     }
-
-    // Auto-increment version if not explicitly bumped
-    if (schema.version <= existing.version) {
-      schema.version = existing.version + 1;
+    if (diff === "major") {
+      // Field removal is a breaking diff; with integer versions we accept
+      // breaking changes when the version bumps. Wire-shape consumers see
+      // the diff class in the rejection / acceptance audit so SDK telemetry
+      // can warn appropriately.
+    }
+    if (!isValidVersionBump(diff, existing.version, schema.version)) {
+      throw new MymeError(
+        ErrorCode.VERSION_BUMP_MISMATCH,
+        diff === "patch"
+          ? "Descriptive-only change accepts the existing version or higher"
+          : `${diff[0]?.toUpperCase() ?? ""}${diff.slice(1)} change requires version > ${String(existing.version)}`,
+        { diff, existing_version: existing.version },
+      );
     }
 
     const updated = await storage.types.update(id, schema);
