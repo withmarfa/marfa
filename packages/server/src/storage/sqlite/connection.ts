@@ -58,10 +58,12 @@ export function createConnection(sqlitePath: string): {
       provider TEXT NOT NULL,
       provider_id TEXT NOT NULL,
       tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      handle TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_handle ON users(handle);
 
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,

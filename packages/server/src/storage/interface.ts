@@ -381,6 +381,10 @@ export interface UserStore {
   getByEmail(email: string): Promise<User | null>;
   getByProvider(provider: string, providerId: string): Promise<User | null>;
   getByTenantId(tenantId: string): Promise<User | null>;
+  /** Lookup by claimed handle (TSC42 §8). Used for collision detection. */
+  getByHandle(handle: string): Promise<User | null>;
+  /** Claim or change a user's handle. Throws on collision. */
+  setHandle(id: string, handle: string): Promise<User>;
 }
 
 export interface TenantStore {

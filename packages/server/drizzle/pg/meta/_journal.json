@@ -148,6 +148,13 @@
       "when": 1778010000000,
       "tag": "0020_is_platform",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1778020000000,
+      "tag": "0021_user_handle",
+      "breakpoints": true
     }
   ]
 }

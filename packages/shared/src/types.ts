@@ -470,6 +470,14 @@ export interface User {
   provider: string;
   provider_id: string;
   tenant_id: string;
+  /**
+   * Lowercase alphanumeric + hyphens, 3–32 chars. Optional — users claim a
+   * handle through the UX rather than at signup. Per TSC42 §8 the user-id
+   * (the immutable PK) is what foreign references key off; the handle is
+   * potentially renameable in a later iteration. Reserved roots and
+   * reserved structural words cannot be claimed.
+   */
+  handle: string | null;
   created_at: string;
   updated_at: string;
 }

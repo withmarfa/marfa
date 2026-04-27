@@ -115,6 +115,57 @@ const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
 const RESERVED_ROOTS = new Set(["core", "system", "app", "user", "myme"]);
 
 /**
+ * Preliminary reserved structural words for the handle namespace (TSC42 §8).
+ * Final list lands in a separate stream before the public registry opens —
+ * this is the launch-blocking subset needed to keep operational paths and
+ * common URL slugs out of the user namespace.
+ */
+const RESERVED_HANDLE_WORDS: ReadonlySet<string> = new Set([
+  "admin",
+  "api",
+  "support",
+  "help",
+  "docs",
+  "console",
+  "auth",
+  "login",
+  "logout",
+  "signup",
+  "register",
+  "settings",
+  "dashboard",
+  "billing",
+  "terms",
+  "privacy",
+  "about",
+  "home",
+  "you",
+  "me",
+  "we",
+  "us",
+  "myme",
+]);
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+/**
+ * Returns true if the value is a valid handle per TSC42 §8: lowercase
+ * alphanumeric and hyphens only, 3–32 characters, no leading/trailing
+ * hyphens, no consecutive hyphens, not a reserved root or structural word.
+ * Comparison is case-insensitive — the canonical form is the lowercase
+ * input; collision detection at the storage layer also lowercases.
+ */
+export function isValidHandle(value: string): boolean {
+  if (typeof value !== "string") return false;
+  if (value.length < 3 || value.length > 32) return false;
+  if (value.includes("--")) return false;
+  if (!HANDLE_RE.test(value)) return false;
+  if (RESERVED_ROOTS.has(value)) return false;
+  if (RESERVED_HANDLE_WORDS.has(value)) return false;
+  return true;
+}
+
+/**
  * Returns true if the value is a syntactically valid type identifier under
  * the five-tier namespace grammar. Server-side enforcement of who can
  * register `core.*` / `system.*` / `myme.*` happens separately

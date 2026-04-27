@@ -34,11 +34,13 @@ export const users = pgTable(
     tenant_id: text("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    handle: text("handle"),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
   (table) => [
     uniqueIndex("idx_users_provider").on(table.provider, table.provider_id),
+    uniqueIndex("idx_users_handle").on(table.handle),
   ],
 );
 
