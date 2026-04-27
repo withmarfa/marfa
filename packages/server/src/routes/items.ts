@@ -594,10 +594,12 @@ export function itemRoutes(storage: Storage) {
 
     // source is non-forgeable: always stamped from the credential.
     // origin and library fall back to credential defaults when absent.
+    // Final fallback is `library: true` ("save it" — the curated layer is the
+    // intended default when neither caller nor credential expresses intent).
     const credential = c.get("apiKey");
     const stampedSource = credential?.source;
     const stampedOrigin = body.origin ?? credential?.default_origin;
-    const libraryValue = body.library ?? credential?.default_library ?? false;
+    const libraryValue = body.library ?? credential?.default_library ?? true;
 
     // Validate edges payload up-front (shape only) so the write path doesn't
     // have to double-check. Per-constraint validation runs inside the
