@@ -65,7 +65,7 @@ describe("GET /search library filter", () => {
       key: ctx.adminKey,
       body: {
         type: "core.note",
-        properties: { body: `${sharedToken} ambient variant` },
+        properties: { body: `${sharedToken} feed variant` },
         tier: "feed",
       },
     });
@@ -104,7 +104,7 @@ describe("GET /search library filter", () => {
     }
   });
 
-  it("returns ambient items only when ?tier=feed", async () => {
+  it("returns feed items only when ?tier=feed", async () => {
     const res = await request(
       ctx.app,
       "GET",

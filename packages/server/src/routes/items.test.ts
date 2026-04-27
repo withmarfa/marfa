@@ -840,7 +840,7 @@ describe("query language: tier system field", () => {
 
 describe("tier default and tri-value filter on GET /items", () => {
   let libraryId: string;
-  let ambientId: string;
+  let feedId: string;
 
   beforeAll(async () => {
     const libRes = await request(ctx.app, "POST", "/items", {
@@ -854,16 +854,16 @@ describe("tier default and tri-value filter on GET /items", () => {
     const libBody = (await libRes.json()) as { item: { id: string } };
     libraryId = libBody.item.id;
 
-    const ambRes = await request(ctx.app, "POST", "/items", {
+    const feedRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "core.note",
-        properties: { body: "ambient marker for default test" },
+        properties: { body: "feed marker for default test" },
         tier: "feed",
       },
     });
-    const ambBody = (await ambRes.json()) as { item: { id: string } };
-    ambientId = ambBody.item.id;
+    const feedBody = (await feedRes.json()) as { item: { id: string } };
+    feedId = feedBody.item.id;
   });
 
   it("returns both library and feed items when no tier param is supplied", async () => {
@@ -879,7 +879,7 @@ describe("tier default and tri-value filter on GET /items", () => {
     };
     const ids = new Set(body.data.map((item) => item.id));
     expect(ids.has(libraryId)).toBe(true);
-    expect(ids.has(ambientId)).toBe(true);
+    expect(ids.has(feedId)).toBe(true);
   });
 
   it("returns library items only when ?tier=library", async () => {
@@ -895,13 +895,13 @@ describe("tier default and tri-value filter on GET /items", () => {
     };
     const ids = new Set(body.data.map((item) => item.id));
     expect(ids.has(libraryId)).toBe(true);
-    expect(ids.has(ambientId)).toBe(false);
+    expect(ids.has(feedId)).toBe(false);
     for (const item of body.data) {
       expect(item.tier).toBe("library");
     }
   });
 
-  it("returns ambient items only when ?tier=feed", async () => {
+  it("returns feed items only when ?tier=feed", async () => {
     const res = await request(
       ctx.app,
       "GET",
@@ -914,7 +914,7 @@ describe("tier default and tri-value filter on GET /items", () => {
     };
     const ids = new Set(body.data.map((item) => item.id));
     expect(ids.has(libraryId)).toBe(false);
-    expect(ids.has(ambientId)).toBe(true);
+    expect(ids.has(feedId)).toBe(true);
     for (const item of body.data) {
       expect(item.tier).toBe("feed");
     }
@@ -933,7 +933,7 @@ describe("tier default and tri-value filter on GET /items", () => {
     };
     const ids = new Set(body.data.map((item) => item.id));
     expect(ids.has(libraryId)).toBe(true);
-    expect(ids.has(ambientId)).toBe(true);
+    expect(ids.has(feedId)).toBe(true);
   });
 });
 

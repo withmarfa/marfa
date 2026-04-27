@@ -1031,9 +1031,9 @@ export class MymeClient {
 
   // ---- Tenants (admin) ----
 
-  /** Tenant-scoped configuration (per-type ambient retention overrides
-   * today; future tenant-level settings will live here). All endpoints
-   * are admin-only. */
+  /** Tenant-scoped configuration. Controls feed-tier retention per type
+   * and the three optional schema-enforcement levers (TSC42 §5). All
+   * endpoints are admin-only. */
   readonly tenants = {
     /** Returns the current tenant's config. Empty object when nothing
      * is configured. */

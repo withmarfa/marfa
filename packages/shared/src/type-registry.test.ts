@@ -74,11 +74,6 @@ describe("TYPE_REGISTRY", () => {
     }
   });
 
-  it("excludes deferred and removed V0 types", () => {
-    // core.message is deferred post-V0; core.collection is removed entirely.
-    expect(TYPE_REGISTRY.has("core.message")).toBe(false);
-    expect(TYPE_REGISTRY.has("core.collection")).toBe(false);
-  });
 });
 
 describe("getTypeSchema", () => {

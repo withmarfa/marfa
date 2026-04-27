@@ -219,37 +219,37 @@ describe("TrashPurger.runOnce — behavioural", () => {
 });
 
 describe("FeedExpirer.runOnce — behavioural", () => {
-  it("deletes ambient items older than the retention window, keeps library items and newer ambients", async () => {
+  it("deletes feed items older than the retention window, keeps library items and newer feed items", async () => {
     const ids = {
-      youngAmbient: id("ddd1"),
-      oldAmbient: id("ddd2"),
-      ancientAmbient: id("ddd3"),
+      youngFeed: id("ddd1"),
+      oldFeed: id("ddd2"),
+      ancientFeed: id("ddd3"),
       ancientLibrary: id("ddd4"),
-      ancientArchivedAmbient: id("ddd5"),
-      ancientTrashedAmbient: id("ddd6"),
+      ancientArchivedFeed: id("ddd5"),
+      ancientTrashedFeed: id("ddd6"),
     };
 
-    // Ambient inside retention window (29 days old): survives.
+    // Feed item inside retention window (29 days old): survives.
     await seedItemWithUpdatedAt({
-      id: ids.youngAmbient,
+      id: ids.youngFeed,
       state: "active",
       tier: "feed",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 29 * MS_PER_DAY,
       ).toISOString(),
     });
-    // Ambient just past cutoff (31 days): expires.
+    // Feed item just past cutoff (31 days): expires.
     await seedItemWithUpdatedAt({
-      id: ids.oldAmbient,
+      id: ids.oldFeed,
       state: "active",
       tier: "feed",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 31 * MS_PER_DAY,
       ).toISOString(),
     });
-    // Ambient 100 days old: expires.
+    // Feed item 100 days old: expires.
     await seedItemWithUpdatedAt({
-      id: ids.ancientAmbient,
+      id: ids.ancientFeed,
       state: "active",
       tier: "feed",
       updatedAtIso: new Date(
@@ -265,18 +265,18 @@ describe("FeedExpirer.runOnce — behavioural", () => {
         FIXED_NOW.getTime() - 100 * MS_PER_DAY,
       ).toISOString(),
     });
-    // Ambient archived 100 days ago: still expires (state-agnostic).
+    // Feed item archived 100 days ago: still expires (state-agnostic).
     await seedItemWithUpdatedAt({
-      id: ids.ancientArchivedAmbient,
+      id: ids.ancientArchivedFeed,
       state: "archived",
       tier: "feed",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 100 * MS_PER_DAY,
       ).toISOString(),
     });
-    // Ambient trashed 100 days ago: also expires.
+    // Feed item trashed 100 days ago: also expires.
     await seedItemWithUpdatedAt({
-      id: ids.ancientTrashedAmbient,
+      id: ids.ancientTrashedFeed,
       state: "trashed",
       tier: "feed",
       updatedAtIso: new Date(
@@ -294,12 +294,12 @@ describe("FeedExpirer.runOnce — behavioural", () => {
     const deleted = await expirer.runOnce();
     expect(deleted).toBe(4);
 
-    expect(await rowExists(ids.youngAmbient)).toBe(true);
+    expect(await rowExists(ids.youngFeed)).toBe(true);
     expect(await rowExists(ids.ancientLibrary)).toBe(true);
-    expect(await rowExists(ids.oldAmbient)).toBe(false);
-    expect(await rowExists(ids.ancientAmbient)).toBe(false);
-    expect(await rowExists(ids.ancientArchivedAmbient)).toBe(false);
-    expect(await rowExists(ids.ancientTrashedAmbient)).toBe(false);
+    expect(await rowExists(ids.oldFeed)).toBe(false);
+    expect(await rowExists(ids.ancientFeed)).toBe(false);
+    expect(await rowExists(ids.ancientArchivedFeed)).toBe(false);
+    expect(await rowExists(ids.ancientTrashedFeed)).toBe(false);
   });
 
   it("is a no-op when retentionDays <= 0 (the V0 default)", async () => {
