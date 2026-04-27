@@ -190,6 +190,14 @@ export interface ApiKey {
   /** Human-readable display name stamped onto items this credential writes. */
   source: string;
   role: KeyRole;
+  /**
+   * Platform-credential gate (TSC42 §3/§4). When `true`, the credential may
+   * register and write `core.*`, `system.*`, and `myme.*` types. The first
+   * credential created at server install is the seed platform credential;
+   * only an existing platform credential may mint another. Defaults to
+   * `false` for ordinary tenant admin and member keys.
+   */
+  is_platform: boolean;
   /** Origin stamped onto items when the client doesn't supply one.
    *  `system` is excluded — server-stamped only, never a credential default. */
   default_origin: Exclude<Origin, "system">;
@@ -219,6 +227,12 @@ export interface CreateKeyInput {
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
+  /**
+   * Optional. Only an existing platform credential can set this to `true`;
+   * other callers see the value silently coerced to `false`. The bootstrap
+   * admin created at server install is the seed platform credential.
+   */
+  is_platform?: boolean;
 }
 
 /**

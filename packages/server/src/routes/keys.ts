@@ -32,6 +32,7 @@ const KeyResponseSchema = z.object({
   role: z.enum(["admin", "member"]),
   default_origin: z.enum(["user", "ai", "worker"]),
   default_tier: z.enum(["library", "feed"]),
+  is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
@@ -48,6 +49,7 @@ const KeyListItemSchema = z.object({
   role: z.string(),
   default_origin: z.enum(["user", "ai", "worker"]),
   default_tier: z.enum(["library", "feed"]),
+  is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
@@ -82,6 +84,7 @@ const createKeyRoute = createRoute({
             role: z.enum(["admin", "member"]).optional(),
             default_origin: z.enum(["user", "ai", "worker"]).optional(),
             default_tier: z.enum(["library", "feed"]).optional(),
+            is_platform: z.boolean().optional(),
             type_permissions: z
               .record(z.string(), z.enum(["read", "write", "none"]))
               .optional(),
@@ -187,6 +190,7 @@ const KeyDetailSchema = z.object({
   role: z.enum(["admin", "member"]),
   default_origin: z.enum(["user", "ai", "worker"]),
   default_tier: z.enum(["library", "feed"]),
+  is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
@@ -260,6 +264,20 @@ export function keyRoutes(storage: Storage, salt: string) {
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
 
+    // Platform-credential gate (TSC42 §3/§4): only an existing platform
+    // credential can mint another. Bootstrap is a special case — the very
+    // first credential created at install time IS the seed platform
+    // credential, so we accept the request body's flag (or default to true
+    // when bootstrapping). After that, callers without is_platform: true
+    // see their request silently coerced to false.
+    const callerIsPlatform = c.get("apiKey")?.is_platform === true;
+    let isPlatform: boolean;
+    if (isBootstrap) {
+      isPlatform = body.is_platform ?? true;
+    } else {
+      isPlatform = callerIsPlatform && body.is_platform === true;
+    }
+
     const stored = await storage.keys.create(
       {
         label: body.label.trim(),
@@ -267,6 +285,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         role: role,
         default_origin: body.default_origin,
         default_tier: body.default_tier,
+        is_platform: isPlatform,
         type_permissions: typePermissions,
         extension_permissions: body.extension_permissions,
         edge_permissions: body.edge_permissions,
@@ -298,6 +317,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         role: stored.role,
         default_origin: stored.default_origin,
         default_tier: stored.default_tier,
+        is_platform: stored.is_platform,
         type_permissions: stored.type_permissions,
         extension_permissions: stored.extension_permissions,
         edge_permissions: stored.edge_permissions,
@@ -386,6 +406,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         role: updated.role,
         default_origin: updated.default_origin,
         default_tier: updated.default_tier,
+        is_platform: updated.is_platform,
         type_permissions: updated.type_permissions,
         extension_permissions: updated.extension_permissions,
         edge_permissions: updated.edge_permissions,

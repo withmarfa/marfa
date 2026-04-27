@@ -7,6 +7,7 @@ import {
   ALL_TYPES,
   validateTypeSchema,
   isValidTypeIdentifier,
+  classifyNamespace,
 } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
@@ -304,8 +305,26 @@ export function typeRoutes(storage: Storage) {
     if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
       throw new MymeError(
         ErrorCode.INVALID_TYPE,
-        "Invalid type identifier. Must be dot-separated lowercase segments (e.g. acme.deal). Forward slashes are not allowed.",
+        "Invalid type identifier. Must follow the five-tier namespace grammar: core.<type>, system.<type>, app.<app-name>.<type>, user.<type>, or <publisher>.<type>. Forward slashes and reserved-root collisions are rejected.",
       );
+    }
+    // TSC42 §3/§4 platform-credential gate. Only credentials marked as
+    // platform may register `core.*`, `system.*`, or `myme.*` types — these
+    // tiers are platform-shipped/operational, not authored at runtime by
+    // ordinary tenant admins.
+    if (typeof body.id === "string") {
+      const tier = classifyNamespace(body.id);
+      const isPlatformCaller = c.get("apiKey")?.is_platform === true;
+      if (
+        (tier === "core" || tier === "system" || tier === "myme") &&
+        !isPlatformCaller
+      ) {
+        throw new MymeError(
+          ErrorCode.FORBIDDEN,
+          `Reserved namespace: only platform credentials may register ${tier}.* types`,
+          { namespace: tier },
+        );
+      }
     }
     if (body.fields === undefined || body.fields === null) {
       throw new MymeError(

@@ -153,6 +153,9 @@ export const apiKeys = sqliteTable(
     role: text("role").notNull().default("member"),
     default_origin: text("default_origin").notNull().default("user"),
     default_tier: text("default_tier").notNull().default("library"),
+    is_platform: integer("is_platform", { mode: "boolean" })
+      .notNull()
+      .default(false),
     type_permissions: text("type_permissions")
       .notNull()
       .default('{"*":"write"}'),

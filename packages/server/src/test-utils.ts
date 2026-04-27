@@ -101,6 +101,10 @@ export async function createTestContext(
       // library tier ("save it"). The test admin matches that default;
       // tests that need feed items pass `tier: "feed"` on create.
       default_tier: "library",
+      // The bootstrap admin in tests stands in for the platform credential —
+      // tests need to register core.evaluator-* helper types and exercise
+      // system.* / handle paths.
+      is_platform: true,
     },
     keyHash,
   );

@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   role TEXT NOT NULL DEFAULT 'member',
   default_origin TEXT NOT NULL DEFAULT 'user',
   default_tier TEXT NOT NULL DEFAULT 'library',
+  is_platform BOOLEAN NOT NULL DEFAULT false,
   type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
   extension_permissions TEXT NOT NULL DEFAULT '{}',
   edge_permissions TEXT NOT NULL DEFAULT '{}',

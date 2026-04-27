@@ -53,9 +53,73 @@ export function getTypeSchema(typeId: string): TypeSchema | undefined {
   return _registry.get(typeId);
 }
 
+/**
+ * The five-tier namespace classification (TSC42 §3). The first segment of a
+ * type identifier determines its tier; reserved roots (`core`, `system`,
+ * `app`, `user`, `myme`) carry platform-defined semantics, anything else is a
+ * publisher handle.
+ */
+export type NamespaceTier =
+  | "core"
+  | "system"
+  | "app"
+  | "user"
+  | "publisher"
+  | "myme";
+
+const RESERVED_ROOTS: ReadonlySet<string> = new Set([
+  "core",
+  "system",
+  "app",
+  "user",
+  "myme",
+]);
+
+/** Returns true if the candidate is a reserved root prefix. */
+export function isReservedRoot(candidate: string): boolean {
+  return RESERVED_ROOTS.has(candidate);
+}
+
+/**
+ * Classifies a type identifier into one of the five tiers (plus the
+ * `myme` reserved-but-internal root). Falls back to `"publisher"` for any
+ * non-reserved first segment — the namespace grammar disambiguates by
+ * structure: `<publisher>.<type>` is two segments, `<reserved>.<...>` follows
+ * the tier-specific shape.
+ */
+export function classifyNamespace(id: string): NamespaceTier {
+  const root = id.split(".", 1)[0] ?? "";
+  if (root === "core") return "core";
+  if (root === "system") return "system";
+  if (root === "app") return "app";
+  if (root === "user") return "user";
+  if (root === "myme") return "myme";
+  return "publisher";
+}
+
 /** Returns true if the type identifier belongs to the core namespace. */
 export function isCoreType(id: string): boolean {
-  return id.startsWith("core.");
+  return classifyNamespace(id) === "core";
+}
+
+/** Returns true if the type identifier belongs to the system namespace. */
+export function isSystemType(id: string): boolean {
+  return classifyNamespace(id) === "system";
+}
+
+/** Returns true if the type identifier belongs to the app namespace. */
+export function isAppType(id: string): boolean {
+  return classifyNamespace(id) === "app";
+}
+
+/** Returns true if the type identifier belongs to the user namespace. */
+export function isUserType(id: string): boolean {
+  return classifyNamespace(id) === "user";
+}
+
+/** Returns true if the type identifier is a publisher-published type. */
+export function isPublisherType(id: string): boolean {
+  return classifyNamespace(id) === "publisher";
 }
 
 /** Registers a type schema into the in-memory registry. Clears the zod cache. */

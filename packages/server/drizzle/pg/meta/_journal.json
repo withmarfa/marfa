@@ -141,6 +141,13 @@
       "when": 1778000000000,
       "tag": "0019_library_to_tier",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1778010000000,
+      "tag": "0020_is_platform",
+      "breakpoints": true
     }
   ]
 }

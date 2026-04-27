@@ -3,6 +3,7 @@ import {
   text,
   integer,
   bigint,
+  boolean,
   doublePrecision,
   jsonb,
   index,
@@ -157,6 +158,7 @@ export const apiKeys = pgTable(
     role: text("role").notNull().default("member"),
     default_origin: text("default_origin").notNull().default("user"),
     default_tier: text("default_tier").notNull().default("library"),
+    is_platform: boolean("is_platform").notNull().default(false),
     type_permissions: text("type_permissions")
       .notNull()
       .default('{"*":"write"}'),

@@ -31,6 +31,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     role: row.role as "admin" | "member",
     default_origin: row.default_origin as Exclude<Origin, "system">,
     default_tier: row.default_tier as Tier,
+    is_platform: row.is_platform,
     type_permissions: safeJsonParse<Record<string, TypePermission>>(
       row.type_permissions,
       {},
@@ -90,6 +91,7 @@ export class SqliteKeyStore implements KeyStore {
       role: input.role,
       default_origin: input.default_origin ?? "user",
       default_tier: input.default_tier ?? "library",
+      is_platform: input.is_platform ?? false,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
       extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
@@ -104,6 +106,7 @@ export class SqliteKeyStore implements KeyStore {
       role: input.role,
       default_origin: row.default_origin,
       default_tier: row.default_tier as Tier,
+      is_platform: row.is_platform,
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},
       edge_permissions: input.edge_permissions ?? {},
