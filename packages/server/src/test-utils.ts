@@ -79,8 +79,8 @@ export async function createTestContext(
     versionMaxVersions: 500,
     trashRetentionDays: 60,
     trashPurgeIntervalMs: 3_600_000,
-    ambientRetentionDays: 0,
-    ambientExpiryIntervalMs: 3_600_000,
+    feedRetentionDays: 0,
+    feedExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     ...overrides,
@@ -97,10 +97,14 @@ export async function createTestContext(
       source: `test-admin-${suffix}`,
       role: "admin",
       type_permissions: {},
-      // V0 default: items created without an explicit `library` flag are
-      // ambient (`library: false`). The test admin matches that — tests
-      // that need library items pass `library: true` on create.
-      default_library: false,
+      // TSC42 §1: items created without an explicit `tier` default to the
+      // library tier ("save it"). The test admin matches that default;
+      // tests that need feed items pass `tier: "feed"` on create.
+      default_tier: "library",
+      // The bootstrap admin in tests stands in for the platform credential —
+      // tests need to register core.evaluator-* helper types and exercise
+      // system.* / handle paths.
+      is_platform: true,
     },
     keyHash,
   );

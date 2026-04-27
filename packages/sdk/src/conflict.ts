@@ -5,6 +5,7 @@ import type {
   Item,
   MergePolicy,
   MergeStrategy,
+  Tier,
 } from "@mymehq/shared";
 import type { HttpTransport } from "./transport.js";
 import { ConflictError } from "./errors.js";
@@ -172,7 +173,7 @@ export async function handleConflictUpdate(
   version: number,
   strategy: ConflictStrategy,
   resolver?: ConflictResolver,
-  library?: boolean,
+  tier?: Tier,
   onAutoMerge?: ConflictAutoMergeListener,
 ): Promise<Item> {
   let properties = clientPatch;
@@ -187,7 +188,7 @@ export async function handleConflictUpdate(
       body: {
         properties,
         version: currentVersion,
-        ...(library !== undefined && { library }),
+        ...(tier !== undefined && { tier }),
       },
     });
 

@@ -8,6 +8,7 @@ import type {
   EdgePermission,
   ExtensionPermission,
   Origin,
+  Tier,
   TypePermission,
 } from "@mymehq/shared";
 import type { KeyStore } from "../interface.js";
@@ -28,8 +29,9 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     label: row.label,
     source: row.source,
     role: row.role as "admin" | "member",
-    default_origin: row.default_origin as Origin,
-    default_library: row.default_library,
+    default_origin: row.default_origin as Exclude<Origin, "system">,
+    default_tier: row.default_tier as Tier,
+    is_platform: row.is_platform,
     type_permissions: safeJsonParse<Record<string, TypePermission>>(
       row.type_permissions,
       {},
@@ -88,7 +90,8 @@ export class SqliteKeyStore implements KeyStore {
       source: input.source,
       role: input.role,
       default_origin: input.default_origin ?? "user",
-      default_library: input.default_library ?? false,
+      default_tier: input.default_tier ?? "library",
+      is_platform: input.is_platform ?? false,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
       extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
@@ -102,7 +105,8 @@ export class SqliteKeyStore implements KeyStore {
       source: row.source,
       role: input.role,
       default_origin: row.default_origin,
-      default_library: row.default_library,
+      default_tier: row.default_tier,
+      is_platform: row.is_platform,
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},
       edge_permissions: input.edge_permissions ?? {},
@@ -143,8 +147,8 @@ export class SqliteKeyStore implements KeyStore {
     if (input.label !== undefined) patch.label = input.label;
     if (input.default_origin !== undefined)
       patch.default_origin = input.default_origin;
-    if (input.default_library !== undefined)
-      patch.default_library = input.default_library;
+    if (input.default_tier !== undefined)
+      patch.default_tier = input.default_tier;
     if (input.type_permissions !== undefined)
       patch.type_permissions = JSON.stringify(input.type_permissions);
     if (input.extension_permissions !== undefined)

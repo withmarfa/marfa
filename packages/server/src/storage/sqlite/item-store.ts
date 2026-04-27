@@ -110,7 +110,7 @@ export class SqliteItemStore implements ItemStore {
           tenant_id: tenantId,
           type: input.type,
           state,
-          library: input.library ?? false,
+          tier: input.tier ?? "library",
           properties: JSON.stringify(input.properties),
           created_at: now,
           updated_at: now,
@@ -140,7 +140,7 @@ export class SqliteItemStore implements ItemStore {
         id,
         type: input.type,
         state: state,
-        library: input.library ?? false,
+        tier: input.tier ?? "library",
         properties: input.properties,
         created_at: now,
         updated_at: now,
@@ -256,11 +256,16 @@ export class SqliteItemStore implements ItemStore {
 
     if (filters.source) conditions.push(eq(items.source, filters.source));
 
-    if (filters.library !== undefined) {
-      // better-sqlite3 cannot bind a JS boolean directly. The library column
-      // is INTEGER under the hood (Drizzle boolean()); coerce to 0/1 here so
-      // the eq() builder produces a bindable parameter.
-      conditions.push(sql`${items.library} = ${filters.library ? 1 : 0}`);
+    if (filters.sources && filters.sources.length > 0) {
+      conditions.push(inArray(items.source, filters.sources));
+    }
+
+    if (filters.tier !== undefined) {
+      conditions.push(eq(items.tier, filters.tier));
+    }
+
+    if (filters.exclude_system_types) {
+      conditions.push(sql`${items.type} NOT LIKE 'system.%'`);
     }
 
     // Timestamp range filters — uses COALESCE(timestamp, created_at) as effective date
@@ -429,13 +434,13 @@ export class SqliteItemStore implements ItemStore {
           ? { ...currentProps, ...input.properties }
           : currentProps;
         const newVersion = row.version + 1;
-        const newLibrary = input.library ?? row.library;
+        const newTier = input.tier ?? row.tier;
 
         const setClause: Record<string, unknown> = {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
-          ...(input.library !== undefined && { library: input.library }),
+          ...(input.tier !== undefined && { tier: input.tier }),
           ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
         };
 
@@ -449,7 +454,7 @@ export class SqliteItemStore implements ItemStore {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
-          library: newLibrary,
+          tier: newTier,
         });
       }
 
@@ -495,13 +500,13 @@ export class SqliteItemStore implements ItemStore {
         this.versionStore.createSync(id, row.version, currentProps, deviceId);
       }
       const newVersion = row.version + 1;
-      const newLibrary = input.library ?? row.library;
+      const newTier = input.tier ?? row.tier;
 
       const mergeSet: Record<string, unknown> = {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
-        ...(input.library !== undefined && { library: input.library }),
+        ...(input.tier !== undefined && { tier: input.tier }),
         ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
       };
 
@@ -515,7 +520,7 @@ export class SqliteItemStore implements ItemStore {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
-        library: newLibrary,
+        tier: newTier,
       });
     });
 
@@ -612,12 +617,12 @@ export class SqliteItemStore implements ItemStore {
     return purgeFn();
   }
 
-  async expireAmbientOlderThan(
+  async expireFeedOlderThan(
     beforeDate: string,
     tenantId?: string,
   ): Promise<number> {
     const baseConditions = [
-      sql`${items.library} = 0`,
+      eq(items.tier, "feed"),
       lt(items.updated_at, beforeDate),
     ];
     if (tenantId) {

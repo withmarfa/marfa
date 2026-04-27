@@ -14,6 +14,7 @@ function rowToUser(row: typeof users.$inferSelect): User {
     provider: row.provider,
     provider_id: row.provider_id,
     tenant_id: row.tenant_id,
+    handle: row.handle,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -39,11 +40,31 @@ export class PgUserStore implements UserStore {
       provider: input.provider,
       provider_id: input.provider_id,
       tenant_id: input.tenant_id,
+      handle: null,
       created_at: now,
       updated_at: now,
     };
     await this.db.insert(users).values(row);
     return rowToUser(row);
+  }
+
+  async setHandle(id: string, handle: string): Promise<User> {
+    const now = new Date().toISOString();
+    await this.db
+      .update(users)
+      .set({ handle, updated_at: now })
+      .where(eq(users.id, id));
+    const [row] = await this.db.select().from(users).where(eq(users.id, id));
+    if (!row) throw new Error(`User ${id} not found`);
+    return rowToUser(row);
+  }
+
+  async getByHandle(handle: string): Promise<User | null> {
+    const [row] = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.handle, handle));
+    return row ? rowToUser(row) : null;
   }
 
   async getById(id: string): Promise<User | null> {

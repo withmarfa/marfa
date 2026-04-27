@@ -7,6 +7,9 @@ import {
   ALL_TYPES,
   validateTypeSchema,
   isValidTypeIdentifier,
+  classifyNamespace,
+  diffTypeSchemas,
+  isValidVersionBump,
 } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
@@ -304,8 +307,26 @@ export function typeRoutes(storage: Storage) {
     if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
       throw new MymeError(
         ErrorCode.INVALID_TYPE,
-        "Invalid type identifier. Must be dot-separated lowercase segments (e.g. acme.deal). Forward slashes are not allowed.",
+        "Invalid type identifier. Must follow the five-tier namespace grammar: core.<type>, system.<type>, app.<app-name>.<type>, user.<type>, or <publisher>.<type>. Forward slashes and reserved-root collisions are rejected.",
       );
+    }
+    // TSC42 §3/§4 platform-credential gate. Only credentials marked as
+    // platform may register `core.*`, `system.*`, or `myme.*` types — these
+    // tiers are platform-shipped/operational, not authored at runtime by
+    // ordinary tenant admins.
+    if (typeof body.id === "string") {
+      const tier = classifyNamespace(body.id);
+      const isPlatformCaller = c.get("apiKey")?.is_platform === true;
+      if (
+        (tier === "core" || tier === "system" || tier === "myme") &&
+        !isPlatformCaller
+      ) {
+        throw new MymeError(
+          ErrorCode.FORBIDDEN,
+          `Reserved namespace: only platform credentials may register ${tier}.* types`,
+          { namespace: tier },
+        );
+      }
     }
     if (body.fields === undefined || body.fields === null) {
       throw new MymeError(
@@ -316,18 +337,27 @@ export function typeRoutes(storage: Storage) {
 
     const result = validateTypeSchema(body);
     if (!result.success) {
-      // If any error carries the inheritance_violation discriminator, surface
-      // the specific code so clients (e.g. mock-myme conformance) can
-      // disambiguate from generic schema-shape failures.
+      // Surface specific discriminators so clients (e.g. mock-myme
+      // conformance) can disambiguate from generic schema-shape failures.
       const hasInheritanceViolation = result.errors.some(
         (e) => e.code === "inheritance_violation",
       );
-      const code = hasInheritanceViolation
-        ? ErrorCode.INHERITANCE_VIOLATION
-        : ErrorCode.INVALID_SCHEMA;
-      const message = hasInheritanceViolation
-        ? "Child type redefines a field declared by an ancestor"
-        : "Invalid type schema";
+      const hasCompatibleWithViolation = result.errors.some(
+        (e) => e.code === "compatible_with_violation",
+      );
+      let code: ErrorCode;
+      let message: string;
+      if (hasInheritanceViolation) {
+        code = ErrorCode.INHERITANCE_VIOLATION;
+        message = "Child type redefines a field declared by an ancestor";
+      } else if (hasCompatibleWithViolation) {
+        code = ErrorCode.COMPATIBLE_WITH_VIOLATION;
+        message =
+          "Type does not satisfy the structural-superset of its compatible_with target";
+      } else {
+        code = ErrorCode.INVALID_SCHEMA;
+        message = "Invalid type schema";
+      }
       throw new MymeError(code, message, { errors: result.errors });
     }
 
@@ -401,19 +431,33 @@ export function typeRoutes(storage: Storage) {
       validateParentChain(schema.id, schema.parent);
     }
 
-    // Reject field removal — updates must be backward-compatible
-    for (const fieldName of Object.keys(existing.fields)) {
-      if (!(fieldName in schema.fields)) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          `Cannot remove field "${fieldName}". Type updates must be backward-compatible.`,
-        );
-      }
+    // TSC42 §7: server-side semver diff. Replaces the historical
+    // auto-increment with a structural classifier — no-op submissions are
+    // rejected, descriptive-only changes accept the existing version,
+    // additive and breaking changes require an explicit bump. The classifier
+    // returns the diff class for telemetry / SDK error messages.
+    const diff = diffTypeSchemas(existing, schema);
+    if (diff === "noop") {
+      throw new MymeError(
+        ErrorCode.VERSION_BUMP_MISMATCH,
+        "No structural or descriptive changes — re-submitting an identical schema is rejected",
+        { diff },
+      );
     }
-
-    // Auto-increment version if not explicitly bumped
-    if (schema.version <= existing.version) {
-      schema.version = existing.version + 1;
+    if (diff === "major") {
+      // Field removal is a breaking diff; with integer versions we accept
+      // breaking changes when the version bumps. Wire-shape consumers see
+      // the diff class in the rejection / acceptance audit so SDK telemetry
+      // can warn appropriately.
+    }
+    if (!isValidVersionBump(diff, existing.version, schema.version)) {
+      throw new MymeError(
+        ErrorCode.VERSION_BUMP_MISMATCH,
+        diff === "patch"
+          ? "Descriptive-only change accepts the existing version or higher"
+          : `${diff[0]?.toUpperCase() ?? ""}${diff.slice(1)} change requires version > ${String(existing.version)}`,
+        { diff, existing_version: existing.version },
+      );
     }
 
     const updated = await storage.types.update(id, schema);

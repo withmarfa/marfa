@@ -58,7 +58,7 @@ describe("GET /search library filter", () => {
       body: {
         type: "core.note",
         properties: { body: `${sharedToken} library variant` },
-        library: true,
+        tier: "library",
       },
     });
     await request(ctx.app, "POST", "/items", {
@@ -66,7 +66,7 @@ describe("GET /search library filter", () => {
       body: {
         type: "core.note",
         properties: { body: `${sharedToken} ambient variant` },
-        library: false,
+        tier: "feed",
       },
     });
   });
@@ -80,61 +80,61 @@ describe("GET /search library filter", () => {
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: { item: { id: string; library: boolean } }[];
+      results: { item: { id: string; tier: "library" | "feed" } }[];
     };
-    const libraryFlags = new Set(data.results.map((r) => r.item.library));
-    expect(libraryFlags.has(true)).toBe(true);
-    expect(libraryFlags.has(false)).toBe(true);
+    const libraryFlags = new Set(data.results.map((r) => r.item.tier));
+    expect(libraryFlags.has("library")).toBe(true);
+    expect(libraryFlags.has("feed")).toBe(true);
   });
 
-  it("returns library items only when ?library=true", async () => {
+  it("returns library items only when ?tier=library", async () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/search?q=${sharedToken}&type=core.note&library=true&limit=100`,
+      `/search?q=${sharedToken}&type=core.note&tier=library&limit=100`,
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: { item: { library: boolean } }[];
+      results: { item: { tier: "library" | "feed" } }[];
     };
     expect(data.results.length).toBeGreaterThan(0);
     for (const result of data.results) {
-      expect(result.item.library).toBe(true);
+      expect(result.item.tier).toBe("library");
     }
   });
 
-  it("returns ambient items only when ?library=false", async () => {
+  it("returns ambient items only when ?tier=feed", async () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/search?q=${sharedToken}&type=core.note&library=false&limit=100`,
+      `/search?q=${sharedToken}&type=core.note&tier=feed&limit=100`,
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: { item: { library: boolean } }[];
+      results: { item: { tier: "library" | "feed" } }[];
     };
     expect(data.results.length).toBeGreaterThan(0);
     for (const result of data.results) {
-      expect(result.item.library).toBe(false);
+      expect(result.item.tier).toBe("feed");
     }
   });
 
-  it("treats ?library=all as a synonym for unfiltered", async () => {
+  it("treats ?tier=all as a synonym for unfiltered", async () => {
     const res = await request(
       ctx.app,
       "GET",
-      `/search?q=${sharedToken}&type=core.note&library=all&limit=100`,
+      `/search?q=${sharedToken}&type=core.note&tier=all&limit=100`,
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      results: { item: { library: boolean } }[];
+      results: { item: { tier: "library" | "feed" } }[];
     };
-    const libraryFlags = new Set(data.results.map((r) => r.item.library));
-    expect(libraryFlags.has(true)).toBe(true);
-    expect(libraryFlags.has(false)).toBe(true);
+    const libraryFlags = new Set(data.results.map((r) => r.item.tier));
+    expect(libraryFlags.has("library")).toBe(true);
+    expect(libraryFlags.has("feed")).toBe(true);
   });
 });
 

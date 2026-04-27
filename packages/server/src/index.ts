@@ -10,7 +10,7 @@ import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
 import { VersionThinner } from "./storage/version-thinner.js";
-import { TrashPurger, AmbientExpirer } from "./storage/retention.js";
+import { TrashPurger, FeedExpirer } from "./storage/retention.js";
 import { initEventLog } from "./pubsub.js";
 import { log } from "./middleware/logger.js";
 
@@ -134,14 +134,14 @@ async function main() {
   );
   trashPurger.start();
 
-  const ambientExpirer = new AmbientExpirer(
+  const feedExpirer = new FeedExpirer(
     storage.items,
-    config.ambientRetentionDays,
-    config.ambientExpiryIntervalMs,
+    config.feedRetentionDays,
+    config.feedExpiryIntervalMs,
     undefined,
     storage.coordination,
   );
-  ambientExpirer.start();
+  feedExpirer.start();
 
   const app = createApp(storage, blobBackend, config);
 
@@ -160,7 +160,7 @@ async function main() {
     clearInterval(auditCleanupInterval);
     versionThinner.stop();
     trashPurger.stop();
-    ambientExpirer.stop();
+    feedExpirer.stop();
     server.close(() => {
       storage
         .close()

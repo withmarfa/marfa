@@ -58,17 +58,19 @@ export function createConnection(sqlitePath: string): {
       provider TEXT NOT NULL,
       provider_id TEXT NOT NULL,
       tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      handle TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_handle ON users(handle);
 
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       tenant_id TEXT,
       type TEXT NOT NULL,
       state TEXT NOT NULL DEFAULT 'active',
-      library INTEGER NOT NULL DEFAULT 0,
+      tier TEXT NOT NULL DEFAULT 'library',
       properties TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -127,7 +129,8 @@ export function createConnection(sqlitePath: string): {
       source TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
       default_origin TEXT NOT NULL DEFAULT 'user',
-      default_library INTEGER NOT NULL DEFAULT 0,
+      default_tier TEXT NOT NULL DEFAULT 'library',
+      is_platform INTEGER NOT NULL DEFAULT 0,
       type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
       extension_permissions TEXT NOT NULL DEFAULT '{}',
       edge_permissions TEXT NOT NULL DEFAULT '{}',

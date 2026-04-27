@@ -21,17 +21,19 @@ CREATE TABLE IF NOT EXISTS users (
   provider TEXT NOT NULL,
   provider_id TEXT NOT NULL,
   tenant_id TEXT NOT NULL REFERENCES tenants(id),
+  handle TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_handle ON users(handle);
 
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
   tenant_id TEXT,
   type TEXT NOT NULL,
   state TEXT NOT NULL DEFAULT 'active',
-  library BOOLEAN NOT NULL DEFAULT false,
+  tier TEXT NOT NULL DEFAULT 'library',
   properties TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -90,7 +92,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
   source TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'member',
   default_origin TEXT NOT NULL DEFAULT 'user',
-  default_library BOOLEAN NOT NULL DEFAULT false,
+  default_tier TEXT NOT NULL DEFAULT 'library',
+  is_platform BOOLEAN NOT NULL DEFAULT false,
   type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
   extension_permissions TEXT NOT NULL DEFAULT '{}',
   edge_permissions TEXT NOT NULL DEFAULT '{}',

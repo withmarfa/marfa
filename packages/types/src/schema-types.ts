@@ -3,9 +3,12 @@
 
 /**
  * Lifecycle states for items. Defined at the metadata layer, universal across
- * all types — types do not declare their own state machines.
+ * all types. Most types use the three-state graph (`active` ↔ `archived`,
+ * either → `trashed`, `trashed` → `active`); `system.*` types are restricted
+ * to `active` → `revoked` (terminal). Per-type validation enforces which
+ * states a given type may occupy.
  */
-export type ItemState = "active" | "archived" | "trashed";
+export type ItemState = "active" | "archived" | "trashed" | "revoked";
 
 /** Supported field types in a type schema. */
 export type FieldType =
@@ -94,6 +97,14 @@ export interface TypeSchema {
   display_hints?: DisplayHints;
   version_policy?: VersionPolicy;
   merge_policy?: MergePolicy;
+  /**
+   * Sibling-type compatibility declaration (TSC42 §3). When set, this type
+   * asserts a structural-superset relationship with the named target — every
+   * required field on the target is present here with a matching shape.
+   * Server verifies at registration; mismatched claims are rejected with
+   * `compatible_with_violation`.
+   */
+  compatible_with?: string;
 }
 
 // ---------------------------------------------------------------------------

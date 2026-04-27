@@ -298,87 +298,87 @@ describe("PATCH /items/:id", () => {
     expect(res.status).toBe(409);
   });
 
-  it("flips library: false → true on PATCH", async () => {
+  it("flips tier: feed → library on PATCH", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "core.note",
         properties: { body: "ambient" },
-        library: false,
+        tier: "feed",
       },
     });
     const created = (await createRes.json()) as {
-      item: { id: string; library: boolean };
+      item: { id: string; tier: "library" | "feed" };
     };
-    expect(created.item.library).toBe(false);
+    expect(created.item.tier).toBe("feed");
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.adminKey,
-      body: { library: true },
+      body: { tier: "library" },
     });
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { item: { library: boolean } };
-    expect(data.item.library).toBe(true);
+    const data = (await res.json()) as { item: { tier: "library" | "feed" } };
+    expect(data.item.tier).toBe("library");
   });
 
-  it("flips library: true → false on PATCH", async () => {
+  it("flips tier: library → feed on PATCH", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "core.note",
         properties: { body: "library" },
-        library: true,
+        tier: "library",
       },
     });
     const created = (await createRes.json()) as { item: { id: string } };
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.adminKey,
-      body: { library: false },
+      body: { tier: "feed" },
     });
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { item: { library: boolean } };
-    expect(data.item.library).toBe(false);
+    const data = (await res.json()) as { item: { tier: "library" | "feed" } };
+    expect(data.item.tier).toBe("feed");
   });
 
-  it("library-only PATCH (no properties) succeeds and bumps version", async () => {
+  it("tier-only PATCH (no properties) succeeds and bumps version", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "x" }, library: false },
+      body: { type: "core.note", properties: { body: "x" }, tier: "feed" },
     });
     const created = (await createRes.json()) as {
       item: { id: string; version: number };
     };
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.adminKey,
-      body: { library: true },
+      body: { tier: "library" },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      item: { library: boolean; version: number };
+      item: { tier: "library" | "feed"; version: number };
     };
-    expect(data.item.library).toBe(true);
+    expect(data.item.tier).toBe("library");
     expect(data.item.version).toBe(created.item.version + 1);
   });
 
-  it("PATCH with library + properties applies both", async () => {
+  it("PATCH with tier + properties applies both", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "core.note",
         properties: { body: "before" },
-        library: false,
+        tier: "feed",
       },
     });
     const created = (await createRes.json()) as { item: { id: string } };
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.adminKey,
-      body: { properties: { body: "after" }, library: true },
+      body: { properties: { body: "after" }, tier: "library" },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
-      item: { library: boolean; properties: Record<string, unknown> };
+      item: { tier: "library" | "feed"; properties: Record<string, unknown> };
     };
-    expect(data.item.library).toBe(true);
+    expect(data.item.tier).toBe("library");
     expect(data.item.properties.body).toBe("after");
   });
 
@@ -801,15 +801,15 @@ describe("state lifecycle enum at the route boundary", () => {
   });
 });
 
-describe("query language: library system field", () => {
-  it("filters items by 'library eq true' via the filter query parameter", async () => {
-    // Two items with explicit library values
+describe("query language: tier system field", () => {
+  it('filters items by `tier eq "library"` via the filter query parameter', async () => {
+    // Two items with explicit tier values
     await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "core.note",
         properties: { body: "library item" },
-        library: true,
+        tier: "library",
       },
     });
     await request(ctx.app, "POST", "/items", {
@@ -817,28 +817,28 @@ describe("query language: library system field", () => {
       body: {
         type: "core.note",
         properties: { body: "ambient item" },
-        library: false,
+        tier: "feed",
       },
     });
 
     const res = await request(
       ctx.app,
       "GET",
-      "/items?type=core.note&filter=library%20eq%20true&limit=200",
+      `/items?type=core.note&filter=${encodeURIComponent('tier eq "library"')}&limit=200`,
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { library: boolean }[];
+      data: { tier: "library" | "feed" }[];
     };
     expect(body.data.length).toBeGreaterThan(0);
     for (const item of body.data) {
-      expect(item.library).toBe(true);
+      expect(item.tier).toBe("library");
     }
   });
 });
 
-describe("library default and tri-value filter on GET /items", () => {
+describe("tier default and tri-value filter on GET /items", () => {
   let libraryId: string;
   let ambientId: string;
 
@@ -848,7 +848,7 @@ describe("library default and tri-value filter on GET /items", () => {
       body: {
         type: "core.note",
         properties: { body: "library marker for default test" },
-        library: true,
+        tier: "library",
       },
     });
     const libBody = (await libRes.json()) as { item: { id: string } };
@@ -859,14 +859,14 @@ describe("library default and tri-value filter on GET /items", () => {
       body: {
         type: "core.note",
         properties: { body: "ambient marker for default test" },
-        library: false,
+        tier: "feed",
       },
     });
     const ambBody = (await ambRes.json()) as { item: { id: string } };
     ambientId = ambBody.item.id;
   });
 
-  it("returns both library and ambient items when no library param is supplied", async () => {
+  it("returns both library and feed items when no tier param is supplied", async () => {
     const res = await request(
       ctx.app,
       "GET",
@@ -875,61 +875,61 @@ describe("library default and tri-value filter on GET /items", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { id: string; library: boolean }[];
+      data: { id: string; tier: "library" | "feed" }[];
     };
     const ids = new Set(body.data.map((item) => item.id));
     expect(ids.has(libraryId)).toBe(true);
     expect(ids.has(ambientId)).toBe(true);
   });
 
-  it("returns library items only when ?library=true", async () => {
+  it("returns library items only when ?tier=library", async () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/items?type=core.note&library=true&limit=200",
+      "/items?type=core.note&tier=library&limit=200",
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { id: string; library: boolean }[];
+      data: { id: string; tier: "library" | "feed" }[];
     };
     const ids = new Set(body.data.map((item) => item.id));
     expect(ids.has(libraryId)).toBe(true);
     expect(ids.has(ambientId)).toBe(false);
     for (const item of body.data) {
-      expect(item.library).toBe(true);
+      expect(item.tier).toBe("library");
     }
   });
 
-  it("returns ambient items only when ?library=false", async () => {
+  it("returns ambient items only when ?tier=feed", async () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/items?type=core.note&library=false&limit=200",
+      "/items?type=core.note&tier=feed&limit=200",
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { id: string; library: boolean }[];
+      data: { id: string; tier: "library" | "feed" }[];
     };
     const ids = new Set(body.data.map((item) => item.id));
     expect(ids.has(libraryId)).toBe(false);
     expect(ids.has(ambientId)).toBe(true);
     for (const item of body.data) {
-      expect(item.library).toBe(false);
+      expect(item.tier).toBe("feed");
     }
   });
 
-  it("treats ?library=all as a synonym for unfiltered", async () => {
+  it("treats ?tier=all as a synonym for unfiltered", async () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/items?type=core.note&library=all&limit=200",
+      "/items?type=core.note&tier=all&limit=200",
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { id: string; library: boolean }[];
+      data: { id: string; tier: "library" | "feed" }[];
     };
     const ids = new Set(body.data.map((item) => item.id));
     expect(ids.has(libraryId)).toBe(true);
@@ -1296,7 +1296,7 @@ describe("permission-gate ordering (priority cluster)", () => {
         source: `gate-member-${suffix}`,
         role: "member",
         default_origin: "user",
-        default_library: false,
+        default_tier: "feed",
         type_permissions: permissions,
         extension_permissions: {},
         edge_permissions: {},

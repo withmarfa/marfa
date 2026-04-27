@@ -98,14 +98,102 @@ export function isValidLanguageCode(value: string): boolean {
 // ---------------------------------------------------------------------------
 
 // Type identifiers: dot-separated segments. Min 2 segments.
-// Core types: core.note, core.media.book
-// Community types: acme.deal, demo.web_gallery
 // Segments: lowercase alphanumeric, underscores, hyphens. Max 128 characters.
+//
+// TSC42 §3 namespace grammar (enforced structurally below):
+//   core.<segment>             — exactly two segments under core (subtypes
+//                                permitted: core.media.book, core.entity.person)
+//   system.<segment>           — exactly two segments
+//   app.<app-name>.<type>      — exactly three segments (app trust separates
+//                                from publisher trust; the explicit segment
+//                                makes that visible)
+//   user.<segment>             — exactly two segments (subtypes permitted)
+//   <publisher>.<type>         — exactly two segments where first is a
+//                                non-reserved-root handle
 const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
 
-/** Returns true if the value is a valid dot-notation type identifier. */
+const RESERVED_ROOTS = new Set(["core", "system", "app", "user", "myme"]);
+
+/**
+ * Preliminary reserved structural words for the handle namespace (TSC42 §8).
+ * Final list lands in a separate stream before the public registry opens —
+ * this is the launch-blocking subset needed to keep operational paths and
+ * common URL slugs out of the user namespace.
+ */
+const RESERVED_HANDLE_WORDS: ReadonlySet<string> = new Set([
+  "admin",
+  "api",
+  "support",
+  "help",
+  "docs",
+  "console",
+  "auth",
+  "login",
+  "logout",
+  "signup",
+  "register",
+  "settings",
+  "dashboard",
+  "billing",
+  "terms",
+  "privacy",
+  "about",
+  "home",
+  "you",
+  "me",
+  "we",
+  "us",
+  "myme",
+]);
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+/**
+ * Returns true if the value is a valid handle per TSC42 §8: lowercase
+ * alphanumeric and hyphens only, 3–32 characters, no leading/trailing
+ * hyphens, no consecutive hyphens, not a reserved root or structural word.
+ * Comparison is case-insensitive — the canonical form is the lowercase
+ * input; collision detection at the storage layer also lowercases.
+ */
+export function isValidHandle(value: string): boolean {
+  if (typeof value !== "string") return false;
+  if (value.length < 3 || value.length > 32) return false;
+  if (value.includes("--")) return false;
+  if (!HANDLE_RE.test(value)) return false;
+  if (RESERVED_ROOTS.has(value)) return false;
+  if (RESERVED_HANDLE_WORDS.has(value)) return false;
+  return true;
+}
+
+/**
+ * Returns true if the value is a syntactically valid type identifier under
+ * the five-tier namespace grammar. Server-side enforcement of who can
+ * register `core.*` / `system.*` / `myme.*` happens separately
+ * (registration time; gated by the credential's is_platform flag).
+ */
 export function isValidTypeIdentifier(value: string): boolean {
-  return value.length <= 128 && TYPE_ID.test(value);
+  if (value.length > 128) return false;
+  if (!TYPE_ID.test(value)) return false;
+  const segments = value.split(".");
+  const root = segments[0] ?? "";
+  switch (root) {
+    case "app":
+      // app.<app-name>.<type>: exactly three segments, no deeper.
+      return segments.length === 3;
+    case "core":
+    case "system":
+    case "user":
+    case "myme":
+      // Subtypes allowed: core.entity.person is valid; system.* stays at
+      // two segments operationally but the grammar accepts deeper paths
+      // (server-side validation rejects deeper system registrations).
+      return segments.length >= 2;
+    default:
+      // <publisher>.<type>: exactly two segments. Publisher handles cannot
+      // collide with reserved roots; see classifyNamespace.
+      if (RESERVED_ROOTS.has(root)) return false;
+      return segments.length === 2;
+  }
 }
 
 // ---------------------------------------------------------------------------

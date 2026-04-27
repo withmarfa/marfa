@@ -11,7 +11,7 @@
  *                             action; server applies the action to every
  *                             matched item. Actions are a discriminated
  *                             enum (transition / purge / update_tags /
- *                             update_library / update_properties /
+ *                             update_tier / update_properties /
  *                             update_timestamp).
  *
  * Both endpoints write one aggregate audit entry per call (never N per-item
@@ -58,7 +58,7 @@ const BulkInputItemSchema = z.object({
   type: z.string(),
   properties: z.record(z.string(), z.unknown()).optional(),
   state: z.enum(["active", "archived", "trashed"]).optional(),
-  library: z.boolean().optional(),
+  tier: z.enum(["library", "feed"]).optional(),
   timestamp: z.string().optional(),
   /** Ignored on the wire — server stamps `source` from the credential. */
   source: z.string().optional(),
@@ -110,7 +110,7 @@ const BulkFilterSchema = z
     type: z.string().optional(),
     state: z.enum(["active", "archived", "trashed"]).optional(),
     source: z.string().optional(),
-    library: z.boolean().optional(),
+    tier: z.enum(["library", "feed"]).optional(),
     tags: z.array(z.string()).optional(),
     since: z.string().optional(),
     until: z.string().optional(),
@@ -141,8 +141,8 @@ const BulkActionRequestSchema = z.discriminatedUnion("action", [
     remove: z.array(z.string()).optional(),
   }),
   BulkActionBaseSchema.extend({
-    action: z.literal("update_library"),
-    library: z.boolean(),
+    action: z.literal("update_tier"),
+    tier: z.enum(["library", "feed"]),
   }),
   BulkActionBaseSchema.extend({
     action: z.literal("update_properties"),
@@ -370,14 +370,14 @@ async function processBulkItem(
     };
   }
 
-  // upsert + existing: update properties/library/timestamp in place,
+  // upsert + existing: update properties/tier/timestamp in place,
   // optionally reconciling edges.
   if (existing) {
     const updated = await storage.items.update(
       existing.id,
       {
         properties: raw.properties,
-        library: raw.library,
+        tier: raw.tier,
         timestamp: raw.timestamp,
       },
       tenantId,
@@ -412,7 +412,7 @@ async function processBulkItem(
       properties: raw.properties ?? {},
       ...(raw.id !== undefined && { id: raw.id }),
       ...(raw.state !== undefined && { state: raw.state }),
-      ...(raw.library !== undefined && { library: raw.library }),
+      ...(raw.tier !== undefined && { tier: raw.tier }),
       ...(raw.timestamp !== undefined && { timestamp: raw.timestamp }),
       ...(stampedSource !== undefined && { source: stampedSource }),
       ...(sourceId !== undefined && { source_id: sourceId }),
@@ -657,7 +657,7 @@ export function bulkRoutes(storage: Storage) {
         type: filter.type,
         state: filter.state as ItemState | undefined,
         source: filter.source,
-        library: filter.library,
+        tier: filter.tier,
         tags: filter.tags,
         filter: filter.filter,
         allowed_types: allowedTypes,
@@ -733,16 +733,16 @@ export function bulkRoutes(storage: Storage) {
               }
               break;
             }
-            case "update_library": {
+            case "update_tier": {
               const updated = await storage.items.update(
                 item.id,
-                { library: body.library },
+                { tier: body.tier },
                 tenantId,
               );
               if ("error" in updated) {
                 throw new MymeError(
                   ErrorCode.CONFLICT,
-                  "Version conflict during bulk update_library",
+                  "Version conflict during bulk update_tier",
                 );
               }
               break;

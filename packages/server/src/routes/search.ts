@@ -4,6 +4,8 @@ import {
   ErrorCode,
   ITEM_STATES,
   isValidTypeIdentifier,
+  resolveEnforcement,
+  getSourceFilter,
 } from "@mymehq/shared";
 import type { ItemState } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -45,7 +47,11 @@ const searchRoute = createRoute({
       q: z.string().min(1, "Query parameter 'q' is required"),
       type: z.string().optional(),
       state: z.enum(ITEM_STATES as unknown as [string, ...string[]]).optional(),
-      library: z.enum(["true", "false", "all"]).optional(),
+      tier: z.enum(["library", "feed", "all"]).optional(),
+      /** Opt-in inclusions, comma-separated. `system` includes the platform
+       *  `system.*` records, which are excluded from search results by
+       *  default per TSC42 §4. */
+      include: z.string().optional(),
       /** Comma-separated tag list. Items must have ALL specified tags. */
       tags: z.string().optional(),
       limit: z.coerce.number().int().min(1).max(100).optional().default(20),
@@ -77,7 +83,7 @@ export function searchRoutes(storage: Storage) {
   router.openapi(searchRoute, async (c) => {
     requireAuth(c);
 
-    const { q, type, state, library, tags, limit, offset, filter } =
+    const { q, type, state, tier, tags, limit, offset, filter, include } =
       c.req.valid("query");
 
     // Business logic validation beyond Zod
@@ -92,10 +98,10 @@ export function searchRoutes(storage: Storage) {
 
     const allowed_types = getTypeFilter(c);
 
-    // Tri-value library filter, matching `/items`. `all` and absent both
-    // mean unfiltered; `true` and `false` narrow the scope.
-    const libraryFilter: boolean | undefined =
-      library === "true" ? true : library === "false" ? false : undefined;
+    // Tier filter, matching `/items`. `all` and absent both mean
+    // unfiltered; `library` and `feed` narrow the scope.
+    const tierFilter: "library" | "feed" | undefined =
+      tier === "library" ? "library" : tier === "feed" ? "feed" : undefined;
 
     const tagsFilter = tags
       ? tags
@@ -104,11 +110,41 @@ export function searchRoutes(storage: Storage) {
           .filter((t) => t.length > 0)
       : undefined;
 
+    const includeSet = new Set(
+      (include ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    );
+    const includeSystemTypes = includeSet.has("system");
+    const typeIsSystemTarget =
+      typeof type === "string" && type.startsWith("system.");
+    const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
+
+    // TSC42 §5 source-filter lever — only narrows when a specific type is
+    // requested.
+    const callerKeyForSearch = c.get("apiKey");
+    const callerTenantIdForSearch = callerKeyForSearch?.tenant_id;
+    const tenantConfigForSearch =
+      callerTenantIdForSearch && storage.tenants
+        ? await storage.tenants.getConfig(callerTenantIdForSearch)
+        : null;
+    const enforcementForSearch = resolveEnforcement(
+      tenantConfigForSearch,
+      callerKeyForSearch,
+    );
+    const sourcesFilter =
+      typeof type === "string"
+        ? (getSourceFilter(enforcementForSearch, type) ?? undefined)
+        : undefined;
+
     const results = await storage.search.search(q.trim(), {
       tenantId: c.get("apiKey")?.tenant_id,
       type,
       state: state as ItemState | undefined,
-      library: libraryFilter,
+      tier: tierFilter,
+      sources: sourcesFilter,
+      exclude_system_types: excludeSystemTypes,
       tags: tagsFilter,
       filter,
       allowed_types,

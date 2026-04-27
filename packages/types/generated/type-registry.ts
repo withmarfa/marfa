@@ -530,3 +530,61 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMediaTvEpisode,
 ];
 
+const systemApp: TypeSchema = {
+  id: "system.app",
+  label: "App",
+  description: "A registered app identity. Required for `app.<app-name>.<type>` registrations to mean anything — the app name resolves through this record. Lifecycle is bounded to active/revoked. Has no tier.",
+  version: 1,
+  fields: {
+    name: { type: "string", description: "Stable identifier slug used in app.<name>.<type> registrations", required: true },
+    display_name: { type: "string", description: "Human-readable display name" },
+    homepage_url: { type: "url", description: "App marketing/landing page" },
+    publisher_handle: { type: "string", description: "Optional reference to the publishing entity's handle" },
+  },
+};
+
+const systemCredential: TypeSchema = {
+  id: "system.credential",
+  label: "Credential",
+  description: "An API key or OAuth approval. Surfaces a Credentials list; carries permissions and last-used time; revocable. Lifecycle is bounded to active/revoked. Has no tier.",
+  version: 1,
+  fields: {
+    label: { type: "string", description: "Human-readable label", required: true },
+    kind: { type: "enum", description: "Credential kind", required: true, enum_values: ["api_key", "oauth_token"] },
+    scopes: { type: "array", description: "Granted scope strings", items_type: "string" },
+    last_used_at: { type: "datetime", description: "Most recent use timestamp" },
+  },
+};
+
+const systemDevice: TypeSchema = {
+  id: "system.device",
+  label: "Device",
+  description: "A connected device — phone, laptop, watch, sync agent. Surfaces a Devices list in the console; carries a name, kind, and last-active timestamp; revocable. Lifecycle is bounded to active/revoked. Has no tier — the curated/feed dimension does not apply.",
+  version: 1,
+  fields: {
+    name: { type: "string", description: "Display name (e.g. \"Aug's MacBook Pro\")", required: true },
+    kind: { type: "enum", description: "Device class", required: true, enum_values: ["phone", "tablet", "laptop", "desktop", "watch", "sync-agent", "other"] },
+    last_active_at: { type: "datetime", description: "Most recent activity timestamp" },
+  },
+};
+
+const systemWebhook: TypeSchema = {
+  id: "system.webhook",
+  label: "Webhook",
+  description: "A registered webhook subscription. Surfaces a Webhooks list; carries URL, event filter, delivery history; editable. Lifecycle is bounded to active/revoked. Has no tier.",
+  version: 1,
+  fields: {
+    url: { type: "url", description: "Delivery URL", required: true },
+    events: { type: "array", description: "Subscribed event family names", required: true, items_type: "string" },
+    type_filter: { type: "string", description: "Optional type-id filter narrowing deliveries" },
+    active: { type: "boolean", description: "Subscription enabled" },
+  },
+};
+
+export const ALL_SYSTEM_TYPES: TypeSchema[] = [
+  systemApp,
+  systemCredential,
+  systemDevice,
+  systemWebhook,
+];
+

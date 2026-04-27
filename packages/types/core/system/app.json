@@ -1,0 +1,25 @@
+{
+  "id": "system.app",
+  "label": "App",
+  "description": "A registered app identity. Required for `app.<app-name>.<type>` registrations to mean anything — the app name resolves through this record. Lifecycle is bounded to active/revoked. Has no tier.",
+  "version": 1,
+  "fields": {
+    "name": {
+      "type": "string",
+      "description": "Stable identifier slug used in app.<name>.<type> registrations"
+    },
+    "display_name": {
+      "type": "string",
+      "description": "Human-readable display name"
+    },
+    "homepage_url": {
+      "type": "url",
+      "description": "App marketing/landing page"
+    },
+    "publisher_handle": {
+      "type": "string",
+      "description": "Optional reference to the publishing entity's handle"
+    }
+  },
+  "required": ["name"]
+}

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import { MymeError, ErrorCode, isValidHandle } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hashApiKey, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -24,6 +24,7 @@ const UserSchema = z.object({
   provider: z.string(),
   provider_id: z.string(),
   tenant_id: z.string(),
+  handle: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -118,6 +119,45 @@ const sessionRoute = createRoute({
     404: {
       content: { "application/json": { schema: ErrorResponseSchema } },
       description: "User not found",
+    },
+  },
+});
+
+const setHandleRoute = createRoute({
+  method: "put",
+  path: "/me/handle",
+  tags: ["Auth"],
+  summary: "Claim or change the current user's handle",
+  description:
+    "Sets the handle on the authenticated user (TSC42 §8). Lowercase alphanumeric and hyphens, 3–32 chars; reserved roots and structural words rejected. Returns 409 on case-insensitive collision with another user.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({ handle: z.string() }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: z.object({ user: UserSchema }) },
+      },
+      description: "Handle claimed",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Invalid handle format",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    409: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Handle already claimed by another user",
     },
   },
 });
@@ -308,6 +348,41 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     }
 
     return c.json({ user, tenant }, 200);
+  });
+
+  // PUT /auth/me/handle — claim or change handle
+  router.openapi(setHandleRoute, async (c) => {
+    const apiKey = requireAuth(c);
+    const tenantId = apiKey.tenant_id;
+    if (!tenantId) {
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        "No tenant associated with this key",
+      );
+    }
+    const user = await userStore.getByTenantId(tenantId);
+    if (!user) {
+      throw new MymeError(ErrorCode.NOT_FOUND, "User not found");
+    }
+    const { handle: rawHandle } = c.req.valid("json");
+    const handle = rawHandle.toLowerCase();
+    if (!isValidHandle(handle)) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid handle: lowercase alphanumeric + hyphens, 3-32 chars; reserved roots and reserved words rejected",
+        { handle: rawHandle },
+      );
+    }
+    const collision = await userStore.getByHandle(handle);
+    if (collision && collision.id !== user.id) {
+      throw new MymeError(
+        ErrorCode.CONFLICT,
+        `Handle "${handle}" is already claimed`,
+        { handle },
+      );
+    }
+    const updated = await userStore.setHandle(user.id, handle);
+    return c.json({ user: updated }, 200);
   });
 
   return router;

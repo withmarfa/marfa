@@ -31,11 +31,13 @@ export const users = sqliteTable(
     tenant_id: text("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    handle: text("handle"),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
   (table) => [
     uniqueIndex("idx_users_provider").on(table.provider, table.provider_id),
+    uniqueIndex("idx_users_handle").on(table.handle),
   ],
 );
 
@@ -50,7 +52,7 @@ export const items = sqliteTable(
     tenant_id: text("tenant_id"),
     type: text("type").notNull(),
     state: text("state").notNull().default("active"),
-    library: integer("library", { mode: "boolean" }).notNull().default(false),
+    tier: text("tier").notNull().default("library"),
     properties: text("properties").notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
@@ -152,7 +154,8 @@ export const apiKeys = sqliteTable(
     source: text("source").notNull(),
     role: text("role").notNull().default("member"),
     default_origin: text("default_origin").notNull().default("user"),
-    default_library: integer("default_library", { mode: "boolean" })
+    default_tier: text("default_tier").notNull().default("library"),
+    is_platform: integer("is_platform", { mode: "boolean" })
       .notNull()
       .default(false),
     type_permissions: text("type_permissions")

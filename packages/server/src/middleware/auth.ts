@@ -87,7 +87,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       }
 
       // Build a synthetic ApiKey from the OAuth token's scopes.
-      // Credential-default fields (source, default_origin, default_library)
+      // Credential-default fields (source, default_origin, default_tier)
       // are synthesised here; full parity with stored API keys remains
       // outstanding.
       const typePermissions = scopesToTypePermissions(oauthToken.scopes);
@@ -98,7 +98,8 @@ export function authMiddleware(storage: Storage, salt: string) {
         source: `oauth:${oauthToken.grant_id}`,
         role: "member",
         default_origin: "user",
-        default_library: false,
+        default_tier: "library",
+        is_platform: false,
         type_permissions: typePermissions,
         extension_permissions: {},
         edge_permissions: edgePermissions,
@@ -127,7 +128,8 @@ export function authMiddleware(storage: Storage, salt: string) {
         source: stored.source,
         role: stored.role,
         default_origin: stored.default_origin,
-        default_library: stored.default_library,
+        default_tier: stored.default_tier,
+        is_platform: stored.is_platform,
         type_permissions: stored.type_permissions,
         extension_permissions: stored.extension_permissions,
         edge_permissions: stored.edge_permissions,

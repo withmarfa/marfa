@@ -106,7 +106,7 @@ export class PgItemStore implements ItemStore {
         tenant_id: tenantId,
         type: input.type,
         state,
-        library: input.library ?? false,
+        tier: input.tier ?? "library",
         properties: JSON.stringify(input.properties),
         created_at: now,
         updated_at: now,
@@ -132,7 +132,7 @@ export class PgItemStore implements ItemStore {
         id,
         type: input.type,
         state: state,
-        library: input.library ?? false,
+        tier: input.tier ?? "library",
         properties: input.properties,
         created_at: now,
         updated_at: now,
@@ -241,8 +241,16 @@ export class PgItemStore implements ItemStore {
       conditions.push(eq(items.tenant_id, filters.tenantId));
     if (filters.source) conditions.push(eq(items.source, filters.source));
 
-    if (filters.library !== undefined) {
-      conditions.push(eq(items.library, filters.library));
+    if (filters.sources && filters.sources.length > 0) {
+      conditions.push(inArray(items.source, filters.sources));
+    }
+
+    if (filters.tier !== undefined) {
+      conditions.push(eq(items.tier, filters.tier));
+    }
+
+    if (filters.exclude_system_types) {
+      conditions.push(sql`${items.type} NOT LIKE 'system.%'`);
     }
 
     // Timestamp range filters — uses COALESCE(timestamp, created_at) as effective date
@@ -412,13 +420,13 @@ export class PgItemStore implements ItemStore {
           ? { ...currentProps, ...input.properties }
           : currentProps;
         const newVersion = row.version + 1;
-        const newLibrary = input.library ?? row.library;
+        const newTier = input.tier ?? row.tier;
 
         const setClause: Record<string, unknown> = {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
-          ...(input.library !== undefined && { library: input.library }),
+          ...(input.tier !== undefined && { tier: input.tier }),
           ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
         };
 
@@ -435,7 +443,7 @@ export class PgItemStore implements ItemStore {
           properties: JSON.stringify(merged),
           version: newVersion,
           updated_at: now,
-          library: newLibrary,
+          tier: newTier,
         });
       }
 
@@ -494,13 +502,13 @@ export class PgItemStore implements ItemStore {
         );
       }
       const newVersion = row.version + 1;
-      const newLibrary = input.library ?? row.library;
+      const newTier = input.tier ?? row.tier;
 
       const mergeSet: Record<string, unknown> = {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
-        ...(input.library !== undefined && { library: input.library }),
+        ...(input.tier !== undefined && { tier: input.tier }),
         ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
       };
 
@@ -517,7 +525,7 @@ export class PgItemStore implements ItemStore {
         properties: JSON.stringify(result.merged),
         version: newVersion,
         updated_at: now,
-        library: newLibrary,
+        tier: newTier,
       });
     });
   }
@@ -605,12 +613,12 @@ export class PgItemStore implements ItemStore {
     });
   }
 
-  async expireAmbientOlderThan(
+  async expireFeedOlderThan(
     beforeDate: string,
     tenantId?: string,
   ): Promise<number> {
     const baseConditions = [
-      eq(items.library, false),
+      eq(items.tier, "feed"),
       lt(items.updated_at, beforeDate),
     ];
     if (tenantId) {

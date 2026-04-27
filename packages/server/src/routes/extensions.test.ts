@@ -42,7 +42,7 @@ beforeAll(async () => {
       role: "member",
       type_permissions: { "*": "write" },
       extension_permissions: { friends: "read" },
-      default_library: false,
+      default_tier: "feed",
     },
     hashApiKey(scopedKey, "test-salt"),
   );

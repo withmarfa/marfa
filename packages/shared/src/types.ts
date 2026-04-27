@@ -8,13 +8,34 @@ export const ITEM_STATES: readonly ItemState[] = [
   "active",
   "archived",
   "trashed",
+  "revoked",
 ] as const;
 
-/** Authorship class of an item's content. */
-export type Origin = "user" | "ai" | "worker";
+/**
+ * Authorship class of an item's content. `system` is reserved for items the
+ * server creates internally (notably `system.*` items like devices,
+ * credentials, webhooks, and registered apps); callers cannot stamp it.
+ */
+export type Origin = "user" | "ai" | "worker" | "system";
 
 /** Valid origin values as a readonly array, useful for validation. */
-export const ORIGINS: readonly Origin[] = ["user", "ai", "worker"] as const;
+export const ORIGINS: readonly Origin[] = [
+  "user",
+  "ai",
+  "worker",
+  "system",
+] as const;
+
+/**
+ * The intent tier on an item — `library` is curated, kept, indexed; `feed`
+ * is high-volume, low-intent capture. Items move between them through manual
+ * or automated curation. `system.*` items have no tier (the dimension does
+ * not apply); the field is optional on the wire to model that.
+ */
+export type Tier = "library" | "feed";
+
+/** Valid tier values as a readonly array, useful for validation. */
+export const TIERS: readonly Tier[] = ["library", "feed"] as const;
 
 /** API key roles. */
 export type KeyRole = "admin" | "member";
@@ -34,8 +55,11 @@ export interface Item {
   id: string;
   type: string;
   state: ItemState;
-  /** Whether this item is part of the curated personal-data layer. */
-  library: boolean;
+  /**
+   * The intent tier on this item — `library` is curated/kept, `feed` is
+   * high-volume capture. Optional because `system.*` items have no tier.
+   */
+  tier?: Tier;
   properties: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -56,8 +80,8 @@ export interface CreateItemInput {
   properties: Record<string, unknown>;
   id?: string;
   state?: ItemState;
-  /** Overrides the credential's default_library when supplied. */
-  library?: boolean;
+  /** Overrides the credential's default_tier when supplied. */
+  tier?: Tier;
   timestamp?: string;
   /** Ignored on the wire — server always stamps source from the credential. */
   source?: string;
@@ -74,10 +98,10 @@ export interface UpdateItemInput {
   properties?: Record<string, unknown>;
   version?: number;
   snapshot?: boolean;
-  /** Toggle library / ambient state. Independent of the version-merge path
-   *  for `properties`; flipping `library` doesn't conflict (it's a single
+  /** Toggle the tier (`library` ↔ `feed`). Independent of the version-merge
+   *  path for `properties`; flipping `tier` doesn't conflict (it's a single
    *  metadata-axis flag, last-writer-wins by design). */
-  library?: boolean;
+  tier?: Tier;
   /** Override the user-meaningful timestamp. Settable on create; this
    *  field lets importers fix dates retroactively without rewriting
    *  properties. Independent of the version-merge path. */
@@ -166,10 +190,26 @@ export interface ApiKey {
   /** Human-readable display name stamped onto items this credential writes. */
   source: string;
   role: KeyRole;
-  /** Origin stamped onto items when the client doesn't supply one. */
-  default_origin: Origin;
-  /** Library flag stamped onto items when the client doesn't supply one. */
-  default_library: boolean;
+  /**
+   * Platform-credential gate (TSC42 §3/§4). When `true`, the credential may
+   * register and write `core.*`, `system.*`, and `myme.*` types. The first
+   * credential created at server install is the seed platform credential;
+   * only an existing platform credential may mint another. Defaults to
+   * `false` for ordinary tenant admin and member keys.
+   */
+  is_platform: boolean;
+  /**
+   * Per-credential schema-enforcement override (TSC42 §5). Same shape as
+   * `TenantConfig.enforcement`; entries here merge over the tenant default
+   * for this credential's writes/reads. Optional — most credentials inherit
+   * tenant config without override.
+   */
+  enforcement_override?: EnforcementSettings;
+  /** Origin stamped onto items when the client doesn't supply one.
+   *  `system` is excluded — server-stamped only, never a credential default. */
+  default_origin: Exclude<Origin, "system">;
+  /** Tier stamped onto items when the client doesn't supply one. */
+  default_tier: Tier;
   type_permissions: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   /**
@@ -189,11 +229,17 @@ export interface CreateKeyInput {
   label: string;
   source: string;
   role: KeyRole;
-  default_origin?: Origin;
-  default_library?: boolean;
+  default_origin?: Exclude<Origin, "system">;
+  default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
+  /**
+   * Optional. Only an existing platform credential can set this to `true`;
+   * other callers see the value silently coerced to `false`. The bootstrap
+   * admin created at server install is the seed platform credential.
+   */
+  is_platform?: boolean;
 }
 
 /**
@@ -203,8 +249,8 @@ export interface CreateKeyInput {
  */
 export interface UpdateKeyInput {
   label?: string;
-  default_origin?: Origin;
-  default_library?: boolean;
+  default_origin?: Exclude<Origin, "system">;
+  default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
@@ -386,14 +432,33 @@ export interface Tenant {
   created_at: string;
 }
 
-/** Per-type ambient retention override (days before ambient items expire). */
+/** Per-type feed retention override (days before feed-tier items expire). */
 export interface TenantRetentionOverride {
-  ambient_days: number;
+  feed_days: number;
+}
+
+/**
+ * Schema-enforcement levers (TSC42 §5). All three default off; flip on
+ * per-type to tighten validation. Applied tenant-wide by default; per-
+ * credential override available via `ApiKey.enforcement_override`.
+ *
+ * - `strict_mode.types` — type IDs where unknown properties are rejected
+ *   on write (z.strictObject vs z.looseObject).
+ * - `source_allowlist` — for the listed types, only items written from
+ *   one of `sources` are accepted; everything else is rejected.
+ * - `source_filter` — for the listed types, reads return only items
+ *   whose source matches `sources`. Filter-only, not enforcement-on-write.
+ */
+export interface EnforcementSettings {
+  strict_mode?: { types: string[] };
+  source_allowlist?: { types: string[]; sources: string[] };
+  source_filter?: { types: string[]; sources: string[] };
 }
 
 /** Tenant-level configuration. Admin-writable via `/tenants/current/config`. */
 export interface TenantConfig {
   retention?: Record<string, TenantRetentionOverride>;
+  enforcement?: EnforcementSettings;
 }
 
 /** A user account (hosted mode). Owns exactly one tenant. */
@@ -405,6 +470,14 @@ export interface User {
   provider: string;
   provider_id: string;
   tenant_id: string;
+  /**
+   * Lowercase alphanumeric + hyphens, 3–32 chars. Optional — users claim a
+   * handle through the UX rather than at signup. Per TSC42 §8 the user-id
+   * (the immutable PK) is what foreign references key off; the handle is
+   * potentially renameable in a later iteration. Reserved roots and
+   * reserved structural words cannot be claimed.
+   */
+  handle: string | null;
   created_at: string;
   updated_at: string;
 }

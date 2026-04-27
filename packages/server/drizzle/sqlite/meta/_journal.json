@@ -120,6 +120,27 @@
       "when": 1777700000000,
       "tag": "0016_add_settings_table",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1777800000000,
+      "tag": "0017_library_to_tier",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1777810000000,
+      "tag": "0018_is_platform",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1777820000000,
+      "tag": "0019_user_handle",
+      "breakpoints": true
     }
   ]
 }

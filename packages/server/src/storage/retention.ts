@@ -80,14 +80,14 @@ export class TrashPurger {
 }
 
 /**
- * Hard-deletes ambient items (those with `library: false`) whose
- * `updated_at` is older than the configured retention window. Operates
- * regardless of state — ambient capture is short-retention by definition.
+ * Hard-deletes feed-tier items whose `updated_at` is older than the
+ * configured retention window. Operates regardless of state — feed
+ * capture is short-retention by definition.
  *
  * If `retentionDays <= 0`, the job is a no-op. The default at the config
- * layer is 0 (disabled) — ambient retention is opt-in per deployment.
+ * layer is 0 (disabled) — feed retention is opt-in per deployment.
  */
-export class AmbientExpirer {
+export class FeedExpirer {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -120,24 +120,24 @@ export class AmbientExpirer {
     const cutoff = new Date(
       this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
     ).toISOString();
-    return this.items.expireAmbientOlderThan(cutoff);
+    return this.items.expireFeedOlderThan(cutoff);
   }
 
   private async poll(): Promise<void> {
     try {
       const deleted = this.coordination
-        ? await this.coordination.withJobLock("ambient-expiry", () =>
+        ? await this.coordination.withJobLock("feed-expiry", () =>
             this.runOnce(),
           )
         : await this.runOnce();
       if (deleted !== undefined && deleted > 0) {
-        log("info", "Ambient expiry", {
+        log("info", "Feed expiry", {
           deleted,
           retentionDays: this.retentionDays,
         });
       }
     } catch (err) {
-      log("error", "Ambient expiry error", {
+      log("error", "Feed expiry error", {
         error: err instanceof Error ? err.message : String(err),
       });
     }

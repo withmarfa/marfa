@@ -72,7 +72,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
         id: itemId,
         type: "core.note",
         properties: { body: "alphabravo searchable" },
-        library: true,
+        tier: "library",
       },
       undefined,
     );
@@ -98,7 +98,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
         id: itemId,
         type: "core.note",
         properties: { body: "charliedelta searchable" },
-        library: true,
+        tier: "library",
       },
       undefined,
     );
@@ -120,14 +120,14 @@ describe("ItemStore purge methods — FTS coverage", () => {
     expect(after.some((h) => h.item.id === itemId)).toBe(false);
   });
 
-  it("expireAmbientOlderThan removes FTS entries for expired ambient items", async () => {
+  it("expireFeedOlderThan removes FTS entries for expired ambient items", async () => {
     const itemId = id("aaa3");
     await ctx.storage.items.create(
       {
         id: itemId,
         type: "core.note",
         properties: { body: "echofoxtrot searchable" },
-        library: false,
+        tier: "feed",
       },
       undefined,
     );
@@ -136,7 +136,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
       new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY).toISOString(),
     );
 
-    const deleted = await ctx.storage.items.expireAmbientOlderThan(
+    const deleted = await ctx.storage.items.expireFeedOlderThan(
       FIXED_NOW.toISOString(),
     );
     expect(deleted).toBe(1);
@@ -164,7 +164,7 @@ describe("ItemStore.bulkPurge — atomicity", () => {
           id: id1,
           type: "core.note",
           properties: { body: "rollbackalpha searchable" },
-          library: true,
+          tier: "library",
         },
         undefined,
       );
@@ -173,7 +173,7 @@ describe("ItemStore.bulkPurge — atomicity", () => {
           id: id2,
           type: "core.note",
           properties: { body: "rollbackbravo searchable" },
-          library: true,
+          tier: "library",
         },
         undefined,
       );
