@@ -11,11 +11,20 @@ export const ITEM_STATES: readonly ItemState[] = [
   "revoked",
 ] as const;
 
-/** Authorship class of an item's content. */
-export type Origin = "user" | "ai" | "worker";
+/**
+ * Authorship class of an item's content. `system` is reserved for items the
+ * server creates internally (notably `system.*` items like devices,
+ * credentials, webhooks, and registered apps); callers cannot stamp it.
+ */
+export type Origin = "user" | "ai" | "worker" | "system";
 
 /** Valid origin values as a readonly array, useful for validation. */
-export const ORIGINS: readonly Origin[] = ["user", "ai", "worker"] as const;
+export const ORIGINS: readonly Origin[] = [
+  "user",
+  "ai",
+  "worker",
+  "system",
+] as const;
 
 /** API key roles. */
 export type KeyRole = "admin" | "member";
