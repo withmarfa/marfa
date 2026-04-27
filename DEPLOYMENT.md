@@ -32,7 +32,7 @@ Both services share one source tree at `~/Services/myme-v0/`. A single deploy re
 ./deploy.sh --host <hostname>
 ```
 
-The script SSHs to Atlas, pulls `main`, runs `pnpm install --frozen-lockfile && pnpm build`, writes `version.json` (current SHA + previous SHA + timestamp), restarts both launchd services, and verifies each health endpoint.
+The script SSHs to Atlas, pulls `main`, runs `pnpm install --frozen-lockfile && pnpm build`, runs `pnpm --filter @mymehq/server migrate` against both databases (`myme_v0` and `myme_mock`), writes `version.json` (current SHA + previous SHA + timestamp), restarts both launchd services, and verifies each health endpoint. Migrations are forward-only — the `--rollback` path reverts the source SHA but does not undo schema changes; if a rollback needs to undo a migration, that's a manual operator decision.
 
 ### Prerequisites
 

@@ -27,10 +27,14 @@ ATLAS_HOST="${ATLAS_HOST:-aic-atlas}"
 SERVICE_DIR="${SERVICE_DIR:-\$HOME/Services/myme-v0}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 
-# Services managed by this script. Paired arrays: label / port.
+# Services managed by this script. Paired arrays: label / port / database URL.
 SERVICE_LABELS=("com.myme.v0" "com.myme.mock")
 SERVICE_NAMES=("active" "mock")
 SERVICE_PORTS=(8602 8601)
+SERVICE_DBS=(
+  "${ACTIVE_DATABASE_URL:-postgres://myme:myme_prod@localhost:5432/myme_v0}"
+  "${MOCK_DATABASE_URL:-postgres://myme:myme_prod@localhost:5432/myme_mock}"
+)
 
 # --- Defaults ---
 ROLLBACK=false
@@ -90,6 +94,18 @@ restart_services() {
     local name="${SERVICE_NAMES[$i]}"
     echo "  Restarting $name ($label)..."
     remote_raw "launchctl unload ~/Library/LaunchAgents/$label.plist 2>/dev/null; sleep 1; launchctl load ~/Library/LaunchAgents/$label.plist"
+  done
+}
+
+run_migrations() {
+  for i in "${!SERVICE_NAMES[@]}"; do
+    local name="${SERVICE_NAMES[$i]}"
+    local url="${SERVICE_DBS[$i]}"
+    echo "  Migrating $name DB..."
+    if ! remote "STORAGE_DIALECT=pg DATABASE_URL='$url' pnpm --filter @mymehq/server migrate"; then
+      echo -e "  ${RED}$name migration failed${NC}"
+      return 1
+    fi
   done
 }
 
@@ -178,19 +194,26 @@ if [ "$NEW_SHA" = "$PREVIOUS_SHA" ]; then
 fi
 
 # --- Step 3: Build ---
-echo "3/6 Building..."
+echo "3/7 Building..."
 remote "pnpm install --frozen-lockfile && pnpm build"
 
-# --- Step 4: Write version file ---
-echo "4/6 Writing version file..."
+# --- Step 4: Run migrations against both databases ---
+# Forward-only — Drizzle migrations don't roll back automatically. The
+# rollback flow above intentionally skips this step; if a deploy needs to
+# undo schema changes, that's a manual operator decision.
+echo "4/7 Running database migrations..."
+run_migrations || { echo -e "${RED}Migrations failed; not restarting services.${NC}"; exit 1; }
+
+# --- Step 5: Write version file ---
+echo "5/7 Writing version file..."
 remote "echo '{\"sha\": \"$NEW_SHA\", \"previous_sha\": \"$PREVIOUS_SHA\", \"deployed_at\": \"$(timestamp)\"}' > version.json"
 
-# --- Step 5: Restart both services ---
-echo "5/6 Restarting services..."
+# --- Step 6: Restart both services ---
+echo "6/7 Restarting services..."
 restart_services
 
-# --- Step 6: Health checks ---
-echo "6/6 Health checks..."
+# --- Step 7: Health checks ---
+echo "7/7 Health checks..."
 FAILED=false
 for i in "${!SERVICE_NAMES[@]}"; do
   health_check "${SERVICE_NAMES[$i]}" "${SERVICE_PORTS[$i]}" || FAILED=true
