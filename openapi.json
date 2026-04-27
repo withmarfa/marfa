@@ -67,8 +67,12 @@
                       "worker"
                     ]
                   },
-                  "library": {
-                    "type": "boolean"
+                  "tier": {
+                    "type": "string",
+                    "enum": [
+                      "library",
+                      "feed"
+                    ]
                   },
                   "device": {
                     "type": "string"
@@ -130,11 +134,16 @@
                           "enum": [
                             "active",
                             "archived",
-                            "trashed"
+                            "trashed",
+                            "revoked"
                           ]
                         },
-                        "library": {
-                          "type": "boolean"
+                        "tier": {
+                          "type": "string",
+                          "enum": [
+                            "library",
+                            "feed"
+                          ]
                         },
                         "version": {
                           "type": "number"
@@ -153,7 +162,8 @@
                           "enum": [
                             "user",
                             "ai",
-                            "worker"
+                            "worker",
+                            "system"
                           ]
                         },
                         "device": {
@@ -252,7 +262,6 @@
                         "type",
                         "properties",
                         "state",
-                        "library",
                         "version",
                         "schema_version",
                         "source",
@@ -445,13 +454,13 @@
             "schema": {
               "type": "string",
               "enum": [
-                "true",
-                "false",
+                "library",
+                "feed",
                 "all"
               ]
             },
             "required": false,
-            "name": "library",
+            "name": "tier",
             "in": "query"
           },
           {
@@ -571,11 +580,16 @@
                                 "enum": [
                                   "active",
                                   "archived",
-                                  "trashed"
+                                  "trashed",
+                                  "revoked"
                                 ]
                               },
-                              "library": {
-                                "type": "boolean"
+                              "tier": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "feed"
+                                ]
                               },
                               "version": {
                                 "type": "number"
@@ -594,7 +608,8 @@
                                 "enum": [
                                   "user",
                                   "ai",
-                                  "worker"
+                                  "worker",
+                                  "system"
                                 ]
                               },
                               "device": {
@@ -693,7 +708,6 @@
                               "type",
                               "properties",
                               "state",
-                              "library",
                               "version",
                               "schema_version",
                               "source",
@@ -746,11 +760,16 @@
                                     "enum": [
                                       "active",
                                       "archived",
-                                      "trashed"
+                                      "trashed",
+                                      "revoked"
                                     ]
                                   },
-                                  "library": {
-                                    "type": "boolean"
+                                  "tier": {
+                                    "type": "string",
+                                    "enum": [
+                                      "library",
+                                      "feed"
+                                    ]
                                   },
                                   "version": {
                                     "type": "number"
@@ -769,7 +788,8 @@
                                     "enum": [
                                       "user",
                                       "ai",
-                                      "worker"
+                                      "worker",
+                                      "system"
                                     ]
                                   },
                                   "device": {
@@ -868,7 +888,6 @@
                                   "type",
                                   "properties",
                                   "state",
-                                  "library",
                                   "version",
                                   "schema_version",
                                   "source",
@@ -1117,11 +1136,16 @@
                           "enum": [
                             "active",
                             "archived",
-                            "trashed"
+                            "trashed",
+                            "revoked"
                           ]
                         },
-                        "library": {
-                          "type": "boolean"
+                        "tier": {
+                          "type": "string",
+                          "enum": [
+                            "library",
+                            "feed"
+                          ]
                         },
                         "version": {
                           "type": "number"
@@ -1140,7 +1164,8 @@
                           "enum": [
                             "user",
                             "ai",
-                            "worker"
+                            "worker",
+                            "system"
                           ]
                         },
                         "device": {
@@ -1239,7 +1264,6 @@
                         "type",
                         "properties",
                         "state",
-                        "library",
                         "version",
                         "schema_version",
                         "source",
@@ -1396,8 +1420,12 @@
                   "snapshot": {
                     "type": "boolean"
                   },
-                  "library": {
-                    "type": "boolean"
+                  "tier": {
+                    "type": "string",
+                    "enum": [
+                      "library",
+                      "feed"
+                    ]
                   },
                   "timestamp": {
                     "type": "string"
@@ -1444,11 +1472,16 @@
                           "enum": [
                             "active",
                             "archived",
-                            "trashed"
+                            "trashed",
+                            "revoked"
                           ]
                         },
-                        "library": {
-                          "type": "boolean"
+                        "tier": {
+                          "type": "string",
+                          "enum": [
+                            "library",
+                            "feed"
+                          ]
                         },
                         "version": {
                           "type": "number"
@@ -1467,7 +1500,8 @@
                           "enum": [
                             "user",
                             "ai",
-                            "worker"
+                            "worker",
+                            "system"
                           ]
                         },
                         "device": {
@@ -1566,7 +1600,6 @@
                         "type",
                         "properties",
                         "state",
-                        "library",
                         "version",
                         "schema_version",
                         "source",
@@ -1954,11 +1987,16 @@
                           "enum": [
                             "active",
                             "archived",
-                            "trashed"
+                            "trashed",
+                            "revoked"
                           ]
                         },
-                        "library": {
-                          "type": "boolean"
+                        "tier": {
+                          "type": "string",
+                          "enum": [
+                            "library",
+                            "feed"
+                          ]
                         },
                         "version": {
                           "type": "number"
@@ -1977,7 +2015,8 @@
                           "enum": [
                             "user",
                             "ai",
-                            "worker"
+                            "worker",
+                            "system"
                           ]
                         },
                         "device": {
@@ -2076,7 +2115,6 @@
                         "type",
                         "properties",
                         "state",
-                        "library",
                         "version",
                         "schema_version",
                         "source",
@@ -2266,11 +2304,16 @@
                           "enum": [
                             "active",
                             "archived",
-                            "trashed"
+                            "trashed",
+                            "revoked"
                           ]
                         },
-                        "library": {
-                          "type": "boolean"
+                        "tier": {
+                          "type": "string",
+                          "enum": [
+                            "library",
+                            "feed"
+                          ]
                         },
                         "version": {
                           "type": "number"
@@ -2289,7 +2332,8 @@
                           "enum": [
                             "user",
                             "ai",
-                            "worker"
+                            "worker",
+                            "system"
                           ]
                         },
                         "device": {
@@ -2388,7 +2432,6 @@
                         "type",
                         "properties",
                         "state",
-                        "library",
                         "version",
                         "schema_version",
                         "source",
@@ -3704,8 +3747,12 @@
                             "trashed"
                           ]
                         },
-                        "library": {
-                          "type": "boolean"
+                        "tier": {
+                          "type": "string",
+                          "enum": [
+                            "library",
+                            "feed"
+                          ]
                         },
                         "timestamp": {
                           "type": "string"
@@ -4001,8 +4048,12 @@
                           "source": {
                             "type": "string"
                           },
-                          "library": {
-                            "type": "boolean"
+                          "tier": {
+                            "type": "string",
+                            "enum": [
+                              "library",
+                              "feed"
+                            ]
                           },
                           "tags": {
                             "type": "array",
@@ -4072,8 +4123,12 @@
                           "source": {
                             "type": "string"
                           },
-                          "library": {
-                            "type": "boolean"
+                          "tier": {
+                            "type": "string",
+                            "enum": [
+                              "library",
+                              "feed"
+                            ]
                           },
                           "tags": {
                             "type": "array",
@@ -4140,8 +4195,12 @@
                           "source": {
                             "type": "string"
                           },
-                          "library": {
-                            "type": "boolean"
+                          "tier": {
+                            "type": "string",
+                            "enum": [
+                              "library",
+                              "feed"
+                            ]
                           },
                           "tags": {
                             "type": "array",
@@ -4214,8 +4273,12 @@
                           "source": {
                             "type": "string"
                           },
-                          "library": {
-                            "type": "boolean"
+                          "tier": {
+                            "type": "string",
+                            "enum": [
+                              "library",
+                              "feed"
+                            ]
                           },
                           "tags": {
                             "type": "array",
@@ -4248,16 +4311,20 @@
                       "action": {
                         "type": "string",
                         "enum": [
-                          "update_library"
+                          "update_tier"
                         ]
                       },
-                      "library": {
-                        "type": "boolean"
+                      "tier": {
+                        "type": "string",
+                        "enum": [
+                          "library",
+                          "feed"
+                        ]
                       }
                     },
                     "required": [
                       "action",
-                      "library"
+                      "tier"
                     ]
                   },
                   {
@@ -4280,8 +4347,12 @@
                           "source": {
                             "type": "string"
                           },
-                          "library": {
-                            "type": "boolean"
+                          "tier": {
+                            "type": "string",
+                            "enum": [
+                              "library",
+                              "feed"
+                            ]
                           },
                           "tags": {
                             "type": "array",
@@ -4349,8 +4420,12 @@
                           "source": {
                             "type": "string"
                           },
-                          "library": {
-                            "type": "boolean"
+                          "tier": {
+                            "type": "string",
+                            "enum": [
+                              "library",
+                              "feed"
+                            ]
                           },
                           "tags": {
                             "type": "array",
@@ -8055,7 +8130,8 @@
               "enum": [
                 "active",
                 "archived",
-                "trashed"
+                "trashed",
+                "revoked"
               ]
             },
             "required": false,
@@ -8066,13 +8142,21 @@
             "schema": {
               "type": "string",
               "enum": [
-                "true",
-                "false",
+                "library",
+                "feed",
                 "all"
               ]
             },
             "required": false,
-            "name": "library",
+            "name": "tier",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "include",
             "in": "query"
           },
           {
@@ -8148,11 +8232,16 @@
                                 "enum": [
                                   "active",
                                   "archived",
-                                  "trashed"
+                                  "trashed",
+                                  "revoked"
                                 ]
                               },
-                              "library": {
-                                "type": "boolean"
+                              "tier": {
+                                "type": "string",
+                                "enum": [
+                                  "library",
+                                  "feed"
+                                ]
                               },
                               "version": {
                                 "type": "number"
@@ -8171,7 +8260,8 @@
                                 "enum": [
                                   "user",
                                   "ai",
-                                  "worker"
+                                  "worker",
+                                  "system"
                                 ]
                               },
                               "device": {
@@ -8270,7 +8360,6 @@
                               "type",
                               "properties",
                               "state",
-                              "library",
                               "version",
                               "schema_version",
                               "source",
@@ -9195,7 +9284,14 @@
                       "worker"
                     ]
                   },
-                  "default_library": {
+                  "default_tier": {
+                    "type": "string",
+                    "enum": [
+                      "library",
+                      "feed"
+                    ]
+                  },
+                  "is_platform": {
                     "type": "boolean"
                   },
                   "type_permissions": {
@@ -9273,7 +9369,14 @@
                         "worker"
                       ]
                     },
-                    "default_library": {
+                    "default_tier": {
+                      "type": "string",
+                      "enum": [
+                        "library",
+                        "feed"
+                      ]
+                    },
+                    "is_platform": {
                       "type": "boolean"
                     },
                     "type_permissions": {
@@ -9322,7 +9425,8 @@
                     "source",
                     "role",
                     "default_origin",
-                    "default_library",
+                    "default_tier",
+                    "is_platform",
                     "type_permissions",
                     "created_at",
                     "last_used_at"
@@ -9412,7 +9516,14 @@
                               "worker"
                             ]
                           },
-                          "default_library": {
+                          "default_tier": {
+                            "type": "string",
+                            "enum": [
+                              "library",
+                              "feed"
+                            ]
+                          },
+                          "is_platform": {
                             "type": "boolean"
                           },
                           "type_permissions": {
@@ -9460,7 +9571,8 @@
                           "source",
                           "role",
                           "default_origin",
-                          "default_library",
+                          "default_tier",
+                          "is_platform",
                           "type_permissions",
                           "created_at",
                           "last_used_at"
@@ -9634,8 +9746,12 @@
                       "worker"
                     ]
                   },
-                  "default_library": {
-                    "type": "boolean"
+                  "default_tier": {
+                    "type": "string",
+                    "enum": [
+                      "library",
+                      "feed"
+                    ]
                   },
                   "type_permissions": {
                     "type": "object",
@@ -9711,7 +9827,14 @@
                         "worker"
                       ]
                     },
-                    "default_library": {
+                    "default_tier": {
+                      "type": "string",
+                      "enum": [
+                        "library",
+                        "feed"
+                      ]
+                    },
+                    "is_platform": {
                       "type": "boolean"
                     },
                     "type_permissions": {
@@ -9759,7 +9882,8 @@
                     "source",
                     "role",
                     "default_origin",
-                    "default_library",
+                    "default_tier",
+                    "is_platform",
                     "type_permissions",
                     "created_at",
                     "last_used_at"
@@ -9921,7 +10045,7 @@
           "Tenants"
         ],
         "summary": "Get the current tenant's configuration",
-        "description": "Admin only. Returns tenant-scoped config (per-type ambient retention overrides). An empty object is returned when nothing is configured.",
+        "description": "Admin only. Returns tenant-scoped config (per-type feed retention overrides). An empty object is returned when nothing is configured.",
         "security": [
           {
             "bearerAuth": []
@@ -9940,15 +10064,76 @@
                       "additionalProperties": {
                         "type": "object",
                         "properties": {
-                          "ambient_days": {
+                          "feed_days": {
                             "type": "integer",
                             "minimum": 0,
                             "exclusiveMinimum": true
                           }
                         },
                         "required": [
-                          "ambient_days"
+                          "feed_days"
                         ]
+                      }
+                    },
+                    "enforcement": {
+                      "type": "object",
+                      "properties": {
+                        "strict_mode": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types"
+                          ]
+                        },
+                        "source_allowlist": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types",
+                            "sources"
+                          ]
+                        },
+                        "source_filter": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types",
+                            "sources"
+                          ]
+                        }
                       }
                     }
                   }
@@ -10052,15 +10237,76 @@
                     "additionalProperties": {
                       "type": "object",
                       "properties": {
-                        "ambient_days": {
+                        "feed_days": {
                           "type": "integer",
                           "minimum": 0,
                           "exclusiveMinimum": true
                         }
                       },
                       "required": [
-                        "ambient_days"
+                        "feed_days"
                       ]
+                    }
+                  },
+                  "enforcement": {
+                    "type": "object",
+                    "properties": {
+                      "strict_mode": {
+                        "type": "object",
+                        "properties": {
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "types"
+                        ]
+                      },
+                      "source_allowlist": {
+                        "type": "object",
+                        "properties": {
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "sources": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "types",
+                          "sources"
+                        ]
+                      },
+                      "source_filter": {
+                        "type": "object",
+                        "properties": {
+                          "types": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "sources": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "types",
+                          "sources"
+                        ]
+                      }
                     }
                   }
                 }
@@ -10081,15 +10327,76 @@
                       "additionalProperties": {
                         "type": "object",
                         "properties": {
-                          "ambient_days": {
+                          "feed_days": {
                             "type": "integer",
                             "minimum": 0,
                             "exclusiveMinimum": true
                           }
                         },
                         "required": [
-                          "ambient_days"
+                          "feed_days"
                         ]
+                      }
+                    },
+                    "enforcement": {
+                      "type": "object",
+                      "properties": {
+                        "strict_mode": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types"
+                          ]
+                        },
+                        "source_allowlist": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types",
+                            "sources"
+                          ]
+                        },
+                        "source_filter": {
+                          "type": "object",
+                          "properties": {
+                            "types": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "sources": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "types",
+                            "sources"
+                          ]
+                        }
                       }
                     }
                   }
