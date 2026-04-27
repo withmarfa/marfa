@@ -42,6 +42,9 @@ export type {
   ConflictAutoMergeListener,
 } from "./conflict.js";
 
+// Type authoring helper
+export { defineType } from "./define-type.js";
+
 // Webhook signature verification (inbound — for receivers)
 export { verifyWebhookSignature } from "./webhooks.js";
 export type {
