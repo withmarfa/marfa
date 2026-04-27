@@ -836,7 +836,11 @@ export function itemRoutes(storage: Storage) {
     //   ?tier=all or absent -> no filter
     const rawTier = c.req.query("tier");
     const tier: "library" | "feed" | undefined =
-      rawTier === "library" ? "library" : rawTier === "feed" ? "feed" : undefined;
+      rawTier === "library"
+        ? "library"
+        : rawTier === "feed"
+          ? "feed"
+          : undefined;
     // `include` accepts a comma-separated list. Lists are lean by default;
     // each value is an opt-in hydration:
     //   metadata    — tags sidecar (extensions always live under `extensions`

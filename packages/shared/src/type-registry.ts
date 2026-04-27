@@ -408,14 +408,13 @@ export const SYSTEM_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> = {
  * `active | revoked`, where `revoked` is terminal. Archived / trashed do not
  * apply to operational platform records.
  */
-export const SYSTEM_TYPE_TRANSITIONS: Readonly<
-  Record<ItemState, ItemState[]>
-> = {
-  active: ["revoked"],
-  archived: [],
-  trashed: [],
-  revoked: [],
-};
+export const SYSTEM_TYPE_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> =
+  {
+    active: ["revoked"],
+    archived: [],
+    trashed: [],
+    revoked: [],
+  };
 
 const SYSTEM_STATES: ReadonlySet<ItemState> = new Set([
   "active",

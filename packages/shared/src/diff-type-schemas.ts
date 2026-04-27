@@ -42,10 +42,7 @@ function fieldsAreDescriptiveOnlyDiff(
  * Compute the diff class between an existing schema and a proposed new
  * version. Used by `POST /types` to gate the version bump.
  */
-export function diffTypeSchemas(
-  prev: TypeSchema,
-  next: TypeSchema,
-): DiffClass {
+export function diffTypeSchemas(prev: TypeSchema, next: TypeSchema): DiffClass {
   // Walk every field on prev — removals or required-tightening or type
   // changes are major.
   let major = false;

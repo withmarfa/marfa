@@ -224,7 +224,9 @@ describe("POST /items/bulk_action", () => {
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
       key: ctx.adminKey,
     });
-    const item = (await getRes.json()) as { item: { tier: "library" | "feed" } };
+    const item = (await getRes.json()) as {
+      item: { tier: "library" | "feed" };
+    };
     expect(item.item.tier).toBe("library");
   });
 
