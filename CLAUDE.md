@@ -64,9 +64,23 @@ Server package (not needed for shared or SDK development):
 - `VERSION_THINNING_INTERVAL_MS` — thinning job interval in ms (default: 3600000)
 - `TRASH_RETENTION_DAYS` — days a trashed item survives before hard-delete (default: 60; `0` disables)
 - `TRASH_PURGE_INTERVAL_MS` — trash purge job interval in ms (default: 86400000)
-- `AMBIENT_RETENTION_DAYS` — days an ambient (`library: false`) item survives before hard-delete, regardless of state (default: 0 / disabled)
-- `AMBIENT_EXPIRY_INTERVAL_MS` — ambient expiry job interval in ms (default: 86400000)
+- `FEED_RETENTION_DAYS` — days a feed-tier item survives before hard-delete, regardless of state (default: 0 / disabled). Per TSC42 §1, the tier axis is `library | feed`; feed-tier capture is short-retention by design.
+- `FEED_EXPIRY_INTERVAL_MS` — feed expiry job interval in ms (default: 86400000)
 - `ERROR_WEBHOOK_URL` — webhook URL for 500 error notifications (optional, debounced)
+
+## Schema-enforcement levers (TSC42 §5)
+
+Three optional levers live in `TenantConfig.enforcement` (writable via `PUT /tenants/current/config`) plus an optional per-credential `enforcement_override` on `ApiKey`. All three default off; flip on per-type to tighten validation:
+
+- **Strict mode** — `enforcement.strict_mode.types: string[]`. For each listed type, unknown properties on writes are rejected with `INVALID_PROPERTIES` (`code: "unknown_property"`). The base `getZodSchema` flips from `z.looseObject` to `z.strictObject`.
+- **Source allow-list** — `enforcement.source_allowlist.{types, sources}`. For each listed type, writes whose credential `source` is not in the allowed sources are rejected with `FORBIDDEN`. Stricter than the credential's own scope.
+- **Source filter** — `enforcement.source_filter.{types, sources}`. For each listed type, reads narrow to items whose `source` is in the allowed list. Filter-on-read, not enforcement-on-write — the read API silently omits rows that fail the filter.
+
+Per-credential `enforcement_override` merges over the tenant default — setting `strict_mode` on a credential does not clear the tenant's `source_allowlist`.
+
+## Platform credentials (TSC42 §3/§4)
+
+The `is_platform: boolean` flag on `ApiKey` gates registration and writes of the reserved namespaces (`core.*`, `system.*`, `myme.*`). The seed value lives on the bootstrap admin credential created at server install; only an existing platform credential may mint another. Ordinary tenant admin/member keys default to `is_platform: false` and are rejected when they try to claim reserved namespaces.
 
 ## Database migrations
 
