@@ -10,8 +10,27 @@ const RetentionOverrideSchema = z.object({
   feed_days: z.number().int().positive(),
 });
 
+const EnforcementSchema = z
+  .object({
+    strict_mode: z.object({ types: z.array(z.string()) }).optional(),
+    source_allowlist: z
+      .object({
+        types: z.array(z.string()),
+        sources: z.array(z.string()),
+      })
+      .optional(),
+    source_filter: z
+      .object({
+        types: z.array(z.string()),
+        sources: z.array(z.string()),
+      })
+      .optional(),
+  })
+  .optional();
+
 const TenantConfigSchema = z.object({
   retention: z.record(z.string(), RetentionOverrideSchema).optional(),
+  enforcement: EnforcementSchema,
 });
 
 const getConfigRoute = createRoute({

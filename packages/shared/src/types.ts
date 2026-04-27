@@ -198,6 +198,13 @@ export interface ApiKey {
    * `false` for ordinary tenant admin and member keys.
    */
   is_platform: boolean;
+  /**
+   * Per-credential schema-enforcement override (TSC42 §5). Same shape as
+   * `TenantConfig.enforcement`; entries here merge over the tenant default
+   * for this credential's writes/reads. Optional — most credentials inherit
+   * tenant config without override.
+   */
+  enforcement_override?: EnforcementSettings;
   /** Origin stamped onto items when the client doesn't supply one.
    *  `system` is excluded — server-stamped only, never a credential default. */
   default_origin: Exclude<Origin, "system">;
@@ -430,9 +437,28 @@ export interface TenantRetentionOverride {
   feed_days: number;
 }
 
+/**
+ * Schema-enforcement levers (TSC42 §5). All three default off; flip on
+ * per-type to tighten validation. Applied tenant-wide by default; per-
+ * credential override available via `ApiKey.enforcement_override`.
+ *
+ * - `strict_mode.types` — type IDs where unknown properties are rejected
+ *   on write (z.strictObject vs z.looseObject).
+ * - `source_allowlist` — for the listed types, only items written from
+ *   one of `sources` are accepted; everything else is rejected.
+ * - `source_filter` — for the listed types, reads return only items
+ *   whose source matches `sources`. Filter-only, not enforcement-on-write.
+ */
+export interface EnforcementSettings {
+  strict_mode?: { types: string[] };
+  source_allowlist?: { types: string[]; sources: string[] };
+  source_filter?: { types: string[]; sources: string[] };
+}
+
 /** Tenant-level configuration. Admin-writable via `/tenants/current/config`. */
 export interface TenantConfig {
   retention?: Record<string, TenantRetentionOverride>;
+  enforcement?: EnforcementSettings;
 }
 
 /** A user account (hosted mode). Owns exactly one tenant. */

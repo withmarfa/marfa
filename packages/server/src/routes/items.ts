@@ -10,6 +10,10 @@ import {
   validateProperties,
   ITEM_STATES,
   SYSTEM_TYPE_IDS,
+  resolveEnforcement,
+  isTypeInStrictMode,
+  getSourceAllowlist,
+  getSourceFilter,
 } from "@mymehq/shared";
 import type { ItemState } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -593,6 +597,14 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
+    // TSC42 §5: schema-enforcement levers. Off by default; flipped on per
+    // type via tenant config or per-credential override.
+    const tenantConfig =
+      tenantId && storage.tenants
+        ? await storage.tenants.getConfig(tenantId)
+        : null;
+    const enforcement = resolveEnforcement(tenantConfig, c.get("apiKey"));
+
     // source is non-forgeable: always stamped from the credential.
     // origin and tier fall back to credential defaults when absent.
     // Final fallback is `tier: "library"` ("save it" — the curated layer is
@@ -601,6 +613,43 @@ export function itemRoutes(storage: Storage) {
     const credential = c.get("apiKey");
     const stampedSource = credential?.source;
     const stampedOrigin = body.origin ?? credential?.default_origin;
+
+    // Source allow-list (TSC42 §5): when configured for this type, the
+    // credential's source must be in the allowed list.
+    const allowedSources = getSourceAllowlist(enforcement, type);
+    if (
+      allowedSources !== null &&
+      (stampedSource === undefined || !allowedSources.includes(stampedSource))
+    ) {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        `Source "${stampedSource ?? "(unknown)"}" is not in the allow-list for type ${type}`,
+        { type, source: stampedSource, allowed: allowedSources },
+      );
+    }
+
+    // Strict-mode lever (TSC42 §5): when configured for this type, unknown
+    // properties are rejected. Storage's own validateProperties runs in
+    // loose mode regardless; this pre-check catches strict-mode violations
+    // before any persistence work.
+    if (
+      isTypeInStrictMode(enforcement, type) &&
+      getTypeSchema(type) !== undefined
+    ) {
+      const strictResult = validateProperties(type, properties, {
+        strict: true,
+      });
+      if (!strictResult.success) {
+        throw new MymeError(
+          ErrorCode.INVALID_PROPERTIES,
+          "Unknown property: strict mode rejects properties not declared in the type schema",
+          {
+            errors: strictResult.errors,
+            code: "unknown_property",
+          },
+        );
+      }
+    }
     // TSC42 §4: `system.*` items have no tier; reject explicit values on
     // write, and stamp `undefined` rather than the library default.
     const isSystemTypeWrite = SYSTEM_TYPE_IDS.has(type);
@@ -814,11 +863,29 @@ export function itemRoutes(storage: Storage) {
       typeof type === "string" && type.startsWith("system.");
     const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
 
+    // TSC42 §5 source-filter lever: when configured for the requested
+    // type, narrow results to items whose source is in the allow-list.
+    // Only applies when a specific type filter is supplied — the lever is
+    // per-type, so filterless reads see no source narrowing.
+    const tenantConfigForRead =
+      c.get("apiKey")?.tenant_id && storage.tenants
+        ? await storage.tenants.getConfig(c.get("apiKey")!.tenant_id!)
+        : null;
+    const enforcementForRead = resolveEnforcement(
+      tenantConfigForRead,
+      c.get("apiKey"),
+    );
+    const sourcesFilter =
+      typeof type === "string"
+        ? (getSourceFilter(enforcementForRead, type) ?? undefined)
+        : undefined;
+
     const result = await storage.items.list({
       tenantId: c.get("apiKey")?.tenant_id,
       type,
       state,
       source: query.source,
+      sources: sourcesFilter,
       tier,
       exclude_system_types: excludeSystemTypes,
       tags,

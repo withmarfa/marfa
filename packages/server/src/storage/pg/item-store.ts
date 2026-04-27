@@ -241,6 +241,10 @@ export class PgItemStore implements ItemStore {
       conditions.push(eq(items.tenant_id, filters.tenantId));
     if (filters.source) conditions.push(eq(items.source, filters.source));
 
+    if (filters.sources && filters.sources.length > 0) {
+      conditions.push(inArray(items.source, filters.sources));
+    }
+
     if (filters.tier !== undefined) {
       conditions.push(eq(items.tier, filters.tier));
     }

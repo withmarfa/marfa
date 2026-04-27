@@ -35,6 +35,11 @@ export interface ItemFilters {
   type?: string;
   state?: ItemState;
   source?: string;
+  /** Multi-source filter (TSC42 §5 source-filter lever). When set, results
+   *  are narrowed to items whose `source` is in the array. `source` and
+   *  `sources` may both be set; the single-source filter is AND'd with the
+   *  multi-source filter. */
+  sources?: string[];
   /** Restrict to a specific tier. Omit for the default unfiltered scope. */
   tier?: "library" | "feed";
   /** When true, items whose type starts with `system.` are excluded from
@@ -59,6 +64,8 @@ export interface SearchFilters {
   state?: ItemState;
   /** Tier filter, matching `/items`. Omit for unfiltered. */
   tier?: "library" | "feed";
+  /** Multi-source filter (TSC42 §5 source-filter lever). */
+  sources?: string[];
   /** Mirrors `ItemFilters.exclude_system_types`. */
   exclude_system_types?: boolean;
   /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */

@@ -10,6 +10,7 @@ import type {
   TypeSchema,
   VersionPolicy,
 } from "@mymehq/types";
+import type { EnforcementSettings, TenantConfig } from "./types.js";
 import { isValidTypeIdentifier } from "./validation.js";
 
 // Re-export schema-shape types and ALL_TYPES so consumers of @mymehq/shared
@@ -53,6 +54,68 @@ const _registry = new Map<string, TypeSchema>(
 export const SYSTEM_TYPE_IDS: ReadonlySet<string> = new Set(
   ALL_SYSTEM_TYPES.map((schema) => schema.id),
 );
+
+// ---------------------------------------------------------------------------
+// Schema-enforcement levers (TSC42 §5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Computes the effective enforcement settings for a given (tenant config,
+ * credential) pair. Per-credential override wins where set, falling back to
+ * the tenant default. All three levers are independently overridable —
+ * setting `strict_mode` on the credential does not clear the tenant
+ * `source_allowlist`.
+ */
+export function resolveEnforcement(
+  tenant: TenantConfig | null | undefined,
+  credential: { enforcement_override?: EnforcementSettings } | null | undefined,
+): EnforcementSettings {
+  const tenantSettings = tenant?.enforcement ?? {};
+  const override = credential?.enforcement_override ?? {};
+  return {
+    strict_mode: override.strict_mode ?? tenantSettings.strict_mode,
+    source_allowlist:
+      override.source_allowlist ?? tenantSettings.source_allowlist,
+    source_filter: override.source_filter ?? tenantSettings.source_filter,
+  };
+}
+
+/** Returns true when the type is configured for strict-object validation. */
+export function isTypeInStrictMode(
+  enforcement: EnforcementSettings,
+  typeId: string,
+): boolean {
+  return enforcement.strict_mode?.types.includes(typeId) ?? false;
+}
+
+/**
+ * Returns the source allow-list for the given type, or null when the lever
+ * is off for this type. Callers reject writes whose credential `source` is
+ * not present in the returned array.
+ */
+export function getSourceAllowlist(
+  enforcement: EnforcementSettings,
+  typeId: string,
+): string[] | null {
+  const list = enforcement.source_allowlist;
+  if (!list) return null;
+  if (!list.types.includes(typeId)) return null;
+  return list.sources;
+}
+
+/**
+ * Returns the source-filter list for the given type, or null when the lever
+ * is off. Callers narrow read results to items whose source is in the array.
+ */
+export function getSourceFilter(
+  enforcement: EnforcementSettings,
+  typeId: string,
+): string[] | null {
+  const list = enforcement.source_filter;
+  if (!list) return null;
+  if (!list.types.includes(typeId)) return null;
+  return list.sources;
+}
 
 /** The type registry — all registered type schemas indexed by type identifier. */
 export const TYPE_REGISTRY: ReadonlyMap<string, TypeSchema> = _registry;
@@ -135,12 +198,14 @@ export function isPublisherType(id: string): boolean {
 export function registerTypeSchema(schema: TypeSchema): void {
   _registry.set(schema.id, schema);
   zodSchemaCache.delete(schema.id);
+  zodSchemaStrictCache.delete(schema.id);
 }
 
 /** Removes a type schema from the in-memory registry. Clears the zod cache. */
 export function unregisterTypeSchema(id: string): void {
   _registry.delete(id);
   zodSchemaCache.delete(id);
+  zodSchemaStrictCache.delete(id);
 }
 
 /**
@@ -251,10 +316,19 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
 }
 
 // Cache generated Zod schemas to avoid re-creation on every validation call.
+// Two caches: one for the default permissive shape, one for strict — strict
+// mode flips z.looseObject (passes unknown properties) to z.strictObject
+// (rejects them) per TSC42 §5.
 const zodSchemaCache = new Map<string, z.ZodType>();
+const zodSchemaStrictCache = new Map<string, z.ZodType>();
 
-function getZodSchema(typeId: string): z.ZodType | undefined {
-  const cached = zodSchemaCache.get(typeId);
+function getZodSchema(
+  typeId: string,
+  options?: { strict?: boolean },
+): z.ZodType | undefined {
+  const strict = options?.strict === true;
+  const cache = strict ? zodSchemaStrictCache : zodSchemaCache;
+  const cached = cache.get(typeId);
   if (cached) return cached;
 
   const fields = getResolvedFields(typeId);
@@ -265,8 +339,8 @@ function getZodSchema(typeId: string): z.ZodType | undefined {
     shape[name] = fieldToZod(field);
   }
 
-  const schema = z.looseObject(shape);
-  zodSchemaCache.set(typeId, schema);
+  const schema = strict ? z.strictObject(shape) : z.looseObject(shape);
+  cache.set(typeId, schema);
   return schema;
 }
 
@@ -277,13 +351,16 @@ export type ValidationResult =
 
 /**
  * Validates item properties against the type schema.
- * Standard fields are validated; custom fields are passed through.
+ * Standard fields are validated; custom fields are passed through unless
+ * `options.strict` is true, in which case unknown properties are rejected
+ * (TSC42 §5 — strict-mode lever).
  */
 export function validateProperties(
   typeId: string,
   properties: Record<string, unknown>,
+  options?: { strict?: boolean },
 ): ValidationResult {
-  const schema = getZodSchema(typeId);
+  const schema = getZodSchema(typeId, options);
   if (!schema) {
     return {
       success: false,

@@ -113,6 +113,14 @@ export class PgSearchStore implements SearchStore {
       conditions.push(`AND i.tier = $${String(paramIdx++)}`);
     }
 
+    if (filters.sources && filters.sources.length > 0) {
+      const placeholders = filters.sources
+        .map(() => `$${String(paramIdx++)}`)
+        .join(", ");
+      params.push(...filters.sources);
+      conditions.push(`AND i.source IN (${placeholders})`);
+    }
+
     if (filters.exclude_system_types) {
       conditions.push(`AND i.type NOT LIKE 'system.%'`);
     }

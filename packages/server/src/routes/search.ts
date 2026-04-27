@@ -4,6 +4,8 @@ import {
   ErrorCode,
   ITEM_STATES,
   isValidTypeIdentifier,
+  resolveEnforcement,
+  getSourceFilter,
 } from "@mymehq/shared";
 import type { ItemState } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -119,11 +121,27 @@ export function searchRoutes(storage: Storage) {
       typeof type === "string" && type.startsWith("system.");
     const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
 
+    // TSC42 §5 source-filter lever — only narrows when a specific type is
+    // requested.
+    const tenantConfigForSearch =
+      c.get("apiKey")?.tenant_id && storage.tenants
+        ? await storage.tenants.getConfig(c.get("apiKey")!.tenant_id!)
+        : null;
+    const enforcementForSearch = resolveEnforcement(
+      tenantConfigForSearch,
+      c.get("apiKey"),
+    );
+    const sourcesFilter =
+      typeof type === "string"
+        ? (getSourceFilter(enforcementForSearch, type) ?? undefined)
+        : undefined;
+
     const results = await storage.search.search(q.trim(), {
       tenantId: c.get("apiKey")?.tenant_id,
       type,
       state: state as ItemState | undefined,
       tier: tierFilter,
+      sources: sourcesFilter,
       exclude_system_types: excludeSystemTypes,
       tags: tagsFilter,
       filter,
