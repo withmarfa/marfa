@@ -79,8 +79,8 @@ async function createHostedContext(): Promise<HostedContext> {
     versionMaxVersions: 500,
     trashRetentionDays: 60,
     trashPurgeIntervalMs: 3_600_000,
-    ambientRetentionDays: 0,
-    ambientExpiryIntervalMs: 3_600_000,
+    feedRetentionDays: 0,
+    feedExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
   });
@@ -98,7 +98,7 @@ async function createHostedContext(): Promise<HostedContext> {
       source: `tenant-cfg-${suffix}`,
       role: "admin",
       type_permissions: {},
-      default_library: false,
+      default_tier: "feed",
     },
     hashApiKey(tenantAdminKey, SALT),
     tenantId,
@@ -179,7 +179,7 @@ describe("Tenant config — hosted mode", () => {
   it("GET returns stored config for a tenant-scoped admin", async () => {
     expect(hosted.storage.tenants).toBeDefined();
     await hosted.storage.tenants!.updateConfig(hosted.tenantId, {
-      retention: { "core.note": { ambient_days: 30 } },
+      retention: { "core.note": { feed_days: 30 } },
     });
 
     const res = await request(hosted.app, "GET", "/tenants/current/config", {
@@ -187,9 +187,9 @@ describe("Tenant config — hosted mode", () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      retention?: Record<string, { ambient_days: number }>;
+      retention?: Record<string, { feed_days: number }>;
     };
-    expect(body.retention?.["core.note"]?.ambient_days).toBe(30);
+    expect(body.retention?.["core.note"]?.feed_days).toBe(30);
   });
 
   it("PUT rejects an unknown retention type with 400", async () => {
@@ -197,7 +197,7 @@ describe("Tenant config — hosted mode", () => {
       key: hosted.tenantAdminKey,
       body: {
         retention: {
-          "core.definitely-not-a-real-type": { ambient_days: 10 },
+          "core.definitely-not-a-real-type": { feed_days: 10 },
         },
       },
     });
@@ -208,7 +208,7 @@ describe("Tenant config — hosted mode", () => {
 
   it("PUT persists a valid config and records an audit entry", async () => {
     const config = {
-      retention: { "core.note": { ambient_days: 45 } },
+      retention: { "core.note": { feed_days: 45 } },
     };
     const res = await request(hosted.app, "PUT", "/tenants/current/config", {
       key: hosted.tenantAdminKey,
@@ -216,7 +216,7 @@ describe("Tenant config — hosted mode", () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as typeof config;
-    expect(body.retention["core.note"].ambient_days).toBe(45);
+    expect(body.retention["core.note"].feed_days).toBe(45);
 
     // Round-trip: GET must return the persisted value.
     const getRes = await request(hosted.app, "GET", "/tenants/current/config", {
@@ -224,7 +224,7 @@ describe("Tenant config — hosted mode", () => {
     });
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as typeof config;
-    expect(getBody.retention["core.note"].ambient_days).toBe(45);
+    expect(getBody.retention["core.note"].feed_days).toBe(45);
 
     // Audit side effect. Fire-and-forget under PG — poll briefly.
     const deadline = Date.now() + 2000;

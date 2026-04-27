@@ -4,6 +4,7 @@ import type {
   ItemState,
   Metadata,
   Origin,
+  Tier,
   Version,
 } from "@mymehq/shared";
 import type { items, metadata, versions } from "./schema.js";
@@ -13,11 +14,15 @@ type MetadataRow = typeof metadata.$inferSelect;
 type VersionRow = typeof versions.$inferSelect;
 
 export function rowToItem(row: ItemRow): Item {
+  const tier =
+    row.tier === "library" || row.tier === "feed"
+      ? (row.tier as Tier)
+      : undefined;
   return {
     id: row.id,
     type: row.type,
     state: row.state as ItemState,
-    library: row.library,
+    ...(tier !== undefined && { tier }),
     properties: safeJsonParse<Record<string, unknown>>(
       row.properties,
       {},

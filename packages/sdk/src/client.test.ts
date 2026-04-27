@@ -76,8 +76,8 @@ beforeAll(async () => {
     versionMaxVersions: 500,
     trashRetentionDays: 60,
     trashPurgeIntervalMs: 3_600_000,
-    ambientRetentionDays: 0,
-    ambientExpiryIntervalMs: 3_600_000,
+    feedRetentionDays: 0,
+    feedExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
   });
@@ -92,7 +92,7 @@ beforeAll(async () => {
     body: JSON.stringify({
       label: "test-admin",
       source: "sdk-test-admin",
-      default_library: false,
+      default_tier: "feed",
     }),
   });
   const { key } = (await bootstrapRes.json()) as { key: string };
@@ -765,13 +765,13 @@ describe("keys", () => {
       source: "update-me-source",
       role: "member",
       default_origin: "user",
-      default_library: false,
+      default_tier: "feed",
       type_permissions: { "core.note": "read" },
     });
 
     const updated = await client.keys.update(id, {
       label: "renamed",
-      default_library: true,
+      default_tier: "library",
       type_permissions: { "core.note": "write" },
       edge_permissions: { "*": "read" },
     });
@@ -780,7 +780,7 @@ describe("keys", () => {
     // source stays put — it's immutable
     expect(updated.source).toBe(source);
     expect(updated.label).toBe("renamed");
-    expect(updated.default_library).toBe(true);
+    expect(updated.default_tier).toBe("library");
     expect(updated.type_permissions).toEqual({ "core.note": "write" });
     expect(updated.edge_permissions).toEqual({ "*": "read" });
   });
@@ -828,27 +828,27 @@ describe("Extended SDK surface", () => {
     const created = await client.items.create({
       type: "core.note",
       properties: { body: "library marker" },
-      library: true,
+      tier: "library",
     });
-    expect(created.library).toBe(true);
+    expect(created.tier).toBe("library");
 
     const onlyLibrary = await client.items.list({
       type: "core.note",
-      library: true,
+      tier: "library",
       limit: 200,
     });
     expect(onlyLibrary.data.length).toBeGreaterThan(0);
     for (const item of onlyLibrary.data) {
-      expect(item.library).toBe(true);
+      expect(item.tier).toBe("library");
     }
 
     const onlyAmbient = await client.items.list({
       type: "core.note",
-      library: false,
+      tier: "feed",
       limit: 200,
     });
     for (const item of onlyAmbient.data) {
-      expect(item.library).toBe(false);
+      expect(item.tier).toBe("feed");
     }
   });
 
@@ -887,7 +887,7 @@ describe("Extended SDK surface", () => {
     expect(created.source).toBe("wave2-sdk-test-src");
     expect(created.role).toBe("member");
     expect(created.default_origin).toBe("user");
-    expect(created.default_library).toBe(false);
+    expect(created.default_tier).toBe("library");
     expect(created.type_permissions).toEqual({ "*": "write" });
   });
 });
@@ -958,11 +958,11 @@ describe("SDK round additions", () => {
     const item = await client.items.create({
       type: "core.note",
       properties: { body: "lib-flip" },
-      library: false,
+      tier: "feed",
     });
-    expect(item.library).toBe(false);
-    const updated = await client.items.update(item.id, {}, { library: true });
-    expect(updated.library).toBe(true);
+    expect(item.tier).toBe("feed");
+    const updated = await client.items.update(item.id, {}, { tier: "library" });
+    expect(updated.tier).toBe("library");
   });
 });
 
@@ -1222,13 +1222,13 @@ describe("items.bulkAction", () => {
     expect(md.tags).not.toContain(tag);
   });
 
-  it("update_library, update_properties, update_timestamp all land", async () => {
+  it("update_tier, update_properties, update_timestamp all land", async () => {
     const tag = `ba-multi-${Math.random().toString(36).slice(2, 8)}`;
     const ids = await seedTagged(1, tag);
 
     await client.items.bulkAction({
-      action: "update_library",
-      library: false,
+      action: "update_tier",
+      tier: "feed",
       filter: { tags: [tag] },
     });
     await client.items.bulkAction({
@@ -1244,7 +1244,7 @@ describe("items.bulkAction", () => {
     });
 
     const fetched = await client.items.get(ids[0]!);
-    expect(fetched.library).toBe(false);
+    expect(fetched.tier).toBe("feed");
     expect((fetched.properties as { extra_bulk?: string }).extra_bulk).toBe(
       "patched",
     );

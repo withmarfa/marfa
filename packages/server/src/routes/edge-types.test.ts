@@ -39,7 +39,7 @@ async function createMemberKey(label: string): Promise<string> {
       label,
       source: `${label}-${Math.random().toString(36).slice(2, 10)}`,
       role: "member",
-      default_library: true,
+      default_tier: "library",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
     },

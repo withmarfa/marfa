@@ -70,7 +70,7 @@ const SYSTEM_FIELDS = new Set([
   // V0-spec system fields. parent_id and in-thread membership are carried
   // as edges, not as generic-query-language filters; use edge[<type>]=
   // clauses for those.
-  "library",
+  "tier",
   "device",
   "version",
   "id",

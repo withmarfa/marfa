@@ -95,7 +95,7 @@ const createItemRoute = createRoute({
             source: z.string().optional(),
             source_id: z.string().optional(),
             origin: z.enum(["user", "ai", "worker"]).optional(),
-            library: z.boolean().optional(),
+            tier: z.enum(["library", "feed"]).optional(),
             device: z.string().optional(),
             capture_latitude: z.number().optional(),
             capture_longitude: z.number().optional(),
@@ -164,7 +164,7 @@ const listItemsRoute = createRoute({
       type: z.string().optional(),
       state: z.string().optional(),
       source: z.string().optional(),
-      library: z.enum(["true", "false", "all"]).optional(),
+      tier: z.enum(["library", "feed", "all"]).optional(),
       tags: z.string().optional(),
       filter: z.string().optional(),
       sort: z.enum(["created_at", "updated_at", "timestamp"]).optional(),
@@ -249,11 +249,11 @@ const updateItemRoute = createRoute({
             properties: z.record(z.string(), z.unknown()).optional(),
             version: z.number().int().min(0).optional(),
             snapshot: z.boolean().optional(),
-            /** Toggle library / ambient state. Independent of the
+            /** Toggle the tier (`library` ↔ `feed`). Independent of the
              *  properties merge path — last-writer-wins. */
-            library: z.boolean().optional(),
+            tier: z.enum(["library", "feed"]).optional(),
             /** Override the user-meaningful timestamp (ISO 8601).
-             *  Last-writer-wins like `library`. */
+             *  Last-writer-wins like `tier`. */
             timestamp: z.string().optional(),
             // Replace-all-for-specified-types semantics: any edge_type
             // listed wipes existing outbound edges of that type from
@@ -593,13 +593,15 @@ export function itemRoutes(storage: Storage) {
     }
 
     // source is non-forgeable: always stamped from the credential.
-    // origin and library fall back to credential defaults when absent.
-    // Final fallback is `library: true` ("save it" — the curated layer is the
-    // intended default when neither caller nor credential expresses intent).
+    // origin and tier fall back to credential defaults when absent.
+    // Final fallback is `tier: "library"` ("save it" — the curated layer is
+    // the intended default when neither caller nor credential expresses
+    // intent). TSC42 §1.
     const credential = c.get("apiKey");
     const stampedSource = credential?.source;
     const stampedOrigin = body.origin ?? credential?.default_origin;
-    const libraryValue = body.library ?? credential?.default_library ?? true;
+    const tierValue: "library" | "feed" =
+      body.tier ?? credential?.default_tier ?? "library";
 
     // Validate edges payload up-front (shape only) so the write path doesn't
     // have to double-check. Per-constraint validation runs inside the
@@ -636,7 +638,7 @@ export function itemRoutes(storage: Storage) {
           properties,
           id: body.id,
           state: body.state as ItemState | undefined,
-          library: libraryValue,
+          tier: tierValue,
           timestamp: body.timestamp,
           source: stampedSource,
           source_id: body.source_id,
@@ -763,18 +765,17 @@ export function itemRoutes(storage: Storage) {
         ? `${filter} AND ${edgeClauses.join(" AND ")}`
         : edgeClauses.join(" AND ");
     }
-    // Read library from the raw query string. zod-openapi's query
-    // validation occasionally drops boolean-as-string enums (a quirk
-    // independent of the schema being declared correctly); the raw
-    // query lookup is the reliable source.
-    // V0 spec: the default query scope is unfiltered (library + ambient).
-    //   ?library=true  -> library only
-    //   ?library=false -> ambient only
-    //   ?library=all or absent -> no filter
-    // See Myme Reference §Library axis.
-    const rawLibrary = c.req.query("library");
-    const library: boolean | undefined =
-      rawLibrary === "true" ? true : rawLibrary === "false" ? false : undefined;
+    // Read tier from the raw query string. zod-openapi's query
+    // validation occasionally drops enum strings (a quirk independent
+    // of the schema being declared correctly); the raw query lookup is
+    // the reliable source.
+    // TSC42 §1: the default query scope is unfiltered (library + feed).
+    //   ?tier=library  -> library only
+    //   ?tier=feed     -> feed only
+    //   ?tier=all or absent -> no filter
+    const rawTier = c.req.query("tier");
+    const tier: "library" | "feed" | undefined =
+      rawTier === "library" ? "library" : rawTier === "feed" ? "feed" : undefined;
     // `include` accepts a comma-separated list. Lists are lean by default;
     // each value is an opt-in hydration:
     //   metadata    — tags sidecar (extensions always live under `extensions`
@@ -797,7 +798,7 @@ export function itemRoutes(storage: Storage) {
       type,
       state,
       source: query.source,
-      library,
+      tier,
       tags,
       filter,
       allowed_types: getTypeFilter(c),
@@ -900,13 +901,13 @@ export function itemRoutes(storage: Storage) {
       body.edges !== undefined &&
       typeof body.edges === "object" &&
       Object.keys(body.edges).length > 0;
-    const hasLibrary = body.library !== undefined;
+    const hasTier = body.tier !== undefined;
     const hasTimestamp = body.timestamp !== undefined;
 
-    if (!hasProperties && !hasEdges && !hasLibrary && !hasTimestamp) {
+    if (!hasProperties && !hasEdges && !hasTier && !hasTimestamp) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of `properties`, `edges`, `library`, or `timestamp` is required.",
+        "At least one of `properties`, `edges`, `tier`, or `timestamp` is required.",
       );
     }
     if (body.timestamp !== undefined && !isValidTimestamp(body.timestamp)) {
@@ -1029,20 +1030,20 @@ export function itemRoutes(storage: Storage) {
 
     const txResult = await storage.runInTransaction(async () => {
       const updated =
-        hasProperties || hasLibrary || hasTimestamp
+        hasProperties || hasTier || hasTimestamp
           ? await storage.items.update(
               id,
               {
                 properties: body.properties,
                 version: body.version,
                 snapshot: body.snapshot === true ? true : undefined,
-                library: hasLibrary ? body.library : undefined,
+                tier: hasTier ? body.tier : undefined,
                 timestamp: hasTimestamp ? body.timestamp : undefined,
               },
               tid,
             )
           : item;
-      if ((hasProperties || hasLibrary || hasTimestamp) && "error" in updated) {
+      if ((hasProperties || hasTier || hasTimestamp) && "error" in updated) {
         return updated;
       }
 

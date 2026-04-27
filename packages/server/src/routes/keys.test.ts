@@ -31,7 +31,7 @@ async function createKey(overrides: Record<string, unknown> = {}): Promise<{
       source: `subject-${suffix}`,
       role: "member",
       default_origin: "user",
-      default_library: false,
+      default_tier: "feed",
       type_permissions: { "core.note": "read" },
       extension_permissions: {},
       edge_permissions: {},
@@ -56,7 +56,7 @@ describe("PATCH /keys/{id}", () => {
       body: {
         label: "renamed",
         default_origin: "ai",
-        default_library: true,
+        default_tier: "library",
         type_permissions: { "core.note": "write" },
         extension_permissions: { "my-app.prefs": "read" },
         edge_permissions: { "parent-of": "write" },
@@ -71,7 +71,7 @@ describe("PATCH /keys/{id}", () => {
     expect(updated.source).toBe(source);
     expect(updated.role).toBe("member");
     expect(updated.default_origin).toBe("ai");
-    expect(updated.default_library).toBe(true);
+    expect(updated.default_tier).toBe("library");
     expect(updated.type_permissions).toEqual({ "core.note": "write" });
     expect(updated.extension_permissions).toEqual({ "my-app.prefs": "read" });
     expect(updated.edge_permissions).toEqual({ "parent-of": "write" });
@@ -80,7 +80,7 @@ describe("PATCH /keys/{id}", () => {
   it("leaves untouched fields alone on a partial patch", async () => {
     const { id } = await createKey({
       label: "before",
-      default_library: false,
+      default_tier: "feed",
       type_permissions: { "core.note": "read" },
     });
 
@@ -92,7 +92,7 @@ describe("PATCH /keys/{id}", () => {
     const updated = (await res.json()) as Record<string, unknown>;
 
     expect(updated.label).toBe("after");
-    expect(updated.default_library).toBe(false);
+    expect(updated.default_tier).toBe("feed");
     expect(updated.type_permissions).toEqual({ "core.note": "read" });
   });
 
@@ -184,8 +184,8 @@ describe("bootstrap sentinel", () => {
       versionMaxVersions: 500,
       trashRetentionDays: 60,
       trashPurgeIntervalMs: 3_600_000,
-      ambientRetentionDays: 0,
-      ambientExpiryIntervalMs: 3_600_000,
+      feedRetentionDays: 0,
+      feedExpiryIntervalMs: 3_600_000,
       errorWebhookUrl: "",
       trustedProxyCidrs: [],
     });
@@ -201,7 +201,7 @@ describe("bootstrap sentinel", () => {
           source: "first-admin",
           role: "member",
           default_origin: "user",
-          default_library: false,
+          default_tier: "feed",
           type_permissions: { "*": "write" },
           extension_permissions: {},
           edge_permissions: {},
@@ -229,7 +229,7 @@ describe("bootstrap sentinel", () => {
           source: "first-admin",
           role: "member",
           default_origin: "user",
-          default_library: false,
+          default_tier: "feed",
           type_permissions: { "*": "write" },
           extension_permissions: {},
           edge_permissions: {},
@@ -249,7 +249,7 @@ describe("bootstrap sentinel", () => {
           source: "takeover",
           role: "member",
           default_origin: "user",
-          default_library: false,
+          default_tier: "feed",
           type_permissions: { "*": "write" },
           extension_permissions: {},
           edge_permissions: {},

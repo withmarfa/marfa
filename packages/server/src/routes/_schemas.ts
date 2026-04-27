@@ -31,7 +31,8 @@ export const ItemSchema = z.object({
   type: z.string(),
   properties: z.record(z.string(), z.unknown()),
   state: z.enum(["active", "archived", "trashed", "revoked"]),
-  library: z.boolean(),
+  /** Optional — `system.*` items have no tier. */
+  tier: z.enum(["library", "feed"]).optional(),
   version: z.number(),
   schema_version: z.number().int(),
   source: z.string(),

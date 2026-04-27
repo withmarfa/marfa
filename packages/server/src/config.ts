@@ -41,10 +41,10 @@ export interface AppConfig {
    *  purger. `0` disables the job. Default: 60. */
   trashRetentionDays: number;
   trashPurgeIntervalMs: number;
-  /** Days an ambient (`library: false`) item survives before it's hard-
-   *  deleted, regardless of state. `0` disables the job (the default). */
-  ambientRetentionDays: number;
-  ambientExpiryIntervalMs: number;
+  /** Days a feed-tier item survives before it's hard-deleted, regardless of
+   *  state. `0` disables the job (the default). */
+  feedRetentionDays: number;
+  feedExpiryIntervalMs: number;
   errorWebhookUrl: string;
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
@@ -134,12 +134,12 @@ export function loadConfig(): AppConfig {
         : 60,
     trashPurgeIntervalMs:
       Number(process.env.TRASH_PURGE_INTERVAL_MS) || 86_400_000,
-    ambientRetentionDays:
-      process.env.AMBIENT_RETENTION_DAYS !== undefined
-        ? Number(process.env.AMBIENT_RETENTION_DAYS)
+    feedRetentionDays:
+      process.env.FEED_RETENTION_DAYS !== undefined
+        ? Number(process.env.FEED_RETENTION_DAYS)
         : 0,
-    ambientExpiryIntervalMs:
-      Number(process.env.AMBIENT_EXPIRY_INTERVAL_MS) || 86_400_000,
+    feedExpiryIntervalMs:
+      Number(process.env.FEED_EXPIRY_INTERVAL_MS) || 86_400_000,
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
     // Parse + validate at startup. Malformed CIDRs throw — we want bad
     // config to surface immediately, not silently degrade.

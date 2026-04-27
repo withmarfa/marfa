@@ -35,8 +35,8 @@ export interface ItemFilters {
   type?: string;
   state?: ItemState;
   source?: string;
-  /** Restrict to library items (true) or ambient items (false). */
-  library?: boolean;
+  /** Restrict to a specific tier. Omit for the default unfiltered scope. */
+  tier?: "library" | "feed";
   tags?: string[];
   filter?: string;
   allowed_types?: string[];
@@ -52,9 +52,8 @@ export interface SearchFilters {
   tenantId?: string;
   type?: string;
   state?: ItemState;
-  /** Tri-value library filter, matching `/items`. `true` = library only,
-   *  `false` = ambient only, `undefined` = no filter (default). */
-  library?: boolean;
+  /** Tier filter, matching `/items`. Omit for unfiltered. */
+  tier?: "library" | "feed";
   /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */
   tags?: string[];
   filter?: string;
@@ -157,13 +156,10 @@ export interface ItemStore {
    *  than `beforeDate` (an ISO 8601 timestamp). Cleans the search index
    *  for each row. Returns the number of rows deleted. */
   purgeTrashedOlderThan(beforeDate: string, tenantId?: string): Promise<number>;
-  /** Hard-delete every ambient (`library: false`) item whose `updated_at`
-   *  is strictly older than `beforeDate`, regardless of state. Cleans the
-   *  search index for each row. Returns the number of rows deleted. */
-  expireAmbientOlderThan(
-    beforeDate: string,
-    tenantId?: string,
-  ): Promise<number>;
+  /** Hard-delete every feed-tier item whose `updated_at` is strictly older
+   *  than `beforeDate`, regardless of state. Cleans the search index for
+   *  each row. Returns the number of rows deleted. */
+  expireFeedOlderThan(beforeDate: string, tenantId?: string): Promise<number>;
 }
 
 export interface MetadataStore {

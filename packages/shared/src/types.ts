@@ -26,6 +26,17 @@ export const ORIGINS: readonly Origin[] = [
   "system",
 ] as const;
 
+/**
+ * The intent tier on an item — `library` is curated, kept, indexed; `feed`
+ * is high-volume, low-intent capture. Items move between them through manual
+ * or automated curation. `system.*` items have no tier (the dimension does
+ * not apply); the field is optional on the wire to model that.
+ */
+export type Tier = "library" | "feed";
+
+/** Valid tier values as a readonly array, useful for validation. */
+export const TIERS: readonly Tier[] = ["library", "feed"] as const;
+
 /** API key roles. */
 export type KeyRole = "admin" | "member";
 
@@ -44,8 +55,11 @@ export interface Item {
   id: string;
   type: string;
   state: ItemState;
-  /** Whether this item is part of the curated personal-data layer. */
-  library: boolean;
+  /**
+   * The intent tier on this item — `library` is curated/kept, `feed` is
+   * high-volume capture. Optional because `system.*` items have no tier.
+   */
+  tier?: Tier;
   properties: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -66,8 +80,8 @@ export interface CreateItemInput {
   properties: Record<string, unknown>;
   id?: string;
   state?: ItemState;
-  /** Overrides the credential's default_library when supplied. */
-  library?: boolean;
+  /** Overrides the credential's default_tier when supplied. */
+  tier?: Tier;
   timestamp?: string;
   /** Ignored on the wire — server always stamps source from the credential. */
   source?: string;
@@ -84,10 +98,10 @@ export interface UpdateItemInput {
   properties?: Record<string, unknown>;
   version?: number;
   snapshot?: boolean;
-  /** Toggle library / ambient state. Independent of the version-merge path
-   *  for `properties`; flipping `library` doesn't conflict (it's a single
+  /** Toggle the tier (`library` ↔ `feed`). Independent of the version-merge
+   *  path for `properties`; flipping `tier` doesn't conflict (it's a single
    *  metadata-axis flag, last-writer-wins by design). */
-  library?: boolean;
+  tier?: Tier;
   /** Override the user-meaningful timestamp. Settable on create; this
    *  field lets importers fix dates retroactively without rewriting
    *  properties. Independent of the version-merge path. */
@@ -176,10 +190,11 @@ export interface ApiKey {
   /** Human-readable display name stamped onto items this credential writes. */
   source: string;
   role: KeyRole;
-  /** Origin stamped onto items when the client doesn't supply one. */
-  default_origin: Origin;
-  /** Library flag stamped onto items when the client doesn't supply one. */
-  default_library: boolean;
+  /** Origin stamped onto items when the client doesn't supply one.
+   *  `system` is excluded — server-stamped only, never a credential default. */
+  default_origin: Exclude<Origin, "system">;
+  /** Tier stamped onto items when the client doesn't supply one. */
+  default_tier: Tier;
   type_permissions: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   /**
@@ -199,8 +214,8 @@ export interface CreateKeyInput {
   label: string;
   source: string;
   role: KeyRole;
-  default_origin?: Origin;
-  default_library?: boolean;
+  default_origin?: Exclude<Origin, "system">;
+  default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
@@ -213,8 +228,8 @@ export interface CreateKeyInput {
  */
 export interface UpdateKeyInput {
   label?: string;
-  default_origin?: Origin;
-  default_library?: boolean;
+  default_origin?: Exclude<Origin, "system">;
+  default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
@@ -396,9 +411,9 @@ export interface Tenant {
   created_at: string;
 }
 
-/** Per-type ambient retention override (days before ambient items expire). */
+/** Per-type feed retention override (days before feed-tier items expire). */
 export interface TenantRetentionOverride {
-  ambient_days: number;
+  feed_days: number;
 }
 
 /** Tenant-level configuration. Admin-writable via `/tenants/current/config`. */

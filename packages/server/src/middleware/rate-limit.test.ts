@@ -58,8 +58,8 @@ async function buildCtx(): Promise<Ctx> {
     versionMaxVersions: 500,
     trashRetentionDays: 60,
     trashPurgeIntervalMs: 3_600_000,
-    ambientRetentionDays: 0,
-    ambientExpiryIntervalMs: 3_600_000,
+    feedRetentionDays: 0,
+    feedExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
   });
@@ -72,7 +72,7 @@ async function buildCtx(): Promise<Ctx> {
       source: `rl-admin-${suffix}`,
       role: "admin",
       type_permissions: { "*": "write" },
-      default_library: false,
+      default_tier: "feed",
     },
     hashApiKey(rawKey, SALT),
   );
@@ -103,7 +103,7 @@ async function makeMemberKey(ctx: Ctx, label: string): Promise<string> {
       source: `${label}-${suffix}`,
       role: "member",
       default_origin: "user",
-      default_library: false,
+      default_tier: "feed",
       type_permissions: { "*": "read" },
       extension_permissions: {},
       edge_permissions: {},

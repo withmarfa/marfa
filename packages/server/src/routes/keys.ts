@@ -31,7 +31,7 @@ const KeyResponseSchema = z.object({
   source: z.string(),
   role: z.enum(["admin", "member"]),
   default_origin: z.enum(["user", "ai", "worker"]),
-  default_library: z.boolean(),
+  default_tier: z.enum(["library", "feed"]),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
@@ -47,7 +47,7 @@ const KeyListItemSchema = z.object({
   source: z.string(),
   role: z.string(),
   default_origin: z.enum(["user", "ai", "worker"]),
-  default_library: z.boolean(),
+  default_tier: z.enum(["library", "feed"]),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
@@ -81,7 +81,7 @@ const createKeyRoute = createRoute({
               .max(200),
             role: z.enum(["admin", "member"]).optional(),
             default_origin: z.enum(["user", "ai", "worker"]).optional(),
-            default_library: z.boolean().optional(),
+            default_tier: z.enum(["library", "feed"]).optional(),
             type_permissions: z
               .record(z.string(), z.enum(["read", "write", "none"]))
               .optional(),
@@ -168,7 +168,7 @@ const revokeKeyRoute = createRoute({
 const UpdateKeyBodySchema = z.object({
   label: z.string().min(1).optional(),
   default_origin: z.enum(["user", "ai", "worker"]).optional(),
-  default_library: z.boolean().optional(),
+  default_tier: z.enum(["library", "feed"]).optional(),
   type_permissions: z
     .record(z.string(), z.enum(["read", "write", "none"]))
     .optional(),
@@ -186,7 +186,7 @@ const KeyDetailSchema = z.object({
   source: z.string(),
   role: z.enum(["admin", "member"]),
   default_origin: z.enum(["user", "ai", "worker"]),
-  default_library: z.boolean(),
+  default_tier: z.enum(["library", "feed"]),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
@@ -266,7 +266,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         source: body.source.trim(),
         role: role,
         default_origin: body.default_origin,
-        default_library: body.default_library,
+        default_tier: body.default_tier,
         type_permissions: typePermissions,
         extension_permissions: body.extension_permissions,
         edge_permissions: body.edge_permissions,
@@ -297,7 +297,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         source: stored.source,
         role: stored.role,
         default_origin: stored.default_origin,
-        default_library: stored.default_library,
+        default_tier: stored.default_tier,
         type_permissions: stored.type_permissions,
         extension_permissions: stored.extension_permissions,
         edge_permissions: stored.edge_permissions,
@@ -362,7 +362,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     const updated = await storage.keys.update(id, {
       label: body.label,
       default_origin: body.default_origin,
-      default_library: body.default_library,
+      default_tier: body.default_tier,
       type_permissions: body.type_permissions,
       extension_permissions: body.extension_permissions,
       edge_permissions: body.edge_permissions,
@@ -385,7 +385,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         source: updated.source,
         role: updated.role,
         default_origin: updated.default_origin,
-        default_library: updated.default_library,
+        default_tier: updated.default_tier,
         type_permissions: updated.type_permissions,
         extension_permissions: updated.extension_permissions,
         edge_permissions: updated.edge_permissions,

@@ -7,7 +7,7 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
 const RetentionOverrideSchema = z.object({
-  ambient_days: z.number().int().positive(),
+  feed_days: z.number().int().positive(),
 });
 
 const TenantConfigSchema = z.object({
@@ -20,7 +20,7 @@ const getConfigRoute = createRoute({
   tags: ["Tenants"],
   summary: "Get the current tenant's configuration",
   description:
-    "Admin only. Returns tenant-scoped config (per-type ambient retention overrides). An empty object is returned when nothing is configured.",
+    "Admin only. Returns tenant-scoped config (per-type feed retention overrides). An empty object is returned when nothing is configured.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

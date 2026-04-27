@@ -3,7 +3,6 @@ import {
   text,
   integer,
   bigint,
-  boolean,
   doublePrecision,
   jsonb,
   index,
@@ -53,7 +52,7 @@ export const items = pgTable(
     tenant_id: text("tenant_id"),
     type: text("type").notNull(),
     state: text("state").notNull().default("active"),
-    library: boolean("library").notNull().default(false),
+    tier: text("tier").notNull().default("library"),
     properties: text("properties").notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
@@ -157,7 +156,7 @@ export const apiKeys = pgTable(
     source: text("source").notNull(),
     role: text("role").notNull().default("member"),
     default_origin: text("default_origin").notNull().default("user"),
-    default_library: boolean("default_library").notNull().default(false),
+    default_tier: text("default_tier").notNull().default("library"),
     type_permissions: text("type_permissions")
       .notNull()
       .default('{"*":"write"}'),

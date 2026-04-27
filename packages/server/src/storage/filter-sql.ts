@@ -40,7 +40,7 @@ interface ItemsTableRef {
   timestamp: unknown;
   created_at: unknown;
   updated_at: unknown;
-  library: unknown;
+  tier: unknown;
   device: unknown;
   version: unknown;
   properties: unknown;
@@ -65,7 +65,7 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
     timestamp: table.timestamp,
     created_at: table.created_at,
     updated_at: table.updated_at,
-    library: table.library,
+    tier: table.tier,
     device: table.device,
     version: table.version,
     id: table.id,

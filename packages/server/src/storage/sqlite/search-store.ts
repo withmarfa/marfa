@@ -133,11 +133,9 @@ export class SqliteSearchStore implements SearchStore {
       params.push(filters.type);
     }
 
-    if (filters.library !== undefined) {
-      // better-sqlite3 cannot bind a JS boolean directly. The library column
-      // is INTEGER under the hood (Drizzle boolean()); coerce to 0/1.
-      conditions.push("AND i.library = ?");
-      params.push(filters.library ? 1 : 0);
+    if (filters.tier !== undefined) {
+      conditions.push("AND i.tier = ?");
+      params.push(filters.tier);
     }
 
     // Tags filter — items must have ALL specified tags. Uses the same
@@ -191,7 +189,7 @@ export class SqliteSearchStore implements SearchStore {
         bm25(items_fts) AS rank,
         i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.origin, i.version,
-        i.schema_version, i.device, i.library,
+        i.schema_version, i.device, i.tier,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions
       FROM items_fts fts
@@ -209,11 +207,9 @@ export class SqliteSearchStore implements SearchStore {
     >[];
 
     return rows.map((row) => ({
-      // SQLite returns boolean columns as 0/1 over the raw protocol — coerce
-      // before handing to rowToItem (which assumes Drizzle's mapped shape).
+      // tier is a plain text column; rowToItem normalizes the value.
       item: rowToItem({
         ...row,
-        library: row.library === 1 || row.library === true,
       } as unknown as typeof items.$inferSelect),
       metadata: rowToMetadata({
         item_id: row.id as string,

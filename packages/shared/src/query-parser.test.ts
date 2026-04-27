@@ -535,22 +535,24 @@ describe("parseFilter", () => {
   });
 
   describe("V0-spec system fields beyond the original seven", () => {
-    it("parses library eq true (the V0 spec example)", () => {
-      const result = parseFilter("library eq true");
+    it('parses tier eq "library" (TSC42 §1)', () => {
+      const result = parseFilter('tier eq "library"');
       expect(result.conditions[0]?.field).toEqual({
         kind: "system",
-        column: "library",
+        column: "tier",
       });
-      expect(result.conditions[0]?.value).toBe(true);
+      expect(result.conditions[0]?.value).toBe("library");
     });
 
-    it("parses combined library + tags filter (V0 spec example)", () => {
-      const result = parseFilter('tags contains "to-read" AND library eq true');
+    it("parses combined tier + tags filter", () => {
+      const result = parseFilter(
+        'tags contains "to-read" AND tier eq "library"',
+      );
       expect(result.conditions).toHaveLength(2);
       expect(result.conditions[0]?.field).toEqual({ kind: "tags" });
       expect(result.conditions[1]?.field).toEqual({
         kind: "system",
-        column: "library",
+        column: "tier",
       });
     });
 

@@ -45,7 +45,7 @@ const searchRoute = createRoute({
       q: z.string().min(1, "Query parameter 'q' is required"),
       type: z.string().optional(),
       state: z.enum(ITEM_STATES as unknown as [string, ...string[]]).optional(),
-      library: z.enum(["true", "false", "all"]).optional(),
+      tier: z.enum(["library", "feed", "all"]).optional(),
       /** Comma-separated tag list. Items must have ALL specified tags. */
       tags: z.string().optional(),
       limit: z.coerce.number().int().min(1).max(100).optional().default(20),
@@ -77,7 +77,7 @@ export function searchRoutes(storage: Storage) {
   router.openapi(searchRoute, async (c) => {
     requireAuth(c);
 
-    const { q, type, state, library, tags, limit, offset, filter } =
+    const { q, type, state, tier, tags, limit, offset, filter } =
       c.req.valid("query");
 
     // Business logic validation beyond Zod
@@ -92,10 +92,10 @@ export function searchRoutes(storage: Storage) {
 
     const allowed_types = getTypeFilter(c);
 
-    // Tri-value library filter, matching `/items`. `all` and absent both
-    // mean unfiltered; `true` and `false` narrow the scope.
-    const libraryFilter: boolean | undefined =
-      library === "true" ? true : library === "false" ? false : undefined;
+    // Tier filter, matching `/items`. `all` and absent both mean
+    // unfiltered; `library` and `feed` narrow the scope.
+    const tierFilter: "library" | "feed" | undefined =
+      tier === "library" ? "library" : tier === "feed" ? "feed" : undefined;
 
     const tagsFilter = tags
       ? tags
@@ -108,7 +108,7 @@ export function searchRoutes(storage: Storage) {
       tenantId: c.get("apiKey")?.tenant_id,
       type,
       state: state as ItemState | undefined,
-      library: libraryFilter,
+      tier: tierFilter,
       tags: tagsFilter,
       filter,
       allowed_types,

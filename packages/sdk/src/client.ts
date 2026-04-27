@@ -10,6 +10,7 @@ import type {
   PaginatedResult,
   SearchResult,
   ItemState,
+  Tier,
   TenantConfig,
   Edge,
   CreateEdgeInput,
@@ -90,9 +91,9 @@ export interface UpdateOptions {
   conflict?: ConflictStrategy;
   /** Custom conflict resolver (required when `conflict` is `"callback"`). */
   resolve?: ConflictResolver;
-  /** Toggle library / ambient state. Independent of the version-merge path
-   *  for `properties`; a library-only update never conflicts. */
-  library?: boolean;
+  /** Toggle the tier (`library` ↔ `feed`). Independent of the version-merge
+   *  path for `properties`; a tier-only update never conflicts. */
+  tier?: Tier;
   /**
    * Item type. Required by the `auto` strategy when a `keep_both_copies`
    * conflict spawns a sibling item. Omit to let the SDK pre-fetch it —
@@ -112,10 +113,9 @@ export interface ListFilters {
   type?: string;
   state?: ItemState;
   source?: string;
-  /** Tri-value library filter. `true` restricts to library items; `false`
-   * restricts to ambient items; omitting the field returns both (the V0
-   * default). */
-  library?: boolean;
+  /** Tier filter. `"library"` restricts to library items; `"feed"` restricts
+   * to feed items; `"all"` (or omitting the field) returns both. */
+  tier?: Tier | "all";
   tags?: string[];
   /** Filter-language expression, e.g. `edge[parent-of] eq "<id>"` or
    *  `edge[parent-of] not_exists`. The filter language replaces the
@@ -151,8 +151,8 @@ export type ItemWithExtensions = Item & {
 export interface SearchFilters {
   type?: string;
   state?: ItemState;
-  /** Tri-value library filter, matching `ListFilters.library`. */
-  library?: boolean;
+  /** Tier filter, matching `ListFilters.tier`. */
+  tier?: Tier | "all";
   /** Items must have ALL specified tags (AND semantics). Matches
    *  `ListFilters.tags` and `/items?tags=`. */
   tags?: string[];
@@ -175,7 +175,7 @@ export interface BulkItemInput {
   type: string;
   properties?: Record<string, unknown>;
   state?: ItemState;
-  library?: boolean;
+  tier?: Tier;
   timestamp?: string;
   /** Ignored on the wire — server stamps `source` from the credential.
    *  Kept on the input shape for round-trip parity with /export output. */
@@ -274,7 +274,7 @@ export interface BulkActionFilter {
   type?: string;
   state?: ItemState;
   source?: string;
-  library?: boolean;
+  tier?: Tier | "all";
   tags?: string[];
   since?: string;
   until?: string;
@@ -309,7 +309,7 @@ export type BulkActionInput =
       add?: string[];
       remove?: string[];
     })
-  | (BulkActionBase & { action: "update_library"; library: boolean })
+  | (BulkActionBase & { action: "update_tier"; tier: Tier })
   | (BulkActionBase & {
       action: "update_properties";
       patch: Record<string, unknown>;
@@ -463,7 +463,7 @@ export class MymeClient {
         version,
         strategy,
         options?.resolve,
-        options?.library,
+        options?.tier,
         onAutoMerge,
       );
     },
@@ -948,7 +948,7 @@ export class MymeClient {
   readonly keys = {
     /** Creates an API key. The raw key value is returned exactly once on
      * creation; the rest of the shape mirrors the persisted ApiKey record
-     * (source, default_origin, default_library, type_permissions, and
+     * (source, default_origin, default_tier, type_permissions, and
      * extension_permissions are all stamped at create time and visible
      * here so the caller doesn't need a follow-up GET /keys to inspect
      * them). */

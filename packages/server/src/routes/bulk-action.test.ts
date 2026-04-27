@@ -31,7 +31,7 @@ async function seed(
         },
         source_id: `seed-${suffix}-${String(i)}`,
         ...(extras?.tags !== undefined && { tags: extras.tags }),
-        ...(extras?.library !== undefined && { library: extras.library }),
+        ...(extras?.tier !== undefined && { tier: extras.tier }),
       },
     });
     const body = (await res.json()) as { item: { id: string } };
@@ -205,15 +205,15 @@ describe("POST /items/bulk_action", () => {
     expect(res.status).toBe(400);
   });
 
-  it("update_library flips the library flag", async () => {
+  it("update_tier flips the tier", async () => {
     const tag = `lib-${Math.random().toString(36).slice(2, 8)}`;
-    const ids = await seed("core.note", 2, { tags: [tag], library: false });
+    const ids = await seed("core.note", 2, { tags: [tag], tier: "feed" });
 
     const res = await request(ctx.app, "POST", "/items/bulk_action", {
       key: ctx.adminKey,
       body: {
-        action: "update_library",
-        library: true,
+        action: "update_tier",
+        tier: "library",
         filter: { tags: [tag] },
       },
     });
@@ -224,8 +224,8 @@ describe("POST /items/bulk_action", () => {
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
       key: ctx.adminKey,
     });
-    const item = (await getRes.json()) as { item: { library: boolean } };
-    expect(item.item.library).toBe(true);
+    const item = (await getRes.json()) as { item: { tier: "library" | "feed" } };
+    expect(item.item.tier).toBe("library");
   });
 
   it("update_properties shallow-merges", async () => {

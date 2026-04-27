@@ -108,9 +108,9 @@ export class PgSearchStore implements SearchStore {
       conditions.push(`AND i.type = $${String(paramIdx++)}`);
     }
 
-    if (filters.library !== undefined) {
-      params.push(filters.library);
-      conditions.push(`AND i.library = $${String(paramIdx++)}`);
+    if (filters.tier !== undefined) {
+      params.push(filters.tier);
+      conditions.push(`AND i.tier = $${String(paramIdx++)}`);
     }
 
     // Tags filter — items must have ALL specified tags. Mirrors the
@@ -160,7 +160,7 @@ export class PgSearchStore implements SearchStore {
       SELECT
         i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.origin, i.version,
-        i.schema_version, i.device, i.library,
+        i.schema_version, i.device, i.tier,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions,
         ts_rank(${tsvec}, ${tsqueryExpr}) AS rank,

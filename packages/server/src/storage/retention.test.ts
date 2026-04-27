@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { TrashPurger, AmbientExpirer } from "./retention.js";
+import { TrashPurger, FeedExpirer } from "./retention.js";
 
 let ctx: TestContext;
 
@@ -24,7 +24,7 @@ const FIXED_NOW = new Date("2026-04-15T12:00:00.000Z");
 async function seedItemWithUpdatedAt(opts: {
   id: string;
   state: "active" | "archived" | "trashed";
-  library: boolean;
+  tier: "library" | "feed";
   updatedAtIso: string;
 }): Promise<void> {
   await ctx.storage.items.create(
@@ -32,7 +32,7 @@ async function seedItemWithUpdatedAt(opts: {
       id: opts.id,
       type: "core.note",
       properties: { body: `seed ${opts.id}` },
-      library: opts.library,
+      tier: opts.tier,
     },
     undefined,
   );
@@ -105,7 +105,7 @@ describe("TrashPurger.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.youngTrash,
       state: "trashed",
-      library: true,
+      tier: "library",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 59 * MS_PER_DAY,
       ).toISOString(),
@@ -114,7 +114,7 @@ describe("TrashPurger.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.oldTrash,
       state: "trashed",
-      library: true,
+      tier: "library",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 61 * MS_PER_DAY,
       ).toISOString(),
@@ -123,7 +123,7 @@ describe("TrashPurger.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.ancientTrash,
       state: "trashed",
-      library: false,
+      tier: "feed",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 90 * MS_PER_DAY,
       ).toISOString(),
@@ -132,7 +132,7 @@ describe("TrashPurger.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.activeAncient,
       state: "active",
-      library: true,
+      tier: "library",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 90 * MS_PER_DAY,
       ).toISOString(),
@@ -141,7 +141,7 @@ describe("TrashPurger.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.archivedAncient,
       state: "archived",
-      library: true,
+      tier: "library",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 90 * MS_PER_DAY,
       ).toISOString(),
@@ -169,7 +169,7 @@ describe("TrashPurger.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: itemId,
       state: "trashed",
-      library: true,
+      tier: "library",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 365 * MS_PER_DAY,
       ).toISOString(),
@@ -191,7 +191,7 @@ describe("TrashPurger.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: itemId,
       state: "trashed",
-      library: true,
+      tier: "library",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 30 * MS_PER_DAY,
       ).toISOString(),
@@ -218,7 +218,7 @@ describe("TrashPurger.runOnce — behavioural", () => {
   });
 });
 
-describe("AmbientExpirer.runOnce — behavioural", () => {
+describe("FeedExpirer.runOnce — behavioural", () => {
   it("deletes ambient items older than the retention window, keeps library items and newer ambients", async () => {
     const ids = {
       youngAmbient: id("ddd1"),
@@ -233,7 +233,7 @@ describe("AmbientExpirer.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.youngAmbient,
       state: "active",
-      library: false,
+      tier: "feed",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 29 * MS_PER_DAY,
       ).toISOString(),
@@ -242,7 +242,7 @@ describe("AmbientExpirer.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.oldAmbient,
       state: "active",
-      library: false,
+      tier: "feed",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 31 * MS_PER_DAY,
       ).toISOString(),
@@ -251,7 +251,7 @@ describe("AmbientExpirer.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.ancientAmbient,
       state: "active",
-      library: false,
+      tier: "feed",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 100 * MS_PER_DAY,
       ).toISOString(),
@@ -260,7 +260,7 @@ describe("AmbientExpirer.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.ancientLibrary,
       state: "active",
-      library: true,
+      tier: "library",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 100 * MS_PER_DAY,
       ).toISOString(),
@@ -269,7 +269,7 @@ describe("AmbientExpirer.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.ancientArchivedAmbient,
       state: "archived",
-      library: false,
+      tier: "feed",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 100 * MS_PER_DAY,
       ).toISOString(),
@@ -278,13 +278,13 @@ describe("AmbientExpirer.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: ids.ancientTrashedAmbient,
       state: "trashed",
-      library: false,
+      tier: "feed",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 100 * MS_PER_DAY,
       ).toISOString(),
     });
 
-    const expirer = new AmbientExpirer(
+    const expirer = new FeedExpirer(
       ctx.storage.items,
       30,
       3_600_000,
@@ -307,13 +307,13 @@ describe("AmbientExpirer.runOnce — behavioural", () => {
     await seedItemWithUpdatedAt({
       id: itemId,
       state: "active",
-      library: false,
+      tier: "feed",
       updatedAtIso: new Date(
         FIXED_NOW.getTime() - 365 * MS_PER_DAY,
       ).toISOString(),
     });
 
-    const disabled = new AmbientExpirer(
+    const disabled = new FeedExpirer(
       ctx.storage.items,
       0,
       3_600_000,
