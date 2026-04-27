@@ -240,17 +240,24 @@ export function validateProperties(
 /** Default state for a newly-created item. */
 export const SYSTEM_DEFAULT_STATE: ItemState = "active";
 
-/** Allowed transitions keyed by current state. */
+/**
+ * Allowed transitions keyed by current state, for the canonical (non-system)
+ * lifecycle graph. `revoked` is terminal for non-system types and unreachable
+ * via these transitions; the `system.*` set declares its own override (see
+ * SYSTEM_TYPE_TRANSITIONS) where `active → revoked` is the lifecycle.
+ */
 export const SYSTEM_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> = {
   active: ["archived", "trashed"],
   archived: ["active", "trashed"],
   trashed: ["active"],
+  revoked: [],
 };
 
 const SYSTEM_STATES: ReadonlySet<ItemState> = new Set([
   "active",
   "archived",
   "trashed",
+  "revoked",
 ]);
 
 /**

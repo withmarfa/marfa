@@ -8,6 +8,7 @@ export const ITEM_STATES: readonly ItemState[] = [
   "active",
   "archived",
   "trashed",
+  "revoked",
 ] as const;
 
 /** Authorship class of an item's content. */

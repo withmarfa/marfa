@@ -3,9 +3,12 @@
 
 /**
  * Lifecycle states for items. Defined at the metadata layer, universal across
- * all types — types do not declare their own state machines.
+ * all types. Most types use the three-state graph (`active` ↔ `archived`,
+ * either → `trashed`, `trashed` → `active`); `system.*` types are restricted
+ * to `active` → `revoked` (terminal). Per-type validation enforces which
+ * states a given type may occupy.
  */
-export type ItemState = "active" | "archived" | "trashed";
+export type ItemState = "active" | "archived" | "trashed" | "revoked";
 
 /** Supported field types in a type schema. */
 export type FieldType =
