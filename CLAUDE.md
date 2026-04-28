@@ -147,7 +147,7 @@ The base error class is `MymeError` (in `@mymehq/shared`). All structured errors
 
 ## Type registration
 
-Core types live in `packages/types/core/*.json`. 21 types ship in the active registry; `core.message` is kept as a deferred stub (marked `_deferred: true`) and excluded from the runtime registry. The codegen in `packages/types/scripts/generate.ts` emits `ALL_TYPES` into `generated/type-registry.ts`; shared bundles it at build time via tsup's `noExternal`. Custom types can be registered at runtime via `POST /types` (admin only) and are persisted in the `custom_types` table. Core types cannot be modified or deleted via the API.
+Core types live in `packages/types/core/*.json`. The codegen in `packages/types/scripts/generate.ts` emits `ALL_TYPES` into `generated/type-registry.ts`; shared bundles it at build time via tsup's `noExternal`. Schemas marked `_deferred: true` are retained on disk as a record of shape but skipped by the generator and excluded from the runtime registry — useful for parking a stub between iterations. Custom types can be registered at runtime via `POST /types` (admin only) and are persisted in the `custom_types` table. Core types cannot be modified or deleted via the API.
 
 Inheritance rule: child types may add new fields but cannot redefine fields declared by any ancestor in their parent chain. Enforced on `POST /types`.
 
