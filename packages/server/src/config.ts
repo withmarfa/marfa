@@ -49,6 +49,17 @@ export interface AppConfig {
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
   trustedProxyCidrs: CidrRange[];
+  /** Issuer URL the better-auth instance is reached at — protocol + host
+   *  (and port). Drives cookie domains and the OAuth issuer field on the
+   *  discovery doc. Defaults to `http://localhost:<port>` if unset. */
+  authBaseUrl: string;
+  /** When `true`, the email + password sign-up endpoint is enabled.
+   *  Default `false` per workstream-1 sign-up policy — single-user
+   *  self-hosted instances enable this only for the initial admin account. */
+  authAllowSignup: boolean;
+  /** Shared secret for cookie signing. Required in production; falls back
+   *  to a per-process ephemeral secret in dev. */
+  authSecret: string;
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -144,5 +155,10 @@ export function loadConfig(): AppConfig {
     // Parse + validate at startup. Malformed CIDRs throw — we want bad
     // config to surface immediately, not silently degrade.
     trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),
+    authBaseUrl:
+      process.env.MYME_AUTH_BASE_URL ??
+      `http://localhost:${String(Number(process.env.PORT) || 8600)}`,
+    authAllowSignup: process.env.MYME_AUTH_ALLOW_SIGNUP === "true",
+    authSecret: process.env.MYME_AUTH_SECRET ?? "",
   };
 }

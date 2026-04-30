@@ -6,6 +6,7 @@ import {
   boolean,
   doublePrecision,
   jsonb,
+  timestamp,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
@@ -368,4 +369,95 @@ export const eventLog = pgTable(
     index("idx_event_log_created_at").on(table.created_at),
     index("idx_event_log_edge_id").on(table.edge_id),
   ],
+);
+
+// ---------------------------------------------------------------------------
+// Better Auth tables (auth_* prefix, isolated from myme's own users table)
+//
+// These are owned and managed by the better-auth library; the schema mirrors
+// what `npx @better-auth/cli generate` produces, hand-translated to Drizzle
+// for both dialects. Column names use the camelCase keys better-auth expects.
+// ---------------------------------------------------------------------------
+
+// Timestamp columns use `timestamp({ mode: "date" })` so the better-auth
+// Drizzle adapter — which forwards JS Date objects — can round-trip.
+// This deviates from myme's TEXT-ISO convention but stays localised
+// to the auth_* island.
+export const auth_user = pgTable(
+  "auth_user",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull().unique(),
+    emailVerified: boolean("email_verified").notNull().default(false),
+    image: text("image"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull(),
+  },
+  (table) => [uniqueIndex("idx_auth_user_email").on(table.email)],
+);
+
+export const auth_session = pgTable(
+  "auth_session",
+  {
+    id: text("id").primaryKey(),
+    expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
+    token: text("token").notNull().unique(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    userId: text("user_id")
+      .notNull()
+      .references(() => auth_user.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    index("idx_auth_session_user_id").on(table.userId),
+    uniqueIndex("idx_auth_session_token").on(table.token),
+  ],
+);
+
+export const auth_account = pgTable(
+  "auth_account",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => auth_user.id, { onDelete: "cascade" }),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at", {
+      mode: "date",
+    }),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at", {
+      mode: "date",
+    }),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull(),
+  },
+  (table) => [
+    index("idx_auth_account_user_id").on(table.userId),
+    uniqueIndex("idx_auth_account_provider").on(
+      table.providerId,
+      table.accountId,
+    ),
+  ],
+);
+
+export const auth_verification = pgTable(
+  "auth_verification",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expires_at", { mode: "date" }).notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }).notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).notNull(),
+  },
+  (table) => [index("idx_auth_verification_identifier").on(table.identifier)],
 );

@@ -29,6 +29,10 @@ export function createSqliteStorage(
 ): Storage & {
   __sqliteAll(query: string): unknown[];
   __sqliteRun(query: string, params: unknown[]): { changes: number };
+  /** Drizzle handle exposed for the better-auth integration; not part
+   *  of the public Storage contract. Consumed only by `auth/instance.ts`. */
+  __betterAuthDb: unknown;
+  __betterAuthDialect: "sqlite";
 } {
   const { db, raw, close } = createConnection(sqlitePath);
 
@@ -90,6 +94,8 @@ export function createSqliteStorage(
       // better-sqlite3 doesn't support async transactions.
       return fn();
     },
+    __betterAuthDb: db,
+    __betterAuthDialect: "sqlite" as const,
     /** Raw query escape hatch — used by retention tests. */
     __sqliteAll(query: string): unknown[] {
       return raw.prepare(query).all();

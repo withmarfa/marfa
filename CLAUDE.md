@@ -33,6 +33,17 @@ pnpm format:check     # check formatting without writing
 pnpm generate:openapi # generate OpenAPI spec from route definitions
 ```
 
+## Authentication model
+
+Two layers coexist permanently and don't share credentials:
+
+- **Bearer tokens** (`myme_k1_*` API keys, `myme_at_*` OAuth access tokens) authenticate every API call to `/items`, `/edges`, etc. Hashed-on-storage; resolved by `middleware/auth.ts`.
+- **Better Auth session cookies** authenticate the human at the consent screen. The library is mounted at `/auth/*` via `app.on(["POST", "GET"], "/auth/*", ...)` after the explicit `/auth/clients`, `/auth/authorize`, `/auth/token`, `/auth/tokens` routes. Cookie is `HttpOnly + Secure + SameSite=Lax`, scoped to `/auth`. **It does not authenticate the data plane** — `/items` with only the cookie returns 401.
+
+Sign-up is gated by `MYME_AUTH_ALLOW_SIGNUP` (default `false`). Single-user self-hosted instances enable it for the initial admin sign-up only. Better Auth tables (`auth_user`, `auth_session`, `auth_account`, `auth_verification`) are isolated under the `auth_*` prefix and use Drizzle's timestamp-mode columns (Date round-trip), distinct from myme's TEXT-ISO convention elsewhere in the schema.
+
+Sign-in methods land per workstream-1 plan: email + password (PR 1), passkey + magic link (PR 2), generic OIDC client / federated (PR 3), Myme as IdP via OIDC Provider plugin (PR 5).
+
 ## Environment variables
 
 Server package (not needed for shared or SDK development):
@@ -67,6 +78,9 @@ Server package (not needed for shared or SDK development):
 - `FEED_RETENTION_DAYS` — days a feed-tier item survives before hard-delete, regardless of state (default: 0 / disabled). Per TSC42 §1, the tier axis is `library | feed`; feed-tier capture is short-retention by design.
 - `FEED_EXPIRY_INTERVAL_MS` — feed expiry job interval in ms (default: 86400000)
 - `ERROR_WEBHOOK_URL` — webhook URL for 500 error notifications (optional, debounced)
+- `MYME_AUTH_BASE_URL` — issuer URL the better-auth instance is reached at (e.g. `http://localhost:8602`). Drives cookie domains and the OAuth issuer field on the discovery doc. Defaults to `http://localhost:<PORT>`.
+- `MYME_AUTH_ALLOW_SIGNUP` — when `true`, enables the email + password sign-up endpoint at `/auth/sign-up/email`. Default `false` per the workstream-1 sign-up policy. Single-user self-hosted instances flip it on for the initial admin account, then back off.
+- `MYME_AUTH_SECRET` — shared secret for cookie signing. Required in production; falls back to a per-process ephemeral secret in dev.
 
 ## Schema-enforcement levers (TSC42 §5)
 
