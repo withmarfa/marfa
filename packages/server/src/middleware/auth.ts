@@ -94,8 +94,8 @@ export function authMiddleware(storage: Storage, salt: string) {
       const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
       c.set("apiKey", {
         id: oauthToken.id,
-        label: `oauth:${oauthToken.grant_id}`,
-        source: `oauth:${oauthToken.grant_id}`,
+        label: `oauth:${oauthToken.connection_item_id}`,
+        source: `oauth:${oauthToken.connection_item_id}`,
         role: "member",
         default_origin: "user",
         default_tier: "library",

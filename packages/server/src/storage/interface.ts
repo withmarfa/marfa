@@ -409,16 +409,25 @@ export interface OAuthStore {
   getClient(id: string): Promise<import("@mymehq/shared").OAuthClient | null>;
   listClients(): Promise<import("@mymehq/shared").OAuthClient[]>;
 
+  /**
+   * Create a new user-app-grant connection. Persists a `system.connection`
+   * item with `kind: user-app-grant`; the returned id is what callers
+   * thread as `connection_item_id` on subsequent code / token writes.
+   *
+   * PR 4 of workstream 1 replaced the prior `createGrant` (which wrote to
+   * the dropped `oauth_grants` table) with this items-backed shape.
+   */
   createGrant(
     clientId: string,
     scopes: string[],
   ): Promise<import("@mymehq/shared").OAuthGrant>;
+  /** List active user-app-grants for a client. Reads system.connection items. */
   getGrantsByClient(
     clientId: string,
   ): Promise<import("@mymehq/shared").OAuthGrant[]>;
 
   createCode(
-    grantId: string,
+    connectionItemId: string,
     codeHash: string,
     challenge: string,
     method: string,
@@ -433,7 +442,7 @@ export interface OAuthStore {
   >;
 
   createToken(
-    grantId: string,
+    connectionItemId: string,
     tokenHash: string,
     type: import("@mymehq/shared").OAuthTokenType,
     expiresAt: string,
@@ -451,7 +460,7 @@ export interface OAuthStore {
   /** Marks a refresh token as used. Returns false if already used (replay). */
   markRefreshUsed(id: string): Promise<boolean>;
   /** Revokes all tokens for a grant (used after replay detection). */
-  revokeGrantTokens(grantId: string): Promise<void>;
+  revokeGrantTokens(connectionItemId: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

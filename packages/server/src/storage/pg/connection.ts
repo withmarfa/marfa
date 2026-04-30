@@ -134,17 +134,12 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS oauth_grants (
-  id TEXT PRIMARY KEY,
-  client_id TEXT NOT NULL REFERENCES oauth_clients(id),
-  scopes TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_oauth_grants_client_id ON oauth_grants(client_id);
-
+-- PR 4 of workstream 1: oauth_grants dropped. Grants now live as
+-- system.connection items (kind: user-app-grant) referenced via
+-- connection_item_id (FK to items.id).
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   id TEXT PRIMARY KEY,
-  grant_id TEXT NOT NULL REFERENCES oauth_grants(id),
+  connection_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   token_hash TEXT NOT NULL UNIQUE,
   token_type TEXT NOT NULL,
   expires_at TEXT NOT NULL,
@@ -152,12 +147,12 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   used_at TEXT,
   created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_oauth_tokens_grant_id ON oauth_tokens(grant_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_connection_item_id ON oauth_tokens(connection_item_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_token_hash ON oauth_tokens(token_hash);
 
 CREATE TABLE IF NOT EXISTS oauth_codes (
   id TEXT PRIMARY KEY,
-  grant_id TEXT NOT NULL REFERENCES oauth_grants(id),
+  connection_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   code_hash TEXT NOT NULL UNIQUE,
   code_challenge TEXT NOT NULL,
   code_challenge_method TEXT NOT NULL,

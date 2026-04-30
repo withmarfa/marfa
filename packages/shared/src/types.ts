@@ -345,7 +345,14 @@ export interface CreateOAuthClientInput {
   redirect_uris: string[];
 }
 
-/** A user's approval for a client — records which scopes were granted. */
+/**
+ * A user's approval for a client — records which scopes were granted.
+ *
+ * PR 4 of workstream 1 moved the durable grant record onto `system.connection`
+ * items (kind: user-app-grant). The `id` field below is the underlying item
+ * id; subsequent OAuth records (codes, tokens) reference it as
+ * `connection_item_id`.
+ */
 export interface OAuthGrant {
   id: string;
   client_id: string;
@@ -356,7 +363,8 @@ export interface OAuthGrant {
 /** An OAuth access or refresh token record (without raw token value). */
 export interface OAuthToken {
   id: string;
-  grant_id: string;
+  /** id of the system.connection item this token was issued under. */
+  connection_item_id: string;
   token_type: OAuthTokenType;
   scopes: string[];
   expires_at: string;
@@ -367,7 +375,8 @@ export interface OAuthToken {
 /** A short-lived authorization code issued during the consent flow. */
 export interface OAuthCode {
   id: string;
-  grant_id: string;
+  /** id of the system.connection item this code was minted against. */
+  connection_item_id: string;
   code_challenge: string;
   code_challenge_method: string;
   redirect_uri: string;

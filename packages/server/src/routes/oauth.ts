@@ -297,13 +297,13 @@ async function handleCodeExchange(
   ).toISOString(); // 90 days
 
   const accessToken = await storage.oauth.createToken(
-    codeRecord.grant_id,
+    codeRecord.connection_item_id,
     accessHash,
     "access",
     accessExpiresAt,
   );
   await storage.oauth.createToken(
-    codeRecord.grant_id,
+    codeRecord.connection_item_id,
     refreshHash,
     "refresh",
     refreshExpiresAt,
@@ -344,7 +344,7 @@ async function handleRefresh(
   const wasUnused = await storage.oauth.markRefreshUsed(refreshRecord.id);
   if (!wasUnused) {
     // Replay detected — revoke all tokens for this grant
-    await storage.oauth.revokeGrantTokens(refreshRecord.grant_id);
+    await storage.oauth.revokeGrantTokens(refreshRecord.connection_item_id);
     throw new MymeError(
       ErrorCode.TOKEN_REUSE_DETECTED,
       "Refresh token reuse detected, all tokens revoked",
@@ -364,13 +364,13 @@ async function handleRefresh(
   ).toISOString();
 
   const accessToken = await storage.oauth.createToken(
-    refreshRecord.grant_id,
+    refreshRecord.connection_item_id,
     accessHash,
     "access",
     accessExpiresAt,
   );
   await storage.oauth.createToken(
-    refreshRecord.grant_id,
+    refreshRecord.connection_item_id,
     newRefreshHash,
     "refresh",
     refreshExpiresAt,

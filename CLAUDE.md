@@ -44,6 +44,8 @@ Sign-up is gated by `MYME_AUTH_ALLOW_SIGNUP` (default `false`). Single-user self
 
 Sign-in methods land per workstream-1 plan: email + password (PR 1), passkey + magic link (PR 2), generic OIDC client / federated (PR 3), Myme as IdP via OIDC Provider plugin (PR 5).
 
+User-app grants are stored as `system.connection` items with `kind: user-app-grant` (PR 4 of workstream 1). The OAuth tables `oauth_codes` and `oauth_tokens` reference the item id via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE). The previous standalone `oauth_grants` table is dropped — workstream 2 will extend the same `system.connection` type with `kind: external-service-connector` and `kind: tenant-share`.
+
 ## Environment variables
 
 Server package (not needed for shared or SDK development):

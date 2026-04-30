@@ -101,7 +101,7 @@ export async function createPgStorage(
     close,
     /** Truncate all tables — used by tests for isolation. */
     async _pgTruncate(): Promise<void> {
-      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_grants, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, event_log, tenants, users CASCADE`;
+      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_tokens, oauth_codes, webhooks, webhook_deliveries, audit_log, event_log, tenants, users CASCADE`;
     },
     /** Raw query escape hatch — used by retention tests for parameterised mutations. */
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]> {

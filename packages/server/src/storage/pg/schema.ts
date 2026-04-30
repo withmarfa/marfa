@@ -202,26 +202,18 @@ export const oauthClients = pgTable("oauth_clients", {
   created_at: text("created_at").notNull(),
 });
 
-export const oauthGrants = pgTable(
-  "oauth_grants",
-  {
-    id: text("id").primaryKey(),
-    client_id: text("client_id")
-      .notNull()
-      .references(() => oauthClients.id),
-    scopes: text("scopes").notNull().default("[]"),
-    created_at: text("created_at").notNull(),
-  },
-  (table) => [index("idx_oauth_grants_client_id").on(table.client_id)],
-);
+// PR 4 of workstream 1: oauth_grants table dropped. The user-facing
+// concept "user X approved client Y with scopes Z" now lives as a
+// `system.connection` item with `kind: user-app-grant`. The token
+// tables FK directly to items.id via connection_item_id.
 
 export const oauthTokens = pgTable(
   "oauth_tokens",
   {
     id: text("id").primaryKey(),
-    grant_id: text("grant_id")
+    connection_item_id: text("connection_item_id")
       .notNull()
-      .references(() => oauthGrants.id),
+      .references(() => items.id, { onDelete: "cascade" }),
     token_hash: text("token_hash").notNull().unique(),
     token_type: text("token_type").notNull(),
     expires_at: text("expires_at").notNull(),
@@ -230,7 +222,7 @@ export const oauthTokens = pgTable(
     created_at: text("created_at").notNull(),
   },
   (table) => [
-    index("idx_oauth_tokens_grant_id").on(table.grant_id),
+    index("idx_oauth_tokens_connection_item_id").on(table.connection_item_id),
     index("idx_oauth_tokens_token_hash").on(table.token_hash),
   ],
 );
@@ -298,9 +290,9 @@ export const webhookDeliveries = pgTable(
 
 export const oauthCodes = pgTable("oauth_codes", {
   id: text("id").primaryKey(),
-  grant_id: text("grant_id")
+  connection_item_id: text("connection_item_id")
     .notNull()
-    .references(() => oauthGrants.id),
+    .references(() => items.id, { onDelete: "cascade" }),
   code_hash: text("code_hash").notNull().unique(),
   code_challenge: text("code_challenge").notNull(),
   code_challenge_method: text("code_challenge_method").notNull(),
