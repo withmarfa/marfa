@@ -7,7 +7,9 @@ import {
   resolveTypePermission,
   scopesToTypePermissions,
   scopesToEdgePermissions,
+  scopesToMetadataPermissions,
   edgePermissionCovers,
+  metadataPermissionCovers,
 } from "@mymehq/shared";
 import type { ApiKey } from "@mymehq/shared";
 import type { Storage } from "../storage/interface.js";
@@ -92,6 +94,9 @@ export function authMiddleware(storage: Storage, salt: string) {
       // outstanding.
       const typePermissions = scopesToTypePermissions(oauthToken.scopes);
       const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
+      const metadataPermissions = scopesToMetadataPermissions(
+        oauthToken.scopes,
+      );
       c.set("apiKey", {
         id: oauthToken.id,
         label: `oauth:${oauthToken.connection_item_id}`,
@@ -103,6 +108,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         type_permissions: typePermissions,
         extension_permissions: {},
         edge_permissions: edgePermissions,
+        metadata_permissions: metadataPermissions,
         created_at: oauthToken.created_at,
         last_used_at: null,
       });
@@ -133,6 +139,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         type_permissions: stored.type_permissions,
         extension_permissions: stored.extension_permissions,
         edge_permissions: stored.edge_permissions,
+        metadata_permissions: stored.metadata_permissions,
         created_at: stored.created_at,
         last_used_at: stored.last_used_at,
       });
@@ -259,6 +266,31 @@ export function requireEdgePermission(
     ErrorCode.EDGE_PERMISSION_DENIED,
     `Missing edge.${edgeType}:${level} permission`,
     { edge_type: edgeType, required: level },
+  );
+}
+
+/**
+ * Enforces a per-metadata-sub-resource permission check. Admin keys
+ * always pass. Non-admin keys (including OAuth-derived synthetic keys)
+ * need either the specific sub-resource permission or the `*` wildcard
+ * at the requested level (write covers read).
+ *
+ * Throws FORBIDDEN (403) on failure with the missing scope name in the
+ * error details so SDK clients can surface a precise re-auth prompt.
+ */
+export function requireMetadataPermission(
+  c: Context<AppEnv>,
+  subresource: string,
+  level: "read" | "write",
+): void {
+  const apiKey = checkAuth(c.get("apiKey"));
+  if (apiKey.role === "admin") return;
+  if (metadataPermissionCovers(apiKey.metadata_permissions, subresource, level))
+    return;
+  throw new MymeError(
+    ErrorCode.FORBIDDEN,
+    `Missing metadata.${subresource}:${level} permission`,
+    { metadata_subresource: subresource, required: level },
   );
 }
 

@@ -9,6 +9,13 @@ interface ConsentParams {
   codeChallengeMethod: string;
   state: string;
   responseType: string;
+  /**
+   * Plain-English description per scope, keyed by `typePattern` (e.g.
+   * `core.note` → "Text content you created."). Pulled from the type
+   * registry's `description` field at the call site. Missing entries
+   * fall back to the literal scope.
+   */
+  descriptions?: Record<string, string>;
 }
 
 function escapeHtml(str: string): string {
@@ -25,11 +32,22 @@ export function renderConsentScreen(params: ConsentParams): string {
   const readScopes = params.scopes.filter((s) => s.operation === "read");
   const writeScopes = params.scopes.filter((s) => s.operation === "write");
 
-  const scopeCheckbox = (scope: ParsedScope) =>
-    `<label style="display:block;margin:4px 0">
-      <input type="checkbox" name="scopes" value="${escapeHtml(scope.typePattern)}:${escapeHtml(scope.operation)}" checked>
-      ${escapeHtml(scope.typePattern)} (${escapeHtml(scope.operation)})
+  const descriptionFor = (scope: ParsedScope): string | undefined => {
+    return params.descriptions?.[scope.typePattern];
+  };
+
+  const scopeCheckbox = (scope: ParsedScope) => {
+    const literal = `${scope.typePattern}:${scope.operation}`;
+    const description = descriptionFor(scope);
+    const humanLine = description
+      ? `<span class="scope-human">${escapeHtml(description)}</span>`
+      : "";
+    return `<label style="display:block;margin:4px 0">
+      <input type="checkbox" name="scopes" value="${escapeHtml(literal)}" checked>
+      <code class="scope-literal">${escapeHtml(literal)}</code>
+      ${humanLine}
     </label>`;
+  };
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -47,6 +65,8 @@ export function renderConsentScreen(params: ConsentParams): string {
     button { padding: 10px 20px; border-radius: 6px; font-size: 0.875rem; cursor: pointer; border: 1px solid #d1d5db; }
     .approve { background: #2563eb; color: white; border-color: #2563eb; }
     .deny { background: white; color: #374151; }
+    .scope-literal { display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; color: #4b5563; background: #eef2ff; padding: 1px 6px; border-radius: 4px; }
+    .scope-human { display: block; margin-left: 24px; font-size: 0.875rem; color: #1f2937; margin-top: 2px; }
   </style>
 </head>
 <body>

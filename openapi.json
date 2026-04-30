@@ -7351,7 +7351,7 @@
           "Types"
         ],
         "summary": "Register a custom type",
-        "description": "Register a new custom type schema. Admin only. Body is validated via validateTypeSchema().",
+        "description": "Register a new custom type schema. Admin keys bypass; non-admin credentials need the `metadata.types:write` scope (default-off for new keys). Body is validated via validateTypeSchema().",
         "security": [
           {
             "bearerAuth": []
@@ -7468,6 +7468,42 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing metadata.types:write permission",
             "content": {
               "application/json": {
                 "schema": {
@@ -9324,6 +9360,16 @@
                         "write"
                       ]
                     }
+                  },
+                  "metadata_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    }
                   }
                 },
                 "required": [
@@ -9401,6 +9447,16 @@
                       }
                     },
                     "edge_permissions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "write"
+                        ]
+                      }
+                    },
+                    "metadata_permissions": {
                       "type": "object",
                       "additionalProperties": {
                         "type": "string",
@@ -9548,6 +9604,16 @@
                             }
                           },
                           "edge_permissions": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "write"
+                              ]
+                            }
+                          },
+                          "metadata_permissions": {
                             "type": "object",
                             "additionalProperties": {
                               "type": "string",
@@ -9784,6 +9850,16 @@
                       ]
                     }
                   },
+                  "metadata_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    }
+                  },
                   "source": {
                     "nullable": true
                   },
@@ -9859,6 +9935,16 @@
                       }
                     },
                     "edge_permissions": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                          "read",
+                          "write"
+                        ]
+                      }
+                    },
+                    "metadata_permissions": {
                       "type": "object",
                       "additionalProperties": {
                         "type": "string",

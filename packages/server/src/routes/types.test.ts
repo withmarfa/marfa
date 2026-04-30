@@ -20,6 +20,62 @@ const baseType = {
   },
 };
 
+describe("POST /types — metadata.types:write gating", () => {
+  it("blocks a non-admin member key without metadata.types:write", async () => {
+    // New default: member keys cannot register custom types unless
+    // explicitly granted `metadata.types:write`. The previous
+    // requireAdmin gate is replaced by an extension-permission-style
+    // check; admin keys still bypass.
+    const createKeyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "no-types-key",
+        source: "no-types-key-src",
+        role: "member",
+        type_permissions: { "*": "write" },
+        // metadata_permissions intentionally omitted — defaults to {}.
+      },
+    });
+    const { key: rawKey } = (await createKeyRes.json()) as { key: string };
+
+    const res = await request(ctx.app, "POST", "/types", {
+      key: rawKey,
+      body: {
+        ...baseType,
+        id: "demo.unauthorized_register",
+        label: "Unauthorized",
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
+  });
+
+  it("allows a non-admin member key when metadata.types:write is granted", async () => {
+    const createKeyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "types-writer-key",
+        source: "types-writer-key-src",
+        role: "member",
+        type_permissions: { "*": "write" },
+        metadata_permissions: { types: "write" },
+      },
+    });
+    const { key: rawKey } = (await createKeyRes.json()) as { key: string };
+
+    const res = await request(ctx.app, "POST", "/types", {
+      key: rawKey,
+      body: {
+        ...baseType,
+        id: "demo.member_registered_type",
+        label: "Member Registered",
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+});
+
 describe("POST /types", () => {
   it("rejects type IDs with forward slashes", async () => {
     const res = await request(ctx.app, "POST", "/types", {

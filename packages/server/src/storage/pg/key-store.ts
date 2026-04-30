@@ -7,6 +7,7 @@ import type {
   UpdateKeyInput,
   EdgePermission,
   ExtensionPermission,
+  MetadataPermission,
   Origin,
   Tier,
   TypePermission,
@@ -46,6 +47,11 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
       row.edge_permissions,
       {},
       "key edge_permissions",
+    ),
+    metadata_permissions: safeJsonParse<Record<string, MetadataPermission>>(
+      row.metadata_permissions,
+      {},
+      "key metadata_permissions",
     ),
     created_at: row.created_at,
     last_used_at: row.last_used_at ?? null,
@@ -94,6 +100,7 @@ export class PgKeyStore implements KeyStore {
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
       extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
+      metadata_permissions: JSON.stringify(input.metadata_permissions ?? {}),
       created_at: now,
     };
     await this.db.insert(apiKeys).values(row);
@@ -109,6 +116,7 @@ export class PgKeyStore implements KeyStore {
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},
       edge_permissions: input.edge_permissions ?? {},
+      metadata_permissions: input.metadata_permissions ?? {},
       created_at: now,
       last_used_at: null,
     };
@@ -151,6 +159,8 @@ export class PgKeyStore implements KeyStore {
       patch.extension_permissions = JSON.stringify(input.extension_permissions);
     if (input.edge_permissions !== undefined)
       patch.edge_permissions = JSON.stringify(input.edge_permissions);
+    if (input.metadata_permissions !== undefined)
+      patch.metadata_permissions = JSON.stringify(input.metadata_permissions);
 
     if (Object.keys(patch).length > 0) {
       await this.db.update(apiKeys).set(patch).where(eq(apiKeys.id, id));

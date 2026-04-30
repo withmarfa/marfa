@@ -46,6 +46,8 @@ Sign-in methods land per workstream-1 plan: email + password (PR 1), passkey + m
 
 User-app grants are stored as `system.connection` items with `kind: user-app-grant` (PR 4 of workstream 1). The OAuth tables `oauth_codes` and `oauth_tokens` reference the item id via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE). The previous standalone `oauth_grants` table is dropped — workstream 2 will extend the same `system.connection` type with `kind: external-service-connector` and `kind: tenant-share`.
 
+The OAuth consent endpoints (`GET/POST /auth/authorize`) gate on the better-auth session cookie, not admin bearer tokens. End users sign in via `/auth/sign-in` and approve their own grants; an unauthenticated request to `/auth/authorize` redirects to `/auth/sign-in?return_to=<original-url>`. Admin bearer tokens are still required for `/auth/clients` (client registration) and `/auth/tokens` (token management).
+
 ## Environment variables
 
 Server package (not needed for shared or SDK development):
@@ -194,9 +196,11 @@ Credentials carry three permission maps:
 
 Edge mutations dual-gate: the caller needs **both** write on the source item's type AND write on the edge type. Admin keys bypass both.
 
-OAuth scope grammar mirrors these: `<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`. Scopes parse via `parseScope` in `@mymehq/shared`; the consent UI renders the resolved `typePattern` literally.
+OAuth scope grammar mirrors these: `<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`, `metadata.<subresource>:<verb>`. Scopes parse via `parseScope` in `@mymehq/shared`; the consent UI renders both the literal scope and a plain-English description sourced from each type's `description` field in `TYPE_REGISTRY` (with built-in fallbacks for metadata sub-resources). Today only `metadata.types:write` is enforced — gates `POST /types` for non-admin credentials. Admin keys bypass; OAuth tokens project the scope into a `metadata_permissions: { types: "write" }` map on the synthetic `ApiKey`.
 
 New keys default to `edge_permissions: {}` — edge access is opt-in; callers must grant explicitly.
+
+`metadata_permissions` is the parallel map for metadata-layer mutations. Keyed by sub-resource (today: `types`); default `{}` for new keys. `requireMetadataPermission(c, "types", "write")` admits admin keys, member keys with `metadata_permissions.types === "write"`, and OAuth tokens whose grant carries `metadata.types:write`.
 
 ## Webhooks
 

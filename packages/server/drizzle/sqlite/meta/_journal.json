@@ -162,6 +162,13 @@
       "when": 1777960000000,
       "tag": "0022_drop_oauth_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1777970000000,
+      "tag": "0023_api_keys_metadata_permissions",
+      "breakpoints": true
     }
   ]
 }

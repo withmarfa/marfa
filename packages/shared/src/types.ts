@@ -182,6 +182,15 @@ export interface ItemEdgesBlock {
 /** Per-edge-type permission levels. */
 export type EdgePermission = "read" | "write";
 
+/**
+ * Per-metadata-sub-resource permission levels. Today the only sub-resource
+ * is `types` (gating type registration via `POST /types`); future entries
+ * (e.g. tenant config) follow the same shape. Default `{}` — no access —
+ * means non-admin/non-platform credentials cannot mutate the metadata
+ * surface.
+ */
+export type MetadataPermission = "read" | "write";
+
 /** An API key record (without the key value itself). */
 export interface ApiKey {
   id: string;
@@ -220,6 +229,14 @@ export interface ApiKey {
    * item's type_permissions).
    */
   edge_permissions?: Record<string, EdgePermission>;
+  /**
+   * Per-metadata-sub-resource permissions map. Today only `types` is
+   * surfaced (gates `POST /types` for non-admin credentials). Empty
+   * object means no metadata permissions granted; admin keys bypass the
+   * map entirely. OAuth tokens carry the same map projected from the
+   * grant's `metadata.<subresource>:<verb>` scopes.
+   */
+  metadata_permissions?: Record<string, MetadataPermission>;
   created_at: string;
   last_used_at: string | null;
 }
@@ -234,6 +251,7 @@ export interface CreateKeyInput {
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
+  metadata_permissions?: Record<string, MetadataPermission>;
   /**
    * Optional. Only an existing platform credential can set this to `true`;
    * other callers see the value silently coerced to `false`. The bootstrap
@@ -254,6 +272,7 @@ export interface UpdateKeyInput {
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
+  metadata_permissions?: Record<string, MetadataPermission>;
 }
 
 // ---------------------------------------------------------------------------
