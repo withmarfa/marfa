@@ -6,5 +6,10 @@
 packages/types/generated/
 # Auto-generated OpenAPI spec — emitted as JSON from route definitions.
 openapi.json
+# Auto-generated Integration manifest JSON Schema — emitted by
+# packages/shared/scripts/generate-manifest-schema.ts. The drift test
+# (integration-manifest.test.ts) byte-compares against the codegen's exact
+# output, so Prettier must not reflow it.
+packages/types/integration-manifest-schema.json
 # Lockfile — owned by pnpm, not Prettier.
 pnpm-lock.yaml
