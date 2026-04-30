@@ -213,6 +213,72 @@ describe("better-auth /auth/* surface", () => {
     expect(res.status).not.toBe(500);
   });
 
+  it("/.well-known/oauth-authorization-server returns the discovery doc", async () => {
+    ctx = await createTestContext({ authAllowSignup: false });
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/.well-known/oauth-authorization-server",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      issuer?: string;
+      authorization_endpoint?: string;
+      token_endpoint?: string;
+      code_challenge_methods_supported?: string[];
+    };
+    expect(body.issuer).toBeTruthy();
+    expect(body.authorization_endpoint).toMatch(/\/auth\/authorize$/);
+    expect(body.token_endpoint).toMatch(/\/auth\/token$/);
+    expect(body.code_challenge_methods_supported).toEqual(["S256"]);
+  });
+
+  it("/auth/grants returns user-app-grant connections, /auth/grants/{id} revokes", async () => {
+    ctx = await createTestContext({ authAllowSignup: false });
+
+    // Create an OAuth client and a grant via the storage layer (the public
+    // surface for client registration is admin-only and exercised elsewhere).
+    const client = await ctx.storage.oauth.createClient({
+      name: "Test App",
+      redirect_uris: ["http://localhost:5173/callback"],
+    });
+    const grant = await ctx.storage.oauth.createGrant(client.id, [
+      "core.note:read",
+    ]);
+
+    const listRes = await request(ctx.app, "GET", "/auth/grants", {
+      key: ctx.adminKey,
+    });
+    expect(listRes.status).toBe(200);
+    const list = (await listRes.json()) as {
+      id: string;
+      client_id: string;
+      scopes: string[];
+      status: string;
+    }[];
+    expect(list.some((g) => g.id === grant.id)).toBe(true);
+    const found = list.find((g) => g.id === grant.id);
+    expect(found?.client_id).toBe(client.id);
+    expect(found?.scopes).toEqual(["core.note:read"]);
+    expect(found?.status).toBe("active");
+
+    // Revoke
+    const revokeRes = await request(
+      ctx.app,
+      "DELETE",
+      `/auth/grants/${grant.id}`,
+      { key: ctx.adminKey },
+    );
+    expect(revokeRes.status).toBe(204);
+
+    // Confirm it's gone from the active list
+    const list2Res = await request(ctx.app, "GET", "/auth/grants", {
+      key: ctx.adminKey,
+    });
+    const list2 = (await list2Res.json()) as { id: string }[];
+    expect(list2.some((g) => g.id === grant.id)).toBe(false);
+  });
+
   it("does NOT shadow the existing /auth/clients route", async () => {
     // Existing oauth client management lives at /auth/clients (admin-only).
     // The better-auth catch-all is registered AFTER it, so explicit routes

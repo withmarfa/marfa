@@ -20,7 +20,7 @@ import { blobRoutes } from "./routes/blobs.js";
 import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
-import { authRoutes } from "./routes/oauth.js";
+import { authRoutes, discoveryRoutes } from "./routes/oauth.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
 import { webhookRoutes } from "./routes/webhooks.js";
@@ -109,6 +109,9 @@ export function createApp(
     }),
   );
   app.route("/health", healthRoutes(storage, blobBackend, config));
+
+  // OAuth 2.1 discovery doc — public, unauthenticated.
+  app.route("/.well-known", discoveryRoutes(config.authBaseUrl));
 
   // Auth middleware runs BEFORE rate limiting so the limiter can key on
   // the credential id (per-credential enforcement). Anonymous requests

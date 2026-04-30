@@ -235,6 +235,90 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
     return c.json({ status: "ok" });
   });
 
+  // -----------------------------------------------------------------------
+  // /auth/grants — typed query into system.connection items
+  //
+  // The user's "approved apps" surface. Reads system.connection items
+  // with kind: user-app-grant. DELETE flips status → revoked and
+  // cascades through revokeGrantTokens to invalidate every token issued
+  // under the grant.
+  // -----------------------------------------------------------------------
+
+  router.get("/grants", async (c) => {
+    requireAuth(c);
+    const items = await storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    const grants: {
+      id: string;
+      kind: string;
+      client_id: string;
+      scopes: string[];
+      status: string;
+      granted_at: string;
+      last_used_at: string | null;
+    }[] = [];
+    for (const item of items.data) {
+      const props = item.properties;
+      if (props.kind !== "user-app-grant") continue;
+      if (props.status !== "active") continue;
+      grants.push({
+        id: item.id,
+        kind: props.kind,
+        client_id: typeof props.client_id === "string" ? props.client_id : "",
+        scopes: Array.isArray(props.scopes) ? (props.scopes as string[]) : [],
+        status: typeof props.status === "string" ? props.status : "active",
+        granted_at:
+          typeof props.granted_at === "string" ? props.granted_at : "",
+        last_used_at:
+          typeof props.last_used_at === "string" ? props.last_used_at : null,
+      });
+    }
+    return c.json(grants);
+  });
+
+  router.delete("/grants/:id", async (c) => {
+    requireAuth(c);
+    const id = c.req.param("id");
+    const item = await storage.items.get(id);
+    if (item?.type !== "system.connection") {
+      throw new MymeError(ErrorCode.NOT_FOUND, "Grant not found");
+    }
+    const props = item.properties;
+    if (props.kind !== "user-app-grant") {
+      throw new MymeError(ErrorCode.NOT_FOUND, "Grant not found");
+    }
+    const now = new Date().toISOString();
+    await storage.items.update(id, {
+      properties: { ...props, status: "revoked", revoked_at: now },
+    });
+    // Cascade-revoke every token + code issued under this connection.
+    await storage.oauth.revokeGrantTokens(id);
+    return c.body(null, 204);
+  });
+
+  return router;
+}
+
+// ---------------------------------------------------------------------------
+// /.well-known/oauth-authorization-server — discovery doc
+// ---------------------------------------------------------------------------
+
+export function discoveryRoutes(baseUrl: string): Hono<AppEnv> {
+  const router = new Hono<AppEnv>();
+  router.get("/oauth-authorization-server", (c) => {
+    return c.json({
+      issuer: baseUrl,
+      authorization_endpoint: `${baseUrl}/auth/authorize`,
+      token_endpoint: `${baseUrl}/auth/token`,
+      registration_endpoint: `${baseUrl}/auth/clients`,
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      response_types_supported: ["code"],
+      code_challenge_methods_supported: ["S256"],
+      token_endpoint_auth_methods_supported: ["none"],
+    });
+  });
   return router;
 }
 
