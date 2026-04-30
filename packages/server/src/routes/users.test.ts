@@ -78,6 +78,10 @@ async function createHostedContext(): Promise<HostedContext> {
     feedExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
+    authBaseUrl: "http://localhost:0",
+    authAllowSignup: true,
+    authSecret: "test-auth-secret",
+    oidcProviders: [],
   });
 
   return {

@@ -83,6 +83,10 @@ export async function createTestContext(
     feedExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
+    authBaseUrl: "http://localhost:0",
+    authAllowSignup: true,
+    authSecret: "test-auth-secret-change-in-production-not-required-here",
+    oidcProviders: [],
     ...overrides,
   };
   const app = createApp(storage, blobBackend, config);

@@ -141,6 +141,27 @@
       "when": 1777820000000,
       "tag": "0019_user_handle",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1777920000000,
+      "tag": "0020_better_auth_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1777950000000,
+      "tag": "0021_passkey_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1777960000000,
+      "tag": "0022_drop_oauth_grants",
+      "breakpoints": true
     }
   ]
 }

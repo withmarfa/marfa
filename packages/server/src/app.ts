@@ -7,6 +7,7 @@ import { authMiddleware } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
+import { createMymeAuth } from "./auth/instance.js";
 import { itemRoutes } from "./routes/items.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
@@ -19,7 +20,7 @@ import { blobRoutes } from "./routes/blobs.js";
 import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
-import { authRoutes } from "./routes/oauth.js";
+import { authRoutes, discoveryRoutes } from "./routes/oauth.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
 import { webhookRoutes } from "./routes/webhooks.js";
@@ -109,6 +110,9 @@ export function createApp(
   );
   app.route("/health", healthRoutes(storage, blobBackend, config));
 
+  // OAuth 2.1 discovery doc — public, unauthenticated.
+  app.route("/.well-known", discoveryRoutes(config.authBaseUrl));
+
   // Auth middleware runs BEFORE rate limiting so the limiter can key on
   // the credential id (per-credential enforcement). Anonymous requests
   // still fall through to IP-based limiting inside rateLimitMiddleware.
@@ -147,6 +151,32 @@ export function createApp(
   if (config.authMode === "hosted" && storage.users && storage.tenants) {
     app.route("/auth", userAuthRoutes(storage, config.apiKeySalt));
   }
+
+  // Better Auth catch-all for /auth/* paths not matched by the explicit
+  // routes above (sign-in, sign-up, magic-link, passkey, federated OIDC,
+  // session). Hono dispatches in registration order — explicit routes
+  // win; unmatched paths fall through here. The handler runs against
+  // the Drizzle DB exposed by the storage factory.
+  const storageWithDb = storage as Storage & {
+    __betterAuthDb?: unknown;
+    __betterAuthDialect?: "sqlite" | "pg";
+  };
+  if (storageWithDb.__betterAuthDb && storageWithDb.__betterAuthDialect) {
+    const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
+      Boolean,
+    );
+    const auth = createMymeAuth({
+      db: storageWithDb.__betterAuthDb,
+      dialect: storageWithDb.__betterAuthDialect,
+      baseURL: config.authBaseUrl,
+      allowSignup: config.authAllowSignup,
+      secret: config.authSecret || undefined,
+      trustedOrigins,
+      oidcProviders: config.oidcProviders,
+    });
+    app.on(["POST", "GET"], "/auth/*", (c) => auth.handler(c.req.raw));
+  }
+
   app.route("/events", eventRoutes(storage));
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));

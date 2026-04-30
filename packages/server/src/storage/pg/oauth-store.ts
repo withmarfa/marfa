@@ -9,19 +9,24 @@ import type {
   OAuthTokenType,
 } from "@mymehq/shared";
 import type { OAuthStore } from "../interface.js";
-import {
-  oauthClients,
-  oauthGrants,
-  oauthTokens,
-  oauthCodes,
-} from "./schema.js";
+import { items, oauthClients, oauthTokens, oauthCodes } from "./schema.js";
 import type { PgDb } from "./connection.js";
 
+/**
+ * OAuth storage backed by a `system.connection` item per user-app-grant.
+ *
+ * PR 4 of workstream 1 dropped the standalone `oauth_grants` table; the
+ * durable record of "user X approved client Y with scopes Z" now lives
+ * as a typed item, queryable through the same DSL as the rest of myme.
+ *
+ * `oauth_codes` and `oauth_tokens` reference the item id via
+ * `connection_item_id` (FK to `items.id`, ON DELETE CASCADE).
+ */
 export class PgOAuthStore implements OAuthStore {
   constructor(private db: PgDb) {}
 
   // -----------------------------------------------------------------------
-  // Clients
+  // Clients (unchanged surface)
   // -----------------------------------------------------------------------
 
   async createClient(input: {
@@ -74,17 +79,29 @@ export class PgOAuthStore implements OAuthStore {
   }
 
   // -----------------------------------------------------------------------
-  // Grants
+  // Grants (system.connection items, kind: user-app-grant)
   // -----------------------------------------------------------------------
 
   async createGrant(clientId: string, scopes: string[]): Promise<OAuthGrant> {
     const now = new Date().toISOString();
     const id = generateId();
-    await this.db.insert(oauthGrants).values({
-      id,
+    const properties = {
+      kind: "user-app-grant",
       client_id: clientId,
-      scopes: JSON.stringify(scopes),
+      scopes,
+      status: "active",
+      granted_at: now,
+    };
+    await this.db.insert(items).values({
+      id,
+      type: "system.connection",
+      state: "active",
+      tier: "library",
+      properties: JSON.stringify(properties),
       created_at: now,
+      updated_at: now,
+      timestamp: now,
+      version: 1,
     });
     return { id, client_id: clientId, scopes, created_at: now };
   }
@@ -92,12 +109,49 @@ export class PgOAuthStore implements OAuthStore {
   async getGrantsByClient(clientId: string): Promise<OAuthGrant[]> {
     const rows = await this.db
       .select()
-      .from(oauthGrants)
-      .where(eq(oauthGrants.client_id, clientId));
-    return rows.map((r) => ({
-      ...r,
-      scopes: safeJsonParse<string[]>(r.scopes, [], "oauth scopes"),
-    }));
+      .from(items)
+      .where(
+        and(eq(items.type, "system.connection"), eq(items.state, "active")),
+      );
+    const out: OAuthGrant[] = [];
+    for (const row of rows) {
+      const props = safeJsonParse<Record<string, unknown>>(
+        row.properties,
+        {},
+        "system.connection properties",
+      );
+      if (
+        props.kind === "user-app-grant" &&
+        props.client_id === clientId &&
+        props.status === "active"
+      ) {
+        out.push({
+          id: row.id,
+          client_id: clientId,
+          scopes: Array.isArray(props.scopes) ? (props.scopes as string[]) : [],
+          created_at: row.created_at,
+        });
+      }
+    }
+    return out;
+  }
+
+  /** Read scopes off a system.connection item by id. */
+  private async getConnectionScopes(
+    connectionItemId: string,
+  ): Promise<string[]> {
+    const rows = await this.db
+      .select()
+      .from(items)
+      .where(eq(items.id, connectionItemId));
+    const row = rows[0];
+    if (!row) return [];
+    const props = safeJsonParse<Record<string, unknown>>(
+      row.properties,
+      {},
+      "system.connection properties",
+    );
+    return Array.isArray(props.scopes) ? (props.scopes as string[]) : [];
   }
 
   // -----------------------------------------------------------------------
@@ -105,7 +159,7 @@ export class PgOAuthStore implements OAuthStore {
   // -----------------------------------------------------------------------
 
   async createCode(
-    grantId: string,
+    connectionItemId: string,
     codeHash: string,
     challenge: string,
     method: string,
@@ -116,7 +170,7 @@ export class PgOAuthStore implements OAuthStore {
     const id = generateId();
     await this.db.insert(oauthCodes).values({
       id,
-      grant_id: grantId,
+      connection_item_id: connectionItemId,
       code_hash: codeHash,
       code_challenge: challenge,
       code_challenge_method: method,
@@ -126,7 +180,7 @@ export class PgOAuthStore implements OAuthStore {
     });
     return {
       id,
-      grant_id: grantId,
+      connection_item_id: connectionItemId,
       code_challenge: challenge,
       code_challenge_method: method,
       redirect_uri: redirectUri,
@@ -140,8 +194,6 @@ export class PgOAuthStore implements OAuthStore {
     codeHash: string,
   ): Promise<(OAuthCode & { scopes: string[] }) | null> {
     const now = new Date().toISOString();
-
-    // Single atomic UPDATE: sets used_at only if code exists, is unused, and not expired
     const [row] = await this.db
       .update(oauthCodes)
       .set({ used_at: now })
@@ -155,19 +207,10 @@ export class PgOAuthStore implements OAuthStore {
       .returning();
     if (!row) return null;
 
-    // Fetch grant scopes
-    const grants = await this.db
-      .select()
-      .from(oauthGrants)
-      .where(eq(oauthGrants.id, row.grant_id));
-    const grant = grants[0];
-    const scopes = grant
-      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
-      : [];
-
+    const scopes = await this.getConnectionScopes(row.connection_item_id);
     return {
       id: row.id,
-      grant_id: row.grant_id,
+      connection_item_id: row.connection_item_id,
       code_challenge: row.code_challenge,
       code_challenge_method: row.code_challenge_method,
       redirect_uri: row.redirect_uri,
@@ -183,26 +226,18 @@ export class PgOAuthStore implements OAuthStore {
   // -----------------------------------------------------------------------
 
   async createToken(
-    grantId: string,
+    connectionItemId: string,
     tokenHash: string,
     type: OAuthTokenType,
     expiresAt: string,
   ): Promise<OAuthToken> {
     const now = new Date().toISOString();
     const id = generateId();
-
-    const grants = await this.db
-      .select()
-      .from(oauthGrants)
-      .where(eq(oauthGrants.id, grantId));
-    const grant = grants[0];
-    const scopes = grant
-      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
-      : [];
+    const scopes = await this.getConnectionScopes(connectionItemId);
 
     await this.db.insert(oauthTokens).values({
       id,
-      grant_id: grantId,
+      connection_item_id: connectionItemId,
       token_hash: tokenHash,
       token_type: type,
       expires_at: expiresAt,
@@ -211,7 +246,7 @@ export class PgOAuthStore implements OAuthStore {
 
     return {
       id,
-      grant_id: grantId,
+      connection_item_id: connectionItemId,
       token_type: type,
       scopes,
       expires_at: expiresAt,
@@ -232,18 +267,10 @@ export class PgOAuthStore implements OAuthStore {
     if (row.revoked_at) return null;
     if (new Date(row.expires_at) < new Date()) return null;
 
-    const grants = await this.db
-      .select()
-      .from(oauthGrants)
-      .where(eq(oauthGrants.id, row.grant_id));
-    const grant = grants[0];
-    const scopes = grant
-      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
-      : [];
-
+    const scopes = await this.getConnectionScopes(row.connection_item_id);
     return {
       id: row.id,
-      grant_id: row.grant_id,
+      connection_item_id: row.connection_item_id,
       token_type: row.token_type as OAuthTokenType,
       scopes,
       expires_at: row.expires_at,
@@ -259,17 +286,10 @@ export class PgOAuthStore implements OAuthStore {
       .where(isNull(oauthTokens.revoked_at));
     const result: OAuthToken[] = [];
     for (const row of rows) {
-      const grants = await this.db
-        .select()
-        .from(oauthGrants)
-        .where(eq(oauthGrants.id, row.grant_id));
-      const grant = grants[0];
-      const scopes = grant
-        ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
-        : [];
+      const scopes = await this.getConnectionScopes(row.connection_item_id);
       result.push({
         id: row.id,
-        grant_id: row.grant_id,
+        connection_item_id: row.connection_item_id,
         token_type: row.token_type as OAuthTokenType,
         scopes,
         expires_at: row.expires_at,
@@ -295,24 +315,31 @@ export class PgOAuthStore implements OAuthStore {
     const token = tokenRows[0];
     if (!token) return;
 
-    const grantRows = await this.db
+    const itemRows = await this.db
       .select()
-      .from(oauthGrants)
-      .where(eq(oauthGrants.id, token.grant_id));
-    const grant = grantRows[0];
-    if (!grant) return;
+      .from(items)
+      .where(eq(items.id, token.connection_item_id));
+    const connection = itemRows[0];
+    if (!connection) return;
 
-    const currentScopes = safeJsonParse<string[]>(
-      grant.scopes,
-      [],
-      "oauth grant scopes",
+    const props = safeJsonParse<Record<string, unknown>>(
+      connection.properties,
+      {},
+      "system.connection properties",
     );
+    const currentScopes = Array.isArray(props.scopes)
+      ? (props.scopes as string[])
+      : [];
     const reduced = currentScopes.filter((s) => scopes.includes(s));
+    const updated = { ...props, scopes: reduced };
 
     await this.db
-      .update(oauthGrants)
-      .set({ scopes: JSON.stringify(reduced) })
-      .where(eq(oauthGrants.id, token.grant_id));
+      .update(items)
+      .set({
+        properties: JSON.stringify(updated),
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(items.id, token.connection_item_id));
   }
 
   // -----------------------------------------------------------------------
@@ -335,10 +362,10 @@ export class PgOAuthStore implements OAuthStore {
     return true;
   }
 
-  async revokeGrantTokens(grantId: string): Promise<void> {
+  async revokeGrantTokens(connectionItemId: string): Promise<void> {
     await this.db
       .update(oauthTokens)
       .set({ revoked_at: new Date().toISOString() })
-      .where(eq(oauthTokens.grant_id, grantId));
+      .where(eq(oauthTokens.connection_item_id, connectionItemId));
   }
 }

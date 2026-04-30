@@ -198,26 +198,18 @@ export const oauthClients = sqliteTable("oauth_clients", {
   created_at: text("created_at").notNull(),
 });
 
-export const oauthGrants = sqliteTable(
-  "oauth_grants",
-  {
-    id: text("id").primaryKey(),
-    client_id: text("client_id")
-      .notNull()
-      .references(() => oauthClients.id),
-    scopes: text("scopes").notNull().default("[]"),
-    created_at: text("created_at").notNull(),
-  },
-  (table) => [index("idx_oauth_grants_client_id").on(table.client_id)],
-);
+// PR 4 of workstream 1: oauth_grants table dropped. The user-facing
+// concept "user X approved client Y with scopes Z" now lives as a
+// `system.connection` item with `kind: user-app-grant`. The token
+// tables FK directly to items.id via connection_item_id.
 
 export const oauthTokens = sqliteTable(
   "oauth_tokens",
   {
     id: text("id").primaryKey(),
-    grant_id: text("grant_id")
+    connection_item_id: text("connection_item_id")
       .notNull()
-      .references(() => oauthGrants.id),
+      .references(() => items.id, { onDelete: "cascade" }),
     token_hash: text("token_hash").notNull().unique(),
     token_type: text("token_type").notNull(),
     expires_at: text("expires_at").notNull(),
@@ -226,7 +218,7 @@ export const oauthTokens = sqliteTable(
     created_at: text("created_at").notNull(),
   },
   (table) => [
-    index("idx_oauth_tokens_grant_id").on(table.grant_id),
+    index("idx_oauth_tokens_connection_item_id").on(table.connection_item_id),
     index("idx_oauth_tokens_token_hash").on(table.token_hash),
   ],
 );
@@ -294,9 +286,9 @@ export const webhookDeliveries = sqliteTable(
 
 export const oauthCodes = sqliteTable("oauth_codes", {
   id: text("id").primaryKey(),
-  grant_id: text("grant_id")
+  connection_item_id: text("connection_item_id")
     .notNull()
-    .references(() => oauthGrants.id),
+    .references(() => items.id, { onDelete: "cascade" }),
   code_hash: text("code_hash").notNull().unique(),
   code_challenge: text("code_challenge").notNull(),
   code_challenge_method: text("code_challenge_method").notNull(),
@@ -357,5 +349,123 @@ export const eventLog = sqliteTable(
   (table) => [
     index("idx_event_log_created_at").on(table.created_at),
     index("idx_event_log_edge_id").on(table.edge_id),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Better Auth tables (auth_* prefix, isolated from myme's own users table)
+//
+// These are owned and managed by the better-auth library; the schema mirrors
+// what `npx @better-auth/cli generate` produces, hand-translated to Drizzle
+// for both dialects. Column names use the camelCase keys better-auth expects.
+// ---------------------------------------------------------------------------
+
+// Timestamp columns use `integer({ mode: "timestamp" })` (Unix seconds)
+// so the better-auth Drizzle adapter — which forwards JS Date objects —
+// can round-trip without manual ISO conversion. Stored as INTEGER under
+// the hood; this deviates from myme's TEXT-ISO convention but stays
+// localised to the auth_* island.
+export const auth_user = sqliteTable(
+  "auth_user",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull().unique(),
+    emailVerified: integer("email_verified", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    image: text("image"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [uniqueIndex("idx_auth_user_email").on(table.email)],
+);
+
+export const auth_session = sqliteTable(
+  "auth_session",
+  {
+    id: text("id").primaryKey(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    token: text("token").notNull().unique(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    userId: text("user_id")
+      .notNull()
+      .references(() => auth_user.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    index("idx_auth_session_user_id").on(table.userId),
+    uniqueIndex("idx_auth_session_token").on(table.token),
+  ],
+);
+
+export const auth_account = sqliteTable(
+  "auth_account",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => auth_user.id, { onDelete: "cascade" }),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: integer("access_token_expires_at", {
+      mode: "timestamp",
+    }),
+    refreshTokenExpiresAt: integer("refresh_token_expires_at", {
+      mode: "timestamp",
+    }),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("idx_auth_account_user_id").on(table.userId),
+    uniqueIndex("idx_auth_account_provider").on(
+      table.providerId,
+      table.accountId,
+    ),
+  ],
+);
+
+export const auth_verification = sqliteTable(
+  "auth_verification",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [index("idx_auth_verification_identifier").on(table.identifier)],
+);
+
+// Passkey credentials (one per registered authenticator).
+export const auth_passkey = sqliteTable(
+  "auth_passkey",
+  {
+    id: text("id").primaryKey(),
+    name: text("name"),
+    publicKey: text("public_key").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => auth_user.id, { onDelete: "cascade" }),
+    credentialID: text("credential_id").notNull(),
+    counter: integer("counter").notNull(),
+    deviceType: text("device_type").notNull(),
+    backedUp: integer("backed_up", { mode: "boolean" }).notNull(),
+    transports: text("transports"),
+    createdAt: integer("created_at", { mode: "timestamp" }),
+    aaguid: text("aaguid"),
+  },
+  (table) => [
+    index("idx_auth_passkey_user_id").on(table.userId),
+    index("idx_auth_passkey_credential_id").on(table.credentialID),
   ],
 );

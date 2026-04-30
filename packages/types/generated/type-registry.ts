@@ -543,6 +543,22 @@ const systemApp: TypeSchema = {
   },
 };
 
+const systemConnection: TypeSchema = {
+  id: "system.connection",
+  label: "Connection",
+  description: "An approved relationship — user-app grant today; external-service connector and tenant-share land in workstream 2. Lifecycle bounded to active | revoked. Has no tier.",
+  version: 1,
+  fields: {
+    kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["user-app-grant", "external-service-connector", "tenant-share"] },
+    client_id: { type: "string", description: "OAuth client identifier (for kind: user-app-grant)" },
+    scopes: { type: "array", description: "Granted scope strings", items_type: "string" },
+    status: { type: "enum", description: "Lifecycle status", required: true, enum_values: ["active", "revoked"] },
+    granted_at: { type: "datetime", description: "When the grant was approved", required: true },
+    last_used_at: { type: "datetime", description: "Most recent successful use of any token issued under this grant" },
+    revoked_at: { type: "datetime", description: "When the grant was revoked, if any" },
+  },
+};
+
 const systemCredential: TypeSchema = {
   id: "system.credential",
   label: "Credential",
@@ -583,6 +599,7 @@ const systemWebhook: TypeSchema = {
 
 export const ALL_SYSTEM_TYPES: TypeSchema[] = [
   systemApp,
+  systemConnection,
   systemCredential,
   systemDevice,
   systemWebhook,

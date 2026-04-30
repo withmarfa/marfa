@@ -80,6 +80,10 @@ beforeAll(async () => {
     feedExpiryIntervalMs: 3_600_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
+    authBaseUrl: "http://localhost:0",
+    authAllowSignup: false,
+    authSecret: "test-secret",
+    oidcProviders: [],
   });
 
   testFetchFn = createTestFetch(app);

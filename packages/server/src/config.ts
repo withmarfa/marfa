@@ -49,6 +49,30 @@ export interface AppConfig {
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
   trustedProxyCidrs: CidrRange[];
+  /** Issuer URL the better-auth instance is reached at — protocol + host
+   *  (and port). Drives cookie domains and the OAuth issuer field on the
+   *  discovery doc. Defaults to `http://localhost:<port>` if unset. */
+  authBaseUrl: string;
+  /** When `true`, the email + password sign-up endpoint is enabled.
+   *  Default `false` per workstream-1 sign-up policy — single-user
+   *  self-hosted instances enable this only for the initial admin account. */
+  authAllowSignup: boolean;
+  /** Shared secret for cookie signing. Required in production; falls back
+   *  to a per-process ephemeral secret in dev. */
+  authSecret: string;
+  /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
+   *  into the generic-oauth plugin. Parsed from the `MYME_OIDC_PROVIDERS`
+   *  env var (JSON array of `{ providerId, clientId, clientSecret,
+   *  discoveryUrl?, scopes? }`). */
+  oidcProviders: OidcProviderConfig[];
+}
+
+export interface OidcProviderConfig {
+  providerId: string;
+  clientId: string;
+  clientSecret: string;
+  discoveryUrl?: string;
+  scopes?: string[];
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -144,5 +168,58 @@ export function loadConfig(): AppConfig {
     // Parse + validate at startup. Malformed CIDRs throw — we want bad
     // config to surface immediately, not silently degrade.
     trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),
+    authBaseUrl:
+      process.env.MYME_AUTH_BASE_URL ??
+      `http://localhost:${String(Number(process.env.PORT) || 8600)}`,
+    authAllowSignup: process.env.MYME_AUTH_ALLOW_SIGNUP === "true",
+    authSecret: process.env.MYME_AUTH_SECRET ?? "",
+    oidcProviders: parseOidcProviders(process.env.MYME_OIDC_PROVIDERS),
   };
+}
+
+function parseOidcProviders(raw: string | undefined): OidcProviderConfig[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      console.warn(
+        "MYME_OIDC_PROVIDERS must be a JSON array, falling back to no federated providers",
+      );
+      return [];
+    }
+    const out: OidcProviderConfig[] = [];
+    for (const entry of parsed) {
+      if (
+        entry &&
+        typeof entry === "object" &&
+        typeof (entry as { providerId?: unknown }).providerId === "string" &&
+        typeof (entry as { clientId?: unknown }).clientId === "string" &&
+        typeof (entry as { clientSecret?: unknown }).clientSecret === "string"
+      ) {
+        const e = entry as Record<string, unknown>;
+        out.push({
+          providerId: e.providerId as string,
+          clientId: e.clientId as string,
+          clientSecret: e.clientSecret as string,
+          discoveryUrl:
+            typeof e.discoveryUrl === "string" ? e.discoveryUrl : undefined,
+          scopes: Array.isArray(e.scopes)
+            ? (e.scopes as unknown[]).filter(
+                (s): s is string => typeof s === "string",
+              )
+            : undefined,
+        });
+      } else {
+        console.warn(
+          "MYME_OIDC_PROVIDERS entry missing providerId/clientId/clientSecret, skipping",
+        );
+      }
+    }
+    return out;
+  } catch {
+    console.warn(
+      "MYME_OIDC_PROVIDERS is not valid JSON, falling back to no federated providers",
+    );
+    return [];
+  }
 }

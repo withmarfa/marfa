@@ -9,19 +9,24 @@ import type {
   OAuthTokenType,
 } from "@mymehq/shared";
 import type { OAuthStore } from "../interface.js";
-import {
-  oauthClients,
-  oauthGrants,
-  oauthTokens,
-  oauthCodes,
-} from "./schema.js";
+import { items, oauthClients, oauthTokens, oauthCodes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
+/**
+ * OAuth storage backed by a `system.connection` item per user-app-grant.
+ *
+ * PR 4 of workstream 1 dropped the standalone `oauth_grants` table; the
+ * durable record of "user X approved client Y with scopes Z" now lives
+ * as a typed item, queryable through the same DSL as the rest of myme.
+ *
+ * `oauth_codes` and `oauth_tokens` reference the item id via
+ * `connection_item_id` (FK to `items.id`, ON DELETE CASCADE).
+ */
 export class SqliteOAuthStore implements OAuthStore {
   constructor(private db: DrizzleDb) {}
 
   // -----------------------------------------------------------------------
-  // Clients
+  // Clients (unchanged surface)
   // -----------------------------------------------------------------------
 
   async createClient(input: {
@@ -77,19 +82,31 @@ export class SqliteOAuthStore implements OAuthStore {
   }
 
   // -----------------------------------------------------------------------
-  // Grants
+  // Grants (system.connection items, kind: user-app-grant)
   // -----------------------------------------------------------------------
 
   async createGrant(clientId: string, scopes: string[]): Promise<OAuthGrant> {
     const now = new Date().toISOString();
     const id = generateId();
+    const properties = {
+      kind: "user-app-grant",
+      client_id: clientId,
+      scopes,
+      status: "active",
+      granted_at: now,
+    };
     this.db
-      .insert(oauthGrants)
+      .insert(items)
       .values({
         id,
-        client_id: clientId,
-        scopes: JSON.stringify(scopes),
+        type: "system.connection",
+        state: "active",
+        tier: "library",
+        properties: JSON.stringify(properties),
         created_at: now,
+        updated_at: now,
+        timestamp: now,
+        version: 1,
       })
       .run();
     return { id, client_id: clientId, scopes, created_at: now };
@@ -98,13 +115,48 @@ export class SqliteOAuthStore implements OAuthStore {
   async getGrantsByClient(clientId: string): Promise<OAuthGrant[]> {
     const rows = this.db
       .select()
-      .from(oauthGrants)
-      .where(eq(oauthGrants.client_id, clientId))
+      .from(items)
+      .where(
+        and(eq(items.type, "system.connection"), eq(items.state, "active")),
+      )
       .all();
-    return rows.map((r) => ({
-      ...r,
-      scopes: safeJsonParse<string[]>(r.scopes, [], "oauth scopes"),
-    }));
+    const out: OAuthGrant[] = [];
+    for (const row of rows) {
+      const props = safeJsonParse<Record<string, unknown>>(
+        row.properties,
+        {},
+        "system.connection properties",
+      );
+      if (
+        props.kind === "user-app-grant" &&
+        props.client_id === clientId &&
+        props.status === "active"
+      ) {
+        out.push({
+          id: row.id,
+          client_id: clientId,
+          scopes: Array.isArray(props.scopes) ? (props.scopes as string[]) : [],
+          created_at: row.created_at,
+        });
+      }
+    }
+    return out;
+  }
+
+  /** Read scopes off a system.connection item by id. */
+  private getConnectionScopes(connectionItemId: string): string[] {
+    const row = this.db
+      .select()
+      .from(items)
+      .where(eq(items.id, connectionItemId))
+      .get();
+    if (!row) return [];
+    const props = safeJsonParse<Record<string, unknown>>(
+      row.properties,
+      {},
+      "system.connection properties",
+    );
+    return Array.isArray(props.scopes) ? (props.scopes as string[]) : [];
   }
 
   // -----------------------------------------------------------------------
@@ -112,7 +164,7 @@ export class SqliteOAuthStore implements OAuthStore {
   // -----------------------------------------------------------------------
 
   async createCode(
-    grantId: string,
+    connectionItemId: string,
     codeHash: string,
     challenge: string,
     method: string,
@@ -125,7 +177,7 @@ export class SqliteOAuthStore implements OAuthStore {
       .insert(oauthCodes)
       .values({
         id,
-        grant_id: grantId,
+        connection_item_id: connectionItemId,
         code_hash: codeHash,
         code_challenge: challenge,
         code_challenge_method: method,
@@ -136,7 +188,7 @@ export class SqliteOAuthStore implements OAuthStore {
       .run();
     return {
       id,
-      grant_id: grantId,
+      connection_item_id: connectionItemId,
       code_challenge: challenge,
       code_challenge_method: method,
       redirect_uri: redirectUri,
@@ -150,8 +202,6 @@ export class SqliteOAuthStore implements OAuthStore {
     codeHash: string,
   ): Promise<(OAuthCode & { scopes: string[] }) | null> {
     const now = new Date().toISOString();
-
-    // Single atomic UPDATE: sets used_at only if code exists, is unused, and not expired
     const row = this.db
       .update(oauthCodes)
       .set({ used_at: now })
@@ -167,19 +217,10 @@ export class SqliteOAuthStore implements OAuthStore {
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- row is undefined when UPDATE matches no rows
     if (!row) return null;
 
-    // Fetch grant scopes
-    const grant = this.db
-      .select()
-      .from(oauthGrants)
-      .where(eq(oauthGrants.id, row.grant_id))
-      .get();
-    const scopes = grant
-      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
-      : [];
-
+    const scopes = this.getConnectionScopes(row.connection_item_id);
     return {
       id: row.id,
-      grant_id: row.grant_id,
+      connection_item_id: row.connection_item_id,
       code_challenge: row.code_challenge,
       code_challenge_method: row.code_challenge_method,
       redirect_uri: row.redirect_uri,
@@ -195,29 +236,20 @@ export class SqliteOAuthStore implements OAuthStore {
   // -----------------------------------------------------------------------
 
   async createToken(
-    grantId: string,
+    connectionItemId: string,
     tokenHash: string,
     type: OAuthTokenType,
     expiresAt: string,
   ): Promise<OAuthToken> {
     const now = new Date().toISOString();
     const id = generateId();
-
-    // Fetch grant scopes
-    const grant = this.db
-      .select()
-      .from(oauthGrants)
-      .where(eq(oauthGrants.id, grantId))
-      .get();
-    const scopes = grant
-      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
-      : [];
+    const scopes = this.getConnectionScopes(connectionItemId);
 
     this.db
       .insert(oauthTokens)
       .values({
         id,
-        grant_id: grantId,
+        connection_item_id: connectionItemId,
         token_hash: tokenHash,
         token_type: type,
         expires_at: expiresAt,
@@ -227,7 +259,7 @@ export class SqliteOAuthStore implements OAuthStore {
 
     return {
       id,
-      grant_id: grantId,
+      connection_item_id: connectionItemId,
       token_type: type,
       scopes,
       expires_at: expiresAt,
@@ -248,19 +280,10 @@ export class SqliteOAuthStore implements OAuthStore {
     if (row.revoked_at) return null;
     if (new Date(row.expires_at) < new Date()) return null;
 
-    // Fetch grant scopes
-    const grant = this.db
-      .select()
-      .from(oauthGrants)
-      .where(eq(oauthGrants.id, row.grant_id))
-      .get();
-    const scopes = grant
-      ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
-      : [];
-
+    const scopes = this.getConnectionScopes(row.connection_item_id);
     return {
       id: row.id,
-      grant_id: row.grant_id,
+      connection_item_id: row.connection_item_id,
       token_type: row.token_type as OAuthTokenType,
       scopes,
       expires_at: row.expires_at,
@@ -275,27 +298,15 @@ export class SqliteOAuthStore implements OAuthStore {
       .from(oauthTokens)
       .where(isNull(oauthTokens.revoked_at))
       .all();
-    const result: OAuthToken[] = [];
-    for (const row of rows) {
-      const grant = this.db
-        .select()
-        .from(oauthGrants)
-        .where(eq(oauthGrants.id, row.grant_id))
-        .get();
-      const scopes = grant
-        ? safeJsonParse<string[]>(grant.scopes, [], "oauth grant scopes")
-        : [];
-      result.push({
-        id: row.id,
-        grant_id: row.grant_id,
-        token_type: row.token_type as OAuthTokenType,
-        scopes,
-        expires_at: row.expires_at,
-        revoked_at: row.revoked_at,
-        created_at: row.created_at,
-      });
-    }
-    return result;
+    return rows.map((row) => ({
+      id: row.id,
+      connection_item_id: row.connection_item_id,
+      token_type: row.token_type as OAuthTokenType,
+      scopes: this.getConnectionScopes(row.connection_item_id),
+      expires_at: row.expires_at,
+      revoked_at: row.revoked_at,
+      created_at: row.created_at,
+    }));
   }
 
   async revokeToken(id: string): Promise<void> {
@@ -307,7 +318,7 @@ export class SqliteOAuthStore implements OAuthStore {
   }
 
   async reduceTokenScope(id: string, scopes: string[]): Promise<void> {
-    // Reduce scope by updating the grant's scopes to the intersection
+    // Reduce scope by intersecting the connection item's scopes.
     const token = this.db
       .select()
       .from(oauthTokens)
@@ -315,24 +326,31 @@ export class SqliteOAuthStore implements OAuthStore {
       .get();
     if (!token) return;
 
-    const grant = this.db
+    const connection = this.db
       .select()
-      .from(oauthGrants)
-      .where(eq(oauthGrants.id, token.grant_id))
+      .from(items)
+      .where(eq(items.id, token.connection_item_id))
       .get();
-    if (!grant) return;
+    if (!connection) return;
 
-    const currentScopes = safeJsonParse<string[]>(
-      grant.scopes,
-      [],
-      "oauth grant scopes",
+    const props = safeJsonParse<Record<string, unknown>>(
+      connection.properties,
+      {},
+      "system.connection properties",
     );
+    const currentScopes = Array.isArray(props.scopes)
+      ? (props.scopes as string[])
+      : [];
     const reduced = currentScopes.filter((s) => scopes.includes(s));
+    const updated = { ...props, scopes: reduced };
 
     this.db
-      .update(oauthGrants)
-      .set({ scopes: JSON.stringify(reduced) })
-      .where(eq(oauthGrants.id, token.grant_id))
+      .update(items)
+      .set({
+        properties: JSON.stringify(updated),
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(items.id, token.connection_item_id))
       .run();
   }
 
@@ -357,11 +375,11 @@ export class SqliteOAuthStore implements OAuthStore {
     return true;
   }
 
-  async revokeGrantTokens(grantId: string): Promise<void> {
+  async revokeGrantTokens(connectionItemId: string): Promise<void> {
     this.db
       .update(oauthTokens)
       .set({ revoked_at: new Date().toISOString() })
-      .where(eq(oauthTokens.grant_id, grantId))
+      .where(eq(oauthTokens.connection_item_id, connectionItemId))
       .run();
   }
 }

@@ -46,6 +46,10 @@ const config: AppConfig = {
   feedExpiryIntervalMs: 86_400_000,
   errorWebhookUrl: "",
   trustedProxyCidrs: [],
+  authBaseUrl: "http://localhost:8600",
+  authAllowSignup: false,
+  authSecret: "openapi-generation-secret-not-for-production",
+  oidcProviders: [],
 };
 
 const storage = createSqliteStorage(":memory:");
