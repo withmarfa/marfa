@@ -530,6 +530,19 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMediaTvEpisode,
 ];
 
+const systemActivity: TypeSchema = {
+  id: "system.activity",
+  label: "Activity",
+  description: "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorise, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the connector writes (a documented TSC42 §4 exception — see routes/items.ts). Lifecycle bounded to active | revoked. Has no tier by default.",
+  version: 1,
+  fields: {
+    connection_id: { type: "string", description: "Id of the emitting system.connection item", required: true },
+    severity: { type: "enum", description: "Surfacing level. `info` for routine completion, `warning` for non-blocking concerns, `error` for recoverable failure, `action_required` for items the user has to resolve (surfaced via /items?type=system.activity&filter=metadata.severity=\"action_required\")", required: true, enum_values: ["info", "warning", "error", "action_required"] },
+    summary: { type: "string", description: "Short one-liner shown in feed surfaces", required: true },
+    detail: { type: "object", description: "Optional JSON context for richer rendering or programmatic resolution" },
+  },
+};
+
 const systemApp: TypeSchema = {
   id: "system.app",
   label: "App",
@@ -609,6 +622,7 @@ const systemWebhook: TypeSchema = {
 };
 
 export const ALL_SYSTEM_TYPES: TypeSchema[] = [
+  systemActivity,
   systemApp,
   systemConnection,
   systemCredential,

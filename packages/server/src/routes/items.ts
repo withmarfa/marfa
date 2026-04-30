@@ -660,9 +660,34 @@ export function itemRoutes(storage: Storage) {
         { field: "tier" },
       );
     }
-    const tierValue: "library" | "feed" | undefined = isSystemTypeWrite
+    let tierValue: "library" | "feed" | undefined = isSystemTypeWrite
       ? undefined
       : (body.tier ?? credential?.default_tier ?? "library");
+
+    // Workstream 2 PR 3 — documented TSC42 §4 exception. When a
+    // `system.activity` write references a `system.connection` whose
+    // `feed_activity === true`, the server stamps `tier: "feed"` so the
+    // activity flows into the user's feed surface. Client tier writes
+    // remain rejected by the block above; only the server makes this
+    // decision, keyed off the per-Connection toggle. Connections without
+    // `feed_activity` (default) leave tier undefined as for every other
+    // system.* write. Authority: Connections — Design Direction lines
+    // 178–186 (per-Connection feed-eligibility toggle on system.activity).
+    if (type === "system.activity") {
+      const connectionId =
+        typeof properties.connection_id === "string"
+          ? properties.connection_id
+          : undefined;
+      if (connectionId) {
+        const connection = await storage.items.get(connectionId, tenantId);
+        if (
+          connection?.type === "system.connection" &&
+          connection.properties.feed_activity === true
+        ) {
+          tierValue = "feed";
+        }
+      }
+    }
 
     // Validate edges payload up-front (shape only) so the write path doesn't
     // have to double-check. Per-constraint validation runs inside the
