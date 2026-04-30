@@ -337,7 +337,7 @@ export function typeRoutes(storage: Storage) {
 
     const result = validateTypeSchema(body);
     if (!result.success) {
-      // Surface specific discriminators so clients (e.g. mock-myme
+      // Surface specific discriminators so clients (e.g. conformance
       // conformance) can disambiguate from generic schema-shape failures.
       const hasInheritanceViolation = result.errors.some(
         (e) => e.code === "inheritance_violation",
