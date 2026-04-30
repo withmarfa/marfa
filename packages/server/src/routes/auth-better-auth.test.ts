@@ -169,9 +169,7 @@ describe("better-auth /auth/* surface", () => {
       "GET",
       "/auth/passkey/generate-register-options",
       {
-        headers: cookie
-          ? { origin: ORIGIN, cookie }
-          : { origin: ORIGIN },
+        headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
       },
     );
     // Either a 200 with challenge or a 4xx — we just verify the route is

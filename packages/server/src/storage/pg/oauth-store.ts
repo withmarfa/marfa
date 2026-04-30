@@ -110,7 +110,9 @@ export class PgOAuthStore implements OAuthStore {
     const rows = await this.db
       .select()
       .from(items)
-      .where(and(eq(items.type, "system.connection"), eq(items.state, "active")));
+      .where(
+        and(eq(items.type, "system.connection"), eq(items.state, "active")),
+      );
     const out: OAuthGrant[] = [];
     for (const row of rows) {
       const props = safeJsonParse<Record<string, unknown>>(

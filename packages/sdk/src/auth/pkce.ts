@@ -24,7 +24,9 @@ function base64url(bytes: Uint8Array): string {
  */
 export function generateCodeVerifier(length = 64): string {
   if (length < 43 || length > 128) {
-    throw new Error(`PKCE verifier length must be 43-128, got ${String(length)}`);
+    throw new Error(
+      `PKCE verifier length must be 43-128, got ${String(length)}`,
+    );
   }
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);

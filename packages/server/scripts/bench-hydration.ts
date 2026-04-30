@@ -48,9 +48,9 @@ async function main(): Promise<void> {
     feedExpiryIntervalMs: 86_400_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
-  authBaseUrl: "http://localhost:0",
-  authAllowSignup: true,
-  authSecret: "test-auth-secret",
+    authBaseUrl: "http://localhost:0",
+    authAllowSignup: true,
+    authSecret: "test-auth-secret",
     oidcProviders: [],
   });
   const raw = "myme_k1_bench";

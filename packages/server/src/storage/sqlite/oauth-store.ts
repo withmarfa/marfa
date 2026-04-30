@@ -116,7 +116,9 @@ export class SqliteOAuthStore implements OAuthStore {
     const rows = this.db
       .select()
       .from(items)
-      .where(and(eq(items.type, "system.connection"), eq(items.state, "active")))
+      .where(
+        and(eq(items.type, "system.connection"), eq(items.state, "active")),
+      )
       .all();
     const out: OAuthGrant[] = [];
     for (const row of rows) {

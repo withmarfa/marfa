@@ -188,10 +188,10 @@ describe("bootstrap sentinel", () => {
       feedExpiryIntervalMs: 3_600_000,
       errorWebhookUrl: "",
       trustedProxyCidrs: [],
-    authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    authSecret: "test-auth-secret",
-    oidcProviders: [],
+      authBaseUrl: "http://localhost:0",
+      authAllowSignup: true,
+      authSecret: "test-auth-secret",
+      oidcProviders: [],
     });
     return { app, storage };
   }

@@ -73,7 +73,6 @@ describe("TYPE_REGISTRY", () => {
       expect(TYPE_REGISTRY.has(id), `missing ${id}`).toBe(true);
     }
   });
-
 });
 
 describe("getTypeSchema", () => {
