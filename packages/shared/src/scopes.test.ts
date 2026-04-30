@@ -33,6 +33,16 @@ describe("parseScope", () => {
     expect(parseScope("metadata:read")).toEqual({
       typePattern: "metadata",
       operation: "read",
+      kind: "metadata",
+    });
+  });
+
+  it("parses metadata sub-resource scope", () => {
+    expect(parseScope("metadata.types:write")).toEqual({
+      typePattern: "metadata.types",
+      operation: "write",
+      kind: "metadata",
+      subresource: "types",
     });
   });
 

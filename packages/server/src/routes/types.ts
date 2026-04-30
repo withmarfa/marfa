@@ -12,7 +12,11 @@ import {
   isValidVersionBump,
 } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, requireAdmin } from "../middleware/auth.js";
+import {
+  requireAuth,
+  requireAdmin,
+  requireMetadataPermission,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { resolveTypeSchema } from "../storage/policy.js";
 import {
@@ -159,7 +163,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a custom type",
   description:
-    "Register a new custom type schema. Admin only. Body is validated via validateTypeSchema().",
+    "Register a new custom type schema. Admin keys bypass; non-admin credentials need the `metadata.types:write` scope (default-off for new keys). Body is validated via validateTypeSchema().",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -182,6 +186,10 @@ const registerTypeRoute = createRoute({
     401: {
       content: { "application/json": { schema: ErrorResponseSchema } },
       description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Missing metadata.types:write permission",
     },
     409: {
       content: { "application/json": { schema: ErrorResponseSchema } },
@@ -298,9 +306,13 @@ export function typeRoutes(storage: Storage) {
     return c.json(schema, 200);
   });
 
-  // POST /types — register a custom type (admin only)
+  // POST /types — register a custom type. Admins bypass the check;
+  // non-admin credentials (member keys, OAuth tokens) need the
+  // `metadata.types:write` scope explicitly granted. Default-off for
+  // new keys per the workstream-1 brief: type registration is a
+  // privileged capability that has to be deliberately granted.
   router.openapi(registerTypeRoute, async (c) => {
-    requireAdmin(c);
+    requireMetadataPermission(c, "types", "write");
     const body = c.req.valid("json");
 
     // Pre-validation for specific error codes

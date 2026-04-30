@@ -1,32 +1,40 @@
-import type { TypePermission } from "./types.js";
+import type { MetadataPermission, TypePermission } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Scope parsing
 // ---------------------------------------------------------------------------
 
 /**
- * Parsed representation of a scope string. Three shapes today:
- *   - item-type scope:  "core.note:read"  → kind undefined, typePattern="core.note"
- *   - metadata scope:   "metadata:write"  → kind undefined, typePattern="metadata"
+ * Parsed representation of a scope string. Four shapes today:
+ *   - item-type scope:  "core.note:read"     → kind undefined, typePattern="core.note"
+ *   - metadata scope:   "metadata:write"     → kind="metadata", subresource undefined
+ *   - metadata sub:     "metadata.types:write" → kind="metadata", subresource="types"
  *   - edge scope:       "edge.parent-of:write" or "edge.*:write"
  *                       → kind="edge", edgeType="parent-of" or "*"
  *
  * Per-edge-type scopes surface fine-grained edge permissions through OAuth,
- * mirroring the `<type>:<verb>` shape used for item-type scopes.
+ * mirroring the `<type>:<verb>` shape used for item-type scopes. Metadata
+ * sub-resource scopes (e.g. `metadata.types:write`) gate metadata-layer
+ * mutations like type registration.
  */
 export interface ParsedScope {
   typePattern: string;
   operation: "read" | "write";
-  /** "edge" for edge-typed scopes, undefined otherwise (type or metadata). */
-  kind?: "edge";
+  /** "edge" or "metadata" for the disambiguated families; undefined for type scopes. */
+  kind?: "edge" | "metadata";
   /** Present when kind === "edge"; the edge type id or "*". */
   edgeType?: string;
+  /** Present when kind === "metadata" and the scope names a sub-resource (e.g. "types"). */
+  subresource?: string;
 }
 
 const SCOPE_RE = /^([a-z][a-z0-9_./*-]+):(read|write)$/;
 // `edge.<type>:<verb>` — type can be kebab-case (parent-of, in-thread) or
 // namespaced (karakeep.list-member).
 const EDGE_SCOPE_RE = /^edge\.([a-z0-9_*][a-z0-9_.\-*]*):(read|write)$/;
+// `metadata.<subresource>:<verb>` — sub-resource is a single dot-free
+// segment (`types`, future siblings).
+const METADATA_SUB_SCOPE_RE = /^metadata\.([a-z][a-z0-9_-]*):(read|write)$/;
 
 /** Parses a scope string into its type pattern and operation. Returns null if invalid. */
 export function parseScope(scope: string): ParsedScope | null {
@@ -34,9 +42,22 @@ export function parseScope(scope: string): ParsedScope | null {
     return {
       typePattern: "metadata",
       operation: scope.split(":")[1] as "read" | "write",
+      kind: "metadata",
     };
   }
   // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec -- .match returns the same captures; the regex has no /g flag
+  const metadataSubMatch = scope.match(METADATA_SUB_SCOPE_RE);
+  if (metadataSubMatch) {
+    const subresource = metadataSubMatch[1] ?? "";
+    const operation = metadataSubMatch[2] as "read" | "write";
+    return {
+      typePattern: `metadata.${subresource}`,
+      operation,
+      kind: "metadata",
+      subresource,
+    };
+  }
+  // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec -- same rationale
   const edgeMatch = scope.match(EDGE_SCOPE_RE);
   if (edgeMatch) {
     const edgeType = edgeMatch[1] ?? "";
@@ -119,8 +140,8 @@ export function scopesToTypePermissions(
     const parsed = parseScope(scope);
     if (!parsed) continue;
 
-    // Skip metadata scopes — they don't map to type permissions
-    if (parsed.typePattern === "metadata") continue;
+    // Skip metadata + edge scopes — they don't map to type_permissions
+    if (parsed.kind === "metadata" || parsed.kind === "edge") continue;
 
     const current = perms[parsed.typePattern];
     // Write trumps read, never downgrade
@@ -170,6 +191,57 @@ export function scopesToEdgePermissions(
     }
   }
   return perms;
+}
+
+// ---------------------------------------------------------------------------
+// Metadata-scope helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Projects metadata-sub-resource scopes (`metadata.<subresource>:<verb>`)
+ * into the `metadata_permissions` map stored on keys / synthesised on
+ * OAuth-derived `ApiKey` records. The bare `metadata:<verb>` form (no
+ * sub-resource) acts as a wildcard — it sets `*: <verb>`. Write trumps
+ * read, never downgrade.
+ */
+export function scopesToMetadataPermissions(
+  scopes: string[],
+): Record<string, MetadataPermission> {
+  const perms: Record<string, MetadataPermission> = {};
+  for (const scope of scopes) {
+    const parsed = parseScope(scope);
+    if (parsed?.kind !== "metadata") continue;
+    const key = parsed.subresource ?? "*";
+    const current = perms[key];
+    if (parsed.operation === "write" || current === undefined) {
+      perms[key] = parsed.operation;
+    }
+  }
+  return perms;
+}
+
+/**
+ * Checks whether a metadata_permissions map covers the required verb on
+ * a specific sub-resource. The wildcard `*` (granted by a bare
+ * `metadata:<verb>` scope or a credential created with `*` explicitly)
+ * matches any sub-resource. `write` implies `read`. Used by route guards
+ * such as the `POST /types` admission check.
+ */
+export function metadataPermissionCovers(
+  perms: Record<string, MetadataPermission> | undefined,
+  subresource: string,
+  requiredOp: "read" | "write",
+): boolean {
+  if (!perms) return false;
+  const specific = perms[subresource];
+  if (specific === "write" || (specific === "read" && requiredOp === "read")) {
+    return true;
+  }
+  const wildcard = perms["*"];
+  if (wildcard === "write" || (wildcard === "read" && requiredOp === "read")) {
+    return true;
+  }
+  return false;
 }
 
 /**

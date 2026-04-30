@@ -193,6 +193,36 @@ describe("extension_permissions wiring", () => {
     expect(putRes.status).toBe(200);
   });
 
+  it("persists and surfaces metadata_permissions on POST /keys and GET /keys", async () => {
+    // Workstream 1 close-out: metadata-layer permissions ride a
+    // dedicated map. Default-off for new keys; admin still bypasses.
+    const createRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "metadata-types-key",
+        source: "metadata-types-key-src",
+        role: "member",
+        type_permissions: { "*": "write" },
+        metadata_permissions: { types: "write" },
+      },
+    });
+    expect(createRes.status).toBe(201);
+    const created = (await createRes.json()) as {
+      id: string;
+      metadata_permissions: Record<string, string>;
+    };
+    expect(created.metadata_permissions).toEqual({ types: "write" });
+
+    const listRes = await request(ctx.app, "GET", "/keys", {
+      key: ctx.adminKey,
+    });
+    const list = (await listRes.json()) as {
+      keys: { id: string; metadata_permissions?: Record<string, string> }[];
+    };
+    const found = list.keys.find((k) => k.id === created.id);
+    expect(found?.metadata_permissions).toEqual({ types: "write" });
+  });
+
   it("falls through to implicit own-namespace write when extension_permissions is empty", async () => {
     // Regression guard: the wiring change must not break the
     // "key writes its own namespace" implicit rule for keys with no grants.

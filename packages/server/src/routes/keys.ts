@@ -38,6 +38,9 @@ const KeyResponseSchema = z.object({
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
   edge_permissions: EdgePermissionsSchema,
+  metadata_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });
@@ -55,6 +58,9 @@ const KeyListItemSchema = z.object({
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
   edge_permissions: EdgePermissionsSchema,
+  metadata_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });
@@ -92,6 +98,9 @@ const createKeyRoute = createRoute({
               .record(z.string(), z.enum(["read", "write"]))
               .optional(),
             edge_permissions: z
+              .record(z.string(), z.enum(["read", "write"]))
+              .optional(),
+            metadata_permissions: z
               .record(z.string(), z.enum(["read", "write"]))
               .optional(),
           }),
@@ -179,6 +188,9 @@ const UpdateKeyBodySchema = z.object({
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
   edge_permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
+  metadata_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
   source: z.unknown().optional(),
   role: z.unknown().optional(),
 });
@@ -196,6 +208,9 @@ const KeyDetailSchema = z.object({
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
   edge_permissions: EdgePermissionsSchema,
+  metadata_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });
@@ -289,6 +304,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         type_permissions: typePermissions,
         extension_permissions: body.extension_permissions,
         edge_permissions: body.edge_permissions,
+        metadata_permissions: body.metadata_permissions,
       },
       keyHash,
     );
@@ -321,6 +337,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         type_permissions: stored.type_permissions,
         extension_permissions: stored.extension_permissions,
         edge_permissions: stored.edge_permissions,
+        metadata_permissions: stored.metadata_permissions,
         created_at: stored.created_at,
         last_used_at: stored.last_used_at,
       },
@@ -386,6 +403,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       type_permissions: body.type_permissions,
       extension_permissions: body.extension_permissions,
       edge_permissions: body.edge_permissions,
+      metadata_permissions: body.metadata_permissions,
     });
 
     void storage.audit.log({
@@ -410,6 +428,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         type_permissions: updated.type_permissions,
         extension_permissions: updated.extension_permissions,
         edge_permissions: updated.edge_permissions,
+        metadata_permissions: updated.metadata_permissions,
         created_at: updated.created_at,
         last_used_at: updated.last_used_at,
       },

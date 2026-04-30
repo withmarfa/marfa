@@ -165,6 +165,7 @@ export const apiKeys = sqliteTable(
       .notNull()
       .default("{}"),
     edge_permissions: text("edge_permissions").notNull().default("{}"),
+    metadata_permissions: text("metadata_permissions").notNull().default("{}"),
     created_at: text("created_at").notNull(),
     revoked_at: text("revoked_at"),
     last_used_at: text("last_used_at"),
