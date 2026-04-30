@@ -5,10 +5,7 @@
 -- index (postgres renames automatically when the table renames, but the
 -- index name itself still carries the old prefix).
 
-ALTER TABLE webhooks RENAME TO outbound_webhooks;
-ALTER TABLE webhook_deliveries RENAME TO outbound_webhook_deliveries;
-
-ALTER INDEX idx_webhook_deliveries_webhook_id
-  RENAME TO idx_outbound_webhook_deliveries_webhook_id;
-ALTER INDEX idx_webhook_deliveries_pending
-  RENAME TO idx_outbound_webhook_deliveries_pending;
+ALTER TABLE webhooks RENAME TO outbound_webhooks;--> statement-breakpoint
+ALTER TABLE webhook_deliveries RENAME TO outbound_webhook_deliveries;--> statement-breakpoint
+ALTER INDEX idx_webhook_deliveries_webhook_id RENAME TO idx_outbound_webhook_deliveries_webhook_id;--> statement-breakpoint
+ALTER INDEX idx_webhook_deliveries_pending RENAME TO idx_outbound_webhook_deliveries_pending;
