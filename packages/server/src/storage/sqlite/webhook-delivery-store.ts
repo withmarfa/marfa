@@ -6,11 +6,11 @@ import type {
   WebhookDeliveryStore,
 } from "../interface.js";
 import { CLAIM_LOCK_TTL_MS } from "../../webhooks/delivery.js";
-import { webhookDeliveries } from "./schema.js";
+import { outboundWebhookDeliveries } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 function rowToDelivery(
-  row: typeof webhookDeliveries.$inferSelect,
+  row: typeof outboundWebhookDeliveries.$inferSelect,
 ): WebhookDelivery {
   return {
     id: row.id,
@@ -36,7 +36,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     error?: string;
   }): Promise<void> {
     this.db
-      .insert(webhookDeliveries)
+      .insert(outboundWebhookDeliveries)
       .values({
         id: generateId(),
         webhook_id: entry.webhookId,
@@ -54,9 +54,9 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
   list(webhookId: string, limit = 50): Promise<WebhookDelivery[]> {
     const rows = this.db
       .select()
-      .from(webhookDeliveries)
-      .where(eq(webhookDeliveries.webhook_id, webhookId))
-      .orderBy(desc(webhookDeliveries.created_at))
+      .from(outboundWebhookDeliveries)
+      .where(eq(outboundWebhookDeliveries.webhook_id, webhookId))
+      .orderBy(desc(outboundWebhookDeliveries.created_at))
       .limit(limit)
       .all();
     return Promise.resolve(rows.map(rowToDelivery));
@@ -72,7 +72,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
   }): Promise<string> {
     const id = generateId();
     this.db
-      .insert(webhookDeliveries)
+      .insert(outboundWebhookDeliveries)
       .values({
         id,
         webhook_id: entry.webhookId,
@@ -106,10 +106,10 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       max_attempts: number;
     }>(
       sql`
-          UPDATE webhook_deliveries
+          UPDATE outbound_webhook_deliveries
           SET next_attempt_at = ${claimExpiry}
           WHERE id IN (
-            SELECT id FROM webhook_deliveries
+            SELECT id FROM outbound_webhook_deliveries
             WHERE status = 'pending' AND next_attempt_at <= ${now}
             ORDER BY next_attempt_at
             LIMIT ${limit}
@@ -149,7 +149,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       max_attempts: number;
     }>(
       sql`
-          UPDATE webhook_deliveries
+          UPDATE outbound_webhook_deliveries
           SET next_attempt_at = ${claimExpiry}
           WHERE id = ${id}
             AND status = 'pending'
@@ -173,14 +173,14 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
 
   markSuccess(id: string, statusCode: number, attempt: number): Promise<void> {
     this.db
-      .update(webhookDeliveries)
+      .update(outboundWebhookDeliveries)
       .set({
         status: "success",
         success: 1,
         status_code: statusCode,
         attempt,
       })
-      .where(eq(webhookDeliveries.id, id))
+      .where(eq(outboundWebhookDeliveries.id, id))
       .run();
     return Promise.resolve();
   }
@@ -193,7 +193,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     nextAttemptAt: string | null,
   ): Promise<void> {
     this.db
-      .update(webhookDeliveries)
+      .update(outboundWebhookDeliveries)
       .set({
         status_code: statusCode ?? null,
         error,
@@ -201,16 +201,16 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         next_attempt_at: nextAttemptAt,
         status: nextAttemptAt === null ? "dead_letter" : "pending",
       })
-      .where(eq(webhookDeliveries.id, id))
+      .where(eq(outboundWebhookDeliveries.id, id))
       .run();
     return Promise.resolve();
   }
 
   markDeadLetter(id: string): Promise<void> {
     this.db
-      .update(webhookDeliveries)
+      .update(outboundWebhookDeliveries)
       .set({ status: "dead_letter" })
-      .where(eq(webhookDeliveries.id, id))
+      .where(eq(outboundWebhookDeliveries.id, id))
       .run();
     return Promise.resolve();
   }

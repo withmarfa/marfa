@@ -104,12 +104,12 @@ async function main() {
   );
 
   const webhookConsumer = new WebhookConsumer(
-    storage.webhooks,
-    storage.webhookDeliveries,
+    storage.outboundWebhooks,
+    storage.outboundWebhookDeliveries,
   );
   webhookConsumer.start();
 
-  const webhookPoller = new WebhookPoller(storage.webhookDeliveries);
+  const webhookPoller = new WebhookPoller(storage.outboundWebhookDeliveries);
   webhookPoller.start();
 
   const versionThinner = new VersionThinner(

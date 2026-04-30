@@ -169,6 +169,13 @@
       "when": 1777970000000,
       "tag": "0023_api_keys_metadata_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1777980000000,
+      "tag": "0024_outbound_webhook_rename",
+      "breakpoints": true
     }
   ]
 }

@@ -294,7 +294,7 @@ describe("GET /webhooks/:id/deliveries", () => {
 
     // Seed three delivery attempts directly through the store.
     for (let i = 0; i < 3; i++) {
-      await ctx.storage.webhookDeliveries.log({
+      await ctx.storage.outboundWebhookDeliveries.log({
         webhookId: created.id,
         event: "item.created",
         statusCode: 200,

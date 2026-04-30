@@ -22,7 +22,7 @@ async function seedPendingDeliveries(
 ): Promise<void> {
   const now = new Date().toISOString();
   for (let i = 0; i < count; i += 1) {
-    await storage.webhookDeliveries.schedule({
+    await storage.outboundWebhookDeliveries.schedule({
       webhookId,
       event: "item.created",
       payload: `{"i":${String(i)}}`,
@@ -45,7 +45,7 @@ describe.skipIf(!isPg || !url)(
       try {
         await truncate(a);
         // Register a webhook so the FK on schedule() resolves.
-        const webhook = await a.webhooks.create({
+        const webhook = await a.outboundWebhooks.create({
           url: "https://example.invalid/hook",
           events: ["item.created"],
         });
@@ -54,8 +54,8 @@ describe.skipIf(!isPg || !url)(
 
         const now = new Date().toISOString();
         const [claimA, claimB] = await Promise.all([
-          a.webhookDeliveries.getPending(now, 50),
-          b.webhookDeliveries.getPending(now, 50),
+          a.outboundWebhookDeliveries.getPending(now, 50),
+          b.outboundWebhookDeliveries.getPending(now, 50),
         ]);
 
         const idsA = new Set(claimA.map((d) => d.id));
@@ -75,27 +75,36 @@ describe.skipIf(!isPg || !url)(
       const storage = await createPgStorage(url);
       try {
         await truncate(storage);
-        const webhook = await storage.webhooks.create({
+        const webhook = await storage.outboundWebhooks.create({
           url: "https://example.invalid/hook",
           events: ["item.created"],
         });
         await seedPendingDeliveries(storage, 1, webhook.id);
 
         const t0 = new Date().toISOString();
-        const first = await storage.webhookDeliveries.getPending(t0, 10);
+        const first = await storage.outboundWebhookDeliveries.getPending(
+          t0,
+          10,
+        );
         expect(first.length).toBe(1);
         const claimedId = first[0]?.id;
 
         // Immediately re-polling with a now that's still inside the claim
         // window returns nothing — the row is "in flight".
-        const second = await storage.webhookDeliveries.getPending(t0, 10);
+        const second = await storage.outboundWebhookDeliveries.getPending(
+          t0,
+          10,
+        );
         expect(second.length).toBe(0);
 
         // Polling with a now past the TTL reclaims the row. CLAIM_LOCK_TTL_MS
         // is 60s; simulate the passage by supplying a future "now" to
         // getPending (callers pass their own clock in the real code path).
         const future = new Date(Date.now() + 120_000).toISOString();
-        const third = await storage.webhookDeliveries.getPending(future, 10);
+        const third = await storage.outboundWebhookDeliveries.getPending(
+          future,
+          10,
+        );
         expect(third.length).toBe(1);
         expect(third[0]?.id).toBe(claimedId);
       } finally {
@@ -117,14 +126,14 @@ describe.skipIf(!isPg || !url)(
       const b = await createPgStorage(url);
       try {
         await truncate(a);
-        const webhook = await a.webhooks.create({
+        const webhook = await a.outboundWebhooks.create({
           url: "https://example.invalid/hook",
           events: ["item.created"],
         });
         // Seed the delivery row in the past so `next_attempt_at <= now`
         // holds for both concurrent claimers.
         const pastIso = new Date(Date.now() - 5_000).toISOString();
-        await a.webhookDeliveries.schedule({
+        await a.outboundWebhookDeliveries.schedule({
           webhookId: webhook.id,
           event: "item.created",
           payload: `{"i":0}`,
@@ -134,15 +143,18 @@ describe.skipIf(!isPg || !url)(
         });
 
         // Fetch the id via a listing — no atomic claim yet.
-        const deliveries = await a.webhookDeliveries.list(webhook.id, 1);
+        const deliveries = await a.outboundWebhookDeliveries.list(
+          webhook.id,
+          1,
+        );
         const id = deliveries[0]?.id;
         expect(id).toBeTruthy();
 
         const now = new Date().toISOString();
         const claimExpiry = new Date(Date.now() + 60_000).toISOString();
         const [resA, resB] = await Promise.all([
-          a.webhookDeliveries.claimById(id!, claimExpiry, now),
-          b.webhookDeliveries.claimById(id!, claimExpiry, now),
+          a.outboundWebhookDeliveries.claimById(id!, claimExpiry, now),
+          b.outboundWebhookDeliveries.claimById(id!, claimExpiry, now),
         ]);
 
         const winners = [resA, resB].filter((r) => r !== null);
@@ -157,7 +169,7 @@ describe.skipIf(!isPg || !url)(
       const storage = await createPgStorage(url);
       try {
         await truncate(storage);
-        const webhook = await storage.webhooks.create({
+        const webhook = await storage.outboundWebhooks.create({
           url: "https://example.invalid/hook",
           events: ["item.created"],
         });
@@ -165,12 +177,15 @@ describe.skipIf(!isPg || !url)(
 
         // Poller claims it first.
         const now = new Date().toISOString();
-        const [claimed] = await storage.webhookDeliveries.getPending(now, 1);
+        const [claimed] = await storage.outboundWebhookDeliveries.getPending(
+          now,
+          1,
+        );
         expect(claimed).toBeDefined();
 
         // Direct path arrives after — must see the bumped next_attempt_at
         // and back off.
-        const result = await storage.webhookDeliveries.claimById(
+        const result = await storage.outboundWebhookDeliveries.claimById(
           claimed!.id,
           new Date(Date.now() + 60_000).toISOString(),
           now,

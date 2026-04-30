@@ -300,7 +300,7 @@ export function webhookRoutes(storage: Storage) {
       }
     }
 
-    const webhook = await storage.webhooks.create(
+    const webhook = await storage.outboundWebhooks.create(
       {
         url: body.url,
         events: body.events,
@@ -323,7 +323,7 @@ export function webhookRoutes(storage: Storage) {
   // GET /webhooks — list all webhooks
   router.openapi(listWebhooksRoute, async (c) => {
     const key = requireAdmin(c);
-    const webhooks = await storage.webhooks.list(key.tenant_id);
+    const webhooks = await storage.outboundWebhooks.list(key.tenant_id);
     return c.json(
       {
         webhooks: webhooks.map((w) => ({
@@ -339,7 +339,7 @@ export function webhookRoutes(storage: Storage) {
   router.openapi(getWebhookRoute, async (c) => {
     const key = requireAdmin(c);
     const { id } = c.req.valid("param");
-    const webhook = await storage.webhooks.get(id, key.tenant_id);
+    const webhook = await storage.outboundWebhooks.get(id, key.tenant_id);
     if (!webhook) {
       throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
@@ -352,7 +352,7 @@ export function webhookRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
-    const existing = await storage.webhooks.get(id, key.tenant_id);
+    const existing = await storage.outboundWebhooks.get(id, key.tenant_id);
     if (!existing) {
       throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
@@ -381,7 +381,7 @@ export function webhookRoutes(storage: Storage) {
       }
     }
 
-    const updated = await storage.webhooks.update(id, {
+    const updated = await storage.outboundWebhooks.update(id, {
       url: body.url,
       events: body.events,
       type_filter: body.type_filter,
@@ -402,12 +402,12 @@ export function webhookRoutes(storage: Storage) {
     const key = requireAdmin(c);
     const { id } = c.req.valid("param");
 
-    const existing = await storage.webhooks.get(id, key.tenant_id);
+    const existing = await storage.outboundWebhooks.get(id, key.tenant_id);
     if (!existing) {
       throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
 
-    await storage.webhooks.delete(id);
+    await storage.outboundWebhooks.delete(id);
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
       action: "webhook.delete",
@@ -423,12 +423,12 @@ export function webhookRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
     const { limit } = c.req.valid("query");
 
-    const existing = await storage.webhooks.get(id, key.tenant_id);
+    const existing = await storage.outboundWebhooks.get(id, key.tenant_id);
     if (!existing) {
       throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
 
-    const deliveries = await storage.webhookDeliveries.list(id, limit);
+    const deliveries = await storage.outboundWebhookDeliveries.list(id, limit);
     return c.json({ deliveries }, 200);
   });
 

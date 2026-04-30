@@ -700,8 +700,8 @@ export interface Storage {
   edges: EdgeStore;
   edgeTypes: EdgeTypeStore;
   oauth: OAuthStore;
-  webhooks: WebhookStore;
-  webhookDeliveries: WebhookDeliveryStore;
+  outboundWebhooks: WebhookStore;
+  outboundWebhookDeliveries: WebhookDeliveryStore;
   audit: AuditStore;
   eventLog: EventLogStore;
   settings: SettingsStore;

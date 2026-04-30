@@ -86,7 +86,7 @@ export function metricsRoutes(storage: Storage) {
         storage.items.stats(tenantId),
         storage.blobs.count(),
         storage.keys.count(),
-        storage.webhooks.count(),
+        storage.outboundWebhooks.count(),
         storage.types.countCustom(),
       ]);
 

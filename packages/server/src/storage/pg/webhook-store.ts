@@ -8,10 +8,10 @@ import type {
 } from "@mymehq/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type { WebhookStore } from "../interface.js";
-import { webhooks } from "./schema.js";
+import { outboundWebhooks } from "./schema.js";
 import type { PgDb } from "./connection.js";
 
-function rowToWebhook(row: typeof webhooks.$inferSelect): Webhook {
+function rowToWebhook(row: typeof outboundWebhooks.$inferSelect): Webhook {
   return {
     id: row.id,
     tenant_id: row.tenant_id ?? undefined,
@@ -41,7 +41,7 @@ export class PgWebhookStore implements WebhookStore {
       created_at: now,
       updated_at: now,
     };
-    await this.db.insert(webhooks).values(row);
+    await this.db.insert(outboundWebhooks).values(row);
     return rowToWebhook(row);
   }
 
@@ -50,20 +50,20 @@ export class PgWebhookStore implements WebhookStore {
       tenantId !== undefined
         ? await this.db
             .select()
-            .from(webhooks)
-            .where(eq(webhooks.tenant_id, tenantId))
-        : await this.db.select().from(webhooks);
+            .from(outboundWebhooks)
+            .where(eq(outboundWebhooks.tenant_id, tenantId))
+        : await this.db.select().from(outboundWebhooks);
     return rows.map(rowToWebhook);
   }
 
   async get(id: string, tenantId?: string): Promise<Webhook | null> {
-    const conditions = [eq(webhooks.id, id)];
+    const conditions = [eq(outboundWebhooks.id, id)];
     if (tenantId !== undefined) {
-      conditions.push(eq(webhooks.tenant_id, tenantId));
+      conditions.push(eq(outboundWebhooks.tenant_id, tenantId));
     }
     const [row] = await this.db
       .select()
-      .from(webhooks)
+      .from(outboundWebhooks)
       .where(and(...conditions));
     return row ? rowToWebhook(row) : null;
   }
@@ -78,12 +78,15 @@ export class PgWebhookStore implements WebhookStore {
       updates.type_filter = input.type_filter ?? null;
     if (input.active !== undefined) updates.active = input.active ? 1 : 0;
 
-    await this.db.update(webhooks).set(updates).where(eq(webhooks.id, id));
+    await this.db
+      .update(outboundWebhooks)
+      .set(updates)
+      .where(eq(outboundWebhooks.id, id));
 
     const [row] = await this.db
       .select()
-      .from(webhooks)
-      .where(eq(webhooks.id, id));
+      .from(outboundWebhooks)
+      .where(eq(outboundWebhooks.id, id));
     if (!row) {
       throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
@@ -91,21 +94,21 @@ export class PgWebhookStore implements WebhookStore {
   }
 
   async delete(id: string): Promise<void> {
-    await this.db.delete(webhooks).where(eq(webhooks.id, id));
+    await this.db.delete(outboundWebhooks).where(eq(outboundWebhooks.id, id));
   }
 
   async listActive(): Promise<Webhook[]> {
     const rows = await this.db
       .select()
-      .from(webhooks)
-      .where(eq(webhooks.active, 1));
+      .from(outboundWebhooks)
+      .where(eq(outboundWebhooks.active, 1));
     return rows.map(rowToWebhook);
   }
 
   async count(): Promise<number> {
     const [row] = await this.db
       .select({ count: sql<number>`count(*)::int` })
-      .from(webhooks);
+      .from(outboundWebhooks);
     return row?.count ?? 0;
   }
 }
