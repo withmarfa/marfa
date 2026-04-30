@@ -6,11 +6,11 @@ import type {
   WebhookDeliveryStore,
 } from "../interface.js";
 import { CLAIM_LOCK_TTL_MS } from "../../webhooks/delivery.js";
-import { webhookDeliveries } from "./schema.js";
+import { outboundWebhookDeliveries } from "./schema.js";
 import type { PgDb } from "./connection.js";
 
 function rowToDelivery(
-  row: typeof webhookDeliveries.$inferSelect,
+  row: typeof outboundWebhookDeliveries.$inferSelect,
 ): WebhookDelivery {
   return {
     id: row.id,
@@ -35,7 +35,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
     success: boolean;
     error?: string;
   }): Promise<void> {
-    await this.db.insert(webhookDeliveries).values({
+    await this.db.insert(outboundWebhookDeliveries).values({
       id: generateId(),
       webhook_id: entry.webhookId,
       event: entry.event,
@@ -50,9 +50,9 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
   async list(webhookId: string, limit = 50): Promise<WebhookDelivery[]> {
     const rows = await this.db
       .select()
-      .from(webhookDeliveries)
-      .where(eq(webhookDeliveries.webhook_id, webhookId))
-      .orderBy(desc(webhookDeliveries.created_at))
+      .from(outboundWebhookDeliveries)
+      .where(eq(outboundWebhookDeliveries.webhook_id, webhookId))
+      .orderBy(desc(outboundWebhookDeliveries.created_at))
       .limit(limit);
     return rows.map(rowToDelivery);
   }
@@ -66,7 +66,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
     nextAttemptAt: string;
   }): Promise<string> {
     const id = generateId();
-    await this.db.insert(webhookDeliveries).values({
+    await this.db.insert(outboundWebhookDeliveries).values({
       id,
       webhook_id: entry.webhookId,
       event: entry.event,
@@ -99,10 +99,10 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
   async getPending(now: string, limit = 50): Promise<PendingWebhookDelivery[]> {
     const claimExpiry = new Date(Date.now() + CLAIM_LOCK_TTL_MS).toISOString();
     const result = await this.db.execute(sql`
-      UPDATE webhook_deliveries
+      UPDATE outbound_webhook_deliveries
       SET next_attempt_at = ${claimExpiry}
       WHERE id IN (
-        SELECT id FROM webhook_deliveries
+        SELECT id FROM outbound_webhook_deliveries
         WHERE status = 'pending' AND next_attempt_at <= ${now}
         ORDER BY next_attempt_at
         FOR UPDATE SKIP LOCKED
@@ -149,7 +149,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
     now: string,
   ): Promise<PendingWebhookDelivery | null> {
     const result = await this.db.execute(sql`
-      UPDATE webhook_deliveries
+      UPDATE outbound_webhook_deliveries
       SET next_attempt_at = ${claimExpiry}
       WHERE id = ${id}
         AND status = 'pending'
@@ -186,14 +186,14 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
     attempt: number,
   ): Promise<void> {
     await this.db
-      .update(webhookDeliveries)
+      .update(outboundWebhookDeliveries)
       .set({
         status: "success",
         success: 1,
         status_code: statusCode,
         attempt,
       })
-      .where(eq(webhookDeliveries.id, id));
+      .where(eq(outboundWebhookDeliveries.id, id));
   }
 
   async markFailed(
@@ -204,7 +204,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
     nextAttemptAt: string | null,
   ): Promise<void> {
     await this.db
-      .update(webhookDeliveries)
+      .update(outboundWebhookDeliveries)
       .set({
         status_code: statusCode ?? null,
         error,
@@ -212,13 +212,13 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
         next_attempt_at: nextAttemptAt,
         status: nextAttemptAt === null ? "dead_letter" : "pending",
       })
-      .where(eq(webhookDeliveries.id, id));
+      .where(eq(outboundWebhookDeliveries.id, id));
   }
 
   async markDeadLetter(id: string): Promise<void> {
     await this.db
-      .update(webhookDeliveries)
+      .update(outboundWebhookDeliveries)
       .set({ status: "dead_letter" })
-      .where(eq(webhookDeliveries.id, id));
+      .where(eq(outboundWebhookDeliveries.id, id));
   }
 }

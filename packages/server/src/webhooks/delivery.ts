@@ -65,7 +65,7 @@ const POLLER_TIMEOUT_MS = 10_000;
 const DIRECT_DISPATCH_TIMEOUT_MS = 5_000;
 
 /**
- * How long a claimed `webhook_deliveries` row is hidden from the
+ * How long a claimed `outbound_webhook_deliveries` row is hidden from the
  * eligibility window. Set generously so a single instance's full HTTP
  * attempt (≤ 10s poller timeout) finishes and writes its outcome before
  * the row becomes visible again; short enough that a crashed worker

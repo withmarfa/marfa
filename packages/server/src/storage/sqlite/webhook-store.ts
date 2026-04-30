@@ -8,10 +8,10 @@ import type {
 } from "@mymehq/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type { WebhookStore } from "../interface.js";
-import { webhooks } from "./schema.js";
+import { outboundWebhooks } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
-function rowToWebhook(row: typeof webhooks.$inferSelect): Webhook {
+function rowToWebhook(row: typeof outboundWebhooks.$inferSelect): Webhook {
   return {
     id: row.id,
     tenant_id: row.tenant_id ?? undefined,
@@ -41,7 +41,7 @@ export class SqliteWebhookStore implements WebhookStore {
       created_at: now,
       updated_at: now,
     };
-    this.db.insert(webhooks).values(row).run();
+    this.db.insert(outboundWebhooks).values(row).run();
     return Promise.resolve(rowToWebhook(row));
   }
 
@@ -50,21 +50,21 @@ export class SqliteWebhookStore implements WebhookStore {
       tenantId !== undefined
         ? this.db
             .select()
-            .from(webhooks)
-            .where(eq(webhooks.tenant_id, tenantId))
+            .from(outboundWebhooks)
+            .where(eq(outboundWebhooks.tenant_id, tenantId))
             .all()
-        : this.db.select().from(webhooks).all();
+        : this.db.select().from(outboundWebhooks).all();
     return Promise.resolve(rows.map(rowToWebhook));
   }
 
   get(id: string, tenantId?: string): Promise<Webhook | null> {
-    const conditions = [eq(webhooks.id, id)];
+    const conditions = [eq(outboundWebhooks.id, id)];
     if (tenantId !== undefined) {
-      conditions.push(eq(webhooks.tenant_id, tenantId));
+      conditions.push(eq(outboundWebhooks.tenant_id, tenantId));
     }
     const row = this.db
       .select()
-      .from(webhooks)
+      .from(outboundWebhooks)
       .where(and(...conditions))
       .get();
     return Promise.resolve(row ? rowToWebhook(row) : null);
@@ -80,12 +80,16 @@ export class SqliteWebhookStore implements WebhookStore {
       updates.type_filter = input.type_filter ?? null;
     if (input.active !== undefined) updates.active = input.active ? 1 : 0;
 
-    this.db.update(webhooks).set(updates).where(eq(webhooks.id, id)).run();
+    this.db
+      .update(outboundWebhooks)
+      .set(updates)
+      .where(eq(outboundWebhooks.id, id))
+      .run();
 
     const row = this.db
       .select()
-      .from(webhooks)
-      .where(eq(webhooks.id, id))
+      .from(outboundWebhooks)
+      .where(eq(outboundWebhooks.id, id))
       .get();
     if (!row) {
       throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
@@ -94,15 +98,15 @@ export class SqliteWebhookStore implements WebhookStore {
   }
 
   delete(id: string): Promise<void> {
-    this.db.delete(webhooks).where(eq(webhooks.id, id)).run();
+    this.db.delete(outboundWebhooks).where(eq(outboundWebhooks.id, id)).run();
     return Promise.resolve();
   }
 
   listActive(): Promise<Webhook[]> {
     const rows = this.db
       .select()
-      .from(webhooks)
-      .where(eq(webhooks.active, 1))
+      .from(outboundWebhooks)
+      .where(eq(outboundWebhooks.active, 1))
       .all();
     return Promise.resolve(rows.map(rowToWebhook));
   }
@@ -110,7 +114,7 @@ export class SqliteWebhookStore implements WebhookStore {
   count(): Promise<number> {
     const row = this.db
       .select({ count: sql<number>`count(*)` })
-      .from(webhooks)
+      .from(outboundWebhooks)
       .get();
     return Promise.resolve(row?.count ?? 0);
   }

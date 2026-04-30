@@ -249,10 +249,10 @@ export const customEdgeTypes = pgTable("custom_edge_types", {
 });
 
 // ---------------------------------------------------------------------------
-// webhooks
+// outbound_webhooks
 // ---------------------------------------------------------------------------
 
-export const webhooks = pgTable("webhooks", {
+export const outboundWebhooks = pgTable("outbound_webhooks", {
   id: text("id").primaryKey(),
   tenant_id: text("tenant_id"),
   url: text("url").notNull(),
@@ -265,11 +265,11 @@ export const webhooks = pgTable("webhooks", {
 });
 
 // ---------------------------------------------------------------------------
-// webhook_deliveries
+// outbound_webhook_deliveries
 // ---------------------------------------------------------------------------
 
-export const webhookDeliveries = pgTable(
-  "webhook_deliveries",
+export const outboundWebhookDeliveries = pgTable(
+  "outbound_webhook_deliveries",
   {
     id: text("id").primaryKey(),
     webhook_id: text("webhook_id").notNull(),
@@ -286,7 +286,9 @@ export const webhookDeliveries = pgTable(
     max_attempts: integer("max_attempts").notNull().default(4),
     status: text("status").notNull().default("pending"),
   },
-  (table) => [index("idx_webhook_deliveries_webhook_id").on(table.webhook_id)],
+  (table) => [
+    index("idx_outbound_webhook_deliveries_webhook_id").on(table.webhook_id),
+  ],
 );
 
 export const oauthCodes = pgTable("oauth_codes", {

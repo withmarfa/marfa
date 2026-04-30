@@ -200,7 +200,7 @@ export function createConnection(sqlitePath: string): {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS webhooks (
+    CREATE TABLE IF NOT EXISTS outbound_webhooks (
       id TEXT PRIMARY KEY,
       tenant_id TEXT,
       url TEXT NOT NULL,
@@ -212,7 +212,7 @@ export function createConnection(sqlitePath: string): {
       updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
       id TEXT PRIMARY KEY,
       webhook_id TEXT NOT NULL,
       event TEXT NOT NULL,
@@ -228,9 +228,9 @@ export function createConnection(sqlitePath: string): {
       max_attempts INTEGER NOT NULL DEFAULT 4,
       status TEXT NOT NULL DEFAULT 'pending'
     );
-    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
-    CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending
-      ON webhook_deliveries(next_attempt_at) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS idx_outbound_webhook_deliveries_webhook_id ON outbound_webhook_deliveries(webhook_id);
+    CREATE INDEX IF NOT EXISTS idx_outbound_webhook_deliveries_pending
+      ON outbound_webhook_deliveries(next_attempt_at) WHERE status = 'pending';
 
     CREATE TABLE IF NOT EXISTS audit_log (
       id TEXT PRIMARY KEY,
