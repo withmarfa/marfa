@@ -162,6 +162,13 @@
       "when": 1778120000000,
       "tag": "0022_better_auth_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1778150000000,
+      "tag": "0023_passkey_table",
+      "breakpoints": true
     }
   ]
 }

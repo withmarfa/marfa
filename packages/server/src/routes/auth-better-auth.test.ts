@@ -138,6 +138,47 @@ describe("better-auth /auth/* surface", () => {
     expect(body?.user?.email).toBe("frank@example.com");
   });
 
+  it("magic-link request creates a verification token (default log transport)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    // First sign up so the user exists.
+    await signUp(ctx, "grace@example.com", "correct horse battery");
+    const res = await request(ctx.app, "POST", "/auth/sign-in/magic-link", {
+      body: {
+        email: "grace@example.com",
+        callbackURL: "http://localhost:0/callback",
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status?: boolean };
+    expect(body.status).toBe(true);
+  });
+
+  it("exposes passkey registration challenge under /auth/passkey/*", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const signUpRes = await signUp(
+      ctx,
+      "henry@example.com",
+      "correct horse battery",
+    );
+    const cookie = signUpRes.headers.get("set-cookie")?.split(";")[0];
+
+    // Generating a registration challenge is a GET requiring a fresh session.
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/auth/passkey/generate-register-options",
+      {
+        headers: cookie
+          ? { origin: ORIGIN, cookie }
+          : { origin: ORIGIN },
+      },
+    );
+    // Either a 200 with challenge or a 4xx — we just verify the route is
+    // mounted (not a 404 falling through to a different handler).
+    expect(res.status).not.toBe(404);
+  });
+
   it("does NOT shadow the existing /auth/clients route", async () => {
     // Existing oauth client management lives at /auth/clients (admin-only).
     // The better-auth catch-all is registered AFTER it, so explicit routes

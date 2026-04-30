@@ -453,3 +453,27 @@ export const auth_verification = sqliteTable(
   },
   (table) => [index("idx_auth_verification_identifier").on(table.identifier)],
 );
+
+// Passkey credentials (one per registered authenticator).
+export const auth_passkey = sqliteTable(
+  "auth_passkey",
+  {
+    id: text("id").primaryKey(),
+    name: text("name"),
+    publicKey: text("public_key").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => auth_user.id, { onDelete: "cascade" }),
+    credentialID: text("credential_id").notNull(),
+    counter: integer("counter").notNull(),
+    deviceType: text("device_type").notNull(),
+    backedUp: integer("backed_up", { mode: "boolean" }).notNull(),
+    transports: text("transports"),
+    createdAt: integer("created_at", { mode: "timestamp" }),
+    aaguid: text("aaguid"),
+  },
+  (table) => [
+    index("idx_auth_passkey_user_id").on(table.userId),
+    index("idx_auth_passkey_credential_id").on(table.credentialID),
+  ],
+);

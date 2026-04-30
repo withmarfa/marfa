@@ -1,7 +1,10 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { magicLink } from "better-auth/plugins";
+import { passkey } from "@better-auth/passkey";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import * as pgSchema from "../storage/pg/schema.js";
+import { log } from "../middleware/logger.js";
 
 /**
  * Constructs the better-auth instance. Plug into the storage factories'
@@ -9,11 +12,17 @@ import * as pgSchema from "../storage/pg/schema.js";
  * to mount the catch-all handler under `/auth/*`.
  *
  * Sign-in methods land in PR-sized chunks per the workstream-1 plan:
- *   PR 1 — email + password (this file)
- *   PR 2 — passkey + magic link
+ *   PR 1 — email + password
+ *   PR 2 — passkey + magic link (this addition)
  *   PR 3 — generic OIDC client (federated)
  *   PR 5 — OIDC provider (Myme as IdP)
  */
+
+export type EmailTransport = (params: {
+  email: string;
+  url: string;
+  token: string;
+}) => void | Promise<void>;
 
 export interface MymeAuthOptions {
   /** Drizzle handle from the storage factory. Typed as unknown because
@@ -37,9 +46,35 @@ export interface MymeAuthOptions {
    *  the auth surface. Defaults to the `baseURL` plus any `corsOrigins`
    *  from `AppConfig`. */
   trustedOrigins?: string[];
+  /** Relying-party name shown to the user during passkey registration.
+   *  Defaults to "Myme". */
+  passkeyRpName?: string;
+  /** Relying-party ID for passkey registration — typically the bare host
+   *  of `baseURL`. When unset, derived from `baseURL`. */
+  passkeyRpId?: string;
+  /** Sink for magic-link emails. Defaults to a `log` transport that
+   *  writes the link to stdout — fine for dev. Production must wire
+   *  an SMTP / Resend / Mailgun transport. */
+  emailTransport?: EmailTransport;
 }
 
-export function createMymeAuth(options: MymeAuthOptions) {
+const defaultLogTransport: EmailTransport = ({ email, url }) => {
+  log("info", "magic-link email (log transport)", {
+    to: email,
+    url,
+    note: "configure MYME_EMAIL_TRANSPORT for live delivery",
+  });
+};
+
+/** Narrow public type — covers everything `app.ts` and future routes need
+ *  without re-exporting the full Better Auth generic surface (which drags
+ *  in @simplewebauthn / zod internal types and breaks portable .d.ts emit). */
+export interface MymeAuth {
+  handler: (request: Request) => Promise<Response>;
+  api: unknown;
+}
+
+export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
   const schema =
     options.dialect === "pg"
       ? {
@@ -47,13 +82,26 @@ export function createMymeAuth(options: MymeAuthOptions) {
           session: pgSchema.auth_session,
           account: pgSchema.auth_account,
           verification: pgSchema.auth_verification,
+          passkey: pgSchema.auth_passkey,
         }
       : {
           user: sqliteSchema.auth_user,
           session: sqliteSchema.auth_session,
           account: sqliteSchema.auth_account,
           verification: sqliteSchema.auth_verification,
+          passkey: sqliteSchema.auth_passkey,
         };
+
+  const transport = options.emailTransport ?? defaultLogTransport;
+
+  let derivedRpId = options.passkeyRpId;
+  if (!derivedRpId) {
+    try {
+      derivedRpId = new URL(options.baseURL).hostname;
+    } catch {
+      derivedRpId = "localhost";
+    }
+  }
 
   return betterAuth({
     baseURL: options.baseURL,
@@ -62,7 +110,6 @@ export function createMymeAuth(options: MymeAuthOptions) {
     trustedOrigins: options.trustedOrigins,
     database: drizzleAdapter(options.db as never, {
       provider: options.dialect === "pg" ? "pg" : "sqlite",
-      // Use our explicit schema mapping rather than usePlural.
       schema,
     }),
     emailAndPassword: {
@@ -74,6 +121,19 @@ export function createMymeAuth(options: MymeAuthOptions) {
       // `MYME_AUTH_ALLOW_SIGNUP` env var is set.
       disableSignUp: !options.allowSignup,
     },
+    plugins: [
+      passkey({
+        rpName: options.passkeyRpName ?? "Myme",
+        rpID: derivedRpId,
+        // Trust the same origins as cookie-credentialed requests.
+        origin: options.baseURL,
+      }),
+      magicLink({
+        sendMagicLink: async ({ email, url, token }) => {
+          await transport({ email, url, token });
+        },
+      }),
+    ],
     advanced: {
       // Cookies set on /auth/*; the data plane (/items, /edges, etc.)
       // remains bearer-only and does not consume this cookie.

@@ -321,6 +321,22 @@ export function createConnection(sqlitePath: string): {
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_auth_verification_identifier ON auth_verification(identifier);
+
+    CREATE TABLE IF NOT EXISTS auth_passkey (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      public_key TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
+      credential_id TEXT NOT NULL,
+      counter INTEGER NOT NULL,
+      device_type TEXT NOT NULL,
+      backed_up INTEGER NOT NULL,
+      transports TEXT,
+      created_at INTEGER,
+      aaguid TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_passkey_user_id ON auth_passkey(user_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_passkey_credential_id ON auth_passkey(credential_id);
   `);
 
   // Schema source of truth is the Drizzle migrations under drizzle/sqlite/.

@@ -283,6 +283,22 @@ CREATE TABLE IF NOT EXISTS auth_verification (
   updated_at TIMESTAMP NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_auth_verification_identifier ON auth_verification(identifier);
+
+CREATE TABLE IF NOT EXISTS auth_passkey (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  public_key TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
+  credential_id TEXT NOT NULL,
+  counter INTEGER NOT NULL,
+  device_type TEXT NOT NULL,
+  backed_up BOOLEAN NOT NULL,
+  transports TEXT,
+  created_at TIMESTAMP,
+  aaguid TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auth_passkey_user_id ON auth_passkey(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_passkey_credential_id ON auth_passkey(credential_id);
 `;
 
 export async function createConnection(connectionString: string): Promise<{
