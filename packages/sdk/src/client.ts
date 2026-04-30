@@ -43,9 +43,23 @@ import {
 // Config and option types
 // ---------------------------------------------------------------------------
 
-export interface ClientConfig {
+/** Minimal token provider shape — full interface lives in
+ *  @mymehq/sdk/auth. Kept loose here so the data root doesn't depend
+ *  on the auth subpath. */
+interface TokenProviderLike {
+  getAccessToken(): Promise<string>;
+}
+
+/**
+ * Credentials are mutually exclusive at the type level: pass either a
+ * static API key (myme_k1_*) or an OAuth token provider (myme_at_*).
+ */
+export type ClientCredential =
+  | { apiKey: string; tokenProvider?: never }
+  | { tokenProvider: TokenProviderLike; apiKey?: never };
+
+export type ClientConfig = ClientCredential & {
   url: string;
-  apiKey: string;
   fetch?: typeof globalThis.fetch;
   /**
    * Default conflict resolution strategy for all updates.
@@ -63,7 +77,7 @@ export interface ClientConfig {
   onConflictAutoMerge?: ConflictAutoMergeListener;
   timeoutMs?: number;
   cdnBaseUrl?: string;
-}
+};
 
 export interface UpdateOptions {
   /**
@@ -354,6 +368,7 @@ export class MymeClient {
     this.transport = new HttpTransport({
       baseUrl: config.url,
       apiKey: config.apiKey,
+      tokenProvider: config.tokenProvider,
       fetch: config.fetch,
       timeoutMs: config.timeoutMs,
     });

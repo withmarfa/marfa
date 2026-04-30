@@ -7,9 +7,20 @@ import {
   ForbiddenError,
 } from "./errors.js";
 
+/** Minimal TokenProvider shape — keeps this transport file independent
+ *  of the @mymehq/sdk/auth subpath so the data root doesn't drag the
+ *  auth bundle into headless consumers. */
+interface TokenProviderLike {
+  getAccessToken(): Promise<string>;
+}
+
 export interface TransportConfig {
   baseUrl: string;
-  apiKey: string;
+  /** Static API key (myme_k1_*). Mutually exclusive with `tokenProvider`. */
+  apiKey?: string;
+  /** OAuth token provider (myme_at_* with refresh-on-401 retry).
+   *  Mutually exclusive with `apiKey`. */
+  tokenProvider?: TokenProviderLike;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
 }
@@ -18,15 +29,37 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 
 export class HttpTransport {
   private readonly baseUrl: string;
-  private readonly apiKey: string;
+  private readonly apiKey: string | undefined;
+  private readonly tokenProvider: TokenProviderLike | undefined;
   private readonly fetch: typeof globalThis.fetch;
   private readonly timeoutMs: number;
 
   constructor(config: TransportConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
     this.apiKey = config.apiKey;
+    this.tokenProvider = config.tokenProvider;
+    if (!this.apiKey && !this.tokenProvider) {
+      throw new Error(
+        "MymeClient requires either { apiKey } or { tokenProvider }",
+      );
+    }
     this.fetch = config.fetch ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  /** Resolves the current Authorization header value. For tokenProvider
+   *  callers this may trigger a proactive refresh under the hood. */
+  private async getAuthHeader(): Promise<string> {
+    if (this.apiKey) return `Bearer ${this.apiKey}`;
+    if (!this.tokenProvider) {
+      throw new MymeError(
+        "configuration_error",
+        "MymeClient has no apiKey or tokenProvider — this should be unreachable",
+        0,
+      );
+    }
+    const token = await this.tokenProvider.getAccessToken();
+    return `Bearer ${token}`;
   }
 
   async request<T>(
@@ -97,7 +130,7 @@ export class HttpTransport {
   ): Promise<Response> {
     const url = this.buildUrl(path, options?.query);
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.apiKey}`,
+      Authorization: await this.getAuthHeader(),
       ...options?.headers,
     };
 
