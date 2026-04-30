@@ -76,11 +76,32 @@ const defaultLogTransport: EmailTransport = ({ email, url }) => {
   });
 };
 
+/** Authenticated user on a Better Auth session. Reduced surface — only the
+ *  fields the OAuth consent flow currently consumes. */
+export interface MymeAuthSessionUser {
+  id: string;
+  email: string;
+  name?: string | null;
+}
+
+/** A live Better Auth session (cookie-backed). */
+export interface MymeAuthSession {
+  user: MymeAuthSessionUser;
+  session: { id: string };
+}
+
 /** Narrow public type — covers everything `app.ts` and future routes need
  *  without re-exporting the full Better Auth generic surface (which drags
  *  in @simplewebauthn / zod internal types and breaks portable .d.ts emit). */
 export interface MymeAuth {
   handler: (request: Request) => Promise<Response>;
+  /**
+   * Session lookup over the request's cookies. Returns the active
+   * Better Auth session, or `null` if no valid cookie is present. The
+   * OAuth consent flow uses this to gate `/auth/authorize` without
+   * requiring admin bearer tokens.
+   */
+  getSession: (headers: Headers) => Promise<MymeAuthSession | null>;
   api: unknown;
 }
 
@@ -113,7 +134,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
     }
   }
 
-  return betterAuth({
+  const instance = betterAuth({
     baseURL: options.baseURL,
     basePath: "/auth",
     secret: options.secret,
@@ -164,4 +185,20 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
       },
     },
   });
+
+  // Wrap better-auth's session-lookup API behind a narrow promise.
+  // `getSession` resolves to `null` when no valid cookie is present —
+  // either no cookie at all, or a cookie whose session has expired or
+  // been signed out. Errors propagate (e.g. a malformed JWT throws).
+  const api = instance.api as {
+    getSession: (params: {
+      headers: Headers;
+    }) => Promise<MymeAuthSession | null>;
+  };
+
+  return {
+    handler: instance.handler,
+    api: instance.api,
+    getSession: (headers: Headers) => api.getSession({ headers }),
+  };
 }

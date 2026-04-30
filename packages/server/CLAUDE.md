@@ -32,7 +32,7 @@ The OpenAPI spec is generated from `createRoute` definitions — never hand-edit
 
 Most write routes follow the same gate sequence:
 
-1. Resolve auth (`requireAuth(c)` or `requireAdmin(c)`).
+1. Resolve auth (`requireAuth(c)`, `requireAdmin(c)`, or — for metadata-layer mutations — `requireMetadataPermission(c, subresource, level)` which admits admin + scope-bearing credentials).
 2. Validate body shape (Zod via `createRoute`).
 3. Check type permissions (`requireTypeAccess(c, type, "write")`).
 4. Resolve enforcement levers (TSC42 §5): tenant config + per-credential override → effective `EnforcementSettings`.

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import type { Context } from "hono";
 import { Hono } from "hono";
 import {
   MymeError,
@@ -10,6 +11,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, requireAuth, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import type { MymeAuth } from "../auth/instance.js";
 import { renderConsentScreen } from "./consent.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 
@@ -17,6 +19,16 @@ const ACCESS_TOKEN_PREFIX = "myme_at_";
 const REFRESH_TOKEN_PREFIX = "myme_rt_";
 const ACCESS_TOKEN_TTL_MS = 3600_000; // 1 hour
 const CODE_TTL_MS = 600_000; // 10 minutes
+
+/**
+ * Plain-English descriptions for the metadata-layer sub-resource scopes.
+ * Type scopes pull their descriptions from `TYPE_REGISTRY`; these don't
+ * correspond to a registered type, so they live alongside the route.
+ */
+const METADATA_SCOPE_DESCRIPTIONS: Record<string, string> = {
+  metadata: "Read or write any metadata-layer resource",
+  "metadata.types": "Register and update custom data types in your workspace",
+};
 
 function generateToken(prefix: string): string {
   return `${prefix}${randomBytes(32).toString("hex")}`;
@@ -26,9 +38,46 @@ function sha256(input: string): string {
   return createHash("sha256").update(input).digest("base64url");
 }
 
-export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
+export function authRoutes(
+  storage: Storage,
+  salt: string,
+  auth?: MymeAuth,
+): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
   const knownTypes = Array.from(TYPE_REGISTRY.keys());
+
+  /**
+   * Gate `/auth/authorize` on a Better Auth cookie session. End users
+   * (not just admins) must be signed in before the consent screen
+   * renders or processes a decision. Unauthenticated requests are
+   * redirected to `/auth/sign-in` with the original URL preserved as
+   * `return_to` so the sign-in flow can pick up where the OAuth flow
+   * left off.
+   *
+   * Returns the active session on success; the caller responds to a
+   * `null` return by issuing the redirect (no further work to do).
+   */
+  async function requireConsentSession(
+    c: Context<AppEnv>,
+  ): Promise<{ kind: "session"; session: NonNullable<unknown> } | Response> {
+    if (!auth) {
+      // Better-auth isn't mounted on this instance. Without an identity
+      // layer the consent screen can't authenticate a user — refuse
+      // outright rather than silently accept.
+      throw new MymeError(
+        ErrorCode.UNAUTHORIZED,
+        "Consent flow requires the better-auth identity layer to be configured",
+      );
+    }
+    const session = await auth.getSession(c.req.raw.headers);
+    if (session) {
+      return { kind: "session", session };
+    }
+    const url = new URL(c.req.url);
+    const returnTo = `${url.pathname}${url.search}`;
+    const signInPath = `/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`;
+    return c.redirect(signInPath, 302);
+  }
 
   // -----------------------------------------------------------------------
   // Client registration
@@ -61,7 +110,8 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
   // -----------------------------------------------------------------------
 
   router.get("/authorize", async (c) => {
-    requireAdmin(c);
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
 
     const clientId = c.req.query("client_id");
     const responseType = c.req.query("response_type");
@@ -113,6 +163,25 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       );
     }
 
+    // Build the plain-English description map. Type scopes look up
+    // the type registry's `description` field; metadata sub-resources
+    // (`metadata.types`, future entries) carry their own canonical
+    // strings — they're not items in TYPE_REGISTRY. Missing entries
+    // fall back to the literal scope at render time.
+    const descriptions: Record<string, string> = {};
+    for (const scope of parsed) {
+      if (descriptions[scope.typePattern] !== undefined) continue;
+      if (scope.kind === "metadata") {
+        const desc = METADATA_SCOPE_DESCRIPTIONS[scope.typePattern];
+        if (desc) descriptions[scope.typePattern] = desc;
+        continue;
+      }
+      const schema = TYPE_REGISTRY.get(scope.typePattern);
+      if (schema?.description) {
+        descriptions[scope.typePattern] = schema.description;
+      }
+    }
+
     // Render consent screen
     const html = renderConsentScreen({
       clientName: client.name,
@@ -123,13 +192,15 @@ export function authRoutes(storage: Storage, salt: string): Hono<AppEnv> {
       codeChallengeMethod: codeChallengeMethod ?? "S256",
       state,
       responseType,
+      descriptions,
     });
 
     return c.html(html);
   });
 
   router.post("/authorize", async (c) => {
-    requireAdmin(c);
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
 
     const formData = await c.req.parseBody();
     const action = formData.action as string;

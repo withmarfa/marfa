@@ -7,6 +7,7 @@ import { authMiddleware } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
+import type { MymeAuth } from "./auth/instance.js";
 import { createMymeAuth } from "./auth/instance.js";
 import { itemRoutes } from "./routes/items.js";
 import { bulkRoutes } from "./routes/bulk.js";
@@ -131,6 +132,31 @@ export function createApp(
     );
   }
 
+  // Better Auth setup. Instance is created up front so it can be passed
+  // into authRoutes (the OAuth consent screen consumes its cookie-based
+  // getSession to gate `/auth/authorize`). The catch-all `/auth/*` mount
+  // is registered AFTER the explicit /auth routes so explicit handlers
+  // win for `/auth/clients`, `/auth/authorize`, `/auth/token`, etc.
+  const storageWithDb = storage as Storage & {
+    __betterAuthDb?: unknown;
+    __betterAuthDialect?: "sqlite" | "pg";
+  };
+  let auth: MymeAuth | undefined;
+  if (storageWithDb.__betterAuthDb && storageWithDb.__betterAuthDialect) {
+    const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
+      Boolean,
+    );
+    auth = createMymeAuth({
+      db: storageWithDb.__betterAuthDb,
+      dialect: storageWithDb.__betterAuthDialect,
+      baseURL: config.authBaseUrl,
+      allowSignup: config.authAllowSignup,
+      secret: config.authSecret || undefined,
+      trustedOrigins,
+      oidcProviders: config.oidcProviders,
+    });
+  }
+
   // Protected routes
   app.route("/items", itemRoutes(storage));
   app.route("/items", bulkRoutes(storage));
@@ -147,34 +173,17 @@ export function createApp(
   app.route("/tenants", tenantRoutes(storage));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   app.route("/export", exportRoutes(storage, blobBackend));
-  app.route("/auth", authRoutes(storage, config.apiKeySalt));
+  app.route("/auth", authRoutes(storage, config.apiKeySalt, auth));
   if (config.authMode === "hosted" && storage.users && storage.tenants) {
     app.route("/auth", userAuthRoutes(storage, config.apiKeySalt));
   }
 
-  // Better Auth catch-all for /auth/* paths not matched by the explicit
-  // routes above (sign-in, sign-up, magic-link, passkey, federated OIDC,
-  // session). Hono dispatches in registration order — explicit routes
-  // win; unmatched paths fall through here. The handler runs against
-  // the Drizzle DB exposed by the storage factory.
-  const storageWithDb = storage as Storage & {
-    __betterAuthDb?: unknown;
-    __betterAuthDialect?: "sqlite" | "pg";
-  };
-  if (storageWithDb.__betterAuthDb && storageWithDb.__betterAuthDialect) {
-    const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
-      Boolean,
-    );
-    const auth = createMymeAuth({
-      db: storageWithDb.__betterAuthDb,
-      dialect: storageWithDb.__betterAuthDialect,
-      baseURL: config.authBaseUrl,
-      allowSignup: config.authAllowSignup,
-      secret: config.authSecret || undefined,
-      trustedOrigins,
-      oidcProviders: config.oidcProviders,
-    });
-    app.on(["POST", "GET"], "/auth/*", (c) => auth.handler(c.req.raw));
+  // Better-auth catch-all for unmatched /auth/* paths (sign-in, sign-up,
+  // magic-link, passkey, federated OIDC, session). Hono dispatches in
+  // registration order — the explicit routes above win.
+  if (auth) {
+    const authInstance = auth;
+    app.on(["POST", "GET"], "/auth/*", (c) => authInstance.handler(c.req.raw));
   }
 
   app.route("/events", eventRoutes(storage));

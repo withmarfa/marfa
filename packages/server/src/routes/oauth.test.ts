@@ -5,9 +5,45 @@ import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
+// Better-auth session cookie for an end-user. The OAuth consent surface
+// gates on this cookie now (previously requireAdmin); admin bearer
+// tokens no longer authenticate `/auth/authorize`.
+let consentCookie: string;
+
+// Origin that better-auth's trustedOrigins check accepts. Must match
+// `authBaseUrl` from createTestContext (defaulted to http://localhost:0).
+const ORIGIN = "http://localhost:0";
 
 beforeAll(async () => {
-  ctx = await createTestContext();
+  ctx = await createTestContext({ authAllowSignup: true });
+
+  // Sign up + sign in a non-admin user; the resulting cookie is reused
+  // across tests that hit /auth/authorize.
+  const signUpRes = await request(ctx.app, "POST", "/auth/sign-up/email", {
+    body: {
+      email: "consent-user@example.com",
+      password: "correct horse battery staple",
+      name: "Consent User",
+    },
+    headers: { origin: ORIGIN },
+  });
+  if (signUpRes.status !== 200) {
+    const text = await signUpRes.text();
+    throw new Error(
+      `OAuth test setup: sign-up failed ${String(signUpRes.status)}: ${text.slice(0, 400)}`,
+    );
+  }
+  const setCookie = signUpRes.headers.get("set-cookie");
+  if (!setCookie) {
+    throw new Error("OAuth test setup: no Set-Cookie on sign-up response");
+  }
+  // First attribute holds `<name>=<value>`; trailing flags (HttpOnly,
+  // SameSite, Secure, Path, Expires) come after the first ';'.
+  const cookieValue = setCookie.split(";")[0];
+  if (!cookieValue) {
+    throw new Error("OAuth test setup: failed to extract cookie value");
+  }
+  consentCookie = cookieValue;
 });
 
 afterAll(() => {
@@ -36,13 +72,14 @@ async function performOAuthFlow(
   const codeVerifier = "test-verifier-that-is-long-enough-for-pkce-validation";
   const codeChallenge = sha256base64url(codeVerifier);
 
-  // Get consent screen
+  // Get consent screen — gated on the better-auth session cookie now,
+  // not an admin bearer token.
   const scopeStr = scopes.join(" ");
   const authorizeRes = await request(
     ctx.app,
     "GET",
     `/auth/authorize?client_id=${client.id}&response_type=code&scope=${encodeURIComponent(scopeStr)}&redirect_uri=${encodeURIComponent("https://example.com/callback")}&code_challenge=${codeChallenge}&code_challenge_method=S256&state=test123`,
-    { key: ctx.adminKey },
+    { headers: { cookie: consentCookie } },
   );
   expect(authorizeRes.status).toBe(200);
 
@@ -66,7 +103,7 @@ async function performOAuthFlow(
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Bearer ${ctx.adminKey}`,
+      cookie: consentCookie,
     },
     body: formBody.toString(),
   });
@@ -151,12 +188,16 @@ describe("OAuth authorization flow", () => {
       ctx.app,
       "GET",
       `/auth/authorize?client_id=${client.id}&response_type=code&scope=core.note:read&redirect_uri=https://example.com/cb&code_challenge=${codeChallenge}&code_challenge_method=S256`,
-      { key: ctx.adminKey },
+      { headers: { cookie: consentCookie } },
     );
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("HTML Test");
     expect(html).toContain("core.note");
+    // Plain-English description sourced from TYPE_REGISTRY ("Text content
+    // you created.") must render alongside the literal `core.note:read`.
+    expect(html).toContain("core.note:read");
+    expect(html).toContain("Text content you created.");
   });
 
   it("rejects unknown client_id", async () => {
@@ -165,9 +206,49 @@ describe("OAuth authorization flow", () => {
       ctx.app,
       "GET",
       `/auth/authorize?client_id=nonexistent&response_type=code&scope=core.note:read&redirect_uri=https://x.com/cb&code_challenge=${codeChallenge}&code_challenge_method=S256`,
-      { key: ctx.adminKey },
+      { headers: { cookie: consentCookie } },
     );
     expect(res.status).toBe(400);
+  });
+
+  it("redirects unauthenticated requests to /auth/sign-in with return_to", async () => {
+    const codeChallenge = sha256base64url("verifier");
+    const path = `/auth/authorize?client_id=any&response_type=code&scope=core.note:read&redirect_uri=https://x.com/cb&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+    const res = await request(ctx.app, "GET", path);
+    expect(res.status).toBe(302);
+    const location = res.headers.get("Location") ?? "";
+    expect(location).toMatch(/^\/auth\/sign-in\?return_to=/);
+    // The original URL must round-trip through the return_to param so
+    // the sign-in flow can hand control back to /auth/authorize.
+    const decoded = decodeURIComponent(location.split("return_to=")[1] ?? "");
+    expect(decoded).toBe(path);
+  });
+
+  it("non-admin signed-in user reaches the consent screen", async () => {
+    // The consent user we set up in beforeAll holds no admin role —
+    // they're just a Better Auth-authenticated user. Reaching this
+    // endpoint with their cookie alone (no admin bearer) is the
+    // workstream-1 close-out behaviour: end users approve their own
+    // grants.
+    const clientRes = await request(ctx.app, "POST", "/auth/clients", {
+      key: ctx.adminKey,
+      body: {
+        name: "End-User Test",
+        redirect_uris: ["https://example.com/cb"],
+      },
+    });
+    const client = (await clientRes.json()) as { id: string };
+    const codeChallenge = sha256base64url("verifier");
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?client_id=${client.id}&response_type=code&scope=core.note:read&redirect_uri=https://example.com/cb&code_challenge=${codeChallenge}&code_challenge_method=S256`,
+      { headers: { cookie: consentCookie } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("End-User Test");
   });
 });
 
@@ -194,7 +275,7 @@ describe("PKCE verification", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
-        Authorization: `Bearer ${ctx.adminKey}`,
+        cookie: consentCookie,
       },
       body: formBody.toString(),
     });
