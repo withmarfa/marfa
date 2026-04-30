@@ -86,6 +86,7 @@ export async function createTestContext(
     authBaseUrl: "http://localhost:0",
     authAllowSignup: true,
     authSecret: "test-auth-secret-change-in-production-not-required-here",
+    oidcProviders: [],
     ...overrides,
   };
   const app = createApp(storage, blobBackend, config);

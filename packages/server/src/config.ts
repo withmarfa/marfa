@@ -60,6 +60,19 @@ export interface AppConfig {
   /** Shared secret for cookie signing. Required in production; falls back
    *  to a per-process ephemeral secret in dev. */
   authSecret: string;
+  /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
+   *  into the generic-oauth plugin. Parsed from the `MYME_OIDC_PROVIDERS`
+   *  env var (JSON array of `{ providerId, clientId, clientSecret,
+   *  discoveryUrl?, scopes? }`). */
+  oidcProviders: OidcProviderConfig[];
+}
+
+export interface OidcProviderConfig {
+  providerId: string;
+  clientId: string;
+  clientSecret: string;
+  discoveryUrl?: string;
+  scopes?: string[];
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -160,5 +173,53 @@ export function loadConfig(): AppConfig {
       `http://localhost:${String(Number(process.env.PORT) || 8600)}`,
     authAllowSignup: process.env.MYME_AUTH_ALLOW_SIGNUP === "true",
     authSecret: process.env.MYME_AUTH_SECRET ?? "",
+    oidcProviders: parseOidcProviders(process.env.MYME_OIDC_PROVIDERS),
   };
+}
+
+function parseOidcProviders(raw: string | undefined): OidcProviderConfig[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      console.warn(
+        "MYME_OIDC_PROVIDERS must be a JSON array, falling back to no federated providers",
+      );
+      return [];
+    }
+    const out: OidcProviderConfig[] = [];
+    for (const entry of parsed) {
+      if (
+        entry &&
+        typeof entry === "object" &&
+        typeof (entry as { providerId?: unknown }).providerId === "string" &&
+        typeof (entry as { clientId?: unknown }).clientId === "string" &&
+        typeof (entry as { clientSecret?: unknown }).clientSecret === "string"
+      ) {
+        const e = entry as Record<string, unknown>;
+        out.push({
+          providerId: e.providerId as string,
+          clientId: e.clientId as string,
+          clientSecret: e.clientSecret as string,
+          discoveryUrl:
+            typeof e.discoveryUrl === "string" ? e.discoveryUrl : undefined,
+          scopes: Array.isArray(e.scopes)
+            ? (e.scopes as unknown[]).filter(
+                (s): s is string => typeof s === "string",
+              )
+            : undefined,
+        });
+      } else {
+        console.warn(
+          "MYME_OIDC_PROVIDERS entry missing providerId/clientId/clientSecret, skipping",
+        );
+      }
+    }
+    return out;
+  } catch {
+    console.warn(
+      "MYME_OIDC_PROVIDERS is not valid JSON, falling back to no federated providers",
+    );
+    return [];
+  }
 }

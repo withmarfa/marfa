@@ -51,6 +51,7 @@ async function main(): Promise<void> {
   authBaseUrl: "http://localhost:0",
   authAllowSignup: true,
   authSecret: "test-auth-secret",
+    oidcProviders: [],
   });
   const raw = "myme_k1_bench";
   await storage.keys.create(

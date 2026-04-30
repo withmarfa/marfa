@@ -169,6 +169,7 @@ export function createApp(
       allowSignup: config.authAllowSignup,
       secret: config.authSecret || undefined,
       trustedOrigins,
+      oidcProviders: config.oidcProviders,
     });
     app.on(["POST", "GET"], "/auth/*", (c) => auth.handler(c.req.raw));
   }

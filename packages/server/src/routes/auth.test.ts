@@ -81,6 +81,7 @@ describe("bootstrap mode", () => {
     authBaseUrl: "http://localhost:0",
     authAllowSignup: true,
     authSecret: "test-auth-secret",
+    oidcProviders: [],
     });
 
     const res = await request(app, "POST", "/keys", {

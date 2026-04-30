@@ -179,6 +179,40 @@ describe("better-auth /auth/* surface", () => {
     expect(res.status).not.toBe(404);
   });
 
+  it("federated OIDC provider exposes /auth/sign-in/oauth2 when configured", async () => {
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      oidcProviders: [
+        {
+          providerId: "test-provider",
+          clientId: "test-client",
+          clientSecret: "test-secret",
+          discoveryUrl:
+            "https://accounts.example.com/.well-known/openid-configuration",
+        },
+      ],
+    });
+
+    // The endpoint is mounted; we just verify it isn't 404 (it'll fail
+    // to fetch the discovery URL in the test, but the route exists).
+    const res = await request(ctx.app, "POST", "/auth/sign-in/oauth2", {
+      body: { providerId: "test-provider" },
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).not.toBe(404);
+  });
+
+  it("genericOAuth gracefully skips when no providers configured", async () => {
+    ctx = await createTestContext({ authAllowSignup: true, oidcProviders: [] });
+    // /auth/sign-in/oauth2 still mounted (the plugin registers regardless),
+    // but errors out for an unknown providerId. Just confirming no crash.
+    const res = await request(ctx.app, "POST", "/auth/sign-in/oauth2", {
+      body: { providerId: "nope" },
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).not.toBe(500);
+  });
+
   it("does NOT shadow the existing /auth/clients route", async () => {
     // Existing oauth client management lives at /auth/clients (admin-only).
     // The better-auth catch-all is registered AFTER it, so explicit routes

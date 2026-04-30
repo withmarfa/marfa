@@ -1,6 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { magicLink } from "better-auth/plugins";
+import { genericOAuth, magicLink } from "better-auth/plugins";
 import { passkey } from "@better-auth/passkey";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import * as pgSchema from "../storage/pg/schema.js";
@@ -56,6 +56,16 @@ export interface MymeAuthOptions {
    *  writes the link to stdout — fine for dev. Production must wire
    *  an SMTP / Resend / Mailgun transport. */
   emailTransport?: EmailTransport;
+  /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
+   *  into the generic-oauth plugin. Each entry surfaces a sign-in button
+   *  on the sign-in page and exposes `/auth/sign-in/oauth2` + `/auth/oauth2/callback/<providerId>`. */
+  oidcProviders?: readonly {
+    providerId: string;
+    clientId: string;
+    clientSecret: string;
+    discoveryUrl?: string;
+    scopes?: string[];
+  }[];
 }
 
 const defaultLogTransport: EmailTransport = ({ email, url }) => {
@@ -132,6 +142,15 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
         sendMagicLink: async ({ email, url, token }) => {
           await transport({ email, url, token });
         },
+      }),
+      genericOAuth({
+        config: (options.oidcProviders ?? []).map((p) => ({
+          providerId: p.providerId,
+          clientId: p.clientId,
+          clientSecret: p.clientSecret,
+          discoveryUrl: p.discoveryUrl,
+          scopes: p.scopes ?? ["openid", "email", "profile"],
+        })),
       }),
     ],
     advanced: {

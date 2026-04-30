@@ -191,6 +191,7 @@ describe("bootstrap sentinel", () => {
     authBaseUrl: "http://localhost:0",
     authAllowSignup: true,
     authSecret: "test-auth-secret",
+    oidcProviders: [],
     });
     return { app, storage };
   }

@@ -81,6 +81,7 @@ async function createHostedContext(): Promise<HostedContext> {
   authBaseUrl: "http://localhost:0",
   authAllowSignup: true,
   authSecret: "test-auth-secret",
+    oidcProviders: [],
   });
 
   return {
