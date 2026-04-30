@@ -872,7 +872,7 @@ describe("Extended SDK surface", () => {
     // The test fixture runs in single-tenant SQLite mode (no tenant_id on
     // the bootstrap key); the server route rejects PUT under that
     // configuration with a clear validation error. Conformance against a
-    // real tenant-scoped credential is exercised by mock-myme. Here we
+    // real tenant-scoped credential is exercised by the conformance suite. Here we
     // just confirm the SDK invokes the endpoint and surfaces the
     // server's response shape.
     await expect(client.tenants.setConfig({})).rejects.toThrow(ValidationError);

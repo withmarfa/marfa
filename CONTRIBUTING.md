@@ -65,9 +65,9 @@ The server tests run against SQLite by default. CI also runs against Postgres.
 
 ## Conformance suite
 
-The [mock-myme](https://github.com/mymehq/mock-myme) repo contains the conformance test suite. To run it against a local server:
+The [conformance](https://github.com/mymehq/conformance) repo contains the conformance test suite. To run it against a local server:
 
 ```bash
-cd ../mock-myme
+cd ../conformance
 MYME_API_URL=http://localhost:8600 MYME_API_KEY=your-key pnpm test
 ```
