@@ -2,7 +2,7 @@
 --
 -- See sqlite/0025_inbound_webhooks.sql for the design notes — this file
 -- mirrors that schema for the Postgres dialect. PG handles multi-statement
--- strings via a single execute, but we use --> statement-breakpoint for
+-- strings via a single execute, but we use the breakpoint marker for
 -- cross-dialect convention parity (lesson from PR 1).
 
 CREATE TABLE inbound_webhooks (
