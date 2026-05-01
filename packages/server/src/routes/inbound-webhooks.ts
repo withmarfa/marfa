@@ -10,7 +10,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage, InboundWebhookRow } from "../storage/interface.js";
-import { validateManifest } from "../integrations/validate-manifest.js";
+import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
 import {
   encryptSecret,
   decryptSecret,
@@ -172,9 +172,13 @@ const createInboundWebhookRoute = createRoute({
           schema: z.object({
             external_service_id: z.string().optional(),
             events: z.array(z.string()).min(1),
-            // Manifest is unknown shape at the wire layer; validateManifest
-            // enforces structure server-side.
-            manifest: z.unknown(),
+            // Layer 2 PR 2: manifest is no longer required in the body —
+            // the route resolves it via the connection's `integration_ref`
+            // → `system.integration` item. Inline `manifest` remains
+            // accepted for one release as a fallback for connections
+            // installed before Layer 2; that path is removed in a
+            // follow-up PR after callers migrate.
+            manifest: z.unknown().optional(),
           }),
         },
       },
@@ -333,18 +337,16 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     );
     const body = c.req.valid("json");
 
-    // Validate the inline manifest. Per the WS2 PR 4 contract, this is
-    // both a structural check (Zod) and a manifest_schema_version range
-    // check (1.x.x supported).
-    const validated = validateManifest(body.manifest);
-    if (!validated.ok) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid Integration manifest",
-        { errors: validated.errors },
-      );
-    }
-    const manifest = validated.manifest;
+    // Layer 2 PR 2: prefer the manifest persisted under the connection's
+    // `integration_ref` over the inline body. Falls back to the inline
+    // path when the connection has no integration_ref (legacy
+    // pre-Layer-2 connections).
+    const { manifest } = await resolveConnectionManifest(
+      storage,
+      connectionId,
+      tenantId,
+      body.manifest,
+    );
 
     // Stamp method + adapter_id on the new row from the validated
     // manifest. This is the only manifest field PR 5 consumes; the rest

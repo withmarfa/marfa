@@ -14,7 +14,7 @@ import type {
   Storage,
   ConnectionLeasedTokenRow,
 } from "../storage/interface.js";
-import { validateManifest } from "../integrations/validate-manifest.js";
+import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
 import {
   createOpenAPIRouter,
   ErrorResponseSchema,
@@ -138,9 +138,11 @@ const issueLeaseRoute = createRoute({
               .max(LEASE_TTL_MAX_SEC)
               .optional(),
             scopes: z.array(z.string()).optional(),
-            // The Integration manifest. Validated by validateManifest;
-            // shape unknown at the wire layer (PR 4 contract).
-            manifest: z.unknown(),
+            // Layer 2 PR 2: manifest is resolved via the connection's
+            // `integration_ref` → `system.integration` item. Inline
+            // `manifest` is accepted for one release as the legacy
+            // fallback for connections installed before Layer 2.
+            manifest: z.unknown().optional(),
           }),
         },
       },
@@ -276,16 +278,14 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     );
     const body = c.req.valid("json");
 
-    // Manifest validation — capability gating depends on a valid manifest.
-    const validated = validateManifest(body.manifest);
-    if (!validated.ok) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid Integration manifest",
-        { errors: validated.errors },
-      );
-    }
-    const manifest = validated.manifest;
+    // Layer 2 PR 2: prefer the manifest persisted under the connection's
+    // `integration_ref`; fall back to inline body for legacy callers.
+    const { manifest } = await resolveConnectionManifest(
+      storage,
+      connectionId,
+      tenantId,
+      body.manifest,
+    );
     const declared = manifest.oauth_requirements[body.capability_id];
     if (declared !== "leased") {
       throw new MymeError(
