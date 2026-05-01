@@ -156,4 +156,14 @@ export const SECRET_INFO = {
    * distinguish the two ciphertext sets.
    */
   apiKeyCredential: "api-key-credentials",
+  /**
+   * OAuth callback state. Used by `signOAuthState` /
+   * `verifyOAuthState` to opaquely tamper-proof the `state` query
+   * param across the round trip from `POST /connections/:id/oauth/start`
+   * → upstream provider → `GET /oauth/callback/:provider`. Encrypts
+   * a small JSON envelope so the callback can recover the
+   * connection_id and validate freshness without trusting
+   * query-string contents.
+   */
+  oauthCallbackState: "oauth-callback-state",
 } as const;
