@@ -169,4 +169,51 @@ describe("ConnectionClient", () => {
       "https://api.example.com/items/conn_1/extensions/connection.runtime",
     );
   });
+
+  it("proxyRequest builds the /connections/:id/proxy/<path> URL", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch(
+        [() => new Response(JSON.stringify({ ok: true }), { status: 200 })],
+        captured,
+      ),
+    });
+    const resp = await client.proxyRequest(
+      "GET",
+      "/calendar/v3/calendars/primary/events?syncToken=abc",
+    );
+    expect(resp.status).toBe(200);
+    expect(captured[0]!.url).toBe(
+      "https://api.example.com/connections/conn_1/proxy/calendar/v3/calendars/primary/events?syncToken=abc",
+    );
+    expect(captured[0]!.method).toBe("GET");
+    expect(captured[0]!.authorization).toBe("Bearer myme_k1_initial");
+  });
+
+  it("proxyRequest sets Content-Type and serialises the body for write methods", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: ((input: RequestInfo | URL, init?: RequestInit) => {
+        const req = new Request(input, init);
+        captured.push({
+          url: req.url,
+          method: req.method,
+          authorization: req.headers.get("Authorization") ?? undefined,
+          body: typeof init?.body === "string" ? init.body : undefined,
+        });
+        return Promise.resolve(new Response("{}", { status: 201 }));
+      }) as typeof fetch,
+    });
+    await client.proxyRequest("POST", "/calendar/v3/calendars/primary/events", {
+      summary: "Test event",
+    });
+    expect(captured[0]!.method).toBe("POST");
+    expect(captured[0]!.body).toBe('{"summary":"Test event"}');
+  });
 });

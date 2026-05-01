@@ -47,6 +47,10 @@ export interface ItemResource {
   updated_at?: string;
 }
 
+/** Allowed lifecycle transitions for non-system items. The
+ *  Calendar integration's tombstone path hits `trashed`. */
+export type ItemState = "active" | "archived" | "trashed";
+
 export class ConnectionClient {
   private credential: RuntimeCredential;
   private readonly apiUrl: string;
@@ -80,6 +84,20 @@ export class ConnectionClient {
     return this.request<ItemResource>("PATCH", `/items/${id}`, patch);
   }
 
+  /** POST /items/:id/transition with the target lifecycle state.
+   *  Returns the updated item. Server validates the transition.
+   *  (Same surface PR 2 added for the auto-archive integration —
+   *  duplicated here so PR 5 is self-contained against main; the
+   *  orchestrator resolves the trivial overlap at merge time.) */
+  async transitionItem(id: string, to: ItemState): Promise<ItemResource> {
+    const wrapper = await this.request<{ item: ItemResource }>(
+      "POST",
+      `/items/${id}/transition`,
+      { state: to },
+    );
+    return wrapper.item;
+  }
+
   /** Read the entire `connection.runtime` namespace blob for this
    *  Connection. The server stores the namespace as a single object —
    *  callers manage their own keys within it. The server enforces
@@ -108,6 +126,33 @@ export class ConnectionClient {
       `/items/${connectionId}/extensions/connection.runtime`,
       blob,
     );
+  }
+
+  /**
+   * Issue a request through the OAuth proxy at
+   * `/connections/:id/proxy/<upstream_path>`. The server attaches
+   * the Connection's stored access token, refreshes it if needed,
+   * and forwards to `<upstream_base_url><upstream_path>`. Returns
+   * the raw `Response` so the caller can stream / parse as needed.
+   *
+   * `upstreamPath` should start with a leading `/` (e.g.
+   * `/calendar/v3/calendars/primary/events?syncToken=...`).
+   */
+  async proxyRequest(
+    method: string,
+    upstreamPath: string,
+    body?: unknown,
+  ): Promise<Response> {
+    const path = `/connections/${this.credential.connection_id}/proxy${upstreamPath}`;
+    const url = `${this.apiUrl}${path}`;
+    return this.fetchImpl(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.credential.api_key}`,
+        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
   }
 
   /** The currently-cached credential. Exposed for the per-Connection
