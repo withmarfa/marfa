@@ -47,6 +47,30 @@ export interface ItemResource {
   updated_at?: string;
 }
 
+/** Query parameters for `listItems`. Mirrors the server's
+ *  `GET /items` query schema; only the fields connectors realistically
+ *  use are surfaced. Add more on demand. */
+export interface ListItemsQuery {
+  type?: string;
+  state?: "active" | "archived" | "trashed";
+  filter?: string;
+  sort?: "created_at" | "updated_at" | "timestamp";
+  direction?: "asc" | "desc";
+  /** Server caps at 200; SDK leaves the cap to the server. */
+  limit?: number;
+  cursor?: string;
+}
+
+export interface ListItemsPage {
+  data: ItemResource[];
+  cursor: string | null;
+  has_more: boolean;
+}
+
+/** Allowed lifecycle transitions for non-system items. The
+ *  `core.task` auto-archive handler hits `archived`. */
+export type ItemState = "active" | "archived" | "trashed";
+
 export class ConnectionClient {
   private credential: RuntimeCredential;
   private readonly apiUrl: string;
@@ -78,6 +102,33 @@ export class ConnectionClient {
     patch: Partial<CreateItemInput>,
   ): Promise<ItemResource> {
     return this.request<ItemResource>("PATCH", `/items/${id}`, patch);
+  }
+
+  /** GET /items with the supplied query. Server caps the page size at
+   *  200; the connector iterates via `cursor` for full sweeps. */
+  async listItems(query: ListItemsQuery = {}): Promise<ListItemsPage> {
+    const params = new URLSearchParams();
+    if (query.type !== undefined) params.set("type", query.type);
+    if (query.state !== undefined) params.set("state", query.state);
+    if (query.filter !== undefined) params.set("filter", query.filter);
+    if (query.sort !== undefined) params.set("sort", query.sort);
+    if (query.direction !== undefined) params.set("direction", query.direction);
+    if (query.limit !== undefined) params.set("limit", String(query.limit));
+    if (query.cursor !== undefined) params.set("cursor", query.cursor);
+    const qs = params.toString();
+    const path = qs.length === 0 ? "/items" : `/items?${qs}`;
+    return this.request<ListItemsPage>("GET", path);
+  }
+
+  /** POST /items/:id/transition with the target lifecycle state.
+   *  Returns the updated item. Server validates the transition. */
+  async transitionItem(id: string, to: ItemState): Promise<ItemResource> {
+    const wrapper = await this.request<{ item: ItemResource }>(
+      "POST",
+      `/items/${id}/transition`,
+      { state: to },
+    );
+    return wrapper.item;
   }
 
   /** Read the entire `connection.runtime` namespace blob for this
