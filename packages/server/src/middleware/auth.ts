@@ -136,6 +136,8 @@ export function authMiddleware(storage: Storage, salt: string) {
         default_origin: stored.default_origin,
         default_tier: stored.default_tier,
         is_platform: stored.is_platform,
+        is_runtime_credential: stored.is_runtime_credential,
+        connection_id: stored.connection_id,
         type_permissions: stored.type_permissions,
         extension_permissions: stored.extension_permissions,
         edge_permissions: stored.edge_permissions,

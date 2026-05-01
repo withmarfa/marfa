@@ -4,10 +4,11 @@ import type { ControlPlaneEnv } from "./env.js";
 
 const TEST_ENV: ControlPlaneEnv = {
   MYME_API_URL: "http://localhost:8602",
+  MYME_RUNTIME_BROKER_KEY: "myme_k1_broker_test",
   ENVIRONMENT: "test",
 };
 
-describe("control plane app", () => {
+describe("control plane app — base routes", () => {
   it("returns ok=true on /health with environment + version surfaced", async () => {
     const app = buildApp();
     const res = await app.request("/health", { method: "GET" }, TEST_ENV);
@@ -31,34 +32,43 @@ describe("control plane app", () => {
     });
   });
 
-  it("returns 501 for inbound webhook (PR 3 wires it)", async () => {
+  it("returns 503 for inbound webhook when control plane env is missing", async () => {
+    const app = buildApp();
+    const res = await app.request(
+      "/webhooks/inbound/conn_123",
+      { method: "POST", body: "{}" },
+      {},
+    );
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "control_plane_misconfigured",
+    });
+  });
+
+  it("returns 503 for inbound webhook when WEBHOOK_RECEIPT_QUEUE is unbound", async () => {
     const app = buildApp();
     const res = await app.request(
       "/webhooks/inbound/conn_123",
       { method: "POST", body: "{}" },
       TEST_ENV,
     );
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(503);
     await expect(res.json()).resolves.toMatchObject({
-      error: "not_implemented",
-      connection_id: "conn_123",
+      error: "queue_unbound",
     });
   });
 
-  it("returns 501 for runtime lease (PR 4 wires it)", async () => {
+  it("returns 503 for runtime lease when env is missing", async () => {
     const app = buildApp();
     const res = await app.request(
       "/lease/conn_123/runtime",
-      { method: "POST" },
-      TEST_ENV,
+      { method: "POST", body: "{}" },
+      {},
     );
-    expect(res.status).toBe(501);
-    await expect(res.json()).resolves.toMatchObject({
-      connection_id: "conn_123",
-    });
+    expect(res.status).toBe(503);
   });
 
-  it("returns 501 for OAuth lease (PR 4 wires it)", async () => {
+  it("returns 501 for OAuth lease (Layer 2 wires it)", async () => {
     const app = buildApp();
     const res = await app.request(
       "/lease/conn_123/oauth/cap_calendar_read",

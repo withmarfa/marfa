@@ -131,6 +131,8 @@ export function createConnection(sqlitePath: string): {
       default_origin TEXT NOT NULL DEFAULT 'user',
       default_tier TEXT NOT NULL DEFAULT 'library',
       is_platform INTEGER NOT NULL DEFAULT 0,
+      is_runtime_credential INTEGER NOT NULL DEFAULT 0,
+      connection_id TEXT,
       type_permissions TEXT NOT NULL DEFAULT '{"*":"write"}',
       extension_permissions TEXT NOT NULL DEFAULT '{}',
       edge_permissions TEXT NOT NULL DEFAULT '{}',

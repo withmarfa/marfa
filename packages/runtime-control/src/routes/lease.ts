@@ -1,36 +1,93 @@
 import { Hono } from "hono";
 import type { ControlPlaneEnv } from "../env.js";
+import { MymeServerClient } from "../myme-client.js";
 
 /**
- * Lease broker. PR 1 ships the route shape only; PR 4 wires the broker
- * to mint short-TTL runtime credentials via Myme's
- * `/system/runtime-credentials` endpoint, and surface leased OAuth
- * tokens via the existing `/connections/:id/lease-token` route.
+ * Lease broker.
  *
- * Two flavors share this prefix:
  *   POST /lease/:connection_id/runtime
- *     → mints (or refreshes) the per-Connection runtime credential
- *       used by the integration Worker to call Myme. Cached in the
- *       per-Connection DO with TTL ≤ 5 min.
+ *     Mints (or refreshes) the per-Connection runtime credential by
+ *     calling Myme's `/system/runtime-credentials` endpoint. The
+ *     control plane authenticates with MYME_RUNTIME_BROKER_KEY (a
+ *     long-lived `is_platform: true` key bound as a secret).
+ *
+ *     Layer 1 PR 4 ships this endpoint with manifest-derived
+ *     permissions defaulting to `*: write` — Layer 2's install
+ *     pipeline narrows them per the manifest's declared scopes. The
+ *     integration Worker calls this on every queue message; the
+ *     per-Connection DO caches the result with TTL ≤ 5 min so the
+ *     broker isn't hit on the hot path.
  *
  *   POST /lease/:connection_id/oauth/:capability_id
- *     → forwards a leased-token request to Myme on behalf of an
- *       integration whose manifest declares
- *       `oauth_requirements.<capability_id> === "leased"`.
+ *     Stub for Layer 2 — proxies a leased-token request to Myme's
+ *     existing `/connections/:id/lease-token` route. Layer 2 wires
+ *     the install-time manifest persistence that captures
+ *     `oauth_requirements.<capability_id> === "leased"`; until then
+ *     the broker returns 501.
  */
 export function registerLeaseRoutes(
   app: Hono<{ Bindings: ControlPlaneEnv }>,
 ): void {
-  app.post("/lease/:connection_id/runtime", (c) => {
+  app.post("/lease/:connection_id/runtime", async (c) => {
     const connectionId = c.req.param("connection_id");
+    const env = c.env;
+    if (!env.MYME_API_URL || !env.MYME_RUNTIME_BROKER_KEY) {
+      return c.json(
+        {
+          error: "control_plane_misconfigured",
+          message: "MYME_API_URL and MYME_RUNTIME_BROKER_KEY must both be set.",
+        },
+        503,
+      );
+    }
+    const myme = new MymeServerClient(
+      env.MYME_API_URL,
+      env.MYME_RUNTIME_BROKER_KEY,
+    );
+
+    let body: { label?: string; source?: string; ttl_seconds?: number };
+    try {
+      body = await c.req.json<{
+        label?: string;
+        source?: string;
+        ttl_seconds?: number;
+      }>();
+    } catch {
+      body = {};
+    }
+    const ttl = body.ttl_seconds ?? 600;
+    const label = body.label ?? `runtime ${connectionId}`;
+    const source =
+      body.source ??
+      `runtime-${connectionId.slice(0, 12)}-${String(Date.now())}`;
+
+    let minted;
+    try {
+      minted = await myme.mintRuntimeCredential({
+        connection_id: connectionId,
+        label,
+        source,
+        // Layer 2 narrows these from the manifest's declared scopes.
+        type_permissions: { "*": "write" },
+        ttl_seconds: ttl,
+      });
+    } catch (err) {
+      return c.json(
+        {
+          error: "mint_failed",
+          message: err instanceof Error ? err.message : String(err),
+        },
+        502,
+      );
+    }
+
     return c.json(
       {
-        error: "not_implemented",
-        message:
-          "Runtime credential broker lands in PR 4 (server-side mint route + broker key).",
-        connection_id: connectionId,
+        api_key: minted.api_key,
+        connection_id: minted.connection_id,
+        expires_at: minted.expires_at,
       },
-      501,
+      200,
     );
   });
 
@@ -41,7 +98,7 @@ export function registerLeaseRoutes(
       {
         error: "not_implemented",
         message:
-          "Leased OAuth token broker lands in PR 4; calls Myme's existing /connections/:id/lease-token route.",
+          "Leased OAuth token broker lands in Layer 2 once manifest persistence captures oauth_requirements.<capability_id>.",
         connection_id: connectionId,
         capability_id: capabilityId,
       },

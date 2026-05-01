@@ -225,6 +225,13 @@
       "when": 1778230000000,
       "tag": "0031_event_log_cycle_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1778240000000,
+      "tag": "0032_api_keys_runtime_credential",
+      "breakpoints": true
     }
   ]
 }

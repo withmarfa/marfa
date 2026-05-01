@@ -33,6 +33,8 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     default_origin: row.default_origin as Exclude<Origin, "system">,
     default_tier: row.default_tier as Tier,
     is_platform: row.is_platform,
+    is_runtime_credential: row.is_runtime_credential,
+    connection_id: row.connection_id ?? undefined,
     type_permissions: safeJsonParse<Record<string, TypePermission>>(
       row.type_permissions,
       {},
@@ -114,6 +116,72 @@ export class SqliteKeyStore implements KeyStore {
       default_origin: row.default_origin,
       default_tier: row.default_tier,
       is_platform: row.is_platform,
+      type_permissions: input.type_permissions ?? {},
+      extension_permissions: input.extension_permissions ?? {},
+      edge_permissions: input.edge_permissions ?? {},
+      metadata_permissions: input.metadata_permissions ?? {},
+      created_at: now,
+      last_used_at: null,
+    });
+  }
+
+  createRuntimeCredential(
+    input: CreateKeyInput & { connection_id: string },
+    keyHash: string,
+    tenantId?: string,
+  ): Promise<ApiKey> {
+    const collision = this.db
+      .select({ id: apiKeys.id })
+      .from(apiKeys)
+      .where(
+        and(
+          tenantId === undefined
+            ? isNull(apiKeys.tenant_id)
+            : eq(apiKeys.tenant_id, tenantId),
+          eq(apiKeys.source, input.source),
+          isNull(apiKeys.revoked_at),
+        ),
+      )
+      .get();
+    if (collision) {
+      throw new MymeError(
+        ErrorCode.CONFLICT,
+        `Source display name "${input.source}" is already in use for this tenant`,
+        { source: input.source },
+      );
+    }
+
+    const now = new Date().toISOString();
+    const row = {
+      id: generateId(),
+      tenant_id: tenantId,
+      key_hash: keyHash,
+      label: input.label,
+      source: input.source,
+      role: input.role,
+      default_origin: input.default_origin ?? "user",
+      default_tier: input.default_tier ?? "library",
+      is_platform: false,
+      is_runtime_credential: true,
+      connection_id: input.connection_id,
+      type_permissions: JSON.stringify(input.type_permissions ?? {}),
+      extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
+      edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
+      metadata_permissions: JSON.stringify(input.metadata_permissions ?? {}),
+      created_at: now,
+    };
+    this.db.insert(apiKeys).values(row).run();
+    return Promise.resolve({
+      id: row.id,
+      tenant_id: tenantId,
+      label: row.label,
+      source: row.source,
+      role: input.role,
+      default_origin: row.default_origin,
+      default_tier: row.default_tier,
+      is_platform: false,
+      is_runtime_credential: true,
+      connection_id: input.connection_id,
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},
       edge_permissions: input.edge_permissions ?? {},

@@ -158,6 +158,10 @@ export const apiKeys = sqliteTable(
     is_platform: integer("is_platform", { mode: "boolean" })
       .notNull()
       .default(false),
+    is_runtime_credential: integer("is_runtime_credential", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    connection_id: text("connection_id"),
     type_permissions: text("type_permissions")
       .notNull()
       .default('{"*":"write"}'),
