@@ -197,6 +197,50 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     expect(created.verification_method).toBe("custom");
     expect(created.verification_adapter_id).toBe("acme-internal");
   });
+
+  // Layer 2 PR 2: preferred path — connection bound to a real
+  // system.integration item; manifest resolved server-side, body omits
+  // it entirely.
+  it("creates a subscription via integration_ref without inline manifest", async () => {
+    // 1. Register an Integration via the registry.
+    const regRes = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: { ...VALID_MANIFEST, name: "acme.via-ref" } },
+    });
+    expect(regRes.status).toBe(201);
+    const reg = (await regRes.json()) as { id: string };
+
+    // 2. Create a connection bound to the registered integration.
+    const conn = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "external-service-connector",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: reg.id,
+        },
+      },
+    });
+    const connBody = (await conn.json()) as ItemResponse;
+    const connectionId = connBody.item.id;
+
+    // 3. Create the subscription with NO manifest in the body — the
+    // route should resolve it via integration_ref.
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/inbound-webhooks`,
+      {
+        key: ctx.adminKey,
+        body: { events: ["thing.created"] },
+      },
+    );
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as CreatedInboundWebhook;
+    expect(created.verification_method).toBe("hmac-sha256");
+  });
 });
 
 describe("GET /connections/:id/inbound-webhooks", () => {

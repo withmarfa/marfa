@@ -171,6 +171,58 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  // Layer 2 PR 2: preferred path — capability gating against the
+  // manifest persisted under integration_ref (no inline manifest in
+  // the request body).
+  it("gates capabilities via integration_ref-resolved manifest", async () => {
+    // 1. Register the integration.
+    const regRes = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: { ...VALID_MANIFEST, name: "acme.lease-via-ref" } },
+    });
+    expect(regRes.status).toBe(201);
+    const reg = (await regRes.json()) as { id: string };
+
+    // 2. Connection bound to the registered integration.
+    const conn = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "external-service-connector",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: reg.id,
+        },
+      },
+    });
+    const connBody = (await conn.json()) as ItemResponse;
+
+    // 3. Issue lease with NO manifest in body — resolved server-side.
+    const ok = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connBody.item.id}/lease-token`,
+      {
+        key: ctx.adminKey,
+        body: { capability_id: "drive.upload" },
+      },
+    );
+    expect(ok.status).toBe(201);
+
+    // 4. Reject a capability not declared by the resolved manifest.
+    const denied = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connBody.item.id}/lease-token`,
+      {
+        key: ctx.adminKey,
+        body: { capability_id: "not.declared" },
+      },
+    );
+    expect(denied.status).toBe(422);
+  });
 });
 
 // ---------------------------------------------------------------------------
