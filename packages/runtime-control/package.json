@@ -1,0 +1,24 @@
+{
+  "name": "@mymehq/runtime-control",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker — Connections runtime control plane (inbound webhook router, lease broker, install callbacks).",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "wrangler dev --config ../../infra/cloudflare/wrangler.control.toml",
+    "deploy": "wrangler deploy --config ../../infra/cloudflare/wrangler.control.toml"
+  },
+  "dependencies": {
+    "hono": "^4.7.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2",
+    "wrangler": "^4.42.0"
+  }
+}

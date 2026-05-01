@@ -1,0 +1,74 @@
+#:schema node_modules/wrangler/config-schema.json
+# Per-Integration Worker template. Each integration under
+# `integrations/<name>/` copies this file and customises:
+#   - name (matches the integration name from its manifest)
+#   - main (path into the integration's own src/)
+#   - durable_objects.bindings (DO class shipped from
+#     @mymehq/runtime-sdk, namespaced per Worker)
+#   - queues.consumers (subscribe to the slice of webhook-receipt /
+#     scheduled-poll / reactive-run that envelope-routes by integration
+#     name)
+#
+# The control plane (wrangler.control.toml) and per-Integration Workers
+# share the same Cloudflare account but no other state — every call
+# between them goes through the public HTTPS surface.
+
+name = "myme-integration-EXAMPLE"
+main = "../../integrations/EXAMPLE/src/worker.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "${CLOUDFLARE_ACCOUNT_ID}"
+
+[vars]
+INTEGRATION_NAME = "EXAMPLE"
+ENVIRONMENT = "dev"
+
+# ---- Durable Object: per-Connection state --------------------------------
+# The DO class lives in @mymehq/runtime-sdk; each integration namespaces
+# it locally. The class_name must match the export from the SDK.
+# (PR 2 wires this binding.)
+#
+# [[durable_objects.bindings]]
+# name = "PER_CONNECTION_STATE"
+# class_name = "PerConnectionState"
+#
+# [[migrations]]
+# tag = "v1"
+# new_sqlite_classes = ["PerConnectionState"]
+
+# ---- Queues: consumers ---------------------------------------------------
+# (PR 3 wires these. Each integration consumes its slice of the queue;
+# the producer envelopes messages with `integration_name`.)
+#
+# [[queues.consumers]]
+# queue = "myme-webhook-receipt"
+# max_batch_size = 10
+# max_batch_timeout = 5
+# max_retries = 6
+# dead_letter_queue = "myme-webhook-receipt-dlq"
+#
+# [[queues.consumers]]
+# queue = "myme-scheduled-poll"
+# max_batch_size = 5
+# max_batch_timeout = 30
+#
+# [[queues.consumers]]
+# queue = "myme-reactive-run"
+# max_batch_size = 10
+# max_batch_timeout = 5
+
+# ---- Staging / Prod ------------------------------------------------------
+[env.staging]
+name = "myme-integration-EXAMPLE-staging"
+[env.staging.vars]
+ENVIRONMENT = "staging"
+
+[env.prod]
+name = "myme-integration-EXAMPLE-prod"
+[env.prod.vars]
+ENVIRONMENT = "prod"
+
+# Secrets (set via `wrangler secret put` per env):
+#   - MYME_API_URL           (every env; the runtime credential is
+#                              fetched per-message from the control
+#                              plane's lease broker, never bound here)

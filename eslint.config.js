@@ -13,6 +13,7 @@ export default [
             "eslint.config.js",
             "vitest.config.ts",
             "packages/*/tsup.config.ts",
+            "packages/*/vitest.config.ts",
           ],
         },
         tsconfigRootDir: import.meta.dirname,
