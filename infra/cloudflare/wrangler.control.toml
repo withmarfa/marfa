@@ -36,12 +36,49 @@ routes = [
 ENVIRONMENT = "prod"
 
 # ---------------------------------------------------------------------------
-# Bindings — added in later PRs:
-#   PR 3: [[queues.producers]] for webhook-receipt + reactive-run, plus
-#         [[kv_namespaces]] for the idempotency cache.
-#   Layer 2: [[r2_buckets]] for large-payload handoff.
+# Queue producers — wired in PR 3 of Layer 1.
+# webhook-receipt   — produced by control plane on verified inbound;
+#                     consumed by per-Integration Workers
+# reactive-run      — produced by the server-side reactive-run-bridge;
+#                     consumed by per-Integration Workers
+# ---------------------------------------------------------------------------
+
+[[env.staging.queues.producers]]
+binding = "WEBHOOK_RECEIPT_QUEUE"
+queue = "myme-webhook-receipt-staging"
+
+[[env.staging.queues.producers]]
+binding = "REACTIVE_RUN_QUEUE"
+queue = "myme-reactive-run-staging"
+
+[[env.prod.queues.producers]]
+binding = "WEBHOOK_RECEIPT_QUEUE"
+queue = "myme-webhook-receipt-prod"
+
+[[env.prod.queues.producers]]
+binding = "REACTIVE_RUN_QUEUE"
+queue = "myme-reactive-run-prod"
+
+# ---------------------------------------------------------------------------
+# KV — short-lived idempotency cache used by the control plane to
+# dedupe webhook deliveries within the verification → enqueue window.
+# Namespace IDs (per env) come from provision.ts; paste below.
+# ---------------------------------------------------------------------------
+
+[[env.staging.kv_namespaces]]
+binding = "IDEMPOTENCY_KV"
+id = "REPLACE_WITH_STAGING_KV_ID"
+
+[[env.prod.kv_namespaces]]
+binding = "IDEMPOTENCY_KV"
+id = "REPLACE_WITH_PROD_KV_ID"
+
+# ---------------------------------------------------------------------------
+# R2 — Layer 2 wires this for large inbound webhook bodies (>256KB).
 #
-# Secrets (set via `wrangler secret put`):
+# Secrets (set via `wrangler secret put` per env):
 #   - MYME_API_URL           (every env)
-#   - MYME_RUNTIME_BROKER_KEY (PR 4)
+#   - MYME_RUNTIME_BROKER_KEY (PR 4 — server-issued long-lived key the
+#                              control plane uses to mint per-Connection
+#                              runtime credentials)
 # ---------------------------------------------------------------------------
