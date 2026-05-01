@@ -297,10 +297,14 @@ CREATE TABLE IF NOT EXISTS event_log (
   edge_id TEXT,
   tenant_id TEXT,
   payload TEXT NOT NULL,
+  originating_connection_id TEXT,
+  hop_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON event_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_event_log_edge_id ON event_log(edge_id);
+CREATE INDEX IF NOT EXISTS idx_event_log_originating_connection_id
+  ON event_log(originating_connection_id, id);
 
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,

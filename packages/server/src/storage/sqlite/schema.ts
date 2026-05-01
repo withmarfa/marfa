@@ -559,11 +559,25 @@ export const eventLog = sqliteTable(
     edge_id: text("edge_id"),
     tenant_id: text("tenant_id"),
     payload: text("payload").notNull(),
+    // Cycle-detection metadata (workstream 2 PR 8). The connection
+    // whose action set off this chain of events; null for events
+    // originating from a human caller. hop_count starts at 0 on
+    // human-initiated events and increments on each reactive
+    // publish; pubsub.publish drops events whose hop_count would
+    // exceed the tenant's `max_event_hop_budget`.
+    originating_connection_id: text("originating_connection_id"),
+    hop_count: integer("hop_count").notNull().default(0),
     created_at: text("created_at").notNull(),
   },
   (table) => [
     index("idx_event_log_created_at").on(table.created_at),
     index("idx_event_log_edge_id").on(table.edge_id),
+    // Trace path: events originating from a single connection,
+    // ordered by id.
+    index("idx_event_log_originating_connection_id").on(
+      table.originating_connection_id,
+      table.id,
+    ),
   ],
 );
 

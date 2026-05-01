@@ -739,6 +739,13 @@ export interface PersistedEvent {
   edge_id: string | null;
   tenant_id: string | null;
   payload: string;
+  /**
+   * The connection whose action set off this chain of events. Null for
+   * events originating from a human caller. (Workstream 2 PR 8.)
+   */
+  originating_connection_id: string | null;
+  /** Hop number from the originating event. 0 = first event in a chain. */
+  hop_count: number;
   created_at: string;
 }
 
@@ -753,6 +760,9 @@ export interface EventLogStore {
     edge_id?: string | null;
     tenant_id?: string;
     payload: string;
+    /** Cycle-detection metadata (workstream 2 PR 8). */
+    originating_connection_id?: string | null;
+    hop_count?: number;
   }): Promise<number>;
 
   /** Retrieve events after a given ID, optionally filtered by tenant. */

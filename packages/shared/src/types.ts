@@ -662,6 +662,14 @@ export interface EnforcementSettings {
 export interface TenantConfig {
   retention?: Record<string, TenantRetentionOverride>;
   enforcement?: EnforcementSettings;
+  /**
+   * Maximum number of hops a single event may traverse before the bus
+   * drops it as a suspected cycle. WS2 PR 8 — connector reactions can
+   * publish further events; without a budget, a malformed integration
+   * could spin a feedback loop. Default 5; admins can raise it for
+   * deeply pipelined integrations or lower it to tighten the leash.
+   */
+  max_event_hop_budget?: number;
 }
 
 /** A user account (hosted mode). Owns exactly one tenant. */
