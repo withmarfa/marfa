@@ -13,6 +13,7 @@ import { requireAdmin, requireAuth, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MymeAuth } from "../auth/instance.js";
 import { renderConsentScreen } from "./consent.js";
+import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 
 const ACCESS_TOKEN_PREFIX = "myme_at_";
@@ -369,7 +370,228 @@ export function authRoutes(
     return c.body(null, 204);
   });
 
+  // -----------------------------------------------------------------------
+  // Sign-in page (HTML) + form-handler wrappers around Better Auth's API
+  // -----------------------------------------------------------------------
+  //
+  // GET /sign-in renders a server-rendered HTML form. It's mounted here
+  // (inside authRoutes, which dispatches before the better-auth catch-all
+  // in app.ts) so the explicit handler wins.
+  //
+  // POST /sign-in accepts a form-encoded body and dispatches internally
+  // to Better Auth's JSON API (`POST /auth/sign-in/email` for password,
+  // `POST /auth/sign-in/magic-link` for magic). Better Auth's response
+  // is translated back into a 302 redirect so the no-JavaScript path
+  // works — Set-Cookie headers from a successful sign-in are forwarded
+  // intact onto the redirect response.
+
+  router.get("/sign-in", (c) => {
+    const url = new URL(c.req.url);
+    const modeRaw = url.searchParams.get("mode");
+    const mode = modeRaw === "magic" ? "magic" : "password";
+    const returnTo = validateReturnTo(url.searchParams.get("return_to"));
+    const error = url.searchParams.get("error") ?? undefined;
+    const magicLinkSent = url.searchParams.get("sent") === "1";
+
+    const html = renderSignInPage({
+      mode,
+      returnTo,
+      error,
+      magicLinkSent,
+      allowSignup: auth?.allowSignup ?? false,
+      oidcProviderIds: auth?.oidcProviderIds ?? [],
+    });
+    return c.html(html);
+  });
+
+  router.post("/sign-in", async (c) => {
+    if (!auth) {
+      throw new MymeError(
+        ErrorCode.UNAUTHORIZED,
+        "Sign-in requires the better-auth identity layer to be configured",
+      );
+    }
+
+    const formData = await c.req.formData();
+    const mode = formData.get("mode") === "magic" ? "magic" : "password";
+    const returnTo = validateReturnTo(formData.get("return_to"));
+    const email = formData.get("email");
+    const emailStr = typeof email === "string" ? email.trim() : "";
+
+    const errorRedirect = (errCode: string, modeOverride?: string): Response =>
+      c.redirect(
+        buildSignInRedirect({
+          mode: modeOverride ?? mode,
+          returnTo,
+          error: errCode,
+        }),
+        302,
+      );
+
+    if (!emailStr) {
+      return errorRedirect("missing_field");
+    }
+
+    if (mode === "magic") {
+      const upstream = new Request(
+        new URL("/auth/sign-in/magic-link", c.req.url),
+        {
+          method: "POST",
+          headers: forwardHeaders(c.req.raw.headers, {
+            "content-type": "application/json",
+          }),
+          body: JSON.stringify({ email: emailStr, callbackURL: returnTo }),
+        },
+      );
+      const response = await auth.handler(upstream);
+      if (response.ok) {
+        return c.redirect(
+          buildSignInRedirect({ mode: "magic", returnTo, sent: true }),
+          302,
+        );
+      }
+      return errorRedirect("magic_send_failed");
+    }
+
+    const password = formData.get("password");
+    const passwordStr = typeof password === "string" ? password : "";
+    if (!passwordStr) {
+      return errorRedirect("missing_field");
+    }
+
+    const upstream = new Request(new URL("/auth/sign-in/email", c.req.url), {
+      method: "POST",
+      headers: forwardHeaders(c.req.raw.headers, {
+        "content-type": "application/json",
+      }),
+      body: JSON.stringify({ email: emailStr, password: passwordStr }),
+    });
+    const response = await auth.handler(upstream);
+
+    if (response.ok) {
+      // Forward every Set-Cookie header from Better Auth onto the redirect
+      // response. `Headers.getSetCookie()` returns each cookie as a
+      // separate string (Node 18.14+ / undici); fall back to a single
+      // header otherwise. Browsers honour multiple Set-Cookie via
+      // `headers.append`.
+      const redirectHeaders = new Headers({ Location: returnTo });
+      const setCookies =
+        typeof (
+          response.headers as Headers & {
+            getSetCookie?: () => string[];
+          }
+        ).getSetCookie === "function"
+          ? (
+              response.headers as Headers & {
+                getSetCookie: () => string[];
+              }
+            ).getSetCookie()
+          : null;
+      if (setCookies && setCookies.length > 0) {
+        for (const cookie of setCookies) {
+          redirectHeaders.append("set-cookie", cookie);
+        }
+      } else {
+        const single = response.headers.get("set-cookie");
+        if (single) redirectHeaders.append("set-cookie", single);
+      }
+      return new Response(null, { status: 302, headers: redirectHeaders });
+    }
+
+    return errorRedirect("invalid_credentials");
+  });
+
+  router.post("/sign-in/provider/:id", async (c) => {
+    if (!auth) {
+      throw new MymeError(
+        ErrorCode.UNAUTHORIZED,
+        "OIDC sign-in requires the better-auth identity layer to be configured",
+      );
+    }
+    const providerId = c.req.param("id");
+    if (!auth.oidcProviderIds.includes(providerId)) {
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        `Unknown OIDC provider: ${providerId}`,
+      );
+    }
+    const formData = await c.req.formData();
+    const returnTo = validateReturnTo(formData.get("return_to"));
+
+    // Better Auth's generic-oauth plugin exposes POST /auth/sign-in/oauth2
+    // taking { providerId, callbackURL }. Successful response returns
+    // { url, redirect: true } pointing at the provider's authorize URL.
+    const upstream = new Request(new URL("/auth/sign-in/oauth2", c.req.url), {
+      method: "POST",
+      headers: forwardHeaders(c.req.raw.headers, {
+        "content-type": "application/json",
+      }),
+      body: JSON.stringify({
+        providerId,
+        callbackURL: returnTo,
+      }),
+    });
+    const response = await auth.handler(upstream);
+    if (!response.ok) {
+      return c.redirect(
+        buildSignInRedirect({
+          mode: "password",
+          returnTo,
+          error: "oauth_failed",
+        }),
+        302,
+      );
+    }
+
+    const body = (await response.json()) as { url?: string };
+    if (typeof body.url === "string" && body.url.length > 0) {
+      return c.redirect(body.url, 302);
+    }
+    return c.redirect(
+      buildSignInRedirect({
+        mode: "password",
+        returnTo,
+        error: "oauth_failed",
+      }),
+      302,
+    );
+  });
+
   return router;
+}
+
+/** Build a redirect URL back to the sign-in page with the right query
+ *  shape (mode, error, sent, return_to). All values are encoded. */
+function buildSignInRedirect(params: {
+  mode: string;
+  returnTo: string;
+  error?: string;
+  sent?: boolean;
+}): string {
+  const search = new URLSearchParams();
+  if (params.mode === "magic") search.set("mode", "magic");
+  if (params.error) search.set("error", params.error);
+  if (params.sent) search.set("sent", "1");
+  if (params.returnTo && params.returnTo !== "/") {
+    search.set("return_to", params.returnTo);
+  }
+  const query = search.toString();
+  return `/auth/sign-in${query ? `?${query}` : ""}`;
+}
+
+/** Forward selected headers (origin, cookie) from the inbound request
+ *  onto the upstream Better Auth dispatch. Origin matters for Better
+ *  Auth's trustedOrigins check; cookie matters when re-signing-in
+ *  while a stale session cookie is present. Other headers (host,
+ *  content-length) are recomputed by the constructor. */
+function forwardHeaders(src: Headers, base: Record<string, string>): Headers {
+  const out = new Headers(base);
+  const passthrough = ["origin", "cookie", "user-agent", "accept-language"];
+  for (const name of passthrough) {
+    const value = src.get(name);
+    if (value) out.set(name, value);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
