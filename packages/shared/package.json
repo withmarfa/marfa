@@ -24,14 +24,14 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "zod": "^4.3.6",
+    "zod": "^4.4.2",
     "uuidv7": "^1.2.1"
   },
   "devDependencies": {
     "@mymehq/types": "workspace:*",
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.6.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.3"
   }
 }
