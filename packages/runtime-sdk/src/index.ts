@@ -34,6 +34,9 @@ export type {
   ConnectionClientOptions,
   CreateItemInput,
   ItemResource,
+  ItemState,
+  ListItemsQuery,
+  ListItemsPage,
 } from "./connection-client.js";
 
 export { createCursorStore } from "./cursor-store.js";

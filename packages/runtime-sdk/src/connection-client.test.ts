@@ -169,4 +169,85 @@ describe("ConnectionClient", () => {
       "https://api.example.com/items/conn_1/extensions/connection.runtime",
     );
   });
+
+  it("listItems builds a query string from the supplied filters", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch(
+        [
+          () =>
+            new Response(
+              JSON.stringify({ data: [], cursor: null, has_more: false }),
+              { status: 200 },
+            ),
+        ],
+        captured,
+      ),
+    });
+    await client.listItems({
+      type: "core.task",
+      state: "active",
+      sort: "created_at",
+      direction: "asc",
+      limit: 100,
+    });
+    expect(captured[0]!.method).toBe("GET");
+    expect(captured[0]!.url).toBe(
+      "https://api.example.com/items?type=core.task&state=active&sort=created_at&direction=asc&limit=100",
+    );
+  });
+
+  it("listItems with no query targets /items with no params", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch(
+        [
+          () =>
+            new Response(
+              JSON.stringify({ data: [], cursor: null, has_more: false }),
+              { status: 200 },
+            ),
+        ],
+        captured,
+      ),
+    });
+    await client.listItems();
+    expect(captured[0]!.url).toBe("https://api.example.com/items");
+  });
+
+  it("transitionItem POSTs the new state and returns the unwrapped item", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch(
+        [
+          // The route returns { item, metadata } per items-lifecycle.ts;
+          // ConnectionClient.transitionItem unwraps so the connector sees
+          // a plain ItemResource.
+          () =>
+            new Response(
+              JSON.stringify({
+                item: { id: "task_1", type: "core.task", state: "archived" },
+              }),
+              { status: 200 },
+            ),
+        ],
+        captured,
+      ),
+    });
+    const item = await client.transitionItem("task_1", "archived");
+    expect(captured[0]!.method).toBe("POST");
+    expect(captured[0]!.url).toBe(
+      "https://api.example.com/items/task_1/transition",
+    );
+    expect(item.state).toBe("archived");
+  });
 });
