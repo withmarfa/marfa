@@ -27,6 +27,16 @@ export enum ErrorCode {
   TYPE_IN_USE = "type_in_use",
   CORE_TYPE_IMMUTABLE = "core_type_immutable",
   WEBHOOK_NOT_FOUND = "webhook_not_found",
+  INBOUND_WEBHOOK_NOT_FOUND = "inbound_webhook_not_found",
+  /**
+   * The inbound webhook subscription is `disabled = true`. Receipts to a
+   * disabled subscription return HTTP 410 to tell the sender to stop —
+   * standard signal in webhook-receiver protocols.
+   */
+  INBOUND_WEBHOOK_DISABLED = "inbound_webhook_disabled",
+  INBOUND_WEBHOOK_EVENT_NOT_FOUND = "inbound_webhook_event_not_found",
+  /** Verification adapter could not validate the request body / headers. */
+  INBOUND_WEBHOOK_VERIFICATION_FAILED = "inbound_webhook_verification_failed",
   BLOB_TOO_LARGE = "blob_too_large",
   INVALID_PROPERTIES = "invalid_properties",
   INVALID_SCHEMA = "invalid_schema",
@@ -100,6 +110,10 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.TYPE_IN_USE]: 409,
   [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,
   [ErrorCode.WEBHOOK_NOT_FOUND]: 404,
+  [ErrorCode.INBOUND_WEBHOOK_NOT_FOUND]: 404,
+  [ErrorCode.INBOUND_WEBHOOK_DISABLED]: 410,
+  [ErrorCode.INBOUND_WEBHOOK_EVENT_NOT_FOUND]: 404,
+  [ErrorCode.INBOUND_WEBHOOK_VERIFICATION_FAILED]: 401,
   [ErrorCode.VERSION_BUMP_MISMATCH]: 422,
   [ErrorCode.COMPATIBLE_WITH_VIOLATION]: 422,
   [ErrorCode.BLOB_TOO_LARGE]: 413,

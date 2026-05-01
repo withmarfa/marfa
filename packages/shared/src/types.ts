@@ -485,6 +485,81 @@ export interface WebhookDelivery {
   created_at: string;
 }
 
+/**
+ * Inbound webhook subscription — workstream 2 PR 5.
+ *
+ * Inbound webhooks are external services posting into Myme via
+ * `POST /webhooks/inbound/:id`. Each subscription belongs to a
+ * `system.connection` of kind `external-service-connector` and stamps
+ * its verification method (read from the Integration manifest) at
+ * creation time. The raw shared secret is returned ONLY in the create
+ * response; subsequent reads always redact it.
+ */
+export interface InboundWebhook {
+  id: string;
+  tenant_id?: string;
+  connection_id: string;
+  external_service_id?: string;
+  /**
+   * Redacted shared-secret marker for list/get responses (`****<last 4>`).
+   * The raw secret is only ever surfaced in the 201 create response,
+   * which uses the `secret` field on `CreatedInboundWebhook` below.
+   */
+  secret_redacted: string;
+  verification_method: "hmac-sha256" | "slack" | "stripe" | "github" | "custom";
+  verification_adapter_id?: string;
+  events: string[];
+  disabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Returned exactly once by `POST /connections/:id/inbound-webhooks` —
+ * extends the standard `InboundWebhook` shape with the raw `secret`
+ * the caller must transmit to the external service. Subsequent reads
+ * never re-surface it.
+ */
+export interface CreatedInboundWebhook extends InboundWebhook {
+  secret: string;
+}
+
+/** Input for registering an inbound webhook subscription. */
+export interface CreateInboundWebhookInput {
+  /** The external service's id for this subscription, optional. */
+  external_service_id?: string;
+  /** Subscribed event types — opaque strings the connector understands. */
+  events: string[];
+  /**
+   * The Integration manifest, inline. Validated via
+   * `validateManifest`; the verification method (and adapter_id when
+   * `method: custom`) is stamped on the new row.
+   *
+   * Typed as `unknown` here because the shape is enforced by
+   * `IntegrationManifestSchema` at validate time — the wire surface
+   * accepts anything; the route rejects with the structured error
+   * array on shape mismatch.
+   */
+  manifest: unknown;
+}
+
+/** A single inbound webhook receipt — one row per POST to `/webhooks/inbound/:id`. */
+export interface InboundWebhookEvent {
+  id: string;
+  inbound_webhook_id: string;
+  external_delivery_id: string;
+  received_at: string;
+  /** Raw request body as received (UTF-8 string). */
+  payload: string;
+  verified: boolean;
+  /** NULL until WS3's reactive runner finishes processing. */
+  processed_at: string | null;
+  /** NULL until retries are exhausted (DLQ). */
+  processing_error: string | null;
+  retry_count: number;
+  next_attempt_at: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // User model (hosted mode only)
 // ---------------------------------------------------------------------------

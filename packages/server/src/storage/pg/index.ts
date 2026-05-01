@@ -16,6 +16,8 @@ import { PgBlobStore } from "./blob-store.js";
 import { PgOAuthStore } from "./oauth-store.js";
 import { PgWebhookStore } from "./webhook-store.js";
 import { PgWebhookDeliveryStore } from "./webhook-delivery-store.js";
+import { PgInboundWebhookStore } from "./inbound-webhook-store.js";
+import { PgInboundWebhookEventStore } from "./inbound-webhook-event-store.js";
 import { PgAuditStore } from "./audit-store.js";
 import { PgEventLogStore } from "./event-log-store.js";
 import { PgUserStore } from "./user-store.js";
@@ -57,6 +59,8 @@ export async function createPgStorage(
   const oauthStore = new PgOAuthStore(db);
   const webhookStore = new PgWebhookStore(db);
   const deliveryStore = new PgWebhookDeliveryStore(db);
+  const inboundWebhookStore = new PgInboundWebhookStore(db);
+  const inboundWebhookEventStore = new PgInboundWebhookEventStore(db);
   const auditStore = new PgAuditStore(db);
   const eventLogStore = new PgEventLogStore(db);
   const edgeStore = new PgEdgeStore(db);
@@ -83,6 +87,8 @@ export async function createPgStorage(
     oauth: oauthStore,
     outboundWebhooks: webhookStore,
     outboundWebhookDeliveries: deliveryStore,
+    inboundWebhooks: inboundWebhookStore,
+    inboundWebhookEvents: inboundWebhookEventStore,
     audit: auditStore,
     eventLog: eventLogStore,
     settings: new PgSettingsStore(db),
@@ -101,7 +107,7 @@ export async function createPgStorage(
     close,
     /** Truncate all tables — used by tests for isolation. */
     async _pgTruncate(): Promise<void> {
-      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_tokens, oauth_codes, oauth_device_codes, outbound_webhooks, outbound_webhook_deliveries, audit_log, event_log, tenants, users, auth_user, auth_session, auth_account, auth_verification, auth_passkey CASCADE`;
+      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_tokens, oauth_codes, oauth_device_codes, outbound_webhooks, outbound_webhook_deliveries, inbound_webhooks, inbound_webhook_events, audit_log, event_log, tenants, users, auth_user, auth_session, auth_account, auth_verification, auth_passkey CASCADE`;
     },
     /** Raw query escape hatch — used by retention tests for parameterised mutations. */
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]> {

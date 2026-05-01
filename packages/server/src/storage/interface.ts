@@ -11,6 +11,7 @@ import type {
   WebhookDelivery,
   CreateWebhookInput,
   UpdateWebhookInput,
+  InboundWebhookEvent,
   PaginatedResult,
   SearchResult,
   ConflictResponse,
@@ -362,6 +363,91 @@ export interface WebhookDeliveryStore {
     nextAttemptAt: string | null,
   ): Promise<void>;
   markDeadLetter(id: string): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Inbound webhook subsystem (workstream 2 PR 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Row shape returned by the SQL stores. The route layer translates this
+ * to the wire `InboundWebhook` (redacting the secret) at response time.
+ * `secret_encrypted` is the raw column value — pass it through
+ * `decryptSecret` to recover the plaintext.
+ */
+export interface InboundWebhookRow {
+  id: string;
+  tenant_id: string | null;
+  connection_id: string;
+  external_service_id: string | null;
+  secret_encrypted: string;
+  verification_method: string;
+  verification_adapter_id: string | null;
+  events: string[];
+  disabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Storage for inbound webhook subscriptions. The store is intentionally
+ * narrow — manifest validation and verification dispatch happen at the
+ * route layer; this interface just persists rows.
+ */
+export interface InboundWebhookStore {
+  create(input: {
+    id: string;
+    tenant_id?: string;
+    connection_id: string;
+    external_service_id?: string;
+    secret_encrypted: string;
+    verification_method: string;
+    verification_adapter_id?: string;
+    events: string[];
+  }): Promise<InboundWebhookRow>;
+  get(id: string, tenantId?: string): Promise<InboundWebhookRow | null>;
+  /**
+   * `getAny` — looks up a row regardless of tenant scope. Used by the
+   * public unauth POST /webhooks/inbound/:id receipt path, which has no
+   * caller credential to scope by; tenant isolation is enforced at the
+   * subscription / read paths instead.
+   */
+  getAny(id: string): Promise<InboundWebhookRow | null>;
+  listByConnection(
+    connectionId: string,
+    tenantId?: string,
+  ): Promise<InboundWebhookRow[]>;
+  setDisabled(id: string, disabled: boolean): Promise<void>;
+}
+
+export interface InboundWebhookEventStore {
+  /**
+   * Insert a receipt row. On a duplicate (inbound_webhook_id,
+   * external_delivery_id) pair, the implementation MUST NOT throw —
+   * the existing row id is returned with `inserted: false` so the
+   * route can distinguish a fresh receipt from a duplicate retry.
+   */
+  insert(input: {
+    id: string;
+    inbound_webhook_id: string;
+    external_delivery_id: string;
+    received_at: string;
+    payload: string;
+    verified: boolean;
+    processing_error?: string;
+  }): Promise<{ id: string; inserted: boolean }>;
+  list(
+    inboundWebhookId: string,
+    limit?: number,
+  ): Promise<InboundWebhookEvent[]>;
+  get(id: string): Promise<InboundWebhookEvent | null>;
+  /**
+   * Reset a row for manual replay from DLQ. Sets retry_count back to 0,
+   * processing_error to null, next_attempt_at to the supplied
+   * timestamp — bringing the row back into the pending partial-index
+   * window for WS3's reactive runner to pick up.
+   */
+  resetForRetry(id: string, nextAttemptAt: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -739,6 +825,8 @@ export interface Storage {
   oauth: OAuthStore;
   outboundWebhooks: WebhookStore;
   outboundWebhookDeliveries: WebhookDeliveryStore;
+  inboundWebhooks: InboundWebhookStore;
+  inboundWebhookEvents: InboundWebhookEventStore;
   audit: AuditStore;
   eventLog: EventLogStore;
   settings: SettingsStore;

@@ -10,6 +10,8 @@ import { SqliteBlobStore } from "./blob-store.js";
 import { SqliteOAuthStore } from "./oauth-store.js";
 import { SqliteWebhookStore } from "./webhook-store.js";
 import { SqliteWebhookDeliveryStore } from "./webhook-delivery-store.js";
+import { SqliteInboundWebhookStore } from "./inbound-webhook-store.js";
+import { SqliteInboundWebhookEventStore } from "./inbound-webhook-event-store.js";
 import { SqliteAuditStore } from "./audit-store.js";
 import { SqliteEventLogStore } from "./event-log-store.js";
 import { SqliteUserStore } from "./user-store.js";
@@ -52,6 +54,8 @@ export function createSqliteStorage(
   const oauthStore = new SqliteOAuthStore(db);
   const webhookStore = new SqliteWebhookStore(db);
   const deliveryStore = new SqliteWebhookDeliveryStore(db);
+  const inboundWebhookStore = new SqliteInboundWebhookStore(db);
+  const inboundWebhookEventStore = new SqliteInboundWebhookEventStore(db);
   const auditStore = new SqliteAuditStore(db);
   const eventLogStore = new SqliteEventLogStore(db, raw);
   const edgeStore = new SqliteEdgeStore(db);
@@ -79,6 +83,8 @@ export function createSqliteStorage(
     oauth: oauthStore,
     outboundWebhooks: webhookStore,
     outboundWebhookDeliveries: deliveryStore,
+    inboundWebhooks: inboundWebhookStore,
+    inboundWebhookEvents: inboundWebhookEventStore,
     audit: auditStore,
     eventLog: eventLogStore,
     settings: new SqliteSettingsStore(db),
