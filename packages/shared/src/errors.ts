@@ -57,6 +57,23 @@ export enum ErrorCode {
    * connection's `configuration.upstream_base_url` is unset or invalid.
    */
   OAUTH_PROXY_UPSTREAM_INVALID = "oauth_proxy_upstream_invalid",
+  /**
+   * Lease issuance was requested for a `capability_id` the supplied
+   * Integration manifest doesn't declare with `oauth_requirements:
+   * <capability>: "leased"`. (workstream 2 PR 7)
+   */
+  LEASE_CAPABILITY_NOT_DECLARED = "lease_capability_not_declared",
+  /**
+   * Requested TTL is outside the allowed range — below the per-capability
+   * floor or above the route-level ceiling (default 3600s).
+   */
+  LEASE_TTL_OUT_OF_RANGE = "lease_ttl_out_of_range",
+  /** Lease lookup by id (revoke / introspect) found no matching row. */
+  LEASE_TOKEN_NOT_FOUND = "lease_token_not_found",
+  /** Validation found a row but its `expires_at` has passed. */
+  LEASE_TOKEN_EXPIRED = "lease_token_expired",
+  /** Validation found a row whose `revoked_at` is set. */
+  LEASE_TOKEN_REVOKED = "lease_token_revoked",
   BLOB_TOO_LARGE = "blob_too_large",
   INVALID_PROPERTIES = "invalid_properties",
   INVALID_SCHEMA = "invalid_schema",
@@ -137,6 +154,11 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED]: 401,
   [ErrorCode.OAUTH_PROXY_TOKEN_MISSING]: 404,
   [ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID]: 422,
+  [ErrorCode.LEASE_CAPABILITY_NOT_DECLARED]: 422,
+  [ErrorCode.LEASE_TTL_OUT_OF_RANGE]: 400,
+  [ErrorCode.LEASE_TOKEN_NOT_FOUND]: 404,
+  [ErrorCode.LEASE_TOKEN_EXPIRED]: 401,
+  [ErrorCode.LEASE_TOKEN_REVOKED]: 401,
   [ErrorCode.VERSION_BUMP_MISMATCH]: 422,
   [ErrorCode.COMPATIBLE_WITH_VIOLATION]: 422,
   [ErrorCode.BLOB_TOO_LARGE]: 413,

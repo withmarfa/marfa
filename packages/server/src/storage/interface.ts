@@ -503,6 +503,59 @@ export interface ConnectionOAuthTokenStore {
 }
 
 // ---------------------------------------------------------------------------
+// Connection leased token store (workstream 2 PR 7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Row shape persisted in `connection_leased_tokens`. The lease IS a
+ * bearer token; storage is hashed (SHA-256) like API keys, plaintext
+ * is returned ONCE on issue. Capability gating ties each lease to a
+ * manifest-declared `oauth_requirements: { <capability_id>: "leased" }`
+ * entry.
+ */
+export interface ConnectionLeasedTokenRow {
+  id: string;
+  connection_id: string;
+  tenant_id: string | null;
+  capability_id: string;
+  lease_token_hash: string;
+  scopes: string[];
+  expires_at: string;
+  revoked_at: string | null;
+  issued_by_key_id: string | null;
+  created_at: string;
+}
+
+export interface ConnectionLeasedTokenStore {
+  create(input: {
+    id: string;
+    connection_id: string;
+    tenant_id?: string;
+    capability_id: string;
+    lease_token_hash: string;
+    scopes: string[];
+    expires_at: string;
+    issued_by_key_id?: string;
+  }): Promise<ConnectionLeasedTokenRow>;
+
+  /** Hash-keyed lookup — used by the validate endpoint. */
+  findByHash(hash: string): Promise<ConnectionLeasedTokenRow | null>;
+
+  /** Id-keyed lookup — used by the revoke endpoint. */
+  get(id: string, tenantId?: string): Promise<ConnectionLeasedTokenRow | null>;
+
+  /** List active (non-revoked, non-expired) leases for a connection. */
+  listActiveByConnection(
+    connectionId: string,
+    nowIso: string,
+    tenantId?: string,
+  ): Promise<ConnectionLeasedTokenRow[]>;
+
+  /** Stamp `revoked_at`. Returns false when the lease was already revoked. */
+  revoke(id: string, nowIso: string): Promise<boolean>;
+}
+
+// ---------------------------------------------------------------------------
 // User + Tenant stores (hosted mode only)
 // ---------------------------------------------------------------------------
 
@@ -880,6 +933,7 @@ export interface Storage {
   inboundWebhooks: InboundWebhookStore;
   inboundWebhookEvents: InboundWebhookEventStore;
   connectionOauthTokens: ConnectionOAuthTokenStore;
+  connectionLeasedTokens: ConnectionLeasedTokenStore;
   audit: AuditStore;
   eventLog: EventLogStore;
   settings: SettingsStore;
