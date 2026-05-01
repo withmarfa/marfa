@@ -1,0 +1,31 @@
+{
+  "name": "@mymehq/runtime-test",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "In-memory mocks of Cloudflare runtime primitives (DO storage + alarms, Queues, KV) for unit-testing Connections integrations without a Worker runtime.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@mymehq/runtime-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}
