@@ -102,6 +102,14 @@ export interface MymeAuth {
    * requiring admin bearer tokens.
    */
   getSession: (headers: Headers) => Promise<MymeAuthSession | null>;
+  /** Whether new account creation is allowed on this instance. Mirrors
+   *  the constructor option; the sign-in page reads it to decide
+   *  whether to render a "Create one" link below the form. */
+  allowSignup: boolean;
+  /** Configured federated OIDC provider IDs, in registration order.
+   *  The sign-in page renders one button per ID. Empty when no
+   *  providers are configured. */
+  oidcProviderIds: readonly string[];
   api: unknown;
 }
 
@@ -200,5 +208,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
     handler: instance.handler,
     api: instance.api,
     getSession: (headers: Headers) => api.getSession({ headers }),
+    allowSignup: options.allowSignup,
+    oidcProviderIds: (options.oidcProviders ?? []).map((p) => p.providerId),
   };
 }
