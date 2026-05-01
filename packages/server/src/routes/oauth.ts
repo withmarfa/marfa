@@ -209,7 +209,7 @@ export function authRoutes(
     const gated = await requireConsentSession(c);
     if (gated instanceof Response) return gated;
 
-    const formData = await c.req.parseBody();
+    const formData = await c.req.parseBody({ all: true });
     const action = formData.action as string;
     const clientId = formData.client_id as string;
     const redirectUri = formData.redirect_uri as string;

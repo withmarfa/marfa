@@ -224,6 +224,25 @@ describe("OAuth authorization flow", () => {
     expect(decoded).toBe(path);
   });
 
+  it("preserves all granted scopes when the consent form has multiple checkboxes (regression)", async () => {
+    // Hono's `c.req.parseBody()` (no `all: true`) collapses repeated form
+    // fields to the LAST value only. The consent screen renders one
+    // `<input type="checkbox" name="scopes">` per scope; before the fix,
+    // the handler only saw the last checkbox's value and tokens were
+    // issued with a single-scope grant regardless of what the user
+    // actually approved.
+    const { tokens } = await performOAuthFlow([
+      "core.note:read",
+      "core.note:write",
+      "metadata.types:write",
+    ]);
+    const grantedSet = new Set(tokens.scope.split(" "));
+    expect(grantedSet.has("core.note:read")).toBe(true);
+    expect(grantedSet.has("core.note:write")).toBe(true);
+    expect(grantedSet.has("metadata.types:write")).toBe(true);
+    expect(grantedSet.size).toBe(3);
+  });
+
   it("non-admin signed-in user reaches the consent screen", async () => {
     // The consent user we set up in beforeAll holds no admin role —
     // they're just a Better Auth-authenticated user. Reaching this
