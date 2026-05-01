@@ -1,0 +1,216 @@
+/**
+ * Layer 1 acceptance test — exercises the full vertical of the runtime
+ * substrate against a real Myme server (in-process), demonstrating
+ * that the per-Integration handler → SDK → server round-trip works
+ * end-to-end.
+ *
+ * Steps covered (from Plan A's 5-step acceptance list):
+ *   3. The integration test in `packages/runtime-test` runs the same
+ *      handler synchronously and asserts the same observable side
+ *      effects.
+ *   5. A second connection's runtime credential is denied access to
+ *      the first connection's `connection.runtime` subtree.
+ *
+ * Steps 1, 2, 4 require live `wrangler dev` + Cloudflare Queues and
+ * are run by the orchestrator at deploy time. Their behaviour is
+ * exercised in unit form by:
+ *   - PR 1's runtime-control app.test.ts (route shapes)
+ *   - PR 4's webhook-flow.test.ts (verify → enqueue with mocks)
+ *   - PR 3's reactive-run-bridge.test.ts (env-gated bridge runtime)
+ */
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import {
+  ConnectionClient,
+  createActivitySink,
+  createCursorStore,
+} from "@mymehq/runtime-sdk";
+import { createInMemoryStorage } from "@mymehq/runtime-test";
+import { createTestContext, request } from "../test-utils.js";
+import type { TestContext } from "../test-utils.js";
+
+let ctx: TestContext;
+
+beforeAll(async () => {
+  ctx = await createTestContext();
+});
+
+afterAll(() => {
+  ctx.cleanup();
+});
+
+interface MintResp {
+  id: string;
+  api_key: string;
+  connection_id: string;
+  expires_at: string;
+}
+
+/** A fetch shim that routes `<apiUrl>/<path>` to `app.request(<path>, init)`.
+ *  apiUrl is the magic prefix the SDK's ConnectionClient sees;
+ *  everything past it is the path the in-process server expects. */
+function makeAppFetch(app: TestContext["app"], apiUrl: string): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit) => {
+    const urlStr =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    const path = urlStr.startsWith(apiUrl)
+      ? urlStr.slice(apiUrl.length)
+      : urlStr;
+    return Promise.resolve(app.request(path, init));
+  }) as typeof fetch;
+}
+
+async function mintRuntimeCredential(connectionId: string): Promise<MintResp> {
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
+    key: ctx.adminKey,
+    body: {
+      connection_id: connectionId,
+      label: `acceptance ${suffix}`,
+      source: `acceptance-${suffix}`,
+      // Layer 2's install pipeline narrows these from the manifest's
+      // declared scopes. Layer 1 default is permissive — what the
+      // control-plane lease broker passes in routes/lease.ts.
+      type_permissions: { "*": "write" },
+    },
+  });
+  expect(res.status).toBe(201);
+  return (await res.json()) as MintResp;
+}
+
+describe("Layer 1 acceptance", () => {
+  it("end-to-end: handler reads cursor → writes cursor → emits activity", async () => {
+    // 1. Create the Connection placeholder item.
+    const itemRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "acceptance connection placeholder" },
+      },
+    });
+    const { item } = (await itemRes.json()) as { item: { id: string } };
+    const connectionId = item.id;
+
+    // 2. Mint a runtime credential for this Connection.
+    const minted = await mintRuntimeCredential(connectionId);
+
+    // 3. Build a ConnectionClient pointed at the in-process server.
+    const apiUrl = "http://acceptance.local";
+    const client = new ConnectionClient({
+      apiUrl,
+      credential: {
+        api_key: minted.api_key,
+        expires_at: minted.expires_at,
+        connection_id: connectionId,
+      },
+      refreshCredential: () =>
+        Promise.resolve({
+          api_key: minted.api_key,
+          expires_at: minted.expires_at,
+          connection_id: connectionId,
+        }),
+      fetch: makeAppFetch(ctx.app, apiUrl),
+    });
+
+    // 4. Drive a handler-equivalent flow: read cursor → write cursor →
+    //    emit activity. This is exactly what _template's handleSchedule
+    //    does, with the in-memory storage shim from runtime-test
+    //    standing in for the per-Connection DO storage.
+    const localStorage = createInMemoryStorage();
+    const cursor = createCursorStore(localStorage);
+    const activity = createActivitySink(client, connectionId);
+
+    // 4a. Cursor starts null on first run.
+    const initialCursor = await cursor.read("main");
+    expect(initialCursor).toBeNull();
+
+    // 4b. Sync cursor to the server's connection.runtime extension.
+    const cursorBlob = {
+      main: {
+        last_run_at: "2026-05-01T00:00:00Z",
+        run_count: 1,
+      },
+    };
+    await client.writeRuntimeExtension(connectionId, cursorBlob);
+
+    // 4c. Round-trip: server should now hold the blob.
+    const serverBlob = await client.readRuntimeExtension(connectionId);
+    expect(serverBlob).toEqual(cursorBlob);
+
+    // 4d. Emit a system.activity row.
+    await activity.emit({
+      severity: "info",
+      summary: "Acceptance run completed",
+      detail: { run_count: 1 },
+    });
+
+    // 5. Verify the activity item landed.
+    const listRes = await request(
+      ctx.app,
+      "GET",
+      `/items?type=system.activity&limit=50`,
+      { key: ctx.adminKey },
+    );
+    expect(listRes.status).toBe(200);
+    const listed = (await listRes.json()) as {
+      data: { id: string; properties?: Record<string, unknown> }[];
+    };
+    const matching = listed.data.find(
+      (i) =>
+        (i.properties as { connection_id?: string } | undefined)
+          ?.connection_id === connectionId,
+    );
+    expect(matching).toBeDefined();
+    expect(matching?.properties).toMatchObject({
+      severity: "info",
+      summary: "Acceptance run completed",
+    });
+  });
+
+  it("step 5 — cross-connection runtime credential is denied", async () => {
+    // Create two distinct Connection placeholders.
+    const itemA = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "tenant A connection" } },
+    });
+    const itemB = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "tenant B connection" } },
+    });
+    const connA = ((await itemA.json()) as { item: { id: string } }).item.id;
+    const connB = ((await itemB.json()) as { item: { id: string } }).item.id;
+
+    // Mint a runtime credential bound to A.
+    const credA = await mintRuntimeCredential(connA);
+
+    // Try to use credA against B's runtime subtree — should 403.
+    const apiUrl = "http://acceptance.local";
+    const client = new ConnectionClient({
+      apiUrl,
+      credential: {
+        api_key: credA.api_key,
+        expires_at: credA.expires_at,
+        connection_id: connA,
+      },
+      refreshCredential: () =>
+        Promise.resolve({
+          api_key: credA.api_key,
+          expires_at: credA.expires_at,
+          connection_id: connA,
+        }),
+      fetch: makeAppFetch(ctx.app, apiUrl),
+    });
+
+    let threw: unknown = null;
+    try {
+      await client.writeRuntimeExtension(connB, { key: 1 });
+    } catch (err) {
+      threw = err;
+    }
+    expect(threw).not.toBeNull();
+    expect(String(threw)).toMatch(/403|forbidden|cross|connection_id/i);
+  });
+});

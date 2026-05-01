@@ -126,7 +126,7 @@ describe("ConnectionClient", () => {
     expect(await client.getItem("missing_id")).toBeNull();
   });
 
-  it("readRuntimeExtension returns the value field unwrapped", async () => {
+  it("readRuntimeExtension returns the namespace blob from the server response", async () => {
     const captured: Captured[] = [];
     const client = new ConnectionClient({
       apiUrl: "https://api.example.com",
@@ -135,24 +135,25 @@ describe("ConnectionClient", () => {
       fetch: makeFetch(
         [
           () =>
-            new Response(JSON.stringify({ value: { cursor: "abc" } }), {
-              status: 200,
-            }),
+            new Response(
+              JSON.stringify({
+                namespace: "connection.runtime",
+                data: { cursor: "abc" },
+              }),
+              { status: 200 },
+            ),
         ],
         captured,
       ),
     });
-    const v = (await client.readRuntimeExtension(
-      "conn_1",
-      "github.cursor",
-    )) as { cursor: string } | null;
+    const v = await client.readRuntimeExtension("conn_1");
     expect(v).toEqual({ cursor: "abc" });
     expect(captured[0]!.url).toBe(
-      "https://api.example.com/items/conn_1/extensions/connection.runtime/github.cursor",
+      "https://api.example.com/items/conn_1/extensions/connection.runtime",
     );
   });
 
-  it("writeRuntimeExtension wraps the value and PUTs", async () => {
+  it("writeRuntimeExtension PUTs the blob directly as the body", async () => {
     const captured: Captured[] = [];
     const client = new ConnectionClient({
       apiUrl: "https://api.example.com",
@@ -160,12 +161,12 @@ describe("ConnectionClient", () => {
       refreshCredential: () => Promise.resolve(REFRESHED),
       fetch: makeFetch([() => new Response(null, { status: 204 })], captured),
     });
-    await client.writeRuntimeExtension("conn_1", "github.cursor", {
-      since: "2026-05-01",
+    await client.writeRuntimeExtension("conn_1", {
+      cursor: { since: "2026-05-01" },
     });
     expect(captured[0]!.method).toBe("PUT");
     expect(captured[0]!.url).toBe(
-      "https://api.example.com/items/conn_1/extensions/connection.runtime/github.cursor",
+      "https://api.example.com/items/conn_1/extensions/connection.runtime",
     );
   });
 });
