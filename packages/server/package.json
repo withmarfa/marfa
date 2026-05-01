@@ -21,6 +21,7 @@
     "dev": "tsx watch src/index.ts",
     "migrate": "tsx src/storage/migrate.ts",
     "migrate:oauth-to-credential": "tsx src/scripts/migrate-oauth-to-credential.ts",
+    "migrate:sync-json-to-connection": "tsx src/scripts/migrate-sync-json-to-connection.ts",
     "migrate:pg:generate": "drizzle-kit generate --config=drizzle.pg.config.ts",
     "migrate:sqlite:generate": "drizzle-kit generate --config=drizzle.sqlite.config.ts",
     "generate:openapi": "tsx scripts/generate-openapi.ts"
@@ -31,6 +32,7 @@
     "@better-auth/passkey": "1.6.9",
     "@hono/node-server": "^1.13.8",
     "@hono/zod-openapi": "^1.2.4",
+    "@mymehq/integration-sync-agent": "workspace:*",
     "@mymehq/shared": "workspace:*",
     "better-auth": "1.6.9",
     "better-sqlite3": "^12.9.0",

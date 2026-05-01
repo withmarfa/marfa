@@ -1,0 +1,27 @@
+{
+  "name": "@mymehq/integration-sync-agent",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Local-runtime connector for the existing sync agent. Defines the manifest the agent installs against; the actual execution is the daemon in the mymehq/sync-agent repo. The companion server-side migration at packages/server/src/scripts/migrate-sync-json-to-connection.ts re-presents an existing ~/.myme/sync.json as a Connection + Credential pair.",
+  "exports": {
+    ".": {
+      "types": "./dist/manifest.d.ts",
+      "import": "./dist/manifest.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsup src/manifest.ts --format esm --dts --out-dir dist",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@mymehq/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}
