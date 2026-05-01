@@ -14,6 +14,7 @@ import type { Storage } from "../storage/interface.js";
 import type { MymeAuth } from "../auth/instance.js";
 import { renderConsentScreen } from "./consent.js";
 import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
+import { renderSignUpPage } from "./sign-up-page.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 
 const ACCESS_TOKEN_PREFIX = "myme_at_";
@@ -557,7 +558,142 @@ export function authRoutes(
     );
   });
 
+  // -----------------------------------------------------------------------
+  // Sign-up page (HTML) + form-handler wrapper
+  // -----------------------------------------------------------------------
+  //
+  // Conditional surface — the GET handler returns 404 when allowSignup
+  // is false. The POST wrapper around Better Auth's POST /auth/sign-up/email
+  // mirrors the sign-in form-handler shape: form-encoded body, JSON
+  // dispatch, Set-Cookie forwarded onto a 302. autoSignIn is enabled
+  // upstream so a successful sign-up lands the user on `return_to`
+  // already authenticated.
+
+  router.get("/sign-up", (c) => {
+    if (!auth?.allowSignup) {
+      throw new MymeError(ErrorCode.NOT_FOUND, "Not found");
+    }
+    const url = new URL(c.req.url);
+    const returnTo = validateReturnTo(url.searchParams.get("return_to"));
+    const error = url.searchParams.get("error") ?? undefined;
+    return c.html(renderSignUpPage({ returnTo, error }));
+  });
+
+  router.post("/sign-up", async (c) => {
+    if (!auth) {
+      throw new MymeError(
+        ErrorCode.UNAUTHORIZED,
+        "Sign-up requires the better-auth identity layer to be configured",
+      );
+    }
+    if (!auth.allowSignup) {
+      throw new MymeError(ErrorCode.NOT_FOUND, "Not found");
+    }
+
+    const formData = await c.req.formData();
+    const returnTo = validateReturnTo(formData.get("return_to"));
+    const email = formData.get("email");
+    const name = formData.get("name");
+    const password = formData.get("password");
+    const passwordConfirm = formData.get("password_confirm");
+    const emailStr = typeof email === "string" ? email.trim() : "";
+    const nameStr = typeof name === "string" ? name.trim() : "";
+    const passwordStr = typeof password === "string" ? password : "";
+    const passwordConfirmStr =
+      typeof passwordConfirm === "string" ? passwordConfirm : "";
+
+    const errorRedirect = (errCode: string): Response =>
+      c.redirect(buildSignUpRedirect({ returnTo, error: errCode }), 302);
+
+    if (!emailStr || !nameStr || !passwordStr || !passwordConfirmStr) {
+      return errorRedirect("missing_field");
+    }
+    if (passwordStr !== passwordConfirmStr) {
+      return errorRedirect("password_mismatch");
+    }
+    if (passwordStr.length < 8) {
+      return errorRedirect("weak_password");
+    }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailStr)) {
+      return errorRedirect("email_invalid");
+    }
+
+    const upstream = new Request(new URL("/auth/sign-up/email", c.req.url), {
+      method: "POST",
+      headers: forwardHeaders(c.req.raw.headers, {
+        "content-type": "application/json",
+      }),
+      body: JSON.stringify({
+        email: emailStr,
+        password: passwordStr,
+        name: nameStr,
+      }),
+    });
+    const response = await auth.handler(upstream);
+
+    if (response.ok) {
+      // autoSignIn=true on the auth instance means the response carries
+      // a session cookie. Forward it onto the 302 to land the user on
+      // return_to already authenticated.
+      const redirectHeaders = new Headers({ Location: returnTo });
+      const setCookies =
+        typeof (
+          response.headers as Headers & {
+            getSetCookie?: () => string[];
+          }
+        ).getSetCookie === "function"
+          ? (
+              response.headers as Headers & {
+                getSetCookie: () => string[];
+              }
+            ).getSetCookie()
+          : null;
+      if (setCookies && setCookies.length > 0) {
+        for (const cookie of setCookies) {
+          redirectHeaders.append("set-cookie", cookie);
+        }
+      } else {
+        const single = response.headers.get("set-cookie");
+        if (single) redirectHeaders.append("set-cookie", single);
+      }
+      return new Response(null, { status: 302, headers: redirectHeaders });
+    }
+
+    // Map Better Auth's error response shape to our user-facing codes.
+    // Better Auth returns 422 USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL when
+    // the email is taken, and 400 with code ROLE-validation when password
+    // is invalid. Read the body once to discriminate.
+    let errorCode = "signup_failed";
+    try {
+      const body = (await response.json()) as { code?: string };
+      if (body.code === "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL") {
+        errorCode = "email_exists";
+      } else if (body.code?.toLowerCase().includes("password")) {
+        errorCode = "weak_password";
+      } else if (body.code?.toLowerCase().includes("email")) {
+        errorCode = "email_invalid";
+      }
+    } catch {
+      // Fall through to the generic signup_failed code.
+    }
+    return errorRedirect(errorCode);
+  });
+
   return router;
+}
+
+/** Build a redirect URL back to the sign-up page with error + return_to. */
+function buildSignUpRedirect(params: {
+  returnTo: string;
+  error?: string;
+}): string {
+  const search = new URLSearchParams();
+  if (params.error) search.set("error", params.error);
+  if (params.returnTo && params.returnTo !== "/") {
+    search.set("return_to", params.returnTo);
+  }
+  const query = search.toString();
+  return `/auth/sign-up${query ? `?${query}` : ""}`;
 }
 
 /** Build a redirect URL back to the sign-in page with the right query
