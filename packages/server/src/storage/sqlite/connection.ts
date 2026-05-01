@@ -229,6 +229,39 @@ export function createConnection(sqlitePath: string): {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS inbound_webhooks (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT,
+      connection_id TEXT NOT NULL,
+      external_service_id TEXT,
+      secret_encrypted TEXT NOT NULL,
+      verification_method TEXT NOT NULL,
+      verification_adapter_id TEXT,
+      events TEXT NOT NULL DEFAULT '[]',
+      disabled INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_inbound_webhooks_connection_id ON inbound_webhooks(connection_id);
+
+    CREATE TABLE IF NOT EXISTS inbound_webhook_events (
+      id TEXT PRIMARY KEY,
+      inbound_webhook_id TEXT NOT NULL,
+      external_delivery_id TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      verified INTEGER NOT NULL,
+      processed_at TEXT,
+      processing_error TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_webhook_events_dedup
+      ON inbound_webhook_events(inbound_webhook_id, external_delivery_id);
+    CREATE INDEX IF NOT EXISTS idx_inbound_webhook_events_pending
+      ON inbound_webhook_events(next_attempt_at)
+      WHERE processed_at IS NULL AND processing_error IS NULL;
+
     CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
       id TEXT PRIMARY KEY,
       webhook_id TEXT NOT NULL,

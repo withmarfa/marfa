@@ -25,6 +25,10 @@ import { authRoutes, discoveryRoutes } from "./routes/oauth.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
 import { webhookRoutes } from "./routes/webhooks.js";
+import {
+  inboundWebhookSubscriptionRoutes,
+  inboundWebhookReceiptRoutes,
+} from "./routes/inbound-webhooks.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
@@ -198,6 +202,11 @@ export function createApp(
   }
 
   app.route("/events", eventRoutes(storage));
+  // Inbound subscription management (admin/connector auth) lives under
+  // /connections/:id/inbound-webhooks. Mounted before /webhooks so the
+  // public receipt path /webhooks/inbound/:id resolves correctly.
+  app.route("/connections", inboundWebhookSubscriptionRoutes(storage));
+  app.route("/webhooks/inbound", inboundWebhookReceiptRoutes(storage));
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));

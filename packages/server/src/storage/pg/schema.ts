@@ -323,6 +323,77 @@ export const outboundWebhookDeliveries = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// inbound_webhooks (workstream 2 PR 5)
+// ---------------------------------------------------------------------------
+
+export const inboundWebhooks = pgTable(
+  "inbound_webhooks",
+  {
+    id: text("id").primaryKey(),
+    tenant_id: text("tenant_id"),
+    // App-level reference to a system.connection item (kind:
+    // external-service-connector). Not a DB-level FK — matches the
+    // existing pattern for other connection-referencing tables.
+    connection_id: text("connection_id").notNull(),
+    // The external service's id for this subscription. Retained for
+    // operator correlation; not unique.
+    external_service_id: text("external_service_id"),
+    // AES-256-GCM(secret) under HKDF(MYME_AUTH_SECRET,
+    // "inbound-webhook-secrets"). Per-row IV is stored in the first 12
+    // bytes of the ciphertext — see crypto/secret-encryption.ts.
+    secret_encrypted: text("secret_encrypted").notNull(),
+    // Verification method stamped at subscription time from the
+    // submitted manifest's webhook_verification.method.
+    verification_method: text("verification_method").notNull(),
+    // Non-null when verification_method === 'custom'.
+    verification_adapter_id: text("verification_adapter_id"),
+    events: text("events").notNull().default("[]"),
+    // Use integer for cross-dialect parity with sqlite — both stores
+    // marshal `disabled === 1` to `boolean` at the row-mapping layer.
+    disabled: integer("disabled").notNull().default(0),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_inbound_webhooks_connection_id").on(table.connection_id),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// inbound_webhook_events (workstream 2 PR 5)
+// ---------------------------------------------------------------------------
+
+export const inboundWebhookEvents = pgTable(
+  "inbound_webhook_events",
+  {
+    id: text("id").primaryKey(),
+    inbound_webhook_id: text("inbound_webhook_id").notNull(),
+    // Sender's idempotency identifier. Combined with inbound_webhook_id
+    // via the unique index below to enforce at-most-once processing.
+    external_delivery_id: text("external_delivery_id").notNull(),
+    received_at: text("received_at").notNull(),
+    payload: text("payload").notNull(),
+    verified: integer("verified").notNull(),
+    // NULL = not yet processed. WS3's reactive runner stamps this when
+    // it finishes work; verified-but-not-processed rows are the queue.
+    processed_at: text("processed_at"),
+    // NULL = no error yet. Populated when retries are exhausted (DLQ).
+    processing_error: text("processing_error"),
+    retry_count: integer("retry_count").notNull().default(0),
+    next_attempt_at: text("next_attempt_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_inbound_webhook_events_dedup").on(
+      table.inbound_webhook_id,
+      table.external_delivery_id,
+    ),
+    index("idx_inbound_webhook_events_pending")
+      .on(table.next_attempt_at)
+      .where(sql`processed_at IS NULL AND processing_error IS NULL`),
+  ],
+);
+
 export const oauthCodes = pgTable("oauth_codes", {
   id: text("id").primaryKey(),
   connection_item_id: text("connection_item_id")
