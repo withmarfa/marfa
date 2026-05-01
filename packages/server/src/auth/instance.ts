@@ -110,6 +110,11 @@ export interface MymeAuth {
    *  The sign-in page renders one button per ID. Empty when no
    *  providers are configured. */
   oidcProviderIds: readonly string[];
+  /** Public-facing issuer URL the instance advertises (drives
+   *  `verification_uri` in the Device Authorization Grant response,
+   *  the OAuth issuer field on the discovery doc, and the cookie
+   *  domain). Mirrors `MYME_AUTH_BASE_URL`. */
+  baseURL: string;
   api: unknown;
 }
 
@@ -210,5 +215,6 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
     getSession: (headers: Headers) => api.getSession({ headers }),
     allowSignup: options.allowSignup,
     oidcProviderIds: (options.oidcProviders ?? []).map((p) => p.providerId),
+    baseURL: options.baseURL,
   };
 }

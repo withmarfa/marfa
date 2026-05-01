@@ -229,6 +229,38 @@ export const oauthTokens = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// oauth_device_codes — Device Authorization Grant (RFC 8628)
+// ---------------------------------------------------------------------------
+
+export const oauthDeviceCodes = pgTable(
+  "oauth_device_codes",
+  {
+    id: text("id").primaryKey(),
+    /** SHA-256 of the raw device_code returned to the polling client. */
+    device_code_hash: text("device_code_hash").notNull().unique(),
+    /** Short, low-entropy code displayed to the human (XXXX-XXXX shape). */
+    user_code: text("user_code").notNull().unique(),
+    client_id: text("client_id")
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    status: text("status").notNull().default("pending"),
+    connection_item_id: text("connection_item_id").references(() => items.id, {
+      onDelete: "set null",
+    }),
+    expires_at: text("expires_at").notNull(),
+    interval_seconds: integer("interval_seconds").notNull().default(5),
+    last_polled_at: text("last_polled_at"),
+    approved_at: text("approved_at"),
+    created_at: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_oauth_device_codes_user_code").on(table.user_code),
+    index("idx_oauth_device_codes_status").on(table.status),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // custom_types (runtime type registration)
 // ---------------------------------------------------------------------------
 

@@ -225,6 +225,49 @@ export const oauthTokens = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// oauth_device_codes — Device Authorization Grant (RFC 8628)
+// ---------------------------------------------------------------------------
+
+export const oauthDeviceCodes = sqliteTable(
+  "oauth_device_codes",
+  {
+    id: text("id").primaryKey(),
+    /** SHA-256 of the raw device_code returned to the polling client.
+     *  Uniqueness lets validateToken-style lookups stay constant-time. */
+    device_code_hash: text("device_code_hash").notNull().unique(),
+    /** Short, low-entropy code displayed to the human (XXXX-XXXX shape).
+     *  Unique while the row is `pending`; once approved/denied/expired
+     *  the row is preserved for audit but no new pending row may reuse
+     *  the value (enforced by a unique index over the natural key). */
+    user_code: text("user_code").notNull().unique(),
+    client_id: text("client_id")
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: "cascade" }),
+    /** Space-separated list of requested scopes. Stored verbatim;
+     *  parsed via parseScope at consent / token time. */
+    scope: text("scope").notNull(),
+    /** Lifecycle: pending → approved | denied; expired by the cleanup
+     *  job once `expires_at < now()`. */
+    status: text("status").notNull().default("pending"),
+    /** Set when status transitions to `approved`. References the
+     *  system.connection (kind: user-app-grant) created on approval. */
+    connection_item_id: text("connection_item_id").references(() => items.id, {
+      onDelete: "set null",
+    }),
+    expires_at: text("expires_at").notNull(),
+    interval_seconds: integer("interval_seconds").notNull().default(5),
+    /** Used by the polling endpoint to detect `slow_down` violations. */
+    last_polled_at: text("last_polled_at"),
+    approved_at: text("approved_at"),
+    created_at: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_oauth_device_codes_user_code").on(table.user_code),
+    index("idx_oauth_device_codes_status").on(table.status),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // custom_types (runtime type registration)
 // ---------------------------------------------------------------------------
 

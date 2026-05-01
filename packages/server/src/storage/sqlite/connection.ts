@@ -200,6 +200,23 @@ export function createConnection(sqlitePath: string): {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS oauth_device_codes (
+      id TEXT PRIMARY KEY,
+      device_code_hash TEXT NOT NULL UNIQUE,
+      user_code TEXT NOT NULL UNIQUE,
+      client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+      scope TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      connection_item_id TEXT REFERENCES items(id) ON DELETE SET NULL,
+      expires_at TEXT NOT NULL,
+      interval_seconds INTEGER NOT NULL DEFAULT 5,
+      last_polled_at TEXT,
+      approved_at TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_device_codes_user_code ON oauth_device_codes(user_code);
+    CREATE INDEX IF NOT EXISTS idx_oauth_device_codes_status ON oauth_device_codes(status);
+
     CREATE TABLE IF NOT EXISTS outbound_webhooks (
       id TEXT PRIMARY KEY,
       tenant_id TEXT,
