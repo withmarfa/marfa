@@ -11,7 +11,7 @@ import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
 import { VersionThinner } from "./storage/version-thinner.js";
 import { TrashPurger, FeedExpirer } from "./storage/retention.js";
-import { initEventLog } from "./pubsub.js";
+import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
 import { log } from "./middleware/logger.js";
 
 async function main() {
@@ -60,7 +60,7 @@ async function main() {
     blobBackend = new FilesystemBlobBackend(config.blobPath);
   }
   // Enable SSE event persistence
-  initEventLog(storage.eventLog);
+  initEventLog(storage.eventLog, defaultCycleDetectionWiring(storage));
 
   // Event log retention — clean up events older than the configured
   // window (default 168h / 7d; override via MYME_EVENT_LOG_RETENTION_HOURS).

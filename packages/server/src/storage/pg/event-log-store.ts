@@ -12,6 +12,8 @@ export class PgEventLogStore implements EventLogStore {
     edge_id?: string | null;
     tenant_id?: string;
     payload: string;
+    originating_connection_id?: string | null;
+    hop_count?: number;
   }): Promise<number> {
     const [row] = await this.db
       .insert(eventLog)
@@ -21,6 +23,8 @@ export class PgEventLogStore implements EventLogStore {
         edge_id: entry.edge_id ?? null,
         tenant_id: entry.tenant_id ?? null,
         payload: entry.payload,
+        originating_connection_id: entry.originating_connection_id ?? null,
+        hop_count: entry.hop_count ?? 0,
         created_at: new Date().toISOString(),
       })
       .returning({ id: eventLog.id });
@@ -52,6 +56,8 @@ export class PgEventLogStore implements EventLogStore {
       edge_id: row.edge_id,
       tenant_id: row.tenant_id,
       payload: row.payload,
+      originating_connection_id: row.originating_connection_id,
+      hop_count: row.hop_count,
       created_at: row.created_at,
     }));
   }

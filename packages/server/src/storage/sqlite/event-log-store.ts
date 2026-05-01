@@ -15,10 +15,12 @@ export class SqliteEventLogStore implements EventLogStore {
     edge_id?: string | null;
     tenant_id?: string;
     payload: string;
+    originating_connection_id?: string | null;
+    hop_count?: number;
   }): Promise<number> {
     const stmt = this.raw.prepare(
-      `INSERT INTO event_log (event_type, item_id, edge_id, tenant_id, payload, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO event_log (event_type, item_id, edge_id, tenant_id, payload, originating_connection_id, hop_count, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const result = stmt.run(
       entry.event_type,
@@ -26,6 +28,8 @@ export class SqliteEventLogStore implements EventLogStore {
       entry.edge_id ?? null,
       entry.tenant_id ?? null,
       entry.payload,
+      entry.originating_connection_id ?? null,
+      entry.hop_count ?? 0,
       new Date().toISOString(),
     );
     return Number(result.lastInsertRowid);
@@ -54,6 +58,8 @@ export class SqliteEventLogStore implements EventLogStore {
       edge_id: row.edge_id,
       tenant_id: row.tenant_id,
       payload: row.payload,
+      originating_connection_id: row.originating_connection_id,
+      hop_count: row.hop_count,
       created_at: row.created_at,
     }));
   }
