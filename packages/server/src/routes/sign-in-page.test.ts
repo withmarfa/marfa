@@ -378,6 +378,86 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     expect(cookies.some((c) => c.includes("myme.auth"))).toBe(true);
   });
 
+  it("succeeds when browser sends Origin: null (privacy-strict referrer policy)", async () => {
+    // Regression test for the bug where Chrome serializes Origin as the
+    // literal string "null" on form-POST navigations under strict
+    // referrer policies — Better Auth's CSRF check was rejecting these
+    // with MISSING_OR_NULL_ORIGIN before the wrapper learned to fall
+    // back to auth.baseURL on null/missing Origin.
+    ctx = await createTestContext({ authAllowSignup: true });
+    await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "edgar@example.com",
+        password: "correct horse",
+        name: "Edgar",
+      },
+      headers: { origin: ORIGIN },
+    });
+
+    const formBody = new URLSearchParams({
+      mode: "password",
+      email: "edgar@example.com",
+      password: "correct horse",
+      return_to: "/",
+    });
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/sign-in`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          // Browser-style: literal "null" Origin from a privacy-strict
+          // referrer policy. The wrapper should fall back to
+          // auth.baseURL when dispatching to Better Auth.
+          origin: "null",
+        },
+        body: formBody.toString(),
+      }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/");
+    const cookies =
+      typeof (res.headers as Headers & { getSetCookie?: () => string[] })
+        .getSetCookie === "function"
+        ? (
+            res.headers as Headers & { getSetCookie: () => string[] }
+          ).getSetCookie()
+        : [res.headers.get("set-cookie") ?? ""];
+    expect(cookies.some((c) => c.includes("myme.auth"))).toBe(true);
+  });
+
+  it("succeeds when browser omits the Origin header entirely", async () => {
+    // Some legacy browsers / curl-without-explicit-origin omit Origin
+    // on POST. The wrapper falls back to auth.baseURL.
+    ctx = await createTestContext({ authAllowSignup: true });
+    await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "frank@example.com",
+        password: "correct horse",
+        name: "Frank",
+      },
+      headers: { origin: ORIGIN },
+    });
+
+    const formBody = new URLSearchParams({
+      mode: "password",
+      email: "frank@example.com",
+      password: "correct horse",
+      return_to: "/",
+    });
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/sign-in`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          // No Origin header.
+        },
+        body: formBody.toString(),
+      }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/");
+  });
+
   it("rejects unsafe return_to values and falls back to /", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     await request(ctx.app, "POST", "/auth/sign-up/email", {
