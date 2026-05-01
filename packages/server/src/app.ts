@@ -29,6 +29,7 @@ import {
   inboundWebhookSubscriptionRoutes,
   inboundWebhookReceiptRoutes,
 } from "./routes/inbound-webhooks.js";
+import { connectionProxyRoutes } from "./routes/connection-proxy.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
@@ -206,6 +207,10 @@ export function createApp(
   // /connections/:id/inbound-webhooks. Mounted before /webhooks so the
   // public receipt path /webhooks/inbound/:id resolves correctly.
   app.route("/connections", inboundWebhookSubscriptionRoutes(storage));
+  // Connection OAuth proxy (workstream 2 PR 6) — POST/GET/etc.
+  // /connections/:id/proxy/* forwards to the connection's configured
+  // upstream URL with Authorization: Bearer <decrypted access_token>.
+  app.route("/connections", connectionProxyRoutes(storage));
   app.route("/webhooks/inbound", inboundWebhookReceiptRoutes(storage));
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));

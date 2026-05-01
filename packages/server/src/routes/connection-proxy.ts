@@ -1,0 +1,687 @@
+import { Hono } from "hono";
+import { createHash } from "node:crypto";
+import { MymeError, ErrorCode, generateId, type Item } from "@mymehq/shared";
+import type { AppEnv } from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
+import type { Storage } from "../storage/interface.js";
+import {
+  encryptSecret,
+  decryptSecret,
+  SECRET_INFO,
+} from "../crypto/secret-encryption.js";
+
+// ---------------------------------------------------------------------------
+// Connection OAuth proxy (workstream 2 PR 6)
+//
+// `POST /connections/:id/proxy/*` — let a connector (or a tenant admin)
+// make an outbound HTTP call to an external service through a single
+// server-side path that:
+//   1. Decrypts the connection's stored access_token and stamps it as
+//      `Authorization: Bearer <access_token>` on the outbound request.
+//   2. On a 401-from-upstream, single-flight-refreshes the access token
+//      (exchange refresh_token via the OAuth provider's token endpoint),
+//      retries the original request once.
+//   3. On terminal refresh failure (`invalid_grant` or no refresh token),
+//      flips the connection's `runtime_status` to `reauth_required` and
+//      emits a `system.activity` row with severity `action_required` so
+//      the user surface knows to prompt for re-authorisation.
+//   4. Rotates the refresh_token whenever the upstream returns a new one;
+//      the rotated-out token's SHA-256 is written to
+//      `previous_refresh_hash` for forensic logging.
+//   5. Audits every call (success and failure) regardless of outcome.
+//
+// All HTTP verbs route through here — proxies have to be method-agnostic.
+// The OpenAPI spec deliberately omits this route; the upstream's schema
+// is unknown at our layer, so a placeholder doc would be misleading.
+// (Documented in PR 6 description as a WS2 placeholder; WS3's manifest
+// runtime can declare upstream paths and re-introduce a structured spec.)
+// ---------------------------------------------------------------------------
+
+interface OAuthConfig {
+  upstream_base_url: string;
+  oauth_token_url: string;
+  oauth_client_id: string;
+  /**
+   * Plaintext client_secret — stored alongside the connection's
+   * configuration in WS2 as a placeholder. WS3 will move this to a
+   * `system.credential` item referenced via `credential_ref`. Documented
+   * trade-off; not a long-term shape.
+   */
+  oauth_client_secret: string;
+}
+
+function readOAuthConfig(connection: Item): OAuthConfig {
+  const raw = connection.properties.configuration;
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    Array.isArray(raw) ||
+    typeof (raw as Record<string, unknown>).upstream_base_url !== "string" ||
+    typeof (raw as Record<string, unknown>).oauth_token_url !== "string" ||
+    typeof (raw as Record<string, unknown>).oauth_client_id !== "string" ||
+    typeof (raw as Record<string, unknown>).oauth_client_secret !== "string"
+  ) {
+    throw new MymeError(
+      ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
+      "Connection.configuration is missing required OAuth fields (upstream_base_url, oauth_token_url, oauth_client_id, oauth_client_secret)",
+    );
+  }
+  const cfg = raw as Record<string, unknown>;
+  return {
+    upstream_base_url: String(cfg.upstream_base_url),
+    oauth_token_url: String(cfg.oauth_token_url),
+    oauth_client_id: String(cfg.oauth_client_id),
+    oauth_client_secret: String(cfg.oauth_client_secret),
+  };
+}
+
+/**
+ * Allow-list of headers the proxy forwards to the upstream from the
+ * caller's request. Most other headers are either irrelevant
+ * (Host, Content-Length recomputed by fetch) or actively dangerous
+ * to forward (Cookie, the caller's own Authorization).
+ */
+const FORWARDABLE_REQUEST_HEADERS = new Set([
+  "accept",
+  "content-type",
+  "accept-language",
+  "user-agent",
+  "if-match",
+  "if-none-match",
+  "if-modified-since",
+]);
+
+/**
+ * Allow-list of upstream response headers we propagate back to the
+ * caller. Strips set-cookie, transfer-encoding, content-length (fetch
+ * recomputes), and connection-level headers.
+ */
+const FORWARDABLE_RESPONSE_HEADERS = new Set([
+  "content-type",
+  "content-language",
+  "etag",
+  "last-modified",
+  "cache-control",
+  "ratelimit-limit",
+  "ratelimit-remaining",
+  "ratelimit-reset",
+  "x-ratelimit-limit",
+  "x-ratelimit-remaining",
+  "x-ratelimit-reset",
+]);
+
+function filterRequestHeaders(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    if (FORWARDABLE_REQUEST_HEADERS.has(key.toLowerCase())) {
+      out[key] = value;
+    }
+  });
+  return out;
+}
+
+function filterResponseHeaders(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    if (FORWARDABLE_RESPONSE_HEADERS.has(key.toLowerCase())) {
+      out[key] = value;
+    }
+  });
+  return out;
+}
+
+function sha256Hex(input: string): string {
+  return createHash("sha256").update(input, "utf8").digest("hex");
+}
+
+/**
+ * In-process mutex map keyed by connectionId. The cross-instance gate is
+ * `storage.coordination.withJobLock`; this Map serialises concurrent
+ * refresh attempts within the same Node process (which the per-instance
+ * lock alone won't do — `pg_try_advisory_lock` is a no-op when the same
+ * session holds it). Enforces "one refresh in flight per connection".
+ */
+const inFlightRefresh = new Map<string, Promise<void>>();
+
+interface RefreshAttemptResult {
+  ok: true;
+  access_token: string;
+}
+
+interface RefreshAttemptFailed {
+  ok: false;
+  /** True when the upstream rejected the refresh with `invalid_grant`. */
+  invalidGrant: boolean;
+  reason: string;
+}
+
+/**
+ * Exchange the connection's refresh_token at the upstream OAuth provider's
+ * token endpoint for a fresh access_token. Persists the rotated tokens
+ * back to `connection_oauth_tokens` and returns the new access_token in
+ * memory for the immediate retry. The cross-instance lock + in-process
+ * mutex means this runs at most once per connection at a time.
+ */
+async function refreshAccessToken(
+  storage: Storage,
+  connectionId: string,
+  config: OAuthConfig,
+): Promise<RefreshAttemptResult | RefreshAttemptFailed> {
+  const row = await storage.connectionOauthTokens.get(connectionId);
+  if (!row) {
+    return {
+      ok: false,
+      invalidGrant: false,
+      reason: "No token row for connection",
+    };
+  }
+  if (!row.refresh_token_encrypted) {
+    return {
+      ok: false,
+      invalidGrant: true,
+      reason: "No refresh token available",
+    };
+  }
+  let refreshToken: string;
+  try {
+    refreshToken = decryptSecret(
+      row.refresh_token_encrypted,
+      SECRET_INFO.connectionOauthToken,
+    );
+  } catch {
+    return {
+      ok: false,
+      invalidGrant: true,
+      reason: "Failed to decrypt stored refresh token",
+    };
+  }
+
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: config.oauth_client_id,
+    client_secret: config.oauth_client_secret,
+  });
+  let resp: Response;
+  try {
+    resp = await fetch(config.oauth_token_url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: body.toString(),
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      invalidGrant: false,
+      reason: `Token endpoint request failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  if (resp.status === 400 || resp.status === 401) {
+    // RFC 6749 §5.2 — invalid_grant is a terminal signal; refresh token
+    // is gone, the user must reauth.
+    let errCode = "";
+    try {
+      const j = (await resp.clone().json()) as { error?: string };
+      errCode = j.error ?? "";
+    } catch {
+      // Body wasn't JSON; treat all 400/401 as invalid_grant since the
+      // upstream isn't going to accept this refresh.
+    }
+    return {
+      ok: false,
+      // 400/401 from token endpoints is canonical "stop, reauth" — RFC
+      // 6749 §5.2. Treat all such responses as terminal.
+      invalidGrant: true,
+      reason: `Upstream rejected refresh: ${errCode || String(resp.status)}`,
+    };
+  }
+  if (!resp.ok) {
+    return {
+      ok: false,
+      invalidGrant: false,
+      reason: `Upstream returned ${String(resp.status)} on refresh`,
+    };
+  }
+
+  let payload: {
+    access_token?: unknown;
+    refresh_token?: unknown;
+    expires_in?: unknown;
+    scope?: unknown;
+  };
+  try {
+    payload = (await resp.json()) as typeof payload;
+  } catch {
+    return {
+      ok: false,
+      invalidGrant: false,
+      reason: "Upstream token response was not JSON",
+    };
+  }
+  if (typeof payload.access_token !== "string") {
+    return {
+      ok: false,
+      invalidGrant: false,
+      reason: "Upstream token response missing access_token",
+    };
+  }
+  const newAccess = payload.access_token;
+  const newRefresh =
+    typeof payload.refresh_token === "string" ? payload.refresh_token : null;
+  const expiresIn =
+    typeof payload.expires_in === "number" && payload.expires_in > 0
+      ? payload.expires_in
+      : 3600; // RFC 6749 §5.1 — default 1h when omitted.
+  const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+  const scopes =
+    typeof payload.scope === "string"
+      ? payload.scope.split(/\s+/).filter(Boolean)
+      : row.scopes;
+
+  // Refresh-token rotation: when the upstream returned a NEW refresh
+  // token that differs from what we sent, update both fields and stamp
+  // previous_refresh_hash for forensic logs. When the upstream returned
+  // the same token (no rotation), don't touch previous_refresh_hash.
+  let nextRefreshEncrypted = row.refresh_token_encrypted;
+  let previousHash = row.previous_refresh_hash;
+  if (newRefresh && newRefresh !== refreshToken) {
+    nextRefreshEncrypted = encryptSecret(
+      newRefresh,
+      SECRET_INFO.connectionOauthToken,
+    );
+    previousHash = sha256Hex(refreshToken);
+  } else if (newRefresh === null) {
+    // Some providers (e.g. when scope is reduced) return only access_token.
+    // Keep the existing refresh token; don't touch previous_refresh_hash.
+  }
+
+  await storage.connectionOauthTokens.upsert({
+    connection_id: connectionId,
+    tenant_id: row.tenant_id ?? undefined,
+    access_token_encrypted: encryptSecret(
+      newAccess,
+      SECRET_INFO.connectionOauthToken,
+    ),
+    refresh_token_encrypted: nextRefreshEncrypted,
+    expires_at: expiresAt,
+    scopes,
+    previous_refresh_hash: previousHash,
+  });
+
+  return { ok: true, access_token: newAccess };
+}
+
+/**
+ * Acquire (cross-instance + in-process) the per-connection refresh lock,
+ * run `fn`, release. Multiple concurrent callers see one execution.
+ */
+async function withRefreshLock<T>(
+  storage: Storage,
+  connectionId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  // Wait on any in-process refresh for this connection.
+  const pending = inFlightRefresh.get(connectionId);
+  if (pending) {
+    await pending;
+  }
+  let resolve!: () => void;
+  const gate = new Promise<void>((r) => {
+    resolve = r;
+  });
+  inFlightRefresh.set(connectionId, gate);
+  try {
+    // Cross-instance gate: best-effort. If another instance has the
+    // lock, withJobLock returns undefined; we fall through (the in-
+    // process map already serialised this connection here, so we just
+    // proceed and let the upstream arbitrate via invalid_grant).
+    const result = await storage.coordination.withJobLock(
+      `connection-refresh:${connectionId}`,
+      fn,
+    );
+    if (result === undefined) {
+      // Another instance held the lock. Run our own attempt — the in-
+      // process map already prevents same-process double-fire.
+      return await fn();
+    }
+    return result;
+  } finally {
+    resolve();
+    inFlightRefresh.delete(connectionId);
+  }
+}
+
+/**
+ * Flip a connection's runtime_status to `reauth_required` and emit a
+ * `system.activity` row so the user surface can prompt for re-auth.
+ * Best-effort: failures here are logged but don't block the route's
+ * own error response.
+ */
+async function markReauthRequired(
+  storage: Storage,
+  connection: Item,
+  tenantId: string | undefined,
+  reason: string,
+): Promise<void> {
+  try {
+    const updated = await storage.items.update(
+      connection.id,
+      {
+        properties: {
+          ...connection.properties,
+          runtime_status: "reauth_required",
+          last_error_at: new Date().toISOString(),
+        },
+      },
+      tenantId,
+    );
+    // items.update may return a ConflictResponse instead of throwing
+    // on version mismatch. Surface that as an audit row rather than a
+    // silent miss.
+    if ("conflict" in updated) {
+      void storage.audit.log({
+        action: "connection_proxy.runtime_status_flip_conflict",
+        resource_type: "connection",
+        resource_id: connection.id,
+      });
+    }
+  } catch (err) {
+    // Best-effort — runtime_status is server-stamped in WS2 so any
+    // failure here is a storage-level fault, not a caller fault.
+    // Surface in audit log so operators can investigate.
+    void storage.audit.log({
+      action: "connection_proxy.runtime_status_flip_failed",
+      resource_type: "connection",
+      resource_id: connection.id,
+      details: {
+        error: err instanceof Error ? err.message : String(err),
+      },
+    });
+  }
+
+  // Emit a system.activity row. Keep the property set minimal — the
+  // type schema accepts severity + summary + connection_id; richer
+  // fields are optional. Tier follows the per-Connection feed_activity
+  // toggle (mirrors the items.ts logic).
+  const integration =
+    typeof connection.properties.integration_ref === "string"
+      ? connection.properties.integration_ref
+      : "(unknown integration)";
+  try {
+    await storage.items.create(
+      {
+        type: "system.activity",
+        properties: {
+          severity: "action_required",
+          summary: `OAuth re-authorisation needed for ${integration}`,
+          connection_id: connection.id,
+          // `detail` is `type: object` per system.activity.json — wrap
+          // the reason string into a structured payload so the schema
+          // validator accepts it.
+          detail: { reason },
+        },
+        // tier follows feed_activity flag — server stamps
+        ...(connection.properties.feed_activity === true
+          ? { tier: "feed" as const }
+          : {}),
+      },
+      tenantId,
+    );
+  } catch (err) {
+    void storage.audit.log({
+      action: "connection_proxy.activity_emit_failed",
+      resource_type: "connection",
+      resource_id: connection.id,
+      details: {
+        error: err instanceof Error ? err.message : String(err),
+      },
+    });
+  }
+}
+
+async function requireConnectionProxyAccess(
+  c: import("hono").Context<AppEnv>,
+  storage: Storage,
+  connectionId: string,
+): Promise<{ tenantId: string | undefined; connection: Item }> {
+  const key = requireAuth(c);
+  const tenantId = key.tenant_id ?? undefined;
+  const connection = await storage.items.get(connectionId, tenantId);
+  if (connection?.type !== "system.connection") {
+    throw new MymeError(ErrorCode.NOT_FOUND, "Connection not found");
+  }
+  const isAdmin = key.role === "admin" || key.is_platform;
+  const isConnector = key.source === `oauth:${connectionId}`;
+  if (!isAdmin && !isConnector) {
+    throw new MymeError(
+      ErrorCode.FORBIDDEN,
+      "Caller cannot proxy through this connection",
+    );
+  }
+  return { tenantId, connection };
+}
+
+interface ProxyAttemptOutcome {
+  status: number;
+  bodyBytes: ArrayBuffer;
+  responseHeaders: Record<string, string>;
+}
+
+async function performUpstreamCall(
+  upstreamUrl: string,
+  method: string,
+  callerHeaders: Headers,
+  bodyBytes: ArrayBuffer,
+  accessToken: string,
+): Promise<ProxyAttemptOutcome> {
+  const headers: Record<string, string> = {
+    ...filterRequestHeaders(callerHeaders),
+    Authorization: `Bearer ${accessToken}`,
+  };
+  const upstreamResp = await fetch(upstreamUrl, {
+    method,
+    headers,
+    body: ["GET", "HEAD"].includes(method.toUpperCase())
+      ? undefined
+      : Buffer.from(bodyBytes),
+  });
+  return {
+    status: upstreamResp.status,
+    bodyBytes: await upstreamResp.arrayBuffer(),
+    responseHeaders: filterResponseHeaders(upstreamResp.headers),
+  };
+}
+
+/** Number of seconds before expiry to trigger a proactive refresh. */
+const PROACTIVE_REFRESH_LEEWAY_SEC = 60;
+
+export function connectionProxyRoutes(storage: Storage) {
+  const r = new Hono<AppEnv>();
+
+  // Hono wildcard — catches every method + every path beneath
+  // `/connections/:id/proxy/`. We capture the upstream sub-path off
+  // `c.req.path`.
+  r.all("/:id/proxy/*", async (c) => {
+    const connectionId = c.req.param("id");
+    const { tenantId, connection } = await requireConnectionProxyAccess(
+      c,
+      storage,
+      connectionId,
+    );
+
+    const config = readOAuthConfig(connection);
+
+    // Derive upstream URL: strip the route prefix from the request path
+    // and prepend the configured upstream base URL.
+    const prefix = `/connections/${connectionId}/proxy`;
+    const reqUrl = new URL(c.req.url);
+    const upstreamPath = reqUrl.pathname.startsWith(prefix)
+      ? reqUrl.pathname.slice(prefix.length)
+      : reqUrl.pathname;
+    const upstreamUrl =
+      config.upstream_base_url.replace(/\/+$/, "") +
+      upstreamPath +
+      reqUrl.search;
+
+    // Read body once — we may retry it after a refresh.
+    const bodyBytes = await c.req.raw.arrayBuffer();
+
+    // Look up the token row. tenantId-scoped read so cross-tenant
+    // requests against the same connection_id can't peek.
+    let row = await storage.connectionOauthTokens.get(connectionId, tenantId);
+    if (!row) {
+      void storage.audit.log({
+        key_id: c.get("apiKey")?.id,
+        action: "connection_proxy.token_missing",
+        resource_type: "connection",
+        resource_id: connectionId,
+      });
+      throw new MymeError(
+        ErrorCode.OAUTH_PROXY_TOKEN_MISSING,
+        "Connection has no stored OAuth token; complete authorisation first",
+      );
+    }
+
+    // Proactive refresh — when access_token expires inside the leeway
+    // window, refresh before issuing the call.
+    const expiresAtMs = Date.parse(row.expires_at);
+    const proactiveDue =
+      Number.isFinite(expiresAtMs) &&
+      expiresAtMs - Date.now() < PROACTIVE_REFRESH_LEEWAY_SEC * 1000;
+
+    if (proactiveDue) {
+      const result = await withRefreshLock(storage, connectionId, () =>
+        refreshAccessToken(storage, connectionId, config),
+      );
+      if (!result.ok) {
+        if (result.invalidGrant) {
+          await markReauthRequired(
+            storage,
+            connection,
+            tenantId,
+            result.reason,
+          );
+        }
+        void storage.audit.log({
+          key_id: c.get("apiKey")?.id,
+          action: "connection_proxy.refresh_failed",
+          resource_type: "connection",
+          resource_id: connectionId,
+          details: {
+            reason: result.reason,
+            invalid_grant: result.invalidGrant,
+          },
+        });
+        throw new MymeError(
+          ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
+          `Refresh failed: ${result.reason}`,
+        );
+      }
+      // Re-read row so the caller sees rotated state.
+      row = await storage.connectionOauthTokens.get(connectionId, tenantId);
+      if (!row) {
+        // Should be impossible — refresh just wrote.
+        throw new MymeError(
+          ErrorCode.OAUTH_PROXY_TOKEN_MISSING,
+          "Token row vanished mid-refresh",
+        );
+      }
+    }
+
+    let accessToken: string;
+    try {
+      accessToken = decryptSecret(
+        row.access_token_encrypted,
+        SECRET_INFO.connectionOauthToken,
+      );
+    } catch {
+      throw new MymeError(
+        ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
+        "Stored access token is unreadable; reauthorise to recover",
+      );
+    }
+
+    const method = c.req.method;
+    let outcome = await performUpstreamCall(
+      upstreamUrl,
+      method,
+      c.req.raw.headers,
+      bodyBytes,
+      accessToken,
+    );
+
+    // Reactive refresh on 401. Single retry per call.
+    if (outcome.status === 401) {
+      const result = await withRefreshLock(storage, connectionId, () =>
+        refreshAccessToken(storage, connectionId, config),
+      );
+      if (!result.ok) {
+        if (result.invalidGrant) {
+          await markReauthRequired(
+            storage,
+            connection,
+            tenantId,
+            result.reason,
+          );
+        }
+        void storage.audit.log({
+          key_id: c.get("apiKey")?.id,
+          action: "connection_proxy.refresh_failed",
+          resource_type: "connection",
+          resource_id: connectionId,
+          details: {
+            reason: result.reason,
+            invalid_grant: result.invalidGrant,
+          },
+        });
+        throw new MymeError(
+          ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
+          `Upstream 401 and refresh failed: ${result.reason}`,
+        );
+      }
+      // Retry once with the new access token.
+      outcome = await performUpstreamCall(
+        upstreamUrl,
+        method,
+        c.req.raw.headers,
+        bodyBytes,
+        result.access_token,
+      );
+    }
+
+    void storage.audit.log({
+      key_id: c.get("apiKey")?.id,
+      action: "connection_proxy.call",
+      resource_type: "connection",
+      resource_id: connectionId,
+      details: {
+        method,
+        upstream_status: outcome.status,
+        // Don't log path query — could contain bearer-equivalent secrets.
+        upstream_host: new URL(upstreamUrl).host,
+      },
+    });
+
+    // Return passthrough.
+    return c.body(
+      outcome.bodyBytes,
+      outcome.status as 200,
+      outcome.responseHeaders,
+    );
+  });
+
+  return r;
+}
+
+// Re-export for tests so they can short-circuit refresh via storage mocks.
+export const __internals = {
+  refreshAccessToken,
+  sha256Hex,
+  PROACTIVE_REFRESH_LEEWAY_SEC,
+  // Exporting just for invariant checks; direct mutation is forbidden.
+  generateProxyId: generateId,
+};

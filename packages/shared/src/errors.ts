@@ -37,6 +37,26 @@ export enum ErrorCode {
   INBOUND_WEBHOOK_EVENT_NOT_FOUND = "inbound_webhook_event_not_found",
   /** Verification adapter could not validate the request body / headers. */
   INBOUND_WEBHOOK_VERIFICATION_FAILED = "inbound_webhook_verification_failed",
+  /**
+   * The connection's stored OAuth refresh has failed terminally (the
+   * upstream returned `invalid_grant` or equivalent, or no refresh token
+   * is available). The connection's `runtime_status` has been flipped to
+   * `reauth_required`; the user must re-authorise the connector before
+   * any further proxy calls will succeed. (workstream 2 PR 6)
+   */
+  OAUTH_PROXY_REAUTH_REQUIRED = "oauth_proxy_reauth_required",
+  /**
+   * No OAuth token row was found for the connection — the proxy was
+   * called before initial authorisation, or after the token row was
+   * deleted on revocation. Distinct from `reauth_required` (which means
+   * we had a token but refresh failed).
+   */
+  OAUTH_PROXY_TOKEN_MISSING = "oauth_proxy_token_missing",
+  /**
+   * The proxy could not derive an upstream URL — typically because the
+   * connection's `configuration.upstream_base_url` is unset or invalid.
+   */
+  OAUTH_PROXY_UPSTREAM_INVALID = "oauth_proxy_upstream_invalid",
   BLOB_TOO_LARGE = "blob_too_large",
   INVALID_PROPERTIES = "invalid_properties",
   INVALID_SCHEMA = "invalid_schema",
@@ -114,6 +134,9 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INBOUND_WEBHOOK_DISABLED]: 410,
   [ErrorCode.INBOUND_WEBHOOK_EVENT_NOT_FOUND]: 404,
   [ErrorCode.INBOUND_WEBHOOK_VERIFICATION_FAILED]: 401,
+  [ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED]: 401,
+  [ErrorCode.OAUTH_PROXY_TOKEN_MISSING]: 404,
+  [ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID]: 422,
   [ErrorCode.VERSION_BUMP_MISMATCH]: 422,
   [ErrorCode.COMPATIBLE_WITH_VIOLATION]: 422,
   [ErrorCode.BLOB_TOO_LARGE]: 413,
