@@ -33,6 +33,10 @@ import {
 } from "./routes/inbound-webhooks.js";
 import { connectionProxyRoutes } from "./routes/connection-proxy.js";
 import {
+  oauthStartRoutes,
+  oauthCallbackRoutes,
+} from "./routes/oauth-callback.js";
+import {
   connectionLeasedTokenRoutes,
   leaseTokenValidationRoutes,
 } from "./routes/connection-leased-tokens.js";
@@ -219,6 +223,12 @@ export function createApp(
   // /connections/:id/proxy/* forwards to the connection's configured
   // upstream URL with Authorization: Bearer <decrypted access_token>.
   app.route("/connections", connectionProxyRoutes(storage));
+  // OAuth bootstrap — POST /connections/:id/oauth/start (admin-gated)
+  // returns the upstream authorize URL with signed state; the public
+  // GET /oauth/callback/:provider exchanges the code and persists
+  // tokens under the same connectionOauthTokens row the proxy reads.
+  app.route("/connections", oauthStartRoutes(storage));
+  app.route("/oauth/callback", oauthCallbackRoutes(storage));
   // Leased bearer tokens (workstream 2 PR 7) — issuance + revoke + list
   // under /connections/:id/lease-tokens; introspection at
   // /lease-tokens/validate (separate router so it can be reached by
