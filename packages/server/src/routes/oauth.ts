@@ -443,9 +443,11 @@ export function authRoutes(
         new URL("/auth/sign-in/magic-link", c.req.url),
         {
           method: "POST",
-          headers: forwardHeaders(c.req.raw.headers, {
-            "content-type": "application/json",
-          }),
+          headers: forwardHeaders(
+            c.req.raw.headers,
+            { "content-type": "application/json" },
+            auth.baseURL,
+          ),
           body: JSON.stringify({ email: emailStr, callbackURL: returnTo }),
         },
       );
@@ -467,9 +469,11 @@ export function authRoutes(
 
     const upstream = new Request(new URL("/auth/sign-in/email", c.req.url), {
       method: "POST",
-      headers: forwardHeaders(c.req.raw.headers, {
-        "content-type": "application/json",
-      }),
+      headers: forwardHeaders(
+        c.req.raw.headers,
+        { "content-type": "application/json" },
+        auth.baseURL,
+      ),
       body: JSON.stringify({ email: emailStr, password: passwordStr }),
     });
     const response = await auth.handler(upstream);
@@ -529,9 +533,11 @@ export function authRoutes(
     // { url, redirect: true } pointing at the provider's authorize URL.
     const upstream = new Request(new URL("/auth/sign-in/oauth2", c.req.url), {
       method: "POST",
-      headers: forwardHeaders(c.req.raw.headers, {
-        "content-type": "application/json",
-      }),
+      headers: forwardHeaders(
+        c.req.raw.headers,
+        { "content-type": "application/json" },
+        auth.baseURL,
+      ),
       body: JSON.stringify({
         providerId,
         callbackURL: returnTo,
@@ -625,9 +631,11 @@ export function authRoutes(
 
     const upstream = new Request(new URL("/auth/sign-up/email", c.req.url), {
       method: "POST",
-      headers: forwardHeaders(c.req.raw.headers, {
-        "content-type": "application/json",
-      }),
+      headers: forwardHeaders(
+        c.req.raw.headers,
+        { "content-type": "application/json" },
+        auth.baseURL,
+      ),
       body: JSON.stringify({
         email: emailStr,
         password: passwordStr,
@@ -1098,13 +1106,30 @@ function buildSignInRedirect(params: {
  *  onto the upstream Better Auth dispatch. Origin matters for Better
  *  Auth's trustedOrigins check; cookie matters when re-signing-in
  *  while a stale session cookie is present. Other headers (host,
- *  content-length) are recomputed by the constructor. */
-function forwardHeaders(src: Headers, base: Record<string, string>): Headers {
+ *  content-length) are recomputed by the constructor.
+ *
+ *  When the inbound `Origin` is missing or the literal string `"null"`
+ *  (browsers serialize Origin as `"null"` for navigations under
+ *  privacy-strict referrer policies, sandboxed iframes, etc.), fall
+ *  back to `fallbackOrigin`. The dispatch is server-internal — Better
+ *  Auth's CSRF check is on the OUTER (browser→server) request; the
+ *  authoritative origin for the upstream dispatch is the auth instance
+ *  itself.
+ */
+function forwardHeaders(
+  src: Headers,
+  base: Record<string, string>,
+  fallbackOrigin?: string,
+): Headers {
   const out = new Headers(base);
   const passthrough = ["origin", "cookie", "user-agent", "accept-language"];
   for (const name of passthrough) {
     const value = src.get(name);
     if (value) out.set(name, value);
+  }
+  const incomingOrigin = out.get("origin");
+  if (fallbackOrigin && (!incomingOrigin || incomingOrigin === "null")) {
+    out.set("origin", fallbackOrigin);
   }
   return out;
 }

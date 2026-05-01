@@ -67,7 +67,17 @@ export function createApp(
     );
   }
 
-  // Security headers
+  // Security headers.
+  //
+  // `referrerPolicy` is overridden from Hono's default of `no-referrer`
+  // to `strict-origin-when-cross-origin` — Chrome/Firefox's modern
+  // default. Per Fetch spec §3.6.6, a `no-referrer` policy makes the
+  // browser serialize the `Origin` header as the literal string
+  // `"null"` on form-POST navigations, which Better Auth's CSRF
+  // protection rejects with `MISSING_OR_NULL_ORIGIN`. The OAuth
+  // consent flow needs `Origin` to round-trip from same-origin POSTs;
+  // `strict-origin-when-cross-origin` preserves it for same-origin
+  // and strips path information cross-origin (privacy intact).
   app.use(
     "*",
     secureHeaders({
@@ -76,6 +86,7 @@ export function createApp(
         : false,
       xFrameOptions: "DENY",
       xXssProtection: "1",
+      referrerPolicy: "strict-origin-when-cross-origin",
     }),
   );
 
