@@ -20,6 +20,11 @@ export interface TokenProvider {
   onSignOut(handler: () => void): () => void;
   /** Force a sign-out — clears local storage, fires onSignOut handlers. */
   signOut(): Promise<void>;
+  /** Force a token refresh and return the new access token. Same single-flight
+   *  semantics as `getAccessToken()`. Consumers calling on a 401 response
+   *  should use this rather than waiting for the next `getAccessToken()` to
+   *  hit the proactive window. */
+  refresh(): Promise<string>;
 }
 
 const PROACTIVE_WINDOW_MS = 60_000;
@@ -86,8 +91,10 @@ export class StoredTokenProvider implements TokenProvider {
     return this.refresh();
   }
 
-  /** Single-flight refresh — concurrent callers await the same promise. */
-  private async refresh(): Promise<string> {
+  /** Single-flight refresh — concurrent callers await the same promise.
+   *  Public so consumers can force a refresh on 401 responses (RFC 6750
+   *  invalid_token) without waiting for the proactive-refresh window. */
+  async refresh(): Promise<string> {
     if (this.inflightRefresh) return this.inflightRefresh;
     if (!this.cache) {
       throw new OAuthError("invalid_grant", "No refresh token available", 401);
