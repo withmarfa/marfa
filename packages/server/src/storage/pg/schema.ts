@@ -421,6 +421,35 @@ export const connectionOauthTokens = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// connection_leased_tokens (workstream 2 PR 7)
+//
+// Mirror of the SQLite table; see sqlite/schema.ts for the design notes.
+// ---------------------------------------------------------------------------
+
+export const connectionLeasedTokens = pgTable(
+  "connection_leased_tokens",
+  {
+    id: text("id").primaryKey(),
+    connection_id: text("connection_id").notNull(),
+    tenant_id: text("tenant_id"),
+    capability_id: text("capability_id").notNull(),
+    lease_token_hash: text("lease_token_hash").notNull(),
+    scopes: text("scopes").notNull().default("[]"),
+    expires_at: text("expires_at").notNull(),
+    revoked_at: text("revoked_at"),
+    issued_by_key_id: text("issued_by_key_id"),
+    created_at: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_connection_leased_tokens_hash").on(table.lease_token_hash),
+    index("idx_connection_leased_tokens_connection_id").on(
+      table.connection_id,
+      table.expires_at,
+    ),
+  ],
+);
+
 export const oauthCodes = pgTable("oauth_codes", {
   id: text("id").primaryKey(),
   connection_item_id: text("connection_item_id")

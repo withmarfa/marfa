@@ -561,6 +561,48 @@ export interface InboundWebhookEvent {
 }
 
 /**
+ * Wire view of a leased bearer token issued to a connector for one of the
+ * four exception cases the OAuth proxy doesn't cover (multipart streaming,
+ * WebSocket, SDK lock-in, non-HTTP). The lease IS a bearer token; storage
+ * is hashed (SHA-256) like API keys, plaintext is returned ONCE on issue.
+ * (workstream 2 PR 7)
+ */
+export interface ConnectionLeasedToken {
+  id: string;
+  connection_id: string;
+  tenant_id: string | null;
+  capability_id: string;
+  scopes: string[];
+  expires_at: string;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+/**
+ * Extends `ConnectionLeasedToken` with the raw `lease_token` field —
+ * returned once in the 201 response to `POST /connections/:id/lease-token`,
+ * never echoed by subsequent reads.
+ */
+export interface CreatedConnectionLeasedToken extends ConnectionLeasedToken {
+  /** Plaintext bearer; pass to validate / use against the upstream. */
+  lease_token: string;
+}
+
+/**
+ * RFC 7662-shaped introspection response from
+ * `POST /lease-tokens/validate`. `active: false` when the lease is
+ * unknown, expired, or revoked; the route returns 200 in either case so
+ * relying parties can branch on the boolean rather than catching errors.
+ */
+export interface LeaseTokenIntrospection {
+  active: boolean;
+  connection_id?: string;
+  capability_id?: string;
+  scopes?: string[];
+  expires_at?: string;
+}
+
+/**
  * Wire view of a stored OAuth token for an external-service connector.
  * Tokens are encrypted at rest server-side; the wire view reveals only
  * the metadata necessary for admin/observability surfaces. The

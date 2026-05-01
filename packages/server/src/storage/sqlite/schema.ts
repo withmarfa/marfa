@@ -457,6 +457,48 @@ export const connectionOauthTokens = sqliteTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// connection_leased_tokens (workstream 2 PR 7)
+//
+// Short-TTL bearer tokens issued for the four exception cases the OAuth
+// proxy doesn't fit (multipart streaming, WebSocket, SDK lock-in, non-HTTP).
+// Capability gating ties each lease to a manifest-declared
+// `oauth_requirements: { <capability_id>: "leased" }` entry — the lease
+// route refuses requests for capabilities the manifest doesn't list.
+//
+// Storage is hashed (SHA-256) like API keys: the lease IS a bearer token,
+// so hashing-on-storage is the right shape. Plaintext is returned ONCE on
+// issue. Validation hashes the presented bearer and looks up the row.
+//
+// Index plan:
+//   - unique on lease_token_hash (validation lookup is hash-keyed)
+//   - composite on (connection_id, expires_at) for the "active leases for
+//     this connection" listing path
+// ---------------------------------------------------------------------------
+
+export const connectionLeasedTokens = sqliteTable(
+  "connection_leased_tokens",
+  {
+    id: text("id").primaryKey(),
+    connection_id: text("connection_id").notNull(),
+    tenant_id: text("tenant_id"),
+    capability_id: text("capability_id").notNull(),
+    lease_token_hash: text("lease_token_hash").notNull(),
+    scopes: text("scopes").notNull().default("[]"),
+    expires_at: text("expires_at").notNull(),
+    revoked_at: text("revoked_at"),
+    issued_by_key_id: text("issued_by_key_id"),
+    created_at: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_connection_leased_tokens_hash").on(table.lease_token_hash),
+    index("idx_connection_leased_tokens_connection_id").on(
+      table.connection_id,
+      table.expires_at,
+    ),
+  ],
+);
+
 export const oauthCodes = sqliteTable("oauth_codes", {
   id: text("id").primaryKey(),
   connection_item_id: text("connection_item_id")

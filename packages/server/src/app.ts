@@ -30,6 +30,10 @@ import {
   inboundWebhookReceiptRoutes,
 } from "./routes/inbound-webhooks.js";
 import { connectionProxyRoutes } from "./routes/connection-proxy.js";
+import {
+  connectionLeasedTokenRoutes,
+  leaseTokenValidationRoutes,
+} from "./routes/connection-leased-tokens.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
@@ -211,6 +215,12 @@ export function createApp(
   // /connections/:id/proxy/* forwards to the connection's configured
   // upstream URL with Authorization: Bearer <decrypted access_token>.
   app.route("/connections", connectionProxyRoutes(storage));
+  // Leased bearer tokens (workstream 2 PR 7) — issuance + revoke + list
+  // under /connections/:id/lease-tokens; introspection at
+  // /lease-tokens/validate (separate router so it can be reached by
+  // upstream services that don't otherwise touch /connections).
+  app.route("/connections", connectionLeasedTokenRoutes(storage));
+  app.route("/lease-tokens", leaseTokenValidationRoutes(storage));
   app.route("/webhooks/inbound", inboundWebhookReceiptRoutes(storage));
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));

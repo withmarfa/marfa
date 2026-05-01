@@ -277,6 +277,23 @@ export function createConnection(sqlitePath: string): {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_connection_oauth_tokens_connection_id
       ON connection_oauth_tokens(connection_id);
 
+    CREATE TABLE IF NOT EXISTS connection_leased_tokens (
+      id TEXT PRIMARY KEY,
+      connection_id TEXT NOT NULL,
+      tenant_id TEXT,
+      capability_id TEXT NOT NULL,
+      lease_token_hash TEXT NOT NULL,
+      scopes TEXT NOT NULL DEFAULT '[]',
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      issued_by_key_id TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_connection_leased_tokens_hash
+      ON connection_leased_tokens(lease_token_hash);
+    CREATE INDEX IF NOT EXISTS idx_connection_leased_tokens_connection_id
+      ON connection_leased_tokens(connection_id, expires_at);
+
     CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
       id TEXT PRIMARY KEY,
       webhook_id TEXT NOT NULL,
