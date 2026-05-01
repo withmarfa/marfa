@@ -14,7 +14,14 @@ export default [
             "vitest.config.ts",
             "packages/*/tsup.config.ts",
             "packages/*/vitest.config.ts",
+            "integrations/*/vitest.config.ts",
           ],
+          // Default is 8; we have ~10 config files that fall through
+          // to the default project (per-package tsup + vitest configs
+          // across 6 packages + 1 integration + the root vitest +
+          // eslint configs). 25 leaves headroom for Layer 3's five
+          // integrations to add their own configs without churn.
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 25,
         },
         tsconfigRootDir: import.meta.dirname,
       },
