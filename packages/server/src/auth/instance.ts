@@ -193,7 +193,14 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
       cookiePrefix: "myme.auth",
       defaultCookieAttributes: {
         httpOnly: true,
-        secure: true,
+        // `Secure` is conditional on the auth baseURL using HTTPS.
+        // Chrome silently drops `Secure` cookies on plain-HTTP origins
+        // except localhost — including HTTP-over-Tailscale, intranet
+        // hostnames, and dev deploys behind reverse proxies that
+        // terminate TLS upstream. Hardcoding `secure: true` made the
+        // session cookie unstoreable in those cases, breaking sign-in
+        // entirely. HttpOnly + SameSite=Lax remain unconditional.
+        secure: options.baseURL.startsWith("https://"),
         sameSite: "lax",
       },
     },
