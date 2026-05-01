@@ -80,35 +80,33 @@ export class ConnectionClient {
     return this.request<ItemResource>("PATCH", `/items/${id}`, patch);
   }
 
-  /** Read a `connection.runtime.<connection_id>.<key>` extension
-   *  blob. The server enforces that the runtime credential's
-   *  connection_id matches the path. Caller casts the returned
-   *  payload to its integration-specific shape. */
+  /** Read the entire `connection.runtime` namespace blob for this
+   *  Connection. The server stores the namespace as a single object —
+   *  callers manage their own keys within it. The server enforces
+   *  that the runtime credential's connection_id matches the path.
+   *  Returns null when the namespace has never been written. Caller
+   *  casts to their integration-specific shape. */
   async readRuntimeExtension(
     connectionId: string,
-    key: string,
-  ): Promise<unknown> {
-    try {
-      const wrapper = await this.request<{ value: unknown }>(
-        "GET",
-        `/items/${connectionId}/extensions/connection.runtime/${key}`,
-      );
-      return wrapper.value;
-    } catch (err) {
-      if (err instanceof MymeApiError && err.status === 404) return null;
-      throw err;
-    }
+  ): Promise<Record<string, unknown> | null> {
+    const wrapper = await this.request<{
+      namespace: string;
+      data: Record<string, unknown> | null;
+    }>("GET", `/items/${connectionId}/extensions/connection.runtime`);
+    return wrapper.data;
   }
 
+  /** Replace the entire `connection.runtime` namespace blob. The
+   *  server's PUT /items/:id/extensions/:namespace expects the body
+   *  to be the namespace object directly. */
   async writeRuntimeExtension(
     connectionId: string,
-    key: string,
-    value: unknown,
+    blob: Record<string, unknown>,
   ): Promise<void> {
     await this.request(
       "PUT",
-      `/items/${connectionId}/extensions/connection.runtime/${key}`,
-      { value },
+      `/items/${connectionId}/extensions/connection.runtime`,
+      blob,
     );
   }
 
