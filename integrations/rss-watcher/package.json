@@ -1,0 +1,22 @@
+{
+  "name": "@mymehq/integration-rss-watcher",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Read-only RSS/Atom feed connector. Polls a feed on a schedule and creates a core.bookmark per new entry. Exists as the simplest end-to-end test of the schedule + cursor + outbound-write substrate.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@mymehq/runtime-sdk": "workspace:*",
+    "@mymehq/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "@mymehq/runtime-test": "workspace:*",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}
