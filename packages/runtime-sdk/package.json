@@ -1,0 +1,32 @@
+{
+  "name": "@mymehq/runtime-sdk",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "SDK that Connections integrations import. Per-Connection Durable Object, typed handler API, ConnectionClient (wraps @mymehq/sdk), echo suppression, system.activity emission.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@mymehq/sdk": "workspace:*",
+    "@mymehq/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}

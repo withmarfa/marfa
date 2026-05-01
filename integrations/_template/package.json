@@ -1,0 +1,20 @@
+{
+  "name": "@mymehq/integration-template",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Skeleton Integration showing minimal end-to-end runtime-sdk usage. Not a real connector — exists so Layer 3 has a concrete starting point and the substrate can be exercised in isolation.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@mymehq/runtime-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}
