@@ -12,6 +12,7 @@ import { SqliteWebhookStore } from "./webhook-store.js";
 import { SqliteWebhookDeliveryStore } from "./webhook-delivery-store.js";
 import { SqliteInboundWebhookStore } from "./inbound-webhook-store.js";
 import { SqliteInboundWebhookEventStore } from "./inbound-webhook-event-store.js";
+import { SqliteConnectionOAuthTokenStore } from "./connection-oauth-token-store.js";
 import { SqliteAuditStore } from "./audit-store.js";
 import { SqliteEventLogStore } from "./event-log-store.js";
 import { SqliteUserStore } from "./user-store.js";
@@ -56,6 +57,7 @@ export function createSqliteStorage(
   const deliveryStore = new SqliteWebhookDeliveryStore(db);
   const inboundWebhookStore = new SqliteInboundWebhookStore(db);
   const inboundWebhookEventStore = new SqliteInboundWebhookEventStore(db);
+  const connectionOauthTokenStore = new SqliteConnectionOAuthTokenStore(db);
   const auditStore = new SqliteAuditStore(db);
   const eventLogStore = new SqliteEventLogStore(db, raw);
   const edgeStore = new SqliteEdgeStore(db);
@@ -85,6 +87,7 @@ export function createSqliteStorage(
     outboundWebhookDeliveries: deliveryStore,
     inboundWebhooks: inboundWebhookStore,
     inboundWebhookEvents: inboundWebhookEventStore,
+    connectionOauthTokens: connectionOauthTokenStore,
     audit: auditStore,
     eventLog: eventLogStore,
     settings: new SqliteSettingsStore(db),

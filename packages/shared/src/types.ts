@@ -560,6 +560,28 @@ export interface InboundWebhookEvent {
   next_attempt_at: string | null;
 }
 
+/**
+ * Wire view of a stored OAuth token for an external-service connector.
+ * Tokens are encrypted at rest server-side; the wire view reveals only
+ * the metadata necessary for admin/observability surfaces. The
+ * `access_token` and `refresh_token` fields are *intentionally*
+ * absent — there is no API that returns them in plaintext. The proxy
+ * route is the only path through which the access token influences a
+ * request, and that path forwards to the upstream rather than echoing
+ * to the caller. (workstream 2 PR 6)
+ */
+export interface ConnectionOAuthToken {
+  id: string;
+  connection_id: string;
+  tenant_id: string | null;
+  expires_at: string;
+  scopes: string[];
+  /** True when a refresh token is present — the proxy can self-heal on 401. */
+  has_refresh_token: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 // ---------------------------------------------------------------------------
 // User model (hosted mode only)
 // ---------------------------------------------------------------------------

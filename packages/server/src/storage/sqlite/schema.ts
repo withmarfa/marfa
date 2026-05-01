@@ -407,6 +407,56 @@ export const inboundWebhookEvents = sqliteTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// connection_oauth_tokens (workstream 2 PR 6)
+//
+// One row per `system.connection` of kind `external-service-connector` whose
+// connector authenticates with a token-bearing OAuth grant. The proxy route
+// (`POST /connections/:id/proxy/*`) reads from this table, decrypts, and
+// stamps `Authorization: Bearer <access>` on the upstream call.
+//
+// Tokens are encrypted at rest under HKDF(MYME_AUTH_SECRET, info=
+// "connection-oauth-tokens"); see crypto/secret-encryption.ts. Hashing won't
+// work — the proxy needs the raw token to forward upstream — so this is
+// envelope encryption, not one-way digest.
+//
+// `previous_refresh_hash` enables replay-detection forensics: when we rotate
+// (refresh-token grant returns a new refresh_token), we SHA-256 the
+// rotated-out token and store it here. If the upstream subsequently rejects
+// our refresh attempt with `invalid_grant`, the route flips the connection's
+// runtime_status to `reauth_required` and emits a system.activity row.
+// ---------------------------------------------------------------------------
+
+export const connectionOauthTokens = sqliteTable(
+  "connection_oauth_tokens",
+  {
+    id: text("id").primaryKey(),
+    // FK shape (no DB-level FK, matching project convention) to the
+    // `system.connection` item id. Unique — at most one stored token per
+    // connection. Re-authorisation overwrites the row in place.
+    connection_id: text("connection_id").notNull(),
+    tenant_id: text("tenant_id"),
+    // AES-256-GCM(plaintext) hex-encoded; see crypto/secret-encryption.ts.
+    access_token_encrypted: text("access_token_encrypted").notNull(),
+    // Nullable — some OAuth flows (e.g. client_credentials) don't issue a
+    // refresh token; the proxy falls back to immediate reauth on 401.
+    refresh_token_encrypted: text("refresh_token_encrypted"),
+    expires_at: text("expires_at").notNull(),
+    scopes: text("scopes").notNull().default("[]"),
+    // SHA-256 hex of the most recent rotated-out refresh token. Set when
+    // rotation occurs; null on initial authorisation. Forensic only —
+    // active enforcement of replay is the upstream's `invalid_grant`.
+    previous_refresh_hash: text("previous_refresh_hash"),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_connection_oauth_tokens_connection_id").on(
+      table.connection_id,
+    ),
+  ],
+);
+
 export const oauthCodes = sqliteTable("oauth_codes", {
   id: text("id").primaryKey(),
   connection_item_id: text("connection_item_id")

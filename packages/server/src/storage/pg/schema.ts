@@ -394,6 +394,33 @@ export const inboundWebhookEvents = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// connection_oauth_tokens (workstream 2 PR 6)
+//
+// Mirror of the SQLite table; see sqlite/schema.ts for the design notes.
+// ---------------------------------------------------------------------------
+
+export const connectionOauthTokens = pgTable(
+  "connection_oauth_tokens",
+  {
+    id: text("id").primaryKey(),
+    connection_id: text("connection_id").notNull(),
+    tenant_id: text("tenant_id"),
+    access_token_encrypted: text("access_token_encrypted").notNull(),
+    refresh_token_encrypted: text("refresh_token_encrypted"),
+    expires_at: text("expires_at").notNull(),
+    scopes: text("scopes").notNull().default("[]"),
+    previous_refresh_hash: text("previous_refresh_hash"),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_connection_oauth_tokens_connection_id").on(
+      table.connection_id,
+    ),
+  ],
+);
+
 export const oauthCodes = pgTable("oauth_codes", {
   id: text("id").primaryKey(),
   connection_item_id: text("connection_item_id")

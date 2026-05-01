@@ -451,6 +451,58 @@ export interface InboundWebhookEventStore {
 }
 
 // ---------------------------------------------------------------------------
+// Connection OAuth token store (workstream 2 PR 6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Row shape persisted in `connection_oauth_tokens`. Tokens are stored
+ * encrypted under HKDF(MYME_AUTH_SECRET, "connection-oauth-tokens"); the
+ * proxy route decrypts at request time. `previous_refresh_hash` is the
+ * SHA-256 (hex) of the most recent rotated-out refresh token, kept for
+ * forensic logging — active replay enforcement is the upstream's
+ * `invalid_grant` response.
+ */
+export interface ConnectionOAuthTokenRow {
+  id: string;
+  connection_id: string;
+  tenant_id: string | null;
+  access_token_encrypted: string;
+  refresh_token_encrypted: string | null;
+  expires_at: string;
+  scopes: string[];
+  previous_refresh_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectionOAuthTokenStore {
+  /**
+   * Upsert the token for a connection. Existing rows for the same
+   * connection_id are overwritten in place — the table is unique on
+   * connection_id so re-authorisation collapses to a single row.
+   */
+  upsert(input: {
+    connection_id: string;
+    tenant_id?: string;
+    access_token_encrypted: string;
+    refresh_token_encrypted: string | null;
+    expires_at: string;
+    scopes: string[];
+    /** SHA-256 hex of the rotated-out refresh token; null on initial save. */
+    previous_refresh_hash?: string | null;
+  }): Promise<ConnectionOAuthTokenRow>;
+
+  /** Lookup by connection_id. Tenant-scoped when supplied. */
+  get(
+    connectionId: string,
+    tenantId?: string,
+  ): Promise<ConnectionOAuthTokenRow | null>;
+
+  /** Hard-delete the row for a connection (used on revocation). */
+  delete(connectionId: string): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
 // User + Tenant stores (hosted mode only)
 // ---------------------------------------------------------------------------
 
@@ -827,6 +879,7 @@ export interface Storage {
   outboundWebhookDeliveries: WebhookDeliveryStore;
   inboundWebhooks: InboundWebhookStore;
   inboundWebhookEvents: InboundWebhookEventStore;
+  connectionOauthTokens: ConnectionOAuthTokenStore;
   audit: AuditStore;
   eventLog: EventLogStore;
   settings: SettingsStore;

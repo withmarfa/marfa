@@ -225,6 +225,21 @@ CREATE INDEX IF NOT EXISTS idx_inbound_webhook_events_pending
   ON inbound_webhook_events(next_attempt_at)
   WHERE processed_at IS NULL AND processing_error IS NULL;
 
+CREATE TABLE IF NOT EXISTS connection_oauth_tokens (
+  id TEXT PRIMARY KEY,
+  connection_id TEXT NOT NULL,
+  tenant_id TEXT,
+  access_token_encrypted TEXT NOT NULL,
+  refresh_token_encrypted TEXT,
+  expires_at TEXT NOT NULL,
+  scopes TEXT NOT NULL DEFAULT '[]',
+  previous_refresh_hash TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_connection_oauth_tokens_connection_id
+  ON connection_oauth_tokens(connection_id);
+
 CREATE TABLE IF NOT EXISTS outbound_webhook_deliveries (
   id TEXT PRIMARY KEY,
   webhook_id TEXT NOT NULL,
