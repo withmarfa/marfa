@@ -142,4 +142,18 @@ export function decryptSecret(ciphertextHex: string, info: string): string {
 export const SECRET_INFO = {
   inboundWebhookSecret: "inbound-webhook-secrets",
   connectionOauthToken: "connection-oauth-tokens",
+  /**
+   * API-key credentials carried by `system.credential` rows of
+   * `kind: api_key`. Used by Layer-3 connectors that re-present an
+   * existing long-lived API key as a Connection's credential — the
+   * sync-agent re-presentation is the first consumer.
+   *
+   * The plaintext key continues to live on the local machine that
+   * uses it (e.g. `~/.myme/sync.connection.json` for the sync agent);
+   * the encrypted copy on the server is for record-keeping and a
+   * future self-service refresh flow. Different domain than
+   * `connectionOauthToken` so a future operator audit can
+   * distinguish the two ciphertext sets.
+   */
+  apiKeyCredential: "api-key-credentials",
 } as const;
