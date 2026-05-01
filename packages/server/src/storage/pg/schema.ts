@@ -162,6 +162,10 @@ export const apiKeys = pgTable(
     default_origin: text("default_origin").notNull().default("user"),
     default_tier: text("default_tier").notNull().default("library"),
     is_platform: boolean("is_platform").notNull().default(false),
+    is_runtime_credential: boolean("is_runtime_credential")
+      .notNull()
+      .default(false),
+    connection_id: text("connection_id"),
     type_permissions: text("type_permissions")
       .notNull()
       .default('{"*":"write"}'),

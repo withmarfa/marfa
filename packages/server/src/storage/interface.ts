@@ -271,6 +271,19 @@ export interface KeyStore {
     keyHash: string,
     tenantId?: string,
   ): Promise<ApiKey>;
+  /**
+   * Mint a runtime credential. Distinct from `create` because runtime
+   * credentials carry the load-bearing `is_runtime_credential` and
+   * `connection_id` stamps that the extension gate keys off of —
+   * neither field is settable through `CreateKeyInput`. Only the
+   * `POST /system/runtime-credentials` route calls this; that route is
+   * itself gated on platform credentials.
+   */
+  createRuntimeCredential(
+    input: CreateKeyInput & { connection_id: string },
+    keyHash: string,
+    tenantId?: string,
+  ): Promise<ApiKey>;
   list(): Promise<ApiKey[]>;
   get(id: string): Promise<ApiKey | null>;
   validate(

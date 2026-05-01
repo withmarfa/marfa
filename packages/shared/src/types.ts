@@ -208,6 +208,24 @@ export interface ApiKey {
    */
   is_platform: boolean;
   /**
+   * Connections runtime credential gate (Workstream 3 Layer 1). When
+   * `true`, the credential was minted by the control-plane lease broker
+   * for a specific Connection's runtime. The extension write gate
+   * narrows such credentials to writing only the `connection.runtime`
+   * subtree of the item whose id matches `connection_id`.
+   *
+   * Defaults to `false` for every other credential type. The mint route
+   * (`POST /system/runtime-credentials`) is the only path that flips
+   * this flag; ordinary key creation cannot.
+   */
+  is_runtime_credential?: boolean;
+  /**
+   * Set when `is_runtime_credential` is `true`. Stamps the Connection
+   * the credential was minted for. The extension gate compares this
+   * against the path `:id` for cross-tenant denial.
+   */
+  connection_id?: string;
+  /**
    * Per-credential schema-enforcement override (TSC42 §5). Same shape as
    * `TenantConfig.enforcement`; entries here merge over the tenant default
    * for this credential's writes/reads. Optional — most credentials inherit

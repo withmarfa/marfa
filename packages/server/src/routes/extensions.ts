@@ -19,6 +19,14 @@ import {
 } from "@mymehq/shared";
 
 const RESERVED_NAMESPACES = new Set(["core", "myme", "system"]);
+
+/** Workstream 3 Layer 1 PR 4: the `connection.runtime` namespace is
+ *  reserved for the per-Connection runtime credential's hot state.
+ *  Only credentials minted by the lease broker (is_runtime_credential
+ *  + connection_id stamped) can write it; admin keys can read but not
+ *  write so operators can inspect runtime state in the UI without
+ *  corrupting it. */
+const RUNTIME_NAMESPACE = "connection.runtime";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -287,27 +295,49 @@ export function extensionRoutes(storage: Storage) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
-    // Reserved namespaces require admin access
-    if (RESERVED_NAMESPACES.has(namespace) && apiKey?.role !== "admin") {
+    // Workstream 3 Layer 1 PR 4: connection.runtime is the runtime
+    // credential's hot-state subtree. Only credentials minted by the
+    // lease broker may write it, and only to the matching connection's
+    // item. Admin keys can read but not write so operators can inspect
+    // runtime state in the UI without corrupting it.
+    if (namespace === RUNTIME_NAMESPACE) {
+      if (!apiKey?.is_runtime_credential) {
+        throw new MymeError(
+          ErrorCode.FORBIDDEN,
+          `Namespace "${RUNTIME_NAMESPACE}" is writable only by runtime credentials`,
+        );
+      }
+      if (apiKey.connection_id !== id) {
+        throw new MymeError(
+          ErrorCode.FORBIDDEN,
+          `Runtime credential for connection ${apiKey.connection_id ?? "unset"} cannot write the runtime namespace of connection ${id}`,
+        );
+      }
+    } else if (RESERVED_NAMESPACES.has(namespace) && apiKey?.role !== "admin") {
       throw new MymeError(
         ErrorCode.FORBIDDEN,
         `Namespace "${namespace}" is reserved`,
       );
     }
 
-    const perm =
-      apiKey?.role === "admin"
-        ? "write"
-        : resolveExtensionPermission(
-            namespace,
-            apiKey?.extension_permissions,
-            apiKey?.label ?? "",
-          );
-    if (perm !== "write") {
-      throw new MymeError(
-        ErrorCode.FORBIDDEN,
-        `No write access to extension namespace "${namespace}"`,
-      );
+    // The general permission gate runs for non-runtime writes. Runtime
+    // credentials bypass it on the connection.runtime namespace because
+    // the dedicated check above fully covers that case.
+    if (namespace !== RUNTIME_NAMESPACE) {
+      const perm =
+        apiKey?.role === "admin"
+          ? "write"
+          : resolveExtensionPermission(
+              namespace,
+              apiKey?.extension_permissions,
+              apiKey?.label ?? "",
+            );
+      if (perm !== "write") {
+        throw new MymeError(
+          ErrorCode.FORBIDDEN,
+          `No write access to extension namespace "${namespace}"`,
+        );
+      }
     }
 
     const body = c.req.valid("json");
@@ -348,27 +378,42 @@ export function extensionRoutes(storage: Storage) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
-    // Reserved namespaces require admin access
-    if (RESERVED_NAMESPACES.has(namespace) && apiKey?.role !== "admin") {
+    // Workstream 3 Layer 1 PR 4: same gate as setExtensionRoute — only
+    // the matching runtime credential may delete its own
+    // connection.runtime namespace; admins read-only.
+    if (namespace === RUNTIME_NAMESPACE) {
+      if (!apiKey?.is_runtime_credential) {
+        throw new MymeError(
+          ErrorCode.FORBIDDEN,
+          `Namespace "${RUNTIME_NAMESPACE}" is writable only by runtime credentials`,
+        );
+      }
+      if (apiKey.connection_id !== id) {
+        throw new MymeError(
+          ErrorCode.FORBIDDEN,
+          `Runtime credential for connection ${apiKey.connection_id ?? "unset"} cannot delete the runtime namespace of connection ${id}`,
+        );
+      }
+    } else if (RESERVED_NAMESPACES.has(namespace) && apiKey?.role !== "admin") {
       throw new MymeError(
         ErrorCode.FORBIDDEN,
         `Namespace "${namespace}" is reserved`,
       );
-    }
-
-    // Only admin or namespace owner can delete
-    const isOwner = apiKey?.label === namespace;
-    if (apiKey?.role !== "admin" && !isOwner) {
-      const perm = resolveExtensionPermission(
-        namespace,
-        apiKey?.extension_permissions,
-        apiKey?.label ?? "",
-      );
-      if (perm !== "write") {
-        throw new MymeError(
-          ErrorCode.FORBIDDEN,
-          `No write access to extension namespace "${namespace}"`,
+    } else {
+      // Only admin or namespace owner can delete
+      const isOwner = apiKey?.label === namespace;
+      if (apiKey?.role !== "admin" && !isOwner) {
+        const perm = resolveExtensionPermission(
+          namespace,
+          apiKey?.extension_permissions,
+          apiKey?.label ?? "",
         );
+        if (perm !== "write") {
+          throw new MymeError(
+            ErrorCode.FORBIDDEN,
+            `No write access to extension namespace "${namespace}"`,
+          );
+        }
       }
     }
 
