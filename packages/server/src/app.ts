@@ -20,6 +20,7 @@ import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
 import { keyRoutes } from "./routes/keys.js";
 import { runtimeCredentialRoutes } from "./routes/runtime-credentials.js";
+import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
 import { authRoutes, discoveryRoutes } from "./routes/oauth.js";
@@ -192,6 +193,7 @@ export function createApp(
   app.route("/blobs", blobRoutes(storage, blobBackend, config.maxBlobSize));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/system", runtimeCredentialRoutes(storage, config.apiKeySalt));
+  app.route("/integrations", integrationRoutes(storage, config.apiKeySalt));
   app.route("/tenants", tenantRoutes(storage));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   app.route("/export", exportRoutes(storage, blobBackend));
