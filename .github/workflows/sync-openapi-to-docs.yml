@@ -29,10 +29,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout myme (source of truth)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Checkout mymehq/docs
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: mymehq/docs
           token: ${{ secrets.DOCS_SYNC_TOKEN }}
@@ -43,7 +43,7 @@ jobs:
         run: cp openapi.json docs-repo/openapi.json
 
       - name: Open / update docs PR
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           path: docs-repo
           token: ${{ secrets.DOCS_SYNC_TOKEN }}
