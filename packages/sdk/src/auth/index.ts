@@ -14,3 +14,5 @@ export {
   defaultTokenStorage,
 } from "./storage.js";
 export type { TokenStorage } from "./storage.js";
+export { startDeviceFlow } from "./device-flow.js";
+export type { StartDeviceFlowConfig, DeviceFlowHandle } from "./device-flow.js";

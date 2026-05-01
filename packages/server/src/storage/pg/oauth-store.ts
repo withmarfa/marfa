@@ -7,9 +7,17 @@ import type {
   OAuthToken,
   OAuthCode,
   OAuthTokenType,
+  OAuthDeviceCode,
+  OAuthDeviceCodeStatus,
 } from "@mymehq/shared";
 import type { OAuthStore } from "../interface.js";
-import { items, oauthClients, oauthTokens, oauthCodes } from "./schema.js";
+import {
+  items,
+  oauthClients,
+  oauthTokens,
+  oauthCodes,
+  oauthDeviceCodes,
+} from "./schema.js";
 import type { PgDb } from "./connection.js";
 
 /**
@@ -368,4 +376,137 @@ export class PgOAuthStore implements OAuthStore {
       .set({ revoked_at: new Date().toISOString() })
       .where(eq(oauthTokens.connection_item_id, connectionItemId));
   }
+
+  // -----------------------------------------------------------------------
+  // Device Authorization Grant
+  // -----------------------------------------------------------------------
+
+  async createDeviceCode(input: {
+    deviceCodeHash: string;
+    userCode: string;
+    clientId: string;
+    scope: string;
+    expiresAt: string;
+    intervalSeconds: number;
+  }): Promise<OAuthDeviceCode> {
+    const id = generateId();
+    const now = new Date().toISOString();
+    await this.db.insert(oauthDeviceCodes).values({
+      id,
+      device_code_hash: input.deviceCodeHash,
+      user_code: input.userCode,
+      client_id: input.clientId,
+      scope: input.scope,
+      status: "pending",
+      connection_item_id: null,
+      expires_at: input.expiresAt,
+      interval_seconds: input.intervalSeconds,
+      last_polled_at: null,
+      approved_at: null,
+      created_at: now,
+    });
+    return {
+      id,
+      user_code: input.userCode,
+      client_id: input.clientId,
+      scopes: input.scope.split(" ").filter(Boolean),
+      status: "pending",
+      connection_item_id: null,
+      expires_at: input.expiresAt,
+      interval_seconds: input.intervalSeconds,
+      last_polled_at: null,
+      approved_at: null,
+      created_at: now,
+    };
+  }
+
+  async findDeviceCodeByHash(hash: string): Promise<OAuthDeviceCode | null> {
+    const rows = await this.db
+      .select()
+      .from(oauthDeviceCodes)
+      .where(eq(oauthDeviceCodes.device_code_hash, hash));
+    const row = rows[0];
+    return row ? rowToDeviceCode(row) : null;
+  }
+
+  async findDeviceCodeByUserCode(
+    userCode: string,
+  ): Promise<OAuthDeviceCode | null> {
+    const rows = await this.db
+      .select()
+      .from(oauthDeviceCodes)
+      .where(eq(oauthDeviceCodes.user_code, userCode));
+    const row = rows[0];
+    return row ? rowToDeviceCode(row) : null;
+  }
+
+  async markDeviceCodePolled(id: string, now: string): Promise<void> {
+    await this.db
+      .update(oauthDeviceCodes)
+      .set({ last_polled_at: now })
+      .where(eq(oauthDeviceCodes.id, id));
+  }
+
+  async approveDeviceCode(
+    id: string,
+    connectionItemId: string,
+  ): Promise<boolean> {
+    const result = await this.db
+      .update(oauthDeviceCodes)
+      .set({
+        status: "approved",
+        connection_item_id: connectionItemId,
+        approved_at: new Date().toISOString(),
+      })
+      .where(
+        and(
+          eq(oauthDeviceCodes.id, id),
+          eq(oauthDeviceCodes.status, "pending"),
+        ),
+      )
+      .returning({ id: oauthDeviceCodes.id });
+    return result.length > 0;
+  }
+
+  async denyDeviceCode(id: string): Promise<boolean> {
+    const result = await this.db
+      .update(oauthDeviceCodes)
+      .set({ status: "denied" })
+      .where(
+        and(
+          eq(oauthDeviceCodes.id, id),
+          eq(oauthDeviceCodes.status, "pending"),
+        ),
+      )
+      .returning({ id: oauthDeviceCodes.id });
+    return result.length > 0;
+  }
+}
+
+function rowToDeviceCode(row: {
+  id: string;
+  user_code: string;
+  client_id: string;
+  scope: string;
+  status: string;
+  connection_item_id: string | null;
+  expires_at: string;
+  interval_seconds: number;
+  last_polled_at: string | null;
+  approved_at: string | null;
+  created_at: string;
+}): OAuthDeviceCode {
+  return {
+    id: row.id,
+    user_code: row.user_code,
+    client_id: row.client_id,
+    scopes: row.scope.split(" ").filter(Boolean),
+    status: row.status as OAuthDeviceCodeStatus,
+    connection_item_id: row.connection_item_id,
+    expires_at: row.expires_at,
+    interval_seconds: row.interval_seconds,
+    last_polled_at: row.last_polled_at,
+    approved_at: row.approved_at,
+    created_at: row.created_at,
+  };
 }

@@ -461,6 +461,43 @@ export interface OAuthStore {
   markRefreshUsed(id: string): Promise<boolean>;
   /** Revokes all tokens for a grant (used after replay detection). */
   revokeGrantTokens(connectionItemId: string): Promise<void>;
+
+  // ----- Device Authorization Grant (RFC 8628) -----
+
+  /** Insert a new device-code row. Caller hashes `device_code` and supplies
+   *  the unique `user_code`; both are stored verbatim. Used by the
+   *  initiate endpoint. */
+  createDeviceCode(input: {
+    deviceCodeHash: string;
+    userCode: string;
+    clientId: string;
+    scope: string;
+    expiresAt: string;
+    intervalSeconds: number;
+  }): Promise<import("@mymehq/shared").OAuthDeviceCode>;
+
+  /** Lookup by SHA-256 of the device_code. Used by the polling endpoint.
+   *  Returns null if the row doesn't exist; expired rows are returned
+   *  with `status: "pending"` (caller checks `expires_at` to decide). */
+  findDeviceCodeByHash(
+    hash: string,
+  ): Promise<import("@mymehq/shared").OAuthDeviceCode | null>;
+
+  /** Lookup by user_code. Used by the verification page. */
+  findDeviceCodeByUserCode(
+    userCode: string,
+  ): Promise<import("@mymehq/shared").OAuthDeviceCode | null>;
+
+  /** Stamp `last_polled_at`. Used by the polling endpoint to detect
+   *  `slow_down` (client polled inside the interval window). */
+  markDeviceCodePolled(id: string, now: string): Promise<void>;
+
+  /** Flip status to `approved`, set `connection_item_id` and
+   *  `approved_at`. Returns false if the row was not pending. */
+  approveDeviceCode(id: string, connectionItemId: string): Promise<boolean>;
+
+  /** Flip status to `denied`. Returns false if the row was not pending. */
+  denyDeviceCode(id: string): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------

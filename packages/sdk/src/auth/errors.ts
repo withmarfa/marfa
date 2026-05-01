@@ -16,7 +16,14 @@ export type OAuthErrorCode =
   | "insufficient_scope"
   | "token_reuse_detected"
   | "server_error"
-  | "temporarily_unavailable";
+  | "temporarily_unavailable"
+  // RFC 8628 (Device Authorization Grant) — codes returned by the
+  // /device/token polling endpoint. `authorization_pending` and
+  // `slow_down` are normal-flow signals but bubble up if the SDK's
+  // polling helper isn't used.
+  | "authorization_pending"
+  | "slow_down"
+  | "expired_token";
 
 export class OAuthError extends Error {
   readonly code: OAuthErrorCode;

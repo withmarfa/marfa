@@ -404,6 +404,42 @@ export interface OAuthCode {
   created_at: string;
 }
 
+/**
+ * Device Authorization Grant (RFC 8628) — pairing record between a
+ * client polling for tokens and a human-driven approval flow.
+ *
+ * The client receives `device_code` (kept private, hashed at storage)
+ * and `user_code` (short, low-entropy, shown to the human). The user
+ * visits `verification_uri`, types in `user_code`, signs in, and
+ * approves the requested scopes; the client polls
+ * `POST /auth/device/token` with `device_code` until approved.
+ *
+ * `connection_item_id` is set when status transitions to `approved`
+ * (the system.connection user-app-grant created at approval time).
+ */
+export interface OAuthDeviceCode {
+  id: string;
+  user_code: string;
+  client_id: string;
+  scopes: string[];
+  status: OAuthDeviceCodeStatus;
+  /** Set when status transitions to `approved`. Null otherwise. */
+  connection_item_id: string | null;
+  expires_at: string;
+  /** Minimum seconds the client should wait between token-endpoint polls. */
+  interval_seconds: number;
+  /** Last time the client polled. Used for `slow_down` detection. */
+  last_polled_at: string | null;
+  approved_at: string | null;
+  created_at: string;
+}
+
+export type OAuthDeviceCodeStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "expired";
+
 // ---------------------------------------------------------------------------
 // Webhook types
 // ---------------------------------------------------------------------------

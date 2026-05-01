@@ -15,6 +15,11 @@ import type { MymeAuth } from "../auth/instance.js";
 import { renderConsentScreen } from "./consent.js";
 import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
+import {
+  renderDevicePage,
+  renderDeviceConsentScreen,
+  renderDeviceDecisionPage,
+} from "./device-pages.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 
 const ACCESS_TOKEN_PREFIX = "myme_at_";
@@ -679,7 +684,381 @@ export function authRoutes(
     return errorRedirect(errorCode);
   });
 
+  // -----------------------------------------------------------------------
+  // Device Authorization Grant (RFC 8628)
+  // -----------------------------------------------------------------------
+  //
+  // Three observable surfaces:
+  //   - POST /auth/device (JSON)   — initiate a flow; returns device_code +
+  //     user_code + verification_uri. The CLI / Swift SDK call this.
+  //   - POST /auth/device (form)   — the user submits their user_code from
+  //     the verification page; if valid, redirect to /auth/device/consent.
+  //   - POST /auth/device/token    — polled by the client until the user
+  //     approves; returns the standard OAuth token response on success.
+  //   - GET /auth/device           — verification HTML form (optionally
+  //     pre-filled via ?user_code=…).
+  //   - GET /auth/device/consent?user_code=… — consent screen, gated on a
+  //     better-auth session (redirects to /auth/sign-in if absent).
+  //   - POST /auth/device/consent  — approve/deny submission.
+
+  router.post("/device", async (c) => {
+    const contentType = c.req.header("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      // -------------------- Initiate flow --------------------
+      let body: { client_id?: unknown; scope?: unknown };
+      try {
+        body = await c.req.json();
+      } catch {
+        throw new MymeError(ErrorCode.VALIDATION_ERROR, "JSON body required");
+      }
+      const clientId =
+        typeof body.client_id === "string" ? body.client_id : null;
+      const scope = typeof body.scope === "string" ? body.scope.trim() : "";
+      if (!clientId || !scope) {
+        throw new MymeError(
+          ErrorCode.VALIDATION_ERROR,
+          "client_id and scope are required",
+        );
+      }
+      const client = await storage.oauth.getClient(clientId);
+      if (!client) {
+        throw new MymeError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
+      }
+      // Validate every requested scope against the registry. Reject
+      // outright on any unknown scope so we don't store a code that
+      // can't be approved.
+      const requestedScopes = scope.split(" ").filter(Boolean);
+      const expanded = expandWildcardScopes(requestedScopes, knownTypes);
+      const parsed = expanded.map(parseScope).filter((s) => s !== null);
+      if (parsed.length === 0) {
+        throw new MymeError(
+          ErrorCode.INVALID_SCOPE,
+          "No valid scopes requested",
+        );
+      }
+
+      const deviceCodeRaw = generateToken(DEVICE_CODE_PREFIX);
+      const deviceCodeHash = sha256(deviceCodeRaw);
+      const userCode = generateUserCode();
+      const expiresAt = new Date(Date.now() + DEVICE_CODE_TTL_MS).toISOString();
+      const intervalSeconds = DEVICE_CODE_DEFAULT_INTERVAL_SECONDS;
+
+      await storage.oauth.createDeviceCode({
+        deviceCodeHash,
+        userCode,
+        clientId,
+        scope: requestedScopes.join(" "),
+        expiresAt,
+        intervalSeconds,
+      });
+
+      const verificationBase = auth?.baseURL ?? new URL(c.req.url).origin;
+      const verificationUri = `${verificationBase}/auth/device`;
+      const verificationUriComplete = `${verificationUri}?user_code=${encodeURIComponent(userCode)}`;
+      return c.json({
+        device_code: deviceCodeRaw,
+        user_code: userCode,
+        verification_uri: verificationUri,
+        verification_uri_complete: verificationUriComplete,
+        expires_in: DEVICE_CODE_TTL_MS / 1000,
+        interval: intervalSeconds,
+      });
+    }
+
+    // -------------------- Form submit user_code --------------------
+    const formData = await c.req.formData();
+    const submittedRaw = formData.get("user_code");
+    const submitted =
+      typeof submittedRaw === "string"
+        ? submittedRaw.trim().toUpperCase().replace(/\s+/g, "")
+        : "";
+    if (!submitted) {
+      return c.redirect(`/auth/device?error=missing_code`, 302);
+    }
+    const normalised = normaliseUserCode(submitted);
+    const row = await storage.oauth.findDeviceCodeByUserCode(normalised);
+    if (!row) {
+      return c.redirect(
+        `/auth/device?error=invalid_code&user_code=${encodeURIComponent(submitted)}`,
+        302,
+      );
+    }
+    if (row.status !== "pending") {
+      return c.redirect(
+        `/auth/device?error=already_resolved&user_code=${encodeURIComponent(submitted)}`,
+        302,
+      );
+    }
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      return c.redirect(`/auth/device?error=expired_code`, 302);
+    }
+    return c.redirect(
+      `/auth/device/consent?user_code=${encodeURIComponent(normalised)}`,
+      302,
+    );
+  });
+
+  router.get("/device", (c) => {
+    const url = new URL(c.req.url);
+    const prefilled = url.searchParams.get("user_code") ?? "";
+    const error = url.searchParams.get("error") ?? undefined;
+    return c.html(renderDevicePage({ prefilled, error }));
+  });
+
+  router.get("/device/consent", async (c) => {
+    const sessionResult = await requireConsentSession(c);
+    if (sessionResult instanceof Response) return sessionResult;
+    const url = new URL(c.req.url);
+    const userCodeRaw = url.searchParams.get("user_code") ?? "";
+    const userCode = normaliseUserCode(userCodeRaw.trim().toUpperCase());
+    if (!userCode) {
+      return c.redirect("/auth/device?error=missing_code", 302);
+    }
+    const row = await storage.oauth.findDeviceCodeByUserCode(userCode);
+    if (!row) {
+      return c.redirect("/auth/device?error=invalid_code", 302);
+    }
+    if (row.status !== "pending") {
+      return c.redirect(
+        `/auth/device?error=already_resolved&user_code=${encodeURIComponent(userCode)}`,
+        302,
+      );
+    }
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      return c.redirect(`/auth/device?error=expired_code`, 302);
+    }
+    const client = await storage.oauth.getClient(row.client_id);
+    if (!client) {
+      throw new MymeError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
+    }
+
+    // Render the same consent template as /auth/authorize. The submit
+    // target is /auth/device/consent (not /auth/authorize), and the
+    // hidden user_code field replaces the OAuth code-flow params.
+    const requestedScopes = row.scopes;
+    const expanded = expandWildcardScopes(requestedScopes, knownTypes);
+    const parsedScopes = expanded
+      .map(parseScope)
+      .filter(
+        (s): s is NonNullable<ReturnType<typeof parseScope>> => s !== null,
+      );
+    const descriptions: Record<string, string> = {};
+    for (const s of parsedScopes) {
+      const typeEntry = TYPE_REGISTRY.get(s.typePattern);
+      if (typeEntry?.description) {
+        descriptions[s.typePattern] = typeEntry.description;
+      } else {
+        const fallback = METADATA_SCOPE_DESCRIPTIONS[s.typePattern];
+        if (fallback) descriptions[s.typePattern] = fallback;
+      }
+    }
+
+    return c.html(
+      renderDeviceConsentScreen({
+        clientName: client.name,
+        scopes: parsedScopes,
+        userCode,
+        descriptions,
+      }),
+    );
+  });
+
+  router.post("/device/consent", async (c) => {
+    const sessionResult = await requireConsentSession(c);
+    if (sessionResult instanceof Response) return sessionResult;
+
+    const formData = await c.req.formData();
+    const userCodeRaw = formData.get("user_code");
+    const userCode =
+      typeof userCodeRaw === "string"
+        ? normaliseUserCode(userCodeRaw.trim().toUpperCase())
+        : "";
+    const decision = formData.get("decision");
+    if (!userCode || (decision !== "approve" && decision !== "deny")) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "user_code and decision are required",
+      );
+    }
+    const row = await storage.oauth.findDeviceCodeByUserCode(userCode);
+    if (!row) {
+      throw new MymeError(ErrorCode.NOT_FOUND, "Unknown user_code");
+    }
+    if (row.status !== "pending") {
+      return c.redirect(
+        `/auth/device?error=already_resolved&user_code=${encodeURIComponent(userCode)}`,
+        302,
+      );
+    }
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      return c.redirect(`/auth/device?error=expired_code`, 302);
+    }
+
+    if (decision === "deny") {
+      await storage.oauth.denyDeviceCode(row.id);
+      return c.html(renderDeviceDecisionPage({ approved: false }));
+    }
+
+    // Approve: create a system.connection (kind: user-app-grant) and
+    // flip the device-code row to approved.
+    const grant = await storage.oauth.createGrant(row.client_id, row.scopes);
+    const ok = await storage.oauth.approveDeviceCode(row.id, grant.id);
+    if (!ok) {
+      // Race: someone else flipped it in between. Surface as already-resolved.
+      return c.redirect(
+        `/auth/device?error=already_resolved&user_code=${encodeURIComponent(userCode)}`,
+        302,
+      );
+    }
+    return c.html(renderDeviceDecisionPage({ approved: true }));
+  });
+
+  router.post("/device/token", async (c) => {
+    const formData = await c.req.formData();
+    const grantType = formData.get("grant_type");
+    const deviceCodeRaw = formData.get("device_code");
+    const clientId = formData.get("client_id");
+
+    if (
+      grantType !== "urn:ietf:params:oauth:grant-type:device_code" ||
+      typeof deviceCodeRaw !== "string" ||
+      typeof clientId !== "string"
+    ) {
+      return c.json(
+        {
+          error: "invalid_request",
+          error_description:
+            "grant_type, device_code, and client_id are required",
+        },
+        400,
+      );
+    }
+
+    const row = await storage.oauth.findDeviceCodeByHash(sha256(deviceCodeRaw));
+    if (row?.client_id !== clientId) {
+      return c.json(
+        { error: "invalid_grant", error_description: "Unknown device_code" },
+        400,
+      );
+    }
+
+    if (new Date(row.expires_at).getTime() < Date.now()) {
+      return c.json(
+        { error: "expired_token", error_description: "device_code expired" },
+        400,
+      );
+    }
+
+    if (row.status === "denied") {
+      return c.json(
+        {
+          error: "access_denied",
+          error_description: "User denied the request",
+        },
+        400,
+      );
+    }
+
+    if (row.status === "pending") {
+      // Slow-down detection: if the client polled inside the interval
+      // window, return slow_down + bumped interval.
+      const now = new Date();
+      if (row.last_polled_at) {
+        const elapsed = now.getTime() - new Date(row.last_polled_at).getTime();
+        if (elapsed < row.interval_seconds * 1000) {
+          await storage.oauth.markDeviceCodePolled(row.id, now.toISOString());
+          return c.json(
+            {
+              error: "slow_down",
+              error_description: "Polling too fast — wait longer",
+            },
+            400,
+          );
+        }
+      }
+      await storage.oauth.markDeviceCodePolled(row.id, now.toISOString());
+      return c.json(
+        {
+          error: "authorization_pending",
+          error_description: "User has not yet approved",
+        },
+        400,
+      );
+    }
+
+    // status === "approved" — issue tokens against the connection grant.
+    if (!row.connection_item_id) {
+      // Invariant violation: status was flipped to approved without a
+      // connection_item_id. Surface as 500 with a clear message.
+      throw new Error(
+        "Approved device-code is missing connection_item_id (invariant violation)",
+      );
+    }
+
+    const accessRaw = generateToken(ACCESS_TOKEN_PREFIX);
+    const refreshRaw = generateToken(REFRESH_TOKEN_PREFIX);
+    const accessHash = sha256(accessRaw);
+    const refreshHash = sha256(refreshRaw);
+    const accessExpiresAt = new Date(
+      Date.now() + ACCESS_TOKEN_TTL_MS,
+    ).toISOString();
+    const refreshExpiresAt = new Date(
+      Date.now() + 30 * 24 * 3600_000,
+    ).toISOString();
+
+    const accessToken = await storage.oauth.createToken(
+      row.connection_item_id,
+      accessHash,
+      "access",
+      accessExpiresAt,
+    );
+    await storage.oauth.createToken(
+      row.connection_item_id,
+      refreshHash,
+      "refresh",
+      refreshExpiresAt,
+    );
+
+    return c.json({
+      access_token: accessRaw,
+      refresh_token: refreshRaw,
+      token_type: "bearer",
+      expires_in: ACCESS_TOKEN_TTL_MS / 1000,
+      scope: accessToken.scopes.join(" "),
+    });
+  });
+
   return router;
+}
+
+// ---------------------------------------------------------------------------
+// Device Authorization Grant — local helpers
+// ---------------------------------------------------------------------------
+
+const DEVICE_CODE_PREFIX = "myme_dc_";
+const DEVICE_CODE_TTL_MS = 600_000; // 10 minutes
+const DEVICE_CODE_DEFAULT_INTERVAL_SECONDS = 5;
+
+/** Alphabet for user_code — restricted to avoid I/O/0/1/U/V ambiguity.
+ *  24 chars × 8 positions = ~110 billion. Plenty for 10-min TTL. */
+const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTWXYZ23456789";
+/** 8 alphanum chars, hyphenated XXXX-XXXX. */
+function generateUserCode(): string {
+  const bytes = randomBytes(8);
+  const chars: string[] = [];
+  for (const b of bytes) {
+    const idx = b % USER_CODE_ALPHABET.length;
+    chars.push(USER_CODE_ALPHABET.charAt(idx));
+  }
+  return `${chars.slice(0, 4).join("")}-${chars.slice(4).join("")}`;
+}
+
+/** Normalise a user-submitted code to the storage shape: uppercase,
+ *  hyphenated XXXX-XXXX. Accepts the user typing without the hyphen. */
+function normaliseUserCode(input: string): string {
+  const stripped = input.replace(/-/g, "").toUpperCase();
+  if (stripped.length !== 8) return input.toUpperCase();
+  return `${stripped.slice(0, 4)}-${stripped.slice(4)}`;
 }
 
 /** Build a redirect URL back to the sign-up page with error + return_to. */
