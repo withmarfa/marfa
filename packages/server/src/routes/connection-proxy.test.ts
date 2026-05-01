@@ -227,6 +227,69 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
     );
     expect(res.status).toBe(404);
   });
+
+  // Layer 2 PR 4: preferred path — OAuth config resolved via
+  // credential_ref pointing at a system.credential item.
+  it("resolves OAuth config via credential_ref when set (preferred path)", async () => {
+    // 1. Create a system.credential with the encrypted client secret.
+    const credRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.credential",
+        properties: {
+          label: "test-cred",
+          kind: "oauth_token",
+          oauth_provider_config: {
+            upstream_base_url: "https://via-credential.test",
+            oauth_token_url: "https://via-credential.test/oauth/token",
+            oauth_client_id: "via-cred-client",
+          },
+          secret_encrypted: encryptSecret(
+            "via-cred-secret",
+            SECRET_INFO.connectionOauthToken,
+          ),
+        },
+      },
+    });
+    const credBody = (await credRes.json()) as ItemResponse;
+
+    // 2. Connection with credential_ref + NO inline OAuth config in
+    //    `configuration`. The dual-read path should pick the credential.
+    const connRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "external-service-connector",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: "acme.demo",
+          credential_ref: credBody.item.id,
+          configuration: {},
+        },
+      },
+    });
+    const connBody = (await connRes.json()) as ItemResponse;
+    const connectionId = connBody.item.id;
+    await seedToken(connectionId);
+
+    const fetchState = installFetchScript([
+      ({ url }) => {
+        // The upstream URL came from the credential, not inline config.
+        expect(url).toBe("https://via-credential.test/api/v1/widgets");
+        return jsonResponse(200, { ok: true, source: "credential" });
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/proxy/api/v1/widgets`,
+      { key: ctx.adminKey, body: {} },
+    );
+    expect(res.status).toBe(200);
+    expect(fetchState.calls).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

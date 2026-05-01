@@ -586,13 +586,15 @@ const systemConnection: TypeSchema = {
 const systemCredential: TypeSchema = {
   id: "system.credential",
   label: "Credential",
-  description: "An API key or OAuth approval. Surfaces a Credentials list; carries permissions and last-used time; revocable. Lifecycle is bounded to active/revoked. Has no tier.",
+  description: "An API key or OAuth approval. Surfaces a Credentials list; carries permissions and last-used time; revocable. Lifecycle is bounded to active/revoked. Has no tier. For kind: oauth_token, the connector's OAuth provider config (upstream URLs, client id) is stored under `oauth_provider_config` and the client secret under `secret_encrypted` (AES-256-GCM via the connectionOauthToken HKDF domain). The companion connection items reference credentials via `credential_ref`.",
   version: 1,
   fields: {
     label: { type: "string", description: "Human-readable label", required: true },
     kind: { type: "enum", description: "Credential kind", required: true, enum_values: ["api_key", "oauth_token"] },
     scopes: { type: "array", description: "Granted scope strings", items_type: "string" },
     last_used_at: { type: "datetime", description: "Most recent use timestamp" },
+    oauth_provider_config: { type: "object", description: "For kind: oauth_token — non-secret OAuth provider config: { upstream_base_url, oauth_token_url, oauth_client_id }. The secret companion lives under `secret_encrypted`." },
+    secret_encrypted: { type: "string", description: "For kind: oauth_token — AES-256-GCM-encrypted client secret (encoded as base64-iv|base64-ciphertext|base64-tag), keyed via HKDF on the `connectionOauthToken` domain. Decrypted server-side only." },
   },
 };
 

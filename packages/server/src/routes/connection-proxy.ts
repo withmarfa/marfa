@@ -41,16 +41,76 @@ interface OAuthConfig {
   upstream_base_url: string;
   oauth_token_url: string;
   oauth_client_id: string;
-  /**
-   * Plaintext client_secret — stored alongside the connection's
-   * configuration in WS2 as a placeholder. WS3 will move this to a
-   * `system.credential` item referenced via `credential_ref`. Documented
-   * trade-off; not a long-term shape.
-   */
+  /** Plaintext client_secret. */
   oauth_client_secret: string;
 }
 
-function readOAuthConfig(connection: Item): OAuthConfig {
+/**
+ * Dual-read OAuth config — Layer 2 PR 4.
+ *
+ *   - **Preferred path**: `connection.properties.credential_ref` points
+ *     at a `system.credential` item with `kind: oauth_token`,
+ *     `oauth_provider_config` (the non-secret fields), and
+ *     `secret_encrypted` (the AES-GCM-encrypted client secret under the
+ *     `connectionOauthToken` HKDF domain). The migration script at
+ *     `src/scripts/migrate-oauth-to-credential.ts` populates this for
+ *     every existing connection.
+ *   - **Legacy path**: connection has no credential_ref. The OAuth
+ *     fields live in `connection.properties.configuration` as plaintext
+ *     (the WS2 placeholder shape). We read them as-is and emit a
+ *     console warning so operators can spot lingering pre-migration
+ *     connections before the cleanup PR removes this branch.
+ *
+ * After Layer 2 ships and the migration runs, the legacy branch is
+ * removed in a follow-up PR (Backlog: "drop connection-proxy legacy
+ * inline-OAuth-config fallback ~2 weeks after Layer 2 closes").
+ */
+async function readOAuthConfig(
+  storage: Storage,
+  connection: Item,
+): Promise<OAuthConfig> {
+  const props = connection.properties as { credential_ref?: string };
+  const credentialRef = props.credential_ref;
+  if (credentialRef) {
+    const credential = await storage.items.get(credentialRef);
+    if (credential?.type === "system.credential") {
+      const credProps = credential.properties as {
+        kind?: string;
+        oauth_provider_config?: {
+          upstream_base_url?: string;
+          oauth_token_url?: string;
+          oauth_client_id?: string;
+        };
+        secret_encrypted?: string;
+      };
+      const cfg = credProps.oauth_provider_config;
+      if (
+        credProps.kind === "oauth_token" &&
+        typeof cfg?.upstream_base_url === "string" &&
+        typeof cfg.oauth_token_url === "string" &&
+        typeof cfg.oauth_client_id === "string" &&
+        typeof credProps.secret_encrypted === "string"
+      ) {
+        return {
+          upstream_base_url: cfg.upstream_base_url,
+          oauth_token_url: cfg.oauth_token_url,
+          oauth_client_id: cfg.oauth_client_id,
+          oauth_client_secret: decryptSecret(
+            credProps.secret_encrypted,
+            SECRET_INFO.connectionOauthToken,
+          ),
+        };
+      }
+    }
+    // credential_ref set but doesn't resolve to a usable OAuth credential
+    // — fall through to inline with a warning. Keeps proxy working when
+    // the credential item is missing or partial.
+    console.warn(
+      `[connection-proxy] connection ${connection.id} has credential_ref '${credentialRef}' but no usable system.credential item exists. Falling back to inline OAuth config.`,
+    );
+  }
+
+  // Legacy fallback — read OAuth fields from connection.properties.configuration.
   const raw = connection.properties.configuration;
   if (
     typeof raw !== "object" ||
@@ -63,7 +123,12 @@ function readOAuthConfig(connection: Item): OAuthConfig {
   ) {
     throw new MymeError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
-      "Connection.configuration is missing required OAuth fields (upstream_base_url, oauth_token_url, oauth_client_id, oauth_client_secret)",
+      "Connection has no usable OAuth config: neither credential_ref → system.credential nor inline configuration is populated",
+    );
+  }
+  if (!credentialRef) {
+    console.warn(
+      `[connection-proxy] connection ${connection.id} resolved via legacy inline OAuth config (no credential_ref). Run the migration script to populate system.credential items.`,
     );
   }
   const cfg = raw as Record<string, unknown>;
@@ -513,7 +578,7 @@ export function connectionProxyRoutes(storage: Storage) {
       connectionId,
     );
 
-    const config = readOAuthConfig(connection);
+    const config = await readOAuthConfig(storage, connection);
 
     // Derive upstream URL: strip the route prefix from the request path
     // and prepend the configured upstream base URL.
