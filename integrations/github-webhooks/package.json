@@ -1,0 +1,22 @@
+{
+  "name": "@mymehq/integration-github-webhooks",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Inbound webhook connector for GitHub. Listens for issues / pull_request opened events on a registered repo and creates a core.bookmark per delivery. Validates the inbound webhook subsystem (HMAC-SHA256 verification via the github adapter) end-to-end.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@mymehq/runtime-sdk": "workspace:*",
+    "@mymehq/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "@mymehq/runtime-test": "workspace:*",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}
