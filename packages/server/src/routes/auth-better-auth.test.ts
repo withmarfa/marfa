@@ -91,6 +91,52 @@ describe("better-auth /auth/* surface", () => {
     expect(cookieHeader).toBeTruthy();
     expect(cookieHeader).toMatch(/HttpOnly/i);
     expect(cookieHeader).toMatch(/SameSite=Lax/i);
+    // Test config uses http://localhost:0 — Secure must be OFF on HTTP
+    // baseURL or Chrome silently drops the cookie (regression guard).
+    expect(cookieHeader).not.toMatch(/Secure/i);
+  });
+
+  it("session cookie includes Secure when baseURL is HTTPS", async () => {
+    // Regression guard: under an HTTPS baseURL, the cookie attributes
+    // MUST include Secure so the cookie isn't sent over HTTP.
+    const HTTPS_ORIGIN = "https://example.test";
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authBaseUrl: HTTPS_ORIGIN,
+    });
+    // Use the matching origin since baseURL drives trustedOrigins.
+    const signUpRes = await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "secure-cookie-test@example.com",
+        password: "correct horse battery",
+        name: "Test",
+      },
+      headers: { origin: HTTPS_ORIGIN },
+    });
+    if (signUpRes.status !== 200) {
+      const text = await signUpRes.text();
+      throw new Error(
+        `sign-up/email returned ${String(signUpRes.status)}: ${text.slice(0, 400)}`,
+      );
+    }
+    const res = await request(ctx.app, "POST", "/auth/sign-in/email", {
+      body: {
+        email: "secure-cookie-test@example.com",
+        password: "correct horse battery",
+      },
+      headers: { origin: HTTPS_ORIGIN },
+    });
+    if (res.status !== 200) {
+      const text = await res.text();
+      throw new Error(
+        `sign-in/email returned ${String(res.status)}: ${text.slice(0, 400)}`,
+      );
+    }
+    const cookieHeader = res.headers.get("set-cookie");
+    expect(cookieHeader).toBeTruthy();
+    expect(cookieHeader).toMatch(/Secure/i);
+    expect(cookieHeader).toMatch(/HttpOnly/i);
+    expect(cookieHeader).toMatch(/SameSite=Lax/i);
   });
 
   it("rejects a wrong password with 4xx", async () => {
