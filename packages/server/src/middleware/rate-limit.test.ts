@@ -23,8 +23,9 @@ interface Ctx {
 // per-window limit, so we can observe per-credential isolation in a
 // handful of requests rather than thousands.
 async function buildCtx(): Promise<Ctx> {
-  process.env.RATE_LIMIT_REQUESTS = "2";
-  process.env.RATE_LIMIT_WINDOW_MS = "60000";
+  // Rate-limit values now flow through AppConfig (single env-read site
+  // lives in loadConfig). Set them directly on the literal below; the
+  // middleware no longer reads process.env.
   const tmpDir = mkdtempSync(join(tmpdir(), "myme-ratelimit-"));
   const storage = createSqliteStorage(join(tmpDir, "test.db"));
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
@@ -66,6 +67,8 @@ async function buildCtx(): Promise<Ctx> {
     authAllowSignup: true,
     authSecret: "test-auth-secret",
     oidcProviders: [],
+    rateLimitDefaultLimit: 2,
+    rateLimitWindowMs: 60_000,
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);

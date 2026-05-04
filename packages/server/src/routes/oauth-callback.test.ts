@@ -245,6 +245,11 @@ describe("GET /oauth/callback/:provider", () => {
     const html = await res.text();
     expect(html).toContain("Authorisation complete");
     expect(html).toContain(connId);
+    // §3.18: success page carries no-store headers.
+    expect(res.headers.get("cache-control")).toBe(
+      "no-store, no-cache, private",
+    );
+    expect(res.headers.get("pragma")).toBe("no-cache");
 
     // Token endpoint hit with the right shape
     expect(tokenCalls).toHaveLength(1);

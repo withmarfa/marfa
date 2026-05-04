@@ -17,11 +17,16 @@ import { log } from "./middleware/logger.js";
 async function main() {
   const config = loadConfig();
 
-  // Log version info at startup
+  // Log version info at startup and surface the same sha on `GET /` (§3.15).
+  // version.json is written at deploy time; in dev it's absent and we
+  // fall back to "dev". Empty / non-string sha values fall back too.
   try {
     const versionPath = resolve(process.cwd(), "version.json");
     const raw = await readFile(versionPath, "utf-8");
     const version = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof version.sha === "string" && version.sha) {
+      config.versionSha = version.sha;
+    }
     log("info", "Server version", {
       sha: version.sha,
       deployed_at: version.deployed_at,

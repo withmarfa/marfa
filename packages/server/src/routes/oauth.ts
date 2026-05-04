@@ -20,6 +20,7 @@ import {
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
 } from "./device-pages.js";
+import { setNoStore } from "./no-store.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 
 const ACCESS_TOKEN_PREFIX = "myme_at_";
@@ -202,6 +203,7 @@ export function authRoutes(
       descriptions,
     });
 
+    setNoStore(c);
     return c.html(html);
   });
 
@@ -407,6 +409,7 @@ export function authRoutes(
       allowSignup: auth?.allowSignup ?? false,
       oidcProviderIds: auth?.oidcProviderIds ?? [],
     });
+    setNoStore(c);
     return c.html(html);
   });
 
@@ -587,6 +590,7 @@ export function authRoutes(
     const url = new URL(c.req.url);
     const returnTo = validateReturnTo(url.searchParams.get("return_to"));
     const error = url.searchParams.get("error") ?? undefined;
+    setNoStore(c);
     return c.html(renderSignUpPage({ returnTo, error }));
   });
 
@@ -810,6 +814,7 @@ export function authRoutes(
     const url = new URL(c.req.url);
     const prefilled = url.searchParams.get("user_code") ?? "";
     const error = url.searchParams.get("error") ?? undefined;
+    setNoStore(c);
     return c.html(renderDevicePage({ prefilled, error }));
   });
 
@@ -861,6 +866,7 @@ export function authRoutes(
       }
     }
 
+    setNoStore(c);
     return c.html(
       renderDeviceConsentScreen({
         clientName: client.name,
@@ -904,6 +910,7 @@ export function authRoutes(
 
     if (decision === "deny") {
       await storage.oauth.denyDeviceCode(row.id);
+      setNoStore(c);
       return c.html(renderDeviceDecisionPage({ approved: false }));
     }
 
@@ -918,6 +925,7 @@ export function authRoutes(
         302,
       );
     }
+    setNoStore(c);
     return c.html(renderDeviceDecisionPage({ approved: true }));
   });
 

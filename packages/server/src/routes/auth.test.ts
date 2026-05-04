@@ -82,6 +82,8 @@ describe("bootstrap mode", () => {
       authAllowSignup: true,
       authSecret: "test-auth-secret",
       oidcProviders: [],
+      rateLimitDefaultLimit: 1000,
+      rateLimitWindowMs: 60_000,
     });
 
     const res = await request(app, "POST", "/keys", {

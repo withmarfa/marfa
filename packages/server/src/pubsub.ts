@@ -1,5 +1,6 @@
 import { EventEmitter, on } from "node:events";
 import type { Edge, Item, Metadata } from "@mymehq/shared";
+import { envNumber } from "./config.js";
 import type { EventLogStore, Storage } from "./storage/interface.js";
 
 /**
@@ -55,7 +56,7 @@ export interface EdgeEventWithId extends EdgeEvent {
 export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
 
 const emitter = new EventEmitter();
-emitter.setMaxListeners(Number(process.env.MAX_SUBSCRIPTION_LISTENERS) || 100);
+emitter.setMaxListeners(envNumber(process.env.MAX_SUBSCRIPTION_LISTENERS, 100));
 
 /** Default hop budget when the tenant has no override configured. */
 export const DEFAULT_HOP_BUDGET = 5;

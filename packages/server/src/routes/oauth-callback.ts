@@ -48,6 +48,7 @@ import {
   DEFAULT_STATE_TTL_MS,
   type OAuthStateEnvelope,
 } from "../oauth/state.js";
+import { setNoStore } from "./no-store.js";
 
 interface OAuthAuthorizeConfig {
   oauth_authorize_url: string;
@@ -399,10 +400,12 @@ export function oauthCallbackRoutes(
         resource_id: provider,
         details: { error: upstreamError, error_description: desc },
       });
+      setNoStore(c);
       return c.html(renderErrorPage(reason, 400), 400);
     }
 
     if (typeof code !== "string" || typeof state !== "string") {
+      setNoStore(c);
       return c.html(
         renderErrorPage("Missing code or state query param", 400),
         400,
@@ -416,6 +419,7 @@ export function oauthCallbackRoutes(
         resource_id: provider,
         details: { reason: stateResult.reason },
       });
+      setNoStore(c);
       return c.html(
         renderErrorPage(`State validation failed: ${stateResult.reason}`, 400),
         400,
@@ -428,6 +432,7 @@ export function oauthCallbackRoutes(
     // start route ran.
     const connection = await storage.items.get(envelope.connection_id);
     if (connection?.type !== "system.connection") {
+      setNoStore(c);
       return c.html(
         renderErrorPage(`Connection ${envelope.connection_id} not found`, 404),
         404,
@@ -438,6 +443,7 @@ export function oauthCallbackRoutes(
       config = await readAuthorizeConfig(storage, connection);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
+      setNoStore(c);
       return c.html(renderErrorPage(reason, 400), 400);
     }
 
@@ -454,6 +460,7 @@ export function oauthCallbackRoutes(
         resource_id: envelope.connection_id,
         details: { reason: exchange.reason, status: exchange.status },
       });
+      setNoStore(c);
       return c.html(
         renderErrorPage(exchange.reason, exchange.status || 502),
         502,
@@ -489,6 +496,7 @@ export function oauthCallbackRoutes(
       resource_id: envelope.connection_id,
       details: { provider, scopes: exchange.scopes },
     });
+    setNoStore(c);
     return c.html(renderSuccessPage(provider, envelope.connection_id), 200);
   });
   return r;

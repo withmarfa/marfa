@@ -1,6 +1,23 @@
 import { parseTrustedProxyCidrs } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
 
+/**
+ * Numeric env-var read with explicit "missing or empty → default" semantics.
+ *
+ * The `Number(env) || default` shorthand silently swallows zero — operators
+ * cannot disable a sub-job (e.g. set a retention to `0`) because `0` is
+ * falsy and gets overridden by the default. This helper is the canonical
+ * pattern for every numeric env read in the server: an undefined or empty
+ * env var falls back to the default; any other value (including `0`,
+ * negatives, or `NaN`) is honoured as written.
+ *
+ * If you need range/validity checking on top, parse explicitly (see
+ * `parseEventLogRetentionHours` for an example with warnings on bad input).
+ */
+export function envNumber(raw: string | undefined, fallback: number): number {
+  return raw !== undefined && raw !== "" ? Number(raw) : fallback;
+}
+
 export interface AppConfig {
   port: number;
   storageDialect: "sqlite" | "pg";
@@ -65,6 +82,20 @@ export interface AppConfig {
    *  env var (JSON array of `{ providerId, clientId, clientSecret,
    *  discoveryUrl?, scopes? }`). */
   oidcProviders: OidcProviderConfig[];
+  /** Default per-credential rate limit, requests per `rateLimitWindowMs`
+   *  window. Read from `RATE_LIMIT_REQUESTS` (default 1000). Wired through
+   *  the rate-limit middleware so there's a single env-read site. */
+  rateLimitDefaultLimit: number;
+  /** Rate-limit window size in ms. Read from `RATE_LIMIT_WINDOW_MS`
+   *  (default 60_000). The self-hosting docs were previously wrong about
+   *  this being hard-coded; it's an env var. */
+  rateLimitWindowMs: number;
+  /** Deployed-build identifier, surfaced on `GET /` as `version`. Filled
+   *  by `index.ts` from `version.json` at startup; defaults to `"dev"`
+   *  when no version file is present (local development). The committed
+   *  OpenAPI spec keeps a separate, semantically-distinct
+   *  API-contract version. */
+  versionSha?: string;
 }
 
 export interface OidcProviderConfig {
@@ -117,14 +148,15 @@ export function loadConfig(): AppConfig {
     }
   }
 
+  const port = envNumber(process.env.PORT, 8600);
   return {
-    port: Number(process.env.PORT) || 8600,
+    port,
     storageDialect: process.env.STORAGE_DIALECT === "pg" ? "pg" : "sqlite",
     sqlitePath: process.env.SQLITE_PATH ?? "./data/myme.db",
     databaseUrl: process.env.DATABASE_URL ?? "",
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
-    maxBlobSize: Number(process.env.MAX_BLOB_SIZE) || 50 * 1024 * 1024,
+    maxBlobSize: envNumber(process.env.MAX_BLOB_SIZE, 50 * 1024 * 1024),
     s3Bucket: process.env.S3_BUCKET ?? "",
     s3Region: process.env.S3_REGION ?? "us-east-1",
     s3Endpoint: process.env.S3_ENDPOINT ?? "",
@@ -134,46 +166,55 @@ export function loadConfig(): AppConfig {
     corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
     cdnBaseUrl: process.env.CDN_BASE_URL ?? "",
     authMode: process.env.AUTH_MODE === "hosted" ? "hosted" : "keys",
-    versionSnapshotIntervalMs:
-      Number(process.env.VERSION_SNAPSHOT_INTERVAL_MS) || 600_000,
+    versionSnapshotIntervalMs: envNumber(
+      process.env.VERSION_SNAPSHOT_INTERVAL_MS,
+      600_000,
+    ),
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
-    auditRetentionDays: Number(process.env.AUDIT_RETENTION_DAYS) || 90,
-    auditCleanupIntervalMs:
-      Number(process.env.AUDIT_CLEANUP_INTERVAL_MS) || 86_400_000,
+    auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
+    auditCleanupIntervalMs: envNumber(
+      process.env.AUDIT_CLEANUP_INTERVAL_MS,
+      86_400_000,
+    ),
     eventLogRetentionHours: parseEventLogRetentionHours(
       process.env.MYME_EVENT_LOG_RETENTION_HOURS,
     ),
-    versionThinningIntervalMs:
-      Number(process.env.VERSION_THINNING_INTERVAL_MS) || 3_600_000,
-    versionRecentDays: Number(process.env.VERSION_RECENT_DAYS) || 30,
-    versionDailySnapshotDays:
-      Number(process.env.VERSION_DAILY_SNAPSHOT_DAYS) || 90,
-    versionWeeklySnapshotDays:
-      Number(process.env.VERSION_WEEKLY_SNAPSHOT_DAYS) || 365,
-    versionMaxVersions: Number(process.env.VERSION_MAX_VERSIONS) || 500,
-    trashRetentionDays:
-      process.env.TRASH_RETENTION_DAYS !== undefined
-        ? Number(process.env.TRASH_RETENTION_DAYS)
-        : 60,
-    trashPurgeIntervalMs:
-      Number(process.env.TRASH_PURGE_INTERVAL_MS) || 86_400_000,
-    feedRetentionDays:
-      process.env.FEED_RETENTION_DAYS !== undefined
-        ? Number(process.env.FEED_RETENTION_DAYS)
-        : 0,
-    feedExpiryIntervalMs:
-      Number(process.env.FEED_EXPIRY_INTERVAL_MS) || 86_400_000,
+    versionThinningIntervalMs: envNumber(
+      process.env.VERSION_THINNING_INTERVAL_MS,
+      3_600_000,
+    ),
+    versionRecentDays: envNumber(process.env.VERSION_RECENT_DAYS, 30),
+    versionDailySnapshotDays: envNumber(
+      process.env.VERSION_DAILY_SNAPSHOT_DAYS,
+      90,
+    ),
+    versionWeeklySnapshotDays: envNumber(
+      process.env.VERSION_WEEKLY_SNAPSHOT_DAYS,
+      365,
+    ),
+    versionMaxVersions: envNumber(process.env.VERSION_MAX_VERSIONS, 500),
+    trashRetentionDays: envNumber(process.env.TRASH_RETENTION_DAYS, 60),
+    trashPurgeIntervalMs: envNumber(
+      process.env.TRASH_PURGE_INTERVAL_MS,
+      86_400_000,
+    ),
+    feedRetentionDays: envNumber(process.env.FEED_RETENTION_DAYS, 0),
+    feedExpiryIntervalMs: envNumber(
+      process.env.FEED_EXPIRY_INTERVAL_MS,
+      86_400_000,
+    ),
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
     // Parse + validate at startup. Malformed CIDRs throw — we want bad
     // config to surface immediately, not silently degrade.
     trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),
     authBaseUrl:
-      process.env.MYME_AUTH_BASE_URL ??
-      `http://localhost:${String(Number(process.env.PORT) || 8600)}`,
+      process.env.MYME_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
     authAllowSignup: process.env.MYME_AUTH_ALLOW_SIGNUP === "true",
     authSecret: process.env.MYME_AUTH_SECRET ?? "",
     oidcProviders: parseOidcProviders(process.env.MYME_OIDC_PROVIDERS),
+    rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
+    rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
   };
 }
 

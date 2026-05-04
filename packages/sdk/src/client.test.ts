@@ -84,6 +84,8 @@ beforeAll(async () => {
     authAllowSignup: false,
     authSecret: "test-secret",
     oidcProviders: [],
+    rateLimitDefaultLimit: 1000,
+    rateLimitWindowMs: 60_000,
   });
 
   testFetchFn = createTestFetch(app);
