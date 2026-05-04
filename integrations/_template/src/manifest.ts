@@ -1,12 +1,19 @@
 /**
  * Template Integration manifest. Each real integration ships its own
  * with the same shape — the contract is defined in @mymehq/shared
- * (`IntegrationManifestSchema`) and Plan B's install pipeline persists
- * it onto the `system.connection` row.
+ * (`IntegrationManifestSchema`) and the install pipeline persists it
+ * onto the `system.connection` row.
  *
- * For Layer 1 this is a typed object with the minimal fields the
- * runtime cares about; the full schema lands in Plan B when the
- * server-side install endpoint validates it.
+ * §2.3 fix: this file was authored against the Layer-1 contract and
+ * never updated when the schema tightened at Layer 2. The shape now
+ * matches the canonical schema exactly:
+ *   - `triggers[0]` carries cron under a nested `config: { cron }`
+ *   - `tombstone_mapping` uses the canonical `state-trashed` value
+ *   - `partial_write_mode` uses the hyphenated `all-or-nothing` value
+ *   - `webhook_verification` discriminates on `method` (not `type`)
+ *
+ * The `manifest.test.ts` sibling parses this object through
+ * `IntegrationManifestSchema` so future drift is caught locally.
  */
 export const TEMPLATE_MANIFEST = {
   name: "myme.template",
@@ -20,19 +27,18 @@ export const TEMPLATE_MANIFEST = {
   target_types: ["core.note"] as const,
   triggers: [
     {
-      type: "schedule",
-      cron: "*/5 * * * *", // every 5 minutes
-      cursor_strategy: "incremental",
+      type: "schedule" as const,
+      config: { cron: "*/5 * * * *" }, // every 5 minutes
     },
   ] as const,
   bidirectional_handling: {
     echo_ttl_seconds: 60,
     lag_window_seconds: 60,
-    tombstone_mapping: "trash" as const,
-    partial_write_mode: "all_or_nothing" as const,
+    tombstone_mapping: "state-trashed" as const,
+    partial_write_mode: "all-or-nothing" as const,
   },
   oauth_requirements: {} as Record<string, "proxy" | "leased">,
-  webhook_verification: { type: "hmac-sha256" as const },
+  webhook_verification: { method: "hmac-sha256" as const },
   permissions: {
     extension: { "connection.runtime": "write" as const },
     edge: {},
