@@ -163,18 +163,19 @@ export function createApp(
   // getSession to gate `/auth/authorize`). The catch-all `/auth/*` mount
   // is registered AFTER the explicit /auth routes so explicit handlers
   // win for `/auth/clients`, `/auth/authorize`, `/auth/token`, etc.
-  const storageWithDb = storage as Storage & {
-    __betterAuthDb?: unknown;
-    __betterAuthDialect?: "sqlite" | "pg";
-  };
+  //
+  // §3.13: the better-auth handles are typed fields on the Storage
+  // interface (BetterAuthStorageAdapter trait). No `as` cast needed —
+  // both fields are optional, so a Storage that doesn't wire better-auth
+  // simply skips the auth mount.
   let auth: MymeAuth | undefined;
-  if (storageWithDb.__betterAuthDb && storageWithDb.__betterAuthDialect) {
+  if (storage.betterAuthDb && storage.betterAuthDialect) {
     const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
       Boolean,
     );
     auth = createMymeAuth({
-      db: storageWithDb.__betterAuthDb,
-      dialect: storageWithDb.__betterAuthDialect,
+      db: storage.betterAuthDb,
+      dialect: storage.betterAuthDialect,
       baseURL: config.authBaseUrl,
       allowSignup: config.authAllowSignup,
       secret: config.authSecret || undefined,
