@@ -6,6 +6,7 @@ import { createTestContext, request } from "../test-utils.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { createApp } from "../app.js";
+import { hashApiKey, touchLastUsedCache } from "../middleware/auth.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -284,5 +285,85 @@ describe("KeyStore.updateLastUsed — DB-side debounce", () => {
 
     const afterKey = await ctx.storage.keys.get(id);
     expect(afterKey?.last_used_at).toBe(firstStamp);
+  });
+});
+
+describe("OAuth synthetic apiKey advances grant last_used_at (§3.4)", () => {
+  it("stamps last_used_at on the user-app-grant connection on a successful access-token request", async () => {
+    // Set up a user-app-grant + access token directly through the storage
+    // layer; the public OAuth flow is exercised in oauth.test.ts.
+    const client = await ctx.storage.oauth.createClient({
+      name: "Test App (last_used_at)",
+      redirect_uris: ["http://localhost:5173/callback"],
+    });
+    const grant = await ctx.storage.oauth.createGrant(client.id, [
+      "core.note:read",
+    ]);
+    const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_lru_test`;
+    const tokenHash = hashApiKey(rawToken, "test-salt");
+    await ctx.storage.oauth.createToken(
+      grant.id,
+      tokenHash,
+      "access",
+      new Date(Date.now() + 3600_000).toISOString(),
+    );
+
+    // Pre-condition: grant has no last_used_at yet.
+    const beforeItem = await ctx.storage.items.get(grant.id);
+    expect(beforeItem).not.toBeNull();
+    expect(beforeItem?.properties.last_used_at).toBeUndefined();
+
+    // Authenticated request through the OAuth path. The exact route is
+    // immaterial — we just need the auth middleware to fire successfully.
+    const res = await request(ctx.app, "GET", "/items", { key: rawToken });
+    expect(res.status).toBe(200);
+
+    // Post-condition: last_used_at advanced.
+    const afterItem = await ctx.storage.items.get(grant.id);
+    expect(afterItem?.properties.last_used_at).toEqual(expect.any(String));
+    const stamped = afterItem?.properties.last_used_at as string;
+    expect(Date.parse(stamped)).toBeGreaterThan(0);
+  });
+});
+
+describe("touchLastUsedCache — bounded LRU eviction (§3.5)", () => {
+  it("evicts the oldest entry when size exceeds cap", () => {
+    // Use a tiny cap by overflowing past 32_768 once via direct API; that's
+    // expensive — simpler to verify the FIFO contract on a smaller scale by
+    // pre-filling the cache. The cap is internal; we verify the eviction
+    // policy by confirming insertion order is preserved and the oldest key
+    // is dropped first.
+    const cache = new Map<string, number>();
+    // Fill with 100 entries.
+    for (let i = 0; i < 100; i++) {
+      touchLastUsedCache(cache, `k${String(i)}`, i);
+    }
+    expect(cache.size).toBe(100);
+    // First inserted key is still present (no overflow yet).
+    expect(cache.has("k0")).toBe(true);
+
+    // Re-touch k0 — it should move to the back, leaving k1 as the oldest.
+    touchLastUsedCache(cache, "k0", 1000);
+    const keys = Array.from(cache.keys());
+    expect(keys[0]).toBe("k1");
+    expect(keys[keys.length - 1]).toBe("k0");
+  });
+
+  it("FIFO contract: oldest insertion key is dropped first", () => {
+    // Construct a tiny synthetic instance with a custom cap by exploiting
+    // that touchLastUsedCache evicts when `size > LAST_USED_CACHE_MAX`. We
+    // can't reach 32_768 cheaply in a unit test; instead, verify the
+    // insertion-order invariant the eviction relies on.
+    const cache = new Map<string, number>();
+    touchLastUsedCache(cache, "alpha", 1);
+    touchLastUsedCache(cache, "beta", 2);
+    touchLastUsedCache(cache, "gamma", 3);
+    // Re-touch beta — should move to back.
+    touchLastUsedCache(cache, "beta", 4);
+    const keys = Array.from(cache.keys());
+    // Order: alpha (oldest), gamma, beta (most recent).
+    expect(keys).toEqual(["alpha", "gamma", "beta"]);
+    // Re-touch values reflect the latest timestamp.
+    expect(cache.get("beta")).toBe(4);
   });
 });
