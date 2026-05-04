@@ -1,13 +1,22 @@
 # Myme
 
-Typed data layer. This monorepo contains four active workspace packages:
+Typed data layer. This monorepo contains seven active workspace packages plus six in-tree Integrations and the Cloudflare infra package:
 
-- **@mymehq/types** — JSON schemas for the core type set plus the validate/generate scripts that emit the TypeScript registries (`ALL_TYPES`, `ALL_EDGE_TYPES`). Consumed by `@mymehq/shared`; private (bundled into shared's dist, not published to npm)
-- **@mymehq/shared** — Wire types, Zod validation schemas, error codes, type registry consumer, ID utilities. The foundation imported by both server and SDK
-- **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published)
-- **@mymehq/sdk** — TypeScript HTTP client for consuming the Myme API
+**Core packages (`packages/`):**
 
-`@mymehq/shared` and `@mymehq/sdk` publish to npm under the `@mymehq` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes.
+- **@mymehq/types** — JSON schemas for the core type set plus the validate/generate scripts that emit the TypeScript registries (`ALL_TYPES`, `ALL_EDGE_TYPES`, `ALL_SYSTEM_TYPES`). Consumed by `@mymehq/shared`; private (bundled into shared's dist, not published to npm).
+- **@mymehq/shared** — Wire types, Zod validation schemas, error codes, type registry consumer, ID utilities, the OAuth scope grammar parser, the `IntegrationManifestSchema`. The foundation imported by every other package.
+- **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published). Carries the data plane plus the Connections / OAuth / Better Auth surfaces.
+- **@mymehq/sdk** — TypeScript HTTP client (`@mymehq/sdk` and the `@mymehq/sdk/auth` subpath for the OAuth helpers — `MymeAuth`, PKCE helpers, token storages, `startDeviceFlow`).
+- **@mymehq/runtime-control** — Cloudflare Worker control plane. Verifies inbound webhook receipts, enqueues per-Integration messages, mediates the runtime-credential broker. Web-Crypto only; no Node APIs.
+- **@mymehq/runtime-sdk** — In-Worker SDK consumed by Integration Workers. Queue consumer, echo-suppression DO, manifest-typed handler scaffolding.
+- **@mymehq/runtime-test** — In-Worker test harness mirroring the runtime-sdk surface so Integrations can run unit tests in a `miniflare`-style fixture without booting a real Cloudflare Workers runtime.
+
+**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copy-pastes), `rss-watcher`, `github-webhooks`, `google-calendar`, `sync-agent` (the file-to-Myme bridge re-presented as a Connection), `task-auto-archive`. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`.
+
+**Infra (`infra/`):** `cloudflare` — `wrangler.jsonc` + deploy script for the runtime-control Worker, the per-Integration Workers, and the shared Queues / KV / Containers bindings.
+
+`@mymehq/shared` and `@mymehq/sdk` publish to npm under the `@mymehq` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.
 
 ## Tech stack
 
@@ -44,9 +53,36 @@ Sign-up is gated by `MYME_AUTH_ALLOW_SIGNUP` (default `false`). Single-user self
 
 Sign-in methods land per workstream-1 plan: email + password (PR 1), passkey + magic link (PR 2), generic OIDC client / federated (PR 3), Myme as IdP via OIDC Provider plugin (PR 5).
 
-User-app grants are stored as `system.connection` items with `kind: user-app-grant` (PR 4 of workstream 1). The OAuth tables `oauth_codes` and `oauth_tokens` reference the item id via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE). The previous standalone `oauth_grants` table is dropped — workstream 2 will extend the same `system.connection` type with `kind: external-service-connector` and `kind: tenant-share`.
+User-app grants are stored as `system.connection` items with `kind: user-app-grant`. The OAuth tables `oauth_codes` and `oauth_tokens` reference the item id via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE). The previous standalone `oauth_grants` table is dropped. The same `system.connection` type carries the other two kinds shipped by the Connections build: `external-service-connector` (a connected upstream service such as Google Calendar) and `tenant-share` (a relationship between two tenants).
 
 The OAuth consent endpoints (`GET/POST /auth/authorize`) gate on the better-auth session cookie, not admin bearer tokens. End users sign in via `/auth/sign-in` and approve their own grants; an unauthenticated request to `/auth/authorize` redirects to `/auth/sign-in?return_to=<original-url>`. Admin bearer tokens are still required for `/auth/clients` (client registration) and `/auth/tokens` (token management).
+
+## System types
+
+The reserved `system.*` namespace carries platform-internal items. All `system.*` types use a bounded lifecycle (`active | revoked` only — not the universal three-state) and are stamped with `origin: system` server-side.
+
+- `system.device` — connected devices (name, kind, last-active timestamp).
+- `system.credential` — API keys and OAuth tokens (encrypted at rest under per-domain HKDF tags).
+- `system.app` — registered app identities. Required before any `app.<app-name>.<type>` references resolve.
+- `system.connection` — approved relationships (the three kinds described under Authentication).
+- `system.integration` — published Integration manifests. One row per `(name, version)` pair; the install pipeline persists the manifest onto the `system.connection` it produces.
+- `system.activity` — operator-visible state: sync progress, errors, reauth prompts. Severity-tagged. The `severity: action_required` slice surfaces as a Repairs-style inbox.
+
+Only platform-flagged credentials (`is_platform: true`) can write to `system.*`; ordinary tenant credentials are rejected at `POST /items` regardless of `type_permissions`.
+
+## Reserved extension namespaces
+
+The metadata-layer `extensions` map is otherwise free-form, but a handful of namespaces under `connection.*` are reserved with constrained write semantics. The canonical entry is **`connection.runtime`** — verbose per-Connection runtime state for `system.connection` items of kind `external-service-connector`: sync cursors, in-flight idempotency keys, recent error tail, retry counters. Writable only by the connector's own runtime credential; readable by tenant admins and the connector. The `packages/server/CLAUDE.md` carries the full list.
+
+## Connections runtime substrate
+
+Three coupled subsystems shipped together as the Connections build (workstreams 1–3):
+
+- **Connection OAuth proxy** — `POST /connections/:id/proxy/*` forwards to the connection's configured upstream URL with `Authorization: Bearer <decrypted access_token>`. Refreshes on 401, single-flight refresh, refresh-token rotation, flips `runtime_status: reauth_required` on terminal failure.
+- **Connection leased tokens** — `/connections/:id/lease-tokens` issues short-TTL bearers that an upstream service can use to call back into Myme directly without holding the connection's full credential. Manifest-capability gated.
+- **Reactive run bridge + hop budget** — events published via `pubsub.publish` carry cycle-detection metadata (`originating_connection_id`, `hop_count`). The bridge fans out to subscribed connections; events whose `hop_count` exceeds the tenant's `max_event_hop_budget` are dropped and recorded as `system.activity` with `severity: error` so the user surface can show the loop detection. The Cloudflare control plane (`runtime-control`) verifies inbound webhook receipts, enqueues per-Integration Worker messages, and mediates the **runtime-credential broker** that mints a short-lived per-connection key the Worker uses for callbacks.
+
+For the per-route specifics — including the OAuth bootstrap callback at `/oauth/callback/:provider` and the inbound webhook receipt URL pattern — see `packages/server/CLAUDE.md`.
 
 ## Environment variables
 
