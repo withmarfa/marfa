@@ -268,3 +268,41 @@ describe("defaultCycleDetectionWiring — overflow emits system.activity", () =>
     expect(matched).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// §3.9 — getHopBudget caches per-tenant lookups
+// ---------------------------------------------------------------------------
+
+describe("defaultCycleDetectionWiring — per-tenant hop-budget cache (§3.9)", () => {
+  it("does not hit storage.tenants.getConfig twice for the same tenant within the TTL window", async () => {
+    let getConfigCalls = 0;
+    // Fake a storage shape with just enough surface for the wiring.
+    // The cache lives inside `defaultCycleDetectionWiring`'s closure,
+    // so a fresh wiring instance is what's under test.
+    const fakeStorage = {
+      tenants: {
+        getConfig: () => {
+          getConfigCalls += 1;
+          return Promise.resolve({ max_event_hop_budget: 7 });
+        },
+      },
+    } as unknown as Parameters<typeof defaultCycleDetectionWiring>[0];
+
+    const wiring = defaultCycleDetectionWiring(fakeStorage);
+    expect(wiring.getHopBudget).toBeDefined();
+    const getHop = wiring.getHopBudget!;
+
+    expect(await getHop("tenant-a")).toBe(7);
+    expect(await getHop("tenant-a")).toBe(7);
+    expect(await getHop("tenant-a")).toBe(7);
+    expect(getConfigCalls).toBe(1);
+
+    // Different tenant id → fresh storage hit.
+    expect(await getHop("tenant-b")).toBe(7);
+    expect(getConfigCalls).toBe(2);
+
+    // Undefined tenantId → constant default, no storage hit.
+    expect(await getHop(undefined)).toBe(DEFAULT_HOP_BUDGET);
+    expect(getConfigCalls).toBe(2);
+  });
+});
