@@ -39,8 +39,40 @@ const KEY_PREFIX = "myme_k1_";
 const ACCESS_TOKEN_PREFIX = "myme_at_";
 const DEBOUNCE_MS = 3600_000; // 1 hour
 
+/**
+ * Soft cap on the in-process `lastUsedCache`. Each entry is a
+ * (string id, number timestamp) pair — a few dozen bytes; 32k entries
+ * caps memory at well under 1MB and accommodates the largest realistic
+ * hot-key set on a single instance. Eviction is FIFO (oldest insertion);
+ * touched entries are re-inserted to refresh their position.
+ */
+const LAST_USED_CACHE_MAX = 32_768;
+
 export function hashApiKey(raw: string, salt: string): string {
   return createHmac("sha256", salt).update(raw).digest("hex");
+}
+
+/**
+ * Stamps a key as recently-touched in the cache, with FIFO eviction
+ * past `LAST_USED_CACHE_MAX`. Map iteration order is insertion order in
+ * JS, so deleting the first key drops the oldest entry. Re-insertion of
+ * an existing key (delete + set) moves it to the back, keeping hot keys
+ * in cache.
+ *
+ * Exported for test access only — production callers go through
+ * `authMiddleware`'s closed-over instance.
+ */
+export function touchLastUsedCache(
+  cache: Map<string, number>,
+  key: string,
+  now: number,
+): void {
+  cache.delete(key);
+  cache.set(key, now);
+  if (cache.size > LAST_USED_CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +80,10 @@ export function hashApiKey(raw: string, salt: string): string {
 // ---------------------------------------------------------------------------
 
 export function authMiddleware(storage: Storage, salt: string) {
+  // Bounded LRU keyed by `key:<api-key-id>` for stored keys and
+  // `oauth:<connection-item-id>` for OAuth grants. Two namespaces on a
+  // single map keeps the eviction story simple; the prefix prevents
+  // accidental collision between the two id spaces.
   const lastUsedCache = new Map<string, number>();
 
   return createMiddleware<AppEnv>(async (c, next) => {
@@ -113,6 +149,34 @@ export function authMiddleware(storage: Storage, salt: string) {
         last_used_at: null,
       });
       c.set("authType", "oauth");
+
+      // Debounced last_used_at update on the underlying user-app-grant
+      // connection (system.connection of kind: user-app-grant). The
+      // /auth/grants surface reads this from the connection's properties
+      // to show "active-but-rarely-used" grants accurately. Same DEBOUNCE_MS
+      // as the api-key path: at most one write per process per grant per
+      // hour. Best-effort — failures must never break the auth path, hence
+      // the try/catch.
+      const oauthCacheKey = `oauth:${oauthToken.connection_item_id}`;
+      const oauthNow = Date.now();
+      const oauthLastTracked = lastUsedCache.get(oauthCacheKey) ?? 0;
+      if (oauthNow - oauthLastTracked > DEBOUNCE_MS) {
+        touchLastUsedCache(lastUsedCache, oauthCacheKey, oauthNow);
+        try {
+          const grant = await storage.items.get(oauthToken.connection_item_id);
+          if (grant) {
+            await storage.items.update(oauthToken.connection_item_id, {
+              properties: {
+                ...grant.properties,
+                last_used_at: new Date(oauthNow).toISOString(),
+              },
+            });
+          }
+        } catch {
+          // Best-effort; the cache mark above prevents a stampede.
+        }
+      }
+
       return next();
     }
 
@@ -152,10 +216,11 @@ export function authMiddleware(storage: Storage, salt: string) {
       // cache is a per-instance round-trip skip rather than the source of
       // truth — multiple instances can't write more often than once per
       // DEBOUNCE_MS per key regardless of what's in any given instance's cache.
+      const cacheKey = `key:${stored.id}`;
       const now = Date.now();
-      const lastTracked = lastUsedCache.get(stored.id) ?? 0;
+      const lastTracked = lastUsedCache.get(cacheKey) ?? 0;
       if (now - lastTracked > DEBOUNCE_MS) {
-        lastUsedCache.set(stored.id, now);
+        touchLastUsedCache(lastUsedCache, cacheKey, now);
         await storage.keys.updateLastUsed(stored.id);
       }
 
