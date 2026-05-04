@@ -4,14 +4,14 @@ Myme runs via launchd. Two instances share one source tree with separate launchd
 
 ## Environments
 
-|                | Staging                                            | Conformance                                            |
-| -------------- | -------------------------------------------------- | ------------------------------------------------------ |
-| Port           | 8602                                               | 8601                                                   |
-| Launchd label  | `so.myme.staging`                                  | `so.myme.conformance`                                  |
-| Postgres DB    | `myme_staging`                                     | `myme_conformance`                                     |
-| Plist location | `~/Library/LaunchAgents/so.myme.staging.plist`     | `~/Library/LaunchAgents/so.myme.conformance.plist`     |
-| Working dir    | `~/Services/myme-staging` (shared with conformance)| `~/Services/myme-staging` (shared with staging)        |
-| Logs           | `~/Services/myme-staging/logs/`                    | `~/Services/myme-conformance/logs/`                    |
+|                | Staging                                             | Conformance                                        |
+| -------------- | --------------------------------------------------- | -------------------------------------------------- |
+| Port           | 8602                                                | 8601                                               |
+| Launchd label  | `so.myme.staging`                                   | `so.myme.conformance`                              |
+| Postgres DB    | `myme_staging`                                      | `myme_conformance`                                 |
+| Plist location | `~/Library/LaunchAgents/so.myme.staging.plist`      | `~/Library/LaunchAgents/so.myme.conformance.plist` |
+| Working dir    | `~/Services/myme-staging` (shared with conformance) | `~/Services/myme-staging` (shared with staging)    |
+| Logs           | `~/Services/myme-staging/logs/`                     | `~/Services/myme-conformance/logs/`                |
 
 Both instances use Postgres on `localhost:5432`, S3 blob storage, and `KeepAlive: true`. Configuration (env vars, ports, database URLs) is embedded in each plist XML.
 
