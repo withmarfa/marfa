@@ -202,11 +202,11 @@ export function defaultCycleDetectionWiring(
 }
 
 /**
- * Maps an internal event type to its V0-spec wire string.
+ * Maps an internal event type to its wire string.
  *   item.* for item events (created / updated / deleted / restored /
  *     state_changed)
  *   metadata.changed (bare, not namespaced) for metadata mutations —
- *     V0 spec exception because it describes a metadata-layer change
+ *     a deliberate exception because it describes a metadata-layer change
  *   edge.created / edge.deleted for edge lifecycle events
  *
  * Mirrored by routes/events.ts, webhooks/delivery.ts, and

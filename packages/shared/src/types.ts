@@ -140,7 +140,7 @@ export interface Version {
 /**
  * A typed edge between two items. Direction is spec-exact: source is the
  * "from" side of the relationship, target is the "to" side. See
- * Myme v0 Reference §Relationships for semantics per edge type.
+ * `packages/types/core/edges/*.json` for semantics per edge type.
  */
 export interface Edge {
   id: string;

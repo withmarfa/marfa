@@ -1237,8 +1237,8 @@ export function itemRoutes(storage: Storage) {
 
   // DELETE /items/:id — soft delete
   // Cascade-on-delete semantics: outbound edges with cascade_on_delete=cascade
-  // (parent-of in the V0 core set) recursively soft-delete their targets;
-  // block edges (none in V0 core set, but custom types may use them) reject
+  // (parent-of in the core set) recursively soft-delete their targets;
+  // block edges (none in the core set, but custom types may use them) reject
   // the delete outright. Orphan is the no-op default.
   router.openapi(deleteItemRoute, async (c) => {
     const { id } = c.req.valid("param");

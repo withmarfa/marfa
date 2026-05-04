@@ -302,7 +302,7 @@ describe("FeedExpirer.runOnce — behavioural", () => {
     expect(await rowExists(ids.ancientTrashedFeed)).toBe(false);
   });
 
-  it("is a no-op when retentionDays <= 0 (the V0 default)", async () => {
+  it("is a no-op when retentionDays <= 0 (the default)", async () => {
     const itemId = id("eee1");
     await seedItemWithUpdatedAt({
       id: itemId,

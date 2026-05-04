@@ -45,7 +45,7 @@ If exposing Myme beyond Tailscale (e.g., for a hosted offering), add a domain-ba
 
 ```
 myme.example.com {
-    reverse_proxy localhost:8600
+    reverse_proxy localhost:8602
 }
 ```
 

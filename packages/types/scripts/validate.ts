@@ -118,8 +118,8 @@ for (const file of files) {
     addError(file, "`version` must be a positive integer");
   }
 
-  // Lifecycle lives at the metadata layer in V0 (active/archived/trashed)
-  // and is not declared per-type. Reject leftover schema-level state keys.
+  // Lifecycle lives at the metadata layer (active/archived/trashed) and is
+  // not declared per-type. Reject leftover schema-level state keys.
   for (const legacyKey of ["states", "default_state", "transitions"]) {
     if (legacyKey in schema) {
       addError(

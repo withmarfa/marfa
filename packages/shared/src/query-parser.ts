@@ -67,9 +67,9 @@ const SYSTEM_FIELDS = new Set([
   "timestamp",
   "created_at",
   "updated_at",
-  // V0-spec system fields. parent_id and in-thread membership are carried
-  // as edges, not as generic-query-language filters; use edge[<type>]=
-  // clauses for those.
+  // System fields beyond the original seven. parent_id and in-thread
+  // membership are carried as edges, not as generic-query-language filters;
+  // use edge[<type>]= clauses for those.
   "tier",
   "device",
   "version",

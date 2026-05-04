@@ -115,7 +115,7 @@ describe("POST /edges/types — happy path and validation", () => {
     expect(body.error.code).toBe("conflict");
   });
 
-  it("400 when `extends` is supplied (unsupported in V0)", async () => {
+  it("400 when `extends` is supplied (unsupported)", async () => {
     const res = await request(ctx.app, "POST", "/edges/types", {
       key: ctx.adminKey,
       body: {

@@ -4,36 +4,36 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Myme deploy script
 #
-# Deploys the Myme server to Atlas via SSH + git pull.
+# Deploys the Myme server via SSH + git pull.
 #
-# Topology (as of April 2026):
-#   - :8602  com.myme.v0    — active instance (Postgres: myme_v0)
-#   - :8601  com.myme.mock  — conformance mock (Postgres: myme_mock)
+# Topology:
+#   - :8602  so.myme.staging      — active instance (Postgres: myme_staging)
+#   - :8601  so.myme.conformance  — conformance instance (Postgres: myme_conformance)
 #
-# Both services share a single source tree at ~/Services/myme-v0/ and
-# separate launchd plists. A deploy rebuilds once and restarts both
+# Both services share a single source tree at ~/Services/myme-staging/
+# and separate launchd plists. A deploy rebuilds once and restarts both
 # launchd services.
 #
-# :8600 com.myme.server is legacy and is NOT touched by this script.
+# The legacy :8600 instance is NOT touched by this script.
 #
 # Usage:
 #   ./deploy.sh                Deploy latest main (restarts both services)
 #   ./deploy.sh --rollback     Rollback to previous SHA recorded in version.json
-#   ./deploy.sh --host myhost  Override SSH host (default: aic-atlas)
+#   ./deploy.sh --host myhost  Override SSH host
 # ---------------------------------------------------------------------------
 
 # --- Configuration (override via environment) ---
 ATLAS_HOST="${ATLAS_HOST:-aic-atlas}"
-SERVICE_DIR="${SERVICE_DIR:-\$HOME/Services/myme-v0}"
+SERVICE_DIR="${SERVICE_DIR:-\$HOME/Services/myme-staging}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 
 # Services managed by this script. Paired arrays: label / port / database URL.
-SERVICE_LABELS=("com.myme.v0" "com.myme.mock")
-SERVICE_NAMES=("active" "mock")
+SERVICE_LABELS=("so.myme.staging" "so.myme.conformance")
+SERVICE_NAMES=("staging" "conformance")
 SERVICE_PORTS=(8602 8601)
 SERVICE_DBS=(
-  "${ACTIVE_DATABASE_URL:-postgres://myme:myme_prod@localhost:5432/myme_v0}"
-  "${MOCK_DATABASE_URL:-postgres://myme:myme_prod@localhost:5432/myme_mock}"
+  "${STAGING_DATABASE_URL:-postgres://myme:myme_prod@localhost:5432/myme_staging}"
+  "${CONFORMANCE_DATABASE_URL:-postgres://myme:myme_prod@localhost:5432/myme_conformance}"
 )
 
 # --- Defaults ---
@@ -59,12 +59,14 @@ while [[ $# -gt 0 ]]; do
     --help|-h)
       echo "Usage: ./deploy.sh [--rollback] [--host hostname]"
       echo ""
-      echo "Deploys both active (:8602) and conformance mock (:8601) from main."
+      echo "Deploys both staging (:8602) and conformance (:8601) from main."
       echo ""
       echo "Environment:"
-      echo "  ATLAS_HOST      SSH host (default: aic-atlas)"
-      echo "  SERVICE_DIR     Source tree on Atlas (default: \$HOME/Services/myme-v0)"
-      echo "  REPO_BRANCH     Branch to deploy (default: main)"
+      echo "  ATLAS_HOST                  SSH host (default: aic-atlas)"
+      echo "  SERVICE_DIR                 Source tree (default: \$HOME/Services/myme-staging)"
+      echo "  REPO_BRANCH                 Branch to deploy (default: main)"
+      echo "  STAGING_DATABASE_URL        Postgres URL for the staging instance"
+      echo "  CONFORMANCE_DATABASE_URL    Postgres URL for the conformance instance"
       exit 0
       ;;
     *)
