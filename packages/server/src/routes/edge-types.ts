@@ -180,14 +180,14 @@ export function edgeTypeRoutes(storage: Storage) {
         "Invalid edge-type identifier",
       );
     }
-    // NQ-1 resolution (no inheritance in V0): pull the raw body and
+    // NQ-1 resolution (custom edges do not inherit): pull the raw body and
     // reject `extends` explicitly. Zod's default .strip() would silently
     // drop it — that's lenient but invites clients to believe it worked.
     const rawBody = await c.req.json<Record<string, unknown>>();
     if ("extends" in rawBody) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
-        "Custom edge types do not support `extends` in V0",
+        "Custom edge types do not support `extends`",
       );
     }
 

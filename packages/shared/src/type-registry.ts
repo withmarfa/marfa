@@ -470,7 +470,7 @@ export function validateTransition(
  *
  * Each error optionally carries a `code` discriminator. The most specific
  * code today is `"inheritance_violation"`, used when a child type
- * redeclares a field already defined by an ancestor (V0 spec inheritance
+ * redeclares a field already defined by an ancestor (the inheritance
  * rule). Route handlers consult this to surface the specific
  * `INHERITANCE_VIOLATION` error code in the API response rather than the
  * generic `INVALID_SCHEMA`.
@@ -585,7 +585,7 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     }
   }
 
-  // Lifecycle is universal in V0 — reject stale state-machine declarations.
+  // Lifecycle is universal — reject stale state-machine declarations.
   for (const legacyKey of ["states", "default_state", "transitions"]) {
     if (legacyKey in obj) {
       errors.push({

@@ -287,13 +287,13 @@ describe("PATCH /items/:id", () => {
   it("returns 409 for version 0 (not 400)", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "V0 test" } },
+      body: { type: "core.note", properties: { body: "test" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.adminKey,
-      body: { properties: { body: "From v0" }, version: 0 },
+      body: { properties: { body: "updated" }, version: 0 },
     });
     expect(res.status).toBe(409);
   });
@@ -938,7 +938,7 @@ describe("tier default and tri-value filter on GET /items", () => {
 });
 
 describe("metadata.changed pubsub event", () => {
-  it("fires from POST /items/:id/tags and surfaces with the V0 wire name", async () => {
+  it("fires from POST /items/:id/tags and surfaces with the canonical wire name", async () => {
     const { subscribe } = await import("../pubsub.js");
 
     const createRes = await request(ctx.app, "POST", "/items", {

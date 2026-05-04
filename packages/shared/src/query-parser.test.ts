@@ -534,7 +534,7 @@ describe("parseFilter", () => {
     });
   });
 
-  describe("V0-spec system fields beyond the original seven", () => {
+  describe("system fields beyond the original seven", () => {
     it('parses tier eq "library" (TSC42 §1)', () => {
       const result = parseFilter('tier eq "library"');
       expect(result.conditions[0]?.field).toEqual({

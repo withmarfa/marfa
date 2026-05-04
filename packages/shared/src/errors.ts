@@ -79,8 +79,8 @@ export enum ErrorCode {
   INVALID_SCHEMA = "invalid_schema",
   /**
    * A child type registration redeclares a field that is already defined
-   * by an ancestor in its parent chain. V0 spec: inherited fields keep
-   * their parent-type meaning in every descendant; redefining breaks the
+   * by an ancestor in its parent chain. Inherited fields keep their
+   * parent-type meaning in every descendant; redefining breaks the
    * generic-reader contract. See `validateTypeSchema`.
    */
   INHERITANCE_VIOLATION = "inheritance_violation",
