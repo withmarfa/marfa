@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# Pre-push gate: typecheck + lint + test:fresh-sqlite + test:pg.
+# Pre-push gate: build + typecheck + lint + test:fresh-sqlite + test:pg.
+#
+# `build` runs first because cross-package typechecks resolve workspace
+# dependencies through each package's `dist/*.d.ts` — when those are stale
+# (e.g. the server's config grew a field that the SDK's tests now
+# reference), typecheck fires on the stale declaration instead of current
+# source. Building first keeps local typechecks aligned with what CI sees
+# on a fresh install.
 #
 # Skips the clean install (that's the explicit `pnpm ci-local`) so the hook
 # stays fast enough not to become the thing everyone --no-verifies past.
@@ -10,10 +17,11 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-echo "═══ pre-push: typecheck + lint + test:fresh-sqlite + test:pg ═══"
+echo "═══ pre-push: build + typecheck + lint + test:fresh-sqlite + test:pg ═══"
 echo "(skip with --no-verify; full clean-install check is \`pnpm ci-local\`)"
 echo
 
+pnpm build
 pnpm typecheck
 pnpm lint
 pnpm test:fresh-sqlite
