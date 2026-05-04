@@ -13,9 +13,9 @@ sudo nano /etc/newsyslog.d/myme.conf
 Contents:
 
 ```
-# logfilename                                    [owner:group]  mode  count  size  when  flags
-/Users/<operator>/Services/myme/stderr.log                       644   7      1024  *     J
-/Users/<operator>/Services/myme-staging/stderr.log               644   7      1024  *     J
+# logfilename                                          [owner:group]  mode  count  size  when  flags
+/Users/<operator>/Services/myme-staging/logs/stderr.log              644   7      1024  *     J
+/Users/<operator>/Services/myme-conformance/logs/stderr.log          644   7      1024  *     J
 ```
 
 Replace `<operator>` with the actual username on the server.
@@ -42,4 +42,4 @@ The `-n` flag does a dry run. Remove `-n` to execute.
 
 - Myme logs structured JSON (one entry per line), so rotated files remain parseable with `jq`
 - The server does not need to be restarted after rotation — it writes to stdout/stderr, and launchd handles the file descriptors
-- For real-time log analysis: `tail -f ~/Services/myme/stderr.log | jq .`
+- For real-time log analysis: `tail -f ~/Services/myme-staging/logs/stderr.log | jq .`
