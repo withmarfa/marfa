@@ -277,8 +277,8 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const body = '{"event":"thing.created"}';
     const sig = hmacHex(sub.secret, body);
     const res = await postRaw(`/webhooks/inbound/${sub.id}`, body, {
-      "X-Signature": `sha256=${sig}`,
-      "X-Delivery-Id": "delivery-1",
+      "X-Myme-Signature": `sha256=${sig}`,
+      "X-Myme-Delivery-Id": "delivery-1",
     });
     expect(res.status).toBe(200);
   });
@@ -289,8 +289,8 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const body = '{"event":"thing.created"}';
     const sig = hmacHex(sub.secret, body);
     const headers = {
-      "X-Signature": `sha256=${sig}`,
-      "X-Delivery-Id": "delivery-dup",
+      "X-Myme-Signature": `sha256=${sig}`,
+      "X-Myme-Delivery-Id": "delivery-dup",
     };
     const first = await postRaw(`/webhooks/inbound/${sub.id}`, body, headers);
     const second = await postRaw(`/webhooks/inbound/${sub.id}`, body, headers);
@@ -320,8 +320,8 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const sig = hmacHex(sub.secret, body);
     const tampered = '{"event":"PWNED"}';
     const res = await postRaw(`/webhooks/inbound/${sub.id}`, tampered, {
-      "X-Signature": `sha256=${sig}`,
-      "X-Delivery-Id": "delivery-tampered",
+      "X-Myme-Signature": `sha256=${sig}`,
+      "X-Myme-Delivery-Id": "delivery-tampered",
     });
     expect(res.status).toBe(401);
 
@@ -350,7 +350,7 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const res = await postRaw(
       "/webhooks/inbound/0192abc1-2345-7000-8000-000000000000",
       "{}",
-      { "X-Signature": "sha256=00" },
+      { "X-Myme-Signature": "sha256=00" },
     );
     expect(res.status).toBe(404);
   });
@@ -364,7 +364,7 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const body = '{"x":1}';
     const sig = hmacHex(sub.secret, body);
     const res = await postRaw(`/webhooks/inbound/${sub.id}`, body, {
-      "X-Signature": `sha256=${sig}`,
+      "X-Myme-Signature": `sha256=${sig}`,
     });
     expect(res.status).toBe(410);
   });
@@ -375,8 +375,8 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const body = '{"event":"x"}';
     const sig = hmacHex(sub.secret, body);
     const res = await postRaw(`/webhooks/inbound/${sub.id}`, body, {
-      "X-Signature": `sha256=${sig}`,
-      "X-Delivery-Id": "delivery-pending",
+      "X-Myme-Signature": `sha256=${sig}`,
+      "X-Myme-Delivery-Id": "delivery-pending",
     });
     expect(res.status).toBe(200);
 
@@ -431,8 +431,8 @@ describe("POST /connections/:id/inbound-webhooks/:webhook_id/deliveries/:event_i
     const body = '{"event":"x"}';
     const sig = hmacHex(sub.secret, body);
     await postRaw(`/webhooks/inbound/${sub.id}`, body, {
-      "X-Signature": `sha256=${sig}`,
-      "X-Delivery-Id": "delivery-for-retry",
+      "X-Myme-Signature": `sha256=${sig}`,
+      "X-Myme-Delivery-Id": "delivery-for-retry",
     });
 
     // Manually mark the row as DLQ via storage to simulate exhausted retries.

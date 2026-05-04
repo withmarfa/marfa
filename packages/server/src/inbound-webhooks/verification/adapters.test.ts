@@ -33,21 +33,21 @@ describe("hmac-sha256 adapter", () => {
 
   it("verifies a correctly signed payload", () => {
     const sig = createHmac("sha256", SECRET).update(body).digest("hex");
-    const headers = new Headers({ "X-Signature": `sha256=${sig}` });
+    const headers = new Headers({ "X-Myme-Signature": `sha256=${sig}` });
     const result = adapter(body, headers, SECRET);
     expect(result.verified).toBe(true);
   });
 
   it("accepts a bare hex signature without the sha256= prefix", () => {
     const sig = createHmac("sha256", SECRET).update(body).digest("hex");
-    const headers = new Headers({ "X-Signature": sig });
+    const headers = new Headers({ "X-Myme-Signature": sig });
     const result = adapter(body, headers, SECRET);
     expect(result.verified).toBe(true);
   });
 
   it("rejects a tampered body", () => {
     const sig = createHmac("sha256", SECRET).update(body).digest("hex");
-    const headers = new Headers({ "X-Signature": `sha256=${sig}` });
+    const headers = new Headers({ "X-Myme-Signature": `sha256=${sig}` });
     const tamperedBody = Buffer.from('{"hello":"WORLD"}');
     const result = adapter(tamperedBody, headers, SECRET);
     expect(result.verified).toBe(false);
@@ -60,17 +60,25 @@ describe("hmac-sha256 adapter", () => {
     expect(result.reason).toContain("missing");
   });
 
+  it("rejects the legacy X-Signature header (canonical is X-Myme-Signature)", () => {
+    const sig = createHmac("sha256", SECRET).update(body).digest("hex");
+    const headers = new Headers({ "X-Signature": `sha256=${sig}` });
+    const result = adapter(body, headers, SECRET);
+    expect(result.verified).toBe(false);
+    expect(result.reason).toContain("missing");
+  });
+
   it("rejects a malformed (non-hex) signature", () => {
-    const headers = new Headers({ "X-Signature": "sha256=NOTHEX!" });
+    const headers = new Headers({ "X-Myme-Signature": "sha256=NOTHEX!" });
     const result = adapter(body, headers, SECRET);
     expect(result.verified).toBe(false);
   });
 
-  it("surfaces X-Delivery-Id when present", () => {
+  it("surfaces X-Myme-Delivery-Id when present", () => {
     const sig = createHmac("sha256", SECRET).update(body).digest("hex");
     const headers = new Headers({
-      "X-Signature": `sha256=${sig}`,
-      "X-Delivery-Id": "d-12345",
+      "X-Myme-Signature": `sha256=${sig}`,
+      "X-Myme-Delivery-Id": "d-12345",
     });
     const result = adapter(body, headers, SECRET);
     expect(result.external_delivery_id).toBe("d-12345");
