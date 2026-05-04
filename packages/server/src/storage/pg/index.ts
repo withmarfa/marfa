@@ -121,13 +121,13 @@ export async function createPgStorage(
         ? client.unsafe(query, params as (string | number | boolean)[])
         : client.unsafe(query);
     },
-    __betterAuthDb: db,
-    __betterAuthDialect: "pg" as const,
+    betterAuthDb: db,
+    betterAuthDialect: "pg" as const,
   } satisfies Storage & {
     _pgTruncate(): Promise<void>;
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]>;
-    __betterAuthDb: unknown;
-    __betterAuthDialect: "pg";
+    betterAuthDb: unknown;
+    betterAuthDialect: "pg";
   };
 
   return storage;

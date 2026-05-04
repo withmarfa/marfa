@@ -940,7 +940,27 @@ export interface CoordinationStore {
   withJobLock<T>(name: string, fn: () => Promise<T>): Promise<T | undefined>;
 }
 
-export interface Storage {
+/**
+ * Typed handle that storage implementations expose for the better-auth
+ * integration (§3.13). The two dialect-specific Drizzle handles diverge
+ * structurally; the public Storage contract carries them as `unknown`
+ * so the consumer (auth/instance.ts) is the single site that narrows.
+ *
+ * Both fields are optional on `Storage` because not every test fixture
+ * needs to wire better-auth — leaving them unset disables the adapter
+ * mount in `app.ts`.
+ */
+export interface BetterAuthStorageAdapter {
+  /** Drizzle DB handle. Typed `unknown` here so the Storage interface
+   *  stays portable; `auth/instance.ts` casts via `Parameters<typeof
+   *  drizzleAdapter>[0]` so the surface is still typed at the consumer. */
+  betterAuthDb: unknown;
+  /** Dialect discriminator — `auth/instance.ts` uses this to pick the
+   *  right Drizzle schema bundle. */
+  betterAuthDialect: "sqlite" | "pg";
+}
+
+export interface Storage extends Partial<BetterAuthStorageAdapter> {
   items: ItemStore;
   metadata: MetadataStore;
   versions: VersionStore;

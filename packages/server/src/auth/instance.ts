@@ -7,6 +7,15 @@ import * as pgSchema from "../storage/pg/schema.js";
 import { log } from "../middleware/logger.js";
 
 /**
+ * The first parameter type of better-auth's drizzleAdapter — used to type
+ * the `db` handle threaded through `MymeAuthOptions` so the call site no
+ * longer needs an `as never` escape hatch (§3.13). When better-auth bumps
+ * and tightens the adapter signature, this alias surfaces the mismatch
+ * at compile time at the consumer rather than masking it with a cast.
+ */
+type DrizzleAdapterDb = Parameters<typeof drizzleAdapter>[0];
+
+/**
  * Constructs the better-auth instance. Plug into the storage factories'
  * `__betterAuthDb` / `__betterAuthDialect` handles. Consumed by `app.ts`
  * to mount the catch-all handler under `/auth/*`.
@@ -25,9 +34,12 @@ export type EmailTransport = (params: {
 }) => void | Promise<void>;
 
 export interface MymeAuthOptions {
-  /** Drizzle handle from the storage factory. Typed as unknown because
-   *  the two dialect handles diverge; the adapter narrows internally. */
-  db: unknown;
+  /** Drizzle handle from the storage factory. Typed against better-auth's
+   *  `drizzleAdapter` first-parameter so the call site is statically
+   *  checked without an `as never` cast. The Storage interface widens it
+   *  to `unknown` (BetterAuthStorageAdapter trait); narrowing happens
+   *  here at the only consumer. */
+  db: DrizzleAdapterDb;
   dialect: "sqlite" | "pg";
   /** Hosting issuer URL — protocol + host (and port) the server is reached
    *  at. Used by better-auth to set cookie domains and base paths.
@@ -152,7 +164,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
     basePath: "/auth",
     secret: options.secret,
     trustedOrigins: options.trustedOrigins,
-    database: drizzleAdapter(options.db as never, {
+    database: drizzleAdapter(options.db, {
       provider: options.dialect === "pg" ? "pg" : "sqlite",
       schema,
     }),
