@@ -4,10 +4,10 @@ import type { AppEnv } from "./auth.js";
 import { getClientIp } from "./client-ip.js";
 import type { CidrRange } from "./client-ip.js";
 
-interface RateLimitConfig {
-  /** Default requests per window (default: 100) */
+export interface RateLimitConfig {
+  /** Default requests per window. */
   defaultLimit: number;
-  /** Window size in milliseconds (default: 60000 = 1 minute) */
+  /** Window size in milliseconds. */
   windowMs: number;
   /** Stricter limits by path prefix */
   pathLimits: Record<string, number>;
@@ -20,23 +20,17 @@ interface WindowEntry {
   resetAt: number;
 }
 
-const DEFAULT_CONFIG: RateLimitConfig = {
-  defaultLimit: Number(process.env.RATE_LIMIT_REQUESTS) || 1000,
-  windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000,
-  pathLimits: {
-    "/keys": 200,
-    "/auth/token": 20,
-  },
-  trustedProxyCidrs: [],
-};
-
 /**
  * In-memory sliding window rate limiter.
  * Keys by API key ID (or IP for unauthenticated requests).
  * Path-specific limits for sensitive endpoints.
+ *
+ * Configuration is required — there is no fallback that reads `process.env`.
+ * `app.ts` constructs the config from `AppConfig.rateLimitDefaultLimit` and
+ * `rateLimitWindowMs` (the single env-read site lives in `loadConfig`).
  */
 export function rateLimitMiddleware(
-  config: RateLimitConfig = DEFAULT_CONFIG,
+  config: RateLimitConfig,
 ): MiddlewareHandler<AppEnv> {
   const windows = new Map<string, WindowEntry>();
 

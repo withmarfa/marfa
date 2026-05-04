@@ -87,6 +87,8 @@ async function createHostedContext(): Promise<HostedContext> {
     authAllowSignup: true,
     authSecret: "test-auth-secret",
     oidcProviders: [],
+    rateLimitDefaultLimit: 1000,
+    rateLimitWindowMs: 60_000,
   });
 
   const suffix = Math.random().toString(36).slice(2, 10);

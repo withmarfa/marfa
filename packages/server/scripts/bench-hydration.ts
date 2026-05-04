@@ -52,6 +52,8 @@ async function main(): Promise<void> {
     authAllowSignup: true,
     authSecret: "test-auth-secret",
     oidcProviders: [],
+    rateLimitDefaultLimit: 1000,
+    rateLimitWindowMs: 60_000,
   });
   const raw = "myme_k1_bench";
   await storage.keys.create(

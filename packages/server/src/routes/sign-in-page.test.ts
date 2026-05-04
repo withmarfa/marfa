@@ -205,6 +205,18 @@ describe("GET /auth/sign-in", () => {
     expect(html).toContain('action="/auth/sign-in"');
   });
 
+  it("§3.18: returns Cache-Control: no-store + Pragma: no-cache", async () => {
+    ctx = await createTestContext();
+    const res = await request(ctx.app, "GET", "/auth/sign-in", {
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe(
+      "no-store, no-cache, private",
+    );
+    expect(res.headers.get("pragma")).toBe("no-cache");
+  });
+
   it("preserves return_to in the form's hidden field", async () => {
     ctx = await createTestContext();
     const returnTo = "/auth/authorize?client_id=abc&response_type=code";

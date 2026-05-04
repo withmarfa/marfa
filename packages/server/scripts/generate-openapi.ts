@@ -50,17 +50,23 @@ const config: AppConfig = {
   authAllowSignup: false,
   authSecret: "openapi-generation-secret-not-for-production",
   oidcProviders: [],
+  rateLimitDefaultLimit: 1000,
+  rateLimitWindowMs: 60_000,
 };
 
 const storage = createSqliteStorage(":memory:");
 const blobBackend = new FilesystemBlobBackend("/tmp/myme-openapi-blobs");
 const app = createApp(storage, blobBackend, config);
 
+// `info.version` here is the API-contract version (the wire shape exposed
+// at /openapi.json), distinct from the deployed-build `version` reported on
+// `GET /`. Bumped on contract changes, not on every deploy. Aligned with
+// @mymehq/shared (which defines the wire types).
 const spec = app.getOpenAPIDocument({
   openapi: "3.1.0",
   info: {
     title: "Myme API",
-    version: "0.1.0",
+    version: "4.2.0",
     description: "Typed data layer for structured personal data",
   },
 });

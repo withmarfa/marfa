@@ -105,7 +105,11 @@ export function createApp(
     }),
   );
 
-  // Public routes (before auth) — mounted directly to avoid prefix matching issues
+  // Public routes (before auth) — mounted directly to avoid prefix matching issues.
+  //
+  // The features array advertises the surfaces a client can expect to find on
+  // this deployment. Keep it in sync with the routes mounted below; entries
+  // here are an honest signal to discovery clients, not a marketing list.
   const features = [
     "items",
     "search",
@@ -118,19 +122,30 @@ export function createApp(
     "extensions",
     "events",
     "webhooks",
+    "inbound-webhooks",
     "type_crud",
     "audit",
     "metrics",
     "edges",
     "admin_archive",
+    "connections",
+    "integrations",
+    "lease-tokens",
+    "oauth-callback",
   ];
   if (config.authMode === "hosted") {
     features.push("users");
   }
+  // §3.15: derive the deployed `version` from `version.json` (read at
+  // startup by index.ts and threaded through `config.versionSha`). The
+  // OpenAPI spec carries a separate, semantically-distinct API-contract
+  // version (`info.version` below) — that's a stable literal bumped on
+  // wire-shape changes, not on every deploy.
+  const deployedVersion = config.versionSha ?? "dev";
   app.get("/", (c) =>
     c.json({
       name: "myme",
-      version: "0.1.0",
+      version: deployedVersion,
       features,
       cdn_base_url: config.cdnBaseUrl || null,
     }),
@@ -145,13 +160,16 @@ export function createApp(
   // still fall through to IP-based limiting inside rateLimitMiddleware.
   app.use("*", authMiddleware(storage, config.apiKeySalt));
 
-  // Rate limiting (default 1000 req/min). Protects all endpoints.
+  // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS
+  // and RATE_LIMIT_WINDOW_MS). Protects all endpoints. Configuration flows
+  // through AppConfig — the rate-limit middleware no longer reads process.env
+  // directly, so there is a single env-read site (loadConfig).
   if (config.rateLimitEnabled) {
     app.use(
       "*",
       rateLimitMiddleware({
-        defaultLimit: Number(process.env.RATE_LIMIT_REQUESTS) || 1000,
-        windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000,
+        defaultLimit: config.rateLimitDefaultLimit,
+        windowMs: config.rateLimitWindowMs,
         pathLimits: { "/keys": 200, "/auth/token": 20 },
         trustedProxyCidrs: config.trustedProxyCidrs,
       }),
@@ -248,11 +266,17 @@ export function createApp(
     description:
       "Pass an API key (myme_k1_...) or OAuth access token (myme_at_...)",
   });
+  // §3.15 note: `info.version` here is the API-contract version (the wire
+  // shape exposed under /openapi.json), distinct from the deployed-build
+  // `version` reported on `GET /`. Keep this aligned with @mymehq/shared
+  // (which defines the wire types) — bump on contract changes, not on
+  // every deploy. The shared package is currently 4.2.x; the API
+  // contract version tracks its major.minor.
   app.doc("/openapi.json", {
     openapi: "3.1.0",
     info: {
       title: "Myme API",
-      version: "0.1.0",
+      version: "4.2.0",
       description: "Typed data layer for structured personal data",
     },
   });

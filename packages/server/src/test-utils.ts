@@ -87,6 +87,8 @@ export async function createTestContext(
     authAllowSignup: true,
     authSecret: "test-auth-secret-change-in-production-not-required-here",
     oidcProviders: [],
+    rateLimitDefaultLimit: 1000,
+    rateLimitWindowMs: 60_000,
     ...overrides,
   };
   const app = createApp(storage, blobBackend, config);

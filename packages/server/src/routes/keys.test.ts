@@ -192,6 +192,8 @@ describe("bootstrap sentinel", () => {
       authAllowSignup: true,
       authSecret: "test-auth-secret",
       oidcProviders: [],
+      rateLimitDefaultLimit: 1000,
+      rateLimitWindowMs: 60_000,
     });
     return { app, storage };
   }

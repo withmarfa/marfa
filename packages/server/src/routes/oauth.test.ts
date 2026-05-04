@@ -198,6 +198,11 @@ describe("OAuth authorization flow", () => {
     // you created.") must render alongside the literal `core.note:read`.
     expect(html).toContain("core.note:read");
     expect(html).toContain("Text content you created.");
+    // §3.18: consent screen carries no-store headers.
+    expect(res.headers.get("cache-control")).toBe(
+      "no-store, no-cache, private",
+    );
+    expect(res.headers.get("pragma")).toBe("no-cache");
   });
 
   it("rejects unknown client_id", async () => {
