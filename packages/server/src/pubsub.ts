@@ -45,11 +45,14 @@ export interface EdgeEvent extends CycleMetadata {
 export type PubsubEvent = ItemEvent | EdgeEvent;
 
 export interface ItemEventWithId extends ItemEvent {
-  eventId?: number;
+  /** event_log.id assigned by storage. `bigint` so values above
+   *  Number.MAX_SAFE_INTEGER round-trip without truncation. */
+  eventId?: bigint;
 }
 
 export interface EdgeEventWithId extends EdgeEvent {
-  eventId?: number;
+  /** event_log.id assigned by storage. `bigint` — see ItemEventWithId. */
+  eventId?: bigint;
 }
 
 export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
@@ -210,10 +213,10 @@ async function passesHopBudget(event: PubsubEvent): Promise<boolean> {
   return false;
 }
 
-export async function publish(event: ItemEvent): Promise<number | undefined> {
+export async function publish(event: ItemEvent): Promise<bigint | undefined> {
   if (!(await passesHopBudget(event))) return undefined;
 
-  let eventId: number | undefined;
+  let eventId: bigint | undefined;
 
   if (eventLogStore) {
     const payload = JSON.stringify({
@@ -243,10 +246,10 @@ export async function publish(event: ItemEvent): Promise<number | undefined> {
  */
 export async function publishEdge(
   event: EdgeEvent,
-): Promise<number | undefined> {
+): Promise<bigint | undefined> {
   if (!(await passesHopBudget(event))) return undefined;
 
-  let eventId: number | undefined;
+  let eventId: bigint | undefined;
 
   if (eventLogStore) {
     const payload = JSON.stringify({

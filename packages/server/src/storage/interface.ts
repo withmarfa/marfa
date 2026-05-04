@@ -743,7 +743,10 @@ export interface AuditStore {
 // ---------------------------------------------------------------------------
 
 export interface PersistedEvent {
-  id: number;
+  /** i64 event-log id. Carried as `bigint` (not `number`) so values above
+   *  Number.MAX_SAFE_INTEGER round-trip without truncation. The SSE wire
+   *  serialises via `String(id)` and parses via `BigInt(Last-Event-ID)`. */
+  id: bigint;
   event_type: string;
   /** Populated on item events; null on edge events. Migration 0014
    *  relaxed this to nullable so edge events no longer reuse source_id
@@ -763,7 +766,7 @@ export interface PersistedEvent {
 }
 
 export interface EventLogStore {
-  /** Append an event and return its assigned sequential ID. */
+  /** Append an event and return its assigned sequential ID (i64 bigint). */
   append(entry: {
     event_type: string;
     /** Non-null for item events; null for edge events. */
@@ -776,11 +779,11 @@ export interface EventLogStore {
     /** Cycle-detection metadata (workstream 2 PR 8). */
     originating_connection_id?: string | null;
     hop_count?: number;
-  }): Promise<number>;
+  }): Promise<bigint>;
 
   /** Retrieve events after a given ID, optionally filtered by tenant. */
   getAfter(
-    afterId: number,
+    afterId: bigint,
     limit: number,
     tenantId?: string,
   ): Promise<PersistedEvent[]>;
@@ -793,7 +796,7 @@ export interface EventLogStore {
    *  detect clients whose `Last-Event-ID` predates the retention
    *  window so it can emit a terminal `catchup_too_old` event
    *  instead of silently resuming mid-stream. */
-  getMinRetainedId(tenantId?: string): Promise<number | null>;
+  getMinRetainedId(tenantId?: string): Promise<bigint | null>;
 }
 
 // ---------------------------------------------------------------------------

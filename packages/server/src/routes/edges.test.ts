@@ -667,8 +667,8 @@ describe("event_log accepts item_id=null for edge rows", () => {
       tenant_id: undefined,
       payload: JSON.stringify({ type: "edge.created", edge: { id: "x" } }),
     });
-    expect(id).toBeGreaterThan(0);
-    const batch = await ctx.storage.eventLog.getAfter(id - 1, 10);
+    expect(id > 0n).toBe(true);
+    const batch = await ctx.storage.eventLog.getAfter(id - 1n, 10);
     const mine = batch.find((e) => e.id === id);
     expect(mine).toBeDefined();
     expect(mine?.item_id).toBeNull();
