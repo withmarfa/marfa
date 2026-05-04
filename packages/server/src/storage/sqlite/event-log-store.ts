@@ -17,7 +17,7 @@ export class SqliteEventLogStore implements EventLogStore {
     payload: string;
     originating_connection_id?: string | null;
     hop_count?: number;
-  }): Promise<number> {
+  }): Promise<bigint> {
     const stmt = this.raw.prepare(
       `INSERT INTO event_log (event_type, item_id, edge_id, tenant_id, payload, originating_connection_id, hop_count, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -32,15 +32,23 @@ export class SqliteEventLogStore implements EventLogStore {
       entry.hop_count ?? 0,
       new Date().toISOString(),
     );
-    return Number(result.lastInsertRowid);
+    // better-sqlite3 returns lastInsertRowid as `number | bigint`; the row id
+    // is i64 underneath. Normalise to `bigint` so PG and SQLite present the
+    // same wire type to the rest of the server.
+    return typeof result.lastInsertRowid === "bigint"
+      ? result.lastInsertRowid
+      : BigInt(result.lastInsertRowid);
   }
 
   async getAfter(
-    afterId: number,
+    afterId: bigint,
     limit: number,
     tenantId?: string,
   ): Promise<PersistedEvent[]> {
-    const conditions = [gt(eventLog.id, afterId)];
+    // SQLite Drizzle binds JS numbers; the row's id is stored as INTEGER (i64).
+    // Convert the bigint cursor to number for the bind, then re-bigint each
+    // returned id so the public PersistedEvent shape matches PG's bigint.
+    const conditions = [gt(eventLog.id, Number(afterId))];
     if (tenantId) conditions.push(eq(eventLog.tenant_id, tenantId));
 
     const rows = this.db
@@ -52,7 +60,7 @@ export class SqliteEventLogStore implements EventLogStore {
       .all();
 
     return rows.map((row) => ({
-      id: row.id,
+      id: BigInt(row.id),
       event_type: row.event_type,
       item_id: row.item_id,
       edge_id: row.edge_id,
@@ -75,15 +83,15 @@ export class SqliteEventLogStore implements EventLogStore {
     return result.changes;
   }
 
-  async getMinRetainedId(tenantId?: string): Promise<number | null> {
+  async getMinRetainedId(tenantId?: string): Promise<bigint | null> {
     const row = (
       tenantId
         ? this.raw
             .prepare(`SELECT MIN(id) AS min FROM event_log WHERE tenant_id = ?`)
             .get(tenantId)
         : this.raw.prepare(`SELECT MIN(id) AS min FROM event_log`).get()
-    ) as { min: number | null } | undefined;
+    ) as { min: number | bigint | null } | undefined;
     if (row?.min == null) return null;
-    return typeof row.min === "number" ? row.min : Number(row.min);
+    return typeof row.min === "bigint" ? row.min : BigInt(row.min);
   }
 }

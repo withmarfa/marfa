@@ -14,7 +14,7 @@ export class PgEventLogStore implements EventLogStore {
     payload: string;
     originating_connection_id?: string | null;
     hop_count?: number;
-  }): Promise<number> {
+  }): Promise<bigint> {
     const [row] = await this.db
       .insert(eventLog)
       .values({
@@ -35,7 +35,7 @@ export class PgEventLogStore implements EventLogStore {
   }
 
   async getAfter(
-    afterId: number,
+    afterId: bigint,
     limit: number,
     tenantId?: string,
   ): Promise<PersistedEvent[]> {
@@ -73,16 +73,16 @@ export class PgEventLogStore implements EventLogStore {
     return rows.length;
   }
 
-  async getMinRetainedId(tenantId?: string): Promise<number | null> {
+  async getMinRetainedId(tenantId?: string): Promise<bigint | null> {
     const query = this.db
-      .select({ min: sql<number | null>`MIN(${eventLog.id})` })
+      .select({ min: sql<bigint | null>`MIN(${eventLog.id})` })
       .from(eventLog);
     const rows = tenantId
       ? await query.where(eq(eventLog.tenant_id, tenantId))
       : await query;
     const min = rows[0]?.min ?? null;
     if (min === null) return null;
-    // pg may drive us back a string/bigint for the aggregate; normalise.
-    return typeof min === "number" ? min : Number(min);
+    // pg may drive us back a string for the aggregate; normalise to bigint.
+    return typeof min === "bigint" ? min : BigInt(min);
   }
 }

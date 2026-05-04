@@ -22,11 +22,15 @@ interface CreatedItem {
   item: { id: string; type: string };
 }
 
-async function createNote(body = "hello"): Promise<number> {
+function maxBigInt(values: bigint[]): bigint {
+  return values.reduce((a, b) => (a > b ? a : b), 0n);
+}
+
+async function createNote(body = "hello"): Promise<bigint> {
   // Returns the event_log id appended for this create. We read it
   // straight off storage because POST /items doesn't echo the event id.
-  const before = await ctx.storage.eventLog.getAfter(0, 1000);
-  const maxBefore = before.length ? Math.max(...before.map((e) => e.id)) : 0;
+  const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+  const maxBefore = before.length ? maxBigInt(before.map((e) => e.id)) : 0n;
   const res = await request(ctx.app, "POST", "/items", {
     key: ctx.adminKey,
     body: { type: "core.note", properties: { body } },
@@ -35,7 +39,7 @@ async function createNote(body = "hello"): Promise<number> {
   (await res.json()) as CreatedItem;
   const after = await ctx.storage.eventLog.getAfter(maxBefore, 1000);
   expect(after.length).toBeGreaterThan(0);
-  return Math.max(...after.map((e) => e.id));
+  return maxBigInt(after.map((e) => e.id));
 }
 
 /**
@@ -124,7 +128,7 @@ function findEvent(
 describe("GET /events — catchup_too_old", () => {
   it("emits terminal catchup_too_old when Last-Event-ID predates retention", async () => {
     const eventId = await createNote("stale-cursor-1");
-    expect(eventId).toBeGreaterThan(0);
+    expect(eventId > 0n).toBe(true);
 
     const res = await request(ctx.app, "GET", "/events", {
       key: ctx.adminKey,
@@ -137,14 +141,15 @@ describe("GET /events — catchup_too_old", () => {
     const frame = findEvent(text, "catchup_too_old");
     expect(frame).not.toBeNull();
     expect(frame!.id).toBe(String(eventId));
+    // Payload now serialises bigint ids as strings (JSON-safe round-trip).
     const payload = JSON.parse(frame!.data) as {
       type: string;
-      min_retained_id: number;
-      requested: number;
+      min_retained_id: string;
+      requested: string;
     };
     expect(payload.type).toBe("catchup_too_old");
-    expect(payload.min_retained_id).toBeGreaterThanOrEqual(1);
-    expect(payload.requested).toBe(0);
+    expect(BigInt(payload.min_retained_id) >= 1n).toBe(true);
+    expect(payload.requested).toBe("0");
 
     // Terminal: the stream should have closed after emitting. Either the
     // server already closed (closed=true) or at least no live events

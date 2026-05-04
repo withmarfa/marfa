@@ -507,10 +507,13 @@ export const eventLog = pgTable(
   "event_log",
   {
     // BIGINT, not INT4: event_log is append-only and INT4 (~2.1B) is a
-    // foreseeable wrap. `mode: "number"` keeps the JS runtime type a
-    // number (safe to 2^53), matching consumer expectations in
-    // event-log-store.ts and routes/events.ts (Last-Event-ID parseInt).
-    id: bigint("id", { mode: "number" })
+    // foreseeable wrap. `mode: "bigint"` (not "number") because the
+    // underlying column is an i64 — `mode: "number"` would silently
+    // truncate above 2^53. Consumers (event-log-store.ts, routes/events.ts,
+    // pubsub.ts) handle the value as a `bigint` end-to-end; the SSE wire
+    // uses string serialisation (`String(id)` and `BigInt(Last-Event-ID)`)
+    // which both round-trip cleanly.
+    id: bigint("id", { mode: "bigint" })
       .primaryKey()
       .generatedAlwaysAsIdentity(),
     event_type: text("event_type").notNull(),

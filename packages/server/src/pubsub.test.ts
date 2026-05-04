@@ -104,8 +104,10 @@ describe("publish — persistence", () => {
   it("stamps hop_count and originating_connection_id on the event_log row", async () => {
     initEventLog(ctx.storage.eventLog);
     const item = fakeItem("item-A");
-    const before = await ctx.storage.eventLog.getAfter(0, 1000);
-    const maxBefore = before.length ? Math.max(...before.map((e) => e.id)) : 0;
+    const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+    const maxBefore = before.length
+      ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
+      : 0n;
 
     await publish({
       type: "created",
@@ -125,8 +127,10 @@ describe("publish — persistence", () => {
   it("defaults hop_count to 0 + originating_connection_id to null for human-initiated events", async () => {
     initEventLog(ctx.storage.eventLog);
     const item = fakeItem("item-B");
-    const before = await ctx.storage.eventLog.getAfter(0, 1000);
-    const maxBefore = before.length ? Math.max(...before.map((e) => e.id)) : 0;
+    const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+    const maxBefore = before.length
+      ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
+      : 0n;
 
     await publish({ type: "created", item });
 
@@ -139,8 +143,10 @@ describe("publish — persistence", () => {
   it("propagates metadata onto edge events too", async () => {
     initEventLog(ctx.storage.eventLog);
     const edge = fakeEdge("edge-1");
-    const before = await ctx.storage.eventLog.getAfter(0, 1000);
-    const maxBefore = before.length ? Math.max(...before.map((e) => e.id)) : 0;
+    const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+    const maxBefore = before.length
+      ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
+      : 0n;
 
     await publishEdge({
       type: "edge_created",
@@ -169,8 +175,10 @@ describe("publish — hop budget enforcement", () => {
       onHopOverflow: overflow,
     });
 
-    const before = await ctx.storage.eventLog.getAfter(0, 1000);
-    const maxBefore = before.length ? Math.max(...before.map((e) => e.id)) : 0;
+    const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+    const maxBefore = before.length
+      ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
+      : 0n;
 
     const result = await publish({
       type: "created",
@@ -203,8 +211,10 @@ describe("publish — hop budget enforcement", () => {
       getHopBudget: () => Promise.resolve(2),
     });
 
-    const before = await ctx.storage.eventLog.getAfter(0, 1000);
-    const maxBefore = before.length ? Math.max(...before.map((e) => e.id)) : 0;
+    const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+    const maxBefore = before.length
+      ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
+      : 0n;
 
     const eid = await publish({
       type: "created",

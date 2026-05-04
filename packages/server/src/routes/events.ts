@@ -56,7 +56,7 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
         const reader = events[Symbol.asyncIterator]();
 
         const sendEvent = (
-          eventId: number | undefined,
+          eventId: bigint | undefined,
           event: ItemEventWithId,
         ) => {
           if (
@@ -84,7 +84,7 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
         // applies to item events only. Edge events flow through unconditionally
         // for subscribers in the same tenant.
         const sendEdgeEvent = (
-          eventId: number | undefined,
+          eventId: bigint | undefined,
           event: EdgeEventWithId,
         ) => {
           if (typeParam) return;
@@ -147,8 +147,16 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
 
         // Replay missed events if Last-Event-ID was provided
         if (lastEventId) {
-          const afterId = parseInt(lastEventId, 10);
-          if (!isNaN(afterId)) {
+          // event_log.id is i64 (PG bigint, SQLite INTEGER). Parse as bigint
+          // so cursors above Number.MAX_SAFE_INTEGER round-trip cleanly.
+          let afterId: bigint | null;
+          try {
+            afterId = BigInt(lastEventId);
+          } catch {
+            afterId = null;
+          }
+          if (afterId !== null) {
+            const afterIdResolved = afterId;
             void (async () => {
               try {
                 // Detect stale cursors — clients whose `Last-Event-ID`
@@ -162,11 +170,11 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
                   const minRetained = await storage.eventLog.getMinRetainedId(
                     tenantId ?? undefined,
                   );
-                  if (minRetained !== null && afterId < minRetained) {
+                  if (minRetained !== null && afterIdResolved < minRetained) {
                     const payload = JSON.stringify({
                       type: "catchup_too_old",
-                      min_retained_id: minRetained,
-                      requested: afterId,
+                      min_retained_id: String(minRetained),
+                      requested: String(afterIdResolved),
                     });
                     // Emit the terminal event using the same SSE framing
                     // (id / event / data / blank-line) as every other event
@@ -192,7 +200,7 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
                   }
                 }
 
-                let lastReplayedId = afterId;
+                let lastReplayedId: bigint = afterIdResolved;
 
                 // Replay in batches
                 while (!state.closed) {
