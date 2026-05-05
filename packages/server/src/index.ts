@@ -12,6 +12,7 @@ import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
 import { VersionThinner } from "./storage/version-thinner.js";
 import { TrashPurger, FeedExpirer } from "./storage/retention.js";
 import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
+import { tryStartReactiveRunBridge } from "./connections/reactive-run-bridge.js";
 import { log } from "./middleware/logger.js";
 
 async function main() {
@@ -66,6 +67,30 @@ async function main() {
   }
   // Enable SSE event persistence
   initEventLog(storage.eventLog, defaultCycleDetectionWiring(storage));
+
+  // Reactive-run bridge — opt-in via CLOUDFLARE_QUEUES_REACTIVE_RUN_URL +
+  // CLOUDFLARE_QUEUES_API_TOKEN. When unset, returns null and the server
+  // boots without the Cloudflare Queues hop (self-hoster path). When set,
+  // the bridge subscribes to pubsub and forwards `item-event`s to the
+  // configured queue producer for fanout to per-Integration Workers.
+  const reactiveRunBridge = tryStartReactiveRunBridge(storage);
+  if (reactiveRunBridge) {
+    void reactiveRunBridge
+      .start()
+      .then(() => {
+        log("info", "Reactive-run bridge started");
+      })
+      .catch((err: unknown) => {
+        log("error", "Reactive-run bridge start failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  } else {
+    log(
+      "info",
+      "Reactive-run bridge disabled (CLOUDFLARE_QUEUES_REACTIVE_RUN_URL / CLOUDFLARE_QUEUES_API_TOKEN unset)",
+    );
+  }
 
   // Event log retention — clean up events older than the configured
   // window (default 168h / 7d; override via MYME_EVENT_LOG_RETENTION_HOURS).
@@ -166,6 +191,13 @@ async function main() {
     versionThinner.stop();
     trashPurger.stop();
     feedExpirer.stop();
+    if (reactiveRunBridge) {
+      void reactiveRunBridge.stop().catch(() => {
+        // Bridge cleanup errors during shutdown are swallowed; the
+        // process is exiting anyway and the underlying coordination
+        // lock will release with the connection.
+      });
+    }
     server.close(() => {
       storage
         .close()
