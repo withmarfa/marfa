@@ -128,13 +128,21 @@ export function authMiddleware(storage: Storage, salt: string) {
       // Credential-default fields (source, default_origin, default_tier)
       // are synthesised here; full parity with stored API keys remains
       // outstanding.
+      //
+      // `tenant_id` projects from the user-app-grant's `system.connection`
+      // item. Storage call sites (`items.get(id, tenantId)`, etc.) treat
+      // `undefined` tenantId as cross-tenant (admin-style) — without this
+      // projection an OAuth bearer would read items across all tenants in
+      // hosted mode (T-004).
       const typePermissions = scopesToTypePermissions(oauthToken.scopes);
       const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
       const metadataPermissions = scopesToMetadataPermissions(
         oauthToken.scopes,
       );
+      const oauthTenantId = oauthToken.tenant_id ?? undefined;
       c.set("apiKey", {
         id: oauthToken.id,
+        tenant_id: oauthTenantId,
         label: `oauth:${oauthToken.connection_item_id}`,
         source: `oauth:${oauthToken.connection_item_id}`,
         role: "member",
@@ -156,21 +164,30 @@ export function authMiddleware(storage: Storage, salt: string) {
       // to show "active-but-rarely-used" grants accurately. Same DEBOUNCE_MS
       // as the api-key path: at most one write per process per grant per
       // hour. Best-effort — failures must never break the auth path, hence
-      // the try/catch.
+      // the try/catch. Tenant-scoped via the projected `oauthTenantId` so a
+      // hosted-mode bearer cannot trip this path against another tenant's
+      // grant row.
       const oauthCacheKey = `oauth:${oauthToken.connection_item_id}`;
       const oauthNow = Date.now();
       const oauthLastTracked = lastUsedCache.get(oauthCacheKey) ?? 0;
       if (oauthNow - oauthLastTracked > DEBOUNCE_MS) {
         touchLastUsedCache(lastUsedCache, oauthCacheKey, oauthNow);
         try {
-          const grant = await storage.items.get(oauthToken.connection_item_id);
+          const grant = await storage.items.get(
+            oauthToken.connection_item_id,
+            oauthTenantId,
+          );
           if (grant) {
-            await storage.items.update(oauthToken.connection_item_id, {
-              properties: {
-                ...grant.properties,
-                last_used_at: new Date(oauthNow).toISOString(),
+            await storage.items.update(
+              oauthToken.connection_item_id,
+              {
+                properties: {
+                  ...grant.properties,
+                  last_used_at: new Date(oauthNow).toISOString(),
+                },
               },
-            });
+              oauthTenantId,
+            );
           }
         } catch {
           // Best-effort; the cache mark above prevents a stampede.

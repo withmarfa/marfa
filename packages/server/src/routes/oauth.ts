@@ -11,7 +11,11 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, requireAuth, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import type { MymeAuth } from "../auth/instance.js";
+import type {
+  MymeAuth,
+  MymeAuthSession,
+  MymeAuthSessionUser,
+} from "../auth/instance.js";
 import { renderConsentScreen } from "./consent.js";
 import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
@@ -22,6 +26,7 @@ import {
 } from "./device-pages.js";
 import { setNoStore } from "./no-store.js";
 import { constantTimeEqual } from "../utils/crypto.js";
+import { publish } from "../pubsub.js";
 
 const ACCESS_TOKEN_PREFIX = "myme_at_";
 const REFRESH_TOKEN_PREFIX = "myme_rt_";
@@ -46,6 +51,60 @@ function sha256(input: string): string {
   return createHash("sha256").update(input).digest("base64url");
 }
 
+/**
+ * Persist a user-app-grant connection through `ItemStore.create` so the
+ * row gets full ItemStore treatment: `tenant_id` stamping (T-004), search
+ * indexing, metadata-row insertion (so subsequent setTags / setExtension
+ * actually write), the `created` event emission, and `source` / `origin`
+ * stamping (T-005). Returns the new connection-item id.
+ *
+ * `tenantId` resolves from the consenting Better Auth user's myme `users`
+ * row in hosted mode; in single-tenant mode (no `users` store) the grant
+ * is stamped tenant-less. Hosted mode without a provisioned tenant for the
+ * authenticated user refuses outright — the OAuth flow can't honour a
+ * grant without a tenant to scope it to.
+ */
+async function createUserAppGrant(
+  storage: Storage,
+  consentingUser: MymeAuthSessionUser,
+  clientId: string,
+  scopes: string[],
+  source: "myme/oauth/authorize" | "myme/oauth/device",
+): Promise<{ id: string }> {
+  let tenantId: string | undefined;
+  if (storage.users) {
+    const user = await storage.users.getByEmail(consentingUser.email);
+    tenantId = user?.tenant_id;
+    if (!tenantId) {
+      throw new MymeError(
+        ErrorCode.UNAUTHORIZED,
+        "No Myme tenant is provisioned for this account; complete onboarding first",
+      );
+    }
+  }
+  const now = new Date().toISOString();
+  const item = await storage.items.create(
+    {
+      type: "system.connection",
+      tier: "library",
+      state: "active",
+      properties: {
+        kind: "user-app-grant",
+        client_id: clientId,
+        scopes,
+        status: "active",
+        granted_at: now,
+      },
+      source,
+      origin: "user",
+    },
+    tenantId,
+  );
+  const metadata = await storage.metadata.get(item.id);
+  await publish({ type: "created", item, metadata, tenantId });
+  return { id: item.id };
+}
+
 export function authRoutes(
   storage: Storage,
   salt: string,
@@ -67,7 +126,7 @@ export function authRoutes(
    */
   async function requireConsentSession(
     c: Context<AppEnv>,
-  ): Promise<{ kind: "session"; session: NonNullable<unknown> } | Response> {
+  ): Promise<{ kind: "session"; session: MymeAuthSession } | Response> {
     if (!auth) {
       // Better-auth isn't mounted on this instance. Without an identity
       // layer the consent screen can't authenticate a user — refuse
@@ -250,8 +309,14 @@ export function authRoutes(
       );
     }
 
-    // Create grant and authorization code
-    const grant = await storage.oauth.createGrant(clientId, grantedScopes);
+    // Create grant (routed through ItemStore.create — T-005) and authorization code.
+    const grant = await createUserAppGrant(
+      storage,
+      gated.session.user,
+      clientId,
+      grantedScopes,
+      "myme/oauth/authorize",
+    );
     const rawCode = randomBytes(32).toString("hex");
     const codeHash = hashApiKey(rawCode, salt);
     const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
@@ -325,10 +390,22 @@ export function authRoutes(
   // -----------------------------------------------------------------------
 
   router.get("/grants", async (c) => {
-    requireAuth(c);
+    const key = requireAuth(c);
+    // T-021: tenant-scope the listing. Admin keys can list cross-tenant
+    // (their `tenant_id` is undefined by design); any other credential
+    // must carry a resolved tenant_id, otherwise the storage call would
+    // fall through and return every tenant's grants.
+    const isAdmin = key.role === "admin" || key.is_platform;
+    if (!isAdmin && !key.tenant_id) {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        "Tenant scope required for this credential",
+      );
+    }
     const items = await storage.items.list({
       type: "system.connection",
       state: "active",
+      tenantId: key.tenant_id ?? undefined,
     });
     const grants: {
       id: string;
@@ -359,9 +436,17 @@ export function authRoutes(
   });
 
   router.delete("/grants/:id", async (c) => {
-    requireAuth(c);
+    const key = requireAuth(c);
+    const isAdmin = key.role === "admin" || key.is_platform;
+    if (!isAdmin && !key.tenant_id) {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        "Tenant scope required for this credential",
+      );
+    }
+    const tenantId = key.tenant_id ?? undefined;
     const id = c.req.param("id");
-    const item = await storage.items.get(id);
+    const item = await storage.items.get(id, tenantId);
     if (item?.type !== "system.connection") {
       throw new MymeError(ErrorCode.NOT_FOUND, "Grant not found");
     }
@@ -370,9 +455,13 @@ export function authRoutes(
       throw new MymeError(ErrorCode.NOT_FOUND, "Grant not found");
     }
     const now = new Date().toISOString();
-    await storage.items.update(id, {
-      properties: { ...props, status: "revoked", revoked_at: now },
-    });
+    await storage.items.update(
+      id,
+      {
+        properties: { ...props, status: "revoked", revoked_at: now },
+      },
+      tenantId,
+    );
     // Cascade-revoke every token + code issued under this connection.
     await storage.oauth.revokeGrantTokens(id);
     return c.body(null, 204);
@@ -914,9 +1003,16 @@ export function authRoutes(
       return c.html(renderDeviceDecisionPage({ approved: false }));
     }
 
-    // Approve: create a system.connection (kind: user-app-grant) and
-    // flip the device-code row to approved.
-    const grant = await storage.oauth.createGrant(row.client_id, row.scopes);
+    // Approve: create a system.connection (kind: user-app-grant) routed
+    // through ItemStore.create (T-005) and flip the device-code row to
+    // approved.
+    const grant = await createUserAppGrant(
+      storage,
+      sessionResult.session.user,
+      row.client_id,
+      row.scopes,
+      "myme/oauth/device",
+    );
     const ok = await storage.oauth.approveDeviceCode(row.id, grant.id);
     if (!ok) {
       // Race: someone else flipped it in between. Surface as already-resolved.

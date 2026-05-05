@@ -467,3 +467,287 @@ describe("coexistence with API keys", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("user-app-grant ItemStore integrity (T-005)", () => {
+  it("/auth/authorize routes the grant through ItemStore.create — full metadata, source, validation", async () => {
+    const { client } = await performOAuthFlow(["core.note:read"]);
+
+    // The grant is the system.connection item with kind: user-app-grant for
+    // this client. Find it via tenant-less list (single-tenant test context).
+    const list = await ctx.storage.items.list({
+      type: "system.connection",
+      limit: 50,
+    });
+    const grant = list.data.find(
+      (i) =>
+        i.properties.kind === "user-app-grant" &&
+        i.properties.client_id === client.id,
+    );
+    expect(grant).toBeDefined();
+
+    // T-005 expectations: full ItemStore treatment.
+    expect(grant!.source).toBe("myme/oauth/authorize"); // stamped
+    expect(grant!.origin).toBe("user");
+    expect(grant!.tier).toBe("library");
+    expect(grant!.state).toBe("active");
+    expect(grant!.properties.status).toBe("active");
+    expect(grant!.properties.scopes).toEqual(["core.note:read"]);
+    expect(grant!.properties.granted_at).toEqual(expect.any(String));
+
+    // Metadata row exists (so setTags / setExtension are no longer silent no-ops).
+    const meta = await ctx.storage.metadata.get(grant!.id);
+    expect(meta.item_id).toBe(grant!.id);
+    expect(meta.tags).toEqual([]);
+
+    // setTags actually persists (the WS1-PR4 bug was that the metadata row
+    // was missing, so UPDATE matched 0 rows).
+    await ctx.storage.metadata.set(grant!.id, ["pinned"]);
+    const after = await ctx.storage.metadata.get(grant!.id);
+    expect(after.tags).toEqual(["pinned"]);
+  });
+});
+
+describe("OAuth tenant scoping (T-004)", () => {
+  it("validateToken projects tenant_id from the underlying user-app-grant", async () => {
+    // Set up a tenant-scoped grant via storage.items.create. The OAuth
+    // route would resolve tenant_id from the consenting user; this test
+    // hits the storage layer directly to isolate the join.
+    const TENANT = "tenant-a";
+    const grant = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        state: "active",
+        tier: "library",
+        properties: {
+          kind: "user-app-grant",
+          client_id: "test-client",
+          scopes: ["core.note:read"],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+        source: "test/oauth",
+        origin: "user",
+      },
+      TENANT,
+    );
+
+    const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_t4_test`;
+    const tokenHash = hashApiKey(rawToken, SALT);
+    await ctx.storage.oauth.createToken(
+      grant.id,
+      tokenHash,
+      "access",
+      new Date(Date.now() + 3600_000).toISOString(),
+    );
+
+    const validated = await ctx.storage.oauth.validateToken(tokenHash);
+    expect(validated).not.toBeNull();
+    expect(validated!.tenant_id).toBe(TENANT);
+  });
+
+  it("OAuth bearer scoped to tenant B cannot read tenant A items", async () => {
+    const TENANT_A = "tenant-a-cross";
+    const TENANT_B = "tenant-b-cross";
+
+    // Item only visible in tenant A.
+    const itemA = await ctx.storage.items.create(
+      {
+        type: "core.note",
+        properties: { body: "tenant-a-only" },
+        source: "test",
+        origin: "user",
+      },
+      TENANT_A,
+    );
+
+    // Grant + token for tenant B.
+    const grantB = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        state: "active",
+        tier: "library",
+        properties: {
+          kind: "user-app-grant",
+          client_id: "client-b",
+          scopes: ["core.note:read"],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+        source: "test/oauth",
+        origin: "user",
+      },
+      TENANT_B,
+    );
+
+    const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_xt_test`;
+    const tokenHash = hashApiKey(rawToken, SALT);
+    await ctx.storage.oauth.createToken(
+      grantB.id,
+      tokenHash,
+      "access",
+      new Date(Date.now() + 3600_000).toISOString(),
+    );
+
+    // Tenant B's bearer must not resolve tenant A's item.
+    const crossRead = await request(ctx.app, "GET", `/items/${itemA.id}`, {
+      key: rawToken,
+    });
+    expect(crossRead.status).toBe(404);
+  });
+
+  it("/auth/grants is tenant-scoped — non-admin keys see only their tenant's grants (T-021)", async () => {
+    const TENANT_A = "tenant-a-grants-list";
+    const TENANT_B = "tenant-b-grants-list";
+
+    // One grant per tenant (different client_ids to keep them distinguishable).
+    const grantA = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        state: "active",
+        tier: "library",
+        properties: {
+          kind: "user-app-grant",
+          client_id: "client-a-list",
+          scopes: ["core.note:read"],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+        source: "test/oauth",
+        origin: "user",
+      },
+      TENANT_A,
+    );
+    await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        state: "active",
+        tier: "library",
+        properties: {
+          kind: "user-app-grant",
+          client_id: "client-b-list",
+          scopes: ["core.note:read"],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+        source: "test/oauth",
+        origin: "user",
+      },
+      TENANT_B,
+    );
+
+    // Non-admin tenant-A key.
+    const rawKey = `myme_k1_test_member_a_${Math.random().toString(36).slice(2)}`;
+    const keyHash = hashApiKey(rawKey, SALT);
+    await ctx.storage.keys.create(
+      {
+        label: "test-member-a",
+        source: `test-member-a-${Math.random().toString(36).slice(2)}`,
+        role: "member",
+        default_tier: "library",
+        type_permissions: { "*": "read" },
+      },
+      keyHash,
+      TENANT_A,
+    );
+
+    const res = await request(ctx.app, "GET", "/auth/grants", {
+      key: rawKey,
+    });
+    expect(res.status).toBe(200);
+    const grants = (await res.json()) as { id: string; client_id: string }[];
+    const ids = grants.map((g) => g.id);
+    expect(ids).toContain(grantA.id);
+    expect(grants.every((g) => g.client_id !== "client-b-list")).toBe(true);
+  });
+
+  it("/auth/grants/:id refuses cross-tenant revoke (T-021)", async () => {
+    const TENANT_A = "tenant-a-revoke";
+    const TENANT_B = "tenant-b-revoke";
+
+    const grantB = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        state: "active",
+        tier: "library",
+        properties: {
+          kind: "user-app-grant",
+          client_id: "client-b-rev",
+          scopes: ["core.note:read"],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+        source: "test/oauth",
+        origin: "user",
+      },
+      TENANT_B,
+    );
+
+    const rawKey = `myme_k1_test_member_a2_${Math.random().toString(36).slice(2)}`;
+    const keyHash = hashApiKey(rawKey, SALT);
+    await ctx.storage.keys.create(
+      {
+        label: "test-member-a-rev",
+        source: `test-member-a-rev-${Math.random().toString(36).slice(2)}`,
+        role: "member",
+        default_tier: "library",
+        type_permissions: { "*": "read" },
+      },
+      keyHash,
+      TENANT_A,
+    );
+
+    const res = await request(ctx.app, "DELETE", `/auth/grants/${grantB.id}`, {
+      key: rawKey,
+    });
+    expect(res.status).toBe(404);
+
+    // Confirm the grant is still active (not revoked by the cross-tenant call).
+    const stillActive = await ctx.storage.items.get(grantB.id, TENANT_B);
+    expect(stillActive?.properties.status).toBe("active");
+  });
+
+  it("OAuth bearer scoped to tenant A can read tenant A items", async () => {
+    const TENANT = "tenant-a-same";
+    const itemA = await ctx.storage.items.create(
+      {
+        type: "core.note",
+        properties: { body: "same-tenant" },
+        source: "test",
+        origin: "user",
+      },
+      TENANT,
+    );
+
+    const grant = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        state: "active",
+        tier: "library",
+        properties: {
+          kind: "user-app-grant",
+          client_id: "client-a",
+          scopes: ["core.note:read"],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+        source: "test/oauth",
+        origin: "user",
+      },
+      TENANT,
+    );
+
+    const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_st_test`;
+    const tokenHash = hashApiKey(rawToken, SALT);
+    await ctx.storage.oauth.createToken(
+      grant.id,
+      tokenHash,
+      "access",
+      new Date(Date.now() + 3600_000).toISOString(),
+    );
+
+    const sameRead = await request(ctx.app, "GET", `/items/${itemA.id}`, {
+      key: rawToken,
+    });
+    expect(sameRead.status).toBe(200);
+  });
+});

@@ -298,9 +298,20 @@ describe("OAuth synthetic apiKey advances grant last_used_at (§3.4)", () => {
       name: "Test App (last_used_at)",
       redirect_uris: ["http://localhost:5173/callback"],
     });
-    const grant = await ctx.storage.oauth.createGrant(client.id, [
-      "core.note:read",
-    ]);
+    const grant = await ctx.storage.items.create({
+      type: "system.connection",
+      state: "active",
+      tier: "library",
+      properties: {
+        kind: "user-app-grant",
+        client_id: client.id,
+        scopes: ["core.note:read"],
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+      source: "test/oauth",
+      origin: "user",
+    });
     const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_lru_test`;
     const tokenHash = hashApiKey(rawToken, "test-salt");
     await ctx.storage.oauth.createToken(

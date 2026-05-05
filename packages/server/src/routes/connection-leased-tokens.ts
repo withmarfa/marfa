@@ -72,12 +72,23 @@ async function requireConnectionAccess(
   connectionId: string,
 ): Promise<{ tenantId: string | undefined }> {
   const key = requireAuth(c);
+  const isAdmin = key.role === "admin" || key.is_platform;
+  // Defence-in-depth: any non-admin / non-platform credential MUST carry a
+  // resolved `tenant_id`. Without it, the storage call sites below treat
+  // `undefined` tenantId as cross-tenant (the same fall-through that T-004
+  // closes upstream). Refuse here so a future caller that forgets to stamp
+  // tenant_id can't quietly bypass scoping on this route.
+  if (!isAdmin && !key.tenant_id) {
+    throw new MymeError(
+      ErrorCode.FORBIDDEN,
+      "Tenant scope required for this credential",
+    );
+  }
   const tenantId = key.tenant_id ?? undefined;
   const connection = await storage.items.get(connectionId, tenantId);
   if (connection?.type !== "system.connection") {
     throw new MymeError(ErrorCode.NOT_FOUND, "Connection not found");
   }
-  const isAdmin = key.role === "admin" || key.is_platform;
   const isConnector = key.source === `oauth:${connectionId}`;
   if (!isAdmin && !isConnector) {
     throw new MymeError(

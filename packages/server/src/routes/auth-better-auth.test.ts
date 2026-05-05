@@ -286,9 +286,20 @@ describe("better-auth /auth/* surface", () => {
       name: "Test App",
       redirect_uris: ["http://localhost:5173/callback"],
     });
-    const grant = await ctx.storage.oauth.createGrant(client.id, [
-      "core.note:read",
-    ]);
+    const grant = await ctx.storage.items.create({
+      type: "system.connection",
+      state: "active",
+      tier: "library",
+      properties: {
+        kind: "user-app-grant",
+        client_id: client.id,
+        scopes: ["core.note:read"],
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+      source: "test/oauth",
+      origin: "user",
+    });
 
     const listRes = await request(ctx.app, "GET", "/auth/grants", {
       key: ctx.adminKey,

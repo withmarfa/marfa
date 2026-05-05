@@ -3,7 +3,6 @@ import { eq, and, isNull, gt } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type {
   OAuthClient,
-  OAuthGrant,
   OAuthToken,
   OAuthCode,
   OAuthTokenType,
@@ -91,65 +90,13 @@ export class SqliteOAuthStore implements OAuthStore {
 
   // -----------------------------------------------------------------------
   // Grants (system.connection items, kind: user-app-grant)
+  //
+  // Grant creation is performed at the route layer via `storage.items.create`
+  // so the user-app-grant item gets full ItemStore treatment: `tenant_id`
+  // stamping, search indexing, metadata-row insertion, type validation, and
+  // event emission. Direct `db.insert(items)` here was the WS1-PR4 source of
+  // the cross-tenant leak (T-005).
   // -----------------------------------------------------------------------
-
-  async createGrant(clientId: string, scopes: string[]): Promise<OAuthGrant> {
-    const now = new Date().toISOString();
-    const id = generateId();
-    const properties = {
-      kind: "user-app-grant",
-      client_id: clientId,
-      scopes,
-      status: "active",
-      granted_at: now,
-    };
-    this.db
-      .insert(items)
-      .values({
-        id,
-        type: "system.connection",
-        state: "active",
-        tier: "library",
-        properties: JSON.stringify(properties),
-        created_at: now,
-        updated_at: now,
-        timestamp: now,
-        version: 1,
-      })
-      .run();
-    return { id, client_id: clientId, scopes, created_at: now };
-  }
-
-  async getGrantsByClient(clientId: string): Promise<OAuthGrant[]> {
-    const rows = this.db
-      .select()
-      .from(items)
-      .where(
-        and(eq(items.type, "system.connection"), eq(items.state, "active")),
-      )
-      .all();
-    const out: OAuthGrant[] = [];
-    for (const row of rows) {
-      const props = safeJsonParse<Record<string, unknown>>(
-        row.properties,
-        {},
-        "system.connection properties",
-      );
-      if (
-        props.kind === "user-app-grant" &&
-        props.client_id === clientId &&
-        props.status === "active"
-      ) {
-        out.push({
-          id: row.id,
-          client_id: clientId,
-          scopes: Array.isArray(props.scopes) ? (props.scopes as string[]) : [],
-          created_at: row.created_at,
-        });
-      }
-    }
-    return out;
-  }
 
   /** Read scopes off a system.connection item by id. */
   private getConnectionScopes(connectionItemId: string): string[] {
@@ -278,10 +225,25 @@ export class SqliteOAuthStore implements OAuthStore {
 
   async validateToken(
     tokenHash: string,
-  ): Promise<(OAuthToken & { scopes: string[] }) | null> {
+  ): Promise<
+    (OAuthToken & { scopes: string[]; tenant_id: string | null }) | null
+  > {
+    // Join through to the user-app-grant `system.connection` to project the
+    // grant's `tenant_id` onto the validation result. The middleware uses this
+    // to stamp `tenant_id` on the synthetic ApiKey so storage call sites
+    // tenant-filter correctly (T-004).
     const row = this.db
-      .select()
+      .select({
+        id: oauthTokens.id,
+        connection_item_id: oauthTokens.connection_item_id,
+        token_type: oauthTokens.token_type,
+        expires_at: oauthTokens.expires_at,
+        revoked_at: oauthTokens.revoked_at,
+        created_at: oauthTokens.created_at,
+        tenant_id: items.tenant_id,
+      })
       .from(oauthTokens)
+      .leftJoin(items, eq(items.id, oauthTokens.connection_item_id))
       .where(eq(oauthTokens.token_hash, tokenHash))
       .get();
     if (!row) return null;
@@ -294,6 +256,7 @@ export class SqliteOAuthStore implements OAuthStore {
       connection_item_id: row.connection_item_id,
       token_type: row.token_type as OAuthTokenType,
       scopes,
+      tenant_id: row.tenant_id ?? null,
       expires_at: row.expires_at,
       revoked_at: row.revoked_at,
       created_at: row.created_at,
