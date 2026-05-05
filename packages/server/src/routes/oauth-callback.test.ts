@@ -124,6 +124,13 @@ describe("POST /connections/:id/oauth/start", () => {
     expect(url.searchParams.get("access_type")).toBe("offline");
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("state")).toBeTruthy();
+    // PKCE (T-010): the start route always emits a code_challenge under
+    // S256. Both must be present and non-empty.
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    const challenge = url.searchParams.get("code_challenge");
+    expect(challenge).toBeTruthy();
+    // base64url-encoded sha256 → 43 chars, alphabet [A-Za-z0-9_-]
+    expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
   it("rejects callers without admin / platform credential", async () => {
@@ -235,6 +242,7 @@ describe("GET /oauth/callback/:provider", () => {
     const state = signOAuthState({
       connection_id: connId,
       redirect_uri: "http://atlas.myme.so:8602/oauth/callback/google",
+      code_verifier: "test-verifier-xyz",
     });
     const res = await request(
       ctx.app,
@@ -251,7 +259,8 @@ describe("GET /oauth/callback/:provider", () => {
     );
     expect(res.headers.get("pragma")).toBe("no-cache");
 
-    // Token endpoint hit with the right shape
+    // Token endpoint hit with the right shape — PKCE verifier echoed
+    // through (T-010).
     expect(tokenCalls).toHaveLength(1);
     expect(tokenCalls[0]!.url).toBe("https://oauth2.google.test/token");
     expect(tokenCalls[0]!.body).toContain("grant_type=authorization_code");
@@ -259,6 +268,7 @@ describe("GET /oauth/callback/:provider", () => {
     expect(tokenCalls[0]!.body).toContain(
       "redirect_uri=http%3A%2F%2Fatlas.myme.so%3A8602%2Foauth%2Fcallback%2Fgoogle",
     );
+    expect(tokenCalls[0]!.body).toContain("code_verifier=test-verifier-xyz");
 
     // Tokens persisted in connectionOauthTokens
     const row = await ctx.storage.connectionOauthTokens.get(connId);
@@ -285,6 +295,7 @@ describe("GET /oauth/callback/:provider", () => {
     const state = signOAuthState({
       connection_id: connId,
       redirect_uri: "http://x/",
+      code_verifier: "verifier-tamper",
     });
     const tampered = state.replace(/.$/, (c) => (c === "0" ? "1" : "0"));
     const res = await request(
@@ -319,6 +330,7 @@ describe("GET /oauth/callback/:provider", () => {
     const state = signOAuthState({
       connection_id: connId,
       redirect_uri: "http://x/",
+      code_verifier: "verifier-bad-token",
     });
     const res = await request(
       ctx.app,
@@ -336,6 +348,7 @@ describe("GET /oauth/callback/:provider", () => {
     const state = signOAuthState({
       connection_id: connId,
       redirect_uri: "http://x/",
+      code_verifier: "verifier-deleted-conn",
     });
     // Delete the connection between start + callback
     const delRes = await request(ctx.app, "DELETE", `/items/${connId}`, {
@@ -352,5 +365,149 @@ describe("GET /oauth/callback/:provider", () => {
       `/oauth/callback/google?code=x&state=${encodeURIComponent(state)}`,
     );
     expect(res.status).toBe(404);
+  });
+
+  it("rejects callback when state envelope has no PKCE verifier (T-010)", async () => {
+    // Hand-craft a state without code_verifier — simulates an in-flight
+    // pre-T-010 state or a hostile caller. The callback must refuse.
+    const credId = await createCredential();
+    const connId = await createConnection(credId);
+    const state = signOAuthState({
+      connection_id: connId,
+      redirect_uri: "http://x/",
+    });
+    // Trip the fetch stub to surface if we actually reach exchange.
+    let fetchCalled = false;
+    globalThis.fetch = (() => {
+      fetchCalled = true;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/oauth/callback/google?code=x&state=${encodeURIComponent(state)}`,
+    );
+    expect(res.status).toBe(400);
+    expect(fetchCalled).toBe(false);
+    const html = await res.text();
+    expect(html).toMatch(/PKCE verifier/);
+  });
+});
+
+describe("redirect_uri allow-list (T-010)", () => {
+  // Build a fresh app with an explicit allow-list config; can't reuse
+  // the shared `ctx` because that one defaults to an empty allow-list
+  // (unenforced).
+  it("rejects redirect_uri not on the allow-list", async () => {
+    const allowedCtx = await createTestContext({
+      oauthRedirectAllowlist: ["https://allowed.example.com/cb"],
+    });
+    try {
+      // Seed credential + connection in the new ctx.
+      const credRes = await request(allowedCtx.app, "POST", "/items", {
+        key: allowedCtx.adminKey,
+        body: {
+          type: "system.credential",
+          properties: {
+            kind: "oauth_token",
+            label: "test",
+            oauth_provider_config: {
+              oauth_authorize_url: "https://provider.test/authorize",
+              oauth_token_url: "https://provider.test/token",
+              oauth_client_id: "client_id_x",
+            },
+            secret_encrypted: encryptSecret(
+              "client_secret",
+              SECRET_INFO.connectionOauthToken,
+            ),
+          },
+        },
+      });
+      const credId = ((await credRes.json()) as ItemResponse).item.id;
+      const connRes = await request(allowedCtx.app, "POST", "/items", {
+        key: allowedCtx.adminKey,
+        body: {
+          type: "system.connection",
+          properties: {
+            kind: "external-service-connector",
+            status: "active",
+            granted_at: new Date().toISOString(),
+            credential_ref: credId,
+            configuration: {},
+          },
+        },
+      });
+      const connId = ((await connRes.json()) as ItemResponse).item.id;
+
+      const res = await request(
+        allowedCtx.app,
+        "POST",
+        `/connections/${connId}/oauth/start`,
+        {
+          key: allowedCtx.adminKey,
+          body: { redirect_uri: "https://attacker.example.com/steal" },
+        },
+      );
+      expect(res.status).toBe(400);
+      const err = (await res.json()) as { error: { message: string } };
+      expect(err.error.message).toMatch(/MYME_OAUTH_REDIRECT_ALLOWLIST/);
+    } finally {
+      allowedCtx.cleanup();
+    }
+  });
+
+  it("accepts redirect_uri matching an allow-list entry", async () => {
+    const allowedCtx = await createTestContext({
+      oauthRedirectAllowlist: ["https://allowed.example.com/cb"],
+    });
+    try {
+      const credRes = await request(allowedCtx.app, "POST", "/items", {
+        key: allowedCtx.adminKey,
+        body: {
+          type: "system.credential",
+          properties: {
+            kind: "oauth_token",
+            label: "test",
+            oauth_provider_config: {
+              oauth_authorize_url: "https://provider.test/authorize",
+              oauth_token_url: "https://provider.test/token",
+              oauth_client_id: "client_id_x",
+            },
+            secret_encrypted: encryptSecret(
+              "client_secret",
+              SECRET_INFO.connectionOauthToken,
+            ),
+          },
+        },
+      });
+      const credId = ((await credRes.json()) as ItemResponse).item.id;
+      const connRes = await request(allowedCtx.app, "POST", "/items", {
+        key: allowedCtx.adminKey,
+        body: {
+          type: "system.connection",
+          properties: {
+            kind: "external-service-connector",
+            status: "active",
+            granted_at: new Date().toISOString(),
+            credential_ref: credId,
+            configuration: {},
+          },
+        },
+      });
+      const connId = ((await connRes.json()) as ItemResponse).item.id;
+
+      const res = await request(
+        allowedCtx.app,
+        "POST",
+        `/connections/${connId}/oauth/start`,
+        {
+          key: allowedCtx.adminKey,
+          body: { redirect_uri: "https://allowed.example.com/cb" },
+        },
+      );
+      expect(res.status).toBe(200);
+    } finally {
+      allowedCtx.cleanup();
+    }
   });
 });
