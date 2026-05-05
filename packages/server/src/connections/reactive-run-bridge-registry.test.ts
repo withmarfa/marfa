@@ -391,4 +391,104 @@ describe("bridge fanout via in-process pubsub", () => {
 
     await bridge!.stop();
   });
+
+  it("fans out to fast subscribers in parallel — they don't wait on a wedged subscriber's timeout (T-036)", async () => {
+    // Tighter than the T-013 test: this asserts ten healthy
+    // subscribers all complete *while* the wedged subscriber is still
+    // in its 200ms timeout window. That's only true if fanout is
+    // concurrent. Pre-T-036 sequential fanout would gate the
+    // healthy subscribers behind the wedged subscriber's full
+    // timeout — fast latency would be ≥ 200ms instead of ≪ 100ms.
+    const intSlow = await createIntegration(
+      manifest({ name: "acme.par-slow" }),
+    );
+    const FAST_COUNT = 10;
+    const fastConnIds: string[] = [];
+    for (let i = 0; i < FAST_COUNT; i++) {
+      const intFast = await createIntegration(
+        manifest({ name: `acme.par-fast-${String(i)}` }),
+      );
+      fastConnIds.push(await createConnection({ integrationRef: intFast }));
+    }
+    const connSlow = await createConnection({ integrationRef: intSlow });
+
+    // Captured by the stub fetch closure; explicitly typed to avoid
+    // TS narrowing the vars to `null` at the read site.
+    const captured: {
+      slowResolveAt: number | null;
+      fastDeliverAt: Map<string, number>;
+    } = {
+      slowResolveAt: null,
+      fastDeliverAt: new Map<string, number>(),
+    };
+
+    const stubFetch: typeof fetch = ((
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      void input;
+      const body = JSON.parse(init?.body as string) as {
+        body: { integration_name: string; connection_id: string };
+      };
+      const integrationName = body.body.integration_name;
+      if (integrationName === "acme.par-slow") {
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            captured.slowResolveAt = Date.now();
+            reject(new Error("aborted"));
+          });
+        });
+      }
+      if (fastConnIds.includes(body.body.connection_id)) {
+        captured.fastDeliverAt.set(body.body.connection_id, Date.now());
+      }
+      return Promise.resolve(new Response(null, { status: 202 }));
+    }) as typeof fetch;
+
+    const SLOW_TIMEOUT_MS = 200;
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      queueUrl: "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: stubFetch,
+      maxAttempts: 1,
+      sendTimeoutMs: SLOW_TIMEOUT_MS,
+    });
+    expect(bridge).not.toBeNull();
+    await bridge!.start();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const unrelated = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "par-test" } },
+      undefined,
+    );
+    const publishAt = Date.now();
+    await publish({
+      type: "created",
+      item: unrelated,
+      originatingConnectionId: "itm_par_origin",
+    });
+    // Wait long enough for both the slow timeout and every fast
+    // delivery to land. The slow timeout fires at ~SLOW_TIMEOUT_MS;
+    // the fast deliveries should land much earlier under parallel
+    // fanout.
+    await new Promise((r) => setTimeout(r, SLOW_TIMEOUT_MS + 300));
+
+    expect(captured.slowResolveAt).not.toBeNull();
+    expect(connSlow).toBeTruthy();
+    // Every fast subscriber must have delivered.
+    expect(captured.fastDeliverAt.size).toBe(FAST_COUNT);
+    // And every fast subscriber's delivery must have happened well
+    // before the slow timeout would have completed in a sequential
+    // model. Half-of-the-timeout is a generous bound to absorb
+    // test-container jitter; pre-T-036 sequential fanout could not
+    // satisfy this for any subscriber positioned behind the wedged
+    // one in the iteration order.
+    for (const [connId, ts] of captured.fastDeliverAt) {
+      void connId;
+      const latency = ts - publishAt;
+      expect(latency).toBeLessThan(SLOW_TIMEOUT_MS / 2);
+    }
+
+    await bridge!.stop();
+  });
 });
