@@ -46,24 +46,22 @@ interface OAuthConfig {
 }
 
 /**
- * Dual-read OAuth config — Layer 2 PR 4.
+ * Read the OAuth config for a Connection.
  *
- *   - **Preferred path**: `connection.properties.credential_ref` points
- *     at a `system.credential` item with `kind: oauth_token`,
- *     `oauth_provider_config` (the non-secret fields), and
- *     `secret_encrypted` (the AES-GCM-encrypted client secret under the
- *     `connectionOauthToken` HKDF domain). The migration script at
- *     `src/scripts/migrate-oauth-to-credential.ts` populates this for
- *     every existing connection.
- *   - **Legacy path**: connection has no credential_ref. The OAuth
- *     fields live in `connection.properties.configuration` as plaintext
- *     (the WS2 placeholder shape). We read them as-is and emit a
- *     console warning so operators can spot lingering pre-migration
- *     connections before the cleanup PR removes this branch.
+ * The connection must reference a `system.credential` item via
+ * `properties.credential_ref`. The credential carries:
+ *   - `kind: "oauth_token"`
+ *   - `oauth_provider_config` (the non-secret fields:
+ *     `upstream_base_url`, `oauth_token_url`, `oauth_client_id`)
+ *   - `secret_encrypted` — the AES-GCM-encrypted client secret under
+ *     the `connectionOauthToken` HKDF domain
  *
- * After Layer 2 ships and the migration runs, the legacy branch is
- * removed in a follow-up PR (Backlog: "drop connection-proxy legacy
- * inline-OAuth-config fallback ~2 weeks after Layer 2 closes").
+ * The transition-period inline-config fallback (reading
+ * `connection.properties.configuration` for plaintext OAuth fields,
+ * including the client_secret) was dropped in T-022 once Layer 2
+ * migrations had run. The migration script at
+ * `src/scripts/migrate-oauth-to-credential.ts` is what installed
+ * `credential_ref` on every existing connection.
  */
 async function readOAuthConfig(
   storage: Storage,
