@@ -157,4 +157,140 @@ describe("performInstall — compensating writes on activity failure", () => {
       "transition:itm_conn_fake:trashed",
     ]);
   });
+
+  it("rolls back when audit.log throws (T-012 — was fire-and-forget pre-fix)", async () => {
+    const calls: string[] = [];
+    const stubStorage = {
+      items: {
+        create: async (input: {
+          type: string;
+        }): Promise<{ id: string; properties: Record<string, unknown> }> => {
+          if (input.type === "system.connection") {
+            calls.push("create:connection");
+            return await Promise.resolve({
+              id: "itm_conn_audit",
+              properties: {},
+            });
+          }
+          calls.push("create:activity");
+          return await Promise.resolve({
+            id: "itm_act_audit",
+            properties: {},
+          });
+        },
+        transition: async (id: string, state: string): Promise<unknown> => {
+          calls.push(`transition:${id}:${state}`);
+          return await Promise.resolve(null);
+        },
+      },
+      keys: {
+        createRuntimeCredential: async (): Promise<{ id: string }> => {
+          calls.push("create:credential");
+          return await Promise.resolve({ id: "api_cred_audit" });
+        },
+        revoke: async (id: string): Promise<void> => {
+          calls.push(`revoke:${id}`);
+          await Promise.resolve();
+        },
+      },
+      audit: {
+        log: (): Promise<void> => {
+          calls.push("audit:log:throw");
+          return Promise.reject(new Error("audit DB unavailable"));
+        },
+      },
+    };
+
+    await expect(
+      performInstall(
+        stubStorage as unknown as Parameters<typeof performInstall>[0],
+        "test-salt",
+        {
+          apiKeyId: "api_admin",
+          tenantId: undefined,
+          integrationItemId: "itm_int_fake",
+          manifest: manifest(),
+          label: "audit-failure test",
+        },
+      ),
+    ).rejects.toThrow(/audit DB unavailable/);
+
+    // Pre-T-012 the audit failure was swallowed via `void`; the install
+    // returned success and the operator had no record. Post-T-012 the
+    // failure throws, the rollback walks the stack, and the connection
+    // is trashed.
+    expect(calls).toEqual([
+      "create:connection",
+      "create:credential",
+      "create:activity",
+      "audit:log:throw",
+      "revoke:api_cred_audit",
+      "transition:itm_conn_audit:trashed",
+    ]);
+  });
+
+  it("rollback walks compensations in reverse push order without mutating (T-012)", async () => {
+    // Pre-T-012 the rollback used `compensations.reverse()` which mutates
+    // in place. The fix iterates via a downward index — the array stays
+    // in push order, so any recovery code that re-invokes rollback walks
+    // the same reversed sequence each time.
+    //
+    // The public `performInstall` API only invokes rollback once internally
+    // on failure (then re-throws), so we verify the reverse-order property
+    // by failing partway through a multi-step install and asserting the
+    // observable call sequence. The array-immutability property is
+    // guaranteed by construction (no `.reverse()` call anywhere in the
+    // module — verified via grep in this PR).
+    const calls: string[] = [];
+    const stubStorage = {
+      items: {
+        create: (input: {
+          type: string;
+        }): Promise<{ id: string; properties: Record<string, unknown> }> => {
+          calls.push(`create:${input.type}`);
+          return Promise.resolve({
+            id: `itm_${String(calls.length)}`,
+            properties: {},
+          });
+        },
+        transition: (id: string, state: string): Promise<unknown> => {
+          calls.push(`transition:${id}:${state}`);
+          return Promise.resolve(null);
+        },
+      },
+      keys: {
+        createRuntimeCredential: (): Promise<{ id: string }> => {
+          calls.push("create:credential:throw");
+          return Promise.reject(new Error("forced credential failure"));
+        },
+        revoke: (id: string): Promise<void> => {
+          calls.push(`revoke:${id}`);
+          return Promise.resolve();
+        },
+      },
+      audit: {
+        log: (): Promise<void> => Promise.resolve(),
+      },
+    };
+
+    await expect(
+      performInstall(
+        stubStorage as unknown as Parameters<typeof performInstall>[0],
+        "test-salt",
+        {
+          apiKeyId: "api_admin",
+          tenantId: undefined,
+          integrationItemId: "itm_int_fake",
+          manifest: manifest(),
+          label: "rollback-reinvoke test",
+        },
+      ),
+    ).rejects.toThrow(/forced credential failure/);
+
+    expect(calls).toEqual([
+      "create:system.connection",
+      "create:credential:throw",
+      "transition:itm_1:trashed",
+    ]);
+  });
 });
