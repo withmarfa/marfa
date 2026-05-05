@@ -286,6 +286,17 @@ export interface KeyStore {
   ): Promise<ApiKey>;
   list(): Promise<ApiKey[]>;
   get(id: string): Promise<ApiKey | null>;
+  /**
+   * Active (non-revoked) keys whose `connection_id` matches. The
+   * uninstall pipeline uses this to locate the runtime credential bound
+   * to a connection before revoking it. Tenant-scoped when supplied —
+   * single-tenant self-hosted deployments pass `undefined` to read keys
+   * with no tenant binding. Indexed on the `connection_id` column.
+   */
+  listByConnectionId(
+    connectionId: string,
+    tenantId?: string,
+  ): Promise<ApiKey[]>;
   validate(
     keyHash: string,
   ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;

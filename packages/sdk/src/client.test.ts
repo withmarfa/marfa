@@ -214,6 +214,67 @@ describe("items", () => {
 });
 
 // ---------------------------------------------------------------------------
+// items.upsert — natural-key 200/201 surfacing (PR A)
+// ---------------------------------------------------------------------------
+
+describe("items.upsert", () => {
+  // The server resolves a `(source, source_id)` POST as natural-key
+  // upsert (T-038): first call → 201 Created, second call with the same
+  // pair → 200 Updated. `request<T>` consumes that status; `upsert`
+  // surfaces it as `created: boolean`.
+
+  it("returns created=true on a fresh natural-key insert (HTTP 201)", async () => {
+    const sourceId = `upsert-fresh-${Date.now().toString()}`;
+    const result = await client.items.upsert({
+      type: "core.note",
+      properties: { title: "Fresh", body: "First write" },
+      source_id: sourceId,
+    });
+    expect(result.created).toBe(true);
+    expect(result.item.properties.title).toBe("Fresh");
+    expect(result.item.version).toBe(1);
+  });
+
+  it("returns created=false on a natural-key match (HTTP 200, second POST with same source_id)", async () => {
+    const sourceId = `upsert-match-${Date.now().toString()}`;
+
+    const first = await client.items.upsert({
+      type: "core.note",
+      properties: { title: "Initial", body: "v1" },
+      source_id: sourceId,
+    });
+    expect(first.created).toBe(true);
+
+    const second = await client.items.upsert({
+      type: "core.note",
+      properties: { title: "Updated", body: "v2" },
+      source_id: sourceId,
+    });
+    expect(second.created).toBe(false);
+    expect(second.item.id).toBe(first.item.id);
+    expect(second.item.properties.title).toBe("Updated");
+  });
+
+  it("upsert without source_id behaves like create — fresh row each call (created=true)", async () => {
+    // No source_id → no natural-key match path → server can never
+    // resolve as 200, so created is always true. Caller using upsert
+    // without source_id gets the same shape as create plus a redundant
+    // boolean — non-broken, documented in JSDoc.
+    const a = await client.items.upsert({
+      type: "core.note",
+      properties: { title: "A", body: "" },
+    });
+    const b = await client.items.upsert({
+      type: "core.note",
+      properties: { title: "B", body: "" },
+    });
+    expect(a.created).toBe(true);
+    expect(b.created).toBe(true);
+    expect(a.item.id).not.toBe(b.item.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Conflict resolution
 // ---------------------------------------------------------------------------
 

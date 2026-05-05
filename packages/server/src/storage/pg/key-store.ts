@@ -205,6 +205,25 @@ export class PgKeyStore implements KeyStore {
     return row ? mapRow(row) : null;
   }
 
+  async listByConnectionId(
+    connectionId: string,
+    tenantId?: string,
+  ): Promise<ApiKey[]> {
+    const rows = await this.db
+      .select()
+      .from(apiKeys)
+      .where(
+        and(
+          eq(apiKeys.connection_id, connectionId),
+          tenantId === undefined
+            ? isNull(apiKeys.tenant_id)
+            : eq(apiKeys.tenant_id, tenantId),
+          isNull(apiKeys.revoked_at),
+        ),
+      );
+    return rows.map(mapRow);
+  }
+
   async update(id: string, input: UpdateKeyInput): Promise<ApiKey> {
     const [existing] = await this.db
       .select()

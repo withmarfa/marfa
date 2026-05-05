@@ -623,6 +623,28 @@ export interface CreatedConnectionLeasedToken extends ConnectionLeasedToken {
 }
 
 /**
+ * Wire shape returned by `POST /connections/:id/uninstall`. Records the
+ * artefacts the orchestrated uninstall pipeline cleaned up — the runtime
+ * credentials it revoked, whether an upstream OAuth tokens row was
+ * deleted, and counts for leased tokens revoked / inbound webhooks
+ * disabled. The system.activity row id is included so callers can
+ * correlate the uninstall with the operator-visible activity feed.
+ */
+export interface ConnectionUninstallResult {
+  connection_id: string;
+  /** ids of every runtime credential revoked. Usually one. */
+  revoked_credential_ids: string[];
+  /** True when a `connection_oauth_tokens` row was deleted. */
+  oauth_tokens_deleted: boolean;
+  /** Number of `connection_leased_tokens` rows revoked. */
+  leased_tokens_revoked: number;
+  /** Number of `inbound_webhooks` subscriptions disabled. */
+  inbound_webhooks_disabled: number;
+  /** id of the system.activity row emitted by the pipeline. */
+  activity_id: string;
+}
+
+/**
  * RFC 7662-shaped introspection response from
  * `POST /lease-tokens/validate`. `active: false` when the lease is
  * unknown, expired, or revoked; the route returns 200 in either case so

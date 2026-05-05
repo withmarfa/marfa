@@ -209,6 +209,26 @@ export class SqliteKeyStore implements KeyStore {
     return Promise.resolve(row ? mapRow(row) : null);
   }
 
+  listByConnectionId(
+    connectionId: string,
+    tenantId?: string,
+  ): Promise<ApiKey[]> {
+    const rows = this.db
+      .select()
+      .from(apiKeys)
+      .where(
+        and(
+          eq(apiKeys.connection_id, connectionId),
+          tenantId === undefined
+            ? isNull(apiKeys.tenant_id)
+            : eq(apiKeys.tenant_id, tenantId),
+          isNull(apiKeys.revoked_at),
+        ),
+      )
+      .all();
+    return Promise.resolve(rows.map(mapRow));
+  }
+
   update(id: string, input: UpdateKeyInput): Promise<ApiKey> {
     const existing = this.db
       .select()

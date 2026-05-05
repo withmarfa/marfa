@@ -72,10 +72,46 @@ export class HttpTransport {
         | object;
     },
   ): Promise<T> {
+    const { data } = await this.requestWithStatus<T>(method, path, options);
+    return data;
+  }
+
+  /**
+   * Like {@link request}, but additionally surfaces the HTTP response
+   * status so callers can branch on 200 vs 201 (or any other 2xx). Used
+   * by `client.items.upsert` to distinguish a fresh create (201) from a
+   * natural-key match update (200) — `request<T>` consumes the status
+   * internally so this sibling exists to thread it back out.
+   *
+   * Error behaviour matches {@link request}: non-2xx responses throw the
+   * appropriate typed `MymeError` subclass via `throwForError`, never
+   * resolve. 204 No Content resolves with `data: undefined as T` and
+   * `status: 204`.
+   *
+   * Internal — not part of the public SDK surface. The exported `MymeClient`
+   * keeps callers at the namespace-method level (`client.items.upsert`,
+   * etc.) so the transport's status-passing remains an implementation
+   * detail.
+   */
+  // T is used by the caller to type the response body, mirroring `request<T>`.
+  // The rule's "single use" heuristic doesn't account for callers explicitly
+  // providing the type arg — see `requestWithStatus<{ item: Item }>` in
+  // `client.items.upsert`.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
+  async requestWithStatus<T>(
+    method: string,
+    path: string,
+    options?: {
+      body?: unknown;
+      query?:
+        | Record<string, string | number | boolean | string[] | undefined>
+        | object;
+    },
+  ): Promise<{ data: T; status: number }> {
     const response = await this.rawRequest(method, path, options);
 
     if (response.status === 204) {
-      return undefined as T;
+      return { data: undefined as T, status: 204 };
     }
 
     const body = await this.parseJson<T>(response);
@@ -84,7 +120,7 @@ export class HttpTransport {
       this.throwForError(response.status, body);
     }
 
-    return body;
+    return { data: body, status: response.status };
   }
 
   /**
