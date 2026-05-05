@@ -40,16 +40,16 @@ export interface EchoSuppression {
   trackOutboundWrite(externalId: string, contentHash: string): Promise<void>;
 
   /** Returns true if this incoming change matches a recent outbound
-   *  write — caller should skip it. */
+   *  write — caller should skip it. Deletes the underlying record on
+   *  expiry so the storage partition stays bounded (T-016). */
   shouldSkipReactive(externalId: string, contentHash: string): Promise<boolean>;
 
   /** Returns true if there's an outstanding outbound write for the
    *  given external_id whose lag window hasn't elapsed. Caller should
-   *  defer reactive reads of the corresponding Myme item. */
+   *  defer reactive reads of the corresponding Myme item. Deletes the
+   *  underlying record on expiry so cleanup happens on every access
+   *  path, not just `shouldSkipReactive` (T-016). */
   inLagWindow(externalId: string): Promise<boolean>;
-
-  /** Removes expired entries. Called periodically by the DO alarm. */
-  prune(now_ms: number): Promise<void>;
 }
 
 export function createEchoSuppression(
@@ -95,19 +95,17 @@ export function createEchoSuppression(
       // Lag window may exceed echo window; both check against the
       // same record but the lag check uses a distinct deadline.
       const lagDeadline = record.expires_at_ms - echoMs + lagMs;
-      return lagDeadline > now_ms();
-    },
-
-    async prune(now_ms_arg: number): Promise<void> {
-      void now_ms_arg;
-      // Pruning by full scan is acceptable here — the DO storage
-      // partition is per-Connection so the key set is bounded.
-      // Implementation lives in the DO class which has list() access;
-      // this method is the contract handlers see.
-      // The default builder doesn't implement scanning to avoid
-      // requiring `list()` on every storage adapter (the in-memory
-      // test adapter doesn't ship one). The DO subclass overrides.
-      return Promise.resolve();
+      const now = now_ms();
+      if (lagDeadline <= now) {
+        // T-016: delete on expiry so a connector that writes to
+        // `external_id` and never reads it back doesn't leak DO
+        // storage. `shouldSkipReactive` already does this on its own
+        // path; mirroring it here closes the second access path
+        // without introducing a periodic prune.
+        await storage.delete(key(externalId));
+        return false;
+      }
+      return true;
     },
   };
 }

@@ -34,7 +34,7 @@
  * existing pubsub publishes these for every `items.create` /
  * `items.update` / `items.delete` so no new emission is needed.
  */
-import { subscribe, type ItemEventWithId } from "../pubsub.js";
+import { publish, subscribe, type ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
 
@@ -45,13 +45,24 @@ export interface BridgeConfig {
   batchSize?: number;
   /** Maximum send attempts before giving up on a batch. */
   maxAttempts?: number;
+  /**
+   * Per-fetch timeout in milliseconds for the queue producer call. A slow
+   * Cloudflare Queues endpoint would otherwise stall the bridge while
+   * fanning out (T-013). Defaults to 5000ms; on timeout the failure is
+   * logged and surfaced as `system.activity` of severity error, then
+   * fanout continues to the next subscriber.
+   */
+  sendTimeoutMs?: number;
   /** Custom fetch (for tests). */
   fetch?: typeof fetch;
 }
 
 export interface BridgeRuntime {
   start(): Promise<void>;
-  stop(): void;
+  /** Stop the drainer + invalidation subscriber and wait for the
+   *  underlying coordination lock to release. Returns a Promise so
+   *  callers (and tests) can wait for the cleanup to settle. */
+  stop(): Promise<void>;
 }
 
 interface QueueMessageBody {
@@ -105,6 +116,7 @@ export function tryStartReactiveRunBridge(
     apiToken,
     batchSize: config?.batchSize ?? 10,
     maxAttempts: config?.maxAttempts ?? 5,
+    sendTimeoutMs: config?.sendTimeoutMs ?? 5000,
     fetch: config?.fetch,
   });
 }
@@ -144,25 +156,52 @@ async function buildEntryForConnection(
 }
 
 /**
+ * Page size for `loadSubscriptions`. The cursor loop walks the full
+ * `system.connection` set; this just bounds memory pressure per page.
+ */
+const SUBSCRIPTION_LOAD_PAGE_SIZE = 200;
+
+/**
  * Walk every system.connection item and build the initial subscription
- * map. Called at bridge startup. Cheap: the listing is bounded (one
- * page; integrations + connections are low-cardinality even at scale).
+ * map. Called at bridge startup.
+ *
+ * T-013: paginate via the storage cursor until exhausted. The previous
+ * single-page read silently dropped any tenant's 201st+ connection from
+ * fanout — the comment claimed it was "bounded ... low-cardinality even
+ * at scale" but this was a soft 200-cap with no warning, no metric, no
+ * log. Now we walk every page and emit a per-tenant subscription count
+ * at startup so an operator can see what loaded.
  */
 async function loadSubscriptions(
   storage: Storage,
 ): Promise<Map<string, SubscriptionEntry>> {
   const out = new Map<string, SubscriptionEntry>();
-  const connections = await storage.items.list({
-    type: "system.connection",
-    limit: 200,
-  });
-  for (const connection of connections.data) {
-    const entry = await buildEntryForConnection(storage, {
-      id: connection.id,
-      properties: connection.properties,
+  let cursor: string | undefined;
+  let pages = 0;
+  for (;;) {
+    const page = await storage.items.list({
+      type: "system.connection",
+      limit: SUBSCRIPTION_LOAD_PAGE_SIZE,
+      cursor,
     });
-    if (entry) out.set(connection.id, entry);
+    pages++;
+    for (const connection of page.data) {
+      const entry = await buildEntryForConnection(storage, {
+        id: connection.id,
+        properties: connection.properties,
+      });
+      if (entry) out.set(connection.id, entry);
+    }
+    if (!page.has_more || !page.cursor) break;
+    cursor = page.cursor;
   }
+
+  // Operational visibility — without this an operator can't tell the
+  // bridge has loaded all of the tenant's subscriptions vs. silently
+  // capped them at the page size (the pre-T-013 bug).
+  console.info(
+    `[reactive-run-bridge] loaded ${String(out.size)} subscription(s) across ${String(pages)} page(s)`,
+  );
   return out;
 }
 
@@ -171,6 +210,18 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   const subscriptions = new Map<string, SubscriptionEntry>();
   let running = false;
   let stopRequested = false;
+  // References to the active subscribe iterators so `stop()` can
+  // proactively close them — without this the `for await` loops would
+  // hang on the next event, holding the coordination advisory lock
+  // open until the process exits. The hang is invisible in single-
+  // instance dev, but in tests (where each `it` reuses the same
+  // storage) and in multi-instance hosted deploys it strands the lock.
+  let drainerIter: AsyncIterator<unknown> | null = null;
+  let invalidationIter: AsyncIterator<unknown> | null = null;
+  // Resolved when the withJobLock-wrapped drainer fully exits and the
+  // advisory lock is released. `stop()` awaits this so callers know the
+  // bridge has fully unwound before they move on.
+  let drainerExit: Promise<void> | null = null;
 
   /**
    * Refresh the subscription entry for one connection id. Called from
@@ -201,18 +252,26 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
    * the main drainer.
    */
   const startInvalidationSubscriber = async (): Promise<void> => {
-    for await (const event of subscribe({
+    const iter = subscribe({
       typeFilter: "system.connection",
-    })) {
-      if (stopRequested) break;
-      try {
-        await refreshConnection(event.item.id);
-      } catch (err) {
-        console.error(
-          "[reactive-run-bridge] cache invalidation failed:",
-          err instanceof Error ? err.message : String(err),
-        );
+    })[Symbol.asyncIterator]();
+    invalidationIter = iter;
+    try {
+      for (;;) {
+        const next = await iter.next();
+        if (next.done) break;
+        if (stopRequested) break;
+        try {
+          await refreshConnection(next.value.item.id);
+        } catch (err) {
+          console.error(
+            "[reactive-run-bridge] cache invalidation failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
       }
+    } finally {
+      invalidationIter = null;
     }
   };
 
@@ -237,14 +296,28 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       // drainer at a time. Other instances wait inside withJobLock.
       // The drainer is fire-and-forget: it lives for the process
       // lifetime; .catch() surfaces unexpected exits.
-      void storage.coordination
+      drainerExit = storage.coordination
         .withJobLock("reactive-run-bridge", async () => {
           // Cache invalidation runs alongside the drainer under the
           // same lock — only the elected instance maintains its map.
           void startInvalidationSubscriber();
-          for await (const event of subscribe()) {
-            if (stopRequested) break;
-            await fanoutEvent(event, subscriptions, config, fetchImpl);
+          const iter = subscribe()[Symbol.asyncIterator]();
+          drainerIter = iter;
+          try {
+            for (;;) {
+              const next = await iter.next();
+              if (next.done) break;
+              if (stopRequested) break;
+              await fanoutEvent(
+                next.value,
+                subscriptions,
+                config,
+                fetchImpl,
+                storage,
+              );
+            }
+          } finally {
+            drainerIter = null;
           }
         })
         .catch((err: unknown) => {
@@ -252,12 +325,59 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
             "[reactive-run-bridge] drainer threw:",
             err instanceof Error ? err.message : String(err),
           );
-        });
+        })
+        .then(() => undefined);
     },
-    stop(): void {
+    async stop(): Promise<void> {
       stopRequested = true;
       running = false;
       subscriptions.clear();
+      // Wake the for-await loops by emitting synthetic events. Each
+      // loop wakes, sees `stopRequested === true`, breaks. The
+      // generator unwinds, `events.on(...)` detaches its listener, the
+      // withJobLock unwraps, and the coordination advisory lock is
+      // returned to the pool. Without this, calls to .return() on the
+      // generator don't unblock the in-flight `next()` waiting on the
+      // EventEmitter — the lock would stay held until the process
+      // exited (invisible in single-instance dev; surfaces in tests
+      // that reuse the same storage and in multi-instance deploys).
+      try {
+        await publish({
+          type: "updated",
+          item: {
+            id: "stop-sentinel",
+            type: "system.connection",
+            state: "active",
+            tier: "library",
+            properties: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+            version: 1,
+            schema_version: 1,
+            source: "stop-sentinel",
+            origin: "system",
+          } as unknown as ItemEventWithId["item"],
+        });
+      } catch {
+        // Best-effort wakeup — never crash stop().
+      }
+      const drainer = drainerIter;
+      const invalidation = invalidationIter;
+      drainerIter = null;
+      invalidationIter = null;
+      const releases: Promise<unknown>[] = [];
+      if (drainer?.return)
+        releases.push(drainer.return().catch(() => undefined));
+      if (invalidation?.return) {
+        releases.push(invalidation.return().catch(() => undefined));
+      }
+      await Promise.all(releases);
+      // Wait for the withJobLock-wrapped drainer to fully exit so the
+      // advisory lock is back in the pool before stop() returns.
+      const exit = drainerExit;
+      drainerExit = null;
+      if (exit) await exit;
     },
   };
 }
@@ -281,6 +401,7 @@ async function fanoutEvent(
   subscriptions: Map<string, SubscriptionEntry>,
   config: BridgeConfig,
   fetchImpl: typeof fetch,
+  storage: Storage,
 ): Promise<void> {
   for (const entry of subscriptions.values()) {
     if (entry.connection_id === event.originatingConnectionId) continue;
@@ -297,7 +418,42 @@ async function fanoutEvent(
       },
       payload: { item: event.item, metadata: event.metadata },
     };
-    await sendOne(body, config, fetchImpl);
+    // T-013: each subscriber's send is wrapped in a per-fetch timeout
+    // and isolated try/catch. A slow / wedged Cloudflare Queues endpoint
+    // for one subscriber doesn't stall fanout to the rest.
+    try {
+      await sendOne(body, config, fetchImpl);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[reactive-run-bridge] subscriber ${entry.connection_id} fanout failed:`,
+        reason,
+      );
+      // Best-effort operator visibility — surface the failure as a
+      // system.activity row for the affected connection.
+      //
+      // `storage.items.create` is the storage-layer call only; it does
+      // NOT invoke `publish()` (publish is the route-layer's job in
+      // `routes/items.ts`). So this write is invisible to the bridge's
+      // own `subscribe()` listener — no loop. Same precedent as
+      // `defaultCycleDetectionWiring`'s overflow hook in `pubsub.ts`.
+      try {
+        await storage.items.create(
+          {
+            type: "system.activity",
+            properties: {
+              severity: "error",
+              summary: `Fanout to connection ${entry.connection_id} failed`,
+              connection_id: entry.connection_id,
+              detail: { reason, item_id: event.item.id },
+            },
+          },
+          event.tenantId,
+        );
+      } catch {
+        // Don't crash the drainer over a follow-up activity write.
+      }
+    }
   }
 }
 
@@ -307,7 +463,12 @@ async function sendOne(
   fetchImpl: typeof fetch,
 ): Promise<void> {
   const maxAttempts = config.maxAttempts ?? 5;
+  const timeoutMs = config.sendTimeoutMs ?? 5000;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
     try {
       const res = await fetchImpl(config.queueUrl, {
         method: "POST",
@@ -316,6 +477,7 @@ async function sendOne(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ body, contentType: "json" }),
+        signal: controller.signal,
       });
       if (res.ok) return;
       // Retry on 5xx, give up on 4xx.
@@ -326,14 +488,20 @@ async function sendOne(
         return;
       }
     } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
       console.error(
         `[reactive-run-bridge] send attempt ${String(attempt)}:`,
-        err instanceof Error ? err.message : String(err),
+        reason,
       );
+    } finally {
+      clearTimeout(timeout);
     }
     // Exponential backoff: 100ms, 200ms, 400ms, ...
     await new Promise((r) => setTimeout(r, 100 * Math.pow(2, attempt - 1)));
   }
+  throw new Error(
+    `[reactive-run-bridge] giving up after ${String(maxAttempts)} attempts`,
+  );
 }
 
 // Test-only export: lets the test suite assert the lazy load + the
