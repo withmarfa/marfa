@@ -467,6 +467,7 @@ export function oauthCallbackRoutes(
       const reason = `${provider} returned error=${upstreamError}${desc ? `: ${desc}` : ""}`;
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
+        tenant_id: c.get("apiKey")?.tenant_id ?? null,
         action: "oauth_callback.upstream_error",
         resource_type: "oauth_callback",
         resource_id: provider,
@@ -487,6 +488,7 @@ export function oauthCallbackRoutes(
     if (!stateResult.ok) {
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
+        tenant_id: c.get("apiKey")?.tenant_id ?? null,
         action: "oauth_callback.state_invalid",
         resource_type: "oauth_callback",
         resource_id: provider,
@@ -527,6 +529,7 @@ export function oauthCallbackRoutes(
     if (typeof envelope.code_verifier !== "string") {
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
+        tenant_id: c.get("apiKey")?.tenant_id ?? null,
         action: "oauth_callback.state_missing_pkce",
         resource_type: "oauth_callback",
         resource_id: provider,
@@ -551,6 +554,7 @@ export function oauthCallbackRoutes(
     if (!exchange.ok) {
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
+        tenant_id: c.get("apiKey")?.tenant_id ?? null,
         action: "oauth_callback.exchange_failed",
         resource_type: "connection",
         resource_id: envelope.connection_id,
@@ -588,6 +592,7 @@ export function oauthCallbackRoutes(
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       action: "oauth_callback.tokens_stored",
       resource_type: "connection",
       resource_id: envelope.connection_id,

@@ -361,6 +361,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "lease.issue",
       resource_type: "connection_leased_token",
@@ -413,6 +414,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     );
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "lease.revoke",
       resource_type: "connection_leased_token",
@@ -457,6 +459,7 @@ export function leaseTokenValidationRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       action: "lease.validate",
       resource_type: "connection_leased_token",
       resource_id: lease?.id,

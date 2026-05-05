@@ -330,6 +330,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "key.create",
       resource_type: "key",
@@ -373,6 +374,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     await storage.keys.revoke(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "key.revoke",
       resource_type: "key",
@@ -421,6 +423,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "key.update",
       resource_type: "key",

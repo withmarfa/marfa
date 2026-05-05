@@ -398,6 +398,7 @@ export function typeRoutes(storage: Storage) {
     const created = await storage.types.create(schema, tenantId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "type.register",
       resource_type: "type",
@@ -476,6 +477,7 @@ export function typeRoutes(storage: Storage) {
     const updated = await storage.types.update(id, schema);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "type.update",
       resource_type: "type",
@@ -520,6 +522,7 @@ export function typeRoutes(storage: Storage) {
     await storage.types.delete(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "type.delete",
       resource_type: "type",

@@ -86,6 +86,7 @@ async function createConnection(opts: {
   integrationRef?: string;
   kind?: string;
   status?: string;
+  tenantId?: string;
 }): Promise<string> {
   const item = await ctx.storage.items.create(
     {
@@ -97,7 +98,7 @@ async function createConnection(opts: {
         integration_ref: opts.integrationRef,
       },
     },
-    undefined,
+    opts.tenantId,
   );
   return item.id;
 }
@@ -388,6 +389,123 @@ describe("bridge fanout via in-process pubsub", () => {
     expect(fastDeliveries).toContain(connFast);
     // Slow subscriber's connection id should NOT appear in fast deliveries.
     expect(fastDeliveries).not.toContain(connSlow);
+
+    await bridge!.stop();
+  });
+
+  it("does not fan out cross-tenant — events for tenant A skip subscribers in tenant B (T-042)", async () => {
+    // Pre-T-042: every subscribing connection received every event
+    // regardless of tenant; the cross-tenant guard relied on the
+    // downstream Worker's per-Connection runtime credential failing the
+    // API permission gate. The bridge now drops cross-tenant fanout
+    // ahead of the queue producer.
+    //
+    // `items.tenant_id` is nullable with no FK in this codebase (the
+    // `tenants` table FK exists on `users` and api keys but not on items),
+    // so the test can use arbitrary tenant ids without first minting a
+    // `Tenant` row. Avoids the "tenants store only available under
+    // authMode=hosted" coupling.
+    const tenantAId = `tenant-a-${Math.random().toString(36).slice(2, 8)}`;
+    const tenantBId = `tenant-b-${Math.random().toString(36).slice(2, 8)}`;
+
+    const intA = await createIntegration(
+      manifest({ name: "acme.tenant-a-int" }),
+    );
+    const intB = await createIntegration(
+      manifest({ name: "acme.tenant-b-int" }),
+    );
+    const connA = await createConnection({
+      integrationRef: intA,
+      tenantId: tenantAId,
+    });
+    const connB = await createConnection({
+      integrationRef: intB,
+      tenantId: tenantBId,
+    });
+
+    interface Captured {
+      url: string;
+      body: { body: { integration_name: string; connection_id: string } };
+    }
+    const captured: Captured[] = [];
+    const stubFetch: typeof fetch = ((
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      captured.push({
+        url,
+        body: JSON.parse(init?.body as string) as Captured["body"],
+      });
+      return Promise.resolve(new Response(null, { status: 202 }));
+    }) as typeof fetch;
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      queueUrl: "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: stubFetch,
+      maxAttempts: 1,
+    });
+    expect(bridge).not.toBeNull();
+    await bridge!.start();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Publish an event scoped to tenant A. Only connA (tenant A) should
+    // receive a queue message; connB (tenant B) must not.
+    const eventItemA = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "tenant-a event" } },
+      tenantAId,
+    );
+    await publish({
+      type: "created",
+      item: eventItemA,
+      tenantId: tenantAId,
+      originatingConnectionId: "itm_unrelated_a",
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const tenantAFanout = captured.filter(
+      (c) => c.body.body.integration_name === "acme.tenant-a-int",
+    );
+    const tenantBFanout = captured.filter(
+      (c) => c.body.body.integration_name === "acme.tenant-b-int",
+    );
+    expect(tenantAFanout.length).toBeGreaterThanOrEqual(1);
+    expect(tenantAFanout.some((c) => c.body.body.connection_id === connA)).toBe(
+      true,
+    );
+    expect(tenantBFanout.length).toBe(0);
+
+    // Symmetric: an event for tenant B reaches connB but not connA.
+    captured.length = 0;
+    const eventItemB = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "tenant-b event" } },
+      tenantBId,
+    );
+    await publish({
+      type: "created",
+      item: eventItemB,
+      tenantId: tenantBId,
+      originatingConnectionId: "itm_unrelated_b",
+    });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const reverseA = captured.filter(
+      (c) => c.body.body.integration_name === "acme.tenant-a-int",
+    );
+    const reverseB = captured.filter(
+      (c) => c.body.body.integration_name === "acme.tenant-b-int",
+    );
+    expect(reverseB.length).toBeGreaterThanOrEqual(1);
+    expect(reverseB.some((c) => c.body.body.connection_id === connB)).toBe(
+      true,
+    );
+    expect(reverseA.length).toBe(0);
 
     await bridge!.stop();
   });

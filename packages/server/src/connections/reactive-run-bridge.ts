@@ -82,6 +82,16 @@ interface QueueMessageBody {
 interface SubscriptionEntry {
   connection_id: string;
   integration_name: string;
+  /**
+   * Tenant scope (T-042). Read from `connection.tenant_id` at registry-load
+   * time so `fanoutEvent` can drop cross-tenant fanout before invoking
+   * `sendOne`. Single-tenant self-hosted installs leave this null on every
+   * connection — the gate trivially passes (null === null). Hosted multi-
+   * tenant: the gate is the cheap-and-correct first guard ahead of the
+   * downstream credential authorisation that catches the same condition
+   * later.
+   */
+  tenant_id: string | null;
 }
 
 interface ConnectionProperties {
@@ -133,7 +143,7 @@ export function tryStartReactiveRunBridge(
  */
 async function buildEntryForConnection(
   storage: Storage,
-  connection: { id: string; properties: unknown },
+  connection: { id: string; properties: unknown; tenant_id?: string | null },
 ): Promise<SubscriptionEntry | null> {
   const props = connection.properties as ConnectionProperties;
   if (props.kind !== "external-service-connector") return null;
@@ -152,6 +162,10 @@ async function buildEntryForConnection(
   return {
     connection_id: connection.id,
     integration_name: validated.manifest.name,
+    // T-042: stamp the connection's tenant scope at registry-load time.
+    // Read from the storage row directly — `Item.tenant_id` is now
+    // populated by `rowToItem` in both dialects.
+    tenant_id: connection.tenant_id ?? null,
   };
 }
 
@@ -189,6 +203,7 @@ async function loadSubscriptions(
       const entry = await buildEntryForConnection(storage, {
         id: connection.id,
         properties: connection.properties,
+        tenant_id: connection.tenant_id ?? null,
       });
       if (entry) out.set(connection.id, entry);
     }
@@ -238,6 +253,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
     const entry = await buildEntryForConnection(storage, {
       id: item.id,
       properties: item.properties,
+      tenant_id: item.tenant_id ?? null,
     });
     if (entry) {
       subscriptions.set(connectionId, entry);
@@ -389,12 +405,14 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
  * events it produced (cycle prevention is upstream via hop_count, but
  * this is the cheaper, earlier check).
  *
- * Tenant scoping: not enforced at the bridge layer in Layer 2. The
- * downstream Worker authenticates with a per-Connection runtime
- * credential (Layer 1's connection_id-stamped apiKeys row); cross-tenant
- * misuse fails at the Myme API permission gate. A future tightening
- * could fan out per tenant once `Item` exposes `tenant_id` on the
- * public type — tracked in the Backlog.
+ * Tenant scoping (T-042): enforced at the bridge layer. Each subscription
+ * entry carries its connection's `tenant_id`; the fanout loop drops events
+ * whose `event.tenantId` doesn't match the subscriber's tenant. The
+ * downstream Worker still authenticates with a per-Connection runtime
+ * credential, so the API permission gate remains as the inner backstop —
+ * but cross-tenant work no longer pays the queue / Worker cost. Single-
+ * tenant self-hosted: every connection and event are tenantless (null),
+ * the gate trivially passes (null === null), no behaviour change.
  *
  * T-036 (parallel fanout): subscribers receive concurrently via
  * `Promise.allSettled`. The pre-T-036 shape was a sequential `await`
@@ -415,8 +433,19 @@ async function fanoutEvent(
   storage: Storage,
 ): Promise<void> {
   const tasks: Promise<unknown>[] = [];
+  // Normalise to null on both sides so single-tenant self-hosted (where
+  // both event.tenantId and entry.tenant_id are typically `undefined`)
+  // doesn't fall foul of `undefined !== null` and accidentally drop every
+  // subscriber. Hosted multi-tenant: both sides carry strings; the
+  // comparison is the explicit cross-tenant guard.
+  const eventTenantId = event.tenantId ?? null;
   for (const entry of subscriptions.values()) {
     if (entry.connection_id === event.originatingConnectionId) continue;
+    // T-042: cross-tenant fanout drops here, ahead of any queue-producer
+    // work. Self-event filter stays as the first gate; tenant gate is the
+    // second. Order matters only for code readability — a self-event from
+    // tenant A can't be a tenant-B subscriber's event anyway.
+    if ((entry.tenant_id ?? null) !== eventTenantId) continue;
     const body: QueueMessageBody = {
       kind: "item-event",
       integration_name: entry.integration_name,

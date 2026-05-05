@@ -256,6 +256,7 @@ export async function performInstall(
     await storage.audit.log({
       key_id: input.apiKeyId,
       client_ip: input.clientIp ?? null,
+      tenant_id: input.tenantId ?? null,
       action: "integration.install",
       resource_type: "item",
       resource_id: connection.id,

@@ -313,6 +313,7 @@ export function webhookRoutes(storage: Storage) {
     // Return full secret on creation so the caller can store it
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "webhook.create",
       resource_type: "webhook",
@@ -391,6 +392,7 @@ export function webhookRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "webhook.update",
       resource_type: "webhook",
@@ -412,6 +414,7 @@ export function webhookRoutes(storage: Storage) {
     await storage.outboundWebhooks.delete(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "webhook.delete",
       resource_type: "webhook",

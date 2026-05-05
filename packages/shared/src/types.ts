@@ -60,6 +60,15 @@ export interface Item {
    * high-volume capture. Optional because `system.*` items have no tier.
    */
   tier?: Tier;
+  /**
+   * Tenant scope. Optional because storage queries are tenant-scoped at
+   * the SQL layer (`tenantWhere` enforces a `WHERE tenant_id = ?` on every
+   * read), so for ordinary callers `tenant_id` always matches the caller's
+   * own tenant and the field is informational. Internal cross-tenant
+   * infrastructure (the reactive-run bridge — T-042) reads this to gate
+   * fanout on tenant match. Mirrors `Edge.tenant_id`.
+   */
+  tenant_id?: string | null;
   properties: Record<string, unknown>;
   created_at: string;
   updated_at: string;

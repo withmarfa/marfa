@@ -538,6 +538,7 @@ export function bulkRoutes(storage: Storage) {
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "items.bulk",
       resource_type: "items.bulk",
@@ -794,6 +795,7 @@ export function bulkRoutes(storage: Storage) {
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "items.bulk_action",
       resource_type: "items.bulk_action",

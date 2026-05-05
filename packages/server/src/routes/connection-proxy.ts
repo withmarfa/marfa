@@ -435,6 +435,7 @@ async function markReauthRequired(
     if ("conflict" in updated) {
       void storage.audit.log({
         client_ip: clientIp,
+        tenant_id: tenantId ?? null,
         action: "connection_proxy.runtime_status_flip_conflict",
         resource_type: "connection",
         resource_id: connection.id,
@@ -446,6 +447,7 @@ async function markReauthRequired(
     // Surface in audit log so operators can investigate.
     void storage.audit.log({
       client_ip: clientIp,
+      tenant_id: tenantId ?? null,
       action: "connection_proxy.runtime_status_flip_failed",
       resource_type: "connection",
       resource_id: connection.id,
@@ -486,6 +488,7 @@ async function markReauthRequired(
   } catch (err) {
     void storage.audit.log({
       client_ip: clientIp,
+      tenant_id: tenantId ?? null,
       action: "connection_proxy.activity_emit_failed",
       resource_type: "connection",
       resource_id: connection.id,
@@ -589,6 +592,7 @@ export function connectionProxyRoutes(storage: Storage) {
     if (!row) {
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
+        tenant_id: c.get("apiKey")?.tenant_id ?? null,
         key_id: c.get("apiKey")?.id,
         action: "connection_proxy.token_missing",
         resource_type: "connection",
@@ -623,6 +627,7 @@ export function connectionProxyRoutes(storage: Storage) {
         }
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
+          tenant_id: c.get("apiKey")?.tenant_id ?? null,
           key_id: c.get("apiKey")?.id,
           action: "connection_proxy.refresh_failed",
           resource_type: "connection",
@@ -687,6 +692,7 @@ export function connectionProxyRoutes(storage: Storage) {
         }
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
+          tenant_id: c.get("apiKey")?.tenant_id ?? null,
           key_id: c.get("apiKey")?.id,
           action: "connection_proxy.refresh_failed",
           resource_type: "connection",
@@ -713,6 +719,7 @@ export function connectionProxyRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "connection_proxy.call",
       resource_type: "connection",

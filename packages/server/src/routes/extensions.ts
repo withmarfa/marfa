@@ -355,6 +355,7 @@ export function extensionRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "extension.set",
       resource_type: "item",
@@ -421,6 +422,7 @@ export function extensionRoutes(storage: Storage) {
     const extensions = await storage.metadata.deleteExtension(id, namespace);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "extension.delete",
       resource_type: "item",

@@ -12,7 +12,11 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const SALT = "test-salt";
+/** Salt used by `createTestContext` for `hashApiKey`. Exposed so tests
+ *  that mint additional api keys (e.g. for tenant-scoped admin coverage)
+ *  hash with the same value the route auth resolver expects. */
+export const TEST_API_KEY_SALT = "test-salt";
+const SALT = TEST_API_KEY_SALT;
 
 export interface TestContext {
   app: Hono<AppEnv>;

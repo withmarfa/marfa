@@ -820,6 +820,7 @@ export function itemRoutes(storage: Storage) {
         });
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
+          tenant_id: c.get("apiKey")?.tenant_id ?? null,
           key_id: c.get("apiKey")?.id,
           action: "item.update",
           resource_type: "item",
@@ -905,6 +906,7 @@ export function itemRoutes(storage: Storage) {
     await publish({ type: "created", item, metadata, tenantId });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.create",
       resource_type: "item",
@@ -1346,6 +1348,7 @@ export function itemRoutes(storage: Storage) {
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.update",
       resource_type: "item",
@@ -1411,6 +1414,7 @@ export function itemRoutes(storage: Storage) {
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.delete",
       resource_type: "item",
@@ -1562,6 +1566,7 @@ export function itemRoutes(storage: Storage) {
     const metadata = await storage.metadata.addTags(id, tags);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.tag",
       resource_type: "item",
@@ -1596,6 +1601,7 @@ export function itemRoutes(storage: Storage) {
     await storage.items.purge(id, tenantId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.purge",
       resource_type: "item",
@@ -1621,6 +1627,7 @@ export function itemRoutes(storage: Storage) {
     const metadata = await storage.metadata.removeTag(id, tag);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.untag",
       resource_type: "item",
