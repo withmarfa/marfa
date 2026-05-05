@@ -90,3 +90,24 @@ jobs:
         run: |
           pnpm pack
           npm publish mymehq-sdk-*.tgz --access=public
+
+      - name: Check @mymehq/webhooks publish status
+        id: check_webhooks
+        working-directory: packages/webhooks
+        run: |
+          local_version=$(node -p "require('./package.json').version")
+          published_versions=$(npm view @mymehq/webhooks versions --json 2>/dev/null || echo '[]')
+          if echo "$published_versions" | grep -q "\"$local_version\""; then
+            echo "@mymehq/webhooks@$local_version is already published — skipping"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "@mymehq/webhooks@$local_version is new — will publish"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish @mymehq/webhooks
+        if: steps.check_webhooks.outputs.should_publish == 'true'
+        working-directory: packages/webhooks
+        run: |
+          pnpm pack
+          npm publish mymehq-webhooks-*.tgz --access=public
