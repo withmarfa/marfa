@@ -286,6 +286,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   id TEXT PRIMARY KEY,
   timestamp TEXT NOT NULL,
   key_id TEXT,
+  tenant_id TEXT,
   action TEXT NOT NULL,
   resource_type TEXT NOT NULL,
   resource_id TEXT,
@@ -294,6 +295,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_audit_log_resource_type ON audit_log(resource_type);
+CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_id ON audit_log(tenant_id);
 
 CREATE TABLE IF NOT EXISTS event_log (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

@@ -118,6 +118,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     await publish({ type: "restored", item: restored, metadata, tenantId });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.restore",
       resource_type: "item",
@@ -156,6 +157,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     await publish({ type: "state_changed", item: updated, metadata, tenantId });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.transition",
       resource_type: "item",

@@ -8,6 +8,11 @@ const AuditEntrySchema = z.object({
   id: z.string(),
   timestamp: z.string(),
   key_id: z.string().nullable(),
+  /**
+   * Tenant scope (T-041). Stamped at write time from the calling api key's
+   * `tenant_id`. Null for system-initiated audits and bootstrap-admin keys.
+   */
+  tenant_id: z.string().nullable(),
   action: z.string(),
   resource_type: z.string(),
   resource_id: z.string().nullable(),
@@ -64,6 +69,12 @@ export function auditRoutes(storage: Storage) {
     const { action, resource_type, resource_id, since, until, limit, cursor } =
       c.req.valid("query");
 
+    // T-041: tenant scope. Bootstrap-admin keys (no `tenant_id`) read every
+    // row — preserves the self-hosted single-tenant operator view. Tenant-
+    // scoped admin keys read only their own tenant. Mirrors the
+    // `ItemStore.list` admit-all-when-tenantless pattern.
+    const callerTenantId = c.get("apiKey")?.tenant_id ?? null;
+
     const result = await storage.audit.list({
       action,
       resource_type,
@@ -72,6 +83,7 @@ export function auditRoutes(storage: Storage) {
       until,
       limit,
       cursor,
+      tenant_id: callerTenantId,
     });
 
     return c.json(result, 200);

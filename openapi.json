@@ -145,6 +145,10 @@
                             "feed"
                           ]
                         },
+                        "tenant_id": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "version": {
                           "type": "number"
                         },
@@ -342,6 +346,10 @@
                             "library",
                             "feed"
                           ]
+                        },
+                        "tenant_id": {
+                          "type": "string",
+                          "nullable": true
                         },
                         "version": {
                           "type": "number"
@@ -789,6 +797,10 @@
                                   "feed"
                                 ]
                               },
+                              "tenant_id": {
+                                "type": "string",
+                                "nullable": true
+                              },
                               "version": {
                                 "type": "number"
                               },
@@ -968,6 +980,10 @@
                                       "library",
                                       "feed"
                                     ]
+                                  },
+                                  "tenant_id": {
+                                    "type": "string",
+                                    "nullable": true
                                   },
                                   "version": {
                                     "type": "number"
@@ -1345,6 +1361,10 @@
                             "feed"
                           ]
                         },
+                        "tenant_id": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "version": {
                           "type": "number"
                         },
@@ -1680,6 +1700,10 @@
                             "library",
                             "feed"
                           ]
+                        },
+                        "tenant_id": {
+                          "type": "string",
+                          "nullable": true
                         },
                         "version": {
                           "type": "number"
@@ -2196,6 +2220,10 @@
                             "feed"
                           ]
                         },
+                        "tenant_id": {
+                          "type": "string",
+                          "nullable": true
+                        },
                         "version": {
                           "type": "number"
                         },
@@ -2512,6 +2540,10 @@
                             "library",
                             "feed"
                           ]
+                        },
+                        "tenant_id": {
+                          "type": "string",
+                          "nullable": true
                         },
                         "version": {
                           "type": "number"
@@ -8476,6 +8508,10 @@
                                   "library",
                                   "feed"
                                 ]
+                              },
+                              "tenant_id": {
+                                "type": "string",
+                                "nullable": true
                               },
                               "version": {
                                 "type": "number"
@@ -14824,6 +14860,10 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "tenant_id": {
+                            "type": "string",
+                            "nullable": true
+                          },
                           "action": {
                             "type": "string"
                           },
@@ -14849,6 +14889,7 @@
                           "id",
                           "timestamp",
                           "key_id",
+                          "tenant_id",
                           "action",
                           "resource_type",
                           "resource_id",

@@ -247,6 +247,7 @@ export function integrationRoutes(storage: Storage, salt: string) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: apiKey.id,
       action: "integration.register",
       resource_type: "item",

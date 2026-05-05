@@ -370,6 +370,7 @@ export function edgesBulkRoutes(storage: Storage) {
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edges.bulk",
       resource_type: "edges.bulk",

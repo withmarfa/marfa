@@ -210,6 +210,7 @@ export function edgeTypeRoutes(storage: Storage) {
     registerEdgeTypeSchema(schema);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge_type.create",
       resource_type: "edge_type",
@@ -246,6 +247,7 @@ export function edgeTypeRoutes(storage: Storage) {
     unregisterEdgeTypeSchema(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
+      tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge_type.delete",
       resource_type: "edge_type",

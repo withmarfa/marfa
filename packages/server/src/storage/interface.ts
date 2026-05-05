@@ -699,6 +699,14 @@ export interface AuditEntry {
   id: string;
   timestamp: string;
   key_id: string | null;
+  /**
+   * Tenant scope (T-041). Stamped at write time from the calling api key's
+   * `tenant_id`. Null for system-initiated audits (install pipeline,
+   * cycle-budget overflow) and for bootstrap-admin keys that have no tenant.
+   * `GET /audit` filters on this column when the caller is tenant-scoped;
+   * tenantless callers (bootstrap admin) read every row.
+   */
+  tenant_id: string | null;
   action: string;
   resource_type: string;
   resource_id: string | null;
@@ -715,6 +723,10 @@ export interface AuditEntry {
 export interface AuditStore {
   log(entry: {
     key_id?: string;
+    /** See `AuditEntry.tenant_id`. Pass `c.get("apiKey")?.tenant_id ?? null`
+     *  from route handlers; null for system-initiated audits and for the
+     *  bootstrap-admin shape on self-hosted single-tenant deployments. */
+    tenant_id?: string | null;
     action: string;
     resource_type: string;
     resource_id?: string;
@@ -731,6 +743,11 @@ export interface AuditStore {
     until?: string;
     limit?: number;
     cursor?: string;
+    /** Tenant-scope filter (T-041). When set, returns only rows whose
+     *  `tenant_id` matches. When omitted, every row is returned —
+     *  bootstrap-admin reads on a self-hosted deployment, plus the
+     *  cleanup job which is currently global. */
+    tenant_id?: string | null;
   }): Promise<PaginatedResult<AuditEntry>>;
   cleanup(retentionDays: number): Promise<number>;
 }

@@ -218,6 +218,13 @@
       "when": 1778040000000,
       "tag": "0030_api_keys_runtime_credential",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1778050000000,
+      "tag": "0031_audit_log_tenant_id",
+      "breakpoints": true
     }
   ]
 }

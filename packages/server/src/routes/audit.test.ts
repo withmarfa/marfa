@@ -1,7 +1,12 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { parseTrustedProxyCidrs } from "../middleware/client-ip.js";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -226,6 +231,108 @@ describe("GET /audit", () => {
     for (const entry of page2.data) {
       expect(page1Ids.has(entry.id)).toBe(false);
     }
+  });
+
+  it("tenant-scopes reads (T-041): bootstrap admin (no tenant_id) sees every row", async () => {
+    // Seed three rows directly into the audit store: one for tenant A, one
+    // for tenant B, one bootstrap-shape (tenant_id null). The bootstrap
+    // admin in the test context has no tenant_id, so `GET /audit` must
+    // return all three. Tenant-scoped reads are exercised at the storage
+    // layer below — keying full HTTP coverage off a freshly-minted
+    // tenant-scoped key requires plumbing the raw key + hash that the
+    // test fixture doesn't expose; the storage assertion is the
+    // load-bearing one.
+    const uniqueAction = `test.tenant.${Math.random().toString(36).slice(2, 8)}`;
+    await ctx.storage.audit.log({
+      action: uniqueAction,
+      resource_type: "test",
+      resource_id: "row-a",
+      tenant_id: "tenant-a",
+    });
+    await ctx.storage.audit.log({
+      action: uniqueAction,
+      resource_type: "test",
+      resource_id: "row-b",
+      tenant_id: "tenant-b",
+    });
+    await ctx.storage.audit.log({
+      action: uniqueAction,
+      resource_type: "test",
+      resource_id: "row-bootstrap",
+      tenant_id: null,
+    });
+
+    // Bootstrap admin (no tenant_id) sees every row through the route.
+    const bootstrapRes = await request(
+      ctx.app,
+      "GET",
+      `/audit?action=${uniqueAction}`,
+      { key: ctx.adminKey },
+    );
+    expect(bootstrapRes.status).toBe(200);
+    const bootstrapBody = (await bootstrapRes.json()) as AuditPage;
+    const bootstrapResourceIds = new Set(
+      bootstrapBody.data.map((e) => e.resource_id),
+    );
+    expect(bootstrapResourceIds).toContain("row-a");
+    expect(bootstrapResourceIds).toContain("row-b");
+    expect(bootstrapResourceIds).toContain("row-bootstrap");
+
+    // Storage-level: a tenant-scoped read returns only rows with the
+    // matching tenant_id. System-stamped (null) rows do NOT leak to a
+    // tenant-scoped reader — the route's filter contract is "rows where
+    // tenant_id = caller's tenant_id". This is the load-bearing
+    // assertion for the hosted-mode isolation property.
+    const tenantA = await ctx.storage.audit.list({
+      action: uniqueAction,
+      tenant_id: "tenant-a",
+    });
+    const tenantAResourceIds = new Set(tenantA.data.map((e) => e.resource_id));
+    expect(tenantAResourceIds).toContain("row-a");
+    expect(tenantAResourceIds).not.toContain("row-b");
+    expect(tenantAResourceIds).not.toContain("row-bootstrap");
+
+    const tenantB = await ctx.storage.audit.list({
+      action: uniqueAction,
+      tenant_id: "tenant-b",
+    });
+    const tenantBResourceIds = new Set(tenantB.data.map((e) => e.resource_id));
+    expect(tenantBResourceIds).toContain("row-b");
+    expect(tenantBResourceIds).not.toContain("row-a");
+    expect(tenantBResourceIds).not.toContain("row-bootstrap");
+
+    // Route-layer end-to-end: mint a tenant-scoped admin key, hit
+    // GET /audit, assert it sees only tenant-A rows. Verifies the
+    // `tenant_id: callerTenantId` line in the route handler hasn't
+    // regressed back to the pre-T-041 unfiltered shape.
+    const tenantAKey = "myme_k1_test_tenant_a_admin";
+    await ctx.storage.keys.create(
+      {
+        label: "tenant-a-admin",
+        source: "tenant-a-admin",
+        role: "admin",
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(tenantAKey, TEST_API_KEY_SALT),
+      "tenant-a",
+    );
+    const tenantARouteRes = await request(
+      ctx.app,
+      "GET",
+      `/audit?action=${uniqueAction}`,
+      { key: tenantAKey },
+    );
+    expect(tenantARouteRes.status).toBe(200);
+    const tenantARouteBody = (await tenantARouteRes.json()) as AuditPage;
+    const routeResourceIds = new Set(
+      tenantARouteBody.data.map((e) => e.resource_id),
+    );
+    // Tenant A's admin sees its own rows only.
+    expect(routeResourceIds).toContain("row-a");
+    expect(routeResourceIds).not.toContain("row-b");
+    expect(routeResourceIds).not.toContain("row-bootstrap");
   });
 
   // NOTE: this test creates a SECOND TestContext with custom config.

@@ -23,6 +23,7 @@ export function rowToItem(row: ItemRow): Item {
     type: row.type,
     state: row.state as ItemState,
     ...(tier !== undefined && { tier }),
+    tenant_id: row.tenant_id ?? null,
     properties: safeJsonParse<Record<string, unknown>>(
       row.properties,
       {},

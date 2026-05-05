@@ -23,6 +23,7 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
     id: row.id,
     timestamp: row.timestamp,
     key_id: row.key_id ?? null,
+    tenant_id: row.tenant_id ?? null,
     action: row.action,
     resource_type: row.resource_type,
     resource_id: row.resource_id ?? null,
@@ -36,6 +37,7 @@ export class SqliteAuditStore implements AuditStore {
 
   async log(entry: {
     key_id?: string;
+    tenant_id?: string | null;
     action: string;
     resource_type: string;
     resource_id?: string;
@@ -55,6 +57,7 @@ export class SqliteAuditStore implements AuditStore {
         id: generateId(),
         timestamp: new Date().toISOString(),
         key_id: entry.key_id ?? null,
+        tenant_id: entry.tenant_id ?? null,
         action: entry.action,
         resource_type: entry.resource_type,
         resource_id: entry.resource_id ?? null,
@@ -71,6 +74,7 @@ export class SqliteAuditStore implements AuditStore {
     until?: string;
     limit?: number;
     cursor?: string;
+    tenant_id?: string | null;
   }): Promise<PaginatedResult<AuditEntry>> {
     const limit = Math.max(1, Math.min(filters.limit ?? 50, 200));
     const conditions = [];
@@ -89,6 +93,13 @@ export class SqliteAuditStore implements AuditStore {
     }
     if (filters.until) {
       conditions.push(lte(auditLog.timestamp, filters.until));
+    }
+    // T-041: tenant scope. When the caller is tenant-scoped (filter
+    // explicitly set), restrict to rows with matching `tenant_id`. When
+    // omitted, no tenant filter is applied — bootstrap-admin reads on
+    // self-hosted, plus the cleanup job which is currently global.
+    if (filters.tenant_id !== undefined && filters.tenant_id !== null) {
+      conditions.push(eq(auditLog.tenant_id, filters.tenant_id));
     }
 
     if (filters.cursor) {

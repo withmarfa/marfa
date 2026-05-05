@@ -478,6 +478,14 @@ export const auditLog = pgTable(
     id: text("id").primaryKey(),
     timestamp: text("timestamp").notNull(),
     key_id: text("key_id"),
+    /**
+     * Tenant scope (T-041). Stamped from the calling api key's `tenant_id`
+     * (or `null` for system-initiated audits / bootstrap-admin keys with no
+     * tenant). Reads filter by this column when the caller is tenant-scoped;
+     * keys without a tenant (bootstrap admin) see all rows. Indexed because
+     * `GET /audit` filters here on every hosted-mode request.
+     */
+    tenant_id: text("tenant_id"),
     action: text("action").notNull(),
     resource_type: text("resource_type").notNull(),
     resource_id: text("resource_id"),
@@ -487,6 +495,7 @@ export const auditLog = pgTable(
     index("idx_audit_log_timestamp").on(table.timestamp),
     index("idx_audit_log_action").on(table.action),
     index("idx_audit_log_resource_type").on(table.resource_type),
+    index("idx_audit_log_tenant_id").on(table.tenant_id),
   ],
 );
 
