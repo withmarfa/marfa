@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 
+# pnpm pack output — manual first-publish flow leaves a tarball
+# in the package directory; never commit it.
+*.tgz
+
 # Test coverage
 coverage/
 
