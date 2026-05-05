@@ -219,6 +219,27 @@ describe("loadSubscriptions", () => {
       "acme.load-subs-yes",
     );
   });
+
+  it("paginates past the first 200 connections (T-013)", async () => {
+    // Pre-T-013 the loader did one storage.items.list with limit=200;
+    // any tenant's 201st+ connection silently dropped from the
+    // subscription map. Seed 250 subscribing connections and assert
+    // every one is in the map after load.
+    const integrationId = await createIntegration(
+      manifest({ name: "acme.load-subs-paginate" }),
+    );
+    const N = 250;
+    const ids: string[] = [];
+    for (let i = 0; i < N; i++) {
+      const id = await createConnection({ integrationRef: integrationId });
+      ids.push(id);
+    }
+
+    const map = await loadSubscriptions(ctx.storage);
+    for (const id of ids) {
+      expect(map.has(id)).toBe(true);
+    }
+  });
 });
 
 describe("bridge fanout via in-process pubsub", () => {
@@ -295,6 +316,74 @@ describe("bridge fanout via in-process pubsub", () => {
       (c) => c.body.body.connection_id === connA,
     );
     expect(selfFiltered.length).toBe(0);
+
+    bridge!.stop();
+  });
+
+  it("a slow subscriber doesn't stall fanout to others (T-013)", async () => {
+    const intSlow = await createIntegration(
+      manifest({ name: "acme.fanout-slow" }),
+    );
+    const intFast = await createIntegration(
+      manifest({ name: "acme.fanout-fast" }),
+    );
+    const connSlow = await createConnection({ integrationRef: intSlow });
+    const connFast = await createConnection({ integrationRef: intFast });
+
+    const fastDeliveries: string[] = [];
+    let slowAttempts = 0;
+    const stubFetch: typeof fetch = ((
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      void input;
+      const body = JSON.parse(init?.body as string) as {
+        body: { integration_name: string; connection_id: string };
+      };
+      const integrationName = body.body.integration_name;
+      if (integrationName === "acme.fanout-slow") {
+        slowAttempts++;
+        // Hang until the AbortController fires from the per-fetch timeout.
+        // Reject when aborted so the bridge surfaces the failure path.
+        return new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
+        });
+      }
+      fastDeliveries.push(body.body.connection_id);
+      return Promise.resolve(new Response(null, { status: 202 }));
+    }) as typeof fetch;
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      queueUrl: "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: stubFetch,
+      maxAttempts: 1,
+      // Tight timeout so the test finishes quickly.
+      sendTimeoutMs: 100,
+    });
+    expect(bridge).not.toBeNull();
+    await bridge!.start();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const unrelated = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "slow-test" } },
+      undefined,
+    );
+    await publish({
+      type: "created",
+      item: unrelated,
+      originatingConnectionId: "itm_slow_origin",
+    });
+    // Wait long enough for the slow timeout to fire and the fast subscriber
+    // to be reached: 100ms timeout + 100ms backoff + slack.
+    await new Promise((r) => setTimeout(r, 600));
+
+    expect(slowAttempts).toBeGreaterThan(0);
+    expect(fastDeliveries).toContain(connFast);
+    // Slow subscriber's connection id should NOT appear in fast deliveries.
+    expect(fastDeliveries).not.toContain(connSlow);
 
     bridge!.stop();
   });
