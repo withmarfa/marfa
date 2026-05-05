@@ -1,0 +1,27 @@
+{
+  "name": "@mymehq/webhook-protocol",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Cross-runtime inbound webhook signature verification (HMAC-SHA256, Slack, Stripe, GitHub). Web Crypto only — runs in Cloudflare Workers and Node 20+ alike.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}

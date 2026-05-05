@@ -16,10 +16,7 @@ import {
   decryptSecret,
   SECRET_INFO,
 } from "../crypto/secret-encryption.js";
-import {
-  ADAPTERS,
-  isVerificationMethod,
-} from "../inbound-webhooks/verification/index.js";
+import { ADAPTERS, isVerificationMethod } from "@mymehq/webhook-protocol";
 import {
   createOpenAPIRouter,
   ErrorResponseSchema,
@@ -528,10 +525,13 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
       );
     }
 
-    // Read the raw body as a Buffer — HMAC over altered bytes fails,
+    // Read the raw body as ArrayBuffer — HMAC over altered bytes fails,
     // so any framework re-serialisation MUST NOT happen between the
-    // bytes-on-the-wire and the verifier input.
-    const rawBody = Buffer.from(await c.req.raw.arrayBuffer());
+    // bytes-on-the-wire and the verifier input. The verifier package
+    // (`@mymehq/webhook-protocol`) takes ArrayBuffer natively (Web
+    // Crypto's input type); we keep the same buffer for the JSON
+    // payload column via TextDecoder.
+    const rawBody = await c.req.raw.arrayBuffer();
 
     let secret: string;
     try {
@@ -550,7 +550,7 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
     }
 
     const adapter = ADAPTERS[subscription.verification_method];
-    const result = adapter(rawBody, c.req.raw.headers, secret);
+    const result = await adapter(rawBody, c.req.raw.headers, secret);
 
     const now = new Date().toISOString();
     // Fall back to the row id when the adapter doesn't surface a
@@ -564,7 +564,7 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
       inbound_webhook_id: id,
       external_delivery_id: externalDeliveryId,
       received_at: now,
-      payload: rawBody.toString("utf8"),
+      payload: new TextDecoder("utf-8").decode(rawBody),
       verified: result.verified,
       processing_error: result.verified ? undefined : result.reason,
     });

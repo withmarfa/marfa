@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    // The `DOM` lib supplies the Web-platform types this package depends
+    // on (Headers, TextEncoder/TextDecoder, ArrayBuffer, crypto.subtle).
+    // Without it, tsc would have no globals for those names. The package
+    // still does not run in a browser — `DOM` here is purely for typing
+    // the Web Crypto and Fetch surfaces shared with Cloudflare Workers
+    // and Node 20+.
+    "lib": ["ES2022", "DOM"],
+    "types": []
+  },
+  "include": ["src"]
+}

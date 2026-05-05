@@ -1,7 +1,7 @@
 import { Hono } from "hono";
+import { ADAPTERS } from "@mymehq/webhook-protocol";
 import type { ControlPlaneEnv } from "../env.js";
 import { MymeServerClient } from "../myme-client.js";
-import { ADAPTERS } from "../verify-dispatch.js";
 
 /**
  * Inbound webhook receiver.
@@ -10,8 +10,10 @@ import { ADAPTERS } from "../verify-dispatch.js";
  *      server (the broker key authenticates the lookup).
  *   2. Verify the delivery against each subscription's adapter; the
  *      first that passes wins. T-009 lifted all four supported methods
- *      (HMAC-SHA256, Slack, Stripe, GitHub) into the control plane via
- *      the `verify-dispatch` table. The previously-stubbed `custom`
+ *      (HMAC-SHA256, Slack, Stripe, GitHub) into the control plane;
+ *      T-035 consolidated them into `@mymehq/webhook-protocol` so the
+ *      Worker control plane and the Node-side server share one
+ *      Web-Crypto implementation. The previously-stubbed `custom`
  *      method was dropped in T-011.
  *   3. Enforce idempotency via the IDEMPOTENCY_KV namespace keyed by
  *      `${webhook_id}:${delivery_id}` with a 1-hour TTL. Duplicate
@@ -84,7 +86,7 @@ export function registerWebhookRoutes(
 
     // Try each subscription; first that verifies wins. Most connections
     // have exactly one subscription so the loop usually runs once. The
-    // dispatch table lookup (verify-dispatch.ts) covers all four
+    // `ADAPTERS` table from `@mymehq/webhook-protocol` covers all four
     // supported methods — unknown methods (shouldn't happen post-T-011
     // since the manifest schema rejects them) get a clear error.
     let matched: {
@@ -107,7 +109,7 @@ export function registerWebhookRoutes(
       if (result.verified) {
         matched = {
           sub,
-          deliveryId: result.delivery_id ?? crypto.randomUUID(),
+          deliveryId: result.external_delivery_id ?? crypto.randomUUID(),
         };
         break;
       }

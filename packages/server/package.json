@@ -33,6 +33,7 @@
     "@hono/node-server": "^1.13.8",
     "@hono/zod-openapi": "^1.2.4",
     "@mymehq/shared": "workspace:*",
+    "@mymehq/webhook-protocol": "workspace:*",
     "better-auth": "1.6.9",
     "better-sqlite3": "^12.9.0",
     "drizzle-orm": "^0.45.2",
