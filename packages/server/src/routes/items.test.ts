@@ -85,26 +85,159 @@ describe("POST /items", () => {
     );
   });
 
-  it("detects duplicate source", async () => {
-    await request(ctx.app, "POST", "/items", {
+  it("natural-key upsert: re-POST with same (source, source_id) updates in place (T-038)", async () => {
+    const first = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "core.note",
         properties: { body: "First" },
-        source: "test",
-        source_id: "dup-1",
+        source_id: "natural-key-1",
       },
     });
-    const res = await request(ctx.app, "POST", "/items", {
+    expect(first.status).toBe(201);
+    const firstData = (await first.json()) as {
+      item: { id: string; version: number };
+    };
+
+    const second = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "core.note",
         properties: { body: "Second" },
-        source: "test",
-        source_id: "dup-1",
+        source_id: "natural-key-1",
       },
     });
-    expect(res.status).toBe(409);
+    // 200 (not 201) signals the realised effect was an update via natural-key
+    // match, not a fresh create.
+    expect(second.status).toBe(200);
+    const secondData = (await second.json()) as {
+      item: { id: string; version: number; properties: { body?: string } };
+    };
+    // Same row, version incremented, properties merged.
+    expect(secondData.item.id).toBe(firstData.item.id);
+    expect(secondData.item.version).toBe(firstData.item.version + 1);
+    expect(secondData.item.properties.body).toBe("Second");
+
+    // Whole-batch retry shape: a third POST is also idempotent — no new row
+    // is created, the existing row keeps being updated. This is the contract
+    // inbound integration handlers (rss-watcher / Calendar) rely on to recover
+    // from createItem-success / cursor-write-fail without producing duplicates.
+    const third = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Third" },
+        source_id: "natural-key-1",
+      },
+    });
+    expect(third.status).toBe(200);
+    const thirdData = (await third.json()) as { item: { id: string } };
+    expect(thirdData.item.id).toBe(firstData.item.id);
+
+    // Audit row records the realised effect (`item.update`) and flags the
+    // idempotent provenance so operators can spot natural-key re-syncs.
+    const auditRes = await request(ctx.app, "GET", "/audit?limit=20", {
+      key: ctx.adminKey,
+    });
+    const auditData = (await auditRes.json()) as {
+      data: {
+        action: string;
+        details?: { idempotent?: boolean; source_id?: string };
+      }[];
+    };
+    const idempotentEntry = auditData.data.find(
+      (e) => e.details?.idempotent === true,
+    );
+    expect(idempotentEntry).toBeDefined();
+    expect(idempotentEntry?.action).toBe("item.update");
+    expect(idempotentEntry?.details?.source_id).toBe("natural-key-1");
+  });
+
+  it("natural-key upsert: source_id absent → create path unchanged", async () => {
+    // Two POSTs with no source_id → two distinct rows, both 201.
+    const first = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "no-key A" } },
+    });
+    const second = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "no-key B" } },
+    });
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    const firstData = (await first.json()) as { item: { id: string } };
+    const secondData = (await second.json()) as { item: { id: string } };
+    expect(firstData.item.id).not.toBe(secondData.item.id);
+  });
+
+  it("natural-key upsert: explicit `id` mismatching the resolved row is rejected", async () => {
+    // First POST creates the row with a generated id; the natural key lives on
+    // (source, source_id). A subsequent POST that explicitly carries a
+    // different `id` along with the same source_id should not silently win
+    // with the existing row's id — that would surprise the caller.
+    const first = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "First" },
+        source_id: "id-mismatch-key",
+      },
+    });
+    expect(first.status).toBe(201);
+
+    const conflicting = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Conflicting id" },
+        source_id: "id-mismatch-key",
+        id: "019df7d6-0000-7000-8000-000000000000",
+      },
+    });
+    expect(conflicting.status).toBe(400);
+    const errBody = (await conflicting.json()) as {
+      error: { code: string };
+    };
+    expect(errBody.error.code).toBe("validation_error");
+  });
+
+  it("natural-key upsert: source_id under different sources do not collide", async () => {
+    // The upsert is keyed on (source, source_id). Different credentials with
+    // different stamped sources but matching source_id values must produce
+    // distinct rows. The test admin's source is `test-admin-<suffix>`; we
+    // mint a second key with a different `source` to exercise the boundary.
+    const altKeyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "alt-source",
+        source: "alt-source",
+        role: "admin",
+        type_permissions: {},
+      },
+    });
+    const altKey = (await altKeyRes.json()) as { key: string };
+
+    const first = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Admin source" },
+        source_id: "shared-key",
+      },
+    });
+    const second = await request(ctx.app, "POST", "/items", {
+      key: altKey.key,
+      body: {
+        type: "core.note",
+        properties: { body: "Alt source" },
+        source_id: "shared-key",
+      },
+    });
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    const firstData = (await first.json()) as { item: { id: string } };
+    const secondData = (await second.json()) as { item: { id: string } };
+    expect(firstData.item.id).not.toBe(secondData.item.id);
   });
 });
 

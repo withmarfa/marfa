@@ -36,6 +36,14 @@ export interface CreateItemInput {
   type: string;
   properties?: Record<string, unknown>;
   edges?: Record<string, string[]>;
+  /** Upstream's stable identifier for this entity. Combined with the
+   *  server-stamped `source` (from the runtime credential), enables the
+   *  natural-key idempotency contract on `POST /items` (T-038): a re-POST
+   *  of the same `(source, source_id)` short-circuits to update instead of
+   *  creating a duplicate. Inbound integrations re-syncing from upstream
+   *  feeds should always set this so whole-batch retries
+   *  (createItem-success / cursor-write-fail) recover cleanly. */
+  source_id?: string;
 }
 
 export interface ItemResource {

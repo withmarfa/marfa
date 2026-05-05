@@ -107,6 +107,204 @@
           }
         },
         "responses": {
+          "200": {
+            "description": "Item updated via natural-key upsert. Returned when both `source` (stamped from the credential) and request `source_id` resolve a non-trashed item in the caller's tenant — the request is treated as an idempotent re-sync of the upstream entry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "item": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        },
+                        "properties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "archived",
+                            "trashed",
+                            "revoked"
+                          ]
+                        },
+                        "tier": {
+                          "type": "string",
+                          "enum": [
+                            "library",
+                            "feed"
+                          ]
+                        },
+                        "version": {
+                          "type": "number"
+                        },
+                        "schema_version": {
+                          "type": "integer"
+                        },
+                        "source": {
+                          "type": "string"
+                        },
+                        "source_id": {
+                          "type": "string"
+                        },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "user",
+                            "ai",
+                            "worker",
+                            "system"
+                          ]
+                        },
+                        "device": {
+                          "type": "string"
+                        },
+                        "capture_latitude": {
+                          "type": "number"
+                        },
+                        "capture_longitude": {
+                          "type": "number"
+                        },
+                        "timestamp": {
+                          "type": "string"
+                        },
+                        "created_at": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string"
+                        },
+                        "edges": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "edges": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "tenant_id": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "source_id": {
+                                      "type": "string"
+                                    },
+                                    "target_id": {
+                                      "type": "string"
+                                    },
+                                    "edge_type": {
+                                      "type": "string"
+                                    },
+                                    "properties": {
+                                      "type": "object",
+                                      "additionalProperties": {
+                                        "nullable": true
+                                      }
+                                    },
+                                    "created_at": {
+                                      "type": "string"
+                                    },
+                                    "updated_at": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "source_id",
+                                    "target_id",
+                                    "edge_type",
+                                    "properties",
+                                    "created_at",
+                                    "updated_at"
+                                  ]
+                                }
+                              },
+                              "has_more": {
+                                "type": "boolean"
+                              },
+                              "next_cursor": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "edges",
+                              "has_more"
+                            ]
+                          }
+                        },
+                        "extensions": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "nullable": true
+                            }
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "type",
+                        "properties",
+                        "state",
+                        "version",
+                        "schema_version",
+                        "source",
+                        "origin",
+                        "timestamp",
+                        "created_at",
+                        "updated_at"
+                      ]
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "properties": {
+                        "item_id": {
+                          "type": "string"
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "extensions": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "item_id",
+                        "tags",
+                        "extensions"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "item",
+                    "metadata"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
             "description": "Item created",
             "content": {
