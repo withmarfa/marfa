@@ -27,20 +27,20 @@
     "generate:openapi": "tsx scripts/generate-openapi.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1021.0",
-    "@aws-sdk/s3-request-presigner": "^3.1021.0",
+    "@aws-sdk/client-s3": "^3.1042.0",
+    "@aws-sdk/s3-request-presigner": "^3.1042.0",
     "@better-auth/passkey": "1.6.9",
-    "@hono/node-server": "^1.13.8",
-    "@hono/zod-openapi": "^1.2.4",
+    "@hono/node-server": "^2.0.1",
+    "@hono/zod-openapi": "^1.3.0",
     "@mymehq/shared": "workspace:*",
     "@mymehq/webhooks": "workspace:*",
     "better-auth": "1.6.9",
     "better-sqlite3": "^12.9.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.7.5",
-    "ipaddr.js": "^2.3.0",
-    "postgres": "^3.4.8",
-    "tar-stream": "^3.1.8",
+    "hono": "^4.12.17",
+    "ipaddr.js": "^2.4.0",
+    "postgres": "^3.4.9",
+    "tar-stream": "^3.2.0",
     "tslib": "^2.8.1"
   },
   "devDependencies": {
@@ -48,11 +48,11 @@
     "@mymehq/runtime-sdk": "workspace:*",
     "@mymehq/runtime-test": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.6.0",
     "@types/tar-stream": "^3.1.4",
     "drizzle-kit": "^0.31.10",
     "tsup": "^8.5.1",
     "tsx": "^4.19.4",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.3"
   }
 }

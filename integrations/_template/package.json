@@ -14,8 +14,8 @@
     "@mymehq/shared": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20251201.0",
-    "typescript": "^6.0.2",
-    "vitest": "^4.1.2"
+    "@cloudflare/workers-types": "^4.20260505.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
   }
 }
