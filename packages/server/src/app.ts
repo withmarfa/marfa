@@ -40,6 +40,7 @@ import {
   connectionLeasedTokenRoutes,
   leaseTokenValidationRoutes,
 } from "./routes/connection-leased-tokens.js";
+import { connectionRoutes } from "./routes/connections.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
@@ -275,6 +276,10 @@ export function createApp(
   // /lease-tokens/validate (separate router so it can be reached by
   // upstream services that don't otherwise touch /connections).
   app.route("/connections", connectionLeasedTokenRoutes(storage));
+  // Connection management — POST /connections/:id/uninstall (admin-gated)
+  // orchestrates a full teardown across credentials, OAuth tokens, leased
+  // tokens, inbound webhooks, and the connection's lifecycle state.
+  app.route("/connections", connectionRoutes(storage));
   app.route("/lease-tokens", leaseTokenValidationRoutes(storage));
   app.route("/webhooks/inbound", inboundWebhookReceiptRoutes(storage));
   app.route("/webhooks", webhookRoutes(storage));

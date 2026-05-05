@@ -23,6 +23,7 @@ import type {
   WebhookDelivery,
   CreateWebhookInput,
   UpdateWebhookInput,
+  ConnectionUninstallResult,
 } from "@mymehq/shared";
 import { HttpTransport } from "./transport.js";
 import {
@@ -393,6 +394,34 @@ export class MymeClient {
         { body: input },
       );
       return res.item;
+    },
+
+    /**
+     * Create-or-update an item, surfacing whether the server resolved as a
+     * fresh create (HTTP 201) or a natural-key match update (HTTP 200).
+     *
+     * `POST /items` accepts a `(source, source_id)` pair as a stable
+     * natural key (T-038): a second POST with the same pair updates the
+     * existing row in place rather than 409ing. The wire shape returned
+     * is `{ item }` regardless — the only signal of "created vs updated"
+     * is the HTTP status code, which `transport.request` consumes
+     * internally. This method threads the status out so callers can
+     * surface the distinction (e.g. CLI `Created.` vs `Updated
+     * (natural-key match).`).
+     *
+     * Use `items.create` when the caller does not need the distinction —
+     * the wire shape is identical.
+     */
+    upsert: async (
+      input: CreateItemInput & {
+        /** Atomic edges payload, same semantics as `items.create`. */
+        edges?: Record<string, string[]>;
+      },
+    ): Promise<{ item: Item; created: boolean }> => {
+      const { data, status } = await this.transport.requestWithStatus<{
+        item: Item;
+      }>("POST", "/items", { body: input });
+      return { item: data.item, created: status === 201 };
     },
 
     get: async (id: string): Promise<Item> => {
@@ -1041,6 +1070,41 @@ export class MymeClient {
         deliveries: WebhookDelivery[];
       }>("GET", `/webhooks/${id}/deliveries`, { query });
       return res.deliveries;
+    },
+  };
+
+  // ---- Connections ----
+
+  /**
+   * Connection management. The `system.connection` items themselves are
+   * still managed via `client.items` (list, get, transition); this
+   * namespace adds the orchestrated lifecycle operations that don't fit
+   * the generic items surface — specifically `uninstall`, which requires
+   * a multi-step server-side teardown across credentials, tokens, and
+   * inbound subscriptions.
+   *
+   * Convenience filters for listing connections (by `integration_ref`,
+   * `state`, etc.) live on `client.items.list({ type: "system.connection",
+   * ... })`. The CLI's `my connections` tree wraps both.
+   */
+  readonly connections = {
+    /**
+     * Orchestrated uninstall of an `external-service-connector`
+     * connection. Revokes runtime credentials, deletes upstream OAuth
+     * tokens, revokes active leased tokens, disables inbound webhook
+     * subscriptions, transitions the system.connection state to
+     * `revoked`, and emits a `system.activity` row. Audit-logged.
+     *
+     * Idempotent at the artefact level — revoking already-revoked
+     * tokens is a no-op — but rejects with 400 when the connection
+     * itself is already in state `revoked`. Admin-only; tenant admins
+     * can uninstall connections in their own tenant scope.
+     */
+    uninstall: async (id: string): Promise<ConnectionUninstallResult> => {
+      return this.transport.request<ConnectionUninstallResult>(
+        "POST",
+        `/connections/${id}/uninstall`,
+      );
     },
   };
 

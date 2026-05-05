@@ -309,6 +309,93 @@ describe("HttpTransport — body-parse failures", () => {
   });
 });
 
+describe("HttpTransport — requestWithStatus", () => {
+  // The status-passing sibling of `request<T>` exists so callers (today
+  // just `client.items.upsert`) can branch on 200 vs 201 without
+  // re-implementing fetch handling. Pin the contract here: success body
+  // is parsed identically, the response status is surfaced, and the
+  // error paths fall through to the same typed-error mapping as
+  // `request<T>`.
+
+  it("surfaces status 200 alongside the parsed body", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(makeJsonResponse(200, { item: { id: "itm_1" } }));
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    const result = await transport.requestWithStatus<{ item: { id: string } }>(
+      "POST",
+      "/items",
+    );
+    expect(result.status).toBe(200);
+    expect(result.data).toEqual({ item: { id: "itm_1" } });
+  });
+
+  it("surfaces status 201 alongside the parsed body — distinguishes natural-key create from update", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(makeJsonResponse(201, { item: { id: "itm_2" } }));
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    const result = await transport.requestWithStatus<{ item: { id: string } }>(
+      "POST",
+      "/items",
+    );
+    expect(result.status).toBe(201);
+    expect(result.data).toEqual({ item: { id: "itm_2" } });
+  });
+
+  it("returns { data: undefined, status: 204 } on No Content responses (matches request<T> behaviour)", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    const result = await transport.requestWithStatus<undefined>(
+      "DELETE",
+      "/items/x",
+    );
+    expect(result.status).toBe(204);
+    expect(result.data).toBeUndefined();
+  });
+
+  it("4xx responses throw the typed MymeError subclass — never resolve", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      makeJsonResponse(404, {
+        error: { code: "not_found", message: "x" },
+      }),
+    );
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    await expect(
+      transport.requestWithStatus<unknown>("GET", "/items/x"),
+    ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("request<T> delegates to requestWithStatus<T> — returning the body unchanged", async () => {
+    // Belt-and-braces: the refactor moved request<T>'s body onto
+    // requestWithStatus<T>. Confirm the public request<T> contract is
+    // unchanged — same body shape, same error mapping.
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(makeJsonResponse(200, { hello: "world" }));
+    const transport = makeTransport(
+      mockFetch as unknown as typeof globalThis.fetch,
+    );
+
+    const body = await transport.request<{ hello: string }>("GET", "/x");
+    expect(body).toEqual({ hello: "world" });
+  });
+});
+
 describe("HttpTransport — no silent retry", () => {
   it("calls fetch exactly once on a 500 response", async () => {
     const mockFetch = vi
