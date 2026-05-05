@@ -329,6 +329,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     // both pass the gate and both mint admin keys.)
 
     void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
       action: "key.create",
       resource_type: "key",
@@ -371,6 +372,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     await storage.keys.revoke(id);
     void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
       action: "key.revoke",
       resource_type: "key",
@@ -418,6 +420,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     });
 
     void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
       action: "key.update",
       resource_type: "key",

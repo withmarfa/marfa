@@ -8,6 +8,17 @@ import { auditLog } from "./schema.js";
 import type { PgDb } from "./connection.js";
 
 function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
+  const details = safeJsonParse<Record<string, unknown>>(
+    row.details,
+    {},
+    "audit_log.details",
+  );
+  // T-027: client_ip is persisted alongside the rest of details for
+  // schema compatibility (audit_log.details is JSON, no migration); the
+  // typed interface lifts it back to a top-level field on the read path.
+  const ipRaw = details.client_ip;
+  const client_ip =
+    typeof ipRaw === "string" && ipRaw.length > 0 ? ipRaw : null;
   return {
     id: row.id,
     timestamp: row.timestamp,
@@ -15,11 +26,8 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
     action: row.action,
     resource_type: row.resource_type,
     resource_id: row.resource_id ?? null,
-    details: safeJsonParse<Record<string, unknown>>(
-      row.details,
-      {},
-      "audit_log.details",
-    ),
+    client_ip,
+    details,
   };
 }
 
@@ -31,8 +39,16 @@ export class PgAuditStore implements AuditStore {
     action: string;
     resource_type: string;
     resource_id?: string;
+    client_ip?: string | null;
     details?: Record<string, unknown>;
   }): Promise<void> {
+    // T-027: fold the typed `client_ip` into the JSON `details` blob.
+    // Persisting alongside the existing details keeps the schema stable
+    // (no migration needed) while exposing IP as a typed field on read.
+    const detailsBlob: Record<string, unknown> = { ...(entry.details ?? {}) };
+    if (entry.client_ip !== undefined && entry.client_ip !== null) {
+      detailsBlob.client_ip = entry.client_ip;
+    }
     await this.db.insert(auditLog).values({
       id: generateId(),
       timestamp: new Date().toISOString(),
@@ -40,7 +56,7 @@ export class PgAuditStore implements AuditStore {
       action: entry.action,
       resource_type: entry.resource_type,
       resource_id: entry.resource_id ?? null,
-      details: JSON.stringify(entry.details ?? {}),
+      details: JSON.stringify(detailsBlob),
     });
   }
 

@@ -20,7 +20,8 @@
  */
 
 import ipaddr from "ipaddr.js";
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
+import type { AppEnv } from "./auth.js";
 
 type CidrRange = [ipaddr.IPv4 | ipaddr.IPv6, number];
 
@@ -140,3 +141,22 @@ export function getClientIp(
 }
 
 export type { CidrRange };
+
+/**
+ * Resolve the client IP once per request and stash it on
+ * `c.var.clientIp` for downstream consumers (T-027).
+ *
+ * Centralising the resolution means routes don't have to thread the
+ * `trustedProxyCidrs` config or call `getClientIp(c, ...)` themselves
+ * every time they want to record an audit row. Run this BEFORE auth
+ * so the resolved IP is available in any downstream middleware
+ * (auth itself, rate limiting, route handlers).
+ */
+export function clientIpMiddleware(
+  trustedCidrs: CidrRange[],
+): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    c.set("clientIp", getClientIp(c, trustedCidrs));
+    await next();
+  };
+}

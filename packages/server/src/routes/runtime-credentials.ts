@@ -221,6 +221,7 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     );
 
     void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: apiKey.id,
       action: "runtime_credential.create",
       resource_type: "api_key",

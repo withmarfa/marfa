@@ -133,6 +133,7 @@ export function tenantRoutes(storage: Storage) {
 
     await storage.tenants.updateConfig(key.tenant_id, body);
     void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: key.id,
       action: "tenant.config.update",
       resource_type: "tenant",

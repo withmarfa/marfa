@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { parseTrustedProxyCidrs } from "../middleware/client-ip.js";
 
 let ctx: TestContext;
 
@@ -18,6 +19,8 @@ interface AuditRow {
   resource_type: string;
   resource_id: string | null;
   timestamp: string;
+  client_ip: string | null;
+  details: Record<string, unknown>;
 }
 
 interface AuditPage {
@@ -154,6 +157,76 @@ describe("GET /audit", () => {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(400);
+  });
+
+  it("captures the resolved client IP on rows produced by route handlers (T-027)", async () => {
+    // Issue an authenticated POST that emits an audit row, with a
+    // synthetic peer IP. No TRUSTED_PROXY_CIDRS — peer is the only
+    // trusted source. The audit row must carry that peer.
+    const uniqueTitle = `t027-peer-${Math.random().toString(36).slice(2, 8)}`;
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      peer: "203.0.113.42",
+      body: { type: "core.task", properties: { title: uniqueTitle } },
+    });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as { item: { id: string } };
+
+    // Look up the audit row for the item we just created — most reliable
+    // way to find our own row vs. unrelated noise from other tests.
+    const listRes = await request(
+      ctx.app,
+      "GET",
+      `/audit?action=item.create&resource_id=${created.item.id}`,
+      { key: ctx.adminKey, peer: "203.0.113.42" },
+    );
+    expect(listRes.status).toBe(200);
+    const body = (await listRes.json()) as AuditPage;
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0]?.client_ip).toBe("203.0.113.42");
+    // client_ip is also folded into the details JSON — the persistence
+    // channel — and lifted back to the typed field on read.
+    expect(body.data[0]?.details.client_ip).toBe("203.0.113.42");
+  });
+
+  it("honours TRUSTED_PROXY_CIDRS when stamping the audit IP (T-027)", async () => {
+    // Stand up a fresh app whose config trusts 10.0.0.0/8 as a proxy
+    // CIDR. A request whose peer is in 10.0.0.0/8 and whose
+    // x-forwarded-for ends in `203.0.113.7` should produce an audit
+    // row with `client_ip: 203.0.113.7` (the leftmost untrusted hop).
+    const trustedCtx = await createTestContext({
+      trustedProxyCidrs: parseTrustedProxyCidrs("10.0.0.0/8"),
+    });
+    try {
+      const uniqueTitle = `t027-proxy-${Math.random().toString(36).slice(2, 8)}`;
+      const res = await request(trustedCtx.app, "POST", "/items", {
+        key: trustedCtx.adminKey,
+        peer: "10.0.0.5",
+        headers: { "x-forwarded-for": "203.0.113.7" },
+        body: { type: "core.task", properties: { title: uniqueTitle } },
+      });
+      expect(res.status).toBe(201);
+      const created = (await res.json()) as { item: { id: string } };
+
+      const listRes = await request(
+        trustedCtx.app,
+        "GET",
+        `/audit?action=item.create&resource_id=${created.item.id}`,
+        {
+          key: trustedCtx.adminKey,
+          peer: "10.0.0.5",
+          headers: { "x-forwarded-for": "203.0.113.7" },
+        },
+      );
+      expect(listRes.status).toBe(200);
+      const body = (await listRes.json()) as AuditPage;
+      expect(body.data).toHaveLength(1);
+      // The leftmost untrusted hop is the recorded IP — NOT the peer
+      // (which was a trusted proxy) and NOT some other XFF entry.
+      expect(body.data[0]?.client_ip).toBe("203.0.113.7");
+    } finally {
+      trustedCtx.cleanup();
+    }
   });
 
   it("respects limit and paginates via cursor across two pages", async () => {

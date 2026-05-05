@@ -11,6 +11,11 @@ const AuditEntrySchema = z.object({
   action: z.string(),
   resource_type: z.string(),
   resource_id: z.string().nullable(),
+  /**
+   * Resolved client IP for the action (T-027). Null for system-initiated
+   * audits with no Hono context.
+   */
+  client_ip: z.string().nullable(),
   details: z.record(z.string(), z.unknown()),
 });
 

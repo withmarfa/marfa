@@ -28,6 +28,16 @@ export interface AppEnv extends Record<string, unknown> {
     isBootstrap: boolean;
     authType: "api_key" | "oauth" | undefined;
     requestId: string;
+    /**
+     * Effective client IP for the current request, resolved once via
+     * `getClientIp` and stashed by `clientIpMiddleware` (T-027). Routes
+     * thread this into `audit.log({ client_ip: c.var.clientIp ?? null })`
+     * so every audit row carries the originator's IP. `null` when the
+     * peer cannot be determined (synthetic test contexts) or when the
+     * caller is not behind a Hono request (system-initiated audits go
+     * through the storage layer directly with `client_ip: null`).
+     */
+    clientIp: string | null;
   };
 }
 

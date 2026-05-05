@@ -291,6 +291,7 @@ export function blobRoutes(
     await storage.blobs.register(hash, mimeType, data.length, hash);
 
     await storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
       action: "blob.upload",
       resource_type: "blob",
@@ -502,6 +503,7 @@ export function blobRoutes(
     }
 
     await storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
       action: "blob.reconcile",
       resource_type: "blob",
