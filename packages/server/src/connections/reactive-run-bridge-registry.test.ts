@@ -365,7 +365,11 @@ describe("bridge fanout via in-process pubsub", () => {
     });
     expect(bridge).not.toBeNull();
     await bridge!.start();
-    await new Promise((r) => setTimeout(r, 20));
+    // The bridge spins up `coordination.withJobLock` + the subscribe()
+    // iterator on a fire-and-forget async path; PG storage adds a real
+    // round-trip per setup step. Give it a generous head-start so the
+    // subscribe() listener is actually live before we publish.
+    await new Promise((r) => setTimeout(r, 200));
 
     const unrelated = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "slow-test" } },
@@ -376,9 +380,9 @@ describe("bridge fanout via in-process pubsub", () => {
       item: unrelated,
       originatingConnectionId: "itm_slow_origin",
     });
-    // Wait long enough for the slow timeout to fire and the fast subscriber
-    // to be reached: 100ms timeout + 100ms backoff + slack.
-    await new Promise((r) => setTimeout(r, 600));
+    // Slow timeout (100ms) + first backoff (100ms) + tail-of-fanout
+    // wait. Generous on PG to absorb test-container jitter.
+    await new Promise((r) => setTimeout(r, 1500));
 
     expect(slowAttempts).toBeGreaterThan(0);
     expect(fastDeliveries).toContain(connFast);
