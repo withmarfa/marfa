@@ -19,6 +19,8 @@ interface Captured {
   method: string;
   authorization?: string;
   body?: string;
+  cycleOrigin?: string;
+  cycleHop?: string;
 }
 
 function makeFetch(
@@ -32,6 +34,8 @@ function makeFetch(
       url: req.url,
       method: req.method,
       authorization: req.headers.get("Authorization") ?? undefined,
+      cycleOrigin: req.headers.get("X-Myme-Cycle-Origin") ?? undefined,
+      cycleHop: req.headers.get("X-Myme-Cycle-Hop") ?? undefined,
     });
     const responder = responses[i++];
     if (!responder) {
@@ -249,5 +253,125 @@ describe("ConnectionClient", () => {
       "https://api.example.com/items/task_1/transition",
     );
     expect(item.state).toBe("archived");
+  });
+});
+
+describe("ConnectionClient cycle headers (T-039)", () => {
+  it("stamps X-Myme-Cycle-Origin / X-Myme-Cycle-Hop on createItem when cycleParent is the parent", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      cycleParent: {
+        originating_connection_id: "conn-upstream",
+        hop_count: 2,
+      },
+      fetch: makeFetch(
+        [
+          () =>
+            new Response(JSON.stringify({ id: "item_1", type: "core.note" }), {
+              status: 201,
+            }),
+        ],
+        captured,
+      ),
+    });
+    await client.createItem({ type: "core.note", properties: { body: "x" } });
+    // nextHopMetadata({ origin: A, hop: 2 }, conn_1) → { origin: A, hop: 3 }
+    expect(captured[0]!.cycleOrigin).toBe("conn-upstream");
+    expect(captured[0]!.cycleHop).toBe("3");
+  });
+
+  it("stamps the connector as the chain head when cycleParent is null", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      cycleParent: null,
+      fetch: makeFetch(
+        [
+          () =>
+            new Response(JSON.stringify({ id: "item_1", type: "core.note" }), {
+              status: 201,
+            }),
+        ],
+        captured,
+      ),
+    });
+    await client.createItem({ type: "core.note", properties: { body: "x" } });
+    // Schedule / webhook trigger: cycleParent: null → connector is the head.
+    // nextHopMetadata(null, conn_1) → { origin: conn_1, hop: 1 }
+    expect(captured[0]!.cycleOrigin).toBe("conn_1");
+    expect(captured[0]!.cycleHop).toBe("1");
+  });
+
+  it("does not stamp cycle headers on GET requests", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      cycleParent: {
+        originating_connection_id: "conn-upstream",
+        hop_count: 2,
+      },
+      fetch: makeFetch(
+        [
+          () =>
+            new Response(JSON.stringify({ id: "item_1", type: "core.note" }), {
+              status: 200,
+            }),
+        ],
+        captured,
+      ),
+    });
+    await client.getItem("item_1");
+    // GET is read-only — won't trigger a publish — so no cycle headers
+    // are emitted. Keeps the wire shape minimal.
+    expect(captured[0]!.cycleOrigin).toBeUndefined();
+    expect(captured[0]!.cycleHop).toBeUndefined();
+  });
+
+  it("multiple mutating calls within the same run all derive from the same parent (one logical hop)", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      cycleParent: {
+        originating_connection_id: "conn-upstream",
+        hop_count: 2,
+      },
+      fetch: makeFetch(
+        [
+          () =>
+            new Response(JSON.stringify({ id: "item_1", type: "core.note" }), {
+              status: 201,
+            }),
+          () =>
+            new Response(JSON.stringify({ id: "item_2", type: "core.note" }), {
+              status: 201,
+            }),
+          () =>
+            new Response(JSON.stringify({ id: "item_3", type: "core.note" }), {
+              status: 201,
+            }),
+        ],
+        captured,
+      ),
+    });
+    await client.createItem({ type: "core.note", properties: {} });
+    await client.createItem({ type: "core.note", properties: {} });
+    await client.createItem({ type: "core.note", properties: {} });
+    // Three mutating calls in the same run — every one stamps hop = 3
+    // (parent + 1). The connector's "run is one logical hop" contract:
+    // per-request increments would conflate an N-call handler with an
+    // N-deep chain.
+    for (const c of captured) {
+      expect(c.cycleOrigin).toBe("conn-upstream");
+      expect(c.cycleHop).toBe("3");
+    }
   });
 });

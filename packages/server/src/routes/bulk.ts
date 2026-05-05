@@ -530,6 +530,7 @@ export function bulkRoutes(storage: Storage) {
               item,
               metadata,
               tenantId,
+              ...c.var.cycle,
             });
           }
         }
@@ -788,7 +789,13 @@ export function bulkRoutes(storage: Storage) {
             : action === "update_tags"
               ? "metadata_changed"
               : "updated";
-        await publish({ type: eventType, item: fresh, metadata, tenantId });
+        await publish({
+          type: eventType,
+          item: fresh,
+          metadata,
+          tenantId,
+          ...c.var.cycle,
+        });
       }
     }
 

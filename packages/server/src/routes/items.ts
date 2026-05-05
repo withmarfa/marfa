@@ -817,6 +817,7 @@ export function itemRoutes(storage: Storage) {
           item: updatedItem,
           metadata: updatedMetadata,
           tenantId,
+          ...c.var.cycle,
         });
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
@@ -902,7 +903,13 @@ export function itemRoutes(storage: Storage) {
     const hydrated = await hydrateEdgesForItem(storage, item.id);
     const itemWithEdges = { ...item, edges: hydrated };
 
-    await publish({ type: "created", item, metadata, tenantId });
+    await publish({
+      type: "created",
+      item,
+      metadata,
+      tenantId,
+      ...c.var.cycle,
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -1343,6 +1350,7 @@ export function itemRoutes(storage: Storage) {
       item: txResult,
       metadata,
       tenantId: tid,
+      ...c.var.cycle,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -1405,6 +1413,7 @@ export function itemRoutes(storage: Storage) {
             type: "deleted",
             item: { ...snapshot, state: "trashed" as ItemState },
             tenantId: tid,
+            ...c.var.cycle,
           });
         }
       }
@@ -1476,6 +1485,7 @@ export function itemRoutes(storage: Storage) {
       item,
       metadata,
       tenantId: c.get("apiKey")?.tenant_id,
+      ...c.var.cycle,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
@@ -1523,6 +1533,7 @@ export function itemRoutes(storage: Storage) {
       item,
       metadata,
       tenantId: c.get("apiKey")?.tenant_id,
+      ...c.var.cycle,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
@@ -1573,6 +1584,7 @@ export function itemRoutes(storage: Storage) {
       item,
       metadata,
       tenantId: c.get("apiKey")?.tenant_id,
+      ...c.var.cycle,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
@@ -1632,6 +1644,7 @@ export function itemRoutes(storage: Storage) {
       item,
       metadata,
       tenantId: c.get("apiKey")?.tenant_id,
+      ...c.var.cycle,
     });
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
