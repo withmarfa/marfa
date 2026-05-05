@@ -14,8 +14,6 @@ set -euo pipefail
 # and separate launchd plists. A deploy rebuilds once and restarts both
 # launchd services.
 #
-# The legacy :8600 instance is NOT touched by this script.
-#
 # Usage:
 #   ./deploy.sh                Deploy latest main (restarts both services)
 #   ./deploy.sh --rollback     Rollback to previous SHA recorded in version.json

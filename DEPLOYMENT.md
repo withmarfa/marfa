@@ -15,8 +15,6 @@ Myme runs via launchd. Two instances share one source tree with separate launchd
 
 Both instances use Postgres on `localhost:5432`, S3 blob storage, and `KeepAlive: true`. Configuration (env vars, ports, database URLs) is embedded in each plist XML.
 
-The legacy `:8600` instance is historical only, not targeted by this deploy flow, and not to be relied on for any product work.
-
 ## Deploying
 
 Both services share one source tree at `~/Services/myme-staging/`. A single deploy rebuilds it and restarts both.
