@@ -395,6 +395,17 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
  * misuse fails at the Myme API permission gate. A future tightening
  * could fan out per tenant once `Item` exposes `tenant_id` on the
  * public type — tracked in the Backlog.
+ *
+ * T-036 (parallel fanout): subscribers receive concurrently via
+ * `Promise.allSettled`. The pre-T-036 shape was a sequential `await`
+ * per subscriber — a slow / wedged subscriber whose 5s per-fetch
+ * timeout (T-013) was firing imposed that latency on every other
+ * subscriber waiting behind it. Parallel dispatch decouples
+ * subscribers; per-subscriber retry, timeout, and error-isolation
+ * paths from T-013 are preserved inside each task. At very high
+ * subscriber counts (a few hundred per tenant) we'd want bounded
+ * concurrency to avoid overwhelming Cloudflare Queues; that's a
+ * separate optimisation worth filing if/when needed.
  */
 async function fanoutEvent(
   event: ItemEventWithId,
@@ -403,6 +414,7 @@ async function fanoutEvent(
   fetchImpl: typeof fetch,
   storage: Storage,
 ): Promise<void> {
+  const tasks: Promise<unknown>[] = [];
   for (const entry of subscriptions.values()) {
     if (entry.connection_id === event.originatingConnectionId) continue;
     const body: QueueMessageBody = {
@@ -419,42 +431,49 @@ async function fanoutEvent(
       payload: { item: event.item, metadata: event.metadata },
     };
     // T-013: each subscriber's send is wrapped in a per-fetch timeout
-    // and isolated try/catch. A slow / wedged Cloudflare Queues endpoint
-    // for one subscriber doesn't stall fanout to the rest.
-    try {
-      await sendOne(body, config, fetchImpl);
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[reactive-run-bridge] subscriber ${entry.connection_id} fanout failed:`,
-        reason,
-      );
-      // Best-effort operator visibility — surface the failure as a
-      // system.activity row for the affected connection.
-      //
-      // `storage.items.create` is the storage-layer call only; it does
-      // NOT invoke `publish()` (publish is the route-layer's job in
-      // `routes/items.ts`). So this write is invisible to the bridge's
-      // own `subscribe()` listener — no loop. Same precedent as
-      // `defaultCycleDetectionWiring`'s overflow hook in `pubsub.ts`.
-      try {
-        await storage.items.create(
-          {
-            type: "system.activity",
-            properties: {
-              severity: "error",
-              summary: `Fanout to connection ${entry.connection_id} failed`,
-              connection_id: entry.connection_id,
-              detail: { reason, item_id: event.item.id },
-            },
-          },
-          event.tenantId,
+    // and an isolated try/catch. A slow / wedged Cloudflare Queues
+    // endpoint for one subscriber doesn't break the rest. T-036:
+    // each task is launched immediately so subscribers fan out in
+    // parallel; allSettled below waits for every one.
+    const task = sendOne(body, config, fetchImpl).catch(
+      async (err: unknown) => {
+        const reason = err instanceof Error ? err.message : String(err);
+        console.error(
+          `[reactive-run-bridge] subscriber ${entry.connection_id} fanout failed:`,
+          reason,
         );
-      } catch {
-        // Don't crash the drainer over a follow-up activity write.
-      }
-    }
+        // Best-effort operator visibility — surface the failure as a
+        // system.activity row for the affected connection.
+        //
+        // `storage.items.create` is the storage-layer call only; it does
+        // NOT invoke `publish()` (publish is the route-layer's job in
+        // `routes/items.ts`). So this write is invisible to the bridge's
+        // own `subscribe()` listener — no loop. Same precedent as
+        // `defaultCycleDetectionWiring`'s overflow hook in `pubsub.ts`.
+        try {
+          await storage.items.create(
+            {
+              type: "system.activity",
+              properties: {
+                severity: "error",
+                summary: `Fanout to connection ${entry.connection_id} failed`,
+                connection_id: entry.connection_id,
+                detail: { reason, item_id: event.item.id },
+              },
+            },
+            event.tenantId,
+          );
+        } catch {
+          // Don't crash the drainer over a follow-up activity write.
+        }
+      },
+    );
+    tasks.push(task);
   }
+  // allSettled (not all): each task already catches its own error and
+  // never rejects, but allSettled documents the intent — we wait for
+  // every subscriber to finish (success or failure) before returning.
+  await Promise.allSettled(tasks);
 }
 
 async function sendOne(
