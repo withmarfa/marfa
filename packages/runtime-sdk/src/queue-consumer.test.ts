@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import {
-  consumeBatch,
-  QueueRetryRequested,
-  type ConsumerEnvironment,
-} from "./queue-consumer.js";
+import { consumeBatch, type ConsumerEnvironment } from "./queue-consumer.js";
 import {
   registerScheduleHandler,
   registerWebhookHandler,
@@ -15,8 +11,55 @@ import type {
   ItemEventMessage,
   ScheduleMessage,
   WebhookMessage,
+  QueueMessage,
 } from "./types.js";
 import { nextHopMetadata, SDK_DEFAULT_HOP_BUDGET } from "./types.js";
+
+/**
+ * Test-only `Message<T>` constructor (T-043 D2). The canonical impl
+ * lives at `packages/runtime-test/src/in-memory-queue.ts:createMessage`;
+ * we inline a minimal version here because runtime-test depends on
+ * runtime-sdk (importing the canonical impl would invert that). The
+ * shape mirrors Cloudflare's `Message<T>` (id, timestamp, body,
+ * attempts, ack, retry) plus `acked` / `retried` / `retryDelaySeconds`
+ * spies for direct assertion. Keep the two impls in sync — the
+ * envelope is a single contract, just doubled to break the dep cycle.
+ */
+interface TestMessage<T> {
+  readonly body: T;
+  readonly id: string;
+  readonly timestamp: Date;
+  attempts: number;
+  ack(): void;
+  retry(opts?: { delaySeconds?: number }): void;
+  // Test-only:
+  acked: boolean;
+  retried: boolean;
+  retryDelaySeconds?: number;
+}
+
+function makeMsg<T extends QueueMessage>(
+  body: T,
+  attempts = 1,
+): TestMessage<T> {
+  const m: TestMessage<T> = {
+    body,
+    id: `msg_${Math.random().toString(36).slice(2, 10)}`,
+    timestamp: new Date(),
+    attempts,
+    acked: false,
+    retried: false,
+    ack(): void {
+      m.acked = true;
+    },
+    retry(opts?: { delaySeconds?: number }): void {
+      m.retried = true;
+      m.retryDelaySeconds = opts?.delaySeconds;
+      m.attempts++;
+    },
+  };
+  return m;
+}
 
 const SCHED = (over: Partial<ScheduleMessage> = {}): ScheduleMessage => ({
   kind: "schedule",
@@ -67,34 +110,104 @@ describe("consumeBatch", () => {
 
   it("acks every message when handler returns ok", async () => {
     registerScheduleHandler(() => Promise.resolve({ ok: true }));
-    const outcome = await consumeBatch(makeEnv(), [
-      SCHED(),
-      SCHED({ connection_id: "conn_b" }),
-    ]);
+    const m1 = makeMsg(SCHED());
+    const m2 = makeMsg(SCHED({ connection_id: "conn_b" }));
+    const outcome = await consumeBatch(makeEnv(), [m1, m2]);
     expect(outcome).toEqual({ acked: 2, retried: 0, failed: 0 });
+    expect(m1.acked).toBe(true);
+    expect(m2.acked).toBe(true);
+    expect(m1.retried).toBe(false);
+    expect(m2.retried).toBe(false);
   });
 
-  it("filters out messages addressed to other integrations", async () => {
-    registerScheduleHandler(() => Promise.resolve({ ok: true }));
-    const outcome = await consumeBatch(makeEnv(), [
-      SCHED({ integration_name: "demo" }),
-      SCHED({ integration_name: "other" }),
-      SCHED({ integration_name: "demo" }),
-    ]);
-    // Other-integration messages are skipped (counted as acked) — the
-    // queue is shared and our consumer is responsible for not getting
-    // stuck on someone else's work.
+  it("acks messages addressed to other integrations without dispatching", async () => {
+    let dispatched = 0;
+    registerScheduleHandler(() => {
+      dispatched++;
+      return Promise.resolve({ ok: true });
+    });
+    const m1 = makeMsg(SCHED({ integration_name: "demo" }));
+    const m2 = makeMsg(SCHED({ integration_name: "other" }));
+    const m3 = makeMsg(SCHED({ integration_name: "demo" }));
+    const outcome = await consumeBatch(makeEnv(), [m1, m2, m3]);
+    // Other-integration messages are acked (so they leave the shared
+    // queue) but not dispatched — the handler only fires for our two.
     expect(outcome.acked).toBe(3);
     expect(outcome.retried).toBe(0);
+    expect(dispatched).toBe(2);
+    expect(m1.acked).toBe(true);
+    expect(m2.acked).toBe(true);
+    expect(m3.acked).toBe(true);
   });
 
-  it("throws QueueRetryRequested when any handler returns retry:true", async () => {
+  it("retries (per-message) when a handler returns retry:true", async () => {
     registerWebhookHandler(() =>
       Promise.resolve({ ok: false, retry: true, reason: "rate_limited" }),
     );
-    await expect(consumeBatch(makeEnv(), [WEBHOOK()])).rejects.toBeInstanceOf(
-      QueueRetryRequested,
+    const m = makeMsg(WEBHOOK());
+    const outcome = await consumeBatch(makeEnv(), [m]);
+    // No throw — per-message retry has informed Cloudflare via msg.retry.
+    expect(outcome).toEqual({ acked: 0, retried: 1, failed: 0 });
+    expect(m.retried).toBe(true);
+    expect(m.acked).toBe(false);
+    // Backoff: first attempt → 2^0 = 1 second.
+    expect(m.retryDelaySeconds).toBe(1);
+  });
+
+  it("only retries the failing message in a partial-failure batch (T-043)", async () => {
+    // The whole point of per-message ack: a partial failure DOES NOT
+    // re-deliver the successful messages on retry. Pre-T-043 this batch
+    // would have thrown QueueRetryRequested, and Cloudflare would have
+    // re-delivered all three messages including the two that already
+    // processed. With per-message ack, message #2 retries; #1 and #3
+    // stay acked.
+    let invocations = 0;
+    registerScheduleHandler(() => {
+      invocations++;
+      // Fail only the second message (invocations === 2).
+      if (invocations === 2) {
+        return Promise.resolve({
+          ok: false as const,
+          retry: true,
+          reason: "second-fails",
+        });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    const m1 = makeMsg(SCHED({ connection_id: "conn_a" }));
+    const m2 = makeMsg(SCHED({ connection_id: "conn_b" }));
+    const m3 = makeMsg(SCHED({ connection_id: "conn_c" }));
+    const outcome = await consumeBatch(makeEnv(), [m1, m2, m3]);
+    expect(outcome).toEqual({ acked: 2, retried: 1, failed: 0 });
+    expect(m1.acked).toBe(true);
+    expect(m1.retried).toBe(false);
+    expect(m2.acked).toBe(false);
+    expect(m2.retried).toBe(true);
+    expect(m3.acked).toBe(true);
+    expect(m3.retried).toBe(false);
+  });
+
+  it("retries with exponential backoff capped at 60s", async () => {
+    registerScheduleHandler(() =>
+      Promise.resolve({ ok: false, retry: true, reason: "x" }),
     );
+    // attempts=1 → 2^0 = 1; attempts=2 → 2^1 = 2; attempts=4 → 2^3 = 8;
+    // attempts=7 → 2^6 = 64 → capped at 60.
+    const fresh = makeMsg(SCHED(), 1);
+    await consumeBatch(makeEnv(), [fresh]);
+    expect(fresh.retryDelaySeconds).toBe(1);
+
+    const second = makeMsg(SCHED(), 2);
+    await consumeBatch(makeEnv(), [second]);
+    expect(second.retryDelaySeconds).toBe(2);
+
+    const fourth = makeMsg(SCHED(), 4);
+    await consumeBatch(makeEnv(), [fourth]);
+    expect(fourth.retryDelaySeconds).toBe(8);
+
+    const seventh = makeMsg(SCHED(), 7);
+    await consumeBatch(makeEnv(), [seventh]);
+    expect(seventh.retryDelaySeconds).toBe(60);
   });
 
   it("acks permanent failures (retry:false) and counts them", async () => {
@@ -105,42 +218,30 @@ describe("consumeBatch", () => {
         reason: "missing_required_field",
       }),
     );
-    const env = makeEnv();
-    const outcome = await consumeBatch(env, [WEBHOOK()]);
+    const m = makeMsg(WEBHOOK());
+    const outcome = await consumeBatch(makeEnv(), [m]);
     expect(outcome).toEqual({ acked: 0, retried: 0, failed: 1 });
+    expect(m.acked).toBe(true);
+    expect(m.retried).toBe(false);
   });
 
-  it("emits an action_required activity for permanent failures", async () => {
-    const activityEmitted: { severity: string; summary: string } | null = null;
-    const env: ConsumerEnvironment = {
-      ...makeEnv(),
-      mintCredential: (id) =>
-        Promise.resolve({
-          api_key: "myme_k1_test",
-          expires_at: new Date(Date.now() + 60_000).toISOString(),
-          connection_id: id,
-        }),
-    };
-    // Replace the activity emission path: instead of going through the
-    // ConnectionClient (which would try a real fetch), use a handler
-    // that simulates the path. We assert via the activityEmitted side
-    // effect captured in a custom mintCredential whose returned client
-    // we... actually simpler: register a webhook handler that
-    // intentionally permanent-fails, then verify the consumeBatch
-    // outcome. Real activity emission is tested in activity.test.ts.
-    void activityEmitted;
-    registerWebhookHandler(() =>
-      Promise.resolve({ ok: false, retry: false, reason: "test" }),
-    );
-    const outcome = await consumeBatch(env, [WEBHOOK()]);
-    expect(outcome.failed).toBe(1);
-  });
-
-  it("treats handler exceptions as retry:true", async () => {
+  it("retries on a first-attempt throw, acks-and-logs on a retried-attempt throw", async () => {
     registerScheduleHandler(() => Promise.reject(new Error("kaboom")));
-    await expect(consumeBatch(makeEnv(), [SCHED()])).rejects.toBeInstanceOf(
-      QueueRetryRequested,
-    );
+
+    // First attempt: handler throws → retry once.
+    const first = makeMsg(SCHED(), 1);
+    const firstOutcome = await consumeBatch(makeEnv(), [first]);
+    expect(firstOutcome).toEqual({ acked: 0, retried: 1, failed: 0 });
+    expect(first.retried).toBe(true);
+    expect(first.retryDelaySeconds).toBe(1);
+
+    // Subsequent attempt (attempts > 1): same throw → ack+log, no
+    // infinite loop on a persistent programming error.
+    const retried = makeMsg(SCHED(), 2);
+    const retriedOutcome = await consumeBatch(makeEnv(), [retried]);
+    expect(retriedOutcome).toEqual({ acked: 0, retried: 0, failed: 1 });
+    expect(retried.acked).toBe(true);
+    expect(retried.retried).toBe(false);
   });
 
   it("acks-and-skips messages whose tenant_id mismatches env.tenantId (T-017)", async () => {
@@ -150,14 +251,14 @@ describe("consumeBatch", () => {
       return Promise.resolve({ ok: true });
     });
     const env: ConsumerEnvironment = { ...makeEnv(), tenantId: "tenant-A" };
-    const outcome = await consumeBatch(env, [
-      SCHED({ tenant_id: "tenant-A" }),
-      SCHED({ tenant_id: "tenant-B" }),
-    ]);
-    // Both acked — but only the matching tenant invokes the handler.
+    const matchA = makeMsg(SCHED({ tenant_id: "tenant-A" }));
+    const mismatchB = makeMsg(SCHED({ tenant_id: "tenant-B" }));
+    const outcome = await consumeBatch(env, [matchA, mismatchB]);
     expect(outcome.acked).toBe(2);
     expect(outcome.retried).toBe(0);
     expect(dispatched).toBe(1);
+    expect(matchA.acked).toBe(true);
+    expect(mismatchB.acked).toBe(true);
   });
 
   it("dispatches messages with no tenant_id when env.tenantId is set (single-tenant compat)", async () => {
@@ -167,7 +268,8 @@ describe("consumeBatch", () => {
       return Promise.resolve({ ok: true });
     });
     const env: ConsumerEnvironment = { ...makeEnv(), tenantId: "tenant-A" };
-    const outcome = await consumeBatch(env, [SCHED()]);
+    const m = makeMsg(SCHED());
+    const outcome = await consumeBatch(env, [m]);
     expect(outcome.acked).toBe(1);
     expect(dispatched).toBe(1);
   });
@@ -188,9 +290,13 @@ describe("consumeBatch", () => {
       cycle: { originating_connection_id: "conn-orig", hop_count: 2 },
       payload: {},
     };
-    const outcome = await consumeBatch(env, [overBudget]);
+    const m = makeMsg(overBudget);
+    const outcome = await consumeBatch(env, [m]);
     expect(outcome.acked).toBe(1);
     expect(dispatched).toBe(0);
+    // Hop-budget refusal acks (so the message leaves the queue) — it's
+    // a permanent decision, not a transient one to retry.
+    expect(m.acked).toBe(true);
   });
 
   it("dispatches reactive item-events under the hop budget (T-008)", async () => {
@@ -209,7 +315,7 @@ describe("consumeBatch", () => {
       cycle: { originating_connection_id: "conn-orig", hop_count: 1 },
       payload: {},
     };
-    const outcome = await consumeBatch(env, [ok]);
+    const outcome = await consumeBatch(env, [makeMsg(ok)]);
     expect(outcome.acked).toBe(1);
     expect(dispatched).toBe(1);
   });
@@ -233,7 +339,7 @@ describe("consumeBatch", () => {
       },
       payload: {},
     };
-    const outcome = await consumeBatch(env, [overDefault]);
+    const outcome = await consumeBatch(env, [makeMsg(overDefault)]);
     expect(outcome.acked).toBe(1);
     expect(dispatched).toBe(0);
   });

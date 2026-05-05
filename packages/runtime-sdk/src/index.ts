@@ -57,11 +57,7 @@ export type {
 
 export type { ConnectionContext } from "./connection-context.js";
 
-export {
-  consumeBatch,
-  buildConnectionContext,
-  QueueRetryRequested,
-} from "./queue-consumer.js";
+export { consumeBatch, buildConnectionContext } from "./queue-consumer.js";
 export type { ConsumerEnvironment } from "./queue-consumer.js";
 
 export type {

@@ -115,23 +115,12 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       };
     },
     async consume() {
-      const messages = queue.drain();
-      try {
-        const outcome = await consumeBatch(env, messages);
-        return outcome;
-      } catch (err) {
-        // QueueRetryRequested carries the partial outcome — surface it
-        // to the test as a normal value so assertions can read it.
-        const maybeOutcome = (err as { outcome?: unknown }).outcome;
-        if (maybeOutcome && typeof maybeOutcome === "object") {
-          return maybeOutcome as {
-            acked: number;
-            retried: number;
-            failed: number;
-          };
-        }
-        throw err;
-      }
+      // T-043 D2: drain via `drainMessages()` so each payload arrives
+      // wrapped in a `Message<T>` envelope with `ack()` / `retry()` /
+      // `attempts`. The consumer dispatches per-message; outcome
+      // counters are still populated for telemetry compatibility.
+      const messages = queue.drainMessages();
+      return consumeBatch(env, messages);
     },
   };
 }
