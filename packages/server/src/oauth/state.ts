@@ -31,6 +31,12 @@ import {
 export interface OAuthStateEnvelope {
   connection_id: string;
   redirect_uri: string;
+  /** PKCE verifier (T-010). Carried through the upstream provider's
+   *  authorize → callback redirect inside the encrypted state envelope so
+   *  the callback can present it at the token exchange. Optional only to
+   *  preserve historical state envelopes while flows complete; the start
+   *  route always emits one. */
+  code_verifier?: string;
   /** Epoch ms after which this state is rejected. */
   expires_at_ms: number;
   /** Per-issue random — defends against accidental state reuse and
@@ -43,6 +49,7 @@ export const DEFAULT_STATE_TTL_MS = 10 * 60 * 1000;
 export function signOAuthState(input: {
   connection_id: string;
   redirect_uri: string;
+  code_verifier?: string;
   ttl_ms?: number;
   now_ms?: number;
 }): string {
@@ -50,6 +57,9 @@ export function signOAuthState(input: {
   const envelope: OAuthStateEnvelope = {
     connection_id: input.connection_id,
     redirect_uri: input.redirect_uri,
+    ...(input.code_verifier !== undefined && {
+      code_verifier: input.code_verifier,
+    }),
     expires_at_ms: now + (input.ttl_ms ?? DEFAULT_STATE_TTL_MS),
     nonce: randomBytes(12).toString("hex"),
   };

@@ -66,6 +66,12 @@ export interface AppConfig {
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
   trustedProxyCidrs: CidrRange[];
+  /** Allow-list of `redirect_uri` values accepted by the connector OAuth
+   *  bootstrap (`POST /connections/:id/oauth/start`). Comma-separated
+   *  via `MYME_OAUTH_REDIRECT_ALLOWLIST`. Empty list disables enforcement
+   *  — convenient for self-hosted dev but an open-redirect risk in
+   *  hosted mode (T-010), so production deployments must set this. */
+  oauthRedirectAllowlist: string[];
   /** Issuer URL the better-auth instance is reached at — protocol + host
    *  (and port). Drives cookie domains and the OAuth issuer field on the
    *  discovery doc. Defaults to `http://localhost:<port>` if unset. */
@@ -208,6 +214,9 @@ export function loadConfig(): AppConfig {
     // Parse + validate at startup. Malformed CIDRs throw — we want bad
     // config to surface immediately, not silently degrade.
     trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),
+    oauthRedirectAllowlist: parseOauthRedirectAllowlist(
+      process.env.MYME_OAUTH_REDIRECT_ALLOWLIST,
+    ),
     authBaseUrl:
       process.env.MYME_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
     authAllowSignup: process.env.MYME_AUTH_ALLOW_SIGNUP === "true",
@@ -216,6 +225,20 @@ export function loadConfig(): AppConfig {
     rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
     rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
   };
+}
+
+/**
+ * Parse `MYME_OAUTH_REDIRECT_ALLOWLIST` — comma-separated list of
+ * fully-qualified `redirect_uri` values accepted by the connector OAuth
+ * bootstrap. Whitespace between entries is tolerated. Empty / unset
+ * means "no allow-list" (validation is bypassed; see oauth-callback.ts).
+ */
+export function parseOauthRedirectAllowlist(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function parseOidcProviders(raw: string | undefined): OidcProviderConfig[] {

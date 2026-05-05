@@ -246,7 +246,12 @@ export function createApp(
   // returns the upstream authorize URL with signed state; the public
   // GET /oauth/callback/:provider exchanges the code and persists
   // tokens under the same connectionOauthTokens row the proxy reads.
-  app.route("/connections", oauthStartRoutes(storage));
+  app.route(
+    "/connections",
+    oauthStartRoutes(storage, {
+      redirectUriAllowlist: config.oauthRedirectAllowlist,
+    }),
+  );
   app.route("/oauth/callback", oauthCallbackRoutes(storage));
   // Leased bearer tokens (workstream 2 PR 7) — issuance + revoke + list
   // under /connections/:id/lease-tokens; introspection at

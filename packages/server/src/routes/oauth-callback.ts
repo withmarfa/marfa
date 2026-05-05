@@ -32,6 +32,7 @@
  * file covers Myme-as-OAuth-client (the connector's outbound OAuth
  * flow). Different concern, different file.
  */
+import { createHash, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { MymeError, ErrorCode, type Item } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -140,6 +141,7 @@ async function exchangeAuthorizationCode(
   config: OAuthAuthorizeConfig,
   redirectUri: string,
   code: string,
+  codeVerifier: string,
   fetchImpl: typeof fetch,
 ): Promise<TokenExchangeResult | TokenExchangeFailed> {
   const body = new URLSearchParams({
@@ -148,6 +150,7 @@ async function exchangeAuthorizationCode(
     redirect_uri: redirectUri,
     client_id: config.oauth_client_id,
     client_secret: config.oauth_client_secret,
+    code_verifier: codeVerifier,
   });
   let resp: Response;
   try {
@@ -278,16 +281,68 @@ export interface OAuthCallbackOptions {
 }
 
 /**
+ * Options for `oauthStartRoutes`.
+ *
+ * `redirectUriAllowlist` — list of redirect_uri values that callers may
+ * pass on `POST /connections/:id/oauth/start`. When non-empty, the
+ * request's `redirect_uri` must match one entry exactly (string equality
+ * after both sides are URL-canonicalised — protocol, host, port, path).
+ * Empty list = unenforced (dev / self-hosted convenience). Hosted
+ * deployments MUST set this via `MYME_OAUTH_REDIRECT_ALLOWLIST` to close
+ * the open-redirect-via-OAuth class T-010 covers.
+ */
+export interface OAuthStartOptions {
+  redirectUriAllowlist?: readonly string[];
+}
+
+function canonicaliseRedirect(uri: string): string {
+  // RFC 3986 canonical form: lower-case scheme + host, default-port
+  // collapsed, query/fragment dropped (we compare full URLs but allow-list
+  // entries should be the registered redirect URIs without query strings).
+  try {
+    const url = new URL(uri);
+    url.hash = "";
+    url.search = "";
+    // Drop trailing slash on path-only-host URLs to match common
+    // registration formats (`https://app.example.com` ≡ `https://app.example.com/`).
+    let normalised = url.toString();
+    if (normalised.endsWith("/") && url.pathname === "/") {
+      normalised = normalised.slice(0, -1);
+    }
+    return normalised;
+  } catch {
+    return uri;
+  }
+}
+
+function isRedirectAllowed(
+  candidate: string,
+  allowlist: readonly string[] | undefined,
+): boolean {
+  if (!allowlist || allowlist.length === 0) return true; // unenforced
+  const c = canonicaliseRedirect(candidate);
+  return allowlist.some((entry) => canonicaliseRedirect(entry) === c);
+}
+
+/**
  * `POST /connections/:id/oauth/start` — admin-gated. Returns the
- * upstream authorize URL (including signed state) the install script
- * or consent UI should open in the user's browser. Body:
+ * upstream authorize URL (including signed state, PKCE challenge) the
+ * install script or consent UI should open in the user's browser. Body:
  *   {
  *     redirect_uri: string,    // exactly the URI registered with the provider
  *     scope?: string,          // overrides oauth_default_scope on the credential
  *     extra_params?: Record<string, string>  // e.g. {access_type: "offline", prompt: "consent"}
  *   }
+ *
+ * PKCE (T-010): every flow includes `code_challenge` + `code_challenge_method=S256`.
+ * The verifier is generated server-side and stored in the encrypted state
+ * envelope; the callback exchanges it at the token endpoint. There is no
+ * non-PKCE path — the connector OAuth bootstrap requires it unconditionally.
  */
-export function oauthStartRoutes(storage: Storage) {
+export function oauthStartRoutes(
+  storage: Storage,
+  options: OAuthStartOptions = {},
+) {
   const r = new Hono<AppEnv>();
   r.post("/:id/oauth/start", async (c) => {
     requireAuth(c);
@@ -323,20 +378,36 @@ export function oauthStartRoutes(storage: Storage) {
         "redirect_uri is required",
       );
     }
+    if (!isRedirectAllowed(body.redirect_uri, options.redirectUriAllowlist)) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        `redirect_uri "${body.redirect_uri}" is not in MYME_OAUTH_REDIRECT_ALLOWLIST`,
+      );
+    }
     const config = await readAuthorizeConfig(storage, connection);
     const scope =
       typeof body.scope === "string" && body.scope.length > 0
         ? body.scope
         : (config.oauth_default_scope ?? "");
+    // PKCE: generate a fresh verifier per flow. base64url of 32 random
+    // bytes yields 43 characters, comfortably within RFC 7636 §4.1's
+    // 43–128 char range.
+    const codeVerifier = randomBytes(32).toString("base64url");
+    const codeChallenge = createHash("sha256")
+      .update(codeVerifier)
+      .digest("base64url");
     const state = signOAuthState({
       connection_id: connectionId,
       redirect_uri: body.redirect_uri,
+      code_verifier: codeVerifier,
     });
     const params = new URLSearchParams({
       response_type: "code",
       client_id: config.oauth_client_id,
       redirect_uri: body.redirect_uri,
       state,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
     });
     if (scope.length > 0) params.set("scope", scope);
     if (
@@ -447,10 +518,31 @@ export function oauthCallbackRoutes(
       return c.html(renderErrorPage(reason, 400), 400);
     }
 
+    // PKCE: every flow started post-T-010 carries a code_verifier in the
+    // state envelope. A missing verifier means the state was issued by an
+    // older code path or by a hostile caller — refuse outright rather
+    // than trying to exchange without PKCE.
+    if (typeof envelope.code_verifier !== "string") {
+      void storage.audit.log({
+        action: "oauth_callback.state_missing_pkce",
+        resource_type: "oauth_callback",
+        resource_id: provider,
+        details: { connection_id: envelope.connection_id },
+      });
+      setNoStore(c);
+      return c.html(
+        renderErrorPage(
+          "State envelope missing PKCE verifier — restart the OAuth flow",
+          400,
+        ),
+        400,
+      );
+    }
     const exchange = await exchangeAuthorizationCode(
       config,
       envelope.redirect_uri,
       code,
+      envelope.code_verifier,
       resolveFetch(),
     );
     if (!exchange.ok) {

@@ -52,6 +52,7 @@ const config: AppConfig = {
   oidcProviders: [],
   rateLimitDefaultLimit: 1000,
   rateLimitWindowMs: 60_000,
+  oauthRedirectAllowlist: [],
 };
 
 const storage = createSqliteStorage(":memory:");

@@ -69,6 +69,7 @@ async function buildCtx(): Promise<Ctx> {
     oidcProviders: [],
     rateLimitDefaultLimit: 2,
     rateLimitWindowMs: 60_000,
+    oauthRedirectAllowlist: [],
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);

@@ -85,6 +85,7 @@ describe("bootstrap mode", () => {
       oidcProviders: [],
       rateLimitDefaultLimit: 1000,
       rateLimitWindowMs: 60_000,
+      oauthRedirectAllowlist: [],
     });
 
     const res = await request(app, "POST", "/keys", {

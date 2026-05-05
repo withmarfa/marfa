@@ -54,6 +54,7 @@ async function main(): Promise<void> {
     oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
+    oauthRedirectAllowlist: [],
   });
   const raw = "myme_k1_bench";
   await storage.keys.create(
