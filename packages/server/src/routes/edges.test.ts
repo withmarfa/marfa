@@ -338,8 +338,7 @@ describe("PATCH /edges/:id — properties only", () => {
       }[];
     };
     const updateEntry = auditData.data.find(
-      (e) =>
-        e.action === "edge.update" && e.resource_id === created.edge.id,
+      (e) => e.action === "edge.update" && e.resource_id === created.edge.id,
     );
     expect(updateEntry).toBeDefined();
     expect(updateEntry?.resource_type).toBe("edge");
