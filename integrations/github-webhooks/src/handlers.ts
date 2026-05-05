@@ -21,7 +21,7 @@
 import {
   registerWebhookHandler,
   type ConnectionContext,
-  type WebhookMessage,
+  type WebhookHandlerInput,
   type HandlerResult,
   type CreateItemInput,
 } from "@mymehq/runtime-sdk";
@@ -59,7 +59,7 @@ interface PullRequestPayload {
 
 export async function handleGithubWebhook(
   ctx: ConnectionContext,
-  message: WebhookMessage,
+  message: WebhookHandlerInput,
 ): Promise<HandlerResult> {
   const headers = message.headers;
   const event = getHeader(headers, "X-GitHub-Event");

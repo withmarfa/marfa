@@ -32,7 +32,7 @@ const WEBHOOK_MSG: WebhookMessage = {
   connection_id: "conn_x",
   delivery_id: "delivery_1",
   headers: {},
-  body: new ArrayBuffer(0),
+  body_base64: "",
   verified_at_ms: 1000,
 };
 

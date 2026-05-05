@@ -161,10 +161,6 @@ const WebhookVerificationSchema = z.discriminatedUnion("method", [
   z.object({ method: z.literal("slack") }),
   z.object({ method: z.literal("stripe") }),
   z.object({ method: z.literal("github") }),
-  z.object({
-    method: z.literal("custom"),
-    adapter_id: z.string().min(1, "custom verification requires an adapter_id"),
-  }),
 ]);
 
 export const IntegrationManifestSchema = z

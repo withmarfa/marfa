@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { ControlPlaneEnv } from "../env.js";
 import { MymeServerClient } from "../myme-client.js";
-import { verifyHmacSha256 } from "../verify-hmac-sha256.js";
+import { ADAPTERS } from "../verify-dispatch.js";
 
 /**
  * Inbound webhook receiver.
@@ -9,22 +9,23 @@ import { verifyHmacSha256 } from "../verify-hmac-sha256.js";
  *   1. Resolve subscription configs by `connection_id` from the Myme
  *      server (the broker key authenticates the lookup).
  *   2. Verify the delivery against each subscription's adapter; the
- *      first that passes wins. PR 4 ships HMAC-SHA256 only — the
- *      other four adapters return 501 with the method name in the
- *      reason so debugging is obvious. Layer 3 ports the rest as
- *      integrations need them.
+ *      first that passes wins. T-009 lifted all four supported methods
+ *      (HMAC-SHA256, Slack, Stripe, GitHub) into the control plane via
+ *      the `verify-dispatch` table. The previously-stubbed `custom`
+ *      method was dropped in T-011.
  *   3. Enforce idempotency via the IDEMPOTENCY_KV namespace keyed by
  *      `${webhook_id}:${delivery_id}` with a 1-hour TTL. Duplicate
  *      receipts respond 200 without enqueuing.
  *   4. On success: enqueue { kind: "webhook", integration_name,
- *      connection_id, delivery_id, headers, body, verified_at_ms }
- *      onto WEBHOOK_RECEIPT_QUEUE; respond 202.
+ *      connection_id, delivery_id, headers, body_base64,
+ *      verified_at_ms } onto WEBHOOK_RECEIPT_QUEUE; respond 202.
  *
- * The integration_name field on the queue message stays "" (empty)
- * until Layer 2 wires manifest persistence — per-Integration Workers
- * filter by their own integration_name and skip empty-targeted
- * messages until then. Layer 1's _template integration accepts
- * untargeted messages for the acceptance run.
+ * `integration_name` on the queue message is stamped from the matched
+ * subscription's projected `integration_name` (T-009) — the per-
+ * Integration Worker's envelope filter then accepts it. Subscriptions
+ * whose connection has no resolvable integration_ref get an empty
+ * integration_name and the receipt is rejected so the runtime layer
+ * never sees an unrouteable message.
  */
 export function registerWebhookRoutes(
   app: Hono<{ Bindings: ControlPlaneEnv }>,
@@ -82,22 +83,27 @@ export function registerWebhookRoutes(
     }
 
     // Try each subscription; first that verifies wins. Most connections
-    // have exactly one subscription so the loop usually runs once.
+    // have exactly one subscription so the loop usually runs once. The
+    // dispatch table lookup (verify-dispatch.ts) covers all four
+    // supported methods — unknown methods (shouldn't happen post-T-011
+    // since the manifest schema rejects them) get a clear error.
     let matched: {
       sub: (typeof subscriptions)[number];
       deliveryId: string;
     } | null = null;
     let lastReason = "no_match";
     for (const sub of subscriptions) {
-      if (sub.verification_method !== "hmac-sha256") {
-        lastReason = `verification_method_not_implemented_in_layer_1:${sub.verification_method}`;
+      const adapter = ADAPTERS[sub.verification_method];
+      // The dispatch table is exhaustive over the wire-typed
+      // verification_method union, so a missing entry would mean the
+      // server returned a method this control plane doesn't know.
+      // Treat it as a routing failure.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defence against drift between server's wider stored set and the control plane's compile-time union
+      if (!adapter) {
+        lastReason = `unknown_verification_method:${sub.verification_method}`;
         continue;
       }
-      const result = await verifyHmacSha256(
-        rawBody,
-        c.req.raw.headers,
-        sub.secret,
-      );
+      const result = await adapter(rawBody, c.req.raw.headers, sub.secret);
       if (result.verified) {
         matched = {
           sub,
@@ -109,6 +115,22 @@ export function registerWebhookRoutes(
     }
     if (!matched) {
       return c.json({ error: "verification_failed", reason: lastReason }, 401);
+    }
+    // T-009: refuse to enqueue a message we can't route — without a
+    // resolved integration_name, the per-Integration Worker's envelope
+    // filter would silently drop it.
+    if (
+      !matched.sub.integration_name ||
+      matched.sub.integration_name.length === 0
+    ) {
+      return c.json(
+        {
+          error: "subscription_unrouteable",
+          reason:
+            "subscription has no integration_name (connection's integration_ref unresolved)",
+        },
+        500,
+      );
     }
 
     // Idempotency: drop deliveries we've already enqueued in the recent
@@ -148,7 +170,7 @@ export function registerWebhookRoutes(
     await env.WEBHOOK_RECEIPT_QUEUE.send(
       {
         kind: "webhook",
-        integration_name: "",
+        integration_name: matched.sub.integration_name,
         connection_id: connectionId,
         delivery_id: matched.deliveryId,
         headers: headerMap,

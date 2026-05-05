@@ -15,7 +15,7 @@ import {
 import type {
   ConnectionContext,
   ScheduleMessage,
-  WebhookMessage,
+  WebhookHandlerInput,
   ItemEventMessage,
   HandlerResult,
 } from "@mymehq/runtime-sdk";
@@ -51,9 +51,9 @@ export async function handleSchedule(
 
 export async function handleWebhook(
   ctx: ConnectionContext,
-  message: WebhookMessage,
+  input: WebhookHandlerInput,
 ): Promise<HandlerResult> {
-  void message;
+  void input;
   await ctx.activity.emit({
     severity: "info",
     summary: "Template received a webhook",

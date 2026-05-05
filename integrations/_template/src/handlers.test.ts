@@ -110,9 +110,6 @@ describe("template integration handlers", () => {
   it("webhook handler emits an activity row", async () => {
     const { ctx, emitted } = buildContext();
     const result = await handleWebhook(ctx, {
-      kind: "webhook",
-      integration_name: "myme.template",
-      connection_id: "conn_template_test",
       delivery_id: "d_1",
       headers: {},
       body: new ArrayBuffer(0),

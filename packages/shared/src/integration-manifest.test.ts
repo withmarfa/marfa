@@ -149,10 +149,10 @@ describe("IntegrationManifestSchema — invalid values", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects custom verification missing adapter_id", () => {
+  it("rejects the dropped 'custom' verification method (T-011)", () => {
     const result = IntegrationManifestSchema.safeParse({
       ...VALID_MANIFEST,
-      webhook_verification: { method: "custom" },
+      webhook_verification: { method: "custom", adapter_id: "x" },
     });
     expect(result.success).toBe(false);
   });

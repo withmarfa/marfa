@@ -62,12 +62,41 @@ export interface WebhookMessage extends QueueEnvelopeBase {
   kind: "webhook";
   delivery_id: string;
   headers: Record<string, string>;
-  /** Raw body. Bodies > 256KB are handed off via R2 with a presigned
-   *  URL substituted for `body` and `body_url` populated; the SDK
-   *  resolves transparently. R2 wiring lands in Layer 2. */
+  /**
+   * Raw body, base64-encoded so it survives JSON serialisation through
+   * the Cloudflare Queue. The SDK's `buildConnectionContext` decodes to
+   * `ArrayBuffer` and surfaces it as `body` on the handler input
+   * (T-009). Bodies > 256KB will eventually be handed off via R2 with a
+   * presigned URL substituted (`body_url` populated); the SDK resolves
+   * transparently. R2 wiring lands in Layer 2.
+   */
+  body_base64: string;
+  body_url?: string;
+  verified_at_ms: number;
+}
+
+/**
+ * Decoded handler input for a webhook delivery. The SDK builds this in
+ * `buildConnectionContext` from the wire `WebhookMessage`. Handlers
+ * receive `body: ArrayBuffer`, never the base64 form.
+ */
+export interface WebhookHandlerInput {
+  delivery_id: string;
+  headers: Record<string, string>;
   body: ArrayBuffer;
   body_url?: string;
   verified_at_ms: number;
+}
+
+/** Decode a base64 string to an ArrayBuffer. Works in both Node and
+ *  Cloudflare Workers (`atob` is available in both). */
+export function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
 }
 
 /** Produced by the per-Connection DO's alarm() when a scheduled poll

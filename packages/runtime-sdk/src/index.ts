@@ -68,10 +68,15 @@ export type {
   CycleMetadata,
   QueueEnvelopeBase,
   WebhookMessage,
+  WebhookHandlerInput,
   ScheduleMessage,
   ItemEventMessage,
   QueueMessage,
   HandlerResult,
   RuntimeCredential,
 } from "./types.js";
-export { SDK_DEFAULT_HOP_BUDGET, nextHopMetadata } from "./types.js";
+export {
+  SDK_DEFAULT_HOP_BUDGET,
+  nextHopMetadata,
+  decodeBase64ToArrayBuffer,
+} from "./types.js";

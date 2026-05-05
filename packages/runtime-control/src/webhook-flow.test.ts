@@ -12,6 +12,7 @@ const SUBSCRIPTION = {
   connection_id: "conn_x",
   secret: SECRET,
   verification_method: "hmac-sha256" as const,
+  integration_name: "mymehq.test-webhook",
   events: ["push"],
   disabled: false,
 };
@@ -139,6 +140,11 @@ describe("webhook receive flow", () => {
       expect(enqueued.connection_id).toBe("conn_x");
       expect(enqueued.delivery_id).toBe("d_42");
       expect(enqueued.webhook_id).toBe("wh_1");
+      // T-009: integration_name stamped from the subscription's
+      // projected manifest name, not hardcoded to "".
+      expect(enqueued.integration_name).toBe("mymehq.test-webhook");
+      // Wire format: body_base64, decoded by the SDK at the seam.
+      expect(typeof enqueued.body_base64).toBe("string");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -269,8 +275,9 @@ describe("webhook receive flow", () => {
     }
   });
 
-  it("skips non-HMAC subscriptions and reports the layer-1 limitation", async () => {
+  it("verifies a valid GitHub HMAC delivery via the lifted dispatch table (T-009)", async () => {
     const queue = mockQueue();
+    const kv = mockKv();
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockMymeFetch({
       subscriptions: [
@@ -285,22 +292,75 @@ describe("webhook receive flow", () => {
         MYME_API_URL: "http://localhost:0",
         MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
+        IDEMPOTENCY_KV: kv as unknown as KVNamespace,
       };
+      const bodyBytes = new TextEncoder().encode('{"action":"opened"}');
+      const bodyBuffer = bodyBytes.buffer.slice(
+        bodyBytes.byteOffset,
+        bodyBytes.byteOffset + bodyBytes.byteLength,
+      );
+      const sig = await sign(bodyBuffer, SECRET);
       const app = buildApp();
       const res = await app.request(
         "/webhooks/inbound/conn_x",
         {
           method: "POST",
-          body: "{}",
-          headers: { "x-myme-signature": "sha256=x" },
+          body: bodyBytes,
+          headers: {
+            "x-hub-signature-256": `sha256=${sig}`,
+            "x-github-delivery": "abc-123",
+          },
         },
         env,
       );
-      expect(res.status).toBe(401);
-      const body: { reason?: string } = await res.json();
-      expect(body.reason).toMatch(
-        /verification_method_not_implemented_in_layer_1/,
+      // Pre-T-009: this would 401 with "verification_method_not_implemented_in_layer_1:github".
+      // Post-T-009: GitHub adapter is in the dispatch table; valid signature → 202.
+      expect(res.status).toBe(202);
+      expect(queue.calls).toHaveLength(1);
+      const enqueued = queue.calls[0]!.body as Record<string, unknown>;
+      expect(enqueued.delivery_id).toBe("abc-123");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects subscriptions with no integration_name (unrouteable)", async () => {
+    const queue = mockQueue();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockMymeFetch({
+      subscriptions: [
+        {
+          ...SUBSCRIPTION,
+          integration_name: undefined as unknown as string,
+        },
+      ],
+    });
+    try {
+      const env: ControlPlaneEnv = {
+        MYME_API_URL: "http://localhost:0",
+        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        WEBHOOK_RECEIPT_QUEUE: queue,
+      };
+      const bodyBytes = new TextEncoder().encode('{"event":"push"}');
+      const bodyBuffer = bodyBytes.buffer.slice(
+        bodyBytes.byteOffset,
+        bodyBytes.byteOffset + bodyBytes.byteLength,
       );
+      const sig = await sign(bodyBuffer, SECRET);
+      const app = buildApp();
+      const res = await app.request(
+        "/webhooks/inbound/conn_x",
+        {
+          method: "POST",
+          body: bodyBytes,
+          headers: { "x-myme-signature": `sha256=${sig}` },
+        },
+        env,
+      );
+      expect(res.status).toBe(500);
+      const body: { error?: string } = await res.json();
+      expect(body.error).toBe("subscription_unrouteable");
+      expect(queue.calls).toHaveLength(0);
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -224,24 +224,6 @@
             "method"
           ],
           "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "method": {
-              "type": "string",
-              "const": "custom"
-            },
-            "adapter_id": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "method",
-            "adapter_id"
-          ],
-          "additionalProperties": false
         }
       ]
     },

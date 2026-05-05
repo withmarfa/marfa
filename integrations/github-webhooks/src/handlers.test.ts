@@ -14,7 +14,7 @@ import {
   type ConnectionContext,
   type ConnectionClient,
   type CreateItemInput,
-  type WebhookMessage,
+  type WebhookHandlerInput,
 } from "@mymehq/runtime-sdk";
 import { handleGithubWebhook } from "./handlers.js";
 import { DELIVERY_RING_SIZE } from "./manifest.js";
@@ -142,7 +142,7 @@ function makeWebhookMessage(
   event: string,
   deliveryId: string,
   headerCase: "title" | "lower" = "title",
-): WebhookMessage {
+): WebhookHandlerInput {
   const headers: Record<string, string> =
     headerCase === "title"
       ? {
@@ -157,9 +157,6 @@ function makeWebhookMessage(
         };
   const bodyBuffer = new TextEncoder().encode(JSON.stringify(body)).buffer;
   return {
-    kind: "webhook",
-    integration_name: "mymehq.github-webhooks",
-    connection_id: "conn_gh_test",
     delivery_id: deliveryId,
     headers,
     body: bodyBuffer,
@@ -282,10 +279,7 @@ describe("github-webhooks handler", () => {
 
   it("returns parse_failed (no retry) on malformed body", async () => {
     const { ctx, emitted } = buildContext();
-    const broken: WebhookMessage = {
-      kind: "webhook",
-      integration_name: "mymehq.github-webhooks",
-      connection_id: "conn_gh_test",
+    const broken: WebhookHandlerInput = {
       delivery_id: "delivery_bad",
       headers: {
         "X-GitHub-Event": "issues",

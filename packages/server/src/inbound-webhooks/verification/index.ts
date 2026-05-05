@@ -2,7 +2,6 @@ import { verifyHmacSha256 } from "./hmac-sha256.js";
 import { verifySlack } from "./slack.js";
 import { verifyStripe } from "./stripe.js";
 import { verifyGitHub } from "./github.js";
-import { verifyCustom } from "./custom.js";
 import type { VerifyInboundWebhook, VerificationMethod } from "./types.js";
 
 export type {
@@ -29,5 +28,4 @@ export const ADAPTERS: Record<VerificationMethod, VerifyInboundWebhook> = {
   slack: verifySlack,
   stripe: verifyStripe,
   github: verifyGitHub,
-  custom: verifyCustom,
 };
