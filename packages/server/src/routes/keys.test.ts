@@ -166,13 +166,20 @@ describe("bootstrap sentinel", () => {
         process.env.DATABASE_URL ??
         "postgres://myme:myme_dev@localhost:5434/myme";
       storage = await createPgStorage(databaseUrl);
-      // Truncate everything — including settings (`bootstrapped` sentinel)
-      // and api_keys — so we hit the bootstrap branch in `POST /keys`.
-      // PG file-parallelism is disabled in vitest.config.ts so the wipe is
-      // contained to this file's run.
+      // Truncate the data tables AND clear the settings table so the
+      // `bootstrapped` sentinel from a prior test in this run doesn't gate
+      // us out of bootstrap mode. `_pgTruncate` only covers data tables
+      // intentionally; the bootstrap sentinel sits in `settings` and we
+      // need it gone for these tests specifically. PG file-parallelism is
+      // disabled in vitest.config.ts so the wipe is contained.
       const s = storage as unknown as Record<string, unknown>;
       if (typeof s._pgTruncate === "function") {
         await (s._pgTruncate as () => Promise<void>)();
+      }
+      if (typeof s.__pgClient === "function") {
+        await (s.__pgClient as (q: string) => Promise<unknown[]>)(
+          "DELETE FROM settings",
+        );
       }
       const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-pg-"));
       blobPath = join(tmpDir, "blobs");
