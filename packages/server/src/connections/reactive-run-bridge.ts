@@ -207,6 +207,14 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   const subscriptions = new Map<string, SubscriptionEntry>();
   let running = false;
   let stopRequested = false;
+  // References to the active subscribe iterators so `stop()` can
+  // proactively close them — without this the `for await` loops would
+  // hang on the next event, holding the coordination advisory lock
+  // open until the process exits. The hang is invisible in single-
+  // instance dev, but in tests (where each `it` reuses the same
+  // storage) and in multi-instance hosted deploys it strands the lock.
+  let drainerIter: AsyncIterator<unknown> | null = null;
+  let invalidationIter: AsyncIterator<unknown> | null = null;
 
   /**
    * Refresh the subscription entry for one connection id. Called from
@@ -237,18 +245,26 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
    * the main drainer.
    */
   const startInvalidationSubscriber = async (): Promise<void> => {
-    for await (const event of subscribe({
+    const iter = subscribe({
       typeFilter: "system.connection",
-    })) {
-      if (stopRequested) break;
-      try {
-        await refreshConnection(event.item.id);
-      } catch (err) {
-        console.error(
-          "[reactive-run-bridge] cache invalidation failed:",
-          err instanceof Error ? err.message : String(err),
-        );
+    })[Symbol.asyncIterator]();
+    invalidationIter = iter;
+    try {
+      for (;;) {
+        const next = await iter.next();
+        if (next.done) break;
+        if (stopRequested) break;
+        try {
+          await refreshConnection(next.value.item.id);
+        } catch (err) {
+          console.error(
+            "[reactive-run-bridge] cache invalidation failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
       }
+    } finally {
+      invalidationIter = null;
     }
   };
 
@@ -278,9 +294,23 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
           // Cache invalidation runs alongside the drainer under the
           // same lock — only the elected instance maintains its map.
           void startInvalidationSubscriber();
-          for await (const event of subscribe()) {
-            if (stopRequested) break;
-            await fanoutEvent(event, subscriptions, config, fetchImpl, storage);
+          const iter = subscribe()[Symbol.asyncIterator]();
+          drainerIter = iter;
+          try {
+            for (;;) {
+              const next = await iter.next();
+              if (next.done) break;
+              if (stopRequested) break;
+              await fanoutEvent(
+                next.value,
+                subscriptions,
+                config,
+                fetchImpl,
+                storage,
+              );
+            }
+          } finally {
+            drainerIter = null;
           }
         })
         .catch((err: unknown) => {
@@ -294,6 +324,18 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       stopRequested = true;
       running = false;
       subscriptions.clear();
+      // Release the iterators so the for-loops above unwind, the
+      // pubsub listeners detach, and the coordination advisory lock is
+      // returned. Best-effort — silently swallow errors from the
+      // already-stopped iterator.
+      const drainer = drainerIter;
+      const invalidation = invalidationIter;
+      drainerIter = null;
+      invalidationIter = null;
+      if (drainer?.return) void drainer.return().catch(() => undefined);
+      if (invalidation?.return) {
+        void invalidation.return().catch(() => undefined);
+      }
     },
   };
 }
