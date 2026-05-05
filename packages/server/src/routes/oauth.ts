@@ -70,6 +70,7 @@ async function createUserAppGrant(
   clientId: string,
   scopes: string[],
   source: "myme/oauth/authorize" | "myme/oauth/device",
+  cycle: AppEnv["Variables"]["cycle"],
 ): Promise<{ id: string }> {
   let tenantId: string | undefined;
   if (storage.users) {
@@ -101,7 +102,7 @@ async function createUserAppGrant(
     tenantId,
   );
   const metadata = await storage.metadata.get(item.id);
-  await publish({ type: "created", item, metadata, tenantId });
+  await publish({ type: "created", item, metadata, tenantId, ...cycle });
   return { id: item.id };
 }
 
@@ -316,6 +317,7 @@ export function authRoutes(
       clientId,
       grantedScopes,
       "myme/oauth/authorize",
+      c.var.cycle,
     );
     const rawCode = randomBytes(32).toString("hex");
     const codeHash = hashApiKey(rawCode, salt);
@@ -1012,6 +1014,7 @@ export function authRoutes(
       row.client_id,
       row.scopes,
       "myme/oauth/device",
+      c.var.cycle,
     );
     const ok = await storage.oauth.approveDeviceCode(row.id, grant.id);
     if (!ok) {
