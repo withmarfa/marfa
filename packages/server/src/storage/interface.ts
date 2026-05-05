@@ -795,6 +795,11 @@ export interface SettingsStore {
   get(key: string): Promise<string | null>;
   /** Upsert — overwrites any existing value for the key. */
   set(key: string, value: string): Promise<void>;
+  /** Atomic insert-or-bail: returns true if this caller's INSERT created the
+   *  row, false if a row already existed. Used by the bootstrap path so that
+   *  exactly one of N concurrent `POST /keys` on a fresh DB wins the right
+   *  to mint the seed admin key (T-007). */
+  claim(key: string, value: string): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------

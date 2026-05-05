@@ -270,6 +270,20 @@ export function keyRoutes(storage: Storage, salt: string) {
       requireAdmin(c);
     }
 
+    // T-007: under bootstrap, atomically claim the workspace sentinel
+    // BEFORE minting. Two concurrent unauthenticated POST /keys against a
+    // fresh DB both pass the middleware gate (which reads the sentinel
+    // non-atomically); only the caller whose INSERT-ON-CONFLICT-DO-NOTHING
+    // returns a row gets to mint. Everyone else falls through to
+    // requireAdmin and receives 401, which is correct because by then
+    // bootstrap is closed.
+    if (isBootstrap) {
+      const claimed = await storage.settings.claim("bootstrapped", "true");
+      if (!claimed) {
+        throw new MymeError(ErrorCode.UNAUTHORIZED, "Authentication required");
+      }
+    }
+
     const body = c.req.valid("json");
 
     const role = isBootstrap ? "admin" : (body.role ?? "member");
@@ -309,13 +323,10 @@ export function keyRoutes(storage: Storage, salt: string) {
       keyHash,
     );
 
-    // On the first (bootstrap) key creation, stamp the workspace as
-    // bootstrapped. From this point on, revoking every key must NOT
-    // re-open bootstrap — the auth middleware reads this sentinel
-    // instead of counting live keys.
-    if (isBootstrap) {
-      await storage.settings.set("bootstrapped", "true");
-    }
+    // The bootstrap sentinel was stamped above via `settings.claim`, so the
+    // post-mint write is no longer needed. (Pre-T-007 the sentinel was
+    // stamped after the mint, which left a window for concurrent calls to
+    // both pass the gate and both mint admin keys.)
 
     void storage.audit.log({
       key_id: c.get("apiKey")?.id,
