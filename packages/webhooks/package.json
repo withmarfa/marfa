@@ -1,8 +1,11 @@
 {
   "name": "@mymehq/webhooks",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
   "description": "Cross-runtime inbound webhook signature verification (HMAC-SHA256, Slack, Stripe, GitHub). Web Crypto only — runs in Cloudflare Workers and Node 20+ alike.",
   "exports": {
     ".": {

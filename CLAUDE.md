@@ -16,7 +16,7 @@ Typed data layer. This monorepo contains seven active workspace packages plus si
 
 **Infra (`infra/`):** `cloudflare` — `wrangler.jsonc` + deploy script for the runtime-control Worker, the per-Integration Workers, and the shared Queues / KV / Containers bindings.
 
-`@mymehq/shared` and `@mymehq/sdk` publish to npm under the `@mymehq` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.
+`@mymehq/shared`, `@mymehq/sdk`, and `@mymehq/webhooks` publish to npm under the `@mymehq` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.
 
 ## Tech stack
 
