@@ -304,6 +304,47 @@ describe("PATCH /edges/:id — properties only", () => {
     };
     expect(data.edge.properties.position).toBe(2);
   });
+
+  it("emits an audit row on success", async () => {
+    // Sibling POST and DELETE handlers emit `edge.create` / `edge.delete`
+    // audit rows; PATCH was the one missing this in the post-T-027 sweep.
+    const source = await createItem();
+    const target = await createItem();
+    const create = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        source_id: source,
+        target_id: target,
+        edge_type: "in-thread",
+        properties: { position: 1 },
+      },
+    });
+    const created = (await create.json()) as { edge: { id: string } };
+    const patch = await request(ctx.app, "PATCH", `/edges/${created.edge.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { position: 7 } },
+    });
+    expect(patch.status).toBe(200);
+
+    const auditRes = await request(ctx.app, "GET", "/audit?limit=20", {
+      key: ctx.adminKey,
+    });
+    const auditData = (await auditRes.json()) as {
+      data: {
+        action: string;
+        resource_id: string;
+        resource_type: string;
+        details?: { edge_type?: string };
+      }[];
+    };
+    const updateEntry = auditData.data.find(
+      (e) =>
+        e.action === "edge.update" && e.resource_id === created.edge.id,
+    );
+    expect(updateEntry).toBeDefined();
+    expect(updateEntry?.resource_type).toBe("edge");
+    expect(updateEntry?.details?.edge_type).toBe("in-thread");
+  });
 });
 
 describe("DELETE /edges/:id", () => {
