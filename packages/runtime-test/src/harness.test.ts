@@ -71,7 +71,7 @@ describe("createTestHarness", () => {
       connection_id: "conn_1",
       delivery_id: "d_1",
       headers: {},
-      body: new ArrayBuffer(0),
+      body_base64: "",
       verified_at_ms: 1,
     });
     const outcome = await harness.consume();
@@ -121,5 +121,40 @@ describe("createTestHarness", () => {
     }
     await harness.consume();
     expect(mintCalls).toBe(3);
+  });
+
+  it("decodes body_base64 → ArrayBuffer at the dispatcher seam (T-009)", async () => {
+    // Round-trip the wire format through the dispatcher: enqueue with
+    // body_base64; the SDK should hand the handler an ArrayBuffer with
+    // matching bytes. The base64 round-trip is the seam that broke 3 of
+    // 5 webhook integrations in production pre-T-009.
+    const harness = createTestHarness({ integrationName: "myme.test" });
+    const original = "hello, webhook world";
+    const bytes = new TextEncoder().encode(original);
+    let bodyBuffer: ArrayBuffer | undefined;
+    registerWebhookHandler((_ctx, input) => {
+      bodyBuffer = input.body;
+      return Promise.resolve({ ok: true });
+    });
+
+    // btoa on the raw byte sequence (Latin1 view) — what the control
+    // plane does when it serialises the body for the queue envelope.
+    let bodyString = "";
+    for (const b of bytes) bodyString += String.fromCharCode(b);
+    const bodyBase64 = btoa(bodyString);
+
+    await harness.connection("conn_decode").send({
+      kind: "webhook",
+      integration_name: "myme.test",
+      connection_id: "conn_decode",
+      delivery_id: "d_decode",
+      headers: { "content-type": "application/json" },
+      body_base64: bodyBase64,
+      verified_at_ms: Date.now(),
+    });
+    const outcome = await harness.consume();
+    expect(outcome.acked).toBe(1);
+    expect(bodyBuffer).toBeDefined();
+    expect(new TextDecoder("utf-8").decode(bodyBuffer)).toBe(original);
   });
 });

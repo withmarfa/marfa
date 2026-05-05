@@ -14,8 +14,15 @@ export interface InboundSubscription {
   external_service_id?: string;
   /** Decrypted plaintext secret. */
   secret: string;
-  verification_method: "hmac-sha256" | "slack" | "stripe" | "github" | "custom";
+  verification_method: "hmac-sha256" | "slack" | "stripe" | "github";
   verification_adapter_id?: string;
+  /**
+   * Manifest name (e.g. `acme.calendar-sync`) projected from the
+   * connection's integration_ref by the server's lookup endpoint
+   * (T-009). The control plane stamps this on the queue message
+   * envelope so the per-Integration Worker filter accepts it.
+   */
+  integration_name?: string;
   events: string[];
   disabled: boolean;
 }

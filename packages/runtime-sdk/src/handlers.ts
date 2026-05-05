@@ -16,9 +16,10 @@ import type {
   HandlerResult,
   ItemEventMessage,
   ScheduleMessage,
-  WebhookMessage,
+  WebhookHandlerInput,
   QueueMessage,
 } from "./types.js";
+import { decodeBase64ToArrayBuffer } from "./types.js";
 import type { ConnectionContext } from "./connection-context.js";
 
 export type ScheduleHandler = (
@@ -26,9 +27,14 @@ export type ScheduleHandler = (
   message: ScheduleMessage,
 ) => Promise<HandlerResult>;
 
+/**
+ * Webhook handlers receive a decoded `WebhookHandlerInput` — `body` is an
+ * `ArrayBuffer` rather than the wire-format `body_base64` string. The
+ * dispatcher (`dispatchMessage`) does the decode at the seam (T-009).
+ */
 export type WebhookHandler = (
   ctx: ConnectionContext,
-  message: WebhookMessage,
+  input: WebhookHandlerInput,
 ) => Promise<HandlerResult>;
 
 export type ItemEventHandler = (
@@ -92,7 +98,16 @@ export async function dispatchMessage(
           reason: "no_webhook_handler_registered",
         };
       }
-      return handler(ctx, message);
+      // T-009: decode the wire-format body_base64 once at the seam.
+      // Handlers always receive the runtime form with `body: ArrayBuffer`.
+      const input: WebhookHandlerInput = {
+        delivery_id: message.delivery_id,
+        headers: message.headers,
+        body: decodeBase64ToArrayBuffer(message.body_base64),
+        ...(message.body_url !== undefined && { body_url: message.body_url }),
+        verified_at_ms: message.verified_at_ms,
+      };
+      return handler(ctx, input);
     }
     case "item-event": {
       const handler = REGISTRY.itemEvent;

@@ -49,8 +49,7 @@ function rowToWire(
     | "hmac-sha256"
     | "slack"
     | "stripe"
-    | "github"
-    | "custom";
+    | "github";
   const base: InboundWebhook = {
     id: row.id,
     tenant_id: row.tenant_id ?? undefined,
@@ -121,13 +120,7 @@ const InboundWebhookSchema = z.object({
   connection_id: z.string(),
   external_service_id: z.string().optional(),
   secret_redacted: z.string(),
-  verification_method: z.enum([
-    "hmac-sha256",
-    "slack",
-    "stripe",
-    "github",
-    "custom",
-  ]),
+  verification_method: z.enum(["hmac-sha256", "slack", "stripe", "github"]),
   verification_adapter_id: z.string().optional(),
   events: z.array(z.string()),
   disabled: z.boolean(),
@@ -348,14 +341,11 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
       body.manifest,
     );
 
-    // Stamp method + adapter_id on the new row from the validated
-    // manifest. This is the only manifest field PR 5 consumes; the rest
-    // is the runtime's concern (WS3).
+    // Stamp method on the new row from the validated manifest. The
+    // legacy `verification_adapter_id` column was reserved for the
+    // dropped `custom` method (T-011); always undefined now.
     const verification_method = manifest.webhook_verification.method;
-    const verification_adapter_id =
-      manifest.webhook_verification.method === "custom"
-        ? manifest.webhook_verification.adapter_id
-        : undefined;
+    const verification_adapter_id: string | undefined = undefined;
 
     // Fresh 32-byte hex secret, encrypted at rest.
     const rawSecret = randomBytes(32).toString("hex");

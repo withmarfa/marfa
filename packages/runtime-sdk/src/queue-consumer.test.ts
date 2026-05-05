@@ -32,7 +32,7 @@ const WEBHOOK = (over: Partial<WebhookMessage> = {}): WebhookMessage => ({
   connection_id: "conn_a",
   delivery_id: "d_1",
   headers: {},
-  body: new ArrayBuffer(0),
+  body_base64: "",
   verified_at_ms: 1000,
   ...over,
 });

@@ -135,14 +135,12 @@ const InboundSubscriptionSchema = z.object({
    *  (control-plane lease broker) so they can verify inbound HMAC
    *  signatures. Never appears on UI list/get endpoints. */
   secret: z.string(),
-  verification_method: z.enum([
-    "hmac-sha256",
-    "slack",
-    "stripe",
-    "github",
-    "custom",
-  ]),
+  verification_method: z.enum(["hmac-sha256", "slack", "stripe", "github"]),
   verification_adapter_id: z.string().optional(),
+  /** Manifest name (e.g. `acme.calendar-sync`) projected from the
+   *  connection's integration_ref so the control plane can stamp it on
+   *  the queue message envelope (T-009). */
+  integration_name: z.string().optional(),
   events: z.array(z.string()),
   disabled: z.boolean(),
 });
@@ -257,6 +255,24 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     }
     const { connection_id } = c.req.valid("param");
     const rows = await storage.inboundWebhooks.listByConnection(connection_id);
+    // T-009: project the integration manifest's `name` so the control
+    // plane can stamp `integration_name` on the queue message envelope.
+    // Resolve once per connection (low cardinality) rather than per-row.
+    const connection = await storage.items.get(connection_id);
+    let integrationName: string | undefined;
+    if (connection?.type === "system.connection") {
+      const integrationRef = (
+        connection.properties as { integration_ref?: string }
+      ).integration_ref;
+      if (integrationRef) {
+        const integration = await storage.items.get(integrationRef);
+        if (integration?.type === "system.integration") {
+          const name = (integration.properties as { manifest_name?: string })
+            .manifest_name;
+          if (typeof name === "string") integrationName = name;
+        }
+      }
+    }
     const subscriptions = rows
       .filter((row) => !row.disabled)
       .map((row) => ({
@@ -271,9 +287,9 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
           | "hmac-sha256"
           | "slack"
           | "stripe"
-          | "github"
-          | "custom",
+          | "github",
         verification_adapter_id: row.verification_adapter_id ?? undefined,
+        integration_name: integrationName,
         events: row.events,
         disabled: row.disabled,
       }));

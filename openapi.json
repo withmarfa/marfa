@@ -10445,11 +10445,13 @@
                               "hmac-sha256",
                               "slack",
                               "stripe",
-                              "github",
-                              "custom"
+                              "github"
                             ]
                           },
                           "verification_adapter_id": {
+                            "type": "string"
+                          },
+                          "integration_name": {
                             "type": "string"
                           },
                           "events": {
@@ -11942,8 +11944,7 @@
                         "hmac-sha256",
                         "slack",
                         "stripe",
-                        "github",
-                        "custom"
+                        "github"
                       ]
                     },
                     "verification_adapter_id": {
@@ -12183,8 +12184,7 @@
                               "hmac-sha256",
                               "slack",
                               "stripe",
-                              "github",
-                              "custom"
+                              "github"
                             ]
                           },
                           "verification_adapter_id": {

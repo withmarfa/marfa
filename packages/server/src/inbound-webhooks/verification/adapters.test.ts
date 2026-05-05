@@ -5,20 +5,20 @@ import { ADAPTERS, isVerificationMethod } from "./index.js";
 const SECRET = "topsecret-shared-key";
 
 describe("verification adapter dispatch", () => {
-  it("isVerificationMethod accepts the five known methods", () => {
-    for (const m of ["hmac-sha256", "slack", "stripe", "github", "custom"]) {
+  it("isVerificationMethod accepts the four known methods", () => {
+    for (const m of ["hmac-sha256", "slack", "stripe", "github"]) {
       expect(isVerificationMethod(m)).toBe(true);
     }
   });
 
-  it("isVerificationMethod rejects unknown methods", () => {
+  it("isVerificationMethod rejects unknown methods (incl. dropped 'custom')", () => {
+    expect(isVerificationMethod("custom")).toBe(false);
     expect(isVerificationMethod("rot13")).toBe(false);
     expect(isVerificationMethod("")).toBe(false);
   });
 
   it("ADAPTERS table has an entry for every method", () => {
     expect(Object.keys(ADAPTERS).sort()).toEqual([
-      "custom",
       "github",
       "hmac-sha256",
       "slack",
@@ -223,13 +223,5 @@ describe("github adapter", () => {
   it("rejects when the header is absent", () => {
     const result = adapter(body, new Headers(), SECRET);
     expect(result.verified).toBe(false);
-  });
-});
-
-describe("custom adapter (WS2 stub)", () => {
-  it("always reports verification not implemented", () => {
-    const result = ADAPTERS.custom(Buffer.from("anything"), new Headers(), "");
-    expect(result.verified).toBe(false);
-    expect(result.reason).toContain("not yet implemented");
   });
 });

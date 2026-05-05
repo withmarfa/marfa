@@ -185,17 +185,27 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     expect(res.status).toBe(401);
   });
 
-  it("stamps verification_adapter_id when manifest declares custom verification", async () => {
+  it("rejects the dropped 'custom' verification method at create time (T-011)", async () => {
     const connectionId = await createConnection();
-    const created = await createSubscription(connectionId, {
-      ...VALID_MANIFEST,
-      webhook_verification: {
-        method: "custom",
-        adapter_id: "acme-internal",
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/inbound-webhooks`,
+      {
+        key: ctx.adminKey,
+        body: {
+          events: ["x"],
+          manifest: {
+            ...VALID_MANIFEST,
+            webhook_verification: {
+              method: "custom",
+              adapter_id: "acme-internal",
+            },
+          },
+        },
       },
-    });
-    expect(created.verification_method).toBe("custom");
-    expect(created.verification_adapter_id).toBe("acme-internal");
+    );
+    expect(res.status).toBe(400);
   });
 
   // Layer 2 PR 2: preferred path — connection bound to a real
@@ -404,19 +414,6 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     expect(event?.processing_error).toBeNull();
     // Pending queue: next_attempt_at set, processed_at + processing_error null.
     expect(event?.next_attempt_at).not.toBeNull();
-  });
-
-  it("custom verification stub returns 401 on every receipt", async () => {
-    const connectionId = await createConnection();
-    const sub = await createSubscription(connectionId, {
-      ...VALID_MANIFEST,
-      webhook_verification: {
-        method: "custom",
-        adapter_id: "acme-internal",
-      },
-    });
-    const res = await postRaw(`/webhooks/inbound/${sub.id}`, "{}");
-    expect(res.status).toBe(401);
   });
 });
 

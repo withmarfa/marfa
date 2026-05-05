@@ -524,7 +524,14 @@ export interface InboundWebhook {
    * which uses the `secret` field on `CreatedInboundWebhook` below.
    */
   secret_redacted: string;
-  verification_method: "hmac-sha256" | "slack" | "stripe" | "github" | "custom";
+  verification_method: "hmac-sha256" | "slack" | "stripe" | "github";
+  /**
+   * Carried over from the WS2 era when `verification_method: "custom"`
+   * shipped with a per-row `adapter_id`. The custom method was dropped
+   * in T-011 (the runtime never resolved it); the column is still on
+   * the table for backwards data compatibility but is always undefined
+   * on writes going forward. Will be removed in a follow-up migration.
+   */
   verification_adapter_id?: string;
   events: string[];
   disabled: boolean;
