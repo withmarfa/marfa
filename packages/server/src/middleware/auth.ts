@@ -38,6 +38,30 @@ export interface AppEnv extends Record<string, unknown> {
      * through the storage layer directly with `client_ip: null`).
      */
     clientIp: string | null;
+    /**
+     * Cycle metadata for events published from this request (T-039).
+     * Resolved by `cycleMiddleware` after auth from either the inbound
+     * `X-Myme-Cycle-Origin` / `X-Myme-Cycle-Hop` headers (a connector
+     * reacting to a parent event — the SDK threads them via
+     * `ConnectionClient.request()`) or from the caller's api key when
+     * the headers are absent (the chain head). Routes thread this into
+     * `publish({ originatingConnectionId, hopCount })` so the reactive-
+     * run bridge can suppress self-fanout and `passesHopBudget` can
+     * apply attribution by origin (T-008).
+     *
+     * **Never `null`.** A human-issued chain head is `{
+     * originatingConnectionId: null, hopCount: 0 }` (the explicit
+     * sentinel); a connector chain head is `{ originatingConnectionId:
+     * <connection_id>, hopCount: 0 }`; a connector continuing a chain
+     * is `{ originatingConnectionId: <head>, hopCount: parent + 1 }`.
+     * The `null` originator on the human sentinel is the contract
+     * `passesHopBudget` keys on to bypass the budget — see
+     * `pubsub.ts:passesHopBudget`.
+     */
+    cycle: {
+      originatingConnectionId: string | null;
+      hopCount: number;
+    };
   };
 }
 

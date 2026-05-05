@@ -46,6 +46,7 @@ import { userAuthRoutes } from "./routes/users.js";
 import { tenantRoutes } from "./routes/tenants.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
+import { cycleMiddleware } from "./middleware/cycle.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { healthRoutes } from "./routes/health.js";
 export function createApp(
@@ -166,6 +167,15 @@ export function createApp(
   // the credential id (per-credential enforcement). Anonymous requests
   // still fall through to IP-based limiting inside rateLimitMiddleware.
   app.use("*", authMiddleware(storage, config.apiKeySalt));
+
+  // Cycle metadata resolution (T-039). Reads X-Myme-Cycle-Origin /
+  // X-Myme-Cycle-Hop headers (a connector continuing a chain) or falls
+  // back to the api key's connection binding (a connector kicking off a
+  // chain). Mounted AFTER auth because the fallback path reads
+  // `c.var.apiKey`. Routes thread `c.var.cycle` into every `publish(...)`
+  // call so the reactive-run bridge can self-suppress and the hop budget
+  // gate can attribute by origin.
+  app.use("*", cycleMiddleware());
 
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS
   // and RATE_LIMIT_WINDOW_MS). Protects all endpoints. Configuration flows

@@ -44,6 +44,18 @@ Most write routes follow the same gate sequence:
 
 Read routes apply the source-filter lever in step 4 before issuing the storage query.
 
+## Request context (`c.var`)
+
+Middleware composes shared per-request state on `c.var`. Routes read these directly rather than re-resolving:
+
+- **`apiKey: ApiKey | undefined`** — set by `authMiddleware` from the bearer token. Carries `tenant_id`, `connection_id` (runtime credentials), `source`, role, and the permission maps. `undefined` for anonymous requests.
+- **`authType: "api_key" | "oauth" | undefined`** — distinguishes how the bearer was resolved.
+- **`clientIp: string | null`** — resolved by `clientIpMiddleware` against `TRUSTED_PROXY_CIDRS`. Threaded into every `audit.log` call (T-027).
+- **`requestId: string`** — per-request UUID for log correlation.
+- **`cycle: { originatingConnectionId: string | null; hopCount: number }`** — cycle metadata (T-039), resolved by `cycleMiddleware` after auth. Reads `X-Myme-Cycle-Origin` / `X-Myme-Cycle-Hop` (a connector continuing a chain), or falls back to the api key's connection binding (a connector kicking off a chain), or stamps the human sentinel `{ null, 0 }` for ordinary user requests. Routes spread `...c.var.cycle` into every `publish(...)` so the reactive-run bridge can self-suppress and `passesHopBudget` can attribute by origin. **Never `null`** — the sentinel is always present.
+
+Middleware order in `app.ts`: logger → CORS → client-ip → auth → cycle → rate-limit → routes. The cycle resolver depends on auth's `c.var.apiKey`, so it must run after auth.
+
 ## Reserved extension namespaces
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:

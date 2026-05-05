@@ -16,7 +16,22 @@
  *      `connection.runtime` extensions, emit `system.activity`.
  *      A bespoke client keeps the surface honest.
  */
-import type { RuntimeCredential } from "./types.js";
+import {
+  nextHopMetadata,
+  type CycleMetadata,
+  type RuntimeCredential,
+} from "./types.js";
+
+/**
+ * Headers that propagate the cycle metadata from a connector reaction
+ * back to the Myme server (T-039). Mirror the server's
+ * `middleware/cycle.ts:CYCLE_HEADERS` constant. Cross-package contract —
+ * change in lockstep.
+ */
+export const CYCLE_HEADERS = {
+  ORIGIN: "X-Myme-Cycle-Origin",
+  HOP: "X-Myme-Cycle-Hop",
+} as const;
 
 export interface ConnectionClientOptions {
   /** Base URL of the Myme server (e.g. `https://myme.so`). */
@@ -30,6 +45,19 @@ export interface ConnectionClientOptions {
   refreshCredential: () => Promise<RuntimeCredential>;
   /** Custom fetch for testing — defaults to globalThis.fetch. */
   fetch?: typeof fetch;
+  /**
+   * Parent cycle metadata for this run (T-039). When the connector is
+   * reacting to an `ItemEventMessage`, pass `message.cycle`. When it's
+   * a fresh schedule / webhook trigger (or any other non-reactive
+   * source), pass `null`. The client stamps `X-Myme-Cycle-Origin` /
+   * `X-Myme-Cycle-Hop` on every mutating request, computing the next
+   * hop via `nextHopMetadata(cycleParent, connection_id)`.
+   *
+   * **Always the parent**, never pre-incremented. The client computes
+   * `nextHopMetadata` once per request — passing pre-incremented data
+   * here would over-count by one hop.
+   */
+  cycleParent?: CycleMetadata | null;
 }
 
 export interface CreateItemInput {
@@ -84,12 +112,23 @@ export class ConnectionClient {
   private readonly apiUrl: string;
   private readonly refreshCredential: () => Promise<RuntimeCredential>;
   private readonly fetchImpl: typeof fetch;
+  /**
+   * Parent cycle metadata for this run, captured at construction time
+   * (T-039). The client stamps `X-Myme-Cycle-Origin` /
+   * `X-Myme-Cycle-Hop` on every mutating request via
+   * `nextHopMetadata(this.cycleParent, this.credential.connection_id)`.
+   * `null` for handlers triggered by schedule / webhook (fresh chain
+   * head); set to `message.cycle` for handlers triggered by an
+   * `ItemEventMessage`.
+   */
+  private readonly cycleParent: CycleMetadata | null;
 
   constructor(opts: ConnectionClientOptions) {
     this.credential = opts.credential;
     this.apiUrl = opts.apiUrl.replace(/\/$/, "");
     this.refreshCredential = opts.refreshCredential;
     this.fetchImpl = opts.fetch ?? globalThis.fetch.bind(globalThis);
+    this.cycleParent = opts.cycleParent ?? null;
   }
 
   async createItem(input: CreateItemInput): Promise<ItemResource> {
@@ -206,12 +245,33 @@ export class ConnectionClient {
     body?: unknown,
   ): Promise<T> {
     const url = `${this.apiUrl}${path}`;
+    // T-039: stamp cycle headers on mutating requests so the server's
+    // `cycleMiddleware` can resolve `c.var.cycle` and the resulting
+    // publishes carry attribution. Read-only verbs (GET/HEAD/OPTIONS)
+    // don't trigger publishes — no need to bloat the headers there.
+    // `nextHopMetadata` is called ONCE per request: the SDK never
+    // pre-increments `this.cycleParent`. Multiple requests in the same
+    // run all derive from the same parent (each gets `parent.hop + 1`)
+    // — that's deliberate. The runtime contract is "this connector's
+    // run is one logical hop"; per-request increments would conflate
+    // an N-call handler with an N-deep chain.
+    const isMutating = method !== "GET" && method !== "HEAD";
+    const cycleHeaders: Record<string, string> = {};
+    if (isMutating) {
+      const next = nextHopMetadata(
+        this.cycleParent,
+        this.credential.connection_id,
+      );
+      cycleHeaders[CYCLE_HEADERS.ORIGIN] = next.originating_connection_id ?? "";
+      cycleHeaders[CYCLE_HEADERS.HOP] = String(next.hop_count);
+    }
     const doFetch = async (): Promise<Response> =>
       this.fetchImpl(url, {
         method,
         headers: {
           Authorization: `Bearer ${this.credential.api_key}`,
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...cycleHeaders,
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });

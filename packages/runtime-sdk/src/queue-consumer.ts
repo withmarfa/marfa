@@ -84,10 +84,18 @@ export async function buildConnectionContext(
   message: QueueMessage,
 ): Promise<ConnectionContext> {
   const credential = await env.mintCredential(message.connection_id);
+  // T-039: thread the parent cycle into the ConnectionClient so every
+  // mutating call back into Myme stamps the cycle headers. Schedule /
+  // webhook handlers start a fresh chain (cycleParent: null —
+  // `nextHopMetadata` sees it and stamps the connector as the chain
+  // head); item-event handlers inherit the parent's cycle from the
+  // queue message.
+  const cycleParent = message.kind === "item-event" ? message.cycle : null;
   const client = new ConnectionClient({
     apiUrl: env.apiUrl,
     credential,
     refreshCredential: () => env.mintCredential(message.connection_id),
+    cycleParent,
   });
   const storage = env.storageFor(message.connection_id);
   return {
@@ -98,7 +106,7 @@ export async function buildConnectionContext(
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, message.connection_id),
     echo: createEchoSuppression(storage, env.echo),
-    cycle: message.kind === "item-event" ? message.cycle : null,
+    cycle: cycleParent,
   };
 }
 

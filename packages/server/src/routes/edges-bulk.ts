@@ -364,7 +364,12 @@ export function edgesBulkRoutes(storage: Storage) {
     // edge_updated variant and adding one is out of scope for this PR.
     if (emitEvents) {
       for (const edge of createdEdges) {
-        await publishEdge({ type: "edge_created", edge, tenantId });
+        await publishEdge({
+          type: "edge_created",
+          edge,
+          tenantId,
+          ...c.var.cycle,
+        });
       }
     }
 

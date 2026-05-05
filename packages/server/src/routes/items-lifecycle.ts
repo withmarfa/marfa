@@ -115,7 +115,13 @@ export function itemsLifecycleRoutes(storage: Storage) {
     requireTypeAccess(c, pending.type, "write");
     const restored = await storage.items.restore(id, tenantId);
     const metadata = await storage.metadata.get(id);
-    await publish({ type: "restored", item: restored, metadata, tenantId });
+    await publish({
+      type: "restored",
+      item: restored,
+      metadata,
+      tenantId,
+      ...c.var.cycle,
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,
@@ -154,7 +160,13 @@ export function itemsLifecycleRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     const updated = await storage.items.transition(id, state, tenantId);
     const metadata = await storage.metadata.get(id);
-    await publish({ type: "state_changed", item: updated, metadata, tenantId });
+    await publish({
+      type: "state_changed",
+      item: updated,
+      metadata,
+      tenantId,
+      ...c.var.cycle,
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,
