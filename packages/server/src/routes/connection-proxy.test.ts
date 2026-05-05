@@ -25,27 +25,82 @@ interface ItemResponse {
   item: { id: string; type: string };
 }
 
-async function createConnection(
-  configurationOverride?: Record<string, unknown>,
+async function createCredential(
+  override?: Partial<{
+    upstream_base_url: string;
+    oauth_token_url: string;
+    oauth_client_id: string;
+    oauth_client_secret: string;
+  }>,
 ): Promise<string> {
-  const configuration = {
+  const cfg = {
     upstream_base_url: "https://upstream.test",
     oauth_token_url: "https://upstream.test/oauth/token",
     oauth_client_id: "test-client",
     oauth_client_secret: "test-secret",
-    ...configurationOverride,
+    ...override,
   };
   const res = await request(ctx.app, "POST", "/items", {
     key: ctx.adminKey,
     body: {
-      type: "system.connection",
+      type: "system.credential",
       properties: {
-        kind: "external-service-connector",
-        status: "active",
-        granted_at: new Date().toISOString(),
-        integration_ref: "acme.demo",
-        configuration,
+        label: "test-cred",
+        kind: "oauth_token",
+        oauth_provider_config: {
+          upstream_base_url: cfg.upstream_base_url,
+          oauth_token_url: cfg.oauth_token_url,
+          oauth_client_id: cfg.oauth_client_id,
+        },
+        secret_encrypted: encryptSecret(
+          cfg.oauth_client_secret,
+          SECRET_INFO.connectionOauthToken,
+        ),
       },
+    },
+  });
+  if (res.status !== 201) {
+    const txt = await res.text();
+    throw new Error(`createCredential failed: ${String(res.status)} ${txt}`);
+  }
+  const body = (await res.json()) as ItemResponse;
+  return body.item.id;
+}
+
+/**
+ * Build a connection backed by a freshly-minted system.credential. Post-T-022
+ * the proxy refuses to read OAuth config from inline `configuration`, so
+ * every test connection must reference a credential item.
+ */
+async function createConnection(opts?: {
+  credentialId?: string;
+  /**
+   * Override the OAuth config baked into the auto-created credential.
+   * Ignored when `credentialId` is supplied.
+   */
+  credentialOverride?: Partial<{
+    upstream_base_url: string;
+    oauth_token_url: string;
+    oauth_client_id: string;
+    oauth_client_secret: string;
+  }>;
+  skipCredential?: boolean;
+}): Promise<string> {
+  const properties: Record<string, unknown> = {
+    kind: "external-service-connector",
+    status: "active",
+    granted_at: new Date().toISOString(),
+    integration_ref: "acme.demo",
+  };
+  if (!opts?.skipCredential) {
+    properties.credential_ref =
+      opts?.credentialId ?? (await createCredential(opts?.credentialOverride));
+  }
+  const res = await request(ctx.app, "POST", "/items", {
+    key: ctx.adminKey,
+    body: {
+      type: "system.connection",
+      properties,
     },
   });
   if (res.status !== 201) {
@@ -525,22 +580,25 @@ describe("POST /connections/:id/proxy/* — audit", () => {
 // ---------------------------------------------------------------------------
 
 describe("POST /connections/:id/proxy/* — misconfiguration", () => {
-  it("returns 422 OAUTH_PROXY_UPSTREAM_INVALID when configuration is missing", async () => {
-    const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "external-service-connector",
-          status: "active",
-          granted_at: new Date().toISOString(),
-          // no configuration
-        },
-      },
+  it("returns 422 OAUTH_PROXY_UPSTREAM_INVALID when credential_ref is missing (T-022)", async () => {
+    const connectionId = await createConnection({ skipCredential: true });
+    await seedToken(connectionId);
+
+    const proxyRes = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/proxy/path`,
+      { key: ctx.adminKey },
+    );
+    expect(proxyRes.status).toBe(422);
+    const err = (await proxyRes.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("oauth_proxy_upstream_invalid");
+  });
+
+  it("returns 422 when credential_ref doesn't resolve to a system.credential (T-022)", async () => {
+    const connectionId = await createConnection({
+      credentialId: "0192abcd-ef00-7000-8000-000000000099",
     });
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as ItemResponse;
-    const connectionId = body.item.id;
     await seedToken(connectionId);
 
     const proxyRes = await request(

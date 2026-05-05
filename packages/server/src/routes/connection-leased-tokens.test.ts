@@ -7,11 +7,27 @@ import type {
   ConnectionLeasedToken,
   LeaseTokenIntrospection,
 } from "@mymehq/shared";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
+/** Registered system.integration id pointing at VALID_MANIFEST. */
+let integrationId: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  // T-022: lease-token capability gating now resolves the manifest from
+  // the connection's integration_ref. Register one up front.
+  const reg = await request(ctx.app, "POST", "/integrations", {
+    key: ctx.adminKey,
+    body: { manifest: VALID_MANIFEST },
+  });
+  if (reg.status !== 201) {
+    throw new Error(
+      `lease-tokens test setup: integration register failed (${String(reg.status)})`,
+    );
+  }
+  const regBody = (await reg.json()) as { id: string };
+  integrationId = regBody.id;
 });
 
 afterAll(() => {
@@ -54,7 +70,7 @@ async function createConnection(): Promise<string> {
         kind: "external-service-connector",
         status: "active",
         granted_at: new Date().toISOString(),
-        integration_ref: VALID_MANIFEST.name,
+        integration_ref: integrationId,
       },
     },
   });
@@ -72,7 +88,6 @@ async function issueLease(
     capability_id?: string;
     ttl_seconds?: number;
     scopes?: string[];
-    manifest?: unknown;
   } = {},
 ): Promise<Response> {
   return request(ctx.app, "POST", `/connections/${connectionId}/lease-token`, {
@@ -81,7 +96,6 @@ async function issueLease(
       capability_id: overrides.capability_id ?? "drive.upload",
       ttl_seconds: overrides.ttl_seconds,
       scopes: overrides.scopes,
-      manifest: overrides.manifest ?? VALID_MANIFEST,
     },
   });
 }
@@ -140,7 +154,6 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
         body: {
           capability_id: "drive.upload",
           ttl_seconds: 7200,
-          manifest: VALID_MANIFEST,
         },
       },
     );
@@ -157,19 +170,29 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
       {
         body: {
           capability_id: "drive.upload",
-          manifest: VALID_MANIFEST,
         },
       },
     );
     expect(res.status).toBe(401);
   });
 
-  it("rejects an invalid manifest with 400", async () => {
-    const connectionId = await createConnection();
-    const res = await issueLease(connectionId, {
-      manifest: { name: "bogus" },
+  it("rejects when the connection has no integration_ref (T-022)", async () => {
+    const orphanRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "external-service-connector",
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
     });
+    const orphan = (await orphanRes.json()) as ItemResponse;
+    const res = await issueLease(orphan.item.id);
     expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("missing_required_field");
   });
 
   // Layer 2 PR 2: preferred path — capability gating against the
@@ -222,6 +245,81 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
       },
     );
     expect(denied.status).toBe(422);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-018 — runtime credential (integration: source) can manage own leases
+// ---------------------------------------------------------------------------
+
+describe("connector runtime credential — integration: source (T-018)", () => {
+  it("issues a lease when called with the connection's runtime credential", async () => {
+    const connectionId = await createConnection();
+    // Mint a runtime credential exactly like the install pipeline does:
+    // source = `integration:<connectionId>`, connection_id stamped.
+    const rawKey = `myme_k1_runtime_test_${Math.random().toString(36).slice(2)}`;
+    const keyHash = hashApiKey(rawKey, "test-salt");
+    await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: "test-runtime-cred",
+        source: `integration:${connectionId}`,
+        role: "member",
+        type_permissions: { "*": "write" },
+        extension_permissions: {},
+        edge_permissions: {},
+        connection_id: connectionId,
+      },
+      keyHash,
+      undefined,
+    );
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/lease-token`,
+      {
+        key: rawKey,
+        body: { capability_id: "drive.upload" },
+      },
+    );
+    // Pre-T-018 the access check matched only `oauth:<connectionId>` —
+    // the install pipeline's `integration:<connectionId>` source got
+    // 403'd. Post-fix the runtime credential is admitted.
+    expect(res.status).toBe(201);
+  });
+
+  it("refuses a runtime credential bound to a different connection", async () => {
+    const connectionA = await createConnection();
+    const connectionB = await createConnection();
+
+    // Runtime credential bound to connection A.
+    const rawKey = `myme_k1_runtime_otherconn_${Math.random().toString(36).slice(2)}`;
+    const keyHash = hashApiKey(rawKey, "test-salt");
+    await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: "test-runtime-cred-other",
+        source: `integration:${connectionA}`,
+        role: "member",
+        type_permissions: { "*": "write" },
+        extension_permissions: {},
+        edge_permissions: {},
+        connection_id: connectionA,
+      },
+      keyHash,
+      undefined,
+    );
+
+    // Try to issue a lease on connection B — must be refused.
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionB}/lease-token`,
+      {
+        key: rawKey,
+        body: { capability_id: "drive.upload" },
+      },
+    );
+    expect(res.status).toBe(403);
   });
 });
 

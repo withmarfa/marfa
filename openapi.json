@@ -11903,9 +11903,6 @@
                       "type": "string"
                     },
                     "minItems": 1
-                  },
-                  "manifest": {
-                    "nullable": true
                   }
                 },
                 "required": [
@@ -12768,9 +12765,6 @@
                     "items": {
                       "type": "string"
                     }
-                  },
-                  "manifest": {
-                    "nullable": true
                   }
                 },
                 "required": [

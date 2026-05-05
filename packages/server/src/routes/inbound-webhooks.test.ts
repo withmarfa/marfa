@@ -5,9 +5,26 @@ import type { TestContext } from "../test-utils.js";
 import type { CreatedInboundWebhook, InboundWebhook } from "@mymehq/shared";
 
 let ctx: TestContext;
+/** Registered system.integration id pointing at VALID_MANIFEST. Resolved
+ *  once at suite setup; every connection in this file references it. */
+let integrationId: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  // T-022: subscriptions resolve the manifest from the connection's
+  // integration_ref → system.integration item. Register one up front so
+  // every test connection points at a real id.
+  const reg = await request(ctx.app, "POST", "/integrations", {
+    key: ctx.adminKey,
+    body: { manifest: VALID_MANIFEST },
+  });
+  if (reg.status !== 201) {
+    throw new Error(
+      `inbound-webhooks test setup: integration register failed (${String(reg.status)})`,
+    );
+  }
+  const regBody = (await reg.json()) as { id: string };
+  integrationId = regBody.id;
 });
 
 afterAll(() => {
@@ -42,7 +59,7 @@ interface ItemResponse {
   item: { id: string; type: string };
 }
 
-async function createConnection(): Promise<string> {
+async function createConnection(refOverride?: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
     key: ctx.adminKey,
     body: {
@@ -51,7 +68,7 @@ async function createConnection(): Promise<string> {
         kind: "external-service-connector",
         status: "active",
         granted_at: new Date().toISOString(),
-        integration_ref: "acme.calendar-sync",
+        integration_ref: refOverride ?? integrationId,
       },
     },
   });
@@ -64,7 +81,6 @@ async function createConnection(): Promise<string> {
 
 async function createSubscription(
   connectionId: string,
-  manifest: unknown = VALID_MANIFEST,
   events: string[] = ["thing.created"],
 ): Promise<CreatedInboundWebhook> {
   const res = await request(
@@ -73,7 +89,7 @@ async function createSubscription(
     `/connections/${connectionId}/inbound-webhooks`,
     {
       key: ctx.adminKey,
-      body: { events, manifest },
+      body: { events },
     },
   );
   if (res.status !== 201) {
@@ -122,40 +138,46 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     expect(created.secret_redacted.startsWith("****")).toBe(true);
   });
 
-  it("rejects an invalid manifest with 400 + structured errors", async () => {
-    const connectionId = await createConnection();
+  it("rejects when the connection has no integration_ref (T-022)", async () => {
+    // Create a connection with NO integration_ref — post-T-022 the
+    // route refuses with MISSING_REQUIRED_FIELD instead of falling
+    // through to the inline manifest path.
+    const orphanRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "external-service-connector",
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+    });
+    const orphan = (await orphanRes.json()) as ItemResponse;
     const res = await request(
       ctx.app,
       "POST",
-      `/connections/${connectionId}/inbound-webhooks`,
+      `/connections/${orphan.item.id}/inbound-webhooks`,
       {
         key: ctx.adminKey,
-        body: {
-          events: ["thing.created"],
-          manifest: { name: "Bad Name With Spaces" },
-        },
+        body: { events: ["thing.created"] },
       },
     );
     expect(res.status).toBe(400);
-    const body = (await res.json()) as {
-      error: { code: string; details?: { errors: { path: string }[] } };
-    };
-    expect(body.error.code).toBe("validation_error");
-    expect(Array.isArray(body.error.details?.errors)).toBe(true);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("missing_required_field");
   });
 
-  it("rejects an unsupported manifest_schema_version major", async () => {
-    const connectionId = await createConnection();
+  it("rejects when integration_ref doesn't resolve (T-022)", async () => {
+    const orphanRefId = "0192abcd-ef00-7000-8000-000000000099";
+    const connectionId = await createConnection(orphanRefId);
     const res = await request(
       ctx.app,
       "POST",
       `/connections/${connectionId}/inbound-webhooks`,
       {
         key: ctx.adminKey,
-        body: {
-          events: ["thing.created"],
-          manifest: { ...VALID_MANIFEST, manifest_schema_version: "2.0.0" },
-        },
+        body: { events: ["thing.created"] },
       },
     );
     expect(res.status).toBe(400);
@@ -168,7 +190,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
       `/connections/0192abc1-2345-7000-8000-000000000000/inbound-webhooks`,
       {
         key: ctx.adminKey,
-        body: { events: ["x"], manifest: VALID_MANIFEST },
+        body: { events: ["x"] },
       },
     );
     expect(res.status).toBe(404);
@@ -180,31 +202,28 @@ describe("POST /connections/:id/inbound-webhooks", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/inbound-webhooks`,
-      { body: { events: ["x"], manifest: VALID_MANIFEST } },
+      { body: { events: ["x"] } },
     );
     expect(res.status).toBe(401);
   });
 
-  it("rejects the dropped 'custom' verification method at create time (T-011)", async () => {
-    const connectionId = await createConnection();
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/connections/${connectionId}/inbound-webhooks`,
-      {
-        key: ctx.adminKey,
-        body: {
-          events: ["x"],
-          manifest: {
-            ...VALID_MANIFEST,
-            webhook_verification: {
-              method: "custom",
-              adapter_id: "acme-internal",
-            },
+  it("rejects the dropped 'custom' verification method at registration time (T-011)", async () => {
+    // Post-T-011 the manifest comes from the registered integration, so
+    // the rejection happens at /integrations registration. Verify that
+    // path here so the regression watch stays in this file's scope.
+    const res = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: {
+        manifest: {
+          ...VALID_MANIFEST,
+          name: "acme.custom-rejected",
+          webhook_verification: {
+            method: "custom",
+            adapter_id: "acme-internal",
           },
         },
       },
-    );
+    });
     expect(res.status).toBe(400);
   });
 
@@ -257,7 +276,7 @@ describe("GET /connections/:id/inbound-webhooks", () => {
   it("lists subscriptions with secrets redacted", async () => {
     const connectionId = await createConnection();
     await createSubscription(connectionId);
-    await createSubscription(connectionId, VALID_MANIFEST, ["thing.updated"]);
+    await createSubscription(connectionId, ["thing.updated"]);
 
     const res = await request(
       ctx.app,

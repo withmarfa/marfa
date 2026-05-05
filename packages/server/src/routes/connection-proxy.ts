@@ -69,74 +69,58 @@ async function readOAuthConfig(
   storage: Storage,
   connection: Item,
 ): Promise<OAuthConfig> {
+  // Connection must reference a `system.credential` row via
+  // `properties.credential_ref`. The transition-period inline-config
+  // fallback (reading `properties.configuration` for plaintext OAuth
+  // fields, including the client_secret) was dropped in T-022 — Layer 2
+  // migrations have run and no production caller now depends on it.
+  // The previous fallback was the lingering exposure for plaintext
+  // provider secrets sitting on `system.connection` rows.
   const props = connection.properties as { credential_ref?: string };
   const credentialRef = props.credential_ref;
-  if (credentialRef) {
-    const credential = await storage.items.get(credentialRef);
-    if (credential?.type === "system.credential") {
-      const credProps = credential.properties as {
-        kind?: string;
-        oauth_provider_config?: {
-          upstream_base_url?: string;
-          oauth_token_url?: string;
-          oauth_client_id?: string;
-        };
-        secret_encrypted?: string;
-      };
-      const cfg = credProps.oauth_provider_config;
-      if (
-        credProps.kind === "oauth_token" &&
-        typeof cfg?.upstream_base_url === "string" &&
-        typeof cfg.oauth_token_url === "string" &&
-        typeof cfg.oauth_client_id === "string" &&
-        typeof credProps.secret_encrypted === "string"
-      ) {
-        return {
-          upstream_base_url: cfg.upstream_base_url,
-          oauth_token_url: cfg.oauth_token_url,
-          oauth_client_id: cfg.oauth_client_id,
-          oauth_client_secret: decryptSecret(
-            credProps.secret_encrypted,
-            SECRET_INFO.connectionOauthToken,
-          ),
-        };
-      }
-    }
-    // credential_ref set but doesn't resolve to a usable OAuth credential
-    // — fall through to inline with a warning. Keeps proxy working when
-    // the credential item is missing or partial.
-    console.warn(
-      `[connection-proxy] connection ${connection.id} has credential_ref '${credentialRef}' but no usable system.credential item exists. Falling back to inline OAuth config.`,
+  if (!credentialRef) {
+    throw new MymeError(
+      ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
+      `Connection ${connection.id} has no credential_ref. Install the connection via /integrations/:id/install or migrate the legacy inline OAuth config to a system.credential item.`,
     );
   }
-
-  // Legacy fallback — read OAuth fields from connection.properties.configuration.
-  const raw = connection.properties.configuration;
+  const credential = await storage.items.get(credentialRef);
+  if (credential?.type !== "system.credential") {
+    throw new MymeError(
+      ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
+      `Connection ${connection.id} has credential_ref '${credentialRef}' but no matching system.credential item exists.`,
+    );
+  }
+  const credProps = credential.properties as {
+    kind?: string;
+    oauth_provider_config?: {
+      upstream_base_url?: string;
+      oauth_token_url?: string;
+      oauth_client_id?: string;
+    };
+    secret_encrypted?: string;
+  };
+  const cfg = credProps.oauth_provider_config;
   if (
-    typeof raw !== "object" ||
-    raw === null ||
-    Array.isArray(raw) ||
-    typeof (raw as Record<string, unknown>).upstream_base_url !== "string" ||
-    typeof (raw as Record<string, unknown>).oauth_token_url !== "string" ||
-    typeof (raw as Record<string, unknown>).oauth_client_id !== "string" ||
-    typeof (raw as Record<string, unknown>).oauth_client_secret !== "string"
+    credProps.kind !== "oauth_token" ||
+    typeof cfg?.upstream_base_url !== "string" ||
+    typeof cfg.oauth_token_url !== "string" ||
+    typeof cfg.oauth_client_id !== "string" ||
+    typeof credProps.secret_encrypted !== "string"
   ) {
     throw new MymeError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
-      "Connection has no usable OAuth config: neither credential_ref → system.credential nor inline configuration is populated",
+      `Connection ${connection.id}'s credential_ref ${credentialRef} is not a usable kind:oauth_token with the required oauth_provider_config + secret_encrypted fields.`,
     );
   }
-  if (!credentialRef) {
-    console.warn(
-      `[connection-proxy] connection ${connection.id} resolved via legacy inline OAuth config (no credential_ref). Run the migration script to populate system.credential items.`,
-    );
-  }
-  const cfg = raw as Record<string, unknown>;
   return {
-    upstream_base_url: String(cfg.upstream_base_url),
-    oauth_token_url: String(cfg.oauth_token_url),
-    oauth_client_id: String(cfg.oauth_client_id),
-    oauth_client_secret: String(cfg.oauth_client_secret),
+    upstream_base_url: cfg.upstream_base_url,
+    oauth_token_url: cfg.oauth_token_url,
+    oauth_client_id: cfg.oauth_client_id,
+    oauth_client_secret: decryptSecret(
+      credProps.secret_encrypted,
+      SECRET_INFO.connectionOauthToken,
+    ),
   };
 }
 
