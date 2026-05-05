@@ -107,12 +107,19 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
       } as ItemResource);
     },
     listItems: (query: ListItemsQuery = {}): Promise<ListItemsPage> => {
-      // Cursor in real Myme is opaque + stable across the current
-      // filter snapshot. Items that mutate out of the filter (e.g.
-      // an `active` task transitioned to `archived`) silently leave
-      // the result set on the next page query. The simplest faithful
-      // model: re-filter fresh on every call and always return the
-      // first `pageSize` items.
+      // Models real Myme's cursor: opaque + stable across the
+      // filter snapshot at the time of the original list call. Items
+      // that mutate out of the filter between pages don't shift the
+      // cursor (the cursor knows where it was within the original
+      // snapshot, not its position in the freshly-filtered list).
+      //
+      // Implementation here: cursor encodes a numeric offset, and
+      // we always re-filter from the current task list. This is a
+      // faithful approximation as long as nothing mutates between
+      // pages — exactly the contract the T-019 collect-then-act
+      // refactor enforces from the handler side. A *separate* test
+      // exercises the offset hazard with mutations interleaved.
+      const offset = query.cursor === undefined ? 0 : Number(query.cursor);
       const filtered = tasks
         .filter(
           (t) => t.type === query.type && (t.state ?? "active") === query.state,
@@ -122,11 +129,12 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
           const bms = b.created_at ? Date.parse(b.created_at) : 0;
           return ams - bms;
         });
-      const slice = filtered.slice(0, pageSize);
-      const has_more = filtered.length > pageSize;
+      const slice = filtered.slice(offset, offset + pageSize);
+      const nextOffset = offset + slice.length;
+      const has_more = nextOffset < filtered.length;
       return Promise.resolve({
         data: slice,
-        cursor: has_more ? "next" : null,
+        cursor: has_more ? String(nextOffset) : null,
         has_more,
       });
     },
@@ -350,6 +358,99 @@ describe("task-auto-archive handlers", () => {
     expect(summary?.properties?.detail).toMatchObject({
       archived: 0,
       stop_reason: "no_more_due",
+    });
+  });
+
+  it("processes every due row even with an offset-based cursor (T-019)", async () => {
+    // Real Myme today returns an opaque keyset cursor that's stable
+    // across in-place state changes. The pre-T-019 handler relied
+    // on that — it transitioned items inside the pagination loop,
+    // and the second page silently picked up where the first left
+    // off. If a future cursor change made `cursor` offset-based,
+    // page 2 would call `slice(offset, offset + size)` against a
+    // freshly-filtered list whose offset now points past unprocessed
+    // rows, and half the rows would be skipped.
+    //
+    // T-019 split the sweep into collect-then-act, so the listItems
+    // calls finish before any transitions happen. This test stubs
+    // listItems with offset-based behaviour and asserts every due
+    // row is still archived.
+    const now = 1_700_000_000_000;
+    const tasks = [
+      task("t_a", 100, now),
+      task("t_b", 90, now),
+      task("t_c", 80, now),
+      task("t_d", 70, now),
+    ];
+    const pageSize = 2;
+    const archived: string[] = [];
+    const transitionCalls: { id: string; to: ItemState }[] = [];
+    const emitted: CapturedActivity[] = [];
+    const storage = createMemoryStorage();
+
+    // Custom client where listItems is offset-based: cursor encodes
+    // the offset into the *current* (post-mutation) filtered list.
+    // With the pre-T-019 handler this would skip rows; with the
+    // collect-then-act fix the offset doesn't move because nothing
+    // mutates between pages.
+    const client = {
+      createItem: (input: CreateItemInput) => {
+        if (input.type === "system.activity") {
+          emitted.push({ type: input.type, properties: input.properties });
+        }
+        return Promise.resolve({ id: "act_x", type: input.type });
+      },
+      getItem: () => Promise.resolve(null),
+      listItems: (query: ListItemsQuery = {}): Promise<ListItemsPage> => {
+        const offset = query.cursor === undefined ? 0 : Number(query.cursor);
+        const filtered = tasks
+          .filter(
+            (t) =>
+              t.type === query.type && (t.state ?? "active") === query.state,
+          )
+          .sort((a, b) => {
+            const ams = a.created_at ? Date.parse(a.created_at) : 0;
+            const bms = b.created_at ? Date.parse(b.created_at) : 0;
+            return ams - bms;
+          });
+        const slice = filtered.slice(offset, offset + pageSize);
+        const nextOffset = offset + slice.length;
+        const has_more = nextOffset < filtered.length;
+        return Promise.resolve({
+          data: slice,
+          cursor: has_more ? String(nextOffset) : null,
+          has_more,
+        });
+      },
+      transitionItem: (id: string, to: ItemState): Promise<ItemResource> => {
+        transitionCalls.push({ id, to });
+        archived.push(id);
+        const t = tasks.find((x) => x.id === id);
+        if (t) t.state = to;
+        return Promise.resolve(t ?? { id, type: "core.task", state: to });
+      },
+    } as unknown as ConnectionClient;
+
+    const ctx: ConnectionContext = {
+      connection_id: "conn_taa_test",
+      integration_name: "mymehq.task-auto-archive",
+      myme: client,
+      cursor: createCursorStore(storage),
+      activity: createActivitySink(client, "conn_taa_test"),
+      echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
+      cycle: null,
+    };
+
+    await handleSchedule(ctx, SCHEDULE_MSG(now));
+
+    // All four tasks must be archived. Pre-T-019 with offset-based
+    // pagination, t_c and t_d would have been skipped on page 2.
+    expect(archived.sort()).toEqual(["t_a", "t_b", "t_c", "t_d"]);
+    expect(transitionCalls).toHaveLength(4);
+    expect(emitted.at(-1)?.properties?.detail).toMatchObject({
+      archived: 4,
+      pages_walked: 2,
+      stop_reason: "complete",
     });
   });
 });

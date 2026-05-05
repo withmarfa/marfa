@@ -328,11 +328,107 @@ describe("Google Calendar handlers — outbound (item-event)", () => {
     expect(r).toEqual({ ok: true });
     expect(proxyCalls[0]!.method).toBe("POST");
     expect(proxyCalls[0]!.path).toMatch(/calendars\/primary\/events$/);
+    // T-020: a deterministic id is stamped onto the POST payload
+    // so a retry of the same handler invocation reaches Calendar
+    // with the same id (Calendar then 409s instead of duplicating).
+    const sentBody = proxyCalls[0]!.body as { id?: string };
+    expect(typeof sentBody.id).toBe("string");
+    expect(sentBody.id).toMatch(/^[0-9a-f]{64}$/);
 
     const cursor = (await ctx.cursor.read("main")) as {
       mappings: Record<string, string>;
     };
     expect(cursor.mappings.gevt_new).toBe("mit_new");
+  });
+
+  it("recovers idempotently when Calendar 409s on a retried POST (T-020)", async () => {
+    // Cloudflare Queues retries the whole batch when the handler
+    // doesn't ack cleanly. If the original attempt POSTed
+    // successfully but crashed before the cursor write persisted,
+    // the retry sees no mapping and re-POSTs. Without the T-020
+    // deterministic-id fix, the retry would create a duplicate
+    // Calendar event. With the fix, Calendar 409s on the duplicate
+    // id and the handler GET-s the event Calendar already holds,
+    // records the mapping, and returns ok=true — no duplicate.
+    const item: ItemResource = {
+      id: "mit_retry",
+      type: "core.event",
+      state: "active",
+      properties: {
+        title: "Retried event",
+        starts_at: "2026-06-02T10:00:00Z",
+        ends_at: "2026-06-02T11:00:00Z",
+      },
+    };
+    const { ctx, proxyCalls, emitted } = buildContext({
+      itemForEvent: item,
+      proxyResponses: [
+        // Retry's POST: Calendar already has it from the prior attempt.
+        () => new Response("conflict", { status: 409 }),
+        // Handler's recovery GET: Calendar returns the event's
+        // current state so we can record the mapping + lag-window.
+        () =>
+          jsonResponse({
+            id: "EXPECTED-DETERMINISTIC-ID",
+            etag: "etag_calendar_v1",
+            summary: "Retried event",
+            start: { dateTime: "2026-06-02T10:00:00Z" },
+            end: { dateTime: "2026-06-02T11:00:00Z" },
+            status: "confirmed",
+          }),
+      ],
+    });
+
+    const r = await handleItemEvent(ctx, ITEM_EVENT("mit_retry", "created"));
+    expect(r).toEqual({ ok: true });
+
+    // First call is the POST that 409s, second is the recovery GET.
+    expect(proxyCalls).toHaveLength(2);
+    expect(proxyCalls[0]!.method).toBe("POST");
+    expect(proxyCalls[1]!.method).toBe("GET");
+    // Both calls target the same deterministic id — the handler must
+    // GET the exact id it sent, otherwise the recovery is unsound.
+    const sentId = (proxyCalls[0]!.body as { id?: string }).id;
+    expect(sentId).toMatch(/^[0-9a-f]{64}$/);
+    expect(proxyCalls[1]!.path).toContain(encodeURIComponent(sentId!));
+
+    // Mapping recorded against the deterministic id, not against
+    // whatever id the GET response carried — the contract is "we
+    // sent it, we own it". We assert against the sent id so a
+    // future Calendar response shape change can't regress this.
+    const cursor = (await ctx.cursor.read("main")) as {
+      mappings: Record<string, string>;
+    };
+    expect(cursor.mappings[sentId!]).toBe("mit_retry");
+
+    // Operator-visible "we recovered" trail.
+    expect(emitted.at(-1)?.properties?.summary).toMatch(/idempotent recovery/);
+  });
+
+  it("derives the same deterministic id across retries (T-020)", async () => {
+    // Sanity check: two invocations for the same Myme item id MUST
+    // stamp the same Calendar id, otherwise the 409 idempotency
+    // path can't fire.
+    const item: ItemResource = {
+      id: "mit_stable",
+      type: "core.event",
+      state: "active",
+      properties: { title: "Stable" },
+    };
+    const sentIds: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const { ctx, proxyCalls } = buildContext({
+        itemForEvent: item,
+        proxyResponses: [
+          () => jsonResponse({ id: "gevt_x", etag: "etag_x" }, 201),
+        ],
+      });
+      await handleItemEvent(ctx, ITEM_EVENT("mit_stable", "created"));
+      const body = proxyCalls[0]!.body as { id?: string };
+      sentIds.push(body.id ?? "");
+    }
+    expect(sentIds[0]).toBe(sentIds[1]);
+    expect(sentIds[0]).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("PATCHes a mapped Calendar event on update", async () => {

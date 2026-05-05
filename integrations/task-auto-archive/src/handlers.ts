@@ -10,16 +10,28 @@
  *   - `schedule`: daily fallback for guarantee under low event
  *     volume.
  *
- * Sweep:
- *   1. Page through `core.task` items in `state: active`, sorted
- *      by `created_at asc`, capped at MAX_PAGES_PER_TICK pages of
- *      PAGE_SIZE each. Bounding keeps a single tick predictable.
- *   2. For each item, compare item.created_at against the cutoff
- *      derived from `archive_after_days`. If older, transition to
- *      `archived`.
- *   3. Stop early when the first item newer than the cutoff is
- *      seen — ascending sort means the rest of the list is also
- *      newer.
+ * Sweep is two-phase (T-019): collect-then-act, never iterate a
+ * paginated filter while mutating items out of that filter.
+ *
+ *   1. Pagination phase. Page through `core.task` items in
+ *      `state: active`, sorted by `created_at asc`, capped at
+ *      MAX_PAGES_PER_TICK pages of PAGE_SIZE each. For each item,
+ *      compare `created_at` against the cutoff derived from
+ *      `archive_after_days`. Collect the IDs of items past the
+ *      cutoff into a snapshot array. Stop walking pages early if
+ *      we hit the first item newer than the cutoff (ascending sort
+ *      guarantees the rest of the list is also newer).
+ *   2. Transition phase. Iterate the snapshot array and transition
+ *      each id to `archived`. The list call has already returned;
+ *      the cursor is not at risk from mid-iteration mutations.
+ *
+ *   The pre-T-019 shape transitioned items inside the page loop. It
+ *   relied on the cursor being opaque keyset (stable across the
+ *   filter snapshot). If a future cursor change made it offset-based,
+ *   page 2 would skip items that page 1 archived — silently. The
+ *   collect-then-act split removes that coupling: the handler now
+ *   works correctly under either cursor model. Memory-bounded by
+ *   `MAX_PAGES_PER_TICK * PAGE_SIZE` (1000 IDs at current settings).
  *
  * Failure handling: per-item transition errors don't abort the
  * sweep; each surfaces as a `system.activity` row with severity
@@ -85,11 +97,14 @@ async function runSweep(
   const cutoffMs = nowMs - archiveAfterDays * 24 * 60 * 60 * 1000;
   const cutoffIso = new Date(cutoffMs).toISOString();
 
-  let archived = 0;
+  // Phase 1 — collect. Walk pages, collect IDs of items older than
+  // the cutoff. Do NOT transition while paginating; that's what
+  // T-019 guards against.
   let inspected = 0;
   let cursor: string | undefined;
   let pages = 0;
   let stopReason: "complete" | "no_more_due" | "page_cap" = "complete";
+  const dueIds: string[] = [];
 
   outer: while (pages < MAX_PAGES_PER_TICK) {
     pages += 1;
@@ -108,16 +123,7 @@ async function runSweep(
         stopReason = "no_more_due";
         break outer;
       }
-      try {
-        await ctx.myme.transitionItem(item.id, "archived");
-        archived += 1;
-      } catch (err) {
-        await ctx.activity.emit({
-          severity: "action_required",
-          summary: `task-auto-archive: failed to archive task ${item.id}`,
-          detail: { error: errorMessage(err) },
-        });
-      }
+      dueIds.push(item.id);
     }
     if (!page.has_more || page.cursor === null) {
       stopReason = "complete";
@@ -127,6 +133,22 @@ async function runSweep(
   }
   if (pages >= MAX_PAGES_PER_TICK && stopReason === "complete") {
     stopReason = "page_cap";
+  }
+
+  // Phase 2 — act. The pagination is complete; transitioning items
+  // out of `state: active` no longer interacts with the cursor.
+  let archived = 0;
+  for (const id of dueIds) {
+    try {
+      await ctx.myme.transitionItem(id, "archived");
+      archived += 1;
+    } catch (err) {
+      await ctx.activity.emit({
+        severity: "action_required",
+        summary: `task-auto-archive: failed to archive task ${id}`,
+        detail: { error: errorMessage(err) },
+      });
+    }
   }
 
   const cursorBlob: AutoArchiveCursor = {
