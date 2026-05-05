@@ -37,6 +37,15 @@
  * count, and a redelivered envelope's `attempts` is the running total.
  */
 export interface Message<T> {
+  /**
+   * Cloudflare assigns a unique id per delivery. The harness produces a
+   * stable `msg_<random>` so test assertions can correlate envelopes
+   * with later inspection of mocks. Real Workers expose this as readonly.
+   */
+  readonly id: string;
+  /** Cloudflare timestamps every delivery. The harness stamps the
+   *  `Date.now()` at envelope construction. */
+  readonly timestamp: Date;
   /** The original payload as enqueued via `q.send(...)`. */
   readonly body: T;
   /**
@@ -108,7 +117,13 @@ export function createMessage<T>(body: T, attempts = 1): Message<T> {
   let retried = false;
   let retryDelaySeconds: number | undefined;
   let currentAttempts = attempts;
+  // Cloudflare assigns these per-delivery; the harness picks stable-ish
+  // values so tests can correlate envelopes with mocks if they need to.
+  const id = `msg_${Math.random().toString(36).slice(2, 14)}`;
+  const timestamp = new Date();
   return {
+    id,
+    timestamp,
     body,
     get attempts() {
       return currentAttempts;
