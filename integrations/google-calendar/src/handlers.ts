@@ -179,7 +179,7 @@ export async function handleSchedule(
         const created = await ctx.myme.createItem({
           ...input,
           source_id: event.id,
-        } as CreateItemInput & { source_id: string });
+        });
         cursor.mappings[event.id] = created.id;
       }
       upserted += 1;

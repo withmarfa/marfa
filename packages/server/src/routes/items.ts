@@ -29,6 +29,7 @@ import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { publish } from "../pubsub.js";
 import { hydrateEdgesForItem, hydrateEdgesForItems } from "./_edges-hydrate.js";
+import { applyInlineEdges } from "./_edges-inline.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
   createOpenAPIRouter,
@@ -115,6 +116,16 @@ const createItemRoute = createRoute({
     },
   },
   responses: {
+    200: {
+      content: {
+        "application/json": { schema: ItemWithMetadataSchema },
+      },
+      description:
+        "Item updated via natural-key upsert. Returned when both `source` " +
+        "(stamped from the credential) and request `source_id` resolve a " +
+        "non-trashed item in the caller's tenant — the request is treated " +
+        "as an idempotent re-sync of the upstream entry.",
+    },
     201: {
       content: {
         "application/json": { schema: ItemWithMetadataSchema },
@@ -714,6 +725,119 @@ export function itemRoutes(storage: Storage) {
         if (targets.length > 0) {
           requireEdgePermission(c, edgeType, "write");
         }
+      }
+    }
+
+    // Natural-key upsert (T-038). When both `source` (stamped from the
+    // credential) and request `source_id` are present, look up an existing
+    // non-trashed row by (source, source_id) within the caller's tenant. If
+    // one matches, short-circuit to update so `POST /items` is idempotent on
+    // re-sync — the contract that lets inbound integration handlers recover
+    // from whole-batch retries (createItem-success / cursor-write-fail) without
+    // producing duplicates. Pattern matches Stripe / Notion / Readwise / Linear
+    // resource-level idempotency. Returns 200 on this branch (vs 201 on create)
+    // so the caller can distinguish the realised effect.
+    //
+    // Update semantics mirror the bulk-upsert path: properties / tier /
+    // timestamp via `ItemStore.update` (shallow-merge as elsewhere); tags via
+    // `metadata.set`; edges via `applyInlineEdges` (replace-by-edge-type).
+    // Fields only meaningful at create time (id, state, origin, device,
+    // capture_*) are ignored on the update branch — the existing row's id
+    // wins, the upstream's source_id is the authority.
+    if (stampedSource && body.source_id) {
+      const existing = await storage.items.findBySourceId(
+        stampedSource,
+        body.source_id,
+        tenantId,
+      );
+      if (existing) {
+        // If the caller explicitly supplied `id` but it doesn't match the row
+        // resolved by (source, source_id), reject rather than silently winning
+        // with the existing row's id. A 200 response carrying a different id
+        // than the body would be a confusing surprise; signalling the conflict
+        // gives the caller a clear path to reconcile.
+        if (body.id !== undefined && body.id !== existing.id) {
+          throw new MymeError(
+            ErrorCode.VALIDATION_ERROR,
+            "Request `id` does not match the item resolved by (source, source_id)",
+            {
+              field: "id",
+              requested_id: body.id,
+              existing_id: existing.id,
+              source: stampedSource,
+              source_id: body.source_id,
+            },
+          );
+        }
+        const { item: updatedItem, metadata: updatedMetadata } =
+          await storage.runInTransaction(async () => {
+            const updated = await storage.items.update(
+              existing.id,
+              {
+                ...(body.properties !== undefined && { properties }),
+                ...(tierValue !== undefined && { tier: tierValue }),
+                ...(body.timestamp !== undefined && {
+                  timestamp: body.timestamp,
+                }),
+              },
+              tenantId,
+            );
+            if ("error" in updated) {
+              // No version was supplied on a POST — `ItemStore.update` only
+              // returns ConflictResponse when a `version` is present in the
+              // input. The natural-key upsert path never sets `version`, so
+              // this branch should be unreachable. Surface defensively if it
+              // ever does.
+              throw new MymeError(
+                ErrorCode.VERSION_CONFLICT,
+                "Natural-key upsert produced an unexpected version conflict",
+                { id: existing.id },
+              );
+            }
+
+            if (Array.isArray(body.tags)) {
+              await storage.metadata.set(updated.id, body.tags);
+            }
+            if (body.edges) {
+              await applyInlineEdges(storage, updated.id, body.edges, tenantId);
+            }
+
+            const meta = await storage.metadata.get(updated.id);
+            return { item: updated, metadata: meta };
+          });
+
+        const hydratedExisting = await hydrateEdgesForItem(
+          storage,
+          updatedItem.id,
+        );
+        const itemWithEdges = { ...updatedItem, edges: hydratedExisting };
+
+        await publish({
+          type: "updated",
+          item: updatedItem,
+          metadata: updatedMetadata,
+          tenantId,
+        });
+        void storage.audit.log({
+          client_ip: c.get("clientIp") ?? null,
+          key_id: c.get("apiKey")?.id,
+          action: "item.update",
+          resource_type: "item",
+          resource_id: updatedItem.id,
+          details: {
+            type: updatedItem.type,
+            idempotent: true,
+            source: stampedSource,
+            source_id: body.source_id,
+          },
+        });
+        return c.json(
+          {
+            item: itemWithEdges,
+            metadata: filterMetadataForCaller(updatedMetadata, c.get("apiKey")),
+          },
+          200,
+        );
       }
     }
 

@@ -23,7 +23,6 @@ import { createRoute, z } from "@hono/zod-openapi";
 import {
   MymeError,
   ErrorCode,
-  isValidId,
   isValidTimestamp,
   isValidTypeIdentifier,
   ITEM_STATES,
@@ -40,6 +39,7 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
+import { applyInlineEdges } from "./_edges-inline.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -279,35 +279,8 @@ interface BulkItemResult {
  * of that type. Unmentioned types are untouched. Matches PATCH /items/{id}
  * edge semantics.
  */
-async function applyInlineEdges(
-  storage: Storage,
-  itemId: string,
-  edges: Record<string, string[]>,
-  tenantId: string | undefined,
-): Promise<void> {
-  for (const [edgeType, targets] of Object.entries(edges)) {
-    await storage.edges.deleteBySource(itemId, edgeType);
-    for (const target of targets) {
-      if (!isValidId(target)) {
-        throw new MymeError(
-          ErrorCode.INVALID_ID,
-          `Invalid target id in edges.${edgeType}: ${target}`,
-        );
-      }
-      if (target === itemId) {
-        throw new MymeError(
-          ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-          `Edge source and target must be different items`,
-          { edge_type: edgeType },
-        );
-      }
-      await storage.edges.createRaw(
-        { source_id: itemId, target_id: target, edge_type: edgeType },
-        tenantId,
-      );
-    }
-  }
-}
+// applyInlineEdges lives in _edges-inline.ts (shared with the natural-key
+// upsert short-circuit on POST /items per T-038).
 
 /**
  * Process a single bulk-upsert input. Caller decides the transaction
