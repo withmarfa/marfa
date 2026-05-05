@@ -1,5 +1,5 @@
 /**
- * Adapter test suite for `@mymehq/webhook-protocol`.
+ * Adapter test suite for `@mymehq/webhooks`.
  *
  * Runs under Node's vitest (default environment) — Node 20+ exposes
  * Web Crypto natively as `globalThis.crypto.subtle`, so the same

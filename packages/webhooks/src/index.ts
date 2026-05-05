@@ -1,5 +1,5 @@
 /**
- * `@mymehq/webhook-protocol` — cross-runtime inbound-webhook signature
+ * `@mymehq/webhooks` — cross-runtime inbound-webhook signature
  * verification.
  *
  * Public surface:

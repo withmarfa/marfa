@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { ADAPTERS } from "@mymehq/webhook-protocol";
+import { ADAPTERS } from "@mymehq/webhooks";
 import type { ControlPlaneEnv } from "../env.js";
 import { MymeServerClient } from "../myme-client.js";
 
@@ -11,7 +11,7 @@ import { MymeServerClient } from "../myme-client.js";
  *   2. Verify the delivery against each subscription's adapter; the
  *      first that passes wins. T-009 lifted all four supported methods
  *      (HMAC-SHA256, Slack, Stripe, GitHub) into the control plane;
- *      T-035 consolidated them into `@mymehq/webhook-protocol` so the
+ *      T-035 consolidated them into `@mymehq/webhooks` so the
  *      Worker control plane and the Node-side server share one
  *      Web-Crypto implementation. The previously-stubbed `custom`
  *      method was dropped in T-011.
@@ -86,7 +86,7 @@ export function registerWebhookRoutes(
 
     // Try each subscription; first that verifies wins. Most connections
     // have exactly one subscription so the loop usually runs once. The
-    // `ADAPTERS` table from `@mymehq/webhook-protocol` covers all four
+    // `ADAPTERS` table from `@mymehq/webhooks` covers all four
     // supported methods — unknown methods (shouldn't happen post-T-011
     // since the manifest schema rejects them) get a clear error.
     let matched: {
