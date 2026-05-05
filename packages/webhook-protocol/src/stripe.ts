@@ -1,5 +1,5 @@
 /**
- * Web Crypto Stripe-signature verifier for inbound webhooks.
+ * Stripe-style signature verification.
  * Spec: https://stripe.com/docs/webhooks/signatures
  *
  * Header format:
@@ -8,11 +8,12 @@
  * Signed string: `<timestamp>.<rawBody-as-utf8>`. Replay window is
  * 5 minutes — Stripe's default tolerance.
  *
- * Stripe re-uses the same signature on retries, so the `t.v1[:16]` pair
- * is a stable per-delivery id we surface as `delivery_id` for the
- * control-plane idempotency cache.
+ * Stripe re-uses the same signature when re-delivering an event, so
+ * the (timestamp, signature-prefix) pair is unique per delivery and
+ * stable across retries — surfaced as `external_delivery_id`.
  */
-import type { VerifyResult } from "./verify-hmac-sha256.js";
+import type { Verifier } from "./types.js";
+import { constantTimeEqualsHex, hmacSha256Hex } from "./crypto.js";
 
 const REPLAY_WINDOW_SECONDS = 60 * 5;
 
@@ -35,34 +36,16 @@ function parseStripeSignature(header: string): ParsedSignature | null {
   return { t, v1 };
 }
 
-function constantTimeEqualsHex(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
-function bufferToHex(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let hex = "";
-  for (const byte of bytes) {
-    hex += byte.toString(16).padStart(2, "0");
-  }
-  return hex;
-}
-
-export async function verifyStripe(
-  rawBody: ArrayBuffer,
-  headers: Headers,
-  secret: string,
-): Promise<VerifyResult> {
+export const verifyStripe: Verifier = async (rawBody, headers, secret) => {
   const sig = headers.get("stripe-signature");
-  if (!sig) return { verified: false, reason: "missing_signature_header" };
+  if (!sig) {
+    return { verified: false, reason: "missing_signature_header" };
+  }
 
   const parsed = parseStripeSignature(sig);
-  if (!parsed) return { verified: false, reason: "signature_format_invalid" };
+  if (!parsed) {
+    return { verified: false, reason: "signature_format_invalid" };
+  }
 
   const tsNum = Number(parsed.t);
   if (!Number.isFinite(tsNum)) {
@@ -72,32 +55,23 @@ export async function verifyStripe(
   if (ageSeconds > REPLAY_WINDOW_SECONDS) {
     return { verified: false, reason: "timestamp_outside_replay_window" };
   }
+
   if (!/^[0-9a-f]+$/i.test(parsed.v1)) {
     return { verified: false, reason: "signature_format_invalid" };
   }
 
   const bodyText = new TextDecoder("utf-8").decode(rawBody);
   const baseString = `${parsed.t}.${bodyText}`;
-
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sigBuf = await crypto.subtle.sign(
-    "HMAC",
-    key,
+  const expected = await hmacSha256Hex(
+    secret,
     new TextEncoder().encode(baseString),
   );
-  const expectedHex = bufferToHex(sigBuf);
-
-  if (!constantTimeEqualsHex(parsed.v1.toLowerCase(), expectedHex)) {
+  if (!constantTimeEqualsHex(parsed.v1, expected)) {
     return { verified: false, reason: "signature_mismatch" };
   }
+
   return {
     verified: true,
-    delivery_id: `${parsed.t}.${parsed.v1.slice(0, 16)}`,
+    external_delivery_id: `${parsed.t}.${parsed.v1.slice(0, 16)}`,
   };
-}
+};
