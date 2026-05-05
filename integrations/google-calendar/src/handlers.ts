@@ -20,16 +20,32 @@
  *       PR 3); double-check defensively against `cycle`.
  *     - If we're inside the lag window for this external_id,
  *       defer (return ok=false retry=true).
- *     - For created items: POST to Calendar; record mapping +
- *       echo.trackOutboundWrite.
+ *     - For created items: POST to Calendar with a deterministic
+ *       client-supplied `id` derived from the Myme item id (T-020).
+ *       On 200/201, record mapping + echo.trackOutboundWrite. On
+ *       409 (Calendar already has an event with that id from a
+ *       prior attempt that didn't persist its cursor write), GET
+ *       the event for its current state and record the mapping
+ *       idempotently.
  *     - For updated items: PATCH the Calendar event referenced
  *       by the mapping.
  *     - For trashed-state transitions: DELETE the Calendar
  *       event.
- *     - On Calendar 4xx, surface as `system.activity` with
- *       severity action_required (per partial_write_mode:
- *       accept-partial).
+ *     - On Calendar 4xx (other than the 409 idempotency case),
+ *       surface as `system.activity` with severity action_required
+ *       (per partial_write_mode: accept-partial).
  *     - On Calendar 5xx, return retry=true.
+ *
+ * T-020 idempotency: Cloudflare Queues whole-batch retry semantics
+ * mean a transient failure between successful Calendar POST and
+ * cursor-write produces a duplicate Calendar event on retry. The
+ * fix is a deterministic client-supplied `id` on the POST: Calendar
+ * accepts a custom `id` (5–1024 chars, base32hex alphabet — hex is
+ * a subset, so a SHA-256 hex digest is valid) and returns 409 on
+ * conflict, which we recognise as "I already created this event,
+ * fetch its current state and record the mapping". The handler
+ * therefore produces at most one Calendar event per Myme item id,
+ * regardless of retry count.
  */
 import {
   registerScheduleHandler,
@@ -258,12 +274,50 @@ export async function handleItemEvent(
   // Create or update on Calendar.
   const calendarPayload = buildCalendarPayload(item);
   if (externalId === null) {
+    // T-020: stamp a deterministic id derived from the Myme item id
+    // so a retry of the same handler invocation reaches Calendar
+    // with the same id. Calendar's `events.insert` accepts a
+    // client-supplied `id` (5–1024 chars, base32hex alphabet — hex
+    // is a subset of base32hex, so a SHA-256 hex digest is valid)
+    // and returns 409 on conflict. The 409 path below recovers the
+    // mapping idempotently without creating a duplicate event.
+    const deterministicId = await deriveDeterministicCalendarId(item.id);
     const calendarId = await resolveCalendarId(ctx);
-    const resp = await ctx.myme.proxyRequest(
-      "POST",
-      `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`,
-      calendarPayload,
-    );
+    const postPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`;
+    const postPayload = { ...calendarPayload, id: deterministicId };
+    const resp = await ctx.myme.proxyRequest("POST", postPath, postPayload);
+
+    if (resp.status === 409) {
+      // A prior attempt of this same handler invocation succeeded
+      // at Calendar but did not persist its cursor write (e.g. the
+      // Worker crashed mid-handler and Cloudflare Queues retried
+      // the whole batch). Fetch the event Calendar already holds,
+      // record the mapping with the id we sent, and proceed as if
+      // the original POST had landed cleanly.
+      const fetchPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(deterministicId)}`;
+      const fetchResp = await ctx.myme.proxyRequest("GET", fetchPath);
+      if (!fetchResp.ok) {
+        return reportOutboundFailure(
+          ctx,
+          "GET (after 409)",
+          deterministicId,
+          fetchResp,
+        );
+      }
+      const body: CalendarEvent = await fetchResp.json();
+      cursor.mappings[deterministicId] = item.id;
+      await ctx.echo.trackOutboundWrite(
+        deterministicId,
+        contentHashForEvent(body),
+      );
+      await ctx.cursor.write(CURSOR_KEY, cursor);
+      await ctx.activity.emit({
+        severity: "info",
+        summary: `google-calendar outbound: idempotent recovery — Calendar already had an event for Myme item ${item.id}`,
+      });
+      return { ok: true };
+    }
+
     if (!resp.ok) {
       return reportOutboundFailure(ctx, "POST", "(new)", resp);
     }
@@ -449,4 +503,32 @@ async function reportFailure(
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Derive a deterministic Google Calendar event id from a Myme item
+ * id. Output is a SHA-256 hex digest — 64 lowercase characters in
+ * the alphabet [0-9a-f], which is a strict subset of the base32hex
+ * alphabet [0-9a-v] that Calendar requires. Length is well within
+ * the 5–1024 character window. Two distinct Myme item ids produce
+ * different Calendar ids with overwhelmingly high probability;
+ * collision is not a real concern at any plausible scale.
+ *
+ * The `myme:` prefix in the input means a Myme item id is unlikely
+ * to ever produce the same digest as some other system stamping
+ * deterministic Calendar ids, even if both used SHA-256.
+ *
+ * Web Crypto is the right primitive here — Cloudflare Workers
+ * (where the integration runs) don't ship `node:crypto`. Node 20+
+ * exposes the same API as `globalThis.crypto`, so this works under
+ * the Vitest fixture too.
+ */
+async function deriveDeterministicCalendarId(myme_id: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(`myme:${myme_id}`);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(digest);
+  let out = "";
+  for (const b of bytes) out += b.toString(16).padStart(2, "0");
+  return out;
 }
