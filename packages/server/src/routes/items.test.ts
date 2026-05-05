@@ -1,6 +1,11 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -238,6 +243,142 @@ describe("POST /items", () => {
     const firstData = (await first.json()) as { item: { id: string } };
     const secondData = (await second.json()) as { item: { id: string } };
     expect(firstData.item.id).not.toBe(secondData.item.id);
+  });
+});
+
+describe("POST /items — platform-credential gate (TSC42 §3/§4)", () => {
+  it("rejects a non-platform admin writing system.* even with explicit type_permissions", async () => {
+    // Pre-fix attack vector: a tenant admin (role admin, is_platform false)
+    // with `type_permissions: { "system.connection": "write" }` could mint
+    // system.connection rows because the admin-role bypass in
+    // `checkTypeAccess` returned early before any platform check ran. The
+    // gate now fires for writes to `core.*` / `system.*` / `myme.*`
+    // independent of role; reads are unrestricted.
+    const tenantAdminKey = "myme_k1_test_non_platform_admin";
+    await ctx.storage.keys.create(
+      {
+        label: "tenant-admin-non-platform",
+        source: "tenant-admin-non-platform",
+        role: "admin",
+        type_permissions: { "system.connection": "write" },
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(tenantAdminKey, TEST_API_KEY_SALT),
+      "tenant-x",
+    );
+
+    const res = await request(ctx.app, "POST", "/items", {
+      key: tenantAdminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "user-app-grant",
+          client_id: "x",
+          scopes: [],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.message).toMatch(/platform/i);
+    expect(body.error.message).toMatch(/system/);
+  });
+
+  it("admits the bootstrap admin (is_platform: true) writing system.*", async () => {
+    // Sanity check the legitimate path stays open. Bootstrap admin is
+    // the test fixture admin which is platform-shaped.
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "user-app-grant",
+          client_id: "platform-write-ok",
+          scopes: [],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("admits runtime credentials writing system.activity (carve-out for connector status reporting)", async () => {
+    // Runtime credentials are is_platform: false but is_runtime_credential:
+    // true and bound to a connection. The activity sink in runtime-sdk
+    // calls POST /items with type: "system.activity" to surface progress
+    // / errors — the carve-out keeps that path open while still blocking
+    // the dangerous system.* writes.
+    const runtimeKey = "myme_k1_test_runtime_credential";
+    await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: "runtime-cred",
+        source: "runtime-cred",
+        role: "member",
+        type_permissions: { "system.activity": "write" },
+        connection_id: "conn_test_carve_out",
+      },
+      hashApiKey(runtimeKey, TEST_API_KEY_SALT),
+      "tenant-x",
+    );
+
+    const activityRes = await request(ctx.app, "POST", "/items", {
+      key: runtimeKey,
+      body: {
+        type: "system.activity",
+        properties: {
+          severity: "info",
+          summary: "Sync run completed",
+          connection_id: "conn_test_carve_out",
+        },
+      },
+    });
+    expect(activityRes.status).toBe(201);
+
+    // Same credential is still blocked from writing system.connection —
+    // the carve-out is narrow.
+    const connectionRes = await request(ctx.app, "POST", "/items", {
+      key: runtimeKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "user-app-grant",
+          client_id: "x",
+          scopes: [],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+    });
+    expect(connectionRes.status).toBe(403);
+  });
+
+  it("does not gate reads to system.* (tenant admin can list its own system.connection rows)", async () => {
+    // Reads to reserved-namespace items are unrestricted (filtered by
+    // tenant scoping at the storage layer); only writes need
+    // is_platform.
+    const tenantReaderKey = "myme_k1_test_tenant_reader";
+    await ctx.storage.keys.create(
+      {
+        label: "tenant-reader",
+        source: "tenant-reader",
+        role: "admin",
+        type_permissions: { "system.connection": "read" },
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(tenantReaderKey, TEST_API_KEY_SALT),
+      "tenant-x",
+    );
+    const res = await request(ctx.app, "GET", "/items?type=system.connection", {
+      key: tenantReaderKey,
+    });
+    expect(res.status).toBe(200);
   });
 });
 

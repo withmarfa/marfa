@@ -4,6 +4,7 @@ import type { Context } from "hono";
 import {
   MymeError,
   ErrorCode,
+  classifyNamespace,
   resolveTypePermission,
   scopesToTypePermissions,
   scopesToEdgePermissions,
@@ -310,6 +311,41 @@ export function checkTypeAccess(
   level: "read" | "write",
 ): void {
   const key = checkAuth(apiKey);
+
+  // Platform-credential gate. Writes to `system.*` (and the internal-only
+  // `myme.*`) require `is_platform: true` independent of role — tenant
+  // admins are admin-shaped within their tenant but are NOT platform-
+  // shaped by default; only the bootstrap admin and credentials it
+  // mints with `is_platform: true` may write platform-internal items.
+  //
+  // `core.*` writes are NOT gated here — core types are user-facing
+  // (core.note, core.task, core.bookmark) and tenant admins write them
+  // routinely; only registration of new core types is platform-gated
+  // (see `routes/types.ts:331`).
+  //
+  // Reads to `system.*` / `myme.*` are unrestricted (filtered by tenant
+  // scoping at the storage layer); only writes need `is_platform`.
+  //
+  // Carve-out: runtime credentials (`is_runtime_credential: true`) may
+  // write `system.activity`. That's the connector's status-reporting
+  // channel — the activity sink in `runtime-sdk` calls `POST /items`
+  // with `type: "system.activity"` to surface progress / errors for the
+  // connection the credential is bound to. Without the carve-out a
+  // legitimate connector can't emit activity rows.
+  if (level === "write") {
+    const tier = classifyNamespace(type);
+    if ((tier === "system" || tier === "myme") && !key.is_platform) {
+      const isRuntimeActivityWrite =
+        key.is_runtime_credential === true && type === "system.activity";
+      if (!isRuntimeActivityWrite) {
+        throw new MymeError(
+          ErrorCode.TYPE_NOT_PERMITTED,
+          `Reserved namespace: only platform credentials may write ${tier}.* items`,
+        );
+      }
+    }
+  }
+
   if (key.role === "admin") return;
 
   const resolved = resolveTypePermission(type, key.type_permissions);
