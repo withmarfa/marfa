@@ -317,7 +317,7 @@ describe("bridge fanout via in-process pubsub", () => {
     );
     expect(selfFiltered.length).toBe(0);
 
-    bridge!.stop();
+    await bridge!.stop();
   });
 
   it("a slow subscriber doesn't stall fanout to others (T-013)", async () => {
@@ -389,6 +389,6 @@ describe("bridge fanout via in-process pubsub", () => {
     // Slow subscriber's connection id should NOT appear in fast deliveries.
     expect(fastDeliveries).not.toContain(connSlow);
 
-    bridge!.stop();
+    await bridge!.stop();
   });
 });

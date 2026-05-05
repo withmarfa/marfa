@@ -34,7 +34,7 @@
  * existing pubsub publishes these for every `items.create` /
  * `items.update` / `items.delete` so no new emission is needed.
  */
-import { subscribe, type ItemEventWithId } from "../pubsub.js";
+import { publish, subscribe, type ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
 
@@ -59,7 +59,10 @@ export interface BridgeConfig {
 
 export interface BridgeRuntime {
   start(): Promise<void>;
-  stop(): void;
+  /** Stop the drainer + invalidation subscriber and wait for the
+   *  underlying coordination lock to release. Returns a Promise so
+   *  callers (and tests) can wait for the cleanup to settle. */
+  stop(): Promise<void>;
 }
 
 interface QueueMessageBody {
@@ -215,6 +218,10 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   // storage) and in multi-instance hosted deploys it strands the lock.
   let drainerIter: AsyncIterator<unknown> | null = null;
   let invalidationIter: AsyncIterator<unknown> | null = null;
+  // Resolved when the withJobLock-wrapped drainer fully exits and the
+  // advisory lock is released. `stop()` awaits this so callers know the
+  // bridge has fully unwound before they move on.
+  let drainerExit: Promise<void> | null = null;
 
   /**
    * Refresh the subscription entry for one connection id. Called from
@@ -289,7 +296,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       // drainer at a time. Other instances wait inside withJobLock.
       // The drainer is fire-and-forget: it lives for the process
       // lifetime; .catch() surfaces unexpected exits.
-      void storage.coordination
+      drainerExit = storage.coordination
         .withJobLock("reactive-run-bridge", async () => {
           // Cache invalidation runs alongside the drainer under the
           // same lock — only the elected instance maintains its map.
@@ -318,24 +325,59 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
             "[reactive-run-bridge] drainer threw:",
             err instanceof Error ? err.message : String(err),
           );
-        });
+        })
+        .then(() => undefined);
     },
-    stop(): void {
+    async stop(): Promise<void> {
       stopRequested = true;
       running = false;
       subscriptions.clear();
-      // Release the iterators so the for-loops above unwind, the
-      // pubsub listeners detach, and the coordination advisory lock is
-      // returned. Best-effort — silently swallow errors from the
-      // already-stopped iterator.
+      // Wake the for-await loops by emitting synthetic events. Each
+      // loop wakes, sees `stopRequested === true`, breaks. The
+      // generator unwinds, `events.on(...)` detaches its listener, the
+      // withJobLock unwraps, and the coordination advisory lock is
+      // returned to the pool. Without this, calls to .return() on the
+      // generator don't unblock the in-flight `next()` waiting on the
+      // EventEmitter — the lock would stay held until the process
+      // exited (invisible in single-instance dev; surfaces in tests
+      // that reuse the same storage and in multi-instance deploys).
+      try {
+        await publish({
+          type: "updated",
+          item: {
+            id: "stop-sentinel",
+            type: "system.connection",
+            state: "active",
+            tier: "library",
+            properties: {},
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+            version: 1,
+            schema_version: 1,
+            source: "stop-sentinel",
+            origin: "system",
+          } as unknown as ItemEventWithId["item"],
+        });
+      } catch {
+        // Best-effort wakeup — never crash stop().
+      }
       const drainer = drainerIter;
       const invalidation = invalidationIter;
       drainerIter = null;
       invalidationIter = null;
-      if (drainer?.return) void drainer.return().catch(() => undefined);
+      const releases: Promise<unknown>[] = [];
+      if (drainer?.return)
+        releases.push(drainer.return().catch(() => undefined));
       if (invalidation?.return) {
-        void invalidation.return().catch(() => undefined);
+        releases.push(invalidation.return().catch(() => undefined));
       }
+      await Promise.all(releases);
+      // Wait for the withJobLock-wrapped drainer to fully exit so the
+      // advisory lock is back in the pool before stop() returns.
+      const exit = drainerExit;
+      drainerExit = null;
+      if (exit) await exit;
     },
   };
 }
