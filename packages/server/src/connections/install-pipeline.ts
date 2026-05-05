@@ -67,6 +67,10 @@ export interface InstallInput {
   /** Display label for the credential and connection. Falls back to
    *  `${manifest_name} ${manifest_version}` at the route layer. */
   label: string;
+  /** Resolved client IP of the caller (T-027). Threaded into the audit
+   *  row so installs are attributable. Null when the install runs
+   *  outside a Hono request (e.g. one-shot CLI scripts). */
+  clientIp?: string | null;
 }
 
 export interface InstallResult {
@@ -251,6 +255,7 @@ export async function performInstall(
   try {
     await storage.audit.log({
       key_id: input.apiKeyId,
+      client_ip: input.clientIp ?? null,
       action: "integration.install",
       resource_type: "item",
       resource_id: connection.id,

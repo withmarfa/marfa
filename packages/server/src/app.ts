@@ -45,6 +45,7 @@ import { metricsRoutes } from "./routes/metrics.js";
 import { userAuthRoutes } from "./routes/users.js";
 import { tenantRoutes } from "./routes/tenants.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
+import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { healthRoutes } from "./routes/health.js";
 export function createApp(
@@ -154,6 +155,12 @@ export function createApp(
 
   // OAuth 2.1 discovery doc — public, unauthenticated.
   app.route("/.well-known", discoveryRoutes(config.authBaseUrl));
+
+  // Resolve the effective client IP once per request and stash it on
+  // `c.var.clientIp` (T-027). Runs BEFORE auth so audit rows emitted
+  // from auth-side paths (e.g. token revocation) and route handlers
+  // alike can attribute the originator without re-resolving each time.
+  app.use("*", clientIpMiddleware(config.trustedProxyCidrs));
 
   // Auth middleware runs BEFORE rate limiting so the limiter can key on
   // the credential id (per-credential enforcement). Anonymous requests

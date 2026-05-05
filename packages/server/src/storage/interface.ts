@@ -702,6 +702,13 @@ export interface AuditEntry {
   action: string;
   resource_type: string;
   resource_id: string | null;
+  /**
+   * Resolved client IP (T-027). Persisted into `details.client_ip` so no
+   * schema migration is needed; surfaced as a typed top-level field on the
+   * read path. Null for system-initiated audits (install pipeline,
+   * cycle-budget overflow) where no Hono context exists.
+   */
+  client_ip: string | null;
   details: Record<string, unknown>;
 }
 
@@ -711,6 +718,9 @@ export interface AuditStore {
     action: string;
     resource_type: string;
     resource_id?: string;
+    /** See `AuditEntry.client_ip`. Pass `c.var.clientIp ?? null` from
+     *  route handlers; null for system-initiated audits. */
+    client_ip?: string | null;
     details?: Record<string, unknown>;
   }): Promise<void>;
   list(filters: {

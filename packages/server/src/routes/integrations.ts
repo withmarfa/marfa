@@ -246,6 +246,7 @@ export function integrationRoutes(storage: Storage, salt: string) {
     );
 
     void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: apiKey.id,
       action: "integration.register",
       resource_type: "item",
@@ -338,6 +339,7 @@ export function integrationRoutes(storage: Storage, salt: string) {
     const installed = await performInstall(storage, salt, {
       apiKeyId: apiKey.id,
       tenantId: apiKey.tenant_id,
+      clientIp: c.get("clientIp") ?? null,
       integrationItemId: id,
       manifest: props.manifest,
       label:

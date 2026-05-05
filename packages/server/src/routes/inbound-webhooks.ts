@@ -358,6 +358,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     });
 
     void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
       action: "inbound_webhook.create",
       resource_type: "inbound_webhook",
@@ -442,6 +443,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
       new Date().toISOString(),
     );
     void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
       action: "inbound_webhook.retry",
       resource_type: "inbound_webhook_event",
@@ -576,6 +578,7 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
 
     // 200 ack on verified receipt — fresh OR duplicate (idempotent).
     void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: undefined,
       action: written.inserted
         ? "inbound_webhook.receive"

@@ -14636,6 +14636,10 @@
                             "type": "string",
                             "nullable": true
                           },
+                          "client_ip": {
+                            "type": "string",
+                            "nullable": true
+                          },
                           "details": {
                             "type": "object",
                             "additionalProperties": {
@@ -14650,6 +14654,7 @@
                           "action",
                           "resource_type",
                           "resource_id",
+                          "client_ip",
                           "details"
                         ]
                       }

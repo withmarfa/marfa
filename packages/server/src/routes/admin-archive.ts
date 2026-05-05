@@ -226,6 +226,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     });
 
     await storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
       action: "admin.restore_archive",
       resource_type: "admin.restore_archive",
