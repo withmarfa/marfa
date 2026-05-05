@@ -14,6 +14,39 @@ export interface CycleMetadata {
   hop_count: number;
 }
 
+/**
+ * Default per-tenant hop budget (mirrors `DEFAULT_HOP_BUDGET` on the
+ * server). Used by the SDK as a defensive ceiling — the server already
+ * drops events past its own budget before enqueuing, but a non-pubsub
+ * queue producer (or future control-plane path) could enqueue without
+ * applying the gate. The SDK's refusal is belt-and-braces.
+ */
+export const SDK_DEFAULT_HOP_BUDGET = 5;
+
+/**
+ * Compute cycle metadata for a downstream event published from a
+ * connector reaction. Mirrors the server-side `nextHopMetadata` — kept
+ * here so integration handlers don't roll their own and accidentally
+ * skip stamping `originating_connection_id`.
+ *
+ * Pass the parent's `cycle` (from `ItemEventMessage.cycle`) and the
+ * current connector's `connection_id`. The returned metadata stamps:
+ *   - `originating_connection_id`: parent's if set, otherwise the
+ *     current connection (this connector kicks off the chain).
+ *   - `hop_count`: parent's + 1.
+ */
+export function nextHopMetadata(
+  parent: CycleMetadata | null | undefined,
+  currentConnectionId: string,
+): CycleMetadata {
+  const parentHopCount = parent?.hop_count ?? 0;
+  const parentOrigin = parent?.originating_connection_id ?? null;
+  return {
+    originating_connection_id: parentOrigin ?? currentConnectionId,
+    hop_count: parentHopCount + 1,
+  };
+}
+
 /** Common envelope fields every queue message carries. */
 export interface QueueEnvelopeBase {
   integration_name: string;

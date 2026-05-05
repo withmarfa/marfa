@@ -7,10 +7,16 @@ import {
 import {
   registerScheduleHandler,
   registerWebhookHandler,
+  registerItemEventHandler,
   _resetHandlers,
 } from "./handlers.js";
 import { createInMemoryStorage } from "./in-memory-storage.js";
-import type { ScheduleMessage, WebhookMessage } from "./types.js";
+import type {
+  ItemEventMessage,
+  ScheduleMessage,
+  WebhookMessage,
+} from "./types.js";
+import { nextHopMetadata, SDK_DEFAULT_HOP_BUDGET } from "./types.js";
 
 const SCHED = (over: Partial<ScheduleMessage> = {}): ScheduleMessage => ({
   kind: "schedule",
@@ -135,5 +141,124 @@ describe("consumeBatch", () => {
     await expect(consumeBatch(makeEnv(), [SCHED()])).rejects.toBeInstanceOf(
       QueueRetryRequested,
     );
+  });
+
+  it("acks-and-skips messages whose tenant_id mismatches env.tenantId (T-017)", async () => {
+    let dispatched = 0;
+    registerScheduleHandler(() => {
+      dispatched++;
+      return Promise.resolve({ ok: true });
+    });
+    const env: ConsumerEnvironment = { ...makeEnv(), tenantId: "tenant-A" };
+    const outcome = await consumeBatch(env, [
+      SCHED({ tenant_id: "tenant-A" }),
+      SCHED({ tenant_id: "tenant-B" }),
+    ]);
+    // Both acked — but only the matching tenant invokes the handler.
+    expect(outcome.acked).toBe(2);
+    expect(outcome.retried).toBe(0);
+    expect(dispatched).toBe(1);
+  });
+
+  it("dispatches messages with no tenant_id when env.tenantId is set (single-tenant compat)", async () => {
+    let dispatched = 0;
+    registerScheduleHandler(() => {
+      dispatched++;
+      return Promise.resolve({ ok: true });
+    });
+    const env: ConsumerEnvironment = { ...makeEnv(), tenantId: "tenant-A" };
+    const outcome = await consumeBatch(env, [SCHED()]);
+    expect(outcome.acked).toBe(1);
+    expect(dispatched).toBe(1);
+  });
+
+  it("refuses to dispatch reactive item-events past the hop budget (T-008)", async () => {
+    let dispatched = 0;
+    registerItemEventHandler(() => {
+      dispatched++;
+      return Promise.resolve({ ok: true });
+    });
+    const env: ConsumerEnvironment = { ...makeEnv(), hopBudget: 2 };
+    const overBudget: ItemEventMessage = {
+      kind: "item-event",
+      integration_name: "demo",
+      connection_id: "conn_a",
+      event_type: "item.created",
+      item_id: "item_x",
+      cycle: { originating_connection_id: "conn-orig", hop_count: 2 },
+      payload: {},
+    };
+    const outcome = await consumeBatch(env, [overBudget]);
+    expect(outcome.acked).toBe(1);
+    expect(dispatched).toBe(0);
+  });
+
+  it("dispatches reactive item-events under the hop budget (T-008)", async () => {
+    let dispatched = 0;
+    registerItemEventHandler(() => {
+      dispatched++;
+      return Promise.resolve({ ok: true });
+    });
+    const env: ConsumerEnvironment = { ...makeEnv(), hopBudget: 5 };
+    const ok: ItemEventMessage = {
+      kind: "item-event",
+      integration_name: "demo",
+      connection_id: "conn_a",
+      event_type: "item.created",
+      item_id: "item_x",
+      cycle: { originating_connection_id: "conn-orig", hop_count: 1 },
+      payload: {},
+    };
+    const outcome = await consumeBatch(env, [ok]);
+    expect(outcome.acked).toBe(1);
+    expect(dispatched).toBe(1);
+  });
+
+  it("falls back to SDK_DEFAULT_HOP_BUDGET when env.hopBudget is unset", async () => {
+    let dispatched = 0;
+    registerItemEventHandler(() => {
+      dispatched++;
+      return Promise.resolve({ ok: true });
+    });
+    const env = makeEnv();
+    const overDefault: ItemEventMessage = {
+      kind: "item-event",
+      integration_name: "demo",
+      connection_id: "conn_a",
+      event_type: "item.created",
+      item_id: "item_y",
+      cycle: {
+        originating_connection_id: "conn-orig",
+        hop_count: SDK_DEFAULT_HOP_BUDGET,
+      },
+      payload: {},
+    };
+    const outcome = await consumeBatch(env, [overDefault]);
+    expect(outcome.acked).toBe(1);
+    expect(dispatched).toBe(0);
+  });
+});
+
+describe("nextHopMetadata (SDK)", () => {
+  it("starts a chain when called with no parent metadata", () => {
+    const meta = nextHopMetadata(null, "conn-1");
+    expect(meta.hop_count).toBe(1);
+    expect(meta.originating_connection_id).toBe("conn-1");
+  });
+
+  it("propagates the originating connection through the chain", () => {
+    const first = nextHopMetadata(null, "conn-1");
+    const second = nextHopMetadata(first, "conn-2");
+    expect(second.hop_count).toBe(2);
+    expect(second.originating_connection_id).toBe("conn-1");
+  });
+
+  it("preserves origin when parent has it but current is unset", () => {
+    const meta = nextHopMetadata(
+      { originating_connection_id: "conn-orig", hop_count: 3 },
+      "conn-current",
+    );
+    expect(meta.hop_count).toBe(4);
+    expect(meta.originating_connection_id).toBe("conn-orig");
   });
 });

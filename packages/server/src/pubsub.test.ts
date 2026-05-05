@@ -243,6 +243,48 @@ describe("publish — hop budget enforcement", () => {
     });
     expect(result).toBeUndefined();
   });
+
+  it("enforces budget on connector-originated events even when hopCount=0 (T-008)", async () => {
+    // A misbehaving connector that stamps `originatingConnectionId` but
+    // leaves hopCount at 0 must not slip past the budget. The fix
+    // attributes by origin presence — effective hopCount floors at 1.
+    const overflow = vi.fn(() => Promise.resolve());
+    initEventLog(ctx.storage.eventLog, {
+      // Budget of 0 — any connector-originated event should overflow.
+      getHopBudget: () => Promise.resolve(0),
+      onHopOverflow: overflow,
+    });
+
+    const result = await publish({
+      type: "created",
+      item: fakeItem("item-misbehaving-connector"),
+      hopCount: 0,
+      originatingConnectionId: "conn-misbehaving",
+    });
+
+    expect(result).toBeUndefined();
+    expect(overflow).toHaveBeenCalledTimes(1);
+  });
+
+  it("admits human-originated events with no origin and hopCount=0 (T-008)", async () => {
+    // A human caller MUST omit both fields — the budget bypass for that
+    // shape stays in place. Regression in case the new attribution logic
+    // accidentally narrowed it.
+    const overflow = vi.fn(() => Promise.resolve());
+    initEventLog(ctx.storage.eventLog, {
+      // Even a budget of 0 must not block human publishes.
+      getHopBudget: () => Promise.resolve(0),
+      onHopOverflow: overflow,
+    });
+
+    const eid = await publish({
+      type: "created",
+      item: fakeItem("item-human-publish"),
+    });
+
+    expect(eid).toBeDefined();
+    expect(overflow).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -29,10 +29,11 @@ import {
 import { createActivitySink } from "./activity.js";
 import { createEchoSuppression } from "./echo-suppression.js";
 import type { ConnectionContext } from "./connection-context.js";
-import type {
-  HandlerResult,
-  QueueMessage,
-  RuntimeCredential,
+import {
+  SDK_DEFAULT_HOP_BUDGET,
+  type HandlerResult,
+  type QueueMessage,
+  type RuntimeCredential,
 } from "./types.js";
 
 export interface ConsumerEnvironment {
@@ -49,6 +50,24 @@ export interface ConsumerEnvironment {
   echo: { echo_ttl_seconds: number; lag_window_seconds?: number };
   /** Integration name from the manifest (envelope filter). */
   integrationName: string;
+  /**
+   * Tenant id this Worker instance is scoped to (T-017). Per-Worker stamp
+   * configured at deploy time. When set, the consumer cross-checks every
+   * incoming `message.tenant_id` against it and acks-and-skips any
+   * mismatched message — defence in depth against a misrouted (or
+   * maliciously-crafted) cross-tenant message that already passed the
+   * `connection_id` gate. Optional only to keep self-host setups where
+   * the tenant column is null wire-compatible.
+   */
+  tenantId?: string;
+  /**
+   * Defensive ceiling for cycle hop count (T-008). When set, the consumer
+   * refuses to dispatch a reactive `item-event` whose `cycle.hop_count`
+   * meets or exceeds it. The server already drops over-budget events
+   * before they hit the queue, but a non-pubsub producer could enqueue
+   * without applying the gate. Defaults to `SDK_DEFAULT_HOP_BUDGET`.
+   */
+  hopBudget?: number;
 }
 
 interface ConsumeOutcome {
@@ -95,11 +114,48 @@ export async function consumeBatch(
   const outcome: ConsumeOutcome = { acked: 0, retried: 0, failed: 0 };
   let retryRequested = false;
 
+  const hopBudget = env.hopBudget ?? SDK_DEFAULT_HOP_BUDGET;
+
   for (const message of messages) {
     if (message.integration_name !== env.integrationName) {
       // Envelope filter — the queue is shared across integrations.
       // Skip messages addressed to other integrations.
       outcome.acked++;
+      continue;
+    }
+    // T-017: defence-in-depth tenant check. The connection_id gate is
+    // the primary line of defence; this is the secondary one. A
+    // misrouted message that targets the wrong tenant gets acked and
+    // skipped without ever invoking the handler.
+    if (
+      env.tenantId !== undefined &&
+      message.tenant_id !== undefined &&
+      message.tenant_id !== env.tenantId
+    ) {
+      outcome.acked++;
+      continue;
+    }
+    // T-008: SDK-side cycle-budget refusal. The server drops events past
+    // its own budget before they hit the queue, but a non-pubsub queue
+    // producer could enqueue without applying the gate. Refuse here as
+    // a defensive ceiling and surface the failure as an action_required
+    // activity so an operator can see the loop.
+    if (message.kind === "item-event" && message.cycle.hop_count >= hopBudget) {
+      outcome.acked++;
+      try {
+        const ctx = await buildConnectionContext(env, message);
+        await ctx.activity.emit({
+          severity: "error",
+          summary: `Reactive event dropped — cycle hop budget (${String(hopBudget)}) reached at the SDK boundary`,
+          detail: {
+            connection_id: message.connection_id,
+            originating_connection_id: message.cycle.originating_connection_id,
+            hop_count: message.cycle.hop_count,
+          },
+        });
+      } catch {
+        // Swallow — failing to emit the activity is non-fatal.
+      }
       continue;
     }
     let result: HandlerResult;

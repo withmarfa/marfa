@@ -228,12 +228,26 @@ function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
  * Check whether the event would exceed the tenant's hop budget. When it
  * does, fire the overflow hook and return false so the caller skips
  * persistence + emission. Returns true on the happy path.
+ *
+ * Attribution by `originatingConnectionId !== null` (T-008) — NOT by
+ * `hopCount`. A misbehaving (or hostile) connector that publishes with
+ * `hopCount: 0` plus an `originatingConnectionId` set would otherwise
+ * short-circuit the budget. The contract per `nextHopMetadata` is
+ * `hopCount >= 1` whenever origin is set; any event that violates it
+ * gets treated as `hopCount = 1` so the budget gate still applies.
  */
 async function passesHopBudget(event: PubsubEvent): Promise<boolean> {
   const hopCount = event.hopCount ?? 0;
-  if (hopCount === 0) return true;
+  const isConnectorOriginated = event.originatingConnectionId != null;
+  // Human-originated events (no origin, no hops) bypass the budget.
+  if (!isConnectorOriginated && hopCount === 0) return true;
+  // Connector chains: enforce a floor of 1 so a malformed publish that
+  // stamps origin but leaves hopCount at 0 doesn't slip past the budget.
+  const effectiveHopCount = isConnectorOriginated
+    ? Math.max(hopCount, 1)
+    : hopCount;
   const budget = await getHopBudget(event.tenantId);
-  if (hopCount <= budget) return true;
+  if (effectiveHopCount <= budget) return true;
   if (onHopOverflow) {
     try {
       await onHopOverflow(event, budget);
