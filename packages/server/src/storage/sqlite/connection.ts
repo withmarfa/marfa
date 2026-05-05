@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
+import { stampSqliteDrizzleMigrations } from "../bootstrap-stamp.js";
 
 // Raw SQL for tables that Drizzle cannot express (FTS5 virtual tables).
 const CREATE_FTS = `
@@ -143,6 +144,8 @@ export function createConnection(sqlitePath: string): {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_source_per_tenant
       ON api_keys(tenant_id, source) WHERE revoked_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_api_keys_connection_id
+      ON api_keys(connection_id) WHERE connection_id IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS blobs (
       hash TEXT PRIMARY KEY,
@@ -465,6 +468,13 @@ export function createConnection(sqlitePath: string): {
       }
     }
   }
+
+  // Stamp Drizzle's `__drizzle_migrations` table so a follow-up
+  // `pnpm migrate` against this bootstrapped DB short-circuits as a no-op
+  // (T-014). Without this, migrate replays from 0000 and several DROP /
+  // ALTER migrations error against tables / objects the bootstrap shape
+  // never had. Idempotent — only stamps when the table is empty.
+  stampSqliteDrizzleMigrations(sqlite);
 
   const db = drizzle(sqlite, { schema });
 

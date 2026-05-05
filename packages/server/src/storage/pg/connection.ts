@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema.js";
+import { stampPgDrizzleMigrations } from "../bootstrap-stamp.js";
 
 export type PgDb = ReturnType<typeof drizzle<typeof schema>>;
 export type PgClient = ReturnType<typeof postgres>;
@@ -106,6 +107,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_source_per_tenant
   ON api_keys(tenant_id, source) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_api_keys_connection_id
+  ON api_keys(connection_id) WHERE connection_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS blobs (
   hash TEXT PRIMARY KEY,
@@ -432,6 +435,10 @@ export async function createConnection(connectionString: string): Promise<{
   await client.unsafe(`SELECT pg_advisory_lock(42)`);
   try {
     await client.unsafe(SCHEMA_SQL);
+    // Stamp Drizzle's `__drizzle_migrations` table so a follow-up
+    // `pnpm migrate` against this bootstrapped DB short-circuits as a no-op
+    // (T-014). Idempotent — only stamps when the table is empty.
+    await stampPgDrizzleMigrations(client);
   } finally {
     await client.unsafe(`SELECT pg_advisory_unlock(42)`);
   }

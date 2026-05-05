@@ -1,12 +1,14 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
+import { createPgStorage } from "../storage/pg/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import type { Storage } from "../storage/interface.js";
 
 let ctx: TestContext;
 
@@ -146,20 +148,46 @@ describe("PATCH /keys/{id}", () => {
 });
 
 describe("bootstrap sentinel", () => {
-  // Builds a fresh SQLite-backed app with NO existing key and NO
-  // sentinel set — mirrors a brand-new installation. Uses sqlite
-  // directly (not createTestContext) so we can go through POST /keys
-  // on a truly empty workspace.
-  function freshApp() {
-    const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-"));
-    const storage = createSqliteStorage(join(tmpDir, "test.db"));
-    const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
+  // Builds a fresh app with NO existing key and NO sentinel set —
+  // mirrors a brand-new installation. Dialect-aware: under
+  // `STORAGE_DIALECT=pg` truncates the shared test container so the
+  // bootstrap path can fire; under SQLite (default) creates a fresh
+  // tmp DB. Cannot use `createTestContext` because that pre-creates an
+  // admin key and stamps the bootstrapped sentinel.
+  async function freshApp(): Promise<{
+    app: ReturnType<typeof createApp>;
+    storage: Storage;
+  }> {
+    const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+    let storage: Storage;
+    let blobPath: string;
+    if (dialect === "pg") {
+      const databaseUrl =
+        process.env.DATABASE_URL ??
+        "postgres://myme:myme_dev@localhost:5434/myme";
+      storage = await createPgStorage(databaseUrl);
+      // Truncate everything — including settings (`bootstrapped` sentinel)
+      // and api_keys — so we hit the bootstrap branch in `POST /keys`.
+      // PG file-parallelism is disabled in vitest.config.ts so the wipe is
+      // contained to this file's run.
+      const s = storage as unknown as Record<string, unknown>;
+      if (typeof s._pgTruncate === "function") {
+        await (s._pgTruncate as () => Promise<void>)();
+      }
+      const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-pg-"));
+      blobPath = join(tmpDir, "blobs");
+    } else {
+      const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-"));
+      storage = createSqliteStorage(join(tmpDir, "test.db"));
+      blobPath = join(tmpDir, "blobs");
+    }
+    const blobBackend = new FilesystemBlobBackend(blobPath);
     const app = createApp(storage, blobBackend, {
       port: 0,
-      storageDialect: "sqlite",
+      storageDialect: dialect as "sqlite" | "pg",
       sqlitePath: "",
       databaseUrl: "",
-      blobPath: join(tmpDir, "blobs"),
+      blobPath,
       blobBackend: "fs",
       maxBlobSize: 50 * 1024 * 1024,
       s3Bucket: "",
@@ -199,7 +227,7 @@ describe("bootstrap sentinel", () => {
   }
 
   it("admits the first unauthenticated POST /keys as bootstrap", async () => {
-    const { app, storage } = freshApp();
+    const { app, storage } = await freshApp();
     try {
       const res = await request(app, "POST", "/keys", {
         body: {
@@ -226,7 +254,7 @@ describe("bootstrap sentinel", () => {
   });
 
   it("does NOT re-open bootstrap after every key is revoked", async () => {
-    const { app, storage } = freshApp();
+    const { app, storage } = await freshApp();
     try {
       // First unauthenticated POST succeeds as bootstrap.
       const firstRes = await request(app, "POST", "/keys", {
@@ -266,4 +294,132 @@ describe("bootstrap sentinel", () => {
       await storage.close();
     }
   });
+
+  it("concurrent unauthenticated POST /keys mints exactly one admin key (T-007)", async () => {
+    const { app, storage } = await freshApp();
+    try {
+      const N = 8;
+      const bodies = Array.from({ length: N }, (_, i) => ({
+        label: `race-${String(i)}`,
+        source: `race-${String(i)}`,
+        type_permissions: { "*": "write" },
+      }));
+      const results = await Promise.all(
+        bodies.map((body) => request(app, "POST", "/keys", { body })),
+      );
+      const statuses = results.map((r) => r.status);
+      const successes = statuses.filter((s) => s === 201).length;
+      const unauthorized = statuses.filter((s) => s === 401).length;
+      expect(successes).toBe(1);
+      expect(unauthorized).toBe(N - 1);
+
+      // Sentinel must be stamped exactly once.
+      const stamped = await storage.settings.get("bootstrapped");
+      expect(stamped).toBe("true");
+
+      // Only one key persisted in the store.
+      const keys = await storage.keys.list();
+      expect(keys.length).toBe(1);
+      expect(keys[0]?.role).toBe("admin");
+    } finally {
+      await storage.close();
+    }
+  });
+
+  // The remaining T-014 assertions exercise SQLite-specific introspection
+  // (`__sqliteAll`, `runSqliteMigrations`). The PG side is exercised by the
+  // production server boot path under `STORAGE_DIALECT=pg` (this file's
+  // dialect-aware `freshApp` runs the bootstrap path against the PG
+  // container) and by the SCHEMA_SQL diff itself; running these specific
+  // introspection tests on PG would require parallel PG-flavoured queries
+  // for marginal additional coverage.
+  const SKIP_SQLITE_ONLY =
+    (process.env.STORAGE_DIALECT ?? "sqlite") !== "sqlite";
+
+  it.skipIf(SKIP_SQLITE_ONLY)(
+    "bootstrap stamps __drizzle_migrations so a follow-up migrate is a no-op (T-014, sqlite)",
+    async () => {
+      const { storage } = (await freshApp()) as unknown as {
+        storage: ReturnType<typeof createSqliteStorage>;
+      };
+      try {
+        const rows = storage.__sqliteAll(
+          "SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at ASC",
+        ) as { hash: string; created_at: number }[];
+        // At least one stamped row exists, hashes are non-empty, timestamps
+        // are positive — the row shape Drizzle's migrator writes after each
+        // applied migration. Drizzle's skip-decision is "if any row's
+        // created_at >= migration.folderMillis, skip", so a single row with
+        // the latest timestamp would suffice; we stamp every entry to keep
+        // the table identical to a normally-migrated DB.
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.every((r) => /^[0-9a-f]{64}$/.test(r.hash))).toBe(true);
+        expect(rows.every((r) => r.created_at > 0)).toBe(true);
+      } finally {
+        await storage.close();
+      }
+    },
+  );
+
+  it.skipIf(SKIP_SQLITE_ONLY)(
+    "bootstrap then `pnpm migrate` is a no-op — no DROP errors (T-014, sqlite)",
+    async () => {
+      // Bootstrap a fresh DB at a known path, close it, then drive Drizzle's
+      // migrate runner against the same path. Pre-fix, the runner replays
+      // 0000 → latest and several DROP/ALTER migrations error against
+      // tables / objects the bootstrap shape never had. Post-fix the runner
+      // sees stamped rows and short-circuits.
+      const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-migrate-"));
+      const dbPath = join(tmpDir, "bootstrap-then-migrate.db");
+      const storage = createSqliteStorage(dbPath);
+      const before = storage.__sqliteAll(
+        "SELECT COUNT(*) AS n FROM __drizzle_migrations",
+      ) as { n: number }[];
+      const beforeCount = before[0]?.n ?? 0;
+      expect(beforeCount).toBeGreaterThan(0);
+      await storage.close();
+
+      const { runSqliteMigrations } = await import("../storage/migrate.js");
+      await expect(runSqliteMigrations(dbPath)).resolves.toBeUndefined();
+
+      const reopened = createSqliteStorage(dbPath);
+      try {
+        const after = reopened.__sqliteAll(
+          "SELECT COUNT(*) AS n FROM __drizzle_migrations",
+        ) as { n: number }[];
+        expect(after[0]?.n ?? 0).toBe(beforeCount);
+      } finally {
+        await reopened.close();
+      }
+    },
+  );
+
+  it.skipIf(SKIP_SQLITE_ONLY)(
+    "bootstrap creates idx_api_keys_connection_id (T-014, sqlite)",
+    async () => {
+      const { storage } = (await freshApp()) as unknown as {
+        storage: ReturnType<typeof createSqliteStorage>;
+      };
+      try {
+        const indexes = storage.__sqliteAll(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_api_keys_connection_id'",
+        ) as { name: string }[];
+        expect(indexes.length).toBe(1);
+
+        // EXPLAIN must show the index is consulted on the runtime-credential
+        // lookup path. SQLite's planner reports `USING INDEX <name>` when it
+        // chooses an index; partial indexes need the WHERE predicate to match
+        // for the planner to pick them.
+        const plan = storage.__sqliteAll(
+          "EXPLAIN QUERY PLAN SELECT * FROM api_keys WHERE connection_id = 'x'",
+        ) as { detail: string }[];
+        const usesIndex = plan.some((row) =>
+          row.detail.includes("idx_api_keys_connection_id"),
+        );
+        expect(usesIndex).toBe(true);
+      } finally {
+        await storage.close();
+      }
+    },
+  );
 });
