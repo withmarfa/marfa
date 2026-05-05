@@ -189,6 +189,51 @@ describe("GET /audit", () => {
     expect(body.data[0]?.details.client_ip).toBe("203.0.113.42");
   });
 
+  it("respects limit and paginates via cursor across two pages", async () => {
+    // Seed enough entries under a unique action to split across 2 pages of 2.
+    const action = `test.page.${Math.random().toString(36).slice(2, 8)}`;
+    for (let i = 0; i < 5; i++) {
+      await seedAudit(action, "test", `p-${String(i)}`);
+    }
+
+    const page1Res = await request(
+      ctx.app,
+      "GET",
+      `/audit?action=${action}&limit=2`,
+      { key: ctx.adminKey },
+    );
+    expect(page1Res.status).toBe(200);
+    const page1 = (await page1Res.json()) as AuditPage;
+    expect(page1.data.length).toBe(2);
+    expect(page1.has_more).toBe(true);
+    expect(page1.cursor).not.toBeNull();
+
+    const cursor = page1.cursor;
+    expect(cursor).toBeTruthy();
+
+    const page2Res = await request(
+      ctx.app,
+      "GET",
+      `/audit?action=${action}&limit=2&cursor=${encodeURIComponent(String(cursor))}`,
+      { key: ctx.adminKey },
+    );
+    expect(page2Res.status).toBe(200);
+    const page2 = (await page2Res.json()) as AuditPage;
+    expect(page2.data.length).toBe(2);
+
+    // Pages must not overlap.
+    const page1Ids = new Set(page1.data.map((e) => e.id));
+    for (const entry of page2.data) {
+      expect(page1Ids.has(entry.id)).toBe(false);
+    }
+  });
+
+  // NOTE: this test creates a SECOND TestContext with custom config.
+  // Under PG, `createTestContext` truncates the shared database, so
+  // any test running AFTER this one against the original `ctx` would
+  // see its admin key wiped. Keep this test LAST in the describe
+  // block — fresh-context tests must not run before any test that
+  // relies on the file-level fixture.
   it("honours TRUSTED_PROXY_CIDRS when stamping the audit IP (T-027)", async () => {
     // Stand up a fresh app whose config trusts 10.0.0.0/8 as a proxy
     // CIDR. A request whose peer is in 10.0.0.0/8 and whose
@@ -226,45 +271,6 @@ describe("GET /audit", () => {
       expect(body.data[0]?.client_ip).toBe("203.0.113.7");
     } finally {
       trustedCtx.cleanup();
-    }
-  });
-
-  it("respects limit and paginates via cursor across two pages", async () => {
-    // Seed enough entries under a unique action to split across 2 pages of 2.
-    const action = `test.page.${Math.random().toString(36).slice(2, 8)}`;
-    for (let i = 0; i < 5; i++) {
-      await seedAudit(action, "test", `p-${String(i)}`);
-    }
-
-    const page1Res = await request(
-      ctx.app,
-      "GET",
-      `/audit?action=${action}&limit=2`,
-      { key: ctx.adminKey },
-    );
-    expect(page1Res.status).toBe(200);
-    const page1 = (await page1Res.json()) as AuditPage;
-    expect(page1.data.length).toBe(2);
-    expect(page1.has_more).toBe(true);
-    expect(page1.cursor).not.toBeNull();
-
-    const cursor = page1.cursor;
-    expect(cursor).toBeTruthy();
-
-    const page2Res = await request(
-      ctx.app,
-      "GET",
-      `/audit?action=${action}&limit=2&cursor=${encodeURIComponent(String(cursor))}`,
-      { key: ctx.adminKey },
-    );
-    expect(page2Res.status).toBe(200);
-    const page2 = (await page2Res.json()) as AuditPage;
-    expect(page2.data.length).toBe(2);
-
-    // Pages must not overlap.
-    const page1Ids = new Set(page1.data.map((e) => e.id));
-    for (const entry of page2.data) {
-      expect(page1Ids.has(entry.id)).toBe(false);
     }
   });
 });
