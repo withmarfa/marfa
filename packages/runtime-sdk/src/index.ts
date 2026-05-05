@@ -74,3 +74,4 @@ export type {
   HandlerResult,
   RuntimeCredential,
 } from "./types.js";
+export { SDK_DEFAULT_HOP_BUDGET, nextHopMetadata } from "./types.js";
