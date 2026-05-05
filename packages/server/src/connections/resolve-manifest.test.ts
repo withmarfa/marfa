@@ -1,13 +1,10 @@
 /**
- * Tests for the integration_ref-based manifest resolution helper —
- * Layer 2 PR 2.
+ * Tests for the integration_ref-based manifest resolution helper.
  *
- * Covers all four resolution paths:
- *   - integration_ref set + resolves + valid → preferred path
- *   - integration_ref set + resolves + invalid manifest → throws
- *   - integration_ref set + doesn't resolve → falls through to inline
- *   - no integration_ref + inline supplied → legacy path
- *   - no integration_ref + no inline → MISSING_REQUIRED_FIELD
+ * Post-T-022 the helper resolves only via the connection's
+ * `integration_ref` → `system.integration` item. The transition-period
+ * inline-manifest fallback was dropped; missing or unresolvable refs
+ * surface as `MISSING_REQUIRED_FIELD`.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext } from "../test-utils.js";
@@ -89,7 +86,7 @@ async function createIntegration(
 }
 
 describe("resolveConnectionManifest", () => {
-  it("preferred path: integration_ref resolves to a system.integration item", async () => {
+  it("resolves the manifest from a connection's integration_ref", async () => {
     const integrationId = await createIntegration();
     const connectionId = await createConnection(integrationId);
 
@@ -97,56 +94,9 @@ describe("resolveConnectionManifest", () => {
       ctx.storage,
       connectionId,
       undefined,
-      undefined,
     );
-    expect(result.source).toBe("integration_ref");
     expect(result.integration_item_id).toBe(integrationId);
     expect(result.manifest.name).toBe("acme.resolve-test");
-  });
-
-  it("preferred path takes precedence over inline manifest in body", async () => {
-    const persisted = makeManifest({ name: "acme.persisted" });
-    const inline = makeManifest({ name: "acme.inline-overridden" });
-    const integrationId = await createIntegration(persisted);
-    const connectionId = await createConnection(integrationId);
-
-    const result = await resolveConnectionManifest(
-      ctx.storage,
-      connectionId,
-      undefined,
-      inline,
-    );
-    expect(result.source).toBe("integration_ref");
-    expect(result.manifest.name).toBe("acme.persisted");
-  });
-
-  it("legacy fallback: no integration_ref + inline manifest supplied", async () => {
-    const connectionId = await createConnection(undefined);
-    const inline = makeManifest({ name: "acme.legacy-inline" });
-
-    const result = await resolveConnectionManifest(
-      ctx.storage,
-      connectionId,
-      undefined,
-      inline,
-    );
-    expect(result.source).toBe("inline_legacy");
-    expect(result.integration_item_id).toBeNull();
-    expect(result.manifest.name).toBe("acme.legacy-inline");
-  });
-
-  it("orphan integration_ref falls through to inline when target item missing", async () => {
-    const inline = makeManifest({ name: "acme.orphan-fallback" });
-    const connectionId = await createConnection("itm_does_not_exist");
-
-    const result = await resolveConnectionManifest(
-      ctx.storage,
-      connectionId,
-      undefined,
-      inline,
-    );
-    expect(result.source).toBe("inline_legacy");
-    expect(result.manifest.name).toBe("acme.orphan-fallback");
   });
 
   it("throws NOT_FOUND on unknown connection id", async () => {
@@ -156,7 +106,6 @@ describe("resolveConnectionManifest", () => {
         ctx.storage,
         "itm_no_such_connection",
         undefined,
-        makeManifest(),
       );
     } catch (err) {
       thrown = err;
@@ -165,16 +114,23 @@ describe("resolveConnectionManifest", () => {
     expect((thrown as MymeError).code).toBe(ErrorCode.NOT_FOUND);
   });
 
-  it("throws MISSING_REQUIRED_FIELD when neither path resolves", async () => {
+  it("throws MISSING_REQUIRED_FIELD when the connection has no integration_ref (T-022)", async () => {
     const connectionId = await createConnection(undefined);
     let thrown: unknown = null;
     try {
-      await resolveConnectionManifest(
-        ctx.storage,
-        connectionId,
-        undefined,
-        undefined,
-      );
+      await resolveConnectionManifest(ctx.storage, connectionId, undefined);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(MymeError);
+    expect((thrown as MymeError).code).toBe(ErrorCode.MISSING_REQUIRED_FIELD);
+  });
+
+  it("throws MISSING_REQUIRED_FIELD when integration_ref doesn't resolve (T-022)", async () => {
+    const connectionId = await createConnection("itm_does_not_exist");
+    let thrown: unknown = null;
+    try {
+      await resolveConnectionManifest(ctx.storage, connectionId, undefined);
     } catch (err) {
       thrown = err;
     }
@@ -205,26 +161,7 @@ describe("resolveConnectionManifest", () => {
 
     let thrown: unknown = null;
     try {
-      await resolveConnectionManifest(
-        ctx.storage,
-        connectionId,
-        undefined,
-        makeManifest(),
-      );
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(MymeError);
-    expect((thrown as MymeError).code).toBe(ErrorCode.VALIDATION_ERROR);
-  });
-
-  it("throws VALIDATION_ERROR when legacy inline manifest is invalid", async () => {
-    const connectionId = await createConnection(undefined);
-    let thrown: unknown = null;
-    try {
-      await resolveConnectionManifest(ctx.storage, connectionId, undefined, {
-        name: "broken",
-      });
+      await resolveConnectionManifest(ctx.storage, connectionId, undefined);
     } catch (err) {
       thrown = err;
     }

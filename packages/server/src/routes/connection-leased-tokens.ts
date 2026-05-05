@@ -48,6 +48,35 @@ function hashLease(raw: string): string {
   return createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
+/**
+ * A credential source string that scopes the credential to a specific
+ * connection. Two prefixes mint connection-scoped credentials today
+ * (T-018):
+ *
+ *   - `oauth:<connectionId>` — the synthetic ApiKey constructed by the
+ *     auth middleware for an OAuth `myme_at_*` access token. The token
+ *     was minted via the `/auth/authorize` consent flow and the
+ *     consenting user authorised the connection.
+ *   - `integration:<connectionId>` — the runtime credential the
+ *     install pipeline mints for the per-Connection Worker (see
+ *     `connections/install-pipeline.ts`).
+ *
+ * Either source identifies "the connector itself" for the purpose of
+ * managing leased tokens on this connection. Pre-T-018 the check was
+ * narrowed to `oauth:` and the runtime credential's `integration:`
+ * source got locked out — contradicting the design "the connector
+ * requests a short-TTL bearer for direct calls".
+ */
+function isConnectionScopedSource(
+  source: string,
+  connectionId: string,
+): boolean {
+  return (
+    source === `oauth:${connectionId}` ||
+    source === `integration:${connectionId}`
+  );
+}
+
 function rowToWire(
   row: ConnectionLeasedTokenRow,
   rawLease?: string,
@@ -73,12 +102,17 @@ async function requireConnectionAccess(
 ): Promise<{ tenantId: string | undefined }> {
   const key = requireAuth(c);
   const isAdmin = key.role === "admin" || key.is_platform;
-  // Defence-in-depth: any non-admin / non-platform credential MUST carry a
-  // resolved `tenant_id`. Without it, the storage call sites below treat
-  // `undefined` tenantId as cross-tenant (the same fall-through that T-004
-  // closes upstream). Refuse here so a future caller that forgets to stamp
-  // tenant_id can't quietly bypass scoping on this route.
-  if (!isAdmin && !key.tenant_id) {
+  const isConnector = isConnectionScopedSource(key.source, connectionId);
+  // Defence-in-depth: any non-admin / non-connector credential MUST carry
+  // a resolved `tenant_id`. Without it, the storage call sites below
+  // treat `undefined` tenantId as cross-tenant (the same fall-through
+  // that T-004 closes upstream). Refuse here so a future caller that
+  // forgets to stamp tenant_id can't quietly bypass scoping on this
+  // route. Runtime credentials and OAuth bearers issued for this
+  // connection are exempt — their `connection_id` / source-prefix
+  // binding is its own scope, and self-hosted (single-tenant) deploys
+  // legitimately leave `tenant_id` unset on those.
+  if (!isAdmin && !isConnector && !key.tenant_id) {
     throw new MymeError(
       ErrorCode.FORBIDDEN,
       "Tenant scope required for this credential",
@@ -89,7 +123,6 @@ async function requireConnectionAccess(
   if (connection?.type !== "system.connection") {
     throw new MymeError(ErrorCode.NOT_FOUND, "Connection not found");
   }
-  const isConnector = key.source === `oauth:${connectionId}`;
   if (!isAdmin && !isConnector) {
     throw new MymeError(
       ErrorCode.FORBIDDEN,
@@ -149,11 +182,6 @@ const issueLeaseRoute = createRoute({
               .max(LEASE_TTL_MAX_SEC)
               .optional(),
             scopes: z.array(z.string()).optional(),
-            // Layer 2 PR 2: manifest is resolved via the connection's
-            // `integration_ref` → `system.integration` item. Inline
-            // `manifest` is accepted for one release as the legacy
-            // fallback for connections installed before Layer 2.
-            manifest: z.unknown().optional(),
           }),
         },
       },
@@ -289,13 +317,13 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     );
     const body = c.req.valid("json");
 
-    // Layer 2 PR 2: prefer the manifest persisted under the connection's
-    // `integration_ref`; fall back to inline body for legacy callers.
+    // Manifest is resolved server-side from the connection's
+    // `integration_ref` → `system.integration` item. The inline-manifest
+    // fallback was dropped in T-022.
     const { manifest } = await resolveConnectionManifest(
       storage,
       connectionId,
       tenantId,
-      body.manifest,
     );
     const declared = manifest.oauth_requirements[body.capability_id];
     if (declared !== "leased") {

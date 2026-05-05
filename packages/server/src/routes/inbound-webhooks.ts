@@ -165,13 +165,6 @@ const createInboundWebhookRoute = createRoute({
           schema: z.object({
             external_service_id: z.string().optional(),
             events: z.array(z.string()).min(1),
-            // Layer 2 PR 2: manifest is no longer required in the body —
-            // the route resolves it via the connection's `integration_ref`
-            // → `system.integration` item. Inline `manifest` remains
-            // accepted for one release as a fallback for connections
-            // installed before Layer 2; that path is removed in a
-            // follow-up PR after callers migrate.
-            manifest: z.unknown().optional(),
           }),
         },
       },
@@ -330,15 +323,13 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     );
     const body = c.req.valid("json");
 
-    // Layer 2 PR 2: prefer the manifest persisted under the connection's
-    // `integration_ref` over the inline body. Falls back to the inline
-    // path when the connection has no integration_ref (legacy
-    // pre-Layer-2 connections).
+    // Manifest is resolved server-side from the connection's
+    // `integration_ref` → `system.integration` item. The inline-manifest
+    // fallback was dropped in T-022.
     const { manifest } = await resolveConnectionManifest(
       storage,
       connectionId,
       tenantId,
-      body.manifest,
     );
 
     // Stamp method on the new row from the validated manifest. The
