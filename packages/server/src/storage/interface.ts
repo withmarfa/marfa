@@ -613,23 +613,6 @@ export interface OAuthStore {
   getClient(id: string): Promise<import("@mymehq/shared").OAuthClient | null>;
   listClients(): Promise<import("@mymehq/shared").OAuthClient[]>;
 
-  /**
-   * Create a new user-app-grant connection. Persists a `system.connection`
-   * item with `kind: user-app-grant`; the returned id is what callers
-   * thread as `connection_item_id` on subsequent code / token writes.
-   *
-   * PR 4 of workstream 1 replaced the prior `createGrant` (which wrote to
-   * the dropped `oauth_grants` table) with this items-backed shape.
-   */
-  createGrant(
-    clientId: string,
-    scopes: string[],
-  ): Promise<import("@mymehq/shared").OAuthGrant>;
-  /** List active user-app-grants for a client. Reads system.connection items. */
-  getGrantsByClient(
-    clientId: string,
-  ): Promise<import("@mymehq/shared").OAuthGrant[]>;
-
   createCode(
     connectionItemId: string,
     codeHash: string,
@@ -651,11 +634,15 @@ export interface OAuthStore {
     type: import("@mymehq/shared").OAuthTokenType,
     expiresAt: string,
   ): Promise<import("@mymehq/shared").OAuthToken>;
-  /** Validates a token hash. Returns null if not found, expired, or revoked. */
-  validateToken(
-    tokenHash: string,
-  ): Promise<
-    (import("@mymehq/shared").OAuthToken & { scopes: string[] }) | null
+  /** Validates a token hash. Returns null if not found, expired, or revoked.
+   *  `tenant_id` is read off the underlying `system.connection` user-app-grant
+   *  item; null when the grant predates tenant scoping (single-tenant). */
+  validateToken(tokenHash: string): Promise<
+    | (import("@mymehq/shared").OAuthToken & {
+        scopes: string[];
+        tenant_id: string | null;
+      })
+    | null
   >;
   listTokens(): Promise<import("@mymehq/shared").OAuthToken[]>;
   revokeToken(id: string): Promise<void>;
