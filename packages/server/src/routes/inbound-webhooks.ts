@@ -16,7 +16,7 @@ import {
   decryptSecret,
   SECRET_INFO,
 } from "../crypto/secret-encryption.js";
-import { ADAPTERS, isVerificationMethod } from "@mymehq/webhook-protocol";
+import { ADAPTERS, isVerificationMethod } from "@mymehq/webhooks";
 import {
   createOpenAPIRouter,
   ErrorResponseSchema,
@@ -530,7 +530,7 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
     // Read the raw body as ArrayBuffer — HMAC over altered bytes fails,
     // so any framework re-serialisation MUST NOT happen between the
     // bytes-on-the-wire and the verifier input. The verifier package
-    // (`@mymehq/webhook-protocol`) takes ArrayBuffer natively (Web
+    // (`@mymehq/webhooks`) takes ArrayBuffer natively (Web
     // Crypto's input type); we keep the same buffer for the JSON
     // payload column via TextDecoder.
     const rawBody = await c.req.raw.arrayBuffer();

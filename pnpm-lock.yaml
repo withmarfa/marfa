@@ -173,9 +173,9 @@ importers:
 
   packages/runtime-control:
     dependencies:
-      '@mymehq/webhook-protocol':
+      '@mymehq/webhooks':
         specifier: workspace:*
-        version: link:../webhook-protocol
+        version: link:../webhooks
       hono:
         specifier: ^4.7.5
         version: 4.12.9
@@ -276,9 +276,9 @@ importers:
       '@mymehq/shared':
         specifier: workspace:*
         version: link:../shared
-      '@mymehq/webhook-protocol':
+      '@mymehq/webhooks':
         specifier: workspace:*
-        version: link:../webhook-protocol
+        version: link:../webhooks
       better-auth:
         specifier: 1.6.9
         version: 1.6.9(@cloudflare/workers-types@4.20260501.1)(better-sqlite3@12.9.0)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260501.1)(@types/better-sqlite3@7.6.13)(better-sqlite3@12.9.0)(kysely@0.28.16)(postgres@3.4.8))(vitest@4.1.2(@types/node@22.19.15)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@22.19.15)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.8.3)))
@@ -375,7 +375,7 @@ importers:
         specifier: ^6.0.2
         version: 6.0.2
 
-  packages/webhook-protocol:
+  packages/webhooks:
     devDependencies:
       tsup:
         specifier: ^8.5.1

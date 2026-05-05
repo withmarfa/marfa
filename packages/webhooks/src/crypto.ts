@@ -1,5 +1,5 @@
 /**
- * Web Crypto helpers — internal to `@mymehq/webhook-protocol`.
+ * Web Crypto helpers — internal to `@mymehq/webhooks`.
  *
  * `globalThis.crypto.subtle` is available in Cloudflare Workers and
  * Node 20+, so a single implementation works in both runtimes. No
