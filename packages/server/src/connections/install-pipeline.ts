@@ -133,10 +133,18 @@ export async function performInstall(
   const now = new Date().toISOString();
 
   // Compensation stack — each step pushes a rollback closure. On any
-  // subsequent failure we reverse the stack and re-throw.
+  // subsequent failure we walk the stack in reverse and re-throw.
+  //
+  // T-012: do NOT use `compensations.reverse()` — that mutates the array
+  // in place. If a recovery path re-invokes rollback (or any code reads
+  // `compensations` after rollback returns) the stack is silently
+  // backwards from where the caller expects. Iterate via a downward
+  // index instead so the original push-order is preserved.
   const compensations: (() => Promise<void>)[] = [];
   const rollback = async (originalErr: unknown): Promise<never> => {
-    for (const undo of compensations.reverse()) {
+    for (let i = compensations.length - 1; i >= 0; i--) {
+      const undo = compensations[i];
+      if (!undo) continue;
       try {
         await undo();
       } catch (cleanupErr) {
@@ -235,23 +243,29 @@ export async function performInstall(
   }
 
   // -------------------------------------------------------------------
-  // Audit trail — fire-and-forget; failure here doesn't roll the
-  // install back since the audit log is best-effort observability.
+  // Audit trail (T-012). Awaited and rolled back on failure — `system.connection`
+  // writes are operationally significant and an unaudited install isn't
+  // auditable. Pre-T-012 this was `void storage.audit.log(...)`, which
+  // swallowed audit-DB failures silently.
   // -------------------------------------------------------------------
-  void storage.audit.log({
-    key_id: input.apiKeyId,
-    action: "integration.install",
-    resource_type: "item",
-    resource_id: connection.id,
-    details: {
-      integration_ref: input.integrationItemId,
-      credential_id: credential.id,
-      activity_id: activity.id,
-      manifest_name: manifest.name,
-      manifest_version: manifest.version,
-      ttl_seconds: INSTALL_CREDENTIAL_TTL_SECONDS,
-    },
-  });
+  try {
+    await storage.audit.log({
+      key_id: input.apiKeyId,
+      action: "integration.install",
+      resource_type: "item",
+      resource_id: connection.id,
+      details: {
+        integration_ref: input.integrationItemId,
+        credential_id: credential.id,
+        activity_id: activity.id,
+        manifest_name: manifest.name,
+        manifest_version: manifest.version,
+        ttl_seconds: INSTALL_CREDENTIAL_TTL_SECONDS,
+      },
+    });
+  } catch (err) {
+    return rollback(err);
+  }
 
   return {
     connection_id: connection.id,
