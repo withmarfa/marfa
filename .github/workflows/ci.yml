@@ -93,7 +93,7 @@ jobs:
   ci-sqlite:
     name: CI (SQLite)
     if: github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -163,7 +163,7 @@ jobs:
   ci-fresh-migrate-sqlite:
     name: CI (Fresh migrate, SQLite)
     if: github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       STORAGE_DIALECT: sqlite
