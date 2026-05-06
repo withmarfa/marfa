@@ -455,14 +455,16 @@ export function requireTypeAccess(
 }
 
 /**
- * Enforces a per-edge-type permission check. Admin keys always pass.
- * Non-admin keys need either the specific edge-type permission or the
- * `*` wildcard at the requested level (write covers read). Reads fall
- * back through edgePermissionCovers which also accepts wildcard.
+ * Enforces a per-edge-type permission check. Admin and workspace_admin
+ * keys always pass (workspace_admin is admin-shaped within its tenant
+ * — see `checkTypeAccess` for the layered-helper rationale, T-051
+ * follow-on / Wave B Part 2). Non-admin keys (member + OAuth-derived
+ * synthetic keys) need either the specific edge-type permission or
+ * the `*` wildcard at the requested level (write covers read).
  *
  * Throws EDGE_PERMISSION_DENIED (403) on failure — the discriminator
- * code lets SDK clients route `forbidden` differently from specifically
- * an edge-permission failure.
+ * code lets SDK clients route `forbidden` differently from
+ * specifically an edge-permission failure.
  */
 export function requireEdgePermission(
   c: Context<AppEnv>,
@@ -470,7 +472,7 @@ export function requireEdgePermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  if (apiKey.role === "admin") return;
+  if (apiKey.role === "admin" || apiKey.role === "workspace_admin") return;
   if (edgePermissionCovers(apiKey.edge_permissions, edgeType, level)) return;
   throw new MymeError(
     ErrorCode.EDGE_PERMISSION_DENIED,
@@ -494,7 +496,12 @@ export function requireMetadataPermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  if (apiKey.role === "admin") return;
+  // Same admin-tier shape as `requireEdgePermission`: workspace_admin
+  // is admin-shaped within its tenant for metadata mutations too. The
+  // platform-credential gate on `metadata.types:write` registration of
+  // reserved-namespace types still applies via the route-level
+  // `is_platform` check, not here.
+  if (apiKey.role === "admin" || apiKey.role === "workspace_admin") return;
   if (metadataPermissionCovers(apiKey.metadata_permissions, subresource, level))
     return;
   throw new MymeError(

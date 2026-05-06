@@ -294,14 +294,23 @@ export class SqliteItemStore implements ItemStore {
     }
 
     if (filters.allowed_types) {
-      const typeClauses = filters.allowed_types.map((pattern) => {
-        if (pattern === "*") return sql`1=1`;
-        if (pattern.endsWith(".*")) {
-          return like(items.type, pattern.slice(0, -1) + "%");
-        }
-        return eq(items.type, pattern);
-      });
-      if (typeClauses.length > 0) {
+      // T-045: an empty allowed_types array means "the caller has no
+      // readable types" — typically a member-tier credential or an OAuth
+      // token whose scopes don't project into any type_permission. The
+      // route layer (computeTypeFilter) returns `undefined` to mean "no
+      // filter" (admin / workspace_admin) and an array to mean "filter
+      // to these patterns". An empty array must filter to zero rows; the
+      // earlier shape silently fell through and returned every row.
+      if (filters.allowed_types.length === 0) {
+        conditions.push(sql`1=0`);
+      } else {
+        const typeClauses = filters.allowed_types.map((pattern) => {
+          if (pattern === "*") return sql`1=1`;
+          if (pattern.endsWith(".*")) {
+            return like(items.type, pattern.slice(0, -1) + "%");
+          }
+          return eq(items.type, pattern);
+        });
         const clause = or(...typeClauses);
         if (clause) conditions.push(clause);
       }
