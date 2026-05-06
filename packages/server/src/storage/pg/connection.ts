@@ -438,12 +438,16 @@ CREATE POLICY "edges_tenant_isolation" ON "edges"
   USING (tenant_id::text = current_setting('myme.tenant_id', true)
          OR tenant_id IS NULL);
 
+-- versions — keyed on item_id; policy joins via items.
 ALTER TABLE "versions" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "versions_tenant_isolation" ON "versions";
 CREATE POLICY "versions_tenant_isolation" ON "versions"
   FOR ALL TO "myme_app"
-  USING (tenant_id::text = current_setting('myme.tenant_id', true)
-         OR tenant_id IS NULL);
+  USING (EXISTS (
+    SELECT 1 FROM "items" WHERE "items".id = "versions".item_id
+      AND ("items".tenant_id::text = current_setting('myme.tenant_id', true)
+           OR "items".tenant_id IS NULL)
+  ));
 
 ALTER TABLE "metadata" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "metadata_tenant_isolation" ON "metadata";
