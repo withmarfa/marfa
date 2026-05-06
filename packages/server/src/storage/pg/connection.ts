@@ -403,6 +403,110 @@ CREATE TABLE IF NOT EXISTS auth_passkey (
 );
 CREATE INDEX IF NOT EXISTS idx_auth_passkey_user_id ON auth_passkey(user_id);
 CREATE INDEX IF NOT EXISTS idx_auth_passkey_credential_id ON auth_passkey(credential_id);
+
+-- T-025 part 1: RLS scaffold. Mirrors migration 0035 so fresh-DB
+-- bootstrap gets the role + policies. The connection-pool wiring
+-- (transaction-per-request with SET LOCAL ROLE myme_app) lands as
+-- T-025 part 2; until then policies have no effect because the
+-- application connects as the table owner.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'myme_app') THEN
+    CREATE ROLE "myme_app";
+  END IF;
+END
+$$;
+GRANT USAGE ON SCHEMA public TO "myme_app";
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  "items", "edges", "versions", "metadata", "api_keys", "blobs",
+  "custom_types", "custom_edge_types", "outbound_webhooks",
+  "outbound_webhook_deliveries", "audit_log", "event_log",
+  "tenants", "settings"
+TO "myme_app";
+
+ALTER TABLE "items" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "items_tenant_isolation" ON "items";
+CREATE POLICY "items_tenant_isolation" ON "items"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
+
+ALTER TABLE "edges" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "edges_tenant_isolation" ON "edges";
+CREATE POLICY "edges_tenant_isolation" ON "edges"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
+
+-- versions — keyed on item_id; policy joins via items.
+ALTER TABLE "versions" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "versions_tenant_isolation" ON "versions";
+CREATE POLICY "versions_tenant_isolation" ON "versions"
+  FOR ALL TO "myme_app"
+  USING (EXISTS (
+    SELECT 1 FROM "items" WHERE "items".id = "versions".item_id
+      AND ("items".tenant_id::text = current_setting('myme.tenant_id', true)
+           OR "items".tenant_id IS NULL)
+  ));
+
+ALTER TABLE "metadata" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "metadata_tenant_isolation" ON "metadata";
+CREATE POLICY "metadata_tenant_isolation" ON "metadata"
+  FOR ALL TO "myme_app"
+  USING (EXISTS (
+    SELECT 1 FROM "items" WHERE "items".id = "metadata".item_id
+      AND ("items".tenant_id::text = current_setting('myme.tenant_id', true)
+           OR "items".tenant_id IS NULL)
+  ));
+
+ALTER TABLE "api_keys" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "api_keys_tenant_isolation" ON "api_keys";
+CREATE POLICY "api_keys_tenant_isolation" ON "api_keys"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
+
+ALTER TABLE "blobs" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "blobs_tenant_isolation" ON "blobs";
+CREATE POLICY "blobs_tenant_isolation" ON "blobs"
+  FOR ALL TO "myme_app"
+  USING (tenant_id = current_setting('myme.tenant_id', true)
+         OR tenant_id = '');
+
+ALTER TABLE "custom_types" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "custom_types_tenant_isolation" ON "custom_types";
+CREATE POLICY "custom_types_tenant_isolation" ON "custom_types"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
+
+ALTER TABLE "custom_edge_types" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "custom_edge_types_tenant_isolation" ON "custom_edge_types";
+CREATE POLICY "custom_edge_types_tenant_isolation" ON "custom_edge_types"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
+
+ALTER TABLE "outbound_webhooks" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "outbound_webhooks_tenant_isolation" ON "outbound_webhooks";
+CREATE POLICY "outbound_webhooks_tenant_isolation" ON "outbound_webhooks"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
+
+ALTER TABLE "audit_log" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "audit_log_tenant_isolation" ON "audit_log";
+CREATE POLICY "audit_log_tenant_isolation" ON "audit_log"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
+
+ALTER TABLE "event_log" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "event_log_tenant_isolation" ON "event_log";
+CREATE POLICY "event_log_tenant_isolation" ON "event_log"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
 `;
 
 export async function createConnection(connectionString: string): Promise<{
