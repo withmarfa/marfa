@@ -203,15 +203,15 @@ Every auth-side wrapper writes a stable-shape audit row through `storage.audit.l
 
 Actions emitted today:
 
-| Action | Triggered by | resource_id | details |
-|---|---|---|---|
-| `auth.sign_up` | `POST /auth/sign-up` success | email | `{ email }` |
-| `auth.sign_in.success` | `POST /auth/sign-in` success (password or magic) | email | `{ email, method: "password" \| "magic" }` |
-| `auth.sign_in.failed` | `POST /auth/sign-in` failure | email | `{ email, method, reason }` |
-| `auth.password_reset.requested` | `POST /auth/forgot-password` (always — captures attempts) | email | `{ email }` |
-| `auth.password_reset.completed` | `POST /auth/reset-password` success | token-prefix | `{ token_prefix }` |
-| `auth.email.verified` | `GET /auth/verify-email?token=…` success | token-prefix | `{ token_prefix }` |
-| `email.suppressed` | `POST /webhooks/resend` bounce/complaint | email | `{ reason, source_email_id }` |
+| Action                          | Triggered by                                              | resource_id  | details                                    |
+| ------------------------------- | --------------------------------------------------------- | ------------ | ------------------------------------------ |
+| `auth.sign_up`                  | `POST /auth/sign-up` success                              | email        | `{ email }`                                |
+| `auth.sign_in.success`          | `POST /auth/sign-in` success (password or magic)          | email        | `{ email, method: "password" \| "magic" }` |
+| `auth.sign_in.failed`           | `POST /auth/sign-in` failure                              | email        | `{ email, method, reason }`                |
+| `auth.password_reset.requested` | `POST /auth/forgot-password` (always — captures attempts) | email        | `{ email }`                                |
+| `auth.password_reset.completed` | `POST /auth/reset-password` success                       | token-prefix | `{ token_prefix }`                         |
+| `auth.email.verified`           | `GET /auth/verify-email?token=…` success                  | token-prefix | `{ token_prefix }`                         |
+| `email.suppressed`              | `POST /webhooks/resend` bounce/complaint                  | email        | `{ reason, source_email_id }`              |
 
 Calls are fire-and-forget (`void storage.audit.log(...)`) — audit failures must never block the user-facing flow. `client_ip` threads through `c.var.clientIp` (T-027 client-ip middleware).
 
@@ -223,17 +223,17 @@ Out-of-scope today (filed as follow-on if needed): per-passkey-registration, per
 
 Defaults (per-minute window per IP):
 
-| Path | Cap |
-|---|---|
-| `/auth/sign-in/magic-link` | 5 |
-| `/auth/sign-in/email` | 10 |
-| `/auth/sign-in` | 10 |
-| `/auth/sign-up` | 5 |
-| `/auth/forgot-password` | 5 |
-| `/auth/reset-password` | 10 |
-| `/auth/verify-email/resend` | 5 |
-| `/auth/token` | 20 |
-| `/keys` | 200 |
+| Path                        | Cap |
+| --------------------------- | --- |
+| `/auth/sign-in/magic-link`  | 5   |
+| `/auth/sign-in/email`       | 10  |
+| `/auth/sign-in`             | 10  |
+| `/auth/sign-up`             | 5   |
+| `/auth/forgot-password`     | 5   |
+| `/auth/reset-password`      | 10  |
+| `/auth/verify-email/resend` | 5   |
+| `/auth/token`               | 20  |
+| `/keys`                     | 200 |
 
 Per-email throttle on `/auth/forgot-password` (3/hour, in-route, `auth/per-email-throttle.ts`) sits inside the per-IP cap — bot-net protection on the IP layer, account-protection on the email layer. The window is shared (`config.rateLimitWindowMs`, default 60s) — per-path windows would need a middleware refactor; deferred.
 
