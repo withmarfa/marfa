@@ -281,6 +281,13 @@
       "when": 1778310000000,
       "tag": "0039_backfill_items_search_vector",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1778320000000,
+      "tag": "0040_rls_extend_policies",
+      "breakpoints": true
     }
   ]
 }

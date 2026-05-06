@@ -11,10 +11,12 @@ describe.skipIf(!isPg || !url)("pg connection", () => {
   // T-025 part 1 (Wave B): the schema scaffold creates 11 RLS policies on
   // tenant-scoped tables (items, edges, versions, metadata, api_keys, blobs,
   // custom_types, custom_edge_types, outbound_webhooks, audit_log, event_log).
-  // RLS is enabled on the same set. Policies have no effect until the
-  // connection-pool wiring lands in T-025 part 2 (the application connects
-  // as the table owner today).
-  it("creates the T-025-part-1 RLS scaffold on tenant tables", async () => {
+  // Wave B Part 4 follow-on extends the policy block to three more direct-
+  // tenant_id tables (inbound_webhooks, connection_oauth_tokens,
+  // connection_leased_tokens) — total 14. RLS is enabled on the same set.
+  // Policies have no effect until the connection-pool wiring lands in T-025
+  // part 2 (the application connects as the table owner today).
+  it("creates the T-025 RLS scaffold on tenant tables (14 policies after Part 4 follow-on)", async () => {
     const { close } = await createConnection(url);
     const client = postgres(url, { max: 1 });
     try {
@@ -24,7 +26,7 @@ describe.skipIf(!isPg || !url)("pg connection", () => {
         WHERE schemaname = 'public'
           AND policyname LIKE '%_tenant_isolation'
       `;
-      expect(policies[0]?.count).toBe("11");
+      expect(policies[0]?.count).toBe("14");
 
       const enabled = await client<{ count: string }[]>`
         SELECT COUNT(*)::text AS count
@@ -33,7 +35,7 @@ describe.skipIf(!isPg || !url)("pg connection", () => {
           AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
           AND relrowsecurity = true
       `;
-      expect(enabled[0]?.count).toBe("11");
+      expect(enabled[0]?.count).toBe("14");
     } finally {
       await client.end();
       await close();
