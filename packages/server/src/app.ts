@@ -279,6 +279,12 @@ export function createApp(
       // the legacy callable for tests that don't construct a full
       // transport.
       mymeEmailTransport: emailTransport,
+      // Wave C PR2: opt-in override for `requireEmailVerification`.
+      // When unset, the auth layer auto-detects from the transport
+      // (on for `resend`/`smtp`, off for `none`/missing).
+      ...(config.authRequireEmailVerification !== undefined && {
+        requireEmailVerification: config.authRequireEmailVerification,
+      }),
     });
   }
 

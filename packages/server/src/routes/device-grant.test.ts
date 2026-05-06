@@ -1,5 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  markEmailVerified,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
@@ -100,6 +104,9 @@ async function signInAndCookie(
       body: JSON.stringify({ email, password, name: "Tester" }),
     }),
   );
+  // Wave C PR2: requireEmailVerification blocks sign-in until the
+  // verify link is clicked. Stand-in for that here.
+  await markEmailVerified(c.storage, email);
   const signIn = await c.app.fetch(
     new Request(`${ORIGIN}/auth/sign-in/email`, {
       method: "POST",

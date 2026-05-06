@@ -1,5 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  markEmailVerified,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
@@ -78,6 +82,9 @@ describe("better-auth /auth/* surface", () => {
         `sign-up/email returned ${String(signUpRes.status)}: ${text.slice(0, 600)}`,
       );
     }
+    // Wave C PR2: requireEmailVerification blocks sign-in until the
+    // user clicks the verify link. Stand-in for that here.
+    await markEmailVerified(ctx.storage, "carol@example.com");
 
     const res = await signIn(ctx, "carol@example.com", "correct horse battery");
     if (res.status !== 200) {
@@ -119,6 +126,7 @@ describe("better-auth /auth/* surface", () => {
         `sign-up/email returned ${String(signUpRes.status)}: ${text.slice(0, 400)}`,
       );
     }
+    await markEmailVerified(ctx.storage, "secure-cookie-test@example.com");
     const res = await request(ctx.app, "POST", "/auth/sign-in/email", {
       body: {
         email: "secure-cookie-test@example.com",
@@ -170,7 +178,21 @@ describe("better-auth /auth/* surface", () => {
       "frank@example.com",
       "correct horse battery",
     );
-    const setCookie = signUpRes.headers.get("set-cookie");
+    if (signUpRes.status !== 200) {
+      const text = await signUpRes.text();
+      throw new Error(
+        `sign-up/email returned ${String(signUpRes.status)}: ${text.slice(0, 400)}`,
+      );
+    }
+    // Wave C PR2: sign-up no longer auto-signs-in; verify + sign in
+    // explicitly so we have a session cookie to send back.
+    await markEmailVerified(ctx.storage, "frank@example.com");
+    const signInRes = await signIn(
+      ctx,
+      "frank@example.com",
+      "correct horse battery",
+    );
+    const setCookie = signInRes.headers.get("set-cookie");
     const cookie = setCookie?.split(";")[0];
 
     const res = await request(ctx.app, "GET", "/auth/get-session", {
@@ -202,12 +224,14 @@ describe("better-auth /auth/* surface", () => {
 
   it("exposes passkey registration challenge under /auth/passkey/*", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
-    const signUpRes = await signUp(
+    await signUp(ctx, "henry@example.com", "correct horse battery");
+    await markEmailVerified(ctx.storage, "henry@example.com");
+    const signInRes = await signIn(
       ctx,
       "henry@example.com",
       "correct horse battery",
     );
-    const cookie = signUpRes.headers.get("set-cookie")?.split(";")[0];
+    const cookie = signInRes.headers.get("set-cookie")?.split(";")[0];
 
     // Generating a registration challenge is a GET requiring a fresh session.
     const res = await request(
