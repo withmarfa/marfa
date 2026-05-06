@@ -197,6 +197,17 @@ End-user surface for resetting a forgotten password. Sits on top of better-auth'
 - **Multi-instance.** Throttle is in-memory only. Multi-instance deployments need a shared counter (Redis); deferred until hosted-multi-tenant lights up.
 - **Tests.** `password-reset.test.ts` exercises the full sign-up → forgot → DB-token-read → reset → sign-in round-trip (plus single-use replay rejection + session revocation). `readLatestResetToken(storage)` in `test-utils.ts` reads the most recent `auth_verification` row — used by the integration test in lieu of intercepting the email transport.
 
+## Passkey UI (Wave C PR6 / T-034)
+
+Browser-side WebAuthn ceremony on top of better-auth's passkey plugin.
+
+- **Static asset.** `auth-static/passkey-js.ts` exports `PASSKEY_JS` (string template literal — same bundling pattern as `auth-css.ts`). Served from `GET /auth/static/passkey.js` with `Cache-Control: public, max-age=3600` + strong ETag. Public route, no auth required.
+- **Surface.** Exposes `window.MymePasskey.{enroll, signIn, isSupported}`. Pages wire onClick handlers; the script handles base64url ⇄ ArrayBuffer conversion + `RegistrationResponseJSON` / `AuthenticationResponseJSON` shaping for better-auth's `verify-registration` + `verify-authentication` endpoints.
+- **Enrol page.** `GET /auth/passkey/enroll` — auth-gated (redirects to `/auth/sign-in?return_to=` when no session). Inline click handler calls `MymePasskey.enroll()`. Hides itself on browsers without `window.PublicKeyCredential` or non-secure-context — fallback paragraph explains the requirement.
+- **Sign-in.** `/auth/sign-in` carries a "Use a passkey" button (also hidden when unsupported). Inline handler runs the auth ceremony and `window.location.assign(returnTo)` on success. Browser-side `JSON.stringify(returnTo).replace(/</...)` escape prevents `</script>` breakouts even though `validateReturnTo` already rejects off-origin paths.
+- **Capability detection.** Done client-side in JS — no UA sniffing. `isSupported()` checks `window.isSecureContext` + `PublicKeyCredential` + `navigator.credentials.{create,get}`.
+- **Tests.** `passkey-enroll-page.test.ts` covers the renderer (link to script, fallback paragraph, escape paths) + the route auth gate. The static-asset route gets ETag + 304 + content-type assertions. The full WebAuthn round-trip is browser-side and exercised in the manual cross-browser walkthrough at end of Wave C (Chrome on macOS Touch ID, Safari on iOS iCloud Keychain, Chrome on Android).
+
 ## Reserved extension namespaces
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:
