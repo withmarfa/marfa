@@ -374,4 +374,63 @@ input[type="text"]:focus {
   font-weight: 600;
   color: var(--ink);
 }
+
+/* Wave C PR7 / T-031 — security page row layout. Used inside
+   .section blocks for connected-apps + active-sessions lists. */
+.row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--gap-md);
+  padding: var(--gap-sm) 0;
+  border-top: 1px solid var(--border);
+}
+.row:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+.row__main {
+  flex: 1;
+  min-width: 0;
+}
+.row__title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0 0 4px;
+  word-break: break-word;
+}
+.row__meta {
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin: 2px 0 0;
+  word-break: break-word;
+}
+.row__meta .scope-literal {
+  margin-right: var(--gap-xs);
+}
+.row__action {
+  flex-shrink: 0;
+  margin: 0;
+}
+
+/* Inline tag for "current device" annotation on the active-session
+   list; subtle, not a full banner. */
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--pill-bg);
+  color: var(--pill-ink);
+  margin-left: 6px;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tag--current {
+  background: var(--success-bg);
+  color: var(--success-ink);
+}
 `;

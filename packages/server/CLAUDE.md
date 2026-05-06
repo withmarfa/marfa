@@ -197,6 +197,16 @@ End-user surface for resetting a forgotten password. Sits on top of better-auth'
 - **Multi-instance.** Throttle is in-memory only. Multi-instance deployments need a shared counter (Redis); deferred until hosted-multi-tenant lights up.
 - **Tests.** `password-reset.test.ts` exercises the full sign-up → forgot → DB-token-read → reset → sign-in round-trip (plus single-use replay rejection + session revocation). `readLatestResetToken(storage)` in `test-utils.ts` reads the most recent `auth_verification` row — used by the integration test in lieu of intercepting the email transport.
 
+## Security page (Wave C PR7 / T-031)
+
+User-facing page at `/auth/security` listing connected apps and active sessions, with revoke buttons.
+
+- **Connected apps section** — `system.connection user-app-grant` items in the user's tenant. Each row: client name (resolved by joining `oauth_clients` in a single batch list), scope chips, granted-at, last-used-at. Revoke button POSTs to `/auth/grants/:id/revoke` (form-friendly counterpart to the existing `DELETE /auth/grants/:id`); on success the page redirects back with `?notice=grant_revoked`.
+- **Active sessions section** — better-auth's `GET /auth/list-sessions` output, mapped to `SecurityPageSession` rows. UA is parsed to a friendly device hint (Mac / iPhone / Windows / etc); IP is shown raw. Each row carries a Revoke button POSTing to `/auth/sessions/:id/revoke` — handler looks the session up by id in `list-sessions`, extracts the token, forwards to better-auth's `POST /auth/revoke-session` (token-keyed upstream). The current-session row is tagged "current device" and its Revoke button is disabled (use Sign out everywhere instead).
+- **Sign out everywhere** — bottom-of-page button POSTs to `/auth/sessions/sign-out-all`, which forwards to better-auth's `POST /auth/revoke-sessions` (drops every session for this user, including current) and redirects to `/auth/sign-in`.
+- **Notice flash** — `?notice=…` query param maps to a banner at the top of the page (`grant_revoked`, `session_revoked`, `session_not_found`, `cannot_revoke_current`, etc). Unknown codes resolve to no banner, not a 500.
+- **Auth gate** — all four handlers run through `requireConsentSession` (same gate as `/auth/authorize`). Unauthenticated requests 302 to `/auth/sign-in?return_to=…`.
+
 ## Reserved extension namespaces
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:
