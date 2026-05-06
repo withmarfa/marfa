@@ -28,6 +28,7 @@ import { validateManifest } from "../integrations/validate-manifest.js";
 import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 import { renderInstallConsentScreen } from "./integration-install-page.js";
 import { performInstall } from "../connections/install-pipeline.js";
+import { publish } from "../pubsub.js";
 
 // Manifest is stored as opaque on the wire — `validateManifest()` runs
 // the structured Zod check at the route handler.
@@ -347,6 +348,26 @@ export function integrationRoutes(storage: Storage, salt: string) {
         labelOverride.trim() ||
         `${props.manifest_name} ${props.manifest_version}`,
     });
+
+    // Publish a `created` event for the new system.connection so the
+    // reactive-run bridge's cache-invalidation subscriber picks it up.
+    // Same fix as the JSON install route at routes/connections.ts —
+    // both routes call the same install-pipeline, both need to feed
+    // pubsub for the bridge to fan out to newly-installed connectors.
+    const connection = await storage.items.get(
+      installed.connection_id,
+      apiKey.tenant_id ?? undefined,
+    );
+    if (connection) {
+      const metadata = await storage.metadata.get(connection.id);
+      await publish({
+        type: "created",
+        item: connection,
+        metadata,
+        tenantId: apiKey.tenant_id ?? undefined,
+        ...c.var.cycle,
+      });
+    }
 
     return c.html(renderInstalledPage(installed));
   });
