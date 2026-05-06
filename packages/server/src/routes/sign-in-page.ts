@@ -167,6 +167,49 @@ export function renderSignInPage(params: SignInPageParams): string {
 
   const activeForm = isPasswordMode ? passwordForm : magicForm;
 
+  // Wave C PR6 / T-034 — passkey sign-in button. Hidden by default
+  // and revealed by the inline script only on browsers that support
+  // WebAuthn AND are running in a secure context. The script lives
+  // inline (rather than in passkey.js) because it needs to read
+  // `params.returnTo` to redirect on success.
+  const passkeyButton = `
+    <div id="passkey-block" hidden>
+      <div class="separator" role="separator" aria-orientation="horizontal">
+        <span>or</span>
+      </div>
+      <div class="oidc">
+        <button id="passkey-signin" type="button" class="btn btn--oidc">Use a passkey</button>
+      </div>
+      <div id="passkey-error" class="banner banner--error" role="alert" hidden style="margin-top:12px"></div>
+    </div>
+  `;
+
+  const passkeyScript = `
+(function () {
+  function show(id) { var el = document.getElementById(id); if (el) el.hidden = false; }
+  function hide(id) { var el = document.getElementById(id); if (el) el.hidden = true; }
+  function setError(msg) {
+    var el = document.getElementById('passkey-error');
+    if (el) { el.textContent = msg; show('passkey-error'); }
+  }
+  if (!window.MymePasskey || !window.MymePasskey.isSupported()) return;
+  show('passkey-block');
+  var btn = document.getElementById('passkey-signin');
+  if (!btn) return;
+  btn.addEventListener('click', async function () {
+    hide('passkey-error');
+    btn.disabled = true;
+    try {
+      await window.MymePasskey.signIn();
+      window.location.assign(${JSON.stringify(params.returnTo).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")});
+    } catch (err) {
+      setError((err && err.message) || 'Passkey sign-in failed.');
+      btn.disabled = false;
+    }
+  });
+})();
+  `.trim();
+
   const bodyHtml = `
     <h1>Sign in to Myme</h1>
     ${errorBanner}
@@ -174,7 +217,10 @@ export function renderSignInPage(params: SignInPageParams): string {
     ${tabsHtml}
     ${activeForm}
     ${oidcButtons}
+    ${passkeyButton}
     ${signupLink}
+    <script src="/auth/static/passkey.js"></script>
+    <script>${passkeyScript}</script>
   `;
 
   return renderAuthLayout({

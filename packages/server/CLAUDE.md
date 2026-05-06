@@ -237,6 +237,30 @@ Defaults (per-minute window per IP):
 
 Per-email throttle on `/auth/forgot-password` (3/hour, in-route, `auth/per-email-throttle.ts`) sits inside the per-IP cap — bot-net protection on the IP layer, account-protection on the email layer. The window is shared (`config.rateLimitWindowMs`, default 60s) — per-path windows would need a middleware refactor; deferred.
 
+## Passkey UI (Wave C PR6 / T-034)
+
+Browser-side WebAuthn ceremony on top of better-auth's passkey plugin.
+
+- **Static asset.** `auth-static/passkey-js.ts` exports `PASSKEY_JS` (string template literal — same bundling pattern as `auth-css.ts`). Served from `GET /auth/static/passkey.js` with `Cache-Control: public, max-age=3600` + strong ETag. Public route, no auth required.
+- **Surface.** Exposes `window.MymePasskey.{enroll, signIn, isSupported}`. Pages wire onClick handlers; the script handles base64url ⇄ ArrayBuffer conversion + `RegistrationResponseJSON` / `AuthenticationResponseJSON` shaping for better-auth's `verify-registration` + `verify-authentication` endpoints.
+- **Enrol page.** `GET /auth/passkey/enroll` — auth-gated (redirects to `/auth/sign-in?return_to=` when no session). Inline click handler calls `MymePasskey.enroll()`. Hides itself on browsers without `window.PublicKeyCredential` or non-secure-context — fallback paragraph explains the requirement.
+- **Sign-in.** `/auth/sign-in` carries a "Use a passkey" button (also hidden when unsupported). Inline handler runs the auth ceremony and `window.location.assign(returnTo)` on success. Browser-side `JSON.stringify(returnTo).replace(/</...)` escape prevents `</script>` breakouts even though `validateReturnTo` already rejects off-origin paths.
+- **Capability detection.** Done client-side in JS — no UA sniffing. `isSupported()` checks `window.isSecureContext` + `PublicKeyCredential` + `navigator.credentials.{create,get}`.
+- **Tests.** `passkey-enroll-page.test.ts` covers the renderer (link to script, fallback paragraph, escape paths) + the route auth gate. The static-asset route gets ETag + 304 + content-type assertions. The full WebAuthn round-trip is browser-side and exercised in the manual cross-browser walkthrough at end of Wave C (Chrome on macOS Touch ID, Safari on iOS iCloud Keychain, Chrome on Android).
+
+## Re-consent diff (Wave C PR5 / T-032)
+
+When a user OAuth-grants the same client a second time and the requested scopes differ from last time, the consent screen renders a diff instead of the flat read / write split.
+
+- **Lookup.** `GET /auth/authorize` queries `system.connection` items in the consenting user's tenant for an active `user-app-grant` matching the request's `client_id`. Most-recently-granted wins. The grant's `properties.scopes` literal set is threaded into `renderConsentScreen` as `priorScopes`.
+- **Hosted-mode only.** The user → tenant binding lives in `storage.users` (hosted mode). In keys mode there's no per-user tenant — the lookup is skipped and the screen renders flat. Defensible: keys mode is single-user self-host where a re-consent is rare.
+- **Pure diff helper.** `routes/consent-diff.ts` exports `computeConsentDiff(prev, next): { kept, added, removed }`. Set difference on opaque scope literals (`<typePattern>:<verb>`); preserves `next`-side ordering, de-duplicates.
+- **Rendering.** `consent.ts` switches on `priorScopes`:
+  - Three group blocks instead of read/write — `Previously granted` (kept), `New permissions` (added), `No longer requested` (removed). Empty groups are omitted.
+  - Removed scopes render as static rows with strikethrough on the literal pill — they're being dropped, not re-granted, so no checkbox.
+  - The H1 copy switches from "wants to access your data" to "is requesting updated access to your data".
+- **CSS.** `auth.css` adds `.section--kept` / `.section--added` / `.section--removed` modifiers (subtle accent borders + tinted backgrounds) and `.scope-row--removed` (line-through + soft opacity).
+
 ## Reserved extension namespaces
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:

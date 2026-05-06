@@ -20,6 +20,7 @@ import { renderConsentScreen } from "./consent.js";
 import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
+import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
 import { renderForgotPasswordPage } from "./forgot-password-page.js";
 import { renderResetPasswordPage } from "./reset-password-page.js";
 import { PerEmailThrottle } from "../auth/per-email-throttle.js";
@@ -265,6 +266,46 @@ export function authRoutes(
       }
     }
 
+    // Wave C PR5 / T-032: re-consent diff. Look for an existing
+    // `system.connection user-app-grant` for `(user, client_id)`.
+    // The grant carries a literal scope set; we hand it to
+    // `renderConsentScreen` as `priorScopes` and the renderer
+    // switches to the diff variant. When there's no prior grant
+    // (first-time consent) `priorScopes` stays undefined and the
+    // renderer falls through to the flat read/write split.
+    //
+    // User → tenant binding only works in hosted mode (when
+    // storage.users is wired). In keys mode there's no per-user
+    // tenant — we'd potentially leak across users on a multi-user
+    // self-host. Limit reconsent diff to hosted mode for now; keys
+    // mode keeps the flat shape.
+    const consentingUser = gated.session.user;
+    let priorScopes: string[] | undefined;
+    if (storage.users) {
+      const userRow = await storage.users.getByEmail(consentingUser.email);
+      if (userRow?.tenant_id) {
+        const items = await storage.items.list({
+          type: "system.connection",
+          state: "active",
+          tenantId: userRow.tenant_id,
+        });
+        // Multiple grants for the same client are unusual but possible
+        // (legacy revoke + re-grant cycles). Pick the most-recently
+        // granted active one — items.list returns by created_at desc by
+        // default, so the first match wins.
+        for (const item of items.data) {
+          const props = item.properties;
+          if (props.kind !== "user-app-grant") continue;
+          if (props.status !== "active") continue;
+          if (props.client_id !== clientId) continue;
+          if (Array.isArray(props.scopes)) {
+            priorScopes = (props.scopes as string[]).slice();
+            break;
+          }
+        }
+      }
+    }
+
     // Render consent screen
     const html = renderConsentScreen({
       clientName: client.name,
@@ -276,6 +317,7 @@ export function authRoutes(
       state,
       responseType,
       descriptions,
+      priorScopes,
     });
 
     setNoStore(c);
@@ -1236,6 +1278,27 @@ export function authRoutes(
       // Fall through to "unknown".
     }
     return c.html(renderResetPasswordPage({ state: "failure", failureCode }));
+  });
+
+  // -----------------------------------------------------------------------
+  // Passkey enrol (Wave C PR6 / T-034)
+  // -----------------------------------------------------------------------
+  //
+  // GET /auth/passkey/enroll — auth-gated HTML page that runs the
+  // WebAuthn registration ceremony in the browser. Better-auth's
+  // passkey plugin provides the raw endpoints (`/passkey/generate-
+  // register-options`, `/passkey/verify-registration`, etc.); this
+  // page just stitches the ceremony around them.
+  //
+  // Passkey sign-in (the auth side of the same plugin) is exposed
+  // as a button on `/auth/sign-in` that calls
+  // `MymePasskey.signIn()` from the same static script.
+
+  router.get("/passkey/enroll", async (c) => {
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
+    setNoStore(c);
+    return c.html(renderPasskeyEnrollPage({ email: gated.session.user.email }));
   });
 
   // -----------------------------------------------------------------------
