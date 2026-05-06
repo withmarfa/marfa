@@ -23,6 +23,11 @@ import { renderVerifyEmailPage } from "./verify-email-page.js";
 import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
 import { renderForgotPasswordPage } from "./forgot-password-page.js";
 import { renderResetPasswordPage } from "./reset-password-page.js";
+import {
+  renderSecurityPage,
+  type SecurityPageGrant,
+  type SecurityPageSession,
+} from "./security-page.js";
 import { PerEmailThrottle } from "../auth/per-email-throttle.js";
 import {
   renderDevicePage,
@@ -1281,6 +1286,232 @@ export function authRoutes(
   });
 
   // -----------------------------------------------------------------------
+  // Security page + session/grant revocation (Wave C PR7 / T-031)
+  // -----------------------------------------------------------------------
+  //
+  // Surfaces:
+  //   - GET  /auth/security                — auth-gated. Lists the
+  //     user's connected apps + active sessions with revoke buttons.
+  //   - POST /auth/grants/:id/revoke       — form-friendly counterpart
+  //     to the existing API DELETE /auth/grants/:id. The HTML page
+  //     forms POST here; redirects back to /auth/security with a
+  //     notice on success.
+  //   - POST /auth/sessions/:id/revoke     — form-friendly per-session
+  //     revoke. Looks up the session id in the user's list-sessions
+  //     output, extracts its token, forwards to better-auth's
+  //     POST /auth/revoke-session.
+  //   - POST /auth/sessions/sign-out-all   — revokes every session
+  //     (including current). Forwards to better-auth's
+  //     POST /auth/revoke-sessions, then redirects to /auth/sign-in.
+
+  router.get("/security", async (c) => {
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
+    setNoStore(c);
+    // requireConsentSession throws when auth is undefined, so reaching
+    // this point guarantees auth is defined — narrow it for TS.
+    if (!auth) throw new Error("unreachable: auth defined after gated");
+
+    const sessionUser = gated.session.user;
+    const currentSessionId = gated.session.session.id;
+
+    // 1. Forward GET /auth/list-sessions internally to get this
+    //    user's active sessions. Cookies thread through so
+    //    better-auth resolves to the right user.
+    let sessions: SecurityPageSession[] = [];
+    try {
+      const listReq = new Request(new URL("/auth/list-sessions", c.req.url), {
+        method: "GET",
+        headers: forwardHeaders(c.req.raw.headers, {}, auth.baseURL),
+      });
+      const listRes = await auth.handler(listReq);
+      if (listRes.ok) {
+        const data = (await listRes.json()) as {
+          id: string;
+          createdAt: string | Date;
+          updatedAt: string | Date;
+          ipAddress?: string | null;
+          userAgent?: string | null;
+        }[];
+        sessions = data.map((s) => ({
+          id: s.id,
+          created_at:
+            typeof s.createdAt === "string"
+              ? s.createdAt
+              : s.createdAt.toISOString(),
+          last_active_at:
+            typeof s.updatedAt === "string"
+              ? s.updatedAt
+              : s.updatedAt.toISOString(),
+          is_current: s.id === currentSessionId,
+          ip_address: s.ipAddress ?? null,
+          user_agent: s.userAgent ?? null,
+        }));
+      }
+    } catch {
+      // Soft-fail — render the page without the sessions list rather
+      // than 500. Operators see the underlying log if it's a real
+      // outage.
+    }
+
+    // 2. List grants for this user's tenant. In keys mode (no
+    //    storage.users), grants are tenant-less and we list them
+    //    that way; this matches the pattern in /auth/grants and the
+    //    existing DELETE handler.
+    let tenantId: string | undefined;
+    if (storage.users) {
+      const userRow = await storage.users.getByEmail(sessionUser.email);
+      tenantId = userRow?.tenant_id;
+    }
+    const grantItems = await storage.items.list({
+      type: "system.connection",
+      state: "active",
+      tenantId,
+    });
+    // Resolve client names in one batch — list every oauth client and
+    // map by id. The list is small (typically tens) so the batch
+    // fetch is cheaper than per-grant lookups.
+    const clients = await storage.oauth.listClients();
+    const clientById = new Map<string, string>();
+    for (const cli of clients) clientById.set(cli.id, cli.name);
+
+    const grants: SecurityPageGrant[] = [];
+    for (const item of grantItems.data) {
+      const props = item.properties;
+      if (props.kind !== "user-app-grant") continue;
+      if (props.status !== "active") continue;
+      const clientId =
+        typeof props.client_id === "string" ? props.client_id : "";
+      grants.push({
+        id: item.id,
+        client_name: clientById.get(clientId) ?? clientId,
+        client_id: clientId,
+        scopes: Array.isArray(props.scopes) ? (props.scopes as string[]) : [],
+        granted_at:
+          typeof props.granted_at === "string" ? props.granted_at : "",
+        last_used_at:
+          typeof props.last_used_at === "string" ? props.last_used_at : null,
+      });
+    }
+
+    // 3. Optional flash notice from `?notice=...`.
+    const url = new URL(c.req.url);
+    const notice = parseNotice(url.searchParams.get("notice"));
+
+    return c.html(
+      renderSecurityPage({
+        email: sessionUser.email,
+        grants,
+        sessions,
+        notice,
+      }),
+    );
+  });
+
+  // Form-friendly grant revoke. Mirrors the DELETE /auth/grants/:id
+  // logic but renders a redirect back to /auth/security with a flash
+  // notice instead of a 204 body.
+  router.post("/grants/:id/revoke", async (c) => {
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
+    const sessionUser = gated.session.user;
+
+    let tenantId: string | undefined;
+    if (storage.users) {
+      const userRow = await storage.users.getByEmail(sessionUser.email);
+      tenantId = userRow?.tenant_id;
+    }
+    const id = c.req.param("id");
+    const item = await storage.items.get(id, tenantId);
+    if (item?.type !== "system.connection") {
+      return c.redirect("/auth/security?notice=grant_not_found", 302);
+    }
+    const props = item.properties;
+    if (props.kind !== "user-app-grant") {
+      return c.redirect("/auth/security?notice=grant_not_found", 302);
+    }
+    const now = new Date().toISOString();
+    await storage.items.update(
+      id,
+      { properties: { ...props, status: "revoked", revoked_at: now } },
+      tenantId,
+    );
+    await storage.oauth.revokeGrantTokens(id);
+    return c.redirect("/auth/security?notice=grant_revoked", 302);
+  });
+
+  router.post("/sessions/:id/revoke", async (c) => {
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
+    if (!auth) throw new Error("unreachable: auth defined after gated");
+    const id = c.req.param("id");
+    const currentSessionId = gated.session.session.id;
+    if (id === currentSessionId) {
+      // Refuse to revoke the current session through this path —
+      // the user should use Sign out everywhere instead, which
+      // signs them out cleanly. Defence-in-depth: the form button
+      // for the current session is rendered as disabled.
+      return c.redirect("/auth/security?notice=cannot_revoke_current", 302);
+    }
+    // Look up the session by id in the user's list to extract the
+    // token (better-auth's revoke endpoint takes a token, not an id).
+    let token: string | null = null;
+    try {
+      const listReq = new Request(new URL("/auth/list-sessions", c.req.url), {
+        method: "GET",
+        headers: forwardHeaders(c.req.raw.headers, {}, auth.baseURL),
+      });
+      const listRes = await auth.handler(listReq);
+      if (listRes.ok) {
+        const data = (await listRes.json()) as {
+          id: string;
+          token: string;
+        }[];
+        const match = data.find((s) => s.id === id);
+        if (match) token = match.token;
+      }
+    } catch {
+      return c.redirect("/auth/security?notice=session_revoke_failed", 302);
+    }
+    if (!token) {
+      return c.redirect("/auth/security?notice=session_not_found", 302);
+    }
+    const revokeReq = new Request(new URL("/auth/revoke-session", c.req.url), {
+      method: "POST",
+      headers: forwardHeaders(
+        c.req.raw.headers,
+        { "content-type": "application/json" },
+        auth.baseURL,
+      ),
+      body: JSON.stringify({ token }),
+    });
+    const revokeRes = await auth.handler(revokeReq);
+    if (!revokeRes.ok) {
+      return c.redirect("/auth/security?notice=session_revoke_failed", 302);
+    }
+    return c.redirect("/auth/security?notice=session_revoked", 302);
+  });
+
+  router.post("/sessions/sign-out-all", async (c) => {
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
+    if (!auth) throw new Error("unreachable: auth defined after gated");
+    const revokeReq = new Request(new URL("/auth/revoke-sessions", c.req.url), {
+      method: "POST",
+      headers: forwardHeaders(
+        c.req.raw.headers,
+        { "content-type": "application/json" },
+        auth.baseURL,
+      ),
+    });
+    const revokeRes = await auth.handler(revokeReq);
+    // Regardless of upstream outcome, the current session is now
+    // cooked (or about to be). Redirect to /auth/sign-in.
+    void revokeRes;
+    return c.redirect("/auth/sign-in", 302);
+  });
+
+  // -----------------------------------------------------------------------
   // Passkey enrol (Wave C PR6 / T-034)
   // -----------------------------------------------------------------------
   //
@@ -1737,6 +1968,43 @@ function buildSignInRedirect(params: {
  *  authoritative origin for the upstream dispatch is the auth instance
  *  itself.
  */
+/** Wave C PR7 — map the `?notice=` query param on /auth/security to
+ *  the flash banner the page renders. Unknown codes resolve to
+ *  `undefined` (no banner) rather than 500ing. */
+function parseNotice(
+  raw: string | null,
+): { kind: "success" | "error"; text: string } | undefined {
+  if (!raw) return undefined;
+  const messages: Record<string, { kind: "success" | "error"; text: string }> =
+    {
+      grant_revoked: {
+        kind: "success",
+        text: "App access revoked. The app will no longer be able to access your data.",
+      },
+      grant_not_found: {
+        kind: "error",
+        text: "That app was already revoked or no longer exists.",
+      },
+      session_revoked: {
+        kind: "success",
+        text: "Session signed out. The device will need to sign in again.",
+      },
+      session_not_found: {
+        kind: "error",
+        text: "That session was already signed out or no longer exists.",
+      },
+      session_revoke_failed: {
+        kind: "error",
+        text: "Couldn't sign out that session. Try again in a moment.",
+      },
+      cannot_revoke_current: {
+        kind: "error",
+        text: "Use Sign out everywhere to revoke the current session.",
+      },
+    };
+  return messages[raw];
+}
+
 function forwardHeaders(
   src: Headers,
   base: Record<string, string>,
