@@ -3,6 +3,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MymeError, ErrorCode, isValidBlobHash } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
+import { enforceQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
@@ -277,6 +278,14 @@ export function blobRoutes(
         `Blob exceeds maximum size of ${String(maxBlobSize)} bytes`,
       );
     }
+
+    // T-052 follow-on (Wave B Part 2): enforce per-tenant blobs +
+    // storage_bytes ceilings. enforceQuota is a no-op for tenant-less
+    // keys (single-tenant self-hosts, platform admin) so the existing
+    // instance-wide flow is unaffected. Both checks run against the
+    // same tenant_id so they're either both present or both absent.
+    await enforceQuota(c, storage, "blobs", 1);
+    await enforceQuota(c, storage, "storage_bytes", data.length);
 
     // Compute content-addressed hash
     const hex = createHash("sha256").update(data).digest("hex");
