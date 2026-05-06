@@ -12309,6 +12309,16 @@
             "bearerAuth": []
           }
         ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "target_tenant_id",
+            "in": "query"
+          }
+        ],
         "requestBody": {
           "content": {
             "application/gzip": {
@@ -12506,6 +12516,14 @@
             },
             "required": false,
             "name": "format",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "target_tenant_id",
             "in": "query"
           }
         ],
