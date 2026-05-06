@@ -68,6 +68,14 @@ describe("renderSignUpPage", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
+  it("Wave C PR4: links to /auth/static/auth.css and carries no inline <style>", () => {
+    const html = renderSignUpPage({ returnTo: "/" });
+    expect(html).toContain(
+      '<link rel="stylesheet" href="/auth/static/auth.css">',
+    );
+    expect(html).not.toContain("<style>");
+  });
+
   it("renders a sign-in link with return_to preserved", () => {
     const html = renderSignUpPage({
       returnTo: "/auth/authorize?client_id=abc",

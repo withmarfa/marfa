@@ -152,6 +152,19 @@ describe("renderSignInPage", () => {
     expect(html).toContain("Check your email");
   });
 
+  it("Wave C PR4: links to /auth/static/auth.css and carries no inline <style>", () => {
+    const html = renderSignInPage({
+      mode: "password",
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    expect(html).toContain(
+      '<link rel="stylesheet" href="/auth/static/auth.css">',
+    );
+    expect(html).not.toContain("<style>");
+  });
+
   it("renders both tabs with the active one marked aria-selected=true", () => {
     const html = renderSignInPage({
       mode: "password",

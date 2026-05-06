@@ -24,6 +24,7 @@ import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
 import { authRoutes, discoveryRoutes } from "./routes/oauth.js";
+import { authStaticRoutes } from "./routes/auth-static.js";
 import { resendWebhookRoutes } from "./routes/webhooks-resend.js";
 import type { EmailTransport as MymeEmailTransport } from "./email/transport.js";
 import { extensionRoutes } from "./routes/extensions.js";
@@ -174,6 +175,13 @@ export function createApp(
 
   // OAuth 2.1 discovery doc — public, unauthenticated.
   app.route("/.well-known", discoveryRoutes(config.authBaseUrl));
+
+  // Wave C PR4: shared auth-page stylesheet. Public — anyone landing
+  // on `/auth/sign-in` must be able to fetch the CSS without a
+  // session cookie. Mounted BEFORE authMiddleware AND before the
+  // better-auth catch-all so `/auth/static/auth.css` resolves to the
+  // static handler rather than falling through to `/auth/*`.
+  app.route("/auth/static", authStaticRoutes());
 
   // Resolve the effective client IP once per request and stash it on
   // `c.var.clientIp` (T-027). Runs BEFORE auth so audit rows emitted
