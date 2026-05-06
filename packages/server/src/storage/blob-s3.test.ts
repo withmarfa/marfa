@@ -243,5 +243,40 @@ describe("S3BlobBackend", () => {
       ).client;
       expect(client.config.forcePathStyle).toBeUndefined();
     });
+
+    it("accepts an R2-shaped configuration (T-029)", () => {
+      // Cloudflare R2 is S3-compatible. The minimum config is bucket +
+      // explicit credentials + an R2 endpoint of the shape
+      // https://<account-id>.r2.cloudflarestorage.com. The S3 SDK
+      // requires a region; R2 ignores it but accepts any string — `auto`
+      // is the convention used in Cloudflare's own examples. The test
+      // pins forcePathStyle=true (the gate that makes endpoint-routed
+      // S3-compatible stores work).
+      const backend = new S3BlobBackend({
+        bucket: "myme-runtime-payloads-staging",
+        region: "auto",
+        endpoint:
+          "https://fb81b3c1ad68ef6dbd689897e8897b10.r2.cloudflarestorage.com",
+        accessKeyId: "R2_ACCESS_KEY_ID",
+        secretAccessKey: "R2_SECRET_ACCESS_KEY",
+      });
+
+      const client = (
+        backend as unknown as {
+          client: InstanceType<typeof S3Client> & {
+            config: Record<string, unknown>;
+          };
+        }
+      ).client;
+      expect(client.config.endpoint).toBe(
+        "https://fb81b3c1ad68ef6dbd689897e8897b10.r2.cloudflarestorage.com",
+      );
+      expect(client.config.forcePathStyle).toBe(true);
+      expect(client.config.region).toBe("auto");
+      expect(client.config.credentials).toEqual({
+        accessKeyId: "R2_ACCESS_KEY_ID",
+        secretAccessKey: "R2_SECRET_ACCESS_KEY",
+      });
+    });
   });
 });
