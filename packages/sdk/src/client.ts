@@ -1173,10 +1173,7 @@ export class MymeClient {
        * and was usable via raw HTTP until this method.
        */
       getOwn: async (): Promise<TenantQuota> => {
-        return this.transport.request<TenantQuota>(
-          "GET",
-          "/tenants/me/quotas",
-        );
+        return this.transport.request<TenantQuota>("GET", "/tenants/me/quotas");
       },
 
       /** Read a specific tenant's quota row (platform admin only). */
