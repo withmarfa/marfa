@@ -197,6 +197,46 @@ End-user surface for resetting a forgotten password. Sits on top of better-auth'
 - **Multi-instance.** Throttle is in-memory only. Multi-instance deployments need a shared counter (Redis); deferred until hosted-multi-tenant lights up.
 - **Tests.** `password-reset.test.ts` exercises the full sign-up → forgot → DB-token-read → reset → sign-in round-trip (plus single-use replay rejection + session revocation). `readLatestResetToken(storage)` in `test-utils.ts` reads the most recent `auth_verification` row — used by the integration test in lieu of intercepting the email transport.
 
+## Auth audit-row hardening (Wave C PR8)
+
+Every auth-side wrapper writes a stable-shape audit row through `storage.audit.log`. The shape across actions is uniform — `{ action, resource_type, resource_id, client_ip, details }` — so an operator querying `audit_log` can correlate auth events without matching ad-hoc field names.
+
+Actions emitted today:
+
+| Action                          | Triggered by                                              | resource_id  | details                                    |
+| ------------------------------- | --------------------------------------------------------- | ------------ | ------------------------------------------ |
+| `auth.sign_up`                  | `POST /auth/sign-up` success                              | email        | `{ email }`                                |
+| `auth.sign_in.success`          | `POST /auth/sign-in` success (password or magic)          | email        | `{ email, method: "password" \| "magic" }` |
+| `auth.sign_in.failed`           | `POST /auth/sign-in` failure                              | email        | `{ email, method, reason }`                |
+| `auth.password_reset.requested` | `POST /auth/forgot-password` (always — captures attempts) | email        | `{ email }`                                |
+| `auth.password_reset.completed` | `POST /auth/reset-password` success                       | token-prefix | `{ token_prefix }`                         |
+| `auth.email.verified`           | `GET /auth/verify-email?token=…` success                  | token-prefix | `{ token_prefix }`                         |
+| `email.suppressed`              | `POST /webhooks/resend` bounce/complaint                  | email        | `{ reason, source_email_id }`              |
+
+Calls are fire-and-forget (`void storage.audit.log(...)`) — audit failures must never block the user-facing flow. `client_ip` threads through `c.var.clientIp` (T-027 client-ip middleware).
+
+Out-of-scope today (filed as follow-on if needed): per-passkey-registration, per-grant-creation, per-session-revocation. Better-auth handles those endpoints inside its catch-all and we don't have a clean wrapper seam without `before`/`after` plugin hooks.
+
+## Per-IP rate limits on auth surfaces (Wave C PR8)
+
+`middleware/rate-limit.ts`'s `pathLimits` carry small per-IP caps on every auth-abuse-prone endpoint. The middleware iterates entries in object insertion order and takes the FIRST `path.startsWith(prefix)` match — so more-specific prefixes (`/auth/sign-in/magic-link`) MUST appear before broader siblings (`/auth/sign-in`).
+
+Defaults (per-minute window per IP):
+
+| Path                        | Cap |
+| --------------------------- | --- |
+| `/auth/sign-in/magic-link`  | 5   |
+| `/auth/sign-in/email`       | 10  |
+| `/auth/sign-in`             | 10  |
+| `/auth/sign-up`             | 5   |
+| `/auth/forgot-password`     | 5   |
+| `/auth/reset-password`      | 10  |
+| `/auth/verify-email/resend` | 5   |
+| `/auth/token`               | 20  |
+| `/keys`                     | 200 |
+
+Per-email throttle on `/auth/forgot-password` (3/hour, in-route, `auth/per-email-throttle.ts`) sits inside the per-IP cap — bot-net protection on the IP layer, account-protection on the email layer. The window is shared (`config.rateLimitWindowMs`, default 60s) — per-path windows would need a middleware refactor; deferred.
+
 ## Passkey UI (Wave C PR6 / T-034)
 
 Browser-side WebAuthn ceremony on top of better-auth's passkey plugin.

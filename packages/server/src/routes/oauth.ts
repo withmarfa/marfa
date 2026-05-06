@@ -661,9 +661,33 @@ export function authRoutes(
         const single = response.headers.get("set-cookie");
         if (single) redirectHeaders.append("set-cookie", single);
       }
+      // Wave C PR8 — audit-row on the success path. Don't await:
+      // audit failures shouldn't block sign-in. `auth.sign_in.success`
+      // shape: `{ email, method }`. `client_ip` auto-stamped from
+      // `c.var.clientIp` by middleware contract.
+      void storage.audit.log({
+        action: "auth.sign_in.success",
+        resource_type: "auth_user",
+        resource_id: emailStr,
+        client_ip: c.var.clientIp ?? null,
+        details: { email: emailStr, method: mode },
+      });
       return new Response(null, { status: 302, headers: redirectHeaders });
     }
 
+    // Wave C PR8 — audit-row on the failure path. Captures the
+    // reason from better-auth's error body where possible.
+    void storage.audit.log({
+      action: "auth.sign_in.failed",
+      resource_type: "auth_user",
+      resource_id: emailStr,
+      client_ip: c.var.clientIp ?? null,
+      details: {
+        email: emailStr,
+        method: mode,
+        reason: "invalid_credentials",
+      },
+    });
     return errorRedirect("invalid_credentials");
   });
 
@@ -802,6 +826,15 @@ export function authRoutes(
     const response = await auth.handler(upstream);
 
     if (response.ok) {
+      // Wave C PR8 — audit the sign-up. Don't await: audit failures
+      // shouldn't block the user's redirect.
+      void storage.audit.log({
+        action: "auth.sign_up",
+        resource_type: "auth_user",
+        resource_id: emailStr,
+        client_ip: c.var.clientIp ?? null,
+        details: { email: emailStr },
+      });
       // autoSignIn=true on the auth instance means the response carries
       // a session cookie — UNLESS `requireEmailVerification: true`
       // (Wave C PR2) is set, in which case better-auth returns 200 with
@@ -925,6 +958,16 @@ export function authRoutes(
     const response = await auth.handler(upstream);
 
     if (response.ok) {
+      // Wave C PR8 — audit the successful email verification.
+      // resource_id is the token prefix (correlation handle) since
+      // we don't have the user_id at this layer.
+      void storage.audit.log({
+        action: "auth.email.verified",
+        resource_type: "auth_user",
+        resource_id: token.slice(0, 12),
+        client_ip: c.var.clientIp ?? null,
+        details: { token_prefix: token.slice(0, 12) },
+      });
       // Forward any Set-Cookie better-auth issued onto our response
       // (forward-compatible — the current 1.6.x verify-email doesn't
       // mint a session, but we don't want to silently drop it if a
@@ -1115,6 +1158,18 @@ export function authRoutes(
       // Soft-fail.
     }
 
+    // Wave C PR8 — audit every reset-request attempt regardless of
+    // upstream outcome. Captures the email + IP for rate-monitoring;
+    // operators can correlate with `auth.password_reset.completed`
+    // to spot abandoned flows.
+    void storage.audit.log({
+      action: "auth.password_reset.requested",
+      resource_type: "auth_user",
+      resource_id: emailStr,
+      client_ip: c.var.clientIp ?? null,
+      details: { email: emailStr },
+    });
+
     const params = new URLSearchParams({
       email: emailStr,
       return_to: returnTo,
@@ -1198,9 +1253,21 @@ export function authRoutes(
     const response = await auth.handler(upstream);
 
     if (response.ok) {
-      // Success — render the success page. `revokeSessionsOnPasswordReset:
-      // true` already nuked any other sessions for this user; the
-      // user has no active session now and must sign in fresh.
+      // Wave C PR8 — audit the successful reset.
+      // `revokeSessionsOnPasswordReset: true` already nuked any other
+      // sessions for this user. Audit row captures the action + IP;
+      // we don't have the user_id at this layer (better-auth
+      // performed the reset internally) so resource_id is the token
+      // prefix as a correlation handle.
+      void storage.audit.log({
+        action: "auth.password_reset.completed",
+        resource_type: "auth_user",
+        resource_id: tokenStr.slice(0, 12),
+        client_ip: c.var.clientIp ?? null,
+        details: { token_prefix: tokenStr.slice(0, 12) },
+      });
+      // Success — render the success page. The user has no active
+      // session now and must sign in fresh.
       return c.html(renderResetPasswordPage({ state: "success", returnTo }));
     }
 
