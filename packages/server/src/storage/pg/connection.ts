@@ -436,11 +436,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   "tenants", "settings"
 TO "myme_app";
 -- T-025 part 2 grants — remaining tables myme_app needs to satisfy
--- request paths once role-switch-on-checkout activates. RLS policies
--- on inbound_webhooks, connection_oauth_tokens, and
--- connection_leased_tokens are filed as follow-on; for now the
--- application layer is still the tenant fence on those (same posture
--- as Part 1 pre-policy state on the other eleven tables).
+-- request paths once role-switch-on-checkout activates. Policies on
+-- inbound_webhooks, connection_oauth_tokens, and connection_leased_tokens
+-- land in migration 0040 (Wave B Part 4 follow-on); the GRANTs alone
+-- here let queries reach the rows, the policies below restrict them
+-- per-tenant.
 GRANT SELECT, INSERT, UPDATE, DELETE ON
   "inbound_webhooks", "inbound_webhook_events",
   "connection_oauth_tokens", "connection_leased_tokens",
@@ -531,6 +531,32 @@ CREATE POLICY "audit_log_tenant_isolation" ON "audit_log"
 ALTER TABLE "event_log" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "event_log_tenant_isolation" ON "event_log";
 CREATE POLICY "event_log_tenant_isolation" ON "event_log"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
+
+-- Wave B Part 4 follow-on (migration 0040): RLS policies on the three
+-- direct-tenant_id tables that received GRANTs in migration 0037 but
+-- not yet policies. Same shape as the eleven tables above —
+-- equality-on-current-setting plus NULL-allowance for single-tenant
+-- self-host transparency.
+ALTER TABLE "inbound_webhooks" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "inbound_webhooks_tenant_isolation" ON "inbound_webhooks";
+CREATE POLICY "inbound_webhooks_tenant_isolation" ON "inbound_webhooks"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
+
+ALTER TABLE "connection_oauth_tokens" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "connection_oauth_tokens_tenant_isolation" ON "connection_oauth_tokens";
+CREATE POLICY "connection_oauth_tokens_tenant_isolation" ON "connection_oauth_tokens"
+  FOR ALL TO "myme_app"
+  USING (tenant_id::text = current_setting('myme.tenant_id', true)
+         OR tenant_id IS NULL);
+
+ALTER TABLE "connection_leased_tokens" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "connection_leased_tokens_tenant_isolation" ON "connection_leased_tokens";
+CREATE POLICY "connection_leased_tokens_tenant_isolation" ON "connection_leased_tokens"
   FOR ALL TO "myme_app"
   USING (tenant_id::text = current_setting('myme.tenant_id', true)
          OR tenant_id IS NULL);
