@@ -19,7 +19,7 @@ import type { ItemState } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
-  requireAdmin,
+  requireWorkspaceAdmin,
   requireTypeAccess,
   requireEdgePermission,
   getTypeFilter,
@@ -1610,7 +1610,11 @@ export function itemRoutes(storage: Storage) {
       throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    requireAdmin(c);
+    // T-051 follow-on (Wave B Part 2): widened from `requireAdmin` to
+    // `requireWorkspaceAdmin`. The purge is already tenant-scoped via
+    // the explicit `tenantId` thread below — workspace_admin sees only
+    // its own tenant's items.
+    requireWorkspaceAdmin(c);
     const tenantId = c.get("apiKey")?.tenant_id;
     // Edges no longer carry a FK to items (thread-target compat window) so
     // cascade cleanup must happen explicitly before the item row goes.

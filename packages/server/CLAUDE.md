@@ -28,17 +28,19 @@ Every new route under `src/routes/` ships with a sibling `*.test.ts` covering at
 
 The OpenAPI spec is generated from `createRoute` definitions — never hand-edited. Run `pnpm --silent --filter @mymehq/server generate:openapi > openapi.json` after route changes; the freshness CI job checks for drift.
 
-## Auth helpers (T-051 layered)
+## Auth helpers (T-051 layered, Wave B Part 2 completeness pass)
 
 Three tiers, picked by intent:
 
 - **`requireAuth(c)`** — bearer token must resolve. No role check.
-- **`requireWorkspaceAdmin(c)`** — admits both `admin` (platform) and `workspace_admin` (tenant-bounded). Use for routes that genuinely belong inside a tenant — own keys, webhooks, types, connections, extensions, blobs, export. **The route MUST thread `key.tenant_id` into storage queries** so a workspace_admin attempting to address another tenant's resource gets a 404 (cross-tenant probes never see other tenants' data). Once T-025 (Postgres RLS) lands, the DB layer enforces this independently — but until then the application layer is the load-bearing fence.
+- **`requireWorkspaceAdmin(c)`** — admits both `admin` (platform) and `workspace_admin` (tenant-bounded). Use for routes that genuinely belong inside a tenant. **The route MUST thread `key.tenant_id` into storage queries** so a workspace_admin attempting to address another tenant's resource gets a 404 (cross-tenant probes never see other tenants' data). With T-025 (Postgres RLS) wired, the DB layer enforces this independently when `MYME_RLS_ENFORCE=true`; the application-layer fence remains load-bearing for self-hosts that leave RLS off.
 - **`requireAdmin(c)`** — platform-only. Use for routes that need cross-tenant authority or instance-level ops: tenant CRUD, OAuth client registration, audit cleanup, metrics, archive restore, platform-credential mint.
 
-When auditing a `requireAdmin` callsite for tenant widening: the route is safe to widen iff every storage operation it performs filters by (or stamps from) the caller's `tenant_id`. Lookups via path id MUST go through tenant-scoped store methods (e.g., `get(id, tenant_id)`); list operations MUST pass `tenant_id`; create operations MUST stamp `tenant_id` from the caller. If any of those isn't the case, leave as `requireAdmin` and file a follow-on to tenant-scope the storage layer first.
+**Type access bypass.** `checkTypeAccess` and `computeTypeFilter` admit both `admin` and `workspace_admin` without consulting `type_permissions`. workspace_admin is the "admin within tenant" tier — keys deliberately scoped to a subset of types belong as `member` with explicit `type_permissions`, not as workspace_admin. The platform-credential gate on `system.*` / `myme.*` writes still applies (workspace_admin is not platform unless explicitly minted that way).
 
-Routes widened in PR T-051: `POST /keys`, all `/webhooks/*`, `POST /connections/install`, `POST /connections/:id/uninstall`. Routes deliberately NOT widened pending storage tenant-scoping: `keys.list/get/revoke/update`, `types.update`, `edge-types.create/delete`, `bulk` ops, `items.purge`, `tenants.*`, `oauth.client/token`, `audit.cleanup`, `metrics`, `admin-archive`, admin blob ops.
+When auditing a `requireAdmin` callsite for tenant widening: the route is safe to widen iff every storage operation it performs filters by (or stamps from) the caller's `tenant_id`. Lookups via path id MUST go through tenant-scoped store methods (e.g., `get(id, tenant_id)`); list operations MUST pass `tenant_id`; create operations MUST stamp `tenant_id` from the caller. If any of those isn't the case, either leave as `requireAdmin` or add a route-level tenant filter / 404-cloak (the pattern used in `keys.list/revoke/update` here).
+
+Routes widened in T-051 (Wave B Part 1): `POST /keys`, all `/webhooks/*`, `POST /connections/install`, `POST /connections/:id/uninstall`. Routes widened in Wave B Part 2: `GET /keys`, `DELETE /keys/:id`, `PATCH /keys/:id`, `DELETE /items/:id/purge`, plus the new `GET /tenants/me/quotas`. Routes still on `requireAdmin`: `tenants.*` (cross-tenant CRUD by definition), `oauth.client/token`, `audit.cleanup`, `metrics`, `admin-archive`, admin blob ops, and `types.update/delete` + `edge-types.create/delete` (the storage layer for custom types/edge-types loads through an in-memory registry that doesn't currently filter by tenant_id at lookup time — widening these requires a small registry-side audit, filed as follow-on).
 
 ## Per-route enforcement order
 
