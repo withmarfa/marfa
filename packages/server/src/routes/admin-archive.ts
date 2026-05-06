@@ -30,6 +30,13 @@ interface ArchiveManifest {
   version: number;
   format: string;
   created_at: string;
+  /**
+   * T-053: tenant_id stamped at export time. Used here to verify
+   * the importing admin's authority over the source tenant. Older
+   * archives (pre-T-053) lack the field — restored as null so
+   * single-tenant self-host archives keep working.
+   */
+  tenant_id?: string | null;
   item_count: number;
   blob_count: number;
   blobs: Record<string, { mime_type: string; size: number }>;
@@ -42,6 +49,13 @@ const restoreArchiveRoute = createRoute({
   summary: "Restore items and blobs from a myme-archive-v1 tar.gz (admin only)",
   security: [{ bearerAuth: [] }],
   request: {
+    query: z.object({
+      // T-053: platform admins targeting a specific tenant pass an
+      // explicit `?target_tenant_id=<id>`. Tenant-bound admins
+      // (workspace_admin / admin with tenant_id) may not override —
+      // the manifest tenant_id must match their own tenant.
+      target_tenant_id: z.string().optional(),
+    }),
     body: {
       content: {
         "application/gzip": {
@@ -82,7 +96,8 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
-    requireAdmin(c);
+    const callerKey = requireAdmin(c);
+    const { target_tenant_id: targetTenantParam } = c.req.valid("query");
 
     const rawBody = await c.req.arrayBuffer();
     if (rawBody.byteLength === 0) {
@@ -93,12 +108,30 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     const itemLines: string[] = [];
     const blobUploads: Promise<void>[] = [];
     let blobCount = 0;
-    // T-049: archive restore lands blobs under the calling admin's tenant
-    // scope. Empty-string sentinel for platform admins on single-tenant
-    // self-hosts. Cross-tenant restore (platform admin restoring into a
-    // specific tenant) is the T-053 follow-up; for now, the calling
-    // admin's tenant_id wins.
-    const restoreTenantId = c.get("apiKey")?.tenant_id ?? "";
+    // T-053: resolve the tenant under which the archive will be
+    // restored. Tenant-bound admins use their own tenant; platform
+    // admins (no tenant_id on the key) MUST pass `target_tenant_id`
+    // explicitly. The empty-string sentinel still applies for
+    // single-tenant self-hosts (platform admin without a target
+    // param on a deployment whose archive has tenant_id = null).
+    const callerTenant = callerKey.tenant_id;
+    let restoreTenantId: string;
+    if (callerTenant) {
+      if (
+        targetTenantParam !== undefined &&
+        targetTenantParam !== callerTenant
+      ) {
+        throw new MymeError(
+          ErrorCode.FORBIDDEN,
+          "Cannot restore into another tenant — target_tenant_id must match caller's tenant_id (or be omitted).",
+        );
+      }
+      restoreTenantId = callerTenant;
+    } else {
+      // Platform admin. target_tenant_id present → scope to it.
+      // Absent → empty-string sentinel (single-tenant self-host).
+      restoreTenantId = targetTenantParam ?? "";
+    }
 
     const extract = tar.extract();
     const gunzip = createGunzip();
@@ -180,6 +213,31 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     const inputStream = Readable.from(Buffer.from(rawBody));
     inputStream.pipe(gunzip).pipe(extract);
     await entries;
+
+    // T-053: verify manifest.tenant_id against the resolved restore
+    // tenant. Three legitimate shapes:
+    //   - manifest.tenant_id is null/undefined → pre-T-053 archive,
+    //     or single-tenant self-host export. Allowed regardless of
+    //     restore tenant (the import semantics fall back to a NULL
+    //     tenant_id on items, matching the source shape).
+    //   - manifest.tenant_id matches restoreTenantId → expected
+    //     same-tenant round-trip.
+    //   - mismatch → reject. Platform admins bypass via the explicit
+    //     `target_tenant_id` query param: their resolved
+    //     restoreTenantId then equals the manifest, which lands in
+    //     the matching branch above.
+    // Closure-modified `manifest` — TS doesn't narrow through the
+    // entry-handler closure, so cast back to the declared type for
+    // the access. Null when no manifest.json was present (defensive;
+    // an invalid archive structure is rejected on parse).
+    const m = manifest as ArchiveManifest | null;
+    const manifestTenantId = m?.tenant_id ?? null;
+    if (manifestTenantId !== null && manifestTenantId !== restoreTenantId) {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        `Archive manifest.tenant_id "${manifestTenantId}" does not match restore tenant "${restoreTenantId}". Platform admins must pass target_tenant_id matching the source.`,
+      );
+    }
 
     await Promise.all(blobUploads);
 

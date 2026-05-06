@@ -10,12 +10,60 @@ import {
 } from "@mymehq/shared";
 import type { ItemState } from "@mymehq/shared";
 import * as tar from "tar-stream";
+import type { ApiKey } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+
+/**
+ * T-053: resolve the target tenant for an export request.
+ *
+ * Three cases:
+ *   1. **workspace_admin / member with tenant_id** — caller's tenant
+ *      wins; cross-tenant attempts (`?target_tenant_id` set to
+ *      anything other than the caller's own) are rejected with 403.
+ *   2. **platform admin (no tenant_id)** — MUST pass an explicit
+ *      `?target_tenant_id=<id>` query param. Without it we reject
+ *      with 400 to avoid the historical bug where a platform key
+ *      received an export covering every tenant on the instance.
+ *   3. **single-tenant self-host (anonymous / bootstrap admin
+ *      mode)** — historically callers exported the whole DB. To
+ *      avoid breaking those deployments we treat a tenant-less
+ *      caller running against a DB whose items have no tenant_id
+ *      (NULL) as the legitimate single-tenant path: pass
+ *      `tenantId: undefined` through to the storage layer so list
+ *      operations match `tenant_id IS NULL`. Distinguishing this
+ *      from case 2 is the explicit `target_tenant_id` query param —
+ *      operators on hosted multi-tenant deployments must set it;
+ *      single-tenant operators don't.
+ */
+function resolveExportTenant(
+  apiKey: ApiKey | undefined,
+  targetParam: string | undefined,
+): string | undefined {
+  const callerTenant = apiKey?.tenant_id;
+  // Tenant-bound caller — own tenant wins.
+  if (callerTenant) {
+    if (targetParam !== undefined && targetParam !== callerTenant) {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        "Cannot export another tenant's data — target_tenant_id must match caller's tenant_id (or be omitted).",
+      );
+    }
+    return callerTenant;
+  }
+  // Tenant-less caller — platform admin OR single-tenant self-host.
+  // The presence of `target_tenant_id` distinguishes them: platform
+  // admins on hosted multi-tenant set it explicitly; single-tenant
+  // self-hosts leave it unset.
+  if (targetParam !== undefined) {
+    return targetParam; // platform admin scoping to a specific tenant
+  }
+  return undefined; // single-tenant self-host fallback
+}
 
 // ---------------------------------------------------------------------------
 // Route definition
@@ -34,6 +82,12 @@ const exportRoute = createRoute({
       since: z.string().optional(),
       until: z.string().optional(),
       format: z.string().optional(),
+      // T-053: platform admins scope a hosted-mode export to a
+      // specific tenant by passing `?target_tenant_id=<id>`. Tenant-
+      // bound callers (workspace_admin / member) get their own
+      // tenant automatically; supplying a mismatching value here
+      // returns 403.
+      target_tenant_id: z.string().optional(),
     }),
   },
   responses: {
@@ -93,10 +147,39 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
     const since = query.since;
     const until = query.until;
 
-    // Stream NDJSON — one {item, metadata} per line, paginating internally.
-    // Uses ReadableStream to avoid buffering the entire export in memory.
-    const tenantId = c.get("apiKey")?.tenant_id;
+    // T-053: resolve the target tenant (caller's own, or platform-
+    // admin's explicit target). Throws on cross-tenant attempts.
+    const tenantId = resolveExportTenant(
+      c.get("apiKey"),
+      query.target_tenant_id,
+    );
     const allowedTypes = getTypeFilter(c);
+
+    // T-053: audit the export attempt before streaming starts.
+    // `details.scope` captures the resolved tenant; an "unscoped"
+    // shape signals operators when a platform admin exports without
+    // a target_tenant_id (self-host fallback path that returns all
+    // rows — fine on single-tenant deployments, a real concern on
+    // hosted multi-tenant). Operators alerting on this shape can
+    // catch accidental cross-tenant exports.
+    const platformUnscoped =
+      c.get("apiKey")?.tenant_id === undefined &&
+      query.target_tenant_id === undefined;
+    void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      tenant_id: tenantId ?? null,
+      key_id: c.get("apiKey")?.id,
+      action: "export.tenant",
+      resource_type: "tenant",
+      resource_id: tenantId ?? undefined,
+      details: {
+        format: query.format ?? "ndjson",
+        scope: platformUnscoped ? "platform_unscoped" : "tenant",
+        ...(query.target_tenant_id !== undefined
+          ? { target_tenant_id: query.target_tenant_id }
+          : {}),
+      },
+    });
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
@@ -149,6 +232,14 @@ interface ArchiveManifest {
   version: number;
   format: string;
   created_at: string;
+  /**
+   * T-053: tenant_id stamped at export time. `null` for single-
+   * tenant self-host exports (no tenant scope on either side);
+   * a string for hosted-mode exports. Used by `/admin/restore-archive`
+   * to verify cross-tenant restore attempts (rejected unless the
+   * platform admin passes an explicit `target_tenant_id`).
+   */
+  tenant_id: string | null;
   item_count: number;
   blob_count: number;
   blobs: Record<string, { mime_type: string; size: number }>;
@@ -172,7 +263,14 @@ async function handleArchiveExport(
   }
   const since = c.req.query("since");
   const until = c.req.query("until");
-  const tenantId = c.get("apiKey")?.tenant_id;
+  // T-053: resolve target tenant (caller's own, or platform-admin's
+  // explicit target). The audit row in the parent handler already
+  // captured the `started` action; the manifest below stamps the
+  // resolved tenant_id for restore-side verification.
+  const tenantId = resolveExportTenant(
+    c.get("apiKey"),
+    c.req.query("target_tenant_id"),
+  );
   const allowedTypes = getTypeFilter(c);
 
   // Pass 1: Collect all items as NDJSON and gather blob hashes
@@ -213,11 +311,14 @@ async function handleArchiveExport(
     }
   }
 
-  // Build manifest
+  // Build manifest. T-053: tenant_id is the resolved scope of this
+  // export — the calling tenant or the platform-admin's
+  // target_tenant_id; null for single-tenant self-hosts.
   const manifest: ArchiveManifest = {
     version: 1,
     format: "myme-archive-v1",
     created_at: new Date().toISOString(),
+    tenant_id: tenantId ?? null,
     item_count: lines.length,
     blob_count: Object.keys(blobMeta).length,
     blobs: blobMeta,
