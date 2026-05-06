@@ -8,7 +8,8 @@ updates:
       - "/packages/shared"
       - "/packages/types"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+      day: "monday"
     groups:
       all-npm:
         patterns:
@@ -19,7 +20,8 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
+      day: "monday"
     groups:
       all-actions:
         patterns:
