@@ -435,7 +435,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   "inbound_webhooks", "inbound_webhook_events",
   "connection_oauth_tokens", "connection_leased_tokens",
   "oauth_clients", "oauth_codes", "oauth_tokens", "oauth_device_codes",
-  "users"
+  "users", "tenant_quotas"
 TO "myme_app";
 -- Sequence usage so myme_app can insert into identity columns
 -- (event_log.id BIGINT GENERATED ALWAYS AS IDENTITY).

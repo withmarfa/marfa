@@ -48,7 +48,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   "oauth_codes",
   "oauth_tokens",
   "oauth_device_codes",
-  "users"
+  "users",
+  "tenant_quotas"
 TO "myme_app";
 --> statement-breakpoint
 
