@@ -68,6 +68,16 @@ Middleware composes shared per-request state on `c.var`. Routes read these direc
 
 Middleware order in `app.ts`: logger → CORS → client-ip → auth → cycle → rate-limit → routes. The cycle resolver depends on auth's `c.var.apiKey`, so it must run after auth.
 
+## Per-tenant quotas (T-052)
+
+Per-tenant resource ceilings are stored in `tenant_quotas` (PK `tenant_id`); missing rows / NULL columns fall back to env defaults (`MYME_DEFAULT_QUOTA_*`). Counts are computed on-demand via `COUNT(*)` on the underlying tables at quota-check time — no eager-increment / reconcile machinery in this PR (the eager path is a follow-on once load measurement justifies the complexity).
+
+`enforceQuota(c, storage, resource, increment)` is the gate. It's a no-op for tenant-less keys (single-tenant self-hosts + platform admin), so the existing instance-wide flow is unaffected. Routes wired in PR T-052: `POST /webhooks` (resource: `webhooks`), `POST /items` (resource: `items`). Blobs / storage_bytes / per-tenant rate-per-minute enforcement is filed as follow-ons; the schema and store carry the columns ready for them.
+
+Admin surface: `GET /tenants/:id/quotas` and `PUT /tenants/:id/quotas` (platform-admin only). Workspace_admin's read-own surface (`GET /tenants/me/quotas`) is a follow-on.
+
+Errors: `quota_exceeded` (HTTP 429) with `details: { resource, limit, current }` so SDK / CLI / operator alerts can wire off the shape.
+
 ## Blob storage tenant scoping (T-049)
 
 The `blobs` metadata table has a composite PK on `(tenant_id, hash)`. Different tenants uploading the same hash bytes get separate metadata rows; the storage backend (filesystem / S3) still keys by hash globally so the physical file is shared (content-addressed deduplication preserved). `tenant_id` is `NOT NULL DEFAULT ''` — empty string is the sentinel for instance-wide / single-tenant / platform-admin uploads, used to keep the composite PK clean across both dialects.

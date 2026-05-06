@@ -752,6 +752,40 @@ export interface EnforcementSettings {
   source_filter?: { types: string[]; sources: string[] };
 }
 
+/**
+ * Per-tenant resource quotas (T-052). Empty / missing limits fall back to
+ * the instance defaults from env (`MYME_DEFAULT_QUOTA_*`). Quotas are
+ * platform-admin-managed via `GET/PUT /admin/tenants/:id/quotas`; tenant-
+ * own reads land via `GET /tenants/me/quotas` (workspace_admin or admin).
+ *
+ * Counts (e.g. `items_count`) are computed on-demand from existing tables
+ * at quota-check time. The plan's eager-increment + daily reconcile
+ * design is filed as a follow-on once load measurement justifies the
+ * complexity — for now, COUNT(*) on hot paths is fast enough at the
+ * scale we're targeting and avoids drift entirely.
+ */
+export interface TenantQuota {
+  tenant_id: string;
+  items_limit?: number | null;
+  webhooks_limit?: number | null;
+  blobs_limit?: number | null;
+  /** Storage bytes ceiling. Optional / not enforced in this PR — counter
+   *  + reconcile job filed as a follow-on. */
+  storage_bytes_limit?: number | null;
+  /** Per-tenant request-rate ceiling (additional to the per-credential
+   *  global rate limit). Not enforced in this PR. */
+  rate_per_minute_limit?: number | null;
+  updated_at: string;
+}
+
+/** Resource categories that participate in T-052 enforcement. */
+export type QuotaResource =
+  | "items"
+  | "webhooks"
+  | "blobs"
+  | "storage_bytes"
+  | "rate_per_minute";
+
 /** Tenant-level configuration. Admin-writable via `/tenants/current/config`. */
 export interface TenantConfig {
   retention?: Record<string, TenantRetentionOverride>;

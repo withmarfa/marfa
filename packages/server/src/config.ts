@@ -102,6 +102,18 @@ export interface AppConfig {
    *  OpenAPI spec keeps a separate, semantically-distinct
    *  API-contract version. */
   versionSha?: string;
+  /**
+   * T-052 default per-tenant quota ceilings. NULL = unlimited (no
+   * enforcement). Each is read from a corresponding env var
+   * (`MYME_DEFAULT_QUOTA_*`); per-tenant overrides via
+   * `tenant_quotas` rows take precedence. Optional on the type so
+   * existing test contexts continue to compile.
+   */
+  defaultQuotaItems?: number | null;
+  defaultQuotaWebhooks?: number | null;
+  defaultQuotaBlobs?: number | null;
+  defaultQuotaStorageBytes?: number | null;
+  defaultQuotaRatePerMinute?: number | null;
 }
 
 export interface OidcProviderConfig {
@@ -123,6 +135,23 @@ const DEFAULT_EVENT_LOG_RETENTION_HOURS = 168;
  * and we'd rather run the server with sensible retention than fail boot.
  * Exported for direct unit testing.
  */
+/**
+ * T-052: parses a quota env var. Returns null for unset / empty (the
+ * "unlimited" sentinel) and a parsed integer otherwise. Negative or
+ * non-integer values log a warning and fall back to null.
+ */
+function parseQuotaEnv(raw: string | undefined): number | null {
+  if (raw === undefined || raw === "") return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || !Number.isInteger(parsed)) {
+    console.warn(
+      `Invalid quota env value "${raw}", treating as unlimited (null).`,
+    );
+    return null;
+  }
+  return parsed;
+}
+
 export function parseEventLogRetentionHours(raw: string | undefined): number {
   if (raw === undefined || raw === "") return DEFAULT_EVENT_LOG_RETENTION_HOURS;
   const parsed = Number(raw);
@@ -224,6 +253,17 @@ export function loadConfig(): AppConfig {
     oidcProviders: parseOidcProviders(process.env.MYME_OIDC_PROVIDERS),
     rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
     rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
+    defaultQuotaItems: parseQuotaEnv(process.env.MYME_DEFAULT_QUOTA_ITEMS),
+    defaultQuotaWebhooks: parseQuotaEnv(
+      process.env.MYME_DEFAULT_QUOTA_WEBHOOKS,
+    ),
+    defaultQuotaBlobs: parseQuotaEnv(process.env.MYME_DEFAULT_QUOTA_BLOBS),
+    defaultQuotaStorageBytes: parseQuotaEnv(
+      process.env.MYME_DEFAULT_QUOTA_STORAGE_BYTES,
+    ),
+    defaultQuotaRatePerMinute: parseQuotaEnv(
+      process.env.MYME_DEFAULT_QUOTA_RATE_PER_MINUTE,
+    ),
   };
 }
 

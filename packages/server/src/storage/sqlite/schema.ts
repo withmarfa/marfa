@@ -578,6 +578,20 @@ export const settings = sqliteTable("settings", {
 });
 
 // ---------------------------------------------------------------------------
+// tenant_quotas (T-052: per-tenant resource caps)
+// ---------------------------------------------------------------------------
+
+export const tenantQuotas = sqliteTable("tenant_quotas", {
+  tenant_id: text("tenant_id").primaryKey(),
+  items_limit: integer("items_limit"),
+  webhooks_limit: integer("webhooks_limit"),
+  blobs_limit: integer("blobs_limit"),
+  storage_bytes_limit: integer("storage_bytes_limit"),
+  rate_per_minute_limit: integer("rate_per_minute_limit"),
+  updated_at: text("updated_at").notNull(),
+});
+
+// ---------------------------------------------------------------------------
 // event_log (SSE event persistence for replay)
 // ---------------------------------------------------------------------------
 

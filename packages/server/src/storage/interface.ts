@@ -644,6 +644,31 @@ export interface TenantStore {
   ): Promise<void>;
 }
 
+/**
+ * Per-tenant quota store (T-052). Stores ceilings; counts are computed
+ * on-demand from existing tables at quota-check time.
+ */
+export interface TenantQuotaStore {
+  /** Returns the per-tenant ceilings; null when no row exists (use env defaults). */
+  get(tenantId: string): Promise<import("@mymehq/shared").TenantQuota | null>;
+  /** Upserts ceilings. Pass null on a field to clear it (revert to env default). */
+  set(
+    tenantId: string,
+    input: {
+      items_limit?: number | null;
+      webhooks_limit?: number | null;
+      blobs_limit?: number | null;
+      storage_bytes_limit?: number | null;
+      rate_per_minute_limit?: number | null;
+    },
+  ): Promise<import("@mymehq/shared").TenantQuota>;
+  /** Returns the current count for a resource within a tenant. */
+  count(
+    tenantId: string,
+    resource: import("@mymehq/shared").QuotaResource,
+  ): Promise<number>;
+}
+
 // ---------------------------------------------------------------------------
 // OAuth store
 // ---------------------------------------------------------------------------
@@ -1048,6 +1073,9 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   coordination: CoordinationStore;
   users?: UserStore;
   tenants?: TenantStore;
+  /** T-052: per-tenant quotas. Always present (counts even when no
+   *  per-tenant ceilings are set). */
+  tenantQuotas: TenantQuotaStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   close(): Promise<void>;
 }

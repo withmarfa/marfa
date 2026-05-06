@@ -24,6 +24,7 @@ import {
   requireEdgePermission,
   getTypeFilter,
 } from "../middleware/auth.js";
+import { enforceQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
@@ -600,6 +601,11 @@ export function itemRoutes(storage: Storage) {
 
     requireTypeAccess(c, type, "write");
     const tenantId = c.get("apiKey")?.tenant_id;
+
+    // T-052: per-tenant items quota. No-op for tenant-less keys (single-
+    // tenant + platform admin). Throws 429 quota_exceeded if this create
+    // would push the tenant past its items ceiling.
+    await enforceQuota(c, storage, "items");
 
     if (Array.isArray(body.tags) && body.tags.length > 100) {
       throw new MymeError(
