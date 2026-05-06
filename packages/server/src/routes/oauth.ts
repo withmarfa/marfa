@@ -20,6 +20,7 @@ import { renderConsentScreen } from "./consent.js";
 import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
+import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
 import { renderForgotPasswordPage } from "./forgot-password-page.js";
 import { renderResetPasswordPage } from "./reset-password-page.js";
 import {
@@ -1400,6 +1401,27 @@ export function authRoutes(
     // cooked (or about to be). Redirect to /auth/sign-in.
     void revokeRes;
     return c.redirect("/auth/sign-in", 302);
+  });
+
+  // -----------------------------------------------------------------------
+  // Passkey enrol (Wave C PR6 / T-034)
+  // -----------------------------------------------------------------------
+  //
+  // GET /auth/passkey/enroll — auth-gated HTML page that runs the
+  // WebAuthn registration ceremony in the browser. Better-auth's
+  // passkey plugin provides the raw endpoints (`/passkey/generate-
+  // register-options`, `/passkey/verify-registration`, etc.); this
+  // page just stitches the ceremony around them.
+  //
+  // Passkey sign-in (the auth side of the same plugin) is exposed
+  // as a button on `/auth/sign-in` that calls
+  // `MymePasskey.signIn()` from the same static script.
+
+  router.get("/passkey/enroll", async (c) => {
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
+    setNoStore(c);
+    return c.html(renderPasskeyEnrollPage({ email: gated.session.user.email }));
   });
 
   // -----------------------------------------------------------------------

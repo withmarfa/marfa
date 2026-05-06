@@ -107,15 +107,18 @@ describe("renderSignInPage", () => {
     expect(html).toContain("Continue with Authentik");
   });
 
-  it("renders no separator + no oidc block when providers list is empty", () => {
+  it("renders no OIDC provider buttons when providers list is empty", () => {
     const html = renderSignInPage({
       mode: "password",
       returnTo: "/",
       allowSignup: false,
       oidcProviderIds: [],
     });
-    expect(html).not.toContain('class="oidc"');
-    expect(html).not.toContain('class="separator"');
+    // No federated provider POST forms.
+    expect(html).not.toContain('action="/auth/sign-in/provider/');
+    expect(html).not.toContain("Continue with");
+    // Wave C PR6 reuses `.separator` + `.oidc` classes on the passkey
+    // block, so we don't assert their absence anymore.
   });
 
   it("renders an error banner with role=alert when error is set", () => {
