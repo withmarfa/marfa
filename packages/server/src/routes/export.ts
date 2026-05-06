@@ -123,7 +123,43 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
 
     const query = c.req.valid("query");
 
-    // Archive export: ?format=archive
+    // T-053: resolve the target tenant up front so it's available to
+    // the audit log AND both downstream paths (archive + NDJSON). The
+    // resolver throws on cross-tenant attempts.
+    const tenantId = resolveExportTenant(
+      c.get("apiKey"),
+      query.target_tenant_id,
+    );
+
+    // T-053: audit the export attempt before streaming starts. Stamped
+    // for both archive and NDJSON paths. `details.scope: "platform_unscoped"`
+    // signals operators when a platform admin exports without a
+    // target_tenant_id (self-host fallback path that returns all rows —
+    // fine on single-tenant deployments, a real concern on hosted
+    // multi-tenant). Alerting on the shape catches accidental cross-
+    // tenant exports.
+    const platformUnscoped =
+      c.get("apiKey")?.tenant_id === undefined &&
+      query.target_tenant_id === undefined;
+    void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      tenant_id: tenantId ?? null,
+      key_id: c.get("apiKey")?.id,
+      action: "export.tenant",
+      resource_type: "tenant",
+      resource_id: tenantId ?? undefined,
+      details: {
+        format: query.format ?? "ndjson",
+        scope: platformUnscoped ? "platform_unscoped" : "tenant",
+        ...(query.target_tenant_id !== undefined
+          ? { target_tenant_id: query.target_tenant_id }
+          : {}),
+      },
+    });
+
+    // Archive export: ?format=archive. The handler re-resolves the
+    // tenant from the same param (single source of truth) but the
+    // audit row is already written.
     if (query.format === "archive") {
       return handleArchiveExport(c, storage, blobBackend);
     }
@@ -147,39 +183,7 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
     const since = query.since;
     const until = query.until;
 
-    // T-053: resolve the target tenant (caller's own, or platform-
-    // admin's explicit target). Throws on cross-tenant attempts.
-    const tenantId = resolveExportTenant(
-      c.get("apiKey"),
-      query.target_tenant_id,
-    );
     const allowedTypes = getTypeFilter(c);
-
-    // T-053: audit the export attempt before streaming starts.
-    // `details.scope` captures the resolved tenant; an "unscoped"
-    // shape signals operators when a platform admin exports without
-    // a target_tenant_id (self-host fallback path that returns all
-    // rows — fine on single-tenant deployments, a real concern on
-    // hosted multi-tenant). Operators alerting on this shape can
-    // catch accidental cross-tenant exports.
-    const platformUnscoped =
-      c.get("apiKey")?.tenant_id === undefined &&
-      query.target_tenant_id === undefined;
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      tenant_id: tenantId ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "export.tenant",
-      resource_type: "tenant",
-      resource_id: tenantId ?? undefined,
-      details: {
-        format: query.format ?? "ndjson",
-        scope: platformUnscoped ? "platform_unscoped" : "tenant",
-        ...(query.target_tenant_id !== undefined
-          ? { target_tenant_id: query.target_tenant_id }
-          : {}),
-      },
-    });
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
