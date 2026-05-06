@@ -9543,6 +9543,7 @@
                     "type": "string",
                     "enum": [
                       "admin",
+                      "workspace_admin",
                       "member"
                     ]
                   },
@@ -9638,6 +9639,7 @@
                       "type": "string",
                       "enum": [
                         "admin",
+                        "workspace_admin",
                         "member"
                       ]
                     },
@@ -10126,6 +10128,7 @@
                       "type": "string",
                       "enum": [
                         "admin",
+                        "workspace_admin",
                         "member"
                       ]
                     },
@@ -11724,6 +11727,325 @@
                   },
                   "required": [
                     "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tenants/{id}/quotas": {
+      "get": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Read per-tenant quota ceilings (admin only)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Quota row. Null fields mean 'fall back to env defaults'. An entirely-null payload means no per-tenant override is set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tenant_id": {
+                      "type": "string"
+                    },
+                    "items_limit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "webhooks_limit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "blobs_limit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "storage_bytes_limit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "rate_per_minute_limit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "tenant_id",
+                    "items_limit",
+                    "webhooks_limit",
+                    "blobs_limit",
+                    "storage_bytes_limit",
+                    "rate_per_minute_limit",
+                    "updated_at"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Set per-tenant quota ceilings (admin only)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "items_limit": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "webhooks_limit": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "blobs_limit": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "storage_bytes_limit": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "rate_per_minute_limit": {
+                    "type": "integer",
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Quota row updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tenant_id": {
+                      "type": "string"
+                    },
+                    "items_limit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "webhooks_limit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "blobs_limit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "storage_bytes_limit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "rate_per_minute_limit": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "tenant_id",
+                    "items_limit",
+                    "webhooks_limit",
+                    "blobs_limit",
+                    "storage_bytes_limit",
+                    "rate_per_minute_limit",
+                    "updated_at"
                   ]
                 }
               }
