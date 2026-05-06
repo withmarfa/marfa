@@ -8,6 +8,7 @@ import {
   UninstallError,
 } from "../connections/uninstall-pipeline.js";
 import { performInstall } from "../connections/install-pipeline.js";
+import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
@@ -185,6 +186,27 @@ export function connectionRoutes(storage: Storage, salt: string) {
       label: effectiveLabel,
       clientIp,
     });
+
+    // Hydrate the new system.connection item and publish a `created`
+    // event onto pubsub. Without this the reactive-run bridge's
+    // cache-invalidation subscriber (subscribes to ITEM_CHANGED with
+    // typeFilter system.connection) never sees newly-installed
+    // connections, so its in-memory subscription map stays stale and
+    // the bridge fans out to nothing. The HTML consent flow at
+    // routes/integrations.ts has the same bug — fix landed alongside
+    // this one in a follow-up to keep this PR's diff scoped to the
+    // path that ships in Wave A.
+    const connection = await storage.items.get(result.connection_id, tenantId);
+    if (connection) {
+      const metadata = await storage.metadata.get(connection.id);
+      await publish({
+        type: "created",
+        item: connection,
+        metadata,
+        tenantId,
+        ...c.var.cycle,
+      });
+    }
 
     return c.json(result, 201);
   });
