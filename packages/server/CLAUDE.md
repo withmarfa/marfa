@@ -197,6 +197,19 @@ End-user surface for resetting a forgotten password. Sits on top of better-auth'
 - **Multi-instance.** Throttle is in-memory only. Multi-instance deployments need a shared counter (Redis); deferred until hosted-multi-tenant lights up.
 - **Tests.** `password-reset.test.ts` exercises the full sign-up → forgot → DB-token-read → reset → sign-in round-trip (plus single-use replay rejection + session revocation). `readLatestResetToken(storage)` in `test-utils.ts` reads the most recent `auth_verification` row — used by the integration test in lieu of intercepting the email transport.
 
+## Re-consent diff (Wave C PR5 / T-032)
+
+When a user OAuth-grants the same client a second time and the requested scopes differ from last time, the consent screen renders a diff instead of the flat read / write split.
+
+- **Lookup.** `GET /auth/authorize` queries `system.connection` items in the consenting user's tenant for an active `user-app-grant` matching the request's `client_id`. Most-recently-granted wins. The grant's `properties.scopes` literal set is threaded into `renderConsentScreen` as `priorScopes`.
+- **Hosted-mode only.** The user → tenant binding lives in `storage.users` (hosted mode). In keys mode there's no per-user tenant — the lookup is skipped and the screen renders flat. Defensible: keys mode is single-user self-host where a re-consent is rare.
+- **Pure diff helper.** `routes/consent-diff.ts` exports `computeConsentDiff(prev, next): { kept, added, removed }`. Set difference on opaque scope literals (`<typePattern>:<verb>`); preserves `next`-side ordering, de-duplicates.
+- **Rendering.** `consent.ts` switches on `priorScopes`:
+  - Three group blocks instead of read/write — `Previously granted` (kept), `New permissions` (added), `No longer requested` (removed). Empty groups are omitted.
+  - Removed scopes render as static rows with strikethrough on the literal pill — they're being dropped, not re-granted, so no checkbox.
+  - The H1 copy switches from "wants to access your data" to "is requesting updated access to your data".
+- **CSS.** `auth.css` adds `.section--kept` / `.section--added` / `.section--removed` modifiers (subtle accent borders + tinted backgrounds) and `.scope-row--removed` (line-through + soft opacity).
+
 ## Reserved extension namespaces
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:
