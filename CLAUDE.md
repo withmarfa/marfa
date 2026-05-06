@@ -51,6 +51,8 @@ Two layers coexist permanently and don't share credentials:
 
 Sign-up is gated by `MYME_AUTH_ALLOW_SIGNUP` (default `false`). Single-user self-hosted instances enable it for the initial admin sign-up only. Better Auth tables (`auth_user`, `auth_session`, `auth_account`, `auth_verification`) are isolated under the `auth_*` prefix and use Drizzle's timestamp-mode columns (Date round-trip), distinct from myme's TEXT-ISO convention elsewhere in the schema.
 
+Email verification is required (Wave C PR2). New accounts sign up successfully but `auth_user.email_verified` starts `false` and `requireEmailVerification: true` blocks sign-in until the user clicks a verification link. The grandfather migration `0042` (PG) / `0035` (SQLite) marks every account created before this PR as verified at deploy time so the flip doesn't lock them out. The verify-email surface lives at `/auth/verify-email`; the sign-up wrapper redirects to it after a successful sign-up.
+
 Sign-in methods land per workstream-1 plan: email + password (PR 1), passkey + magic link (PR 2), generic OIDC client / federated (PR 3), Myme as IdP via OIDC Provider plugin (PR 5).
 
 User-app grants are stored as `system.connection` items with `kind: user-app-grant`. The OAuth tables `oauth_codes` and `oauth_tokens` reference the item id via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE). The previous standalone `oauth_grants` table is dropped. The same `system.connection` type carries the other two kinds shipped by the Connections build: `external-service-connector` (a connected upstream service such as Google Calendar) and `tenant-share` (a relationship between two tenants).

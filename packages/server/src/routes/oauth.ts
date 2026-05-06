@@ -19,6 +19,7 @@ import type {
 import { renderConsentScreen } from "./consent.js";
 import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
+import { renderVerifyEmailPage } from "./verify-email-page.js";
 import {
   renderDevicePage,
   renderDeviceConsentScreen,
@@ -741,9 +742,12 @@ export function authRoutes(
 
     if (response.ok) {
       // autoSignIn=true on the auth instance means the response carries
-      // a session cookie. Forward it onto the 302 to land the user on
-      // return_to already authenticated.
-      const redirectHeaders = new Headers({ Location: returnTo });
+      // a session cookie — UNLESS `requireEmailVerification: true`
+      // (Wave C PR2) is set, in which case better-auth returns 200 with
+      // `{ token: null, user }` and no Set-Cookie. We branch on the
+      // cookie presence: if absent, redirect to the verify-email page
+      // so the user can watch for the inbox arrival; if present, land
+      // them on `return_to` already authenticated.
       const setCookies =
         typeof (
           response.headers as Headers & {
@@ -756,13 +760,28 @@ export function authRoutes(
               }
             ).getSetCookie()
           : null;
-      if (setCookies && setCookies.length > 0) {
-        for (const cookie of setCookies) {
-          redirectHeaders.append("set-cookie", cookie);
-        }
-      } else {
-        const single = response.headers.get("set-cookie");
-        if (single) redirectHeaders.append("set-cookie", single);
+      const singleCookie = response.headers.get("set-cookie");
+      const cookies =
+        setCookies && setCookies.length > 0
+          ? setCookies
+          : singleCookie
+            ? [singleCookie]
+            : [];
+
+      if (cookies.length === 0) {
+        // Verification-required path. Redirect to the verify-email
+        // page with the email pre-filled and return_to threaded
+        // through so the user lands on their original destination
+        // after clicking the link.
+        const params = new URLSearchParams();
+        params.set("email", emailStr);
+        params.set("return_to", returnTo);
+        return c.redirect(`/auth/verify-email?${params.toString()}`, 302);
+      }
+
+      const redirectHeaders = new Headers({ Location: returnTo });
+      for (const cookie of cookies) {
+        redirectHeaders.append("set-cookie", cookie);
       }
       return new Response(null, { status: 302, headers: redirectHeaders });
     }
@@ -785,6 +804,161 @@ export function authRoutes(
       // Fall through to the generic signup_failed code.
     }
     return errorRedirect(errorCode);
+  });
+
+  // -----------------------------------------------------------------------
+  // Email verification (Wave C PR2)
+  // -----------------------------------------------------------------------
+  //
+  // Three observable surfaces:
+  //   - GET /auth/verify-email?token=…&return_to=…  — token path:
+  //     forwards to better-auth's verify-email endpoint which validates
+  //     the token, stamps `email_verified=true`, and (because we don't
+  //     pass `callbackURL`) returns a JSON body. We render success or
+  //     failure as our themed page, forwarding any Set-Cookie better-auth
+  //     issued (currently none on the verify endpoint, but
+  //     forward-compatible with future better-auth changes).
+  //   - GET /auth/verify-email?email=…&return_to=… — pending path:
+  //     no token, just landed from a sign-up redirect. Renders the
+  //     "check your inbox" page with a resend form. Optional `?sent=1`
+  //     swaps to the success-banner variant for resend confirmations.
+  //   - POST /auth/verify-email/resend — calls better-auth's
+  //     send-verification-email endpoint. Idempotent at the user level
+  //     (Resend dedupe via per-token idempotency key set on the
+  //     transport hook). Redirects back with `?sent=1` regardless of
+  //     whether the address actually exists, to avoid email enumeration.
+
+  router.get("/verify-email", async (c) => {
+    if (!auth) {
+      throw new MymeError(
+        ErrorCode.UNAUTHORIZED,
+        "Email verification requires the better-auth identity layer to be configured",
+      );
+    }
+    const url = new URL(c.req.url);
+    const token = url.searchParams.get("token");
+    const email = url.searchParams.get("email");
+    const returnTo = validateReturnTo(url.searchParams.get("return_to"));
+    const sent = url.searchParams.get("sent");
+    setNoStore(c);
+
+    if (!token) {
+      return c.html(
+        renderVerifyEmailPage({
+          state: sent === "1" ? "resent" : "pending",
+          email,
+          returnTo,
+        }),
+      );
+    }
+
+    // Token path. Forward to better-auth's GET /auth/verify-email
+    // (we omit `callbackURL` so it returns a JSON body rather than
+    // a redirect; we render our own success/failure UI).
+    const upstreamUrl = new URL("/auth/verify-email", c.req.url);
+    upstreamUrl.searchParams.set("token", token);
+    const upstream = new Request(upstreamUrl, {
+      method: "GET",
+      headers: forwardHeaders(c.req.raw.headers, {}, auth.baseURL),
+    });
+    const response = await auth.handler(upstream);
+
+    if (response.ok) {
+      // Forward any Set-Cookie better-auth issued onto our response
+      // (forward-compatible — the current 1.6.x verify-email doesn't
+      // mint a session, but we don't want to silently drop it if a
+      // future bump does).
+      const headers = new Headers({
+        "content-type": "text/html; charset=utf-8",
+      });
+      const setCookies =
+        typeof (response.headers as Headers & { getSetCookie?: () => string[] })
+          .getSetCookie === "function"
+          ? (
+              response.headers as Headers & { getSetCookie: () => string[] }
+            ).getSetCookie()
+          : null;
+      if (setCookies && setCookies.length > 0) {
+        for (const cookie of setCookies) headers.append("set-cookie", cookie);
+      } else {
+        const single = response.headers.get("set-cookie");
+        if (single) headers.append("set-cookie", single);
+      }
+      // No-store on the success render too; the URL carries a
+      // single-use token and shouldn't sit in history caches.
+      headers.set("cache-control", "no-store, no-cache, private");
+      headers.set("pragma", "no-cache");
+      return new Response(
+        renderVerifyEmailPage({ state: "success", returnTo }),
+        { status: 200, headers },
+      );
+    }
+
+    // Failure path. Map better-auth's error shape to a friendly code.
+    let failureCode: "expired" | "invalid" | "unknown" = "unknown";
+    try {
+      const body = (await response.json()) as { code?: string };
+      const code = body.code?.toLowerCase() ?? "";
+      if (code.includes("expired")) failureCode = "expired";
+      else if (code.includes("invalid") || code.includes("token"))
+        failureCode = "invalid";
+    } catch {
+      // Fall through to "unknown".
+    }
+    return c.html(
+      renderVerifyEmailPage({
+        state: "failure",
+        email,
+        returnTo,
+        failureCode,
+      }),
+    );
+  });
+
+  router.post("/verify-email/resend", async (c) => {
+    if (!auth) {
+      throw new MymeError(
+        ErrorCode.UNAUTHORIZED,
+        "Email verification requires the better-auth identity layer to be configured",
+      );
+    }
+    const formData = await c.req.formData();
+    const email = formData.get("email");
+    const returnTo = validateReturnTo(formData.get("return_to"));
+    const emailStr = typeof email === "string" ? email.trim() : "";
+
+    if (!emailStr) {
+      const params = new URLSearchParams({ return_to: returnTo });
+      return c.redirect(`/auth/verify-email?${params.toString()}`, 302);
+    }
+
+    // Forward to better-auth's POST /auth/send-verification-email.
+    // Soft-fail on errors — we redirect with `?sent=1` regardless so
+    // an attacker can't probe whether an address has an account.
+    const upstream = new Request(
+      new URL("/auth/send-verification-email", c.req.url),
+      {
+        method: "POST",
+        headers: forwardHeaders(
+          c.req.raw.headers,
+          { "content-type": "application/json" },
+          auth.baseURL,
+        ),
+        body: JSON.stringify({ email: emailStr, callbackURL: returnTo }),
+      },
+    );
+    try {
+      await auth.handler(upstream);
+    } catch {
+      // Swallow — the redirect carries `?sent=1` regardless to keep
+      // the soft-fail invariant.
+    }
+
+    const params = new URLSearchParams();
+    params.set("email", emailStr);
+    params.set("return_to", returnTo);
+    params.set("sent", "1");
+    return c.redirect(`/auth/verify-email?${params.toString()}`, 302);
   });
 
   // -----------------------------------------------------------------------

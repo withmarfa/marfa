@@ -101,6 +101,12 @@ export interface AppConfig {
   /** Shared secret for cookie signing. Required in production; falls back
    *  to a per-process ephemeral secret in dev. */
   authSecret: string;
+  /** Wave C PR2: explicit override for `requireEmailVerification`. When
+   *  `undefined`, the auth layer auto-detects from the configured email
+   *  transport (on for `resend`/`smtp`, off for `none`/missing). When
+   *  set, takes precedence over the auto-detect — primarily a test
+   *  hook (env-driven config never sets it). */
+  authRequireEmailVerification?: boolean;
   /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
    *  into the generic-oauth plugin. Parsed from the `MYME_OIDC_PROVIDERS`
    *  env var (JSON array of `{ providerId, clientId, clientSecret,
