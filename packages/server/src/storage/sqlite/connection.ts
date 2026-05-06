@@ -160,6 +160,20 @@ export function createConnection(sqlitePath: string): {
       updated_at TEXT NOT NULL
     );
 
+    -- Wave C PR1: per-tenant email suppression list. Mirrors Resend
+    -- webhooks; transport pre-send check consults this. Empty-string
+    -- tenant_id is the platform-level / pre-sign-in sentinel.
+    CREATE TABLE IF NOT EXISTS email_suppressions (
+      tenant_id TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      source_email_id TEXT,
+      PRIMARY KEY (tenant_id, email)
+    );
+    CREATE INDEX IF NOT EXISTS idx_email_suppressions_email
+      ON email_suppressions (email);
+
     -- T-049: composite PK on (tenant_id, hash). Empty-string sentinel for
     -- instance-wide / single-tenant / platform-admin rows. Different tenants
     -- uploading the same hash bytes get separate rows; storage backend dedupes

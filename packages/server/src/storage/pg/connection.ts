@@ -132,6 +132,21 @@ CREATE TABLE IF NOT EXISTS tenant_quotas (
   updated_at TEXT NOT NULL
 );
 
+-- Wave C PR1: per-tenant email suppression list. Mirrored from Resend
+-- webhooks; transport pre-send check consults this. Empty-string
+-- tenant_id is the platform-level / pre-sign-in sentinel (mirrors
+-- blob T-049 convention).
+CREATE TABLE IF NOT EXISTS email_suppressions (
+  tenant_id TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  source_email_id TEXT,
+  PRIMARY KEY (tenant_id, email)
+);
+CREATE INDEX IF NOT EXISTS idx_email_suppressions_email
+  ON email_suppressions (email);
+
 -- T-049: composite PK on (tenant_id, hash). See sqlite/connection.ts for
 -- design rationale. Empty-string sentinel for instance-wide rows.
 CREATE TABLE IF NOT EXISTS blobs (
@@ -445,7 +460,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   "inbound_webhooks", "inbound_webhook_events",
   "connection_oauth_tokens", "connection_leased_tokens",
   "oauth_clients", "oauth_codes", "oauth_tokens", "oauth_device_codes",
-  "users", "tenant_quotas"
+  "users", "tenant_quotas", "email_suppressions"
 TO "myme_app";
 -- Sequence usage so myme_app can insert into identity columns
 -- (event_log.id BIGINT GENERATED ALWAYS AS IDENTITY).
@@ -560,6 +575,15 @@ CREATE POLICY "connection_leased_tokens_tenant_isolation" ON "connection_leased_
   FOR ALL TO "myme_app"
   USING (tenant_id::text = current_setting('myme.tenant_id', true)
          OR tenant_id IS NULL);
+
+-- Wave C PR1 — email_suppressions tenant policy. tenant_id is TEXT
+-- (no NULL — empty-string sentinel matches blob T-049 convention).
+ALTER TABLE "email_suppressions" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "email_suppressions_tenant_isolation" ON "email_suppressions";
+CREATE POLICY "email_suppressions_tenant_isolation" ON "email_suppressions"
+  FOR ALL TO "myme_app"
+  USING (tenant_id = current_setting('myme.tenant_id', true)
+         OR tenant_id = '');
 `;
 
 export async function createConnection(connectionString: string): Promise<{

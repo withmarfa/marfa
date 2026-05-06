@@ -124,6 +124,14 @@ Server package (not needed for shared or SDK development):
 - `MYME_AUTH_ALLOW_SIGNUP` — when `true`, enables the email + password sign-up endpoint at `/auth/sign-up/email`. Default `false` per the workstream-1 sign-up policy. Single-user self-hosted instances flip it on for the initial admin account, then back off.
 - `MYME_AUTH_SECRET` — shared secret for cookie signing. Required in production; falls back to a per-process ephemeral secret in dev.
 - `MYME_OIDC_PROVIDERS` — JSON array configuring federated sign-in providers (Google, GitHub, Authentik, etc.). Each entry: `{ providerId, clientId, clientSecret, discoveryUrl?, scopes? }`. Surfaces `Sign in with <providerId>` buttons on the sign-in page and exposes `/auth/sign-in/oauth2` + `/auth/oauth2/callback/<providerId>`. Empty array (default) means no federated providers.
+- `MYME_EMAIL_BACKEND` — `resend | smtp | none`. Default `none` — email-dependent flows (forgot-password, magic-link, email-verify) return HTTP 503 with `email_transport_not_configured` until an operator picks a backend. The factory at `src/email/index.ts` constructs the transport at boot.
+- `MYME_EMAIL_FROM` — visible sender address. Default `Myme <hello@mail.myme.so>`. **For the Resend backend the address MUST end in `@mail.myme.so`** — that's the verified Resend domain. Apex `myme.so` has no DKIM key. The boot-time `senderDomainCheck` fails loud if this is misconfigured (skipped in `NODE_ENV=test`).
+- `MYME_EMAIL_REPLY_TO` — Reply-To header. Optional; recommend a monitored inbox so user replies don't bounce silently.
+- `RESEND_API_KEY_MYME` — Resend API key. Required when `MYME_EMAIL_BACKEND=resend`.
+- `RESEND_WEBHOOK_SECRET_MYME` — Resend webhook signing secret. Used by `POST /webhooks/resend` to verify inbound events (bounces, complaints) and mirror them into the local `email_suppressions` table.
+- `MYME_SMTP_HOST` / `MYME_SMTP_PORT` / `MYME_SMTP_USER` / `MYME_SMTP_PASS` / `MYME_SMTP_SECURE` — SMTP backend config. Required when `MYME_EMAIL_BACKEND=smtp`. Default port `587`. `MYME_SMTP_SECURE=true` for implicit TLS (port 465); leave unset for STARTTLS on 587.
+
+**Resend domain DNS pattern.** Resend uses a two-subdomain split: DKIM signs the visible `From: ...@mail.myme.so` (TXT on `resend._domainkey.mail.myme.so`); the SES Return-Path uses `send.mail.myme.so` (TXT SPF + MX feedback to `feedback-smtp.eu-west-1.amazonses.com`). DMARC lives on `_dmarc.myme.so` apex with `adkim=s` (strict alignment). DKIM-aligned DMARC handles auth; SPF on `send.mail.myme.so` covers the Return-Path.
 
 ## Schema-enforcement levers (TSC42 §5)
 

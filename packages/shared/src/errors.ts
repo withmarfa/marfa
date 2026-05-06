@@ -126,6 +126,30 @@ export enum ErrorCode {
   BULK_CAP_EXCEEDED = "bulk_cap_exceeded",
   /** An atomic bulk upsert failed on one item and rolled back the whole batch. */
   BULK_ATOMIC_ROLLBACK = "bulk_atomic_rollback",
+  // ---------------------------------------------------------------------
+  // Email transport (Wave C PR1)
+  // ---------------------------------------------------------------------
+  /**
+   * The server has no email backend configured (`MYME_EMAIL_BACKEND`
+   * unset or `none`) but a flow that depends on outbound email was
+   * invoked (forgot-password, magic-link, email-verify). Operators
+   * configure a backend to enable these flows; the alternative is a
+   * silent dead-letter, which the server refuses.
+   */
+  EMAIL_TRANSPORT_NOT_CONFIGURED = "email_transport_not_configured",
+  /**
+   * The recipient address is on the suppression list (hard-bounced,
+   * complained, or manually suppressed) and was rejected pre-send.
+   * Returned as an explicit signal so callers know why an email
+   * didn't go — surfaced on forgot-password / magic-link routes.
+   */
+  EMAIL_SUPPRESSED = "email_suppressed",
+  /**
+   * The transport returned a non-retryable failure (4xx from Resend,
+   * permanent SMTP rejection). Distinct from a transient failure
+   * (5xx / 429 / network) which the route handler may retry.
+   */
+  EMAIL_SEND_FAILED = "email_send_failed",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -182,6 +206,9 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_CONFIRMATION_REQUIRED]: 400,
   [ErrorCode.BULK_CAP_EXCEEDED]: 400,
   [ErrorCode.BULK_ATOMIC_ROLLBACK]: 400,
+  [ErrorCode.EMAIL_TRANSPORT_NOT_CONFIGURED]: 503,
+  [ErrorCode.EMAIL_SUPPRESSED]: 422,
+  [ErrorCode.EMAIL_SEND_FAILED]: 502,
 };
 
 /** Returns the HTTP status code for a given error code. */
