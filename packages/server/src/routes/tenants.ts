@@ -2,7 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MymeError, TYPE_REGISTRY } from "@mymehq/shared";
 import type { TenantConfig } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireAdmin, requireWorkspaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 
@@ -135,6 +135,42 @@ const getQuotasRoute = createRoute({
   },
 });
 
+// T-052 follow-on (Wave B Part 2): workspace_admin's read-own surface.
+// `GET /tenants/me/quotas` resolves the calling key's tenant_id from
+// `c.var.apiKey` so workspace_admins don't need to know — or be told
+// — their own tenant_id to read their ceilings. Cleaner than asking
+// them to invoke the platform-admin route at `/{tenant_id}/quotas`.
+const getOwnQuotasRoute = createRoute({
+  method: "get",
+  path: "/me/quotas",
+  tags: ["Tenants"],
+  summary: "Read the calling tenant's quota ceilings",
+  description:
+    "Workspace_admin or admin. Returns the calling key's tenant quota row " +
+    "(or a row of nulls if none is configured — env defaults apply). " +
+    "Platform-admin keys with no tenant_id receive 400 — use " +
+    "`GET /tenants/{id}/quotas` with the explicit id instead.",
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: { "application/json": { schema: QuotaSchema } },
+      description: "Quota row for the calling tenant.",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Caller has no tenant_id (platform admin).",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Forbidden",
+    },
+  },
+});
+
 const putQuotasRoute = createRoute({
   method: "put",
   path: "/{id}/quotas",
@@ -221,11 +257,41 @@ export function tenantRoutes(storage: Storage) {
     return c.json(body, 200);
   });
 
-  // T-052: per-tenant quota administration. Platform-admin only —
-  // setting another tenant's caps is a cross-tenant authority operation.
-  // Workspace_admin's read-own surface (`GET /tenants/me/quotas`) is
-  // a follow-on; until then the calling admin's own tenant_id can be
-  // queried via `GET /admin/tenants/:id/quotas` with their own id.
+  // T-052: per-tenant quota administration.
+  //
+  // **Route order matters.** The `/me/quotas` route is registered BEFORE
+  // `/{id}/quotas` so a request to `GET /tenants/me/quotas` matches the
+  // workspace-admin handler instead of the platform-admin handler with
+  // `id="me"`. Hono dispatches in registration order; flipping these
+  // would surface as a 403 for workspace_admin (caught in the test
+  // suite — see `auth.workspace-admin-completeness.test.ts`).
+  router.openapi(getOwnQuotasRoute, async (c) => {
+    const key = requireWorkspaceAdmin(c);
+    const tenantId = key.tenant_id;
+    if (!tenantId) {
+      // Platform admin keys (no tenant_id) hit this — they should use
+      // the explicit `/tenants/{id}/quotas` route instead.
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Caller has no tenant_id; use GET /tenants/{id}/quotas with an explicit tenant id.",
+      );
+    }
+    const quota = await storage.tenantQuotas.get(tenantId);
+    return c.json(
+      {
+        tenant_id: tenantId,
+        items_limit: quota?.items_limit ?? null,
+        webhooks_limit: quota?.webhooks_limit ?? null,
+        blobs_limit: quota?.blobs_limit ?? null,
+        storage_bytes_limit: quota?.storage_bytes_limit ?? null,
+        rate_per_minute_limit: quota?.rate_per_minute_limit ?? null,
+        updated_at: quota?.updated_at ?? null,
+      },
+      200,
+    );
+  });
+
+  // Platform-admin only — setting another tenant's caps is cross-tenant authority.
   router.openapi(getQuotasRoute, async (c) => {
     requireAdmin(c);
     const { id } = c.req.valid("param");

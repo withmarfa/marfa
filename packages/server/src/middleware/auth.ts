@@ -376,7 +376,17 @@ export function checkTypeAccess(
     }
   }
 
-  if (key.role === "admin") return;
+  // T-051 follow-on (Wave B Part 2): workspace_admin is admin-shaped
+  // within its own tenant. The application-layer tenant scoping +
+  // T-025 RLS at the DB layer keep workspace_admin reads/writes
+  // confined to its tenant_id; bypassing type_permissions here gives
+  // it the full type surface within that scope, matching admin's
+  // platform-wide behaviour. A workspace_admin key whose
+  // type_permissions are deliberately tightened (e.g. to delegate
+  // only `core.note`) belongs as `member` with explicit
+  // type_permissions instead — workspace_admin is the "full admin
+  // within tenant" tier.
+  if (key.role === "admin" || key.role === "workspace_admin") return;
 
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (resolved === "none") {
@@ -396,7 +406,13 @@ export function checkTypeAccess(
 export function computeTypeFilter(
   apiKey: ApiKey | undefined,
 ): string[] | undefined {
-  if (!apiKey || apiKey.role === "admin") return undefined;
+  // workspace_admin sees the full type surface within its tenant —
+  // see `checkTypeAccess` for the rationale. Returning `undefined`
+  // here means "no filter"; tenant scoping is applied separately in
+  // the storage layer (item-store filters by `tenant_id`).
+  if (!apiKey || apiKey.role === "admin" || apiKey.role === "workspace_admin") {
+    return undefined;
+  }
 
   const patterns: string[] = [];
   for (const [pattern, permission] of Object.entries(apiKey.type_permissions)) {

@@ -2,11 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireAdmin,
-  requireWorkspaceAdmin,
-  hashApiKey,
-} from "../middleware/auth.js";
+import { requireWorkspaceAdmin, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -377,16 +373,35 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(listKeysRoute, async (c) => {
-    requireAdmin(c);
-    return c.json({ keys: await storage.keys.list() }, 200);
+    // T-051 follow-on (Wave B Part 2): widened from `requireAdmin`
+    // to `requireWorkspaceAdmin`. workspace_admin sees only its own
+    // tenant's keys; admin (no tenant_id) sees all. Cross-tenant
+    // visibility is fenced at the application layer here AND at the
+    // DB layer (T-025 RLS) when enforcement is on.
+    const key = requireWorkspaceAdmin(c);
+    const all = await storage.keys.list();
+    const visible =
+      key.role === "workspace_admin" && key.tenant_id
+        ? all.filter((k) => k.tenant_id === key.tenant_id)
+        : all;
+    return c.json({ keys: visible }, 200);
   });
 
   router.openapi(revokeKeyRoute, async (c) => {
-    requireAdmin(c);
+    const key = requireWorkspaceAdmin(c);
     const { id } = c.req.valid("param");
 
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
+    }
+
+    // workspace_admin can only revoke keys in its own tenant —
+    // surface as 404 so cross-tenant probes can't enumerate ids.
+    if (key.role === "workspace_admin" && key.tenant_id) {
+      const target = await storage.keys.get(id);
+      if (target?.tenant_id !== key.tenant_id) {
+        throw new MymeError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
+      }
     }
 
     await storage.keys.revoke(id);
@@ -403,7 +418,7 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(updateKeyRoute, async (c) => {
-    requireAdmin(c);
+    const key = requireWorkspaceAdmin(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
@@ -426,6 +441,15 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     const existing = await storage.keys.get(id);
     if (!existing) {
+      throw new MymeError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
+    }
+    // workspace_admin can only update keys in its own tenant — same
+    // 404 cloak as revoke.
+    if (
+      key.role === "workspace_admin" &&
+      key.tenant_id &&
+      existing.tenant_id !== key.tenant_id
+    ) {
       throw new MymeError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
     }
 
