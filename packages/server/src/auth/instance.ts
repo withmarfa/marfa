@@ -89,6 +89,13 @@ export interface MymeAuthOptions {
     discoveryUrl?: string;
     scopes?: string[];
   }[];
+  /** Wave C PR2: turn on `requireEmailVerification` + `sendOnSignUp`.
+   *  Default: auto-detect from `mymeEmailTransport` — on when a real
+   *  backend (`resend` / `smtp`) is wired, off when the transport is
+   *  `none` or missing. Tests pass `true` explicitly to exercise the
+   *  verify flow without booting a real transport; production
+   *  deployments rely on the auto-detect. */
+  requireEmailVerification?: boolean;
 }
 
 const defaultLogTransport: EmailTransport = ({ email, url }) => {
@@ -162,6 +169,19 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
   const transport = options.emailTransport ?? defaultLogTransport;
   const richTransport = options.mymeEmailTransport;
 
+  // Wave C PR2: only flip `requireEmailVerification` when a real email
+  // backend is wired. With the `none` backend (or no rich transport at
+  // all) the verification email can't actually deliver — turning the
+  // flag on would 500 every sign-up. Graceful degradation: pre-PR1
+  // (no transport) and unconfigured-PR1 (`none`) deployments keep the
+  // pre-PR2 auto-sign-in behaviour. As soon as the operator wires
+  // `MYME_EMAIL_BACKEND=resend` (or `smtp`) and restarts, verification
+  // turns on automatically. Callers (e.g. tests) can override the
+  // auto-detect via `options.requireEmailVerification`.
+  const emailVerificationEnabled =
+    options.requireEmailVerification ??
+    (richTransport !== undefined && richTransport.backend !== "none");
+
   let derivedRpId = options.passkeyRpId;
   if (!derivedRpId) {
     try {
@@ -184,67 +204,73 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
       enabled: true,
       // Auto-sign-in after sign-up keeps the consent flow seamless when
       // a brand-new account approves an OAuth client on first visit.
-      // With `requireEmailVerification: true` (Wave C PR2) better-auth
-      // sets `shouldSkipAutoSignIn` so sign-up succeeds with a
-      // `{ token: null, user }` body and NO Set-Cookie — the user
-      // must verify before any session lands.
+      // With `requireEmailVerification: true` (Wave C PR2, conditional
+      // on a real email backend below) better-auth sets
+      // `shouldSkipAutoSignIn` so sign-up succeeds with
+      // `{ token: null, user }` and NO Set-Cookie — the user must
+      // verify before any session lands.
       autoSignIn: true,
       // Default off per the workstream-1 brief; flips on when the
       // `MYME_AUTH_ALLOW_SIGNUP` env var is set.
       disableSignUp: !options.allowSignup,
       // Wave C PR2: every new sign-up must verify their email before
-      // signing in. The grandfather migration (0042 PG / 0035 SQLite)
-      // marks pre-existing accounts as verified so this flip doesn't
-      // lock them out.
-      requireEmailVerification: true,
+      // signing in — but only when a real email backend is actually
+      // configured. The `none` backend (or no transport at all) would
+      // 500 every sign-up. The grandfather migration (0042 PG / 0035
+      // SQLite) marks pre-existing accounts as verified so this flip
+      // doesn't lock them out when an operator turns on a real backend.
+      requireEmailVerification: emailVerificationEnabled,
     },
-    // Wave C PR2: fire the verification email on every sign-up. The
-    // `sendVerificationEmail` hook hands off to the rich Myme transport
-    // (HTML template, idempotency key, suppression check, audit row).
+    // Wave C PR2: fire the verification email on every sign-up — but
+    // only when a real backend is configured (graceful degradation
+    // for self-hosts that haven't wired a transport yet).
     emailVerification: {
-      sendOnSignUp: true,
+      sendOnSignUp: emailVerificationEnabled,
       // 1 hour TTL on verification tokens. Long enough for the user
       // to switch to their inbox, short enough to bound the
       // single-use-token replay window.
       expiresIn: 3600,
       sendVerificationEmail: async ({ user, url }) => {
-        if (richTransport) {
-          const { html, text, subject } = renderVerifyEmailEmail({
-            url,
-            name: user.name,
-            expiresInMinutes: 60,
-          });
-          const result = await richTransport.send({
+        if (!emailVerificationEnabled || !richTransport) {
+          // Defensive: the gate above means this path only fires when
+          // an operator (or test) explicitly calls
+          // `auth.api.sendVerificationEmail` despite no real backend.
+          // Log so it's visible.
+          log("info", "verify-email (no transport configured)", {
             to: user.email,
-            subject,
-            html,
-            text,
-            // Idempotency key is per-user-per-rotation: the token
-            // changes on each resend so duplicate sends within the
-            // 24h Resend window get deduped on (user, token) tuple.
-            idempotencyKey: `verify-email/${user.id}/${url.split("token=")[1]?.split("&")[0] ?? "no-token"}`,
-            tags: { template: "verify-email" },
+            url,
+            note: "configure MYME_EMAIL_BACKEND for live delivery",
           });
-          if (!result.ok) {
-            log("warn", "verify-email send failed", {
-              to: user.email,
-              error: result.error,
-              retryable: result.retryable,
-            });
-            // Surface to better-auth so it knows the send failed.
-            // The sign-up handler awaits this in `runInBackgroundOrAwait`,
-            // so a thrown error becomes a 500-shape from sign-up.
-            throw new Error(`verify_email_send_failed:${result.error}`);
-          }
           return;
         }
-        // No rich transport configured — log the URL for dev-only
-        // visibility. Production deployments wire `mymeEmailTransport`.
-        log("info", "verify-email (log transport)", {
-          to: user.email,
+        const { html, text, subject } = renderVerifyEmailEmail({
           url,
-          note: "configure MYME_EMAIL_BACKEND for live delivery",
+          name: user.name,
+          expiresInMinutes: 60,
         });
+        const result = await richTransport.send({
+          to: user.email,
+          subject,
+          html,
+          text,
+          // Idempotency key is per-user-per-rotation: the token
+          // changes on each resend so duplicate sends within the
+          // 24h Resend window get deduped on (user, token) tuple.
+          idempotencyKey: `verify-email/${user.id}/${url.split("token=")[1]?.split("&")[0] ?? "no-token"}`,
+          tags: { template: "verify-email" },
+        });
+        if (!result.ok) {
+          log("warn", "verify-email send failed", {
+            to: user.email,
+            error: result.error,
+            retryable: result.retryable,
+          });
+          // Surface to better-auth — the sign-up handler awaits this
+          // in `runInBackgroundOrAwait`, so a thrown error becomes a
+          // 500-shape from sign-up. Loud failure when email is
+          // configured but the upstream returns an error.
+          throw new Error(`verify_email_send_failed:${result.error}`);
+        }
       },
     },
     plugins: [

@@ -66,7 +66,10 @@ async function postSignInForm(
 
 describe("Wave C PR2: verify-on-signup flow", () => {
   it("sign-up returns 302 to /auth/verify-email with no session cookie", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const res = await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",
@@ -119,7 +122,10 @@ describe("Wave C PR2: verify-on-signup flow", () => {
   });
 
   it("POST /auth/verify-email/resend redirects with sent=1", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     // Sign up first so the address is known to better-auth (the
     // soft-fail invariant means it'd 302 either way, but exercising
     // the live address proves the dispatch path).
@@ -188,7 +194,10 @@ describe("Wave C PR2: verify-on-signup flow", () => {
   });
 
   it("sign-in is blocked pre-verification, succeeds post-verification", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",

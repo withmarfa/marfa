@@ -86,7 +86,10 @@ describe("renderSignUpPage", () => {
 
 describe("GET /auth/sign-up", () => {
   it("returns 200 + text/html when allowSignup=true", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const res = await request(ctx.app, "GET", "/auth/sign-up", {
       headers: { origin: ORIGIN },
     });
@@ -105,7 +108,10 @@ describe("GET /auth/sign-up", () => {
   });
 
   it("§3.18: returns Cache-Control: no-store + Pragma: no-cache", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const res = await request(ctx.app, "GET", "/auth/sign-up", {
       headers: { origin: ORIGIN },
     });
@@ -117,7 +123,10 @@ describe("GET /auth/sign-up", () => {
   });
 
   it("preserves return_to from query in the hidden field", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const returnTo = "/auth/authorize?client_id=abc";
     const res = await request(
       ctx.app,
@@ -164,7 +173,10 @@ describe("POST /auth/sign-up (form wrapper)", () => {
   });
 
   it("redirects to error=missing_field when fields are blank", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const res = await postSignUpForm(ctx, {
       email: "",
       name: "",
@@ -177,7 +189,10 @@ describe("POST /auth/sign-up (form wrapper)", () => {
   });
 
   it("redirects to error=password_mismatch when passwords differ", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const res = await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",
@@ -190,7 +205,10 @@ describe("POST /auth/sign-up (form wrapper)", () => {
   });
 
   it("redirects to error=weak_password when password is too short", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const res = await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",
@@ -203,7 +221,10 @@ describe("POST /auth/sign-up (form wrapper)", () => {
   });
 
   it("redirects to error=email_invalid when email is malformed", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const res = await postSignUpForm(ctx, {
       email: "not-an-email",
       name: "Alice",
@@ -221,7 +242,10 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     // no Set-Cookie. Our wrapper detects the missing cookie and
     // redirects to the verify-email page so the user knows what to
     // do next.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const res = await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",
@@ -251,7 +275,10 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     // (with no cookie) so an attacker can't probe whether an address
     // has an account. Our wrapper forwards that as a verify-email
     // redirect, identical to a fresh sign-up.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const first = await postSignUpForm(ctx, {
       email: "carol@example.com",
       name: "Carol",
@@ -276,7 +303,10 @@ describe("POST /auth/sign-up (form wrapper)", () => {
   });
 
   it("rejects unsafe return_to values and falls back to / (threaded through the verify-email redirect)", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
     const res = await postSignUpForm(ctx, {
       email: "dave@example.com",
       name: "Dave",
