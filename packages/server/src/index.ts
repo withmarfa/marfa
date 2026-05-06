@@ -10,7 +10,12 @@ import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
 import { VersionThinner } from "./storage/version-thinner.js";
-import { TrashPurger, FeedExpirer } from "./storage/retention.js";
+import {
+  TrashPurger,
+  FeedExpirer,
+  runTenantCleanup,
+} from "./storage/retention.js";
+import type { TenantFanout } from "./storage/retention.js";
 import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
 import { tryStartReactiveRunBridge } from "./connections/reactive-run-bridge.js";
 import { log } from "./middleware/logger.js";
@@ -92,40 +97,71 @@ async function main() {
     );
   }
 
+  // T-050 — per-tenant retention fan-out is wired when the storage
+  // backend exposes a `tenants` store (i.e. always, in current
+  // codebase shape). The fan-out lists every tenant once per tick and
+  // runs each cleanup honouring the per-tenant override; a NULL-tenant
+  // sweep at the instance default catches single-tenant self-host
+  // items. Coordination locks are keyed per-tenant so multi-instance
+  // deployments don't double-process. Tests set `storage.tenants`
+  // explicitly for parity; production always has it.
+  const auditFanout: TenantFanout | undefined = storage.tenants
+    ? { tenants: storage.tenants, configField: "audit_retention_days" }
+    : undefined;
+  const eventLogFanout: TenantFanout | undefined = storage.tenants
+    ? { tenants: storage.tenants, configField: "event_log_retention_hours" }
+    : undefined;
+  const trashFanout: TenantFanout | undefined = storage.tenants
+    ? { tenants: storage.tenants, configField: "trash_retention_days" }
+    : undefined;
+  const feedFanout: TenantFanout | undefined = storage.tenants
+    ? { tenants: storage.tenants, configField: "feed_retention_days" }
+    : undefined;
+
   // Event log retention — clean up events older than the configured
-  // window (default 168h / 7d; override via MYME_EVENT_LOG_RETENTION_HOURS).
-  // Advisory-locked so multi-instance deployments run the sweep once per
-  // tick cluster-wide.
+  // window (default 168h / 7d; override via MYME_EVENT_LOG_RETENTION_HOURS,
+  // or per-tenant via TenantConfig.event_log_retention_hours).
+  // Advisory-locked per-tenant so multi-instance deployments run each
+  // sweep once per tick cluster-wide.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
   const runEventLogCleanup = () => {
-    void storage.coordination
-      .withJobLock("event-log-cleanup", () =>
-        storage.eventLog.cleanup(eventLogRetentionHours),
-      )
-      .then((deleted) => {
-        if (deleted !== undefined && deleted > 0)
-          log(
-            "info",
-            `Purged ${String(deleted)} event_log entries older than ${String(eventLogRetentionHours)} hours`,
-          );
-      });
+    void runTenantCleanup({
+      jobName: "event-log-cleanup",
+      coordination: storage.coordination,
+      fanout: eventLogFanout,
+      instanceDefault: eventLogRetentionHours,
+      unitMs: 3_600_000,
+      sweep: (retention, tenantId) =>
+        storage.eventLog.cleanup(retention, tenantId),
+    }).then((deleted) => {
+      if (deleted > 0)
+        log(
+          "info",
+          `Purged ${String(deleted)} event_log entries (instance default: ${String(eventLogRetentionHours)} hours; per-tenant overrides honoured)`,
+        );
+    });
   };
   const eventLogCleanupDelay = setTimeout(runEventLogCleanup, 10_000);
   const eventLogCleanupInterval = setInterval(runEventLogCleanup, 3_600_000);
 
-  // Audit retention — run once after startup, then on a daily schedule
+  // Audit retention — run once after startup, then on a daily schedule.
+  // Per-tenant overrides via TenantConfig.audit_retention_days.
   const runAuditCleanup = () => {
-    void storage.coordination
-      .withJobLock("audit-cleanup", () =>
-        storage.audit.cleanup(config.auditRetentionDays),
-      )
-      .then((deleted) => {
-        if (deleted !== undefined && deleted > 0)
-          log(
-            "info",
-            `Purged ${String(deleted)} audit entries older than ${String(config.auditRetentionDays)} days`,
-          );
-      });
+    void runTenantCleanup({
+      jobName: "audit-cleanup",
+      coordination: storage.coordination,
+      fanout: auditFanout,
+      instanceDefault: config.auditRetentionDays,
+      unitMs: 86_400_000,
+      sweep: (retention, tenantId) =>
+        storage.audit.cleanup(retention, tenantId),
+    }).then((deleted) => {
+      if (deleted > 0)
+        log(
+          "info",
+          `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; per-tenant overrides honoured)`,
+        );
+    });
   };
   const auditCleanupDelay = setTimeout(runAuditCleanup, 5_000);
   const auditCleanupInterval = setInterval(
@@ -161,6 +197,7 @@ async function main() {
     config.trashPurgeIntervalMs,
     undefined,
     storage.coordination,
+    trashFanout,
   );
   trashPurger.start();
 
@@ -170,6 +207,7 @@ async function main() {
     config.feedExpiryIntervalMs,
     undefined,
     storage.coordination,
+    feedFanout,
   );
   feedExpirer.start();
 

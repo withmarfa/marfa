@@ -88,6 +88,23 @@ The Drizzle PG instance is wrapped in a per-request context proxy (`storage/pg/r
 - **Better Auth** — `storage.betterAuthDb` is the unwrapped base instance. The auth library manages its own connection context outside the data-plane request middleware; auth tables (`auth_*`) carry no RLS.
 - **Streaming responses** — `/events` (SSE) and `/export` (NDJSON archive) hold the response open for arbitrary durations; wrapping them in a transaction would hold a pool connection for the same duration. Bypassed by URL prefix. Both are reads with application-layer tenant scoping; RLS depth-of-defence on those endpoints is a deliberate follow-on.
 
+## Per-tenant background cleanup (T-050)
+
+Four cleanup jobs (`TrashPurger`, `FeedExpirer`, audit cleanup, event-log cleanup) fan out per-tenant. Each tick the job lists every tenant via `TenantStore.list()`, resolves the effective retention (per-tenant `TenantConfig` override OR env default), and runs the cleanup once per tenant scope plus once for the NULL-tenant bucket (single-tenant self-host items + any unscoped legacy rows).
+
+Per-tenant overrides on `TenantConfig`:
+
+- `audit_retention_days` — overrides `AUDIT_RETENTION_DAYS`.
+- `event_log_retention_hours` — overrides `MYME_EVENT_LOG_RETENTION_HOURS`.
+- `trash_retention_days` — overrides `TRASH_RETENTION_DAYS`.
+- `feed_retention_days` — overrides `FEED_RETENTION_DAYS`.
+
+`0` disables the job for that tenant — matches the env-default semantics for `TRASH_RETENTION_DAYS=0` / `FEED_RETENTION_DAYS=0`. Negatives are rejected at write.
+
+Coordination locks are keyed per-tenant (`<jobName>:<tenant-id>`, plus `<jobName>:_no_tenant` for the NULL bucket) so multi-instance deployments don't double-process a single tenant. Cost is O(tenants) per cleanup tick — cleanup is off the request hot path, so the unbounded scan is acceptable at the scale we're targeting.
+
+The `runTenantCleanup` helper in `storage/retention.ts` is the shared fan-out runner; the in-class `TrashPurger.runOnce` / `FeedExpirer.runOnce` accept an optional `TenantFanout` config that wires the same fan-out semantics for the items-table jobs.
+
 ## Per-tenant quotas (T-052)
 
 Per-tenant resource ceilings are stored in `tenant_quotas` (PK `tenant_id`); missing rows / NULL columns fall back to env defaults (`MYME_DEFAULT_QUOTA_*`). Counts are computed on-demand via `COUNT(*)` on the underlying tables at quota-check time — no eager-increment / reconcile machinery in this PR (the eager path is a follow-on once load measurement justifies the complexity).

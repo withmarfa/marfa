@@ -1,4 +1,4 @@
-import { eq, and, desc, lt, or, gte, lte } from "drizzle-orm";
+import { eq, and, desc, lt, or, gte, lte, isNull } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { PaginatedResult } from "@mymehq/shared";
 import type { AuditStore, AuditEntry } from "../interface.js";
@@ -132,13 +132,30 @@ export class PgAuditStore implements AuditStore {
     return { data, cursor: nextCursor, has_more: hasMore };
   }
 
-  async cleanup(retentionDays: number): Promise<number> {
+  async cleanup(
+    retentionDays: number,
+    tenantId?: string | null,
+  ): Promise<number> {
     const cutoff = new Date(
       Date.now() - retentionDays * 24 * 60 * 60 * 1000,
     ).toISOString();
+    // T-050 — three filter shapes:
+    //   undefined → every row older than cutoff
+    //   string    → tenant_id = X
+    //   null      → tenant_id IS NULL
+    const tenantClause =
+      tenantId === undefined
+        ? undefined
+        : tenantId === null
+          ? isNull(auditLog.tenant_id)
+          : eq(auditLog.tenant_id, tenantId);
+    const where =
+      tenantClause === undefined
+        ? lt(auditLog.timestamp, cutoff)
+        : and(lt(auditLog.timestamp, cutoff), tenantClause);
     const rows = await this.db
       .delete(auditLog)
-      .where(lt(auditLog.timestamp, cutoff))
+      .where(where)
       .returning({ id: auditLog.id });
     return rows.length;
   }

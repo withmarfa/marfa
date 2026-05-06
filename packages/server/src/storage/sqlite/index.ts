@@ -98,9 +98,15 @@ export function createSqliteStorage(
     settings: new SqliteSettingsStore(db),
     coordination: new SqliteCoordinationStore(),
     tenantQuotas: new SqliteTenantQuotaStore(db),
+    // T-050: tenant store is wired unconditionally so the per-tenant
+    // cleanup fan-out works on any deployment, including keys-mode
+    // self-hosts that have explicitly created tenant rows. The hosted-
+    // mode gate previously here was stale — the store is harmless in
+    // single-tenant deployments (it just lists zero tenants and the
+    // cleanup falls through to the NULL-bucket sweep).
+    tenants: new SqliteTenantStore(db),
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),
-      tenants: new SqliteTenantStore(db),
     }),
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
       // better-sqlite3 transactions are synchronous. For sync callbacks,

@@ -12,6 +12,7 @@ import {
   like,
   sql,
   inArray,
+  isNull,
 } from "drizzle-orm";
 import {
   generateId,
@@ -588,13 +589,16 @@ export class PgItemStore implements ItemStore {
 
   async purgeTrashedOlderThan(
     beforeDate: string,
-    tenantId?: string,
+    tenantId?: string | null,
   ): Promise<number> {
     const baseConditions = [
       eq(items.state, "trashed"),
       lt(items.updated_at, beforeDate),
     ];
-    if (tenantId) {
+    // T-050 — tenantId === null filters to rows where tenant_id IS NULL.
+    if (tenantId === null) {
+      baseConditions.push(isNull(items.tenant_id));
+    } else if (tenantId !== undefined) {
       baseConditions.push(eq(items.tenant_id, tenantId));
     }
     const where = and(...baseConditions);
@@ -615,13 +619,15 @@ export class PgItemStore implements ItemStore {
 
   async expireFeedOlderThan(
     beforeDate: string,
-    tenantId?: string,
+    tenantId?: string | null,
   ): Promise<number> {
     const baseConditions = [
       eq(items.tier, "feed"),
       lt(items.updated_at, beforeDate),
     ];
-    if (tenantId) {
+    if (tenantId === null) {
+      baseConditions.push(isNull(items.tenant_id));
+    } else if (tenantId !== undefined) {
       baseConditions.push(eq(items.tenant_id, tenantId));
     }
     const where = and(...baseConditions);

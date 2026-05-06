@@ -26,6 +26,15 @@ export class SqliteTenantStore implements TenantStore {
     return { id: row.id, name: row.name, created_at: row.created_at };
   }
 
+  async list(): Promise<Tenant[]> {
+    const rows = this.db.select().from(tenants).all();
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      created_at: row.created_at,
+    }));
+  }
+
   async getConfig(id: string): Promise<TenantConfig | null> {
     const row = this.db
       .select({ config: tenants.config })
