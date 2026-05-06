@@ -213,7 +213,16 @@ export function createApp(
       rateLimitMiddleware({
         defaultLimit: config.rateLimitDefaultLimit,
         windowMs: config.rateLimitWindowMs,
-        pathLimits: { "/keys": 200, "/auth/token": 20 },
+        pathLimits: {
+          "/keys": 200,
+          "/auth/token": 20,
+          // Wave C PR3 / T-033: per-IP caps on auth abuse-prone
+          // surfaces. Per-email throttle on `/auth/forgot-password`
+          // is enforced inside the route handler (3/hour per email).
+          "/auth/forgot-password": 30,
+          "/auth/sign-up": 30,
+          "/auth/sign-in/magic-link": 30,
+        },
         trustedProxyCidrs: config.trustedProxyCidrs,
         // T-052 follow-on (Wave B Part 2): per-tenant rate ceiling on
         // top of the per-credential window. Reads

@@ -73,6 +73,49 @@ export async function markEmailVerified(
   }
 }
 
+/**
+ * Wave C PR3 / T-033 test helper. Reads the latest reset-password
+ * verification token from `auth_verification`. Better-auth keys these
+ * rows as `identifier = "reset-password:${token}"` and `value =
+ * userId`. Returns the most-recently-created token across any user;
+ * tests typically have one in flight at a time. Returns `null` when
+ * no row matches.
+ *
+ * The hook in `instance.ts` builds the email URL itself, so tests
+ * can't intercept the HTTP send — instead they read the token from
+ * the DB and submit it through the same `POST /auth/reset-password`
+ * the user would.
+ */
+export async function readLatestResetToken(
+  storage: Storage,
+): Promise<string | null> {
+  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  if (dialect === "pg") {
+    const pg = storage as unknown as {
+      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
+    };
+    if (!pg.__pgClient) return null;
+    const rows = (await pg.__pgClient(
+      `SELECT identifier FROM auth_verification
+        WHERE identifier LIKE 'reset-password:%'
+        ORDER BY created_at DESC LIMIT 1`,
+    )) as { identifier: string }[];
+    if (rows.length === 0) return null;
+    return rows[0]?.identifier.slice("reset-password:".length) ?? null;
+  }
+  const sqlite = storage as unknown as {
+    __sqliteAll?: (q: string) => unknown[];
+  };
+  if (!sqlite.__sqliteAll) return null;
+  const rows = sqlite.__sqliteAll(
+    `SELECT identifier FROM auth_verification
+      WHERE identifier LIKE 'reset-password:%'
+      ORDER BY created_at DESC LIMIT 1`,
+  ) as { identifier: string }[];
+  if (rows.length === 0) return null;
+  return rows[0]?.identifier.slice("reset-password:".length) ?? null;
+}
+
 export async function createTestContext(
   overrides?: Partial<AppConfig>,
 ): Promise<TestContext> {

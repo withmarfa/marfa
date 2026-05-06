@@ -7,6 +7,7 @@ import * as pgSchema from "../storage/pg/schema.js";
 import { log } from "../middleware/logger.js";
 import type { EmailTransport as MymeEmailTransport } from "../email/transport.js";
 import { renderMagicLinkEmail } from "./email-templates/magic-link.js";
+import { renderResetPasswordEmail } from "./email-templates/reset-password.js";
 import { renderVerifyEmailEmail } from "./email-templates/verify-email.js";
 
 /**
@@ -220,6 +221,67 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
       // SQLite) marks pre-existing accounts as verified so this flip
       // doesn't lock them out when an operator turns on a real backend.
       requireEmailVerification: emailVerificationEnabled,
+      // Wave C PR3 / T-033: 1h reset-token TTL. Long enough for a
+      // user to switch tabs / inboxes, short enough to bound the
+      // single-use replay window.
+      resetPasswordTokenExpiresIn: 3600,
+      // Wave C PR3: revoke every other session on password reset.
+      // The user is reauthenticated on the reset surface itself; any
+      // pre-existing devices need to re-sign-in. Useful belt against
+      // a session that's already drifted somewhere unexpected.
+      revokeSessionsOnPasswordReset: true,
+      // Wave C PR3 / T-033: send the password-reset email through
+      // the rich Myme transport. The hook overrides better-auth's
+      // default URL to point at our themed `/auth/reset-password`
+      // page directly (skipping better-auth's intermediate GET that
+      // redirects to a callbackURL). Token validation happens on
+      // the POST handler — invalid / expired tokens render our
+      // failure state.
+      sendResetPassword: async ({ user, token }) => {
+        const ourUrl = `${options.baseURL.replace(/\/$/, "")}/auth/reset-password?token=${encodeURIComponent(token)}`;
+        if (richTransport && richTransport.backend !== "none") {
+          const { html, text, subject } = renderResetPasswordEmail({
+            url: ourUrl,
+            name: user.name,
+            expiresInMinutes: 60,
+          });
+          const result = await richTransport.send({
+            to: user.email,
+            subject,
+            html,
+            text,
+            // Idempotency on the token (single-use, rotates on
+            // each request) so duplicate sends within Resend's 24h
+            // dedupe window collapse.
+            idempotencyKey: `reset-password/${user.id}/${token}`,
+            tags: { template: "reset-password" },
+          });
+          if (!result.ok) {
+            log("warn", "reset-password send failed", {
+              to: user.email,
+              error: result.error,
+              retryable: result.retryable,
+            });
+            // Throw — better-auth awaits this in
+            // `runInBackgroundOrAwait`, so the error becomes a
+            // 500-shape from `request-password-reset`. The route
+            // wrapper still 302s with a soft-fail success to keep
+            // the no-enumeration invariant; this throw surfaces in
+            // the audit trail.
+            throw new Error(`reset_password_send_failed:${result.error}`);
+          }
+          return;
+        }
+        // No real backend — log for dev visibility and let the
+        // wrapper render the soft-fail success regardless. The
+        // user can't actually reset, but neither can an attacker
+        // discover that the address has an account.
+        log("info", "reset-password (no transport configured)", {
+          to: user.email,
+          url: ourUrl,
+          note: "configure MYME_EMAIL_BACKEND for live delivery",
+        });
+      },
     },
     // Wave C PR2: fire the verification email on every sign-up — but
     // only when a real backend is configured (graceful degradation
