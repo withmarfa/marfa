@@ -853,10 +853,7 @@ export interface AuditStore {
    *
    * Returns the number of rows actually deleted.
    */
-  cleanup(
-    retentionDays: number,
-    tenantId?: string | null,
-  ): Promise<number>;
+  cleanup(retentionDays: number, tenantId?: string | null): Promise<number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -915,10 +912,7 @@ export interface EventLogStore {
    * sweeps everything, a string scopes to that tenant, `null` scopes
    * to rows whose `tenant_id IS NULL`. Returns count deleted.
    */
-  cleanup(
-    retentionHours: number,
-    tenantId?: string | null,
-  ): Promise<number>;
+  cleanup(retentionHours: number, tenantId?: string | null): Promise<number>;
 
   /** Smallest surviving event id, scoped to a tenant when provided.
    *  Returns null when no events match. Used by the SSE route to

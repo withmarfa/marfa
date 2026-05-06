@@ -1,8 +1,4 @@
-import type {
-  CoordinationStore,
-  ItemStore,
-  TenantStore,
-} from "./interface.js";
+import type { CoordinationStore, ItemStore, TenantStore } from "./interface.js";
 import type { TenantConfig } from "@mymehq/shared";
 import { log } from "../middleware/logger.js";
 

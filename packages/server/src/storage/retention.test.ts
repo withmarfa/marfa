@@ -1,11 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import {
-  TrashPurger,
-  FeedExpirer,
-  runTenantCleanup,
-} from "./retention.js";
+import { TrashPurger, FeedExpirer, runTenantCleanup } from "./retention.js";
 import type { TenantFanout } from "./retention.js";
 
 let ctx: TestContext;
