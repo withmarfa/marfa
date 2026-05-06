@@ -39,6 +39,14 @@ import type {
 import type { ItemStore, ItemFilters } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { detectConflict } from "../conflict.js";
+// T-015: when an items.* method opens a transaction and subsequently
+// calls searchStore.{index,remove}, the searchStore writes need to
+// flow through the same connection as the parent INSERT/UPDATE — or
+// they block on the row lock the parent holds. Installing `tx` in
+// the ALS at the start of the tx callback makes the proxy route the
+// searchStore's `db.execute(...)` through the same tx. Same mechanic
+// as the T-025 RLS middleware uses for inbound requests.
+import { pgRequestContext } from "./request-context.js";
 import { items, metadata } from "./schema.js";
 import type { PgDb } from "./connection.js";
 import type { PgVersionStore } from "./version-store.js";
@@ -81,76 +89,81 @@ export class PgItemStore implements ItemStore {
     const state = input.state ?? SYSTEM_DEFAULT_STATE;
 
     return await this.db.transaction(async (tx) => {
-      if (input.source && input.source_id) {
-        const dedupConditions = [
-          eq(items.source, input.source),
-          eq(items.source_id, input.source_id),
-        ];
-        if (tenantId) dedupConditions.push(eq(items.tenant_id, tenantId));
-        const [existing] = await tx
-          .select({ id: items.id })
-          .from(items)
-          .where(and(...dedupConditions));
-        if (existing) {
-          throw new MymeError(
-            ErrorCode.DUPLICATE_SOURCE,
-            `Item with source=${input.source} source_id=${input.source_id} already exists`,
-            { existing_id: existing.id },
-          );
+      // T-015: install tx in ALS so searchStore.index uses the same
+      // connection. Otherwise the proxy falls through to baseDb and
+      // the search-vector UPDATE blocks on the parent INSERT's lock.
+      return pgRequestContext.run({ tx }, async () => {
+        if (input.source && input.source_id) {
+          const dedupConditions = [
+            eq(items.source, input.source),
+            eq(items.source_id, input.source_id),
+          ];
+          if (tenantId) dedupConditions.push(eq(items.tenant_id, tenantId));
+          const [existing] = await tx
+            .select({ id: items.id })
+            .from(items)
+            .where(and(...dedupConditions));
+          if (existing) {
+            throw new MymeError(
+              ErrorCode.DUPLICATE_SOURCE,
+              `Item with source=${input.source} source_id=${input.source_id} already exists`,
+              { existing_id: existing.id },
+            );
+          }
         }
-      }
 
-      const schemaVersion = getTypeSchema(input.type)?.version ?? 1;
+        const schemaVersion = getTypeSchema(input.type)?.version ?? 1;
 
-      await tx.insert(items).values({
-        id,
-        tenant_id: tenantId,
-        type: input.type,
-        state,
-        tier: input.tier ?? "library",
-        properties: JSON.stringify(input.properties),
-        created_at: now,
-        updated_at: now,
-        timestamp: input.timestamp ?? now,
-        source: input.source,
-        source_id: input.source_id,
-        origin: input.origin,
-        version: 1,
-        schema_version: schemaVersion,
-        device: input.device,
-        capture_latitude: input.capture_latitude,
-        capture_longitude: input.capture_longitude,
-      });
-
-      await tx.insert(metadata).values({
-        item_id: id,
-        tags: JSON.stringify(input.tags ?? []),
-      });
-
-      await this.searchStore.index(id, input.properties, input.type);
-
-      return {
-        id,
-        type: input.type,
-        state: state,
-        tier: input.tier ?? "library",
-        properties: input.properties,
-        created_at: now,
-        updated_at: now,
-        timestamp: input.timestamp ?? now,
-        version: 1,
-        schema_version: schemaVersion,
-        source: input.source ?? "unknown",
-        ...(input.source_id != null && { source_id: input.source_id }),
-        origin: input.origin ?? "user",
-        ...(input.device != null && { device: input.device }),
-        ...(input.capture_latitude != null && {
+        await tx.insert(items).values({
+          id,
+          tenant_id: tenantId,
+          type: input.type,
+          state,
+          tier: input.tier ?? "library",
+          properties: JSON.stringify(input.properties),
+          created_at: now,
+          updated_at: now,
+          timestamp: input.timestamp ?? now,
+          source: input.source,
+          source_id: input.source_id,
+          origin: input.origin,
+          version: 1,
+          schema_version: schemaVersion,
+          device: input.device,
           capture_latitude: input.capture_latitude,
-        }),
-        ...(input.capture_longitude != null && {
           capture_longitude: input.capture_longitude,
-        }),
-      } satisfies Item;
+        });
+
+        await tx.insert(metadata).values({
+          item_id: id,
+          tags: JSON.stringify(input.tags ?? []),
+        });
+
+        await this.searchStore.index(id, input.properties, input.type);
+
+        return {
+          id,
+          type: input.type,
+          state: state,
+          tier: input.tier ?? "library",
+          properties: input.properties,
+          created_at: now,
+          updated_at: now,
+          timestamp: input.timestamp ?? now,
+          version: 1,
+          schema_version: schemaVersion,
+          source: input.source ?? "unknown",
+          ...(input.source_id != null && { source_id: input.source_id }),
+          origin: input.origin ?? "user",
+          ...(input.device != null && { device: input.device }),
+          ...(input.capture_latitude != null && {
+            capture_latitude: input.capture_latitude,
+          }),
+          ...(input.capture_longitude != null && {
+            capture_longitude: input.capture_longitude,
+          }),
+        } satisfies Item;
+      });
     });
   }
 
@@ -379,34 +392,128 @@ export class PgItemStore implements ItemStore {
     tenantId?: string,
   ): Promise<Item | ConflictResponse> {
     return await this.db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(items)
-        .where(this.tenantWhere(id, tenantId));
-      if (!row) {
-        throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
-      }
-      if (row.state === "trashed") {
-        throw new MymeError(
-          ErrorCode.INVALID_TRANSITION,
-          "Cannot update trashed item",
+      // T-015: same tx-context propagation as create() — searchStore.{index,remove}
+      // calls inside this block need the parent tx in ALS.
+      return pgRequestContext.run({ tx }, async () => {
+        const [row] = await tx
+          .select()
+          .from(items)
+          .where(this.tenantWhere(id, tenantId));
+        if (!row) {
+          throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+        }
+        if (row.state === "trashed") {
+          throw new MymeError(
+            ErrorCode.INVALID_TRANSITION,
+            "Cannot update trashed item",
+          );
+        }
+
+        const currentProps = safeJsonParse<Record<string, unknown>>(
+          row.properties,
+          {},
+          "item update properties",
         );
-      }
+        const now = new Date().toISOString();
+        const deviceId = row.device ?? undefined;
 
-      const currentProps = safeJsonParse<Record<string, unknown>>(
-        row.properties,
-        {},
-        "item update properties",
-      );
-      const now = new Date().toISOString();
-      const deviceId = row.device ?? undefined;
+        // Fast path: version omitted — always merge, no conflict detection
+        if (input.version === undefined || row.version === input.version) {
+          const latestTs = await this.versionStore.getLatestTimestamp(id, tx);
+          if (
+            shouldCreateVersion(
+              latestTs,
+              this.versionSnapshotIntervalMs,
+              false,
+              input.snapshot === true,
+            )
+          ) {
+            await this.versionStore.create(
+              id,
+              row.version,
+              currentProps,
+              deviceId,
+              tx,
+            );
+          }
 
-      // Fast path: version omitted — always merge, no conflict detection
-      if (input.version === undefined || row.version === input.version) {
-        const latestTs = await this.versionStore.getLatestTimestamp(id, tx);
+          const merged = input.properties
+            ? { ...currentProps, ...input.properties }
+            : currentProps;
+          const newVersion = row.version + 1;
+          const newTier = input.tier ?? row.tier;
+
+          const setClause: Record<string, unknown> = {
+            properties: JSON.stringify(merged),
+            version: newVersion,
+            updated_at: now,
+            ...(input.tier !== undefined && { tier: input.tier }),
+            ...(input.timestamp !== undefined && {
+              timestamp: input.timestamp,
+            }),
+          };
+
+          await tx
+            .update(items)
+            .set(setClause)
+            .where(this.tenantWhere(id, tenantId));
+
+          await this.searchStore.remove(id);
+          await this.searchStore.index(id, merged, row.type);
+
+          return rowToItem({
+            ...row,
+            properties: JSON.stringify(merged),
+            version: newVersion,
+            updated_at: now,
+            tier: newTier,
+          });
+        }
+
+        // Conflict detection path — look up the ancestor version
+        const ancestor = await this.versionStore.getByVersion(
+          id,
+          input.version,
+          tx,
+        );
+
+        if (!ancestor) {
+          return {
+            error: { code: "version_conflict" as const, status: 409 as const },
+            current: { version: row.version, properties: currentProps },
+            ancestor: { version: input.version, properties: {} },
+            conflicting_fields: Object.keys(input.properties ?? {}),
+            merge_policy: resolveMergePolicy(row.type, TYPE_REGISTRY),
+          } satisfies ConflictResponse;
+        }
+
+        const result = detectConflict({
+          clientProperties: input.properties ?? {},
+          currentProperties: currentProps,
+          ancestorProperties: ancestor.properties,
+        });
+
+        if (result.type === "conflict") {
+          return {
+            error: { code: "version_conflict" as const, status: 409 as const },
+            current: { version: row.version, properties: currentProps },
+            ancestor: {
+              version: input.version,
+              properties: ancestor.properties,
+            },
+            conflicting_fields: result.conflicting_fields,
+            merge_policy: resolveMergePolicy(row.type, TYPE_REGISTRY),
+          } satisfies ConflictResponse;
+        }
+
+        // Auto-merge
+        const mergeLatestTs = await this.versionStore.getLatestTimestamp(
+          id,
+          tx,
+        );
         if (
           shouldCreateVersion(
-            latestTs,
+            mergeLatestTs,
             this.versionSnapshotIntervalMs,
             false,
             input.snapshot === true,
@@ -420,15 +527,11 @@ export class PgItemStore implements ItemStore {
             tx,
           );
         }
-
-        const merged = input.properties
-          ? { ...currentProps, ...input.properties }
-          : currentProps;
         const newVersion = row.version + 1;
         const newTier = input.tier ?? row.tier;
 
-        const setClause: Record<string, unknown> = {
-          properties: JSON.stringify(merged),
+        const mergeSet: Record<string, unknown> = {
+          properties: JSON.stringify(result.merged),
           version: newVersion,
           updated_at: now,
           ...(input.tier !== undefined && { tier: input.tier }),
@@ -437,100 +540,19 @@ export class PgItemStore implements ItemStore {
 
         await tx
           .update(items)
-          .set(setClause)
+          .set(mergeSet)
           .where(this.tenantWhere(id, tenantId));
 
         await this.searchStore.remove(id);
-        await this.searchStore.index(id, merged, row.type);
+        await this.searchStore.index(id, result.merged, row.type);
 
         return rowToItem({
           ...row,
-          properties: JSON.stringify(merged),
+          properties: JSON.stringify(result.merged),
           version: newVersion,
           updated_at: now,
           tier: newTier,
         });
-      }
-
-      // Conflict detection path — look up the ancestor version
-      const ancestor = await this.versionStore.getByVersion(
-        id,
-        input.version,
-        tx,
-      );
-
-      if (!ancestor) {
-        return {
-          error: { code: "version_conflict" as const, status: 409 as const },
-          current: { version: row.version, properties: currentProps },
-          ancestor: { version: input.version, properties: {} },
-          conflicting_fields: Object.keys(input.properties ?? {}),
-          merge_policy: resolveMergePolicy(row.type, TYPE_REGISTRY),
-        } satisfies ConflictResponse;
-      }
-
-      const result = detectConflict({
-        clientProperties: input.properties ?? {},
-        currentProperties: currentProps,
-        ancestorProperties: ancestor.properties,
-      });
-
-      if (result.type === "conflict") {
-        return {
-          error: { code: "version_conflict" as const, status: 409 as const },
-          current: { version: row.version, properties: currentProps },
-          ancestor: {
-            version: input.version,
-            properties: ancestor.properties,
-          },
-          conflicting_fields: result.conflicting_fields,
-          merge_policy: resolveMergePolicy(row.type, TYPE_REGISTRY),
-        } satisfies ConflictResponse;
-      }
-
-      // Auto-merge
-      const mergeLatestTs = await this.versionStore.getLatestTimestamp(id, tx);
-      if (
-        shouldCreateVersion(
-          mergeLatestTs,
-          this.versionSnapshotIntervalMs,
-          false,
-          input.snapshot === true,
-        )
-      ) {
-        await this.versionStore.create(
-          id,
-          row.version,
-          currentProps,
-          deviceId,
-          tx,
-        );
-      }
-      const newVersion = row.version + 1;
-      const newTier = input.tier ?? row.tier;
-
-      const mergeSet: Record<string, unknown> = {
-        properties: JSON.stringify(result.merged),
-        version: newVersion,
-        updated_at: now,
-        ...(input.tier !== undefined && { tier: input.tier }),
-        ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
-      };
-
-      await tx
-        .update(items)
-        .set(mergeSet)
-        .where(this.tenantWhere(id, tenantId));
-
-      await this.searchStore.remove(id);
-      await this.searchStore.index(id, result.merged, row.type);
-
-      return rowToItem({
-        ...row,
-        properties: JSON.stringify(result.merged),
-        version: newVersion,
-        updated_at: now,
-        tier: newTier,
       });
     });
   }
@@ -580,12 +602,11 @@ export class PgItemStore implements ItemStore {
       ).map((row) => row.id);
       if (scopedIds.length === 0) return 0;
 
-      // No-op on Postgres (tsvector is computed at query time), but kept
-      // to mirror the SQLite path and stay correct if the search store
-      // ever materialises rows.
-      for (const id of scopedIds) {
-        await this.searchStore.remove(id);
-      }
+      // T-015: search_vector lives on items as a column; the DELETE
+      // below cascades it. No need to call searchStore.remove explicitly
+      // (each call would be a redundant UPDATE and a per-id round-trip).
+      // SQLite's path keeps the explicit remove because items_fts is a
+      // separate FTS5 virtual table — different storage class.
       await tx.delete(items).where(inArray(items.id, scopedIds));
       return scopedIds.length;
     });
@@ -612,10 +633,7 @@ export class PgItemStore implements ItemStore {
       if (idRows.length === 0) return 0;
 
       const ids = idRows.map((row) => row.id);
-      // No-op on Postgres — see bulkPurge.
-      for (const id of ids) {
-        await this.searchStore.remove(id);
-      }
+      // T-015: search_vector cascades with the items row — see bulkPurge.
       await tx.delete(items).where(inArray(items.id, ids));
       return ids.length;
     });
@@ -641,10 +659,7 @@ export class PgItemStore implements ItemStore {
       if (idRows.length === 0) return 0;
 
       const ids = idRows.map((row) => row.id);
-      // No-op on Postgres — see bulkPurge.
-      for (const id of ids) {
-        await this.searchStore.remove(id);
-      }
+      // T-015: search_vector cascades with the items row — see bulkPurge.
       await tx.delete(items).where(inArray(items.id, ids));
       return ids.length;
     });

@@ -1,50 +1,13 @@
-import {
-  parseFilter,
-  getSearchableStringFields,
-  type SearchResult,
-} from "@mymehq/shared";
+import { parseFilter, type SearchResult } from "@mymehq/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql } from "../filter-sql.js";
 import type { RawDb } from "./connection.js";
 import { rowToItem, rowToMetadata } from "./helpers.js";
 import type { items } from "./schema.js";
-
-// Fields to extract from properties for full-text indexing
-const FTS_FIELDS = ["title", "body", "description", "name"] as const;
-
-function extractSearchableText(
-  properties: Record<string, unknown>,
-  typeId?: string,
-): {
-  title: string;
-  body: string;
-  description: string;
-  name: string;
-  extra: string;
-} {
-  const result: Record<string, string> = {};
-  for (const field of FTS_FIELDS) {
-    const value = properties[field];
-    result[field] = typeof value === "string" ? value : "";
-  }
-  // Concatenate custom string fields for the extra column
-  const extraFields = typeId ? getSearchableStringFields(typeId) : [];
-  const extraParts: string[] = [];
-  for (const field of extraFields) {
-    const value = properties[field];
-    if (typeof value === "string" && value) {
-      extraParts.push(value);
-    }
-  }
-  result.extra = extraParts.join(" ");
-  return result as {
-    title: string;
-    body: string;
-    description: string;
-    name: string;
-    extra: string;
-  };
-}
+// T-015: shared FTS text extractor — both dialects consult this so
+// the indexed surface is identical (same fields, same `searchable: false`
+// opt-outs, same long-tail ordering).
+import { extractSearchableText } from "../search-text.js";
 
 /**
  * Build an FTS5 query with prefix matching on the last token.

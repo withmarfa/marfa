@@ -118,6 +118,19 @@ OAuth tokens are issued with scopes parsed by `parseScope` in `@mymehq/shared`. 
 
 **Force re-consent on T-045 deploy.** The pre-T-045 regime had most scopes parsed-but-not-gated; tokens issued under that regime carry consent-screen wording the system didn't honour. Forward-compat would mask the new enforcement against existing tokens. The honest path is `pnpm --filter @mymehq/server tsx src/scripts/revoke-oauth-grants-t045.ts --dialect=<sqlite|pg>` — flips every active `user-app-grant` to revoked, cascades through `oauth.revokeGrantTokens`, and writes a per-revocation audit row stamped `{ action: "key.revoke", details: { reason: "scope_grammar_enforcement", ticket: "T-045" } }` so operators have an attributable trail. Idempotent — re-running over already-revoked grants is a no-op. Users re-grant via the existing consent screen.
 
+## FTS dialect parity (T-015)
+
+Both dialects index the same set of property fields and respect the same per-type opt-out. The dialect-agnostic helper `extractSearchableText` in `storage/search-text.ts` is the single source of truth for "what text contributes to FTS for this item."
+
+- **SQLite** uses an FTS5 virtual table (`items_fts`) populated at write time by `SqliteSearchStore.indexSync` / `removeSync`. Five columns: `title`, `body`, `description`, `name`, `extra`. The `extra` column concatenates every other string-typed field declared on the type that isn't `searchable: false`.
+- **Postgres** uses a materialised `tsvector` column (`items.search_vector`) populated at write time by `PgSearchStore.index` / `remove` via the same shared text extractor. The column is GIN-indexed (`idx_items_search_vector`); the search query reads the column directly instead of computing `to_tsvector(...)` at query time over the JSON.
+
+`searchable: false` on a type's `FieldDefinition` opts the field out of FTS for both dialects. The flag is honoured for the four core fields (title, body, description, name) via `isFieldSearchableExcluded` and for the long tail via `getSearchableStringFields`. Defaults to `true` (searchable) for backward compatibility — existing types without the flag keep their pre-T-015 behaviour.
+
+`PgSearchStore` writes go through the request-context-aware Drizzle instance (`db.execute(sql\`...\`)`) so an `index()`call inside a`db.transaction(...)` runs on the same reserved connection as the parent INSERT/UPDATE — atomicity preserved. Reads (the search query) use the bare client; search isn't typically nested in a write transaction.
+
+The PG migration set is two steps: `0038_items_search_vector.sql` adds the column + index, `0039_backfill_items_search_vector.sql` populates `search_vector` for every existing row using the same field set as the write-time indexer. Pre-T-015 deployments running the migrator catch up cleanly. The backfill doesn't consult per-type `searchable: false` opt-outs (those are TS-side metadata) — pre-existing rows surface a slightly broader vector than their type metadata implies until the next write rewrites them; never narrower.
+
 ## Per-tenant quotas (T-052)
 
 Per-tenant resource ceilings are stored in `tenant_quotas` (PK `tenant_id`); missing rows / NULL columns fall back to env defaults (`MYME_DEFAULT_QUOTA_*`). Counts are computed on-demand via `COUNT(*)` on the underlying tables at quota-check time — no eager-increment / reconcile machinery in this PR (the eager path is a follow-on once load measurement justifies the complexity).
