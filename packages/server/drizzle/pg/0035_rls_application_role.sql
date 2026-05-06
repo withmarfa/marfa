@@ -96,15 +96,18 @@ CREATE POLICY "edges_tenant_isolation" ON "edges"
          OR tenant_id IS NULL);
 --> statement-breakpoint
 
--- versions
+-- versions — keyed on item_id, no tenant_id column. Policy joins via items.
 ALTER TABLE "versions" ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 DROP POLICY IF EXISTS "versions_tenant_isolation" ON "versions";
 --> statement-breakpoint
 CREATE POLICY "versions_tenant_isolation" ON "versions"
   FOR ALL TO "myme_app"
-  USING (tenant_id::text = current_setting('myme.tenant_id', true)
-         OR tenant_id IS NULL);
+  USING (EXISTS (
+    SELECT 1 FROM "items" WHERE "items".id = "versions".item_id
+      AND ("items".tenant_id::text = current_setting('myme.tenant_id', true)
+           OR "items".tenant_id IS NULL)
+  ));
 --> statement-breakpoint
 
 -- metadata — keyed on item_id, not tenant_id directly. Policy joins via items.
