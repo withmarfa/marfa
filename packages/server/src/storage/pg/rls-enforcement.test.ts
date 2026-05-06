@@ -171,19 +171,20 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
         }),
       });
       expect(createRes.status).toBe(201);
-      const created = (await createRes.json()) as { id: string };
+      // POST /items returns `{ item: {...}, metadata: {...} }`.
+      const created = (await createRes.json()) as { item: { id: string } };
 
       // Tenant A asks for tenant B's item id directly. Application
       // layer would have rejected via the tenant-scoped store; RLS
       // blocks the row at the DB even if the application layer is
       // bypassed.
-      const probeRes = await ctx.app.request(`/items/${created.id}`, {
+      const probeRes = await ctx.app.request(`/items/${created.item.id}`, {
         headers: { authorization: `Bearer ${tenantAKey}` },
       });
       expect(probeRes.status).toBe(404);
 
       // And tenant B can still see its own item.
-      const ownRes = await ctx.app.request(`/items/${created.id}`, {
+      const ownRes = await ctx.app.request(`/items/${created.item.id}`, {
         headers: { authorization: `Bearer ${tenantBKey}` },
       });
       expect(ownRes.status).toBe(200);
