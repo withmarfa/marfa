@@ -23,9 +23,9 @@
     "@mymehq/runtime-sdk": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20251201.0",
+    "@cloudflare/workers-types": "^4.20260506.1",
     "tsup": "^8.5.1",
-    "typescript": "^6.0.2",
-    "vitest": "^4.1.2"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
   }
 }
