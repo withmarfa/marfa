@@ -305,6 +305,36 @@ export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
   return key;
 }
 
+/**
+ * Tenant-bounded admin gate (T-051). Admits both `admin` (platform admin,
+ * full instance authority) and `workspace_admin` (tenant-bounded admin
+ * within own `tenant_id`). Used for routes that genuinely belong inside a
+ * tenant — own keys, webhooks, types, connections, extensions, blobs,
+ * export. Routes that need platform authority (system config, cross-tenant
+ * ops, platform-credential mint) keep `checkAdmin` / `requireAdmin`.
+ *
+ * Cross-tenant safety is the route's responsibility:
+ *   - Routes that take a path id (`/webhooks/:id`, `/keys/:id`) must pass
+ *     `key.tenant_id` into the storage lookup so a workspace_admin
+ *     attempting to address another tenant's resource gets a 404.
+ *   - Routes that list resources must pass `key.tenant_id` into the list
+ *     query so workspace_admins see only their own.
+ *   - Routes that create resources must stamp the new resource's
+ *     `tenant_id` from `key.tenant_id` (the storage layer typically does
+ *     this; verify on each callsite).
+ *
+ * Once T-025 (Postgres RLS) lands, the DB layer enforces this independently
+ * — but until then the application layer is the load-bearing fence and
+ * every workspace_admin-accepting route must thread `tenant_id` correctly.
+ */
+export function checkWorkspaceAdmin(apiKey: ApiKey | undefined): ApiKey {
+  const key = checkAuth(apiKey);
+  if (key.role !== "admin" && key.role !== "workspace_admin") {
+    throw new MymeError(ErrorCode.FORBIDDEN, "Admin access required");
+  }
+  return key;
+}
+
 export function checkTypeAccess(
   apiKey: ApiKey | undefined,
   type: string,
@@ -388,6 +418,16 @@ export function requireAuth(c: Context<AppEnv>): ApiKey {
 
 export function requireAdmin(c: Context<AppEnv>): ApiKey {
   return checkAdmin(c.get("apiKey"));
+}
+
+/**
+ * Tenant-bounded admin gate. Admits `admin` (platform) OR `workspace_admin`
+ * (tenant-bounded). See `checkWorkspaceAdmin` for the safety contract:
+ * the calling route MUST thread `key.tenant_id` into storage queries so a
+ * workspace_admin cannot reach another tenant's resources via path id.
+ */
+export function requireWorkspaceAdmin(c: Context<AppEnv>): ApiKey {
+  return checkWorkspaceAdmin(c.get("apiKey"));
 }
 
 export function requireTypeAccess(

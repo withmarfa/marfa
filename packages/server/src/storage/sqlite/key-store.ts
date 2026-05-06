@@ -29,7 +29,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     tenant_id: row.tenant_id ?? undefined,
     label: row.label,
     source: row.source,
-    role: row.role as "admin" | "member",
+    role: row.role as "admin" | "workspace_admin" | "member",
     default_origin: row.default_origin as Exclude<Origin, "system">,
     default_tier: row.default_tier as Tier,
     is_platform: row.is_platform,

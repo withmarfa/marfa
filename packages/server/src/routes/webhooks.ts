@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MymeError, ErrorCode } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireWorkspaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -277,7 +277,10 @@ export function webhookRoutes(storage: Storage) {
 
   // POST /webhooks — create a new webhook
   router.openapi(createWebhookRoute, async (c) => {
-    const key = requireAdmin(c);
+    // T-051: workspace_admin can manage own-tenant webhooks. Storage
+    // layer's list/get/update/delete already filter by `key.tenant_id`,
+    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    const key = requireWorkspaceAdmin(c);
     const body = c.req.valid("json");
 
     // URL validation beyond what Zod handles
@@ -324,7 +327,10 @@ export function webhookRoutes(storage: Storage) {
 
   // GET /webhooks — list all webhooks
   router.openapi(listWebhooksRoute, async (c) => {
-    const key = requireAdmin(c);
+    // T-051: workspace_admin can manage own-tenant webhooks. Storage
+    // layer's list/get/update/delete already filter by `key.tenant_id`,
+    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    const key = requireWorkspaceAdmin(c);
     const webhooks = await storage.outboundWebhooks.list(key.tenant_id);
     return c.json(
       {
@@ -339,7 +345,10 @@ export function webhookRoutes(storage: Storage) {
 
   // GET /webhooks/:id — get a single webhook
   router.openapi(getWebhookRoute, async (c) => {
-    const key = requireAdmin(c);
+    // T-051: workspace_admin can manage own-tenant webhooks. Storage
+    // layer's list/get/update/delete already filter by `key.tenant_id`,
+    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    const key = requireWorkspaceAdmin(c);
     const { id } = c.req.valid("param");
     const webhook = await storage.outboundWebhooks.get(id, key.tenant_id);
     if (!webhook) {
@@ -350,7 +359,10 @@ export function webhookRoutes(storage: Storage) {
 
   // PATCH /webhooks/:id — partial update
   router.openapi(updateWebhookRoute, async (c) => {
-    const key = requireAdmin(c);
+    // T-051: workspace_admin can manage own-tenant webhooks. Storage
+    // layer's list/get/update/delete already filter by `key.tenant_id`,
+    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    const key = requireWorkspaceAdmin(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
@@ -403,7 +415,10 @@ export function webhookRoutes(storage: Storage) {
 
   // DELETE /webhooks/:id
   router.openapi(deleteWebhookRoute, async (c) => {
-    const key = requireAdmin(c);
+    // T-051: workspace_admin can manage own-tenant webhooks. Storage
+    // layer's list/get/update/delete already filter by `key.tenant_id`,
+    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    const key = requireWorkspaceAdmin(c);
     const { id } = c.req.valid("param");
 
     const existing = await storage.outboundWebhooks.get(id, key.tenant_id);
@@ -425,7 +440,10 @@ export function webhookRoutes(storage: Storage) {
 
   // GET /webhooks/:id/deliveries — recent delivery attempts
   router.openapi(listDeliveriesRoute, async (c) => {
-    const key = requireAdmin(c);
+    // T-051: workspace_admin can manage own-tenant webhooks. Storage
+    // layer's list/get/update/delete already filter by `key.tenant_id`,
+    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    const key = requireWorkspaceAdmin(c);
     const { id } = c.req.valid("param");
     const { limit } = c.req.valid("query");
 

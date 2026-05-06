@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MymeError, ErrorCode } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireWorkspaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   performUninstall,
@@ -151,7 +151,10 @@ export function connectionRoutes(storage: Storage, salt: string) {
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(installRoute, async (c) => {
-    const apiKey = requireAdmin(c);
+    // T-051: workspace_admin can install/uninstall own-tenant connections.
+    // Lookups + writes are scoped via `apiKey.tenant_id`, so cross-tenant
+    // attempts surface as NOT_FOUND.
+    const apiKey = requireWorkspaceAdmin(c);
     const { integration_id, label } = c.req.valid("json");
     const tenantId = apiKey.tenant_id ?? undefined;
     const clientIp = c.var.clientIp;
@@ -212,7 +215,10 @@ export function connectionRoutes(storage: Storage, salt: string) {
   });
 
   r.openapi(uninstallRoute, async (c) => {
-    const apiKey = requireAdmin(c);
+    // T-051: workspace_admin can install/uninstall own-tenant connections.
+    // Lookups + writes are scoped via `apiKey.tenant_id`, so cross-tenant
+    // attempts surface as NOT_FOUND.
+    const apiKey = requireWorkspaceAdmin(c);
     const { id: connectionId } = c.req.valid("param");
     const tenantId = apiKey.tenant_id ?? undefined;
     const clientIp = c.var.clientIp;
