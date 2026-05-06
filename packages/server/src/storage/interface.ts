@@ -306,18 +306,50 @@ export interface KeyStore {
   count(): Promise<number>;
 }
 
+/**
+ * Per-tenant blob metadata store (T-049).
+ *
+ * **Tenant scoping.** The `blobs` table has a composite PK on
+ * `(tenant_id, hash)`; the same hash can appear under multiple tenant_ids
+ * (the storage backend dedupes physically — one file per hash — but each
+ * tenant gets their own metadata row). The empty string `""` is the
+ * sentinel for "instance-wide / single-tenant / platform-admin"; routes
+ * pass `key.tenant_id ?? ""` so single-tenant deployments and
+ * platform-admin uploads continue to interoperate.
+ *
+ * `register`, `get`, `remove` all take a tenant scope — passing the wrong
+ * tenant returns null / no-op rather than the row from another tenant.
+ *
+ * `listAll` and `count` are unscoped — they're admin reconciliation
+ * helpers (reconcile route + metrics), gated to platform admins at the
+ * route layer.
+ */
 export interface BlobStore {
   register(
     hash: string,
     mimeType: string,
     size: number,
     storagePath: string,
+    tenantId: string,
   ): Promise<void>;
   get(
     hash: string,
+    tenantId: string,
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null>;
+  /**
+   * Returns hashes seen across the entire instance (every tenant), de-duplicated.
+   * Used only by the admin reconcile route + metrics. Tenant-scoped reads
+   * MUST go through `get(hash, tenantId)`.
+   */
   listAll(): Promise<string[]>;
-  remove(hash: string): Promise<void>;
+  remove(hash: string, tenantId: string): Promise<void>;
+  /**
+   * Removes every row for a given hash across all tenants. Used only by
+   * the admin orphan-cleanup + reconcile routes — the platform admin
+   * decided this hash is unreferenced everywhere, so all per-tenant
+   * metadata rows go. Tenant-scoped deletes use `remove(hash, tenantId)`.
+   */
+  removeAllForHash(hash: string): Promise<void>;
   count(): Promise<{ count: number; total_size: number }>;
 }
 

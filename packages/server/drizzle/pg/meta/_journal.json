@@ -239,6 +239,13 @@
       "when": 1778250000000,
       "tag": "0033_audit_log_tenant_id",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1778260000000,
+      "tag": "0034_blobs_tenant_id",
+      "breakpoints": true
     }
   ]
 }

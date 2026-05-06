@@ -5,6 +5,7 @@ import {
   real,
   index,
   uniqueIndex,
+  primaryKey,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
@@ -185,12 +186,31 @@ export const apiKeys = sqliteTable(
 // blobs (metadata only — actual files on filesystem)
 // ---------------------------------------------------------------------------
 
-export const blobs = sqliteTable("blobs", {
-  hash: text("hash").primaryKey(),
-  mime_type: text("mime_type").notNull(),
-  size: integer("size").notNull(),
-  storage_path: text("storage_path").notNull(),
-});
+// T-049: blob rows are per-tenant. Same `hash` can appear under multiple
+// tenant_ids; the file system / S3 backend dedupes physically (one file
+// per hash), but the blobs table carries one row per (tenant_id, hash) so
+// cross-tenant reads of `/blobs/:hash` resolve to the caller's row only —
+// missing for a given tenant means 404.
+//
+// `tenant_id` is `NOT NULL DEFAULT ''` rather than nullable to keep the
+// composite PK simple. Empty string `''` is the sentinel for
+// "instance-wide / no tenant" — used by single-tenant self-hosts and by
+// platform-admin uploads in hosted mode where the credential carries no
+// tenant_id. The empty-string-as-sentinel asymmetry vs other tables (which
+// use nullable `tenant_id`) is intentional: composite PKs with nullable
+// columns behave inconsistently across SQLite and PG, and this table is
+// the only place we need a composite primary identity.
+export const blobs = sqliteTable(
+  "blobs",
+  {
+    tenant_id: text("tenant_id").notNull().default(""),
+    hash: text("hash").notNull(),
+    mime_type: text("mime_type").notNull(),
+    size: integer("size").notNull(),
+    storage_path: text("storage_path").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.tenant_id, t.hash] })],
+);
 
 // ---------------------------------------------------------------------------
 // OAuth tables

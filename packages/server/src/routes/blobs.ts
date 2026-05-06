@@ -287,8 +287,18 @@ export function blobRoutes(
       await blobBackend.put(hash, data, mimeType);
     }
 
-    // Register metadata (idempotent)
-    await storage.blobs.register(hash, mimeType, data.length, hash);
+    // T-049: register the metadata row scoped to the caller's tenant.
+    // Empty-string sentinel for instance-wide / single-tenant / platform-
+    // admin uploads. Different tenants uploading the same hash bytes get
+    // separate rows; the storage backend dedupes the physical file.
+    const blobTenantId = c.get("apiKey")?.tenant_id ?? "";
+    await storage.blobs.register(
+      hash,
+      mimeType,
+      data.length,
+      hash,
+      blobTenantId,
+    );
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -306,7 +316,7 @@ export function blobRoutes(
   // HEAD /blobs/:hash — check blob existence without downloading
   // HEAD is not supported by createRoute, use .on() directly
   router.on("HEAD", "/:hash", async (c) => {
-    requireAuth(c);
+    const apiKey = requireAuth(c);
 
     let hash = c.req.param("hash");
     if (!hash.startsWith("sha256:")) {
@@ -316,7 +326,8 @@ export function blobRoutes(
       return new Response(null, { status: 400 });
     }
 
-    const record = await storage.blobs.get(hash);
+    // T-049: tenant-scoped lookup. Cross-tenant probes return 404.
+    const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
     if (!record) {
       return new Response(null, { status: 404 });
     }
@@ -332,7 +343,7 @@ export function blobRoutes(
 
   // GET /blobs/:hash — download blob binary
   router.openapi(getBlobRoute, async (c) => {
-    requireAuth(c);
+    const apiKey = requireAuth(c);
 
     let hash = c.req.valid("param").hash;
     if (!hash.startsWith("sha256:")) {
@@ -342,7 +353,8 @@ export function blobRoutes(
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
-    const record = await storage.blobs.get(hash);
+    // T-049: tenant-scoped lookup. Cross-tenant probes return 404.
+    const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
     if (!record) {
       throw new MymeError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
@@ -363,7 +375,7 @@ export function blobRoutes(
 
   // GET /blobs/:hash/url — presigned download URL
   router.openapi(getBlobUrlRoute, async (c) => {
-    requireAuth(c);
+    const apiKey = requireAuth(c);
 
     if (!blobBackend.getPresignedUrl) {
       throw new MymeError(
@@ -380,7 +392,8 @@ export function blobRoutes(
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
-    const record = await storage.blobs.get(hash);
+    // T-049: tenant-scoped lookup. Cross-tenant probes return 404.
+    const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
     if (!record) {
       throw new MymeError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
@@ -437,7 +450,10 @@ export function blobRoutes(
     if (!dryRun) {
       for (const hash of orphaned) {
         await blobBackend.delete(hash);
-        await storage.blobs.remove(hash);
+        // Platform-admin orphan cleanup nukes the row in every tenant
+        // — this hash is unreferenced everywhere as far as the admin's
+        // visible items go.
+        await storage.blobs.removeAllForHash(hash);
       }
     }
 

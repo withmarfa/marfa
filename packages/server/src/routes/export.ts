@@ -202,10 +202,12 @@ async function handleArchiveExport(
       : undefined;
   } while (cursor);
 
-  // Resolve blob metadata from the database
+  // Resolve blob metadata from the database. T-049: tenant-scoped lookup
+  // using the export caller's tenant_id. Platform admins on single-tenant
+  // self-hosts pass `""` (the instance-wide sentinel).
   const blobMeta: Record<string, { mime_type: string; size: number }> = {};
   for (const hash of blobHashes) {
-    const record = await storage.blobs.get(hash);
+    const record = await storage.blobs.get(hash, tenantId ?? "");
     if (record) {
       blobMeta[hash] = { mime_type: record.mime_type, size: record.size };
     }
