@@ -623,6 +623,23 @@ export interface CreatedConnectionLeasedToken extends ConnectionLeasedToken {
 }
 
 /**
+ * Wire shape returned by `POST /connections/install`. The JSON install
+ * sibling of the HTML consent flow at `POST /integrations/:id/install` —
+ * skips the human-consent step (no browser approval) and is admin-only.
+ * Used by operator workflows: T-040 soak seeding, the CLI's
+ * `my connections install` command. Returns the connection id, the seed
+ * runtime credential id, and the system.activity row id from the install
+ * pipeline.
+ */
+export interface ConnectionInstallResult {
+  connection_id: string;
+  /** id of the seed runtime credential minted bound to the new connection. */
+  credential_id: string;
+  /** id of the system.activity row emitted by the pipeline. */
+  activity_id: string;
+}
+
+/**
  * Wire shape returned by `POST /connections/:id/uninstall`. Records the
  * artefacts the orchestrated uninstall pipeline cleaned up — the runtime
  * credentials it revoked, whether an upstream OAuth tokens row was

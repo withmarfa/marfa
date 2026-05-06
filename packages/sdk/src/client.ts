@@ -23,6 +23,7 @@ import type {
   WebhookDelivery,
   CreateWebhookInput,
   UpdateWebhookInput,
+  ConnectionInstallResult,
   ConnectionUninstallResult,
 } from "@mymehq/shared";
 import { HttpTransport } from "./transport.js";
@@ -1088,6 +1089,29 @@ export class MymeClient {
    * ... })`. The CLI's `my connections` tree wraps both.
    */
   readonly connections = {
+    /**
+     * JSON install of an Integration manifest — server-side sibling of
+     * the browser consent flow at `POST /integrations/:id/install`.
+     * Skips the HTML consent screen so operators and tooling can install
+     * connections non-interactively. Admin-only; tenant admins install
+     * into their own tenant scope.
+     *
+     * `integration_id` references a `system.integration` item (registered
+     * via `POST /integrations`). `label` is optional — the server
+     * defaults to `${manifest_name} ${manifest_version}` when omitted.
+     * Returns the new connection id, the seed runtime credential id,
+     * and the `system.activity` row id from the install pipeline.
+     */
+    install: async (input: {
+      integration_id: string;
+      label?: string;
+    }): Promise<ConnectionInstallResult> => {
+      return this.transport.request<ConnectionInstallResult>(
+        "POST",
+        "/connections/install",
+        { body: input },
+      );
+    },
     /**
      * Orchestrated uninstall of an `external-service-connector`
      * connection. Revokes runtime credentials, deletes upstream OAuth
