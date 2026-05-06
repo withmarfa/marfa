@@ -2,7 +2,11 @@ import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin, hashApiKey } from "../middleware/auth.js";
+import {
+  requireAdmin,
+  requireWorkspaceAdmin,
+  hashApiKey,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -29,7 +33,7 @@ const KeyResponseSchema = z.object({
   key: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.enum(["admin", "member"]),
+  role: z.enum(["admin", "workspace_admin", "member"]),
   default_origin: z.enum(["user", "ai", "worker"]),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
@@ -87,7 +91,7 @@ const createKeyRoute = createRoute({
               .string()
               .min(1, "source display name is required")
               .max(200),
-            role: z.enum(["admin", "member"]).optional(),
+            role: z.enum(["admin", "workspace_admin", "member"]).optional(),
             default_origin: z.enum(["user", "ai", "worker"]).optional(),
             default_tier: z.enum(["library", "feed"]).optional(),
             is_platform: z.boolean().optional(),
@@ -199,7 +203,7 @@ const KeyDetailSchema = z.object({
   id: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.enum(["admin", "member"]),
+  role: z.enum(["admin", "workspace_admin", "member"]),
   default_origin: z.enum(["user", "ai", "worker"]),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
@@ -267,7 +271,12 @@ export function keyRoutes(storage: Storage, salt: string) {
   router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");
     if (!isBootstrap) {
-      requireAdmin(c);
+      // T-051: workspace_admin can mint own-tenant keys. The new key's
+      // tenant_id is stamped from the caller's tenant_id in the storage
+      // layer; `is_platform` is coerced to `false` unless the caller is
+      // itself platform (see line ~310 below), so a workspace_admin
+      // cannot escalate to platform via the request body.
+      requireWorkspaceAdmin(c);
     }
 
     // T-007: under bootstrap, atomically claim the workspace sentinel
@@ -307,6 +316,14 @@ export function keyRoutes(storage: Storage, salt: string) {
       isPlatform = callerIsPlatform && body.is_platform === true;
     }
 
+    // T-051: stamp the new key's tenant_id from the caller's tenant_id
+    // so a workspace_admin minting an own-tenant key gets the binding
+    // automatically. Bootstrap is a special case — the seed admin is
+    // stamped tenant-less (NULL) so it can write across tenants until a
+    // hosted-mode tenant is created. Platform admins on a single-tenant
+    // self-host also have tenant_id undefined; that path is unchanged.
+    const newKeyTenantId = c.get("apiKey")?.tenant_id;
+
     const stored = await storage.keys.create(
       {
         label: body.label.trim(),
@@ -321,6 +338,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         metadata_permissions: body.metadata_permissions,
       },
       keyHash,
+      newKeyTenantId,
     );
 
     // The bootstrap sentinel was stamped above via `settings.claim`, so the

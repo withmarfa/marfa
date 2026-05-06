@@ -28,11 +28,23 @@ Every new route under `src/routes/` ships with a sibling `*.test.ts` covering at
 
 The OpenAPI spec is generated from `createRoute` definitions — never hand-edited. Run `pnpm --silent --filter @mymehq/server generate:openapi > openapi.json` after route changes; the freshness CI job checks for drift.
 
+## Auth helpers (T-051 layered)
+
+Three tiers, picked by intent:
+
+- **`requireAuth(c)`** — bearer token must resolve. No role check.
+- **`requireWorkspaceAdmin(c)`** — admits both `admin` (platform) and `workspace_admin` (tenant-bounded). Use for routes that genuinely belong inside a tenant — own keys, webhooks, types, connections, extensions, blobs, export. **The route MUST thread `key.tenant_id` into storage queries** so a workspace_admin attempting to address another tenant's resource gets a 404 (cross-tenant probes never see other tenants' data). Once T-025 (Postgres RLS) lands, the DB layer enforces this independently — but until then the application layer is the load-bearing fence.
+- **`requireAdmin(c)`** — platform-only. Use for routes that need cross-tenant authority or instance-level ops: tenant CRUD, OAuth client registration, audit cleanup, metrics, archive restore, platform-credential mint.
+
+When auditing a `requireAdmin` callsite for tenant widening: the route is safe to widen iff every storage operation it performs filters by (or stamps from) the caller's `tenant_id`. Lookups via path id MUST go through tenant-scoped store methods (e.g., `get(id, tenant_id)`); list operations MUST pass `tenant_id`; create operations MUST stamp `tenant_id` from the caller. If any of those isn't the case, leave as `requireAdmin` and file a follow-on to tenant-scope the storage layer first.
+
+Routes widened in PR T-051: `POST /keys`, all `/webhooks/*`, `POST /connections/install`, `POST /connections/:id/uninstall`. Routes deliberately NOT widened pending storage tenant-scoping: `keys.list/get/revoke/update`, `types.update`, `edge-types.create/delete`, `bulk` ops, `items.purge`, `tenants.*`, `oauth.client/token`, `audit.cleanup`, `metrics`, `admin-archive`, admin blob ops.
+
 ## Per-route enforcement order
 
 Most write routes follow the same gate sequence:
 
-1. Resolve auth (`requireAuth(c)`, `requireAdmin(c)`, or — for metadata-layer mutations — `requireMetadataPermission(c, subresource, level)` which admits admin + scope-bearing credentials).
+1. Resolve auth (`requireAuth(c)`, `requireWorkspaceAdmin(c)`, `requireAdmin(c)`, or — for metadata-layer mutations — `requireMetadataPermission(c, subresource, level)` which admits admin + scope-bearing credentials).
 2. Validate body shape (Zod via `createRoute`).
 3. Check type permissions (`requireTypeAccess(c, type, "write")`).
 4. Resolve enforcement levers (TSC42 §5): tenant config + per-credential override → effective `EnforcementSettings`.

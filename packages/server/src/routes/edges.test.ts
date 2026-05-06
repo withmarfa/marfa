@@ -857,7 +857,7 @@ describe("Edge permission matrix (admin / type-only / edge-only / both / neither
   async function mkKey(
     typePerms: Record<string, "read" | "write" | "none"> | undefined,
     edgePerms: Record<string, "read" | "write"> | undefined,
-    role: "admin" | "member" = "member",
+    role: "admin" | "workspace_admin" | "member" = "member",
   ): Promise<string> {
     const res = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,

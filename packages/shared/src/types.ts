@@ -37,8 +37,29 @@ export type Tier = "library" | "feed";
 /** Valid tier values as a readonly array, useful for validation. */
 export const TIERS: readonly Tier[] = ["library", "feed"] as const;
 
-/** API key roles. */
-export type KeyRole = "admin" | "member";
+/**
+ * API key roles.
+ *
+ * - `admin` — platform admin (single-tenant compat: full instance authority).
+ *   Bypasses every permission map. Used for system config, cross-tenant ops,
+ *   minting platform credentials.
+ * - `workspace_admin` — tenant-bounded admin (T-051). Full admin authority
+ *   *within the calling key's `tenant_id`*: own keys, webhooks, types,
+ *   connections, extensions. Cannot cross-tenant read/write (RLS-enforced),
+ *   cannot mint platform credentials, cannot touch system config. Routes that
+ *   accept this role gate with `requireWorkspaceAdmin(c)` (admits both tiers);
+ *   routes that need platform authority retain `requireAdmin(c)`.
+ * - `member` — non-admin credential. Bound by `type_permissions` /
+ *   `edge_permissions` / `extension_permissions` / `metadata_permissions`.
+ */
+export type KeyRole = "admin" | "workspace_admin" | "member";
+
+/** Valid role values as a readonly array, useful for validation. */
+export const KEY_ROLES: readonly KeyRole[] = [
+  "admin",
+  "workspace_admin",
+  "member",
+] as const;
 
 /** Per-type permission levels. */
 export type TypePermission = "read" | "write" | "none";
