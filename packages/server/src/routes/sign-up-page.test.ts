@@ -215,7 +215,12 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     expect(res.headers.get("location")).toContain("error=email_invalid");
   });
 
-  it("redirects to return_to with auto-sign-in cookie on success", async () => {
+  it("Wave C PR2: redirects to /auth/verify-email on successful sign-up (no auto-sign-in cookie)", async () => {
+    // With requireEmailVerification: true, better-auth suppresses
+    // autoSignIn — sign-up returns 200 + { token: null, user } and
+    // no Set-Cookie. Our wrapper detects the missing cookie and
+    // redirects to the verify-email page so the user knows what to
+    // do next.
     ctx = await createTestContext({ authAllowSignup: true });
     const res = await postSignUpForm(ctx, {
       email: "alice@example.com",
@@ -225,7 +230,11 @@ describe("POST /auth/sign-up (form wrapper)", () => {
       return_to: "/auth/authorize?client_id=abc",
     });
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/auth/authorize?client_id=abc");
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("/auth/verify-email");
+    expect(location).toContain("email=alice%40example.com");
+    expect(location).toContain("return_to=%2Fauth%2Fauthorize");
+    // No session cookie set on the verification-required path.
     const cookies =
       typeof (res.headers as Headers & { getSetCookie?: () => string[] })
         .getSetCookie === "function"
@@ -233,12 +242,16 @@ describe("POST /auth/sign-up (form wrapper)", () => {
             res.headers as Headers & { getSetCookie: () => string[] }
           ).getSetCookie()
         : [res.headers.get("set-cookie") ?? ""];
-    expect(cookies.some((c) => c.includes("myme.auth"))).toBe(true);
+    expect(cookies.some((c) => c.includes("myme.auth"))).toBe(false);
   });
 
-  it("redirects to error=email_exists when email is taken", async () => {
+  it("Wave C PR2: duplicate sign-up follows the generic-duplicate-response path (no email enumeration)", async () => {
+    // better-auth flips `shouldReturnGenericDuplicateResponse` when
+    // `requireEmailVerification: true` — duplicate sign-ups return 200
+    // (with no cookie) so an attacker can't probe whether an address
+    // has an account. Our wrapper forwards that as a verify-email
+    // redirect, identical to a fresh sign-up.
     ctx = await createTestContext({ authAllowSignup: true });
-    // First sign-up succeeds
     const first = await postSignUpForm(ctx, {
       email: "carol@example.com",
       name: "Carol",
@@ -247,8 +260,8 @@ describe("POST /auth/sign-up (form wrapper)", () => {
       return_to: "/",
     });
     expect(first.status).toBe(302);
+    expect(first.headers.get("location")).toContain("/auth/verify-email");
 
-    // Second with same email surfaces email_exists
     const second = await postSignUpForm(ctx, {
       email: "carol@example.com",
       name: "Carol Again",
@@ -257,10 +270,12 @@ describe("POST /auth/sign-up (form wrapper)", () => {
       return_to: "/",
     });
     expect(second.status).toBe(302);
-    expect(second.headers.get("location")).toContain("error=email_exists");
+    // Second attempt looks identical to the first — no `error=email_exists` leak.
+    expect(second.headers.get("location")).toContain("/auth/verify-email");
+    expect(second.headers.get("location")).not.toContain("error=email_exists");
   });
 
-  it("rejects unsafe return_to values and redirects to /", async () => {
+  it("rejects unsafe return_to values and falls back to / (threaded through the verify-email redirect)", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const res = await postSignUpForm(ctx, {
       email: "dave@example.com",
@@ -270,6 +285,11 @@ describe("POST /auth/sign-up (form wrapper)", () => {
       return_to: "https://evil.com/",
     });
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/");
+    const location = res.headers.get("location") ?? "";
+    // return_to was sanitised to "/" before the redirect built the
+    // verify-email URL; the off-origin value never threads through.
+    expect(location).toContain("/auth/verify-email");
+    expect(location).toContain("return_to=%2F");
+    expect(location).not.toContain("evil.com");
   });
 });

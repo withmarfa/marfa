@@ -1,5 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  markEmailVerified,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
 
@@ -371,6 +375,10 @@ describe("POST /auth/sign-in (form wrapper)", () => {
       },
       headers: { origin: ORIGIN },
     });
+    // Wave C PR2: requireEmailVerification is on; flip the flag so
+    // sign-in isn't blocked. Stand-in for the user clicking the
+    // verification link.
+    await markEmailVerified(ctx.storage, "bob@example.com");
 
     const formBody = new URLSearchParams({
       mode: "password",
@@ -418,6 +426,7 @@ describe("POST /auth/sign-in (form wrapper)", () => {
       },
       headers: { origin: ORIGIN },
     });
+    await markEmailVerified(ctx.storage, "edgar@example.com");
 
     const formBody = new URLSearchParams({
       mode: "password",
@@ -462,6 +471,7 @@ describe("POST /auth/sign-in (form wrapper)", () => {
       },
       headers: { origin: ORIGIN },
     });
+    await markEmailVerified(ctx.storage, "frank@example.com");
 
     const formBody = new URLSearchParams({
       mode: "password",
@@ -493,6 +503,7 @@ describe("POST /auth/sign-in (form wrapper)", () => {
       },
       headers: { origin: ORIGIN },
     });
+    await markEmailVerified(ctx.storage, "carol@example.com");
     const formBody = new URLSearchParams({
       mode: "password",
       email: "carol@example.com",

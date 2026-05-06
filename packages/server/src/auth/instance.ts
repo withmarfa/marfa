@@ -7,6 +7,7 @@ import * as pgSchema from "../storage/pg/schema.js";
 import { log } from "../middleware/logger.js";
 import type { EmailTransport as MymeEmailTransport } from "../email/transport.js";
 import { renderMagicLinkEmail } from "./email-templates/magic-link.js";
+import { renderVerifyEmailEmail } from "./email-templates/verify-email.js";
 
 /**
  * The first parameter type of better-auth's drizzleAdapter — used to type
@@ -183,10 +184,68 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
       enabled: true,
       // Auto-sign-in after sign-up keeps the consent flow seamless when
       // a brand-new account approves an OAuth client on first visit.
+      // With `requireEmailVerification: true` (Wave C PR2) better-auth
+      // sets `shouldSkipAutoSignIn` so sign-up succeeds with a
+      // `{ token: null, user }` body and NO Set-Cookie — the user
+      // must verify before any session lands.
       autoSignIn: true,
       // Default off per the workstream-1 brief; flips on when the
       // `MYME_AUTH_ALLOW_SIGNUP` env var is set.
       disableSignUp: !options.allowSignup,
+      // Wave C PR2: every new sign-up must verify their email before
+      // signing in. The grandfather migration (0042 PG / 0035 SQLite)
+      // marks pre-existing accounts as verified so this flip doesn't
+      // lock them out.
+      requireEmailVerification: true,
+    },
+    // Wave C PR2: fire the verification email on every sign-up. The
+    // `sendVerificationEmail` hook hands off to the rich Myme transport
+    // (HTML template, idempotency key, suppression check, audit row).
+    emailVerification: {
+      sendOnSignUp: true,
+      // 1 hour TTL on verification tokens. Long enough for the user
+      // to switch to their inbox, short enough to bound the
+      // single-use-token replay window.
+      expiresIn: 3600,
+      sendVerificationEmail: async ({ user, url }) => {
+        if (richTransport) {
+          const { html, text, subject } = renderVerifyEmailEmail({
+            url,
+            name: user.name,
+            expiresInMinutes: 60,
+          });
+          const result = await richTransport.send({
+            to: user.email,
+            subject,
+            html,
+            text,
+            // Idempotency key is per-user-per-rotation: the token
+            // changes on each resend so duplicate sends within the
+            // 24h Resend window get deduped on (user, token) tuple.
+            idempotencyKey: `verify-email/${user.id}/${url.split("token=")[1]?.split("&")[0] ?? "no-token"}`,
+            tags: { template: "verify-email" },
+          });
+          if (!result.ok) {
+            log("warn", "verify-email send failed", {
+              to: user.email,
+              error: result.error,
+              retryable: result.retryable,
+            });
+            // Surface to better-auth so it knows the send failed.
+            // The sign-up handler awaits this in `runInBackgroundOrAwait`,
+            // so a thrown error becomes a 500-shape from sign-up.
+            throw new Error(`verify_email_send_failed:${result.error}`);
+          }
+          return;
+        }
+        // No rich transport configured — log the URL for dev-only
+        // visibility. Production deployments wire `mymeEmailTransport`.
+        log("info", "verify-email (log transport)", {
+          to: user.email,
+          url,
+          note: "configure MYME_EMAIL_BACKEND for live delivery",
+        });
+      },
     },
     plugins: [
       passkey({

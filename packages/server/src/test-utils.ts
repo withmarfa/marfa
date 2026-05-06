@@ -33,6 +33,46 @@ async function truncatePg(storage: Storage): Promise<void> {
   }
 }
 
+/**
+ * Wave C PR2 helper. With `requireEmailVerification: true` the auth
+ * instance blocks sign-in until `auth_user.email_verified` is `true`.
+ * Tests that exercise the post-sign-in flow (consent, OAuth, etc.)
+ * call this between sign-up and sign-in to grandfather the test
+ * account. Equivalent to a user clicking the verification link, but
+ * without the round-trip through the email transport.
+ *
+ * Safe to call when the user doesn't exist — the UPDATE simply
+ * affects zero rows.
+ */
+export async function markEmailVerified(
+  storage: Storage,
+  email: string,
+): Promise<void> {
+  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const lower = email.toLowerCase();
+  if (dialect === "pg") {
+    const pg = storage as unknown as {
+      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
+    };
+    if (pg.__pgClient) {
+      await pg.__pgClient(
+        `UPDATE auth_user SET email_verified = TRUE WHERE LOWER(email) = $1`,
+        [lower],
+      );
+    }
+    return;
+  }
+  const sqlite = storage as unknown as {
+    __sqliteRun?: (q: string, p: unknown[]) => { changes: number };
+  };
+  if (sqlite.__sqliteRun) {
+    sqlite.__sqliteRun(
+      "UPDATE auth_user SET email_verified = 1 WHERE LOWER(email) = ?",
+      [lower],
+    );
+  }
+}
+
 export async function createTestContext(
   overrides?: Partial<AppConfig>,
 ): Promise<TestContext> {

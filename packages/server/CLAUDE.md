@@ -173,6 +173,17 @@ Pluggable transport for transactional email. Three backends in-tree, picked by `
 
 Each suppression upsert writes an `email.suppressed` audit row with the source Resend message id so an operator can correlate. The handler currently writes to the empty-string tenant; per-tenant routing via Resend tags is a future widening point when hosted multi-tenant lights up.
 
+## Email verification on sign-up (Wave C PR2)
+
+Every new sign-up gets `auth_user.email_verified = false` and the better-auth instance carries `emailAndPassword.requireEmailVerification: true`, so password sign-in is blocked until the user clicks the verification link.
+
+- **Hook.** `emailVerification.sendOnSignUp: true` + the `sendVerificationEmail` callback wired to the Wave C PR1 transport (HTML template at `auth/email-templates/verify-email.ts`, idempotency key per `(user_id, token)`, suppression check, audit). Token TTL: 3600s (1h, set via `emailVerification.expiresIn`).
+- **Sign-up wrapper.** `POST /auth/sign-up` detects the verification-required path by the absence of a Set-Cookie on better-auth's response (which `shouldSkipAutoSignIn` produces when `requireEmailVerification` is on) and 302s to `/auth/verify-email?email=…&return_to=…` instead of `return_to`.
+- **Verify-email page.** `GET /auth/verify-email` renders one of four states: `pending` (no token, just-redirected after sign-up), `success` (token validated), `failure` (expired / invalid / unknown — falls back to a resend form), `resent` (after a successful resend). Uses the shared auth-page layout from PR4.
+- **Resend.** `POST /auth/verify-email/resend` calls better-auth's `POST /auth/send-verification-email` and redirects back with `?sent=1` regardless of whether the address actually exists, to avoid email enumeration.
+- **Grandfather.** Migration `0042_grandfather_email_verified.sql` (PG) / `0035_…` (SQLite) flips `email_verified=true` for every account created before the PR landed. Fresh DBs match zero rows; the migration is a no-op there.
+- **Tests.** `markEmailVerified(storage, email)` in `src/test-utils.ts` is the test-side stand-in for clicking the verify link — direct `UPDATE auth_user SET email_verified = TRUE WHERE LOWER(email) = ?`. Use it between sign-up and sign-in in any test that needs an authenticated session post-PR2.
+
 ## Reserved extension namespaces
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:

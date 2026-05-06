@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  markEmailVerified,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 
@@ -18,7 +22,10 @@ beforeAll(async () => {
   ctx = await createTestContext({ authAllowSignup: true });
 
   // Sign up + sign in a non-admin user; the resulting cookie is reused
-  // across tests that hit /auth/authorize.
+  // across tests that hit /auth/authorize. Wave C PR2: sign-up no
+  // longer auto-signs-in (requireEmailVerification is on); we
+  // grandfather the test account via markEmailVerified and sign in
+  // explicitly to get the cookie.
   const signUpRes = await request(ctx.app, "POST", "/auth/sign-up/email", {
     body: {
       email: "consent-user@example.com",
@@ -33,9 +40,24 @@ beforeAll(async () => {
       `OAuth test setup: sign-up failed ${String(signUpRes.status)}: ${text.slice(0, 400)}`,
     );
   }
-  const setCookie = signUpRes.headers.get("set-cookie");
+  await markEmailVerified(ctx.storage, "consent-user@example.com");
+
+  const signInRes = await request(ctx.app, "POST", "/auth/sign-in/email", {
+    body: {
+      email: "consent-user@example.com",
+      password: "correct horse battery staple",
+    },
+    headers: { origin: ORIGIN },
+  });
+  if (signInRes.status !== 200) {
+    const text = await signInRes.text();
+    throw new Error(
+      `OAuth test setup: sign-in failed ${String(signInRes.status)}: ${text.slice(0, 400)}`,
+    );
+  }
+  const setCookie = signInRes.headers.get("set-cookie");
   if (!setCookie) {
-    throw new Error("OAuth test setup: no Set-Cookie on sign-up response");
+    throw new Error("OAuth test setup: no Set-Cookie on sign-in response");
   }
   // First attribute holds `<name>=<value>`; trailing flags (HttpOnly,
   // SameSite, Secure, Path, Expires) come after the first ';'.
