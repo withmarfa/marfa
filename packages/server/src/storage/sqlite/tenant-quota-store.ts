@@ -106,7 +106,21 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
         .get();
       return Promise.resolve(row?.c ?? 0);
     }
-    // storage_bytes / rate_per_minute deferred — no enforcement in this PR
+    if (resource === "storage_bytes") {
+      // SUM(size) across the tenant's blob metadata rows. T-052
+      // follow-on (Wave B Part 2): the storage backend dedupes the
+      // physical file by hash, so this counts every blob row whose
+      // tenant_id matches — different tenants uploading the same
+      // hash see the row in their own scope (T-049 multi-row design).
+      const row = this.db
+        .select({ s: sql<number>`coalesce(sum(${blobs.size}), 0)` })
+        .from(blobs)
+        .where(eq(blobs.tenant_id, tenantId))
+        .get();
+      return Promise.resolve(row?.s ?? 0);
+    }
+    // rate_per_minute is enforced via the rate-limit middleware's
+    // sliding-window counter, not via tenant_quotas.count.
     return Promise.resolve(0);
   }
 }

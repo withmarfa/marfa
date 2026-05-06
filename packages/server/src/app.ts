@@ -192,6 +192,12 @@ export function createApp(
         windowMs: config.rateLimitWindowMs,
         pathLimits: { "/keys": 200, "/auth/token": 20 },
         trustedProxyCidrs: config.trustedProxyCidrs,
+        // T-052 follow-on (Wave B Part 2): per-tenant rate ceiling on
+        // top of the per-credential window. Reads
+        // tenant_quotas.rate_per_minute_limit (with env fallback) via
+        // a 60s in-process cache. No-op for tenant-less keys.
+        storage,
+        tenantDefaultRatePerMinute: config.defaultQuotaRatePerMinute ?? null,
       }),
     );
   }

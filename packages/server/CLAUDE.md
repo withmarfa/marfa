@@ -92,9 +92,11 @@ The Drizzle PG instance is wrapped in a per-request context proxy (`storage/pg/r
 
 Per-tenant resource ceilings are stored in `tenant_quotas` (PK `tenant_id`); missing rows / NULL columns fall back to env defaults (`MYME_DEFAULT_QUOTA_*`). Counts are computed on-demand via `COUNT(*)` on the underlying tables at quota-check time — no eager-increment / reconcile machinery in this PR (the eager path is a follow-on once load measurement justifies the complexity).
 
-`enforceQuota(c, storage, resource, increment)` is the gate. It's a no-op for tenant-less keys (single-tenant self-hosts + platform admin), so the existing instance-wide flow is unaffected. Routes wired in PR T-052: `POST /webhooks` (resource: `webhooks`), `POST /items` (resource: `items`). Blobs / storage_bytes / per-tenant rate-per-minute enforcement is filed as follow-ons; the schema and store carry the columns ready for them.
+`enforceQuota(c, storage, resource, increment)` is the gate. It's a no-op for tenant-less keys (single-tenant self-hosts + platform admin), so the existing instance-wide flow is unaffected. Routes wired: `POST /webhooks` (resource: `webhooks`), `POST /items` (resource: `items`), and — Wave B Part 2 — `POST /blobs` (both `blobs` count and `storage_bytes` sum). The `count(...)` store method computes everything on demand: `COUNT(*)` for count-style resources, `SUM(size)` for `storage_bytes`. Eager-increment + reconcile is filed as a follow-on if per-tenant cardinality climbs.
 
-Admin surface: `GET /tenants/:id/quotas` and `PUT /tenants/:id/quotas` (platform-admin only). Workspace_admin's read-own surface (`GET /tenants/me/quotas`) is a follow-on.
+Per-tenant `rate_per_minute_limit` enforcement lives in the rate-limit middleware (Wave B Part 2) — applied as a second window on top of the existing per-credential cap. A noisy single credential is bounded by the credential cap; a tenant's collective fleet is bounded by the tenant cap. The middleware caches each tenant's ceiling in-process for 60s to avoid a DB roundtrip per request; tenant-cap changes take up to 60s to propagate. Skipped for tenant-less keys.
+
+Admin surface: `GET /tenants/:id/quotas` and `PUT /tenants/:id/quotas` (platform-admin only). Workspace_admin's read-own surface (`GET /tenants/me/quotas`) lands separately.
 
 Errors: `quota_exceeded` (HTTP 429) with `details: { resource, limit, current }` so SDK / CLI / operator alerts can wire off the shape.
 

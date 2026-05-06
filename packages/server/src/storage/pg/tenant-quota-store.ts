@@ -94,6 +94,17 @@ export class PgTenantQuotaStore implements TenantQuotaStore {
         .where(eq(blobs.tenant_id, tenantId));
       return row?.c ?? 0;
     }
+    if (resource === "storage_bytes") {
+      // SUM(size) across the tenant's blob metadata rows. T-052
+      // follow-on (Wave B Part 2). See sqlite peer for the rationale.
+      const [row] = await this.db
+        .select({
+          s: sql<number>`coalesce(sum(${blobs.size}), 0)::bigint`,
+        })
+        .from(blobs)
+        .where(eq(blobs.tenant_id, tenantId));
+      return row?.s ?? 0;
+    }
     return 0;
   }
 }
