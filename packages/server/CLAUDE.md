@@ -153,6 +153,26 @@ The `blobs` metadata table has a composite PK on `(tenant_id, hash)`. Different 
 
 The storage interface's `listAll` / `count` are unscoped by design — admin reconcile + metrics surfaces only.
 
+## Email transport (Wave C PR1)
+
+Pluggable transport for transactional email. Three backends in-tree, picked by `MYME_EMAIL_BACKEND`:
+
+- **`resend`** — Resend API. Idempotency key on every send (24h dedupe). Pre-send suppression check via `storage.emailSuppressions`. Returns `{ ok: false, error: "email_suppressed" }` for already-suppressed addresses, `{ retryable: true }` on 5xx/429/network so the caller can retry.
+- **`smtp`** — `nodemailer`-backed self-host fallback. Same suppression-check + retryable shape. Idempotency key flows through as `X-Idempotency-Key` header (no API-level dedupe — only the audit row + log correlation gain it).
+- **`none`** — explicit "unconfigured" backend. Always returns `{ ok: false, error: "email_transport_not_configured", retryable: false }`. Default if `MYME_EMAIL_BACKEND` unset. Surfaces a clean 503 instead of silent dead-lettering.
+
+**Sender-domain guard.** `senderDomainCheck` runs at boot when `MYME_EMAIL_BACKEND=resend`. If `MYME_EMAIL_FROM` doesn't end in `@mail.myme.so` (the Resend-verified subdomain), the server fails loud at startup. Skipped under `NODE_ENV=test`.
+
+**Suppression list.** `email_suppressions (tenant_id, email, reason, created_at, source_email_id)`, composite PK on `(tenant_id, email)`. Empty-string sentinel for platform-level / pre-sign-in flows (matches blob T-049 convention). RLS policy on PG mirrors the same equality-on-`current_setting` shape as the other tenant tables.
+
+**Resend webhook receiver.** `POST /webhooks/resend` is public (no bearer) and signature-verified via `svix`. Mounted BEFORE `authMiddleware` in `app.ts`. Acts on:
+
+- `email.bounced` (with `bounce.type === "Permanent"`) → upsert with `reason: hard_bounce`.
+- `email.complained` → upsert with `reason: complaint`.
+- Soft bounces / delivered / opened / clicked / sent — ack only.
+
+Each suppression upsert writes an `email.suppressed` audit row with the source Resend message id so an operator can correlate. The handler currently writes to the empty-string tenant; per-tenant routing via Resend tags is a future widening point when hosted multi-tenant lights up.
+
 ## Reserved extension namespaces
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:

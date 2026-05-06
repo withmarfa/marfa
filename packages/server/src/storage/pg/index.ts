@@ -29,6 +29,7 @@ import { PgEdgeTypeStore } from "./edge-type-store.js";
 import { PgSettingsStore } from "./settings-store.js";
 import { PgCoordinationStore } from "./coordination-store.js";
 import { PgTenantQuotaStore } from "./tenant-quota-store.js";
+import { PgEmailSuppressionsStore } from "./email-suppressions-store.js";
 
 export async function createPgStorage(
   connectionString: string,
@@ -105,6 +106,7 @@ export async function createPgStorage(
     settings: new PgSettingsStore(db),
     coordination: new PgCoordinationStore(client),
     tenantQuotas: new PgTenantQuotaStore(db),
+    emailSuppressions: new PgEmailSuppressionsStore(db),
     // T-050: tenant store wired unconditionally — see sqlite index.ts
     // for rationale. The fan-out on tenant cleanup needs `tenants.list`
     // available regardless of authMode.

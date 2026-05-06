@@ -23,6 +23,7 @@ import { SqliteEdgeTypeStore } from "./edge-type-store.js";
 import { SqliteSettingsStore } from "./settings-store.js";
 import { SqliteCoordinationStore } from "./coordination-store.js";
 import { SqliteTenantQuotaStore } from "./tenant-quota-store.js";
+import { SqliteEmailSuppressionsStore } from "./email-suppressions-store.js";
 import { registerEdgeTypeSchema, isCoreEdgeType } from "@mymehq/shared";
 
 export function createSqliteStorage(
@@ -98,6 +99,7 @@ export function createSqliteStorage(
     settings: new SqliteSettingsStore(db),
     coordination: new SqliteCoordinationStore(),
     tenantQuotas: new SqliteTenantQuotaStore(db),
+    emailSuppressions: new SqliteEmailSuppressionsStore(db),
     // T-050: tenant store is wired unconditionally so the per-tenant
     // cleanup fan-out works on any deployment, including keys-mode
     // self-hosts that have explicitly created tenant rows. The hosted-

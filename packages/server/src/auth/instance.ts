@@ -5,6 +5,8 @@ import { passkey } from "@better-auth/passkey";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import * as pgSchema from "../storage/pg/schema.js";
 import { log } from "../middleware/logger.js";
+import type { EmailTransport as MymeEmailTransport } from "../email/transport.js";
+import { renderMagicLinkEmail } from "./email-templates/magic-link.js";
 
 /**
  * The first parameter type of better-auth's drizzleAdapter — used to type
@@ -65,9 +67,17 @@ export interface MymeAuthOptions {
    *  of `baseURL`. When unset, derived from `baseURL`. */
   passkeyRpId?: string;
   /** Sink for magic-link emails. Defaults to a `log` transport that
-   *  writes the link to stdout — fine for dev. Production must wire
-   *  an SMTP / Resend / Mailgun transport. */
+   *  writes the link to stdout — fine for dev. Tests pass an inline
+   *  callable. Production wires `mymeEmailTransport` instead, which
+   *  goes through the rich email module (suppression check, idempotency,
+   *  audit). */
   emailTransport?: EmailTransport;
+  /** Wave C PR1: rich email transport. When present, magic-link sends
+   *  go through this (HTML template, idempotency key, suppression
+   *  check). When absent, falls back to `emailTransport` (or the
+   *  log default). Production paths set this; tests typically don't.
+   *  See `src/email/index.ts` for construction. */
+  mymeEmailTransport?: MymeEmailTransport;
   /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
    *  into the generic-oauth plugin. Each entry surfaces a sign-in button
    *  on the sign-in page and exposes `/auth/sign-in/oauth2` + `/auth/oauth2/callback/<providerId>`. */
@@ -149,6 +159,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
         };
 
   const transport = options.emailTransport ?? defaultLogTransport;
+  const richTransport = options.mymeEmailTransport;
 
   let derivedRpId = options.passkeyRpId;
   if (!derivedRpId) {
@@ -186,6 +197,33 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
       }),
       magicLink({
         sendMagicLink: async ({ email, url, token }) => {
+          // Wave C PR1: rich transport gets the HTML template + the
+          // pre-send suppression check + idempotency key. Falls back
+          // to the legacy callable transport for tests and the
+          // log-default for unconfigured deployments.
+          if (richTransport) {
+            const { html, text, subject } = renderMagicLinkEmail({ url });
+            const result = await richTransport.send({
+              to: email,
+              subject,
+              html,
+              text,
+              idempotencyKey: `magic-link/${token}`,
+              tags: { template: "magic-link" },
+            });
+            if (!result.ok) {
+              log("warn", "magic-link send failed", {
+                to: email,
+                error: result.error,
+                retryable: result.retryable,
+              });
+              // Surface the failure to better-auth — the plugin
+              // throws on caller side, which is what we want for
+              // the suppressed / unconfigured paths.
+              throw new Error(`magic_link_send_failed:${result.error}`);
+            }
+            return;
+          }
           await transport({ email, url, token });
         },
       }),

@@ -1072,6 +1072,73 @@ export interface CoordinationStore {
 }
 
 /**
+ * Reason an address is on the suppression list. Hard bounce / complaint
+ * are received via Resend webhooks; manual is for support-driven
+ * unsuppress-then-restore-elsewhere edge cases; soft_bounce_threshold
+ * is reserved for the future when we track soft-bounce counts and
+ * escalate on the third strike.
+ */
+export type EmailSuppressionReason =
+  | "hard_bounce"
+  | "complaint"
+  | "manual"
+  | "soft_bounce_threshold";
+
+export interface EmailSuppression {
+  tenant_id: string;
+  email: string;
+  reason: EmailSuppressionReason;
+  created_at: string;
+  /** Resend's email id at the time of suppression — surfaced so an
+   *  operator can correlate back to the original send. */
+  source_email_id: string | null;
+}
+
+/**
+ * Per-tenant email suppression list. Composite PK on (tenant_id,
+ * email). Empty-string tenant_id is the platform-level sentinel
+ * (matches blob T-049 convention) — pre-sign-in flows
+ * (forgot-password, magic-link) operate without tenant context and
+ * use the empty-string row.
+ *
+ * The transport's `send()` consults this BEFORE issuing the upstream
+ * call — saves the API roundtrip on already-known-bad addresses, and
+ * gives callers a clear `email_suppressed` signal distinct from
+ * generic send failure.
+ */
+export interface EmailSuppressionsStore {
+  /**
+   * Returns the suppression row when present, null otherwise.
+   * Pre-send hot path — keep cheap.
+   */
+  isSuppressed(
+    tenantId: string,
+    email: string,
+  ): Promise<EmailSuppression | null>;
+  /**
+   * Idempotent insert. Same (tenant_id, email) updates the existing
+   * row's reason + source_email_id (an address that bounced once and
+   * later complained should reflect the most recent reason).
+   */
+  upsert(input: {
+    tenantId: string;
+    email: string;
+    reason: EmailSuppressionReason;
+    sourceEmailId?: string | null;
+  }): Promise<void>;
+  /**
+   * Tenant-scoped list. Admin-side surface for support ops.
+   */
+  list(tenantId: string): Promise<EmailSuppression[]>;
+  /**
+   * Manual unsuppress. For support-driven edge cases (the user
+   * confirmed the address really is theirs and the previous bounce
+   * was their MTA, etc.). No-op when not present.
+   */
+  remove(tenantId: string, email: string): Promise<void>;
+}
+
+/**
  * Typed handle that storage implementations expose for the better-auth
  * integration (§3.13). The two dialect-specific Drizzle handles diverge
  * structurally; the public Storage contract carries them as `unknown`
@@ -1112,11 +1179,23 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   eventLog: EventLogStore;
   settings: SettingsStore;
   coordination: CoordinationStore;
+
   users?: UserStore;
   tenants?: TenantStore;
   /** T-052: per-tenant quotas. Always present (counts even when no
    *  per-tenant ceilings are set). */
   tenantQuotas: TenantQuotaStore;
+  /**
+   * Wave C PR1: per-tenant email suppression list. Mirrors Resend's
+   * account-level suppressions via webhooks (`POST /webhooks/resend`)
+   * and gates pre-send checks in the email transport. See
+   * `EmailSuppressionsStore` for the full contract.
+   *
+   * Optional on the type so test contexts that construct stripped
+   * Storage stubs continue to compile; production storage always
+   * wires it.
+   */
+  emailSuppressions?: EmailSuppressionsStore;
   /**
    * T-025 part 2: optional reference to the wrapped Postgres Drizzle
    * instance, exposed so the RLS middleware can drive

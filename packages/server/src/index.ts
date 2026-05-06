@@ -19,6 +19,7 @@ import type { TenantFanout } from "./storage/retention.js";
 import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
 import { tryStartReactiveRunBridge } from "./connections/reactive-run-bridge.js";
 import { log } from "./middleware/logger.js";
+import { createEmailTransport } from "./email/index.js";
 
 async function main() {
   const config = loadConfig();
@@ -211,7 +212,39 @@ async function main() {
   );
   feedExpirer.start();
 
-  const app = createApp(storage, blobBackend, config);
+  // Wave C PR1: construct the email transport once at boot and thread
+  // it into createApp. The factory's sender-domain check fails loud
+  // here if MYME_EMAIL_FROM doesn't end @mail.myme.so on the Resend
+  // backend (production/staging), preventing bad config reaching the
+  // request loop. The `none` default returns the explicit-failure
+  // transport so email-dependent flows surface a clean
+  // `email_transport_not_configured` error instead of silently
+  // dead-lettering.
+  // Treat empty strings from `config` as "unset" — env vars come back
+  // as "" rather than undefined, but the transport expects undefined
+  // for optional fields. `emptyToUndef` is the trivial nullable cast.
+  const emptyToUndef = (v: string | undefined): string | undefined =>
+    v && v.length > 0 ? v : undefined;
+  const emailTransport = await createEmailTransport({
+    backend: config.emailBackend ?? "none",
+    from: emptyToUndef(config.emailFrom) ?? "Myme <hello@mail.myme.so>",
+    replyTo: emptyToUndef(config.emailReplyTo),
+    storage,
+    resend: emptyToUndef(config.resendApiKey)
+      ? { apiKey: config.resendApiKey ?? "" }
+      : undefined,
+    smtp: emptyToUndef(config.smtpHost)
+      ? {
+          host: config.smtpHost ?? "",
+          port: config.smtpPort ?? 587,
+          user: emptyToUndef(config.smtpUser),
+          pass: emptyToUndef(config.smtpPass),
+          secure: config.smtpSecure ?? false,
+        }
+      : undefined,
+  });
+
+  const app = createApp(storage, blobBackend, config, emailTransport);
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     log("info", `Myme server listening on port ${String(info.port)}`);

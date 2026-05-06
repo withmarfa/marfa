@@ -132,6 +132,34 @@ export interface AppConfig {
   defaultQuotaBlobs?: number | null;
   defaultQuotaStorageBytes?: number | null;
   defaultQuotaRatePerMinute?: number | null;
+  /**
+   * Wave C PR1: email transport configuration.
+   *
+   * - `emailBackend` — `resend | smtp | none`. Default `none` —
+   *   email-dependent flows (forgot-password, magic-link) return
+   *   `email_transport_not_configured` until an operator picks a
+   *   backend. The factory + boot guard at `src/email/index.ts`
+   *   constructs the right transport at startup.
+   * - `emailFrom` — visible sender, e.g. `Myme <hello@mail.myme.so>`.
+   *   For the Resend backend the domain MUST end in `@mail.myme.so`
+   *   (the verified Resend domain) — `senderDomainCheck` enforces
+   *   this at boot. Apex `myme.so` has no DKIM and would fail SPF.
+   * - `emailReplyTo` — monitored Reply-To. Optional; recommend a
+   *   real inbox so user replies don't bounce silently.
+   * - `resendApiKey` / `resendWebhookSecret` — Resend backend creds.
+   * - `smtpHost` / `smtpPort` / `smtpUser` / `smtpPass` /
+   *   `smtpSecure` — SMTP backend creds (self-host fallback).
+   */
+  emailBackend?: "resend" | "smtp" | "none";
+  emailFrom?: string;
+  emailReplyTo?: string;
+  resendApiKey?: string;
+  resendWebhookSecret?: string;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUser?: string;
+  smtpPass?: string;
+  smtpSecure?: boolean;
 }
 
 export interface OidcProviderConfig {
@@ -283,7 +311,34 @@ export function loadConfig(): AppConfig {
     defaultQuotaRatePerMinute: parseQuotaEnv(
       process.env.MYME_DEFAULT_QUOTA_RATE_PER_MINUTE,
     ),
+    emailBackend: parseEmailBackend(process.env.MYME_EMAIL_BACKEND),
+    emailFrom: process.env.MYME_EMAIL_FROM ?? "",
+    emailReplyTo: process.env.MYME_EMAIL_REPLY_TO ?? "",
+    resendApiKey: process.env.RESEND_API_KEY_MYME ?? "",
+    resendWebhookSecret: process.env.RESEND_WEBHOOK_SECRET_MYME ?? "",
+    smtpHost: process.env.MYME_SMTP_HOST ?? "",
+    smtpPort: envNumber(process.env.MYME_SMTP_PORT, 587),
+    smtpUser: process.env.MYME_SMTP_USER ?? "",
+    smtpPass: process.env.MYME_SMTP_PASS ?? "",
+    smtpSecure: process.env.MYME_SMTP_SECURE === "true",
   };
+}
+
+/**
+ * Parses `MYME_EMAIL_BACKEND`. Unset / unknown → `none` (the
+ * fail-loud-on-send default). Legal values: `resend | smtp | none`.
+ */
+function parseEmailBackend(
+  raw: string | undefined,
+): "resend" | "smtp" | "none" {
+  if (raw === "resend" || raw === "smtp" || raw === "none") return raw;
+  if (raw && raw.length > 0) {
+    console.warn(
+      `Unknown MYME_EMAIL_BACKEND=${raw}; falling back to "none". ` +
+        `Legal values: resend | smtp | none.`,
+    );
+  }
+  return "none";
 }
 
 /**
