@@ -9,6 +9,7 @@ import {
   timestamp,
   index,
   uniqueIndex,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -189,12 +190,20 @@ export const apiKeys = pgTable(
 // blobs (metadata only — actual files on filesystem)
 // ---------------------------------------------------------------------------
 
-export const blobs = pgTable("blobs", {
-  hash: text("hash").primaryKey(),
-  mime_type: text("mime_type").notNull(),
-  size: integer("size").notNull(),
-  storage_path: text("storage_path").notNull(),
-});
+// T-049: see sqlite/schema.ts for the full design rationale. Composite
+// PK on (tenant_id, hash); empty-string sentinel for instance-wide /
+// platform-admin / single-tenant rows.
+export const blobs = pgTable(
+  "blobs",
+  {
+    tenant_id: text("tenant_id").notNull().default(""),
+    hash: text("hash").notNull(),
+    mime_type: text("mime_type").notNull(),
+    size: integer("size").notNull(),
+    storage_path: text("storage_path").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.tenant_id, t.hash] })],
+);
 
 // ---------------------------------------------------------------------------
 // OAuth tables

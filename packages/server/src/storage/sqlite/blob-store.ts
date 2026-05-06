@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { BlobStore } from "../interface.js";
 import { blobs } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -11,11 +11,19 @@ export class SqliteBlobStore implements BlobStore {
     mimeType: string,
     size: number,
     storagePath: string,
+    tenantId: string,
   ): Promise<void> {
-    // Idempotent — ignore if hash already exists
+    // Idempotent — ignore if (tenant_id, hash) row already exists.
+    // Different tenants uploading the same bytes get separate rows.
     this.db
       .insert(blobs)
-      .values({ hash, mime_type: mimeType, size, storage_path: storagePath })
+      .values({
+        tenant_id: tenantId,
+        hash,
+        mime_type: mimeType,
+        size,
+        storage_path: storagePath,
+      })
       .onConflictDoNothing()
       .run();
     return Promise.resolve();
@@ -23,8 +31,13 @@ export class SqliteBlobStore implements BlobStore {
 
   get(
     hash: string,
+    tenantId: string,
   ): Promise<{ mime_type: string; size: number; storage_path: string } | null> {
-    const row = this.db.select().from(blobs).where(eq(blobs.hash, hash)).get();
+    const row = this.db
+      .select()
+      .from(blobs)
+      .where(and(eq(blobs.tenant_id, tenantId), eq(blobs.hash, hash)))
+      .get();
     if (!row) return Promise.resolve(null);
     return Promise.resolve({
       mime_type: row.mime_type,
@@ -34,11 +47,21 @@ export class SqliteBlobStore implements BlobStore {
   }
 
   listAll(): Promise<string[]> {
-    const rows = this.db.select({ hash: blobs.hash }).from(blobs).all();
+    // Distinct hashes across every tenant — used by the admin reconcile
+    // route to find orphan files on disk. Tenant-scoped reads use `get`.
+    const rows = this.db.selectDistinct({ hash: blobs.hash }).from(blobs).all();
     return Promise.resolve(rows.map((r) => r.hash));
   }
 
-  remove(hash: string): Promise<void> {
+  remove(hash: string, tenantId: string): Promise<void> {
+    this.db
+      .delete(blobs)
+      .where(and(eq(blobs.tenant_id, tenantId), eq(blobs.hash, hash)))
+      .run();
+    return Promise.resolve();
+  }
+
+  removeAllForHash(hash: string): Promise<void> {
     this.db.delete(blobs).where(eq(blobs.hash, hash)).run();
     return Promise.resolve();
   }

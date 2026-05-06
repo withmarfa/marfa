@@ -68,6 +68,14 @@ Middleware composes shared per-request state on `c.var`. Routes read these direc
 
 Middleware order in `app.ts`: logger → CORS → client-ip → auth → cycle → rate-limit → routes. The cycle resolver depends on auth's `c.var.apiKey`, so it must run after auth.
 
+## Blob storage tenant scoping (T-049)
+
+The `blobs` metadata table has a composite PK on `(tenant_id, hash)`. Different tenants uploading the same hash bytes get separate metadata rows; the storage backend (filesystem / S3) still keys by hash globally so the physical file is shared (content-addressed deduplication preserved). `tenant_id` is `NOT NULL DEFAULT ''` — empty string is the sentinel for instance-wide / single-tenant / platform-admin uploads, used to keep the composite PK clean across both dialects.
+
+`storage.blobs.{register, get, remove}` take an explicit `tenantId` parameter; the route layer threads `key.tenant_id ?? ""` so platform-admin uploads on hosted instances and all uploads on single-tenant self-hosts go to the empty-string row. Cross-tenant probes (`GET /blobs/:hash` from a tenant that hasn't uploaded those bytes) return 404. `storage.blobs.removeAllForHash` exists for the platform-admin orphan-cleanup path that nukes a hash from every tenant.
+
+The storage interface's `listAll` / `count` are unscoped by design — admin reconcile + metrics surfaces only.
+
 ## Reserved extension namespaces
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:

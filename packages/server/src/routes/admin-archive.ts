@@ -93,6 +93,12 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     const itemLines: string[] = [];
     const blobUploads: Promise<void>[] = [];
     let blobCount = 0;
+    // T-049: archive restore lands blobs under the calling admin's tenant
+    // scope. Empty-string sentinel for platform admins on single-tenant
+    // self-hosts. Cross-tenant restore (platform admin restoring into a
+    // specific tenant) is the T-053 follow-up; for now, the calling
+    // admin's tenant_id wins.
+    const restoreTenantId = c.get("apiKey")?.tenant_id ?? "";
 
     const extract = tar.extract();
     const gunzip = createGunzip();
@@ -148,7 +154,13 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
                   blobBackend
                     .put(hash, buf, mimeType)
                     .then(() =>
-                      storage.blobs.register(hash, mimeType, buf.length, hash),
+                      storage.blobs.register(
+                        hash,
+                        mimeType,
+                        buf.length,
+                        hash,
+                        restoreTenantId,
+                      ),
                     ),
                 );
               }

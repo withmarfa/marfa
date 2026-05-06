@@ -110,11 +110,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_source_per_tenant
 CREATE INDEX IF NOT EXISTS idx_api_keys_connection_id
   ON api_keys(connection_id) WHERE connection_id IS NOT NULL;
 
+-- T-049: composite PK on (tenant_id, hash). See sqlite/connection.ts for
+-- design rationale. Empty-string sentinel for instance-wide rows.
 CREATE TABLE IF NOT EXISTS blobs (
-  hash TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT '',
+  hash TEXT NOT NULL,
   mime_type TEXT NOT NULL,
   size INTEGER NOT NULL,
-  storage_path TEXT NOT NULL
+  storage_path TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, hash)
 );
 
 CREATE TABLE IF NOT EXISTS custom_types (
