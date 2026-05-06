@@ -47,7 +47,13 @@ CREATE TABLE IF NOT EXISTS items (
   schema_version INTEGER,
   device TEXT,
   capture_latitude DOUBLE PRECISION,
-  capture_longitude DOUBLE PRECISION
+  capture_longitude DOUBLE PRECISION,
+  -- T-015: materialised tsvector populated from properties at write
+  -- time by the search store. NULL means not yet indexed (e.g. mid-
+  -- backfill); the search query treats NULL the same as no rows. The
+  -- index uses GIN; per-row size is dominated by the document
+  -- dictionary so the column itself is small.
+  search_vector TSVECTOR
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
@@ -56,6 +62,10 @@ CREATE INDEX IF NOT EXISTS idx_items_created_at ON items(created_at);
 CREATE INDEX IF NOT EXISTS idx_items_timestamp ON items(timestamp);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_dedup
   ON items(source, source_id) WHERE source IS NOT NULL;
+-- T-015: GIN index on the materialised search_vector. Replaces the
+-- per-request to_tsvector(...) sequential scan that the at-query-time
+-- shape required.
+CREATE INDEX IF NOT EXISTS idx_items_search_vector ON items USING GIN(search_vector);
 
 CREATE TABLE IF NOT EXISTS metadata (
   item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,

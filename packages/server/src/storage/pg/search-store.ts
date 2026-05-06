@@ -1,10 +1,14 @@
 import { safeJsonParse } from "../json-utils.js";
 import { parseFilter, type SearchResult } from "@mymehq/shared";
+import { sql } from "drizzle-orm";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql } from "../filter-sql.js";
-import type { PgClient } from "./connection.js";
+import type { PgClient, PgDb } from "./connection.js";
 import { rowToItem } from "./helpers.js";
 import type { items } from "./schema.js";
+// T-015: shared FTS text extractor — both dialects compute the
+// indexable text the same way so the cross-dialect parity test holds.
+import { extractSearchableText } from "../search-text.js";
 
 /**
  * Build a Postgres tsquery function call with prefix matching on the last token.
@@ -45,23 +49,61 @@ function buildTsQueryExpr(
 }
 
 export class PgSearchStore implements SearchStore {
-  constructor(private client: PgClient) {}
+  /**
+   * T-015: writes go through the request-context-aware Drizzle
+   * instance (`db`) so an `index()` call inside a `db.transaction(...)`
+   * runs on the same reserved connection as the parent INSERT/UPDATE.
+   * Reads (the `search` method's raw SQL) use the bare client — search
+   * isn't typically nested in a write transaction, and taking a fresh
+   * pool connection is fine for it.
+   */
+  constructor(
+    private db: PgDb,
+    private client: PgClient,
+  ) {}
 
-  // No-op: Postgres computes tsvectors at query time from the properties JSON
-  // column. Unlike SQLite (which maintains a separate FTS5 table), Postgres does
-  // not need an explicit index step. The SearchStore interface requires these
-  // methods for SQLite compatibility but they are intentionally empty here.
+  /**
+   * T-015: write the materialised tsvector for an item. The text fed
+   * to `to_tsvector('english', ...)` comes from the shared
+   * `extractSearchableText` helper, which respects per-type
+   * `searchable: false` opt-outs and produces the same field set the
+   * SQLite FTS5 indexer uses. Called inside the same transaction as
+   * the items INSERT/UPDATE so the row + its search vector commit
+   * atomically; if the index call fails, the parent transaction
+   * rolls the row back too.
+   */
   async index(
-    _itemId: string, // eslint-disable-line @typescript-eslint/no-unused-vars
-    _properties: Record<string, unknown>, // eslint-disable-line @typescript-eslint/no-unused-vars
-    _typeId?: string, // eslint-disable-line @typescript-eslint/no-unused-vars
+    itemId: string,
+    properties: Record<string, unknown>,
+    typeId?: string,
   ): Promise<void> {
-    // Intentionally empty — see class comment above
+    const text = extractSearchableText(properties, typeId);
+    // Concatenate with single-space separators — same shape as the
+    // backfill migration so existing rows match write-time semantics.
+    const combined = [
+      text.title,
+      text.body,
+      text.description,
+      text.name,
+      text.extra,
+    ]
+      .filter((s) => s.length > 0)
+      .join(" ");
+    await this.db.execute(
+      sql`UPDATE items SET search_vector = to_tsvector('english', ${combined}) WHERE id = ${itemId}`,
+    );
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async remove(_itemId: string): Promise<void> {
-    // Intentionally empty — see class comment above
+  /**
+   * T-015: clear the search vector. Called when an item is hard-
+   * deleted or restored from a state that excluded it from FTS. The
+   * row may already be gone (cascade delete); the UPDATE no-ops in
+   * that case.
+   */
+  async remove(itemId: string): Promise<void> {
+    await this.db.execute(
+      sql`UPDATE items SET search_vector = NULL WHERE id = ${itemId}`,
+    );
   }
 
   async search(query: string, filters: SearchFilters): Promise<SearchResult[]> {
@@ -79,16 +121,13 @@ export class PgSearchStore implements SearchStore {
     );
     params.push(paramValue);
 
-    // tsvector expression over JSON properties — includes all string values
-    // via json_each_text so custom type string fields are searchable
-    const tsvec = `to_tsvector('english',
-      coalesce(i.properties::json->>'title','') || ' ' ||
-      coalesce(i.properties::json->>'body','') || ' ' ||
-      coalesce(i.properties::json->>'description','') || ' ' ||
-      coalesce(i.properties::json->>'name','') || ' ' ||
-      coalesce((SELECT string_agg(value, ' ') FROM json_each_text(i.properties::json)
-                WHERE key NOT IN ('title','body','description','name')), '')
-    )`;
+    // T-015: read the materialised search_vector column. Replaces the
+    // at-query-time `to_tsvector(...)` sequential scan that the at-
+    // query-time shape required. The column is populated by
+    // `index()` at item write time; rows whose search_vector is NULL
+    // (un-backfilled, mid-migration) are simply invisible to search
+    // until the next write or the backfill UPDATE catches them.
+    const tsvec = `i.search_vector`;
 
     // Default: exclude trashed
     if (filters.state) {

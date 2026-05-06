@@ -243,15 +243,44 @@ const CORE_SEARCH_FIELDS = new Set(["title", "body", "description", "name"]);
 /**
  * Returns the names of string-typed fields for a type that are not already
  * covered by the 4 core search fields. Used to index custom type properties.
+ *
+ * T-015: respects the `searchable: false` opt-out on field definitions —
+ * fields explicitly flagged as non-searchable are excluded from this list,
+ * which means both dialects' FTS index (the SQLite `items_fts.extra`
+ * column and the PG `search_vector` materialised tsvector) skip them.
+ * Fields without the flag default to searchable for backward compatibility.
  */
 export function getSearchableStringFields(typeId: string): string[] {
   const fields = getResolvedFields(typeId);
   if (!fields) return [];
   return Object.entries(fields)
     .filter(
-      ([key, def]) => def.type === "string" && !CORE_SEARCH_FIELDS.has(key),
+      ([key, def]) =>
+        def.type === "string" &&
+        !CORE_SEARCH_FIELDS.has(key) &&
+        def.searchable !== false,
     )
     .map(([key]) => key);
+}
+
+/**
+ * T-015: returns true when `typeId.fieldName` is a string field whose
+ * definition explicitly opts out of FTS via `searchable: false`. The
+ * search indexer consults this for the four core fields (title, body,
+ * description, name) — `getSearchableStringFields` only covers the
+ * long tail. Fields that don't exist on the type, or non-string fields,
+ * return false (the default-searchable shape). The flag defaults to
+ * `true` (searchable) for backward compat with existing types.
+ */
+export function isFieldSearchableExcluded(
+  typeId: string,
+  fieldName: string,
+): boolean {
+  const fields = getResolvedFields(typeId);
+  if (!fields) return false;
+  const def = fields[fieldName];
+  if (def?.type !== "string") return false;
+  return def.searchable === false;
 }
 
 /** Returns true if typeId is a subtype of (or equal to) parentId. */

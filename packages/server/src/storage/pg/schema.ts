@@ -10,8 +10,18 @@ import {
   index,
   uniqueIndex,
   primaryKey,
+  customType,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+// T-015: Drizzle doesn't have a first-class tsvector type, so we
+// declare a small customType. We never SELECT the column directly
+// (search reads use raw SQL via the unsafe path); declaring it lets
+// `drizzle-kit generate` emit the right migration shape and lets the
+// item-store INSERTs reference it.
+const tsvector = customType<{ data: string; driverData: string }>({
+  dataType: () => "tsvector",
+});
 
 // ---------------------------------------------------------------------------
 // tenants + users (hosted mode)
@@ -70,6 +80,10 @@ export const items = pgTable(
     device: text("device"),
     capture_latitude: doublePrecision("capture_latitude"),
     capture_longitude: doublePrecision("capture_longitude"),
+    // T-015: materialised tsvector populated by the search store at
+    // write time. Nullable so backfilled rows can be detected
+    // mid-migration. Indexed via GIN below.
+    search_vector: tsvector("search_vector"),
   },
   (table) => [
     index("idx_items_type").on(table.type),
@@ -79,6 +93,9 @@ export const items = pgTable(
     uniqueIndex("idx_items_source_dedup")
       .on(table.source, table.source_id)
       .where(sql`source IS NOT NULL`),
+    // GIN index on the materialised tsvector. Drizzle-kit emits a
+    // standard `CREATE INDEX ... USING gin` statement for this.
+    index("idx_items_search_vector").using("gin", table.search_vector),
   ],
 );
 

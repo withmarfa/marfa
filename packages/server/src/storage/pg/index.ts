@@ -44,7 +44,7 @@ export async function createPgStorage(
     await createConnection(connectionString);
 
   const versionStore = new PgVersionStore(db);
-  const searchStore = new PgSearchStore(client);
+  const searchStore = new PgSearchStore(db, client);
   const itemStore = new PgItemStore(
     db,
     versionStore,

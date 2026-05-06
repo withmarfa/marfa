@@ -12,6 +12,7 @@ import type {
   ItemState,
   Tier,
   TenantConfig,
+  TenantQuota,
   Edge,
   CreateEdgeInput,
   EdgeTypeSchema,
@@ -1155,6 +1156,55 @@ export class MymeClient {
         "/tenants/current/config",
         { body: config },
       );
+    },
+
+    /** Per-tenant resource quotas (T-052). Empty / missing limits fall
+     *  back to the instance defaults from env. Quotas are platform-
+     *  admin-managed. */
+    quotas: {
+      /**
+       * Read the calling tenant's quota row. Resolves the tenant from
+       * the bearer's `tenant_id`; rejects with 400 when the credential
+       * is tenant-less (platform admin, single-tenant self-host
+       * bootstrap). Use `getById` instead in that case.
+       *
+       * Wave B Part 4 follow-on: ships alongside T-015's release tag.
+       * The route landed in Wave B Part 2 (`GET /tenants/me/quotas`)
+       * and was usable via raw HTTP until this method.
+       */
+      getOwn: async (): Promise<TenantQuota> => {
+        return this.transport.request<TenantQuota>(
+          "GET",
+          "/tenants/me/quotas",
+        );
+      },
+
+      /** Read a specific tenant's quota row (platform admin only). */
+      getById: async (tenantId: string): Promise<TenantQuota> => {
+        return this.transport.request<TenantQuota>(
+          "GET",
+          `/tenants/${encodeURIComponent(tenantId)}/quotas`,
+        );
+      },
+
+      /** Replace a tenant's quota row (platform admin only). Pass null
+       *  on a field to clear it (revert to env default). */
+      set: async (
+        tenantId: string,
+        input: {
+          items_limit?: number | null;
+          webhooks_limit?: number | null;
+          blobs_limit?: number | null;
+          storage_bytes_limit?: number | null;
+          rate_per_minute_limit?: number | null;
+        },
+      ): Promise<TenantQuota> => {
+        return this.transport.request<TenantQuota>(
+          "PUT",
+          `/tenants/${encodeURIComponent(tenantId)}/quotas`,
+          { body: input },
+        );
+      },
     },
   };
 
