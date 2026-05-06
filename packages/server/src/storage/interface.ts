@@ -1076,6 +1076,18 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   /** T-052: per-tenant quotas. Always present (counts even when no
    *  per-tenant ceilings are set). */
   tenantQuotas: TenantQuotaStore;
+  /**
+   * T-025 part 2: optional reference to the wrapped Postgres Drizzle
+   * instance, exposed so the RLS middleware can drive
+   * `db.transaction(...)` directly. Set only on the PG storage; left
+   * `undefined` on SQLite (RLS is PG-only). The middleware skips the
+   * role-switch wrapping when this is undefined.
+   *
+   * Typed `unknown` here for the same reason as `betterAuthDb`:
+   * keeps the cross-dialect Storage interface portable. The
+   * middleware casts via the PgDb type at consumer-site.
+   */
+  pgDb?: unknown;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   close(): Promise<void>;
 }

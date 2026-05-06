@@ -37,7 +37,11 @@ export async function createPgStorage(
     authMode?: "hosted" | "keys";
   },
 ): Promise<Storage> {
-  const { db, client, close } = await createConnection(connectionString);
+  // `db` is the wrapped Drizzle instance (per-request RLS context aware);
+  // `baseDb` is the raw owner-connection instance reserved for Better Auth.
+  // T-025 part 2: see `request-context.ts` for the substitution mechanic.
+  const { db, baseDb, client, close } =
+    await createConnection(connectionString);
 
   const versionStore = new PgVersionStore(db);
   const searchStore = new PgSearchStore(client);
@@ -123,8 +127,16 @@ export async function createPgStorage(
         ? client.unsafe(query, params as (string | number | boolean)[])
         : client.unsafe(query);
     },
-    betterAuthDb: db,
+    // Better Auth runs on the unwrapped base instance — its tables
+    // (auth_user, auth_session, etc.) carry no RLS policies and the
+    // auth library manages its own connection context outside the
+    // per-request RLS middleware. T-025 part 2.
+    betterAuthDb: baseDb,
     betterAuthDialect: "pg" as const,
+    // T-025 part 2: the wrapped Drizzle instance, exposed so the
+    // RLS middleware can drive `db.transaction(...)` directly to
+    // wrap each tenant-bounded request.
+    pgDb: db,
   } satisfies Storage & {
     _pgTruncate(): Promise<void>;
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]>;
