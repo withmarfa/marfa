@@ -105,6 +105,19 @@ Coordination locks are keyed per-tenant (`<jobName>:<tenant-id>`, plus `<jobName
 
 The `runTenantCleanup` helper in `storage/retention.ts` is the shared fan-out runner; the in-class `TrashPurger.runOnce` / `FeedExpirer.runOnce` accept an optional `TenantFanout` config that wires the same fan-out semantics for the items-table jobs.
 
+## OAuth scope grammar enforcement (T-045)
+
+OAuth tokens are issued with scopes parsed by `parseScope` in `@mymehq/shared`. At token-resolve time the auth middleware projects them into the synthetic `ApiKey`'s `type_permissions`, `edge_permissions`, and `metadata_permissions` maps. From that point the data plane gates flow through the same helpers used for ordinary API keys:
+
+- **`requireTypeAccess(c, type, level)`** — consults `type_permissions`. Wired on every single-item GET / PATCH / DELETE / restore / transition / version, on every POST `/items` (against `body.type`), and on edge-source and edge-target writes (`POST /items` with `edges`). Admin and workspace_admin bypass; member + OAuth-derived synthetic keys must match the projected permission. List reads use `getTypeFilter` instead — see below.
+- **`requireEdgePermission(c, edgeType, level)`** — consults `edge_permissions`. Wired on `POST /edges`, `PATCH /edges/:id`, `DELETE /edges/:id`, and on every edge mutation inside an atomic `POST /items`. Admin and workspace_admin bypass.
+- **`requireMetadataPermission(c, subresource, level)`** — consults `metadata_permissions`. Wired on `POST /types` (`metadata.types:write`). Admin and workspace_admin bypass.
+- **List-read enforcement via `getTypeFilter`** — list endpoints (`GET /items`, `/search`, `/export`, bulk reads) project `type_permissions` into a storage-layer `allowed_types` filter. Out-of-scope types silently drop from the result set (status 200 with empty data) — implicit denial, not 403. The single-item GET path enforces explicitly via `requireTypeAccess`. Strict rejection on list filter mismatch would force callers to know exactly what's in scope; the implicit-denial shape lets a token pass `?type=X` even with a multi-type scope and get the right results.
+- **Empty `allowed_types` filters to zero rows.** The storage layer treats `allowed_types: []` as "no readable types" (forces `1=0` in SQL); previously it silently passed through and returned every row, a real security gap a no-scope token could exploit. Fixed in T-045 alongside the projection wiring.
+- **More-restrictive-wins is automatic.** OAuth tokens are synthetic `ApiKey` records built only from the granted scopes — there's no underlying API key whose permissions might be wider. Scope and credential are the same map.
+
+**Force re-consent on T-045 deploy.** The pre-T-045 regime had most scopes parsed-but-not-gated; tokens issued under that regime carry consent-screen wording the system didn't honour. Forward-compat would mask the new enforcement against existing tokens. The honest path is `pnpm --filter @mymehq/server tsx src/scripts/revoke-oauth-grants-t045.ts --dialect=<sqlite|pg>` — flips every active `user-app-grant` to revoked, cascades through `oauth.revokeGrantTokens`, and writes a per-revocation audit row stamped `{ action: "key.revoke", details: { reason: "scope_grammar_enforcement", ticket: "T-045" } }` so operators have an attributable trail. Idempotent — re-running over already-revoked grants is a no-op. Users re-grant via the existing consent screen.
+
 ## Per-tenant quotas (T-052)
 
 Per-tenant resource ceilings are stored in `tenant_quotas` (PK `tenant_id`); missing rows / NULL columns fall back to env defaults (`MYME_DEFAULT_QUOTA_*`). Counts are computed on-demand via `COUNT(*)` on the underlying tables at quota-check time — no eager-increment / reconcile machinery in this PR (the eager path is a follow-on once load measurement justifies the complexity).

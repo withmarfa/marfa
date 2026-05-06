@@ -161,16 +161,20 @@ export class SqliteSearchStore implements SearchStore {
 
     // Type permission filtering
     if (filters.allowed_types) {
-      const typeClauses = filters.allowed_types.map((pattern) => {
-        if (pattern === "*") return "1=1";
-        if (pattern.endsWith(".*")) {
-          params.push(pattern.slice(0, -1) + "%");
-          return "i.type LIKE ?";
-        }
-        params.push(pattern);
-        return "i.type = ?";
-      });
-      if (typeClauses.length > 0) {
+      // T-045: empty allowed_types means "no readable types" — see
+      // SqliteItemStore.list. Must filter to zero rows.
+      if (filters.allowed_types.length === 0) {
+        conditions.push("AND 1=0");
+      } else {
+        const typeClauses = filters.allowed_types.map((pattern) => {
+          if (pattern === "*") return "1=1";
+          if (pattern.endsWith(".*")) {
+            params.push(pattern.slice(0, -1) + "%");
+            return "i.type LIKE ?";
+          }
+          params.push(pattern);
+          return "i.type = ?";
+        });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }
     }

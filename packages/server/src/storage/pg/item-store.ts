@@ -280,14 +280,18 @@ export class PgItemStore implements ItemStore {
     }
 
     if (filters.allowed_types) {
-      const typeClauses = filters.allowed_types.map((pattern) => {
-        if (pattern === "*") return sql`1=1`;
-        if (pattern.endsWith(".*")) {
-          return like(items.type, pattern.slice(0, -1) + "%");
-        }
-        return eq(items.type, pattern);
-      });
-      if (typeClauses.length > 0) {
+      // T-045: empty allowed_types means "no readable types" — must filter
+      // to zero rows. See SqliteItemStore.list for the rationale.
+      if (filters.allowed_types.length === 0) {
+        conditions.push(sql`1=0`);
+      } else {
+        const typeClauses = filters.allowed_types.map((pattern) => {
+          if (pattern === "*") return sql`1=1`;
+          if (pattern.endsWith(".*")) {
+            return like(items.type, pattern.slice(0, -1) + "%");
+          }
+          return eq(items.type, pattern);
+        });
         const clause = or(...typeClauses);
         if (clause) conditions.push(clause);
       }
