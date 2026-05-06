@@ -173,6 +173,19 @@ Pluggable transport for transactional email. Three backends in-tree, picked by `
 
 Each suppression upsert writes an `email.suppressed` audit row with the source Resend message id so an operator can correlate. The handler currently writes to the empty-string tenant; per-tenant routing via Resend tags is a future widening point when hosted multi-tenant lights up.
 
+## Forgot-password + reset (Wave C PR3 / T-033)
+
+End-user surface for resetting a forgotten password. Sits on top of better-auth's `request-password-reset` + `reset-password` endpoints, but the email URL bypasses better-auth's intermediate validate-and-redirect GET — our hook constructs a URL pointing at our themed `/auth/reset-password` page directly. Token validation happens on POST.
+
+- **Routes.** `GET /auth/forgot-password` (email form), `POST /auth/forgot-password` (soft-fail dispatch), `GET /auth/reset-password?token=…` (renders the new-password form), `POST /auth/reset-password` (validates fields, dispatches to better-auth, renders success/failure).
+- **Hook.** `emailAndPassword.sendResetPassword` builds an in-house URL (`${baseURL}/auth/reset-password?token=…`) and routes the email through the rich Myme transport (idempotency key per `(user_id, token)`, suppression check, audit). Conditional on a real backend — same gate pattern as PR2's verification flow.
+- **Token TTL.** `resetPasswordTokenExpiresIn: 3600` (1 hour). Single-use — better-auth deletes the verification row on successful reset.
+- **Session revocation.** `revokeSessionsOnPasswordReset: true` — every other session for the user is dropped on a successful reset. The user must re-sign-in everywhere.
+- **Per-email throttle.** `auth/per-email-throttle.ts` mints `PerEmailThrottle` instances. The forgot-password router holds one (3/hour per email, in-memory). Layered on top of the per-IP `pathLimits` cap (`/auth/forgot-password: 30`) in `middleware/rate-limit.ts`.
+- **No-enumeration invariant.** `POST /auth/forgot-password` always 302s with `?sent=1` regardless of whether the address exists, whether the upstream succeeded, or whether the email transport actually delivered. Better-auth's `request-password-reset` endpoint enforces the same shape upstream (timing-safe). The throttle path is the only branch that surfaces a different state (`?error=rate_limited`) — and it does so based on the email itself, not on whether the account exists, so no enumeration leaks there either.
+- **Multi-instance.** Throttle is in-memory only. Multi-instance deployments need a shared counter (Redis); deferred until hosted-multi-tenant lights up.
+- **Tests.** `password-reset.test.ts` exercises the full sign-up → forgot → DB-token-read → reset → sign-in round-trip (plus single-use replay rejection + session revocation). `readLatestResetToken(storage)` in `test-utils.ts` reads the most recent `auth_verification` row — used by the integration test in lieu of intercepting the email transport.
+
 ## Reserved extension namespaces
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:

@@ -19,6 +19,9 @@ import type {
 import { renderConsentScreen } from "./consent.js";
 import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
+import { renderForgotPasswordPage } from "./forgot-password-page.js";
+import { renderResetPasswordPage } from "./reset-password-page.js";
+import { PerEmailThrottle } from "../auth/per-email-throttle.js";
 import {
   renderDevicePage,
   renderDeviceConsentScreen,
@@ -113,6 +116,17 @@ export function authRoutes(
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
   const knownTypes = Array.from(TYPE_REGISTRY.keys());
+
+  // Wave C PR3 / T-033: per-email throttle on `/auth/forgot-password`.
+  // 3 requests per email per hour. Sits on top of the per-IP rate
+  // limit configured in `middleware/rate-limit.ts` — per-IP bounds a
+  // noisy client; per-email bounds the address itself so a burst from
+  // many IPs can't drown one user's inbox. In-memory only; multi-
+  // instance deployments would need a shared counter (deferred).
+  const forgotPasswordThrottle = new PerEmailThrottle({
+    limit: 3,
+    windowMs: 60 * 60 * 1000,
+  });
 
   /**
    * Gate `/auth/authorize` on a Better Auth cookie session. End users
@@ -785,6 +799,202 @@ export function authRoutes(
       // Fall through to the generic signup_failed code.
     }
     return errorRedirect(errorCode);
+  });
+
+  // -----------------------------------------------------------------------
+  // Forgot password + reset (Wave C PR3 / T-033)
+  // -----------------------------------------------------------------------
+  //
+  // Surfaces:
+  //   - GET  /auth/forgot-password           — render the email form
+  //   - POST /auth/forgot-password           — soft-fail dispatch to
+  //     better-auth's `request-password-reset`. Per-email throttled
+  //     (3/hour) AND per-IP throttled (via existing rate-limit
+  //     middleware's `pathLimits`). Always 302s to the `sent` state
+  //     regardless of whether the address exists, to avoid email
+  //     enumeration.
+  //   - GET  /auth/reset-password?token=…    — render the new-password
+  //     form. Token validity is checked on POST (not GET) — cheap, and
+  //     better-auth-style callback redirects have already been bypassed
+  //     by our hook constructing the email URL directly.
+  //   - POST /auth/reset-password            — validate fields, dispatch
+  //     to better-auth's `reset-password`, render success or failure.
+
+  router.get("/forgot-password", (c) => {
+    const url = new URL(c.req.url);
+    const error = url.searchParams.get("error") as
+      | "rate_limited"
+      | "email_not_configured"
+      | null;
+    const sent = url.searchParams.get("sent") === "1";
+    const email = url.searchParams.get("email");
+    const returnTo = validateReturnTo(url.searchParams.get("return_to"));
+    setNoStore(c);
+    return c.html(
+      renderForgotPasswordPage({
+        state: error ? "error" : sent ? "sent" : "form",
+        email,
+        returnTo,
+        errorCode: error ?? undefined,
+      }),
+    );
+  });
+
+  router.post("/forgot-password", async (c) => {
+    if (!auth) {
+      throw new MymeError(
+        ErrorCode.UNAUTHORIZED,
+        "Password reset requires the better-auth identity layer to be configured",
+      );
+    }
+    const formData = await c.req.formData();
+    const emailRaw = formData.get("email");
+    const returnTo = validateReturnTo(formData.get("return_to"));
+    const emailStr =
+      typeof emailRaw === "string" ? emailRaw.trim().toLowerCase() : "";
+
+    // Empty / malformed email — render the form again with the value
+    // erased; no point dispatching upstream.
+    if (!emailStr || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailStr)) {
+      const params = new URLSearchParams({ return_to: returnTo });
+      return c.redirect(`/auth/forgot-password?${params.toString()}`, 302);
+    }
+
+    // Per-email throttle. The rate-limit middleware also caps per-IP;
+    // this is the parallel cap for the email itself.
+    const throttle = forgotPasswordThrottle.attempt(emailStr);
+    if (!throttle.allowed) {
+      const params = new URLSearchParams({
+        email: emailStr,
+        return_to: returnTo,
+        error: "rate_limited",
+      });
+      return c.redirect(`/auth/forgot-password?${params.toString()}`, 302);
+    }
+
+    // Dispatch to better-auth. We swallow errors — the soft-fail
+    // success render is the canonical path regardless of upstream
+    // outcome (no enumeration). The `sendResetPassword` hook itself
+    // logs failures and writes to the audit trail.
+    try {
+      const upstream = new Request(
+        new URL("/auth/request-password-reset", c.req.url),
+        {
+          method: "POST",
+          headers: forwardHeaders(
+            c.req.raw.headers,
+            { "content-type": "application/json" },
+            auth.baseURL,
+          ),
+          body: JSON.stringify({ email: emailStr }),
+        },
+      );
+      await auth.handler(upstream);
+    } catch {
+      // Soft-fail.
+    }
+
+    const params = new URLSearchParams({
+      email: emailStr,
+      return_to: returnTo,
+      sent: "1",
+    });
+    return c.redirect(`/auth/forgot-password?${params.toString()}`, 302);
+  });
+
+  router.get("/reset-password", (c) => {
+    if (!auth) {
+      throw new MymeError(
+        ErrorCode.UNAUTHORIZED,
+        "Password reset requires the better-auth identity layer to be configured",
+      );
+    }
+    const url = new URL(c.req.url);
+    const token = url.searchParams.get("token");
+    const returnTo = validateReturnTo(url.searchParams.get("return_to"));
+    setNoStore(c);
+
+    // No token means the user landed here without clicking a link.
+    // Send them to forgot-password to start over.
+    if (!token) {
+      return c.redirect("/auth/forgot-password", 302);
+    }
+
+    return c.html(renderResetPasswordPage({ state: "form", token, returnTo }));
+  });
+
+  router.post("/reset-password", async (c) => {
+    if (!auth) {
+      throw new MymeError(
+        ErrorCode.UNAUTHORIZED,
+        "Password reset requires the better-auth identity layer to be configured",
+      );
+    }
+    const formData = await c.req.formData();
+    const token = formData.get("token");
+    const password = formData.get("password");
+    const passwordConfirm = formData.get("password_confirm");
+    const returnTo = validateReturnTo(formData.get("return_to"));
+    const tokenStr = typeof token === "string" ? token : "";
+    const passwordStr = typeof password === "string" ? password : "";
+    const passwordConfirmStr =
+      typeof passwordConfirm === "string" ? passwordConfirm : "";
+
+    // Form-side validation. Re-render with an in-form banner so the
+    // user doesn't lose the in-progress reset.
+    const renderForm = (
+      formError: "missing_field" | "password_mismatch" | "weak_password",
+    ): Response =>
+      c.html(
+        renderResetPasswordPage({
+          state: "form",
+          token: tokenStr,
+          returnTo,
+          formError,
+        }),
+      );
+
+    if (!tokenStr || !passwordStr || !passwordConfirmStr) {
+      return renderForm("missing_field");
+    }
+    if (passwordStr !== passwordConfirmStr) {
+      return renderForm("password_mismatch");
+    }
+    if (passwordStr.length < 8) {
+      return renderForm("weak_password");
+    }
+
+    // Dispatch to better-auth's POST /auth/reset-password.
+    const upstream = new Request(new URL("/auth/reset-password", c.req.url), {
+      method: "POST",
+      headers: forwardHeaders(
+        c.req.raw.headers,
+        { "content-type": "application/json" },
+        auth.baseURL,
+      ),
+      body: JSON.stringify({ newPassword: passwordStr, token: tokenStr }),
+    });
+    const response = await auth.handler(upstream);
+
+    if (response.ok) {
+      // Success — render the success page. `revokeSessionsOnPasswordReset:
+      // true` already nuked any other sessions for this user; the
+      // user has no active session now and must sign in fresh.
+      return c.html(renderResetPasswordPage({ state: "success", returnTo }));
+    }
+
+    // Map better-auth's error shape to our friendly failure code.
+    let failureCode: "expired" | "invalid" | "unknown" = "unknown";
+    try {
+      const body = (await response.json()) as { code?: string };
+      const code = body.code?.toLowerCase() ?? "";
+      if (code.includes("expired")) failureCode = "expired";
+      else if (code.includes("invalid") || code.includes("token"))
+        failureCode = "invalid";
+    } catch {
+      // fall through to "unknown"
+    }
+    return c.html(renderResetPasswordPage({ state: "failure", failureCode }));
   });
 
   // -----------------------------------------------------------------------
