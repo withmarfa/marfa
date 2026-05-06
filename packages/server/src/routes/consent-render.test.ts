@@ -104,3 +104,83 @@ describe("renderConsentScreen (Wave C PR4)", () => {
     expect(html).not.toContain("Read and write access</h2>");
   });
 });
+
+describe("renderConsentScreen — re-consent diff (Wave C PR5 / T-032)", () => {
+  it("renders the kept / added / removed groups when priorScopes is supplied", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      // PARAMS.scopes = note:read, note:write, task:read
+      priorScopes: ["core.note:read", "core.task:write"],
+    });
+    expect(html).toContain('class="section section--kept"');
+    expect(html).toContain('class="section section--added"');
+    expect(html).toContain('class="section section--removed"');
+    expect(html).toContain("Previously granted</h2>");
+    expect(html).toContain("New permissions</h2>");
+    expect(html).toContain("No longer requested</h2>");
+    // Flat sections must NOT render in diff mode.
+    expect(html).not.toContain("Read access</h2>");
+    expect(html).not.toContain("Read and write access</h2>");
+  });
+
+  it("kept group carries scopes present in BOTH prev + next", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read"],
+    });
+    // core.note:read is in both → kept
+    expect(html).toMatch(
+      /section--kept[\s\S]*?core\.note:read[\s\S]*?(?:section--|<\/div>)/,
+    );
+  });
+
+  it("added group carries scopes new in next", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read"],
+    });
+    // core.note:write + core.task:read are added (new in next)
+    expect(html).toMatch(/section--added[\s\S]*?core\.note:write/);
+    expect(html).toMatch(/section--added[\s\S]*?core\.task:read/);
+  });
+
+  it("removed group carries scopes from prev that next omits, with strikethrough class", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read", "core.task:write"],
+    });
+    expect(html).toMatch(/section--removed[\s\S]*?core\.task:write/);
+    expect(html).toContain('class="scope-row scope-row--removed"');
+  });
+
+  it("omits a diff group when its set is empty", () => {
+    // Identical prev + next → only "Previously granted" renders.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read", "core.note:write", "core.task:read"],
+    });
+    expect(html).toContain("Previously granted");
+    expect(html).not.toContain("New permissions");
+    expect(html).not.toContain("No longer requested");
+  });
+
+  it("changes the heading copy in the diff variant", () => {
+    const flat = renderConsentScreen(PARAMS);
+    expect(flat).toContain("wants to access your data");
+
+    const diff = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read"],
+    });
+    expect(diff).toContain("requesting updated access");
+  });
+
+  it("removed scopes render their plain-English description", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read", "core.task:write"],
+    });
+    // Removed: core.task:write → "Tasks and todos." description
+    expect(html).toMatch(/section--removed[\s\S]*?Tasks and todos/);
+  });
+});

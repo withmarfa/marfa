@@ -232,6 +232,11 @@ input[type="text"]:focus {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
+.btn:disabled,
+.btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .btn--primary {
   background: var(--accent);
@@ -297,6 +302,7 @@ input[type="text"]:focus {
   padding: 12px 14px;
   background: var(--section-bg);
   border-radius: var(--radius-md);
+  border-left: 3px solid transparent;
 }
 .section h2 {
   font-size: 12px;
@@ -305,6 +311,39 @@ input[type="text"]:focus {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-weight: 600;
+}
+
+/* Wave C PR5 / T-032 — re-consent diff variants. Subtle accent borders
+   so the user can scan kept / added / removed at a glance without
+   leaving the dark-ink design system. */
+.section--kept {
+  /* Same neutral as flat sections — no extra emphasis. */
+}
+.section--added {
+  background: #ecf6e9;
+  border-left-color: #2a5a1f;
+}
+.section--added h2 {
+  color: #2a5a1f;
+}
+.section--removed {
+  background: #f3f0ec;
+  border-left-color: var(--ink-faint);
+}
+.section--removed h2 {
+  color: var(--ink-soft);
+}
+/* Removed scope rows render as static (no checkbox): strike them so
+   the user sees they're being dropped rather than re-granted. */
+.scope-row--removed {
+  margin: var(--gap-xs) 0;
+  opacity: 0.7;
+}
+.scope-row--removed .scope-literal {
+  text-decoration: line-through;
+}
+.scope-row--removed .scope-human {
+  color: var(--ink-soft);
 }
 
 /* Bulleted scope list — one row per <scope>:<verb> entry, optional
