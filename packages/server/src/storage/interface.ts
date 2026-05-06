@@ -167,14 +167,29 @@ export interface ItemStore {
     tenantId?: string,
     allowedTypes?: string[],
   ): Promise<Record<string, number>>;
-  /** Hard-delete every trashed item whose `updated_at` is strictly older
-   *  than `beforeDate` (an ISO 8601 timestamp). Cleans the search index
-   *  for each row. Returns the number of rows deleted. */
-  purgeTrashedOlderThan(beforeDate: string, tenantId?: string): Promise<number>;
+  /**
+   * Hard-delete every trashed item whose `updated_at` is strictly older
+   * than `beforeDate` (an ISO 8601 timestamp). Cleans the search index
+   * for each row. Returns the number of rows deleted.
+   *
+   * `tenantId` semantics (T-050):
+   * - `undefined` — every row older than the cutoff.
+   * - `string` — only rows where `tenant_id` matches.
+   * - `null` — only rows where `tenant_id IS NULL` (single-tenant
+   *   self-host items + any unscoped legacy rows).
+   */
+  purgeTrashedOlderThan(
+    beforeDate: string,
+    tenantId?: string | null,
+  ): Promise<number>;
   /** Hard-delete every feed-tier item whose `updated_at` is strictly older
    *  than `beforeDate`, regardless of state. Cleans the search index for
-   *  each row. Returns the number of rows deleted. */
-  expireFeedOlderThan(beforeDate: string, tenantId?: string): Promise<number>;
+   *  each row. Same tenant semantics as `purgeTrashedOlderThan`. Returns
+   *  the number of rows deleted. */
+  expireFeedOlderThan(
+    beforeDate: string,
+    tenantId?: string | null,
+  ): Promise<number>;
 }
 
 export interface MetadataStore {
@@ -637,6 +652,14 @@ export interface UserStore {
 export interface TenantStore {
   create(name?: string): Promise<Tenant>;
   get(id: string): Promise<Tenant | null>;
+  /**
+   * T-050: enumerate all tenants. Used by background cleanup jobs that
+   * fan out per-tenant. Returns tenants in arbitrary order; callers
+   * shouldn't depend on ordering. Cost is O(tenants) — cleanup runs
+   * are off the request hot path so the unbounded scan is acceptable
+   * at the scale we're targeting.
+   */
+  list(): Promise<Tenant[]>;
   getConfig(id: string): Promise<import("@mymehq/shared").TenantConfig | null>;
   updateConfig(
     id: string,
@@ -817,7 +840,23 @@ export interface AuditStore {
      *  cleanup job which is currently global. */
     tenant_id?: string | null;
   }): Promise<PaginatedResult<AuditEntry>>;
-  cleanup(retentionDays: number): Promise<number>;
+  /**
+   * Hard-delete rows whose `timestamp` is older than the retention
+   * window. T-050 added the optional `tenantId` filter so the cleanup
+   * job can fan out per-tenant honouring per-tenant retention
+   * overrides:
+   *
+   * - `undefined` — every row older than the cutoff (legacy behaviour).
+   * - `string` — only rows where `tenant_id` matches.
+   * - `null` — only rows where `tenant_id IS NULL` (system-initiated
+   *   audits + the no-tenant rows that single-tenant self-hosts use).
+   *
+   * Returns the number of rows actually deleted.
+   */
+  cleanup(
+    retentionDays: number,
+    tenantId?: string | null,
+  ): Promise<number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -870,8 +909,16 @@ export interface EventLogStore {
     tenantId?: string,
   ): Promise<PersistedEvent[]>;
 
-  /** Delete events older than the given retention period. Returns count deleted. */
-  cleanup(retentionHours: number): Promise<number>;
+  /**
+   * Delete events older than the given retention window. Same
+   * `tenantId` semantics as `AuditStore.cleanup` (T-050): undefined
+   * sweeps everything, a string scopes to that tenant, `null` scopes
+   * to rows whose `tenant_id IS NULL`. Returns count deleted.
+   */
+  cleanup(
+    retentionHours: number,
+    tenantId?: string | null,
+  ): Promise<number>;
 
   /** Smallest surviving event id, scoped to a tenant when provided.
    *  Returns null when no events match. Used by the SSE route to

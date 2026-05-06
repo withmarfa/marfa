@@ -105,9 +105,12 @@ export async function createPgStorage(
     settings: new PgSettingsStore(db),
     coordination: new PgCoordinationStore(client),
     tenantQuotas: new PgTenantQuotaStore(db),
+    // T-050: tenant store wired unconditionally — see sqlite index.ts
+    // for rationale. The fan-out on tenant cleanup needs `tenants.list`
+    // available regardless of authMode.
+    tenants: new PgTenantStore(db),
     ...(options?.authMode === "hosted" && {
       users: new PgUserStore(db),
-      tenants: new PgTenantStore(db),
     }),
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
       let result: T | undefined;

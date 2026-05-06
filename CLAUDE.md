@@ -101,25 +101,23 @@ Server package (not needed for shared or SDK development):
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
 - `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
-  <<<<<<< HEAD
-- # `MYME_DEFAULT_QUOTA_ITEMS` / `MYME_DEFAULT_QUOTA_WEBHOOKS` / `MYME_DEFAULT_QUOTA_BLOBS` / `MYME_DEFAULT_QUOTA_STORAGE_BYTES` / `MYME_DEFAULT_QUOTA_RATE_PER_MINUTE` — T-052 default per-tenant ceilings. Unset = unlimited (no enforcement). Per-tenant overrides via `tenant_quotas` rows take precedence. Today only `items` and `webhooks` enforcement is wired; the others are scaffolded for follow-ons.
+- `MYME_DEFAULT_QUOTA_ITEMS` / `MYME_DEFAULT_QUOTA_WEBHOOKS` / `MYME_DEFAULT_QUOTA_BLOBS` / `MYME_DEFAULT_QUOTA_STORAGE_BYTES` / `MYME_DEFAULT_QUOTA_RATE_PER_MINUTE` — T-052 default per-tenant ceilings. Unset = unlimited (no enforcement). Per-tenant overrides via `tenant_quotas` rows take precedence. Today `items`, `webhooks`, `blobs`, `storage_bytes`, and `rate_per_minute` enforcement are all wired (T-052 + Wave B Part 2 follow-on).
 - `MYME_RLS_ENFORCE` — when `true`, each tenant-bounded request is wrapped in a Drizzle transaction with `SET LOCAL ROLE myme_app` and `set_config('myme.tenant_id', $tenant, true)` so the per-table RLS policies actually filter queries (defense-in-depth beneath the application-layer scoping). Default `false` keeps existing single-tenant self-hosts unchanged. Platform-admin keys (no tenant_id), anonymous routes, and streaming responses (`/events`, `/export`) bypass the wrapper. T-025 lands as two PRs: part 1 is the schema scaffold (role, grants, policies); part 2 is the connection-pool wiring described above.
-  > > > > > > > 9dc517c (feat(server): Postgres RLS schema scaffold (T-025 part 1))
 - `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000)
 - `RATE_LIMIT_ENABLED` — set to `false` to disable rate limiting entirely (on by default)
 - `ENABLE_HSTS` — `true` to add Strict-Transport-Security header (only behind TLS)
 - `TRUSTED_PROXY_CIDRS` — comma-separated CIDRs (e.g. `10.0.0.0/8,127.0.0.1/32`) for opt-in `x-forwarded-for` trust. Unset = ignore the header (recommended when no reverse proxy is in front). Malformed CIDRs throw at startup.
-- `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90)
+- `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90). Tenant override: `TenantConfig.audit_retention_days` (T-050).
 - `AUDIT_CLEANUP_INTERVAL_MS` — audit cleanup interval in ms (default: 86400000)
-- `MYME_EVENT_LOG_RETENTION_HOURS` — hours an event_log entry survives before the cleanup job purges it (default: 168 / 7 days). Controls how far back an SSE client's `Last-Event-ID` can reach; older cursors receive a terminal `catchup_too_old` event.
+- `MYME_EVENT_LOG_RETENTION_HOURS` — hours an event_log entry survives before the cleanup job purges it (default: 168 / 7 days). Controls how far back an SSE client's `Last-Event-ID` can reach; older cursors receive a terminal `catchup_too_old` event. Tenant override: `TenantConfig.event_log_retention_hours` (T-050).
 - `VERSION_RECENT_DAYS` — version recent window in days (default: 30)
 - `VERSION_DAILY_SNAPSHOT_DAYS` — daily thinning window end in days (default: 90)
 - `VERSION_WEEKLY_SNAPSHOT_DAYS` — weekly thinning window end in days (default: 365)
 - `VERSION_MAX_VERSIONS` — hard cap per item (default: 500)
 - `VERSION_THINNING_INTERVAL_MS` — thinning job interval in ms (default: 3600000)
-- `TRASH_RETENTION_DAYS` — days a trashed item survives before hard-delete (default: 60; `0` disables)
+- `TRASH_RETENTION_DAYS` — days a trashed item survives before hard-delete (default: 60; `0` disables). Tenant-scoped overrides via `TenantConfig.trash_retention_days` (T-050) take precedence per tenant; the env default applies to the NULL-tenant bucket and to tenants without an override.
 - `TRASH_PURGE_INTERVAL_MS` — trash purge job interval in ms (default: 86400000)
-- `FEED_RETENTION_DAYS` — days a feed-tier item survives before hard-delete, regardless of state (default: 0 / disabled). Per TSC42 §1, the tier axis is `library | feed`; feed-tier capture is short-retention by design.
+- `FEED_RETENTION_DAYS` — days a feed-tier item survives before hard-delete, regardless of state (default: 0 / disabled). Tenant override: `TenantConfig.feed_retention_days`.
 - `FEED_EXPIRY_INTERVAL_MS` — feed expiry job interval in ms (default: 86400000)
 - `ERROR_WEBHOOK_URL` — webhook URL for 500 error notifications (optional, debounced)
 - `MYME_AUTH_BASE_URL` — issuer URL the better-auth instance is reached at (e.g. `http://localhost:8602`). Drives cookie domains and the OAuth issuer field on the discovery doc. Defaults to `http://localhost:<PORT>`.

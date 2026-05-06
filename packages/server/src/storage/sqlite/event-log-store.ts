@@ -1,4 +1,4 @@
-import { gt, and, eq, lt } from "drizzle-orm";
+import { gt, and, eq, lt, isNull } from "drizzle-orm";
 import type { EventLogStore, PersistedEvent } from "../interface.js";
 import { eventLog } from "./schema.js";
 import type { DrizzleDb, RawDb } from "./connection.js";
@@ -72,14 +72,25 @@ export class SqliteEventLogStore implements EventLogStore {
     }));
   }
 
-  async cleanup(retentionHours: number): Promise<number> {
+  async cleanup(
+    retentionHours: number,
+    tenantId?: string | null,
+  ): Promise<number> {
     const cutoff = new Date(
       Date.now() - retentionHours * 3_600_000,
     ).toISOString();
-    const result = this.db
-      .delete(eventLog)
-      .where(lt(eventLog.created_at, cutoff))
-      .run();
+    // T-050 — three filter shapes (see audit-store.cleanup).
+    const tenantClause =
+      tenantId === undefined
+        ? undefined
+        : tenantId === null
+          ? isNull(eventLog.tenant_id)
+          : eq(eventLog.tenant_id, tenantId);
+    const where =
+      tenantClause === undefined
+        ? lt(eventLog.created_at, cutoff)
+        : and(lt(eventLog.created_at, cutoff), tenantClause);
+    const result = this.db.delete(eventLog).where(where).run();
     return result.changes;
   }
 

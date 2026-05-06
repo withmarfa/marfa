@@ -31,6 +31,16 @@ export class PgTenantStore implements TenantStore {
     return row ?? null;
   }
 
+  async list(): Promise<Tenant[]> {
+    return this.db
+      .select({
+        id: tenants.id,
+        name: tenants.name,
+        created_at: tenants.created_at,
+      })
+      .from(tenants);
+  }
+
   async getConfig(id: string): Promise<TenantConfig | null> {
     const [row] = await this.db
       .select({ config: tenants.config })

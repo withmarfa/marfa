@@ -31,6 +31,15 @@ const EnforcementSchema = z
 const TenantConfigSchema = z.object({
   retention: z.record(z.string(), RetentionOverrideSchema).optional(),
   enforcement: EnforcementSchema,
+  // T-050 — tenant-scoped retention overrides for the four cleanup
+  // jobs. Each falls back to the instance env default when unset.
+  // `0` disables the job for that tenant (matches env-default
+  // semantics for `TRASH_RETENTION_DAYS=0` /
+  // `FEED_RETENTION_DAYS=0`); negatives are rejected.
+  audit_retention_days: z.number().int().min(0).optional(),
+  event_log_retention_hours: z.number().int().min(0).optional(),
+  trash_retention_days: z.number().int().min(0).optional(),
+  feed_retention_days: z.number().int().min(0).optional(),
 });
 
 const getConfigRoute = createRoute({
