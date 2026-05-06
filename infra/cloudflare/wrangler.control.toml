@@ -6,7 +6,10 @@ name = "myme-runtime-control"
 main = "../../packages/runtime-control/src/index.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
-account_id = "${CLOUDFLARE_ACCOUNT_ID}"
+# Wrangler doesn't expand env vars in TOML for `account_id`; hardcoding is the
+# pragmatic path. This is the dedicated Myme Cloudflare account (post-T-059
+# migration) — not a secret. Personal aic-cloudflare account stays separate.
+account_id = "fb81b3c1ad68ef6dbd689897e8897b10"
 
 # Default (dev) environment — bound to the cloudflared-tunnel hostname
 # the developer brings up with `cloudflared tunnel --url …`.
@@ -67,7 +70,7 @@ queue = "myme-reactive-run-prod"
 
 [[env.staging.kv_namespaces]]
 binding = "IDEMPOTENCY_KV"
-id = "REPLACE_WITH_STAGING_KV_ID"
+id = "2a6c8397db694f8a898c16450d8fd1cc"
 
 [[env.prod.kv_namespaces]]
 binding = "IDEMPOTENCY_KV"
