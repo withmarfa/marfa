@@ -101,7 +101,11 @@ Server package (not needed for shared or SDK development):
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
 - `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
+<<<<<<< HEAD
 - `MYME_DEFAULT_QUOTA_ITEMS` / `MYME_DEFAULT_QUOTA_WEBHOOKS` / `MYME_DEFAULT_QUOTA_BLOBS` / `MYME_DEFAULT_QUOTA_STORAGE_BYTES` / `MYME_DEFAULT_QUOTA_RATE_PER_MINUTE` — T-052 default per-tenant ceilings. Unset = unlimited (no enforcement). Per-tenant overrides via `tenant_quotas` rows take precedence. Today only `items` and `webhooks` enforcement is wired; the others are scaffolded for follow-ons.
+=======
+- `MYME_RLS_ENFORCE` — when `true`, the application connects to Postgres as the `myme_app` role with `SET LOCAL myme.tenant_id = '<id>'` per request, so RLS policies enforce tenant isolation at the DB layer (defense-in-depth beneath the application-layer scoping). Default `false` keeps existing single-tenant self-hosts unchanged. **T-025 part 1** (this commit) lands the schema scaffold (role, grants, policies); **T-025 part 2** lands the connection-pool wiring — until then this flag is read at startup but does not yet change connection behaviour.
+>>>>>>> 9dc517c (feat(server): Postgres RLS schema scaffold (T-025 part 1))
 - `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000)
 - `RATE_LIMIT_ENABLED` — set to `false` to disable rate limiting entirely (on by default)
 - `ENABLE_HSTS` — `true` to add Strict-Transport-Security header (only behind TLS)

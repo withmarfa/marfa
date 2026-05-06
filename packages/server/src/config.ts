@@ -40,6 +40,24 @@ export interface AppConfig {
   versionSnapshotIntervalMs: number;
   rateLimitEnabled: boolean;
   enableHsts: boolean;
+  /**
+   * T-025 part 1: when `true`, the application connects to Postgres as
+   * the `myme_app` role with `SET LOCAL myme.tenant_id = '<id>'` per
+   * request, so RLS policies enforce tenant isolation at the DB layer
+   * (defense-in-depth beneath the application-layer scoping). Default
+   * `false` keeps existing single-tenant self-hosts unchanged.
+   *
+   * Part 1 (this commit) lands the schema scaffold (role, grants,
+   * policies). The actual connection-pool wiring — wrapping every
+   * request handler in a transaction with `SET LOCAL ROLE myme_app`
+   * after auth — lands in T-025 part 2. Until then this flag is read
+   * at startup and surfaced to operators but does not yet change
+   * connection behaviour. Documented in `packages/server/CLAUDE.md`.
+   *
+   * Optional on the type so test contexts that construct AppConfig
+   * literals continue to compile; defaults to `false`.
+   */
+  rlsEnforce?: boolean;
   auditRetentionDays: number;
   auditCleanupIntervalMs: number;
   /** Hours an event_log entry survives before the cleanup job purges it.
@@ -207,6 +225,7 @@ export function loadConfig(): AppConfig {
     ),
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
+    rlsEnforce: process.env.MYME_RLS_ENFORCE === "true",
     auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
     auditCleanupIntervalMs: envNumber(
       process.env.AUDIT_CLEANUP_INTERVAL_MS,

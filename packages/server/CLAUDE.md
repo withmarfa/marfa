@@ -68,6 +68,14 @@ Middleware composes shared per-request state on `c.var`. Routes read these direc
 
 Middleware order in `app.ts`: logger → CORS → client-ip → auth → cycle → rate-limit → routes. The cycle resolver depends on auth's `c.var.apiKey`, so it must run after auth.
 
+## Postgres RLS scaffold (T-025 part 1)
+
+The Postgres schema carries a `myme_app` non-owner role + per-table RLS policies on every tenant-scoped table (`items`, `edges`, `versions`, `metadata`, `api_keys`, `blobs`, `custom_types`, `custom_edge_types`, `outbound_webhooks`, `audit_log`, `event_log`). Migration `0035_rls_application_role.sql` and the bootstrap mirror in `pg/connection.ts` both apply the policies.
+
+Policies key on `current_setting('myme.tenant_id', true)`; the NULL clause on each policy keeps single-tenant deployments unbroken if RLS is later enabled. The blobs table uses `tenant_id = ''` instead of NULL because its composite PK requires `tenant_id NOT NULL DEFAULT ''`. The metadata + versions tables have no direct `tenant_id` column — their policies join via items.
+
+**RLS is not yet enforced.** With `MYME_RLS_ENFORCE=false` (the default) the application keeps connecting as the table owner and policies have no effect. Flipping the flag does not yet change behaviour — it's read at startup but the connection-pool wiring is T-025 part 2 (a separate PR; see the follow-on ticket). Single-tenant self-hosts and the existing application-layer tenant scoping continue to work unchanged.
+
 ## Per-tenant quotas (T-052)
 
 Per-tenant resource ceilings are stored in `tenant_quotas` (PK `tenant_id`); missing rows / NULL columns fall back to env defaults (`MYME_DEFAULT_QUOTA_*`). Counts are computed on-demand via `COUNT(*)` on the underlying tables at quota-check time — no eager-increment / reconcile machinery in this PR (the eager path is a follow-on once load measurement justifies the complexity).
