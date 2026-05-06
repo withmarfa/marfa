@@ -216,12 +216,30 @@ export function createApp(
         pathLimits: {
           "/keys": 200,
           "/auth/token": 20,
-          // Wave C PR3 / T-033: per-IP caps on auth abuse-prone
-          // surfaces. Per-email throttle on `/auth/forgot-password`
-          // is enforced inside the route handler (3/hour per email).
-          "/auth/forgot-password": 30,
-          "/auth/sign-up": 30,
-          "/auth/sign-in/magic-link": 30,
+          // Wave C PR8 — per-IP caps on auth abuse-prone surfaces.
+          // Insertion order matters: the middleware iterates and
+          // takes the FIRST `path.startsWith(prefix)` match, so
+          // place more-specific prefixes ahead of broader siblings
+          // (otherwise `/auth/sign-in/magic-link` would resolve
+          // against `/auth/sign-in` first).
+          //
+          // Auth endpoints get small caps that suit their realistic
+          // call frequency: a human signs in / signs up / requests
+          // a reset a handful of times per session, never hundreds.
+          // The global default (1000/window) bounds anything else.
+          //
+          // The per-email throttle on `/auth/forgot-password`
+          // (3/hour, in-route) is the inner cap; the per-IP cap
+          // here is the outer cap that prevents a single client
+          // botnet from running thousands of reset attempts across
+          // many addresses in one window.
+          "/auth/sign-in/magic-link": 5,
+          "/auth/sign-in/email": 10,
+          "/auth/sign-in": 10,
+          "/auth/sign-up": 5,
+          "/auth/forgot-password": 5,
+          "/auth/reset-password": 10,
+          "/auth/verify-email/resend": 5,
         },
         trustedProxyCidrs: config.trustedProxyCidrs,
         // T-052 follow-on (Wave B Part 2): per-tenant rate ceiling on
