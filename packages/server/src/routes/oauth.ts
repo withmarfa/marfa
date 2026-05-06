@@ -271,6 +271,46 @@ export function authRoutes(
       }
     }
 
+    // Wave C PR5 / T-032: re-consent diff. Look for an existing
+    // `system.connection user-app-grant` for `(user, client_id)`.
+    // The grant carries a literal scope set; we hand it to
+    // `renderConsentScreen` as `priorScopes` and the renderer
+    // switches to the diff variant. When there's no prior grant
+    // (first-time consent) `priorScopes` stays undefined and the
+    // renderer falls through to the flat read/write split.
+    //
+    // User → tenant binding only works in hosted mode (when
+    // storage.users is wired). In keys mode there's no per-user
+    // tenant — we'd potentially leak across users on a multi-user
+    // self-host. Limit reconsent diff to hosted mode for now; keys
+    // mode keeps the flat shape.
+    const consentingUser = gated.session.user;
+    let priorScopes: string[] | undefined;
+    if (storage.users) {
+      const userRow = await storage.users.getByEmail(consentingUser.email);
+      if (userRow?.tenant_id) {
+        const items = await storage.items.list({
+          type: "system.connection",
+          state: "active",
+          tenantId: userRow.tenant_id,
+        });
+        // Multiple grants for the same client are unusual but possible
+        // (legacy revoke + re-grant cycles). Pick the most-recently
+        // granted active one — items.list returns by created_at desc by
+        // default, so the first match wins.
+        for (const item of items.data) {
+          const props = item.properties;
+          if (props.kind !== "user-app-grant") continue;
+          if (props.status !== "active") continue;
+          if (props.client_id !== clientId) continue;
+          if (Array.isArray(props.scopes)) {
+            priorScopes = (props.scopes as string[]).slice();
+            break;
+          }
+        }
+      }
+    }
+
     // Render consent screen
     const html = renderConsentScreen({
       clientName: client.name,
@@ -282,6 +322,7 @@ export function authRoutes(
       state,
       responseType,
       descriptions,
+      priorScopes,
     });
 
     setNoStore(c);

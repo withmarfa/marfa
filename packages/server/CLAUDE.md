@@ -208,6 +208,19 @@ Browser-side WebAuthn ceremony on top of better-auth's passkey plugin.
 - **Capability detection.** Done client-side in JS — no UA sniffing. `isSupported()` checks `window.isSecureContext` + `PublicKeyCredential` + `navigator.credentials.{create,get}`.
 - **Tests.** `passkey-enroll-page.test.ts` covers the renderer (link to script, fallback paragraph, escape paths) + the route auth gate. The static-asset route gets ETag + 304 + content-type assertions. The full WebAuthn round-trip is browser-side and exercised in the manual cross-browser walkthrough at end of Wave C (Chrome on macOS Touch ID, Safari on iOS iCloud Keychain, Chrome on Android).
 
+## Re-consent diff (Wave C PR5 / T-032)
+
+When a user OAuth-grants the same client a second time and the requested scopes differ from last time, the consent screen renders a diff instead of the flat read / write split.
+
+- **Lookup.** `GET /auth/authorize` queries `system.connection` items in the consenting user's tenant for an active `user-app-grant` matching the request's `client_id`. Most-recently-granted wins. The grant's `properties.scopes` literal set is threaded into `renderConsentScreen` as `priorScopes`.
+- **Hosted-mode only.** The user → tenant binding lives in `storage.users` (hosted mode). In keys mode there's no per-user tenant — the lookup is skipped and the screen renders flat. Defensible: keys mode is single-user self-host where a re-consent is rare.
+- **Pure diff helper.** `routes/consent-diff.ts` exports `computeConsentDiff(prev, next): { kept, added, removed }`. Set difference on opaque scope literals (`<typePattern>:<verb>`); preserves `next`-side ordering, de-duplicates.
+- **Rendering.** `consent.ts` switches on `priorScopes`:
+  - Three group blocks instead of read/write — `Previously granted` (kept), `New permissions` (added), `No longer requested` (removed). Empty groups are omitted.
+  - Removed scopes render as static rows with strikethrough on the literal pill — they're being dropped, not re-granted, so no checkbox.
+  - The H1 copy switches from "wants to access your data" to "is requesting updated access to your data".
+- **CSS.** `auth.css` adds `.section--kept` / `.section--added` / `.section--removed` modifiers (subtle accent borders + tinted backgrounds) and `.scope-row--removed` (line-through + soft opacity).
+
 ## Security page (Wave C PR7 / T-031)
 
 User-facing page at `/auth/security` listing connected apps and active sessions, with revoke buttons.

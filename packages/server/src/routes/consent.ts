@@ -3,19 +3,20 @@
  *
  * Wave C PR4: layout extraction. Older inline `<style>` block dropped
  * in favour of the shared `/auth/static/auth.css` design tokens —
- * unifies the visual surface with sign-in / sign-up / device-flow
- * (single dark-ink primary instead of the old blue accent). Class
- * names migrate to the shared system (`.section`, `.scope-row`,
- * `.scope-literal`, `.scope-human`, `.actions`, `.btn--primary`,
- * `.btn`).
+ * unifies the visual surface with sign-in / sign-up / device-flow.
  *
- * PR5 will extend this with re-consent diff rendering (kept / added /
- * removed sections) when a prior `system.connection user-app-grant`
- * for `(user, client_id)` exists.
+ * Wave C PR5 / T-032: re-consent diff. When the caller passes
+ * `priorScopes` (the scope set the user previously approved on this
+ * client, looked up via `system.connection` of `kind: user-app-grant`),
+ * the screen renders three group blocks — Previously granted (kept),
+ * New permissions (added), and No longer requested (removed) —
+ * instead of the flat read / write split. First-time consent (no
+ * prior grant) keeps the flat shape.
  */
 
 import type { ParsedScope } from "@mymehq/shared";
 import { renderAuthLayout } from "./auth-layout.js";
+import { computeConsentDiff } from "./consent-diff.js";
 
 interface ConsentParams {
   clientName: string;
@@ -33,6 +34,15 @@ interface ConsentParams {
    * fall back to the literal scope.
    */
   descriptions?: Record<string, string>;
+  /**
+   * Wave C PR5: the literal scope set the user previously approved on
+   * this client (e.g. `["core.note:read", "core.note:write"]`). When
+   * present, the screen renders the diff variant — "Previously
+   * granted" / "New permissions" / "No longer requested" — instead of
+   * the flat read / write split. When absent (first-time consent or
+   * no prior grant), renders flat.
+   */
+  priorScopes?: readonly string[];
 }
 
 function escapeHtml(str: string): string {
@@ -46,24 +56,40 @@ function escapeHtml(str: string): string {
 
 /** Renders the OAuth consent screen as an HTML string. */
 export function renderConsentScreen(params: ConsentParams): string {
-  const readScopes = params.scopes.filter((s) => s.operation === "read");
-  const writeScopes = params.scopes.filter((s) => s.operation === "write");
+  const descriptionFor = (typePattern: string): string | undefined =>
+    params.descriptions?.[typePattern];
 
-  const descriptionFor = (scope: ParsedScope): string | undefined => {
-    return params.descriptions?.[scope.typePattern];
-  };
-
-  const scopeCheckbox = (scope: ParsedScope) => {
+  // The "removed" branch only carries literals (no `ParsedScope`),
+  // since we render them as-is without splitting on read/write.
+  const scopeCheckbox = (scope: ParsedScope, opts?: { checked?: boolean }) => {
     const literal = `${scope.typePattern}:${scope.operation}`;
-    const description = descriptionFor(scope);
+    const description = descriptionFor(scope.typePattern);
     const humanLine = description
       ? `<span class="scope-human">${escapeHtml(description)}</span>`
       : "";
+    const checked = opts?.checked === false ? "" : "checked";
     return `<label class="scope-row">
-      <input type="checkbox" name="scopes" value="${escapeHtml(literal)}" checked>
+      <input type="checkbox" name="scopes" value="${escapeHtml(literal)}" ${checked}>
       <code class="scope-literal">${escapeHtml(literal)}</code>
       ${humanLine}
     </label>`;
+  };
+
+  // For the "removed" rows we don't have a parsed shape — but we know
+  // every scope literal is `<typePattern>:<verb>`. Split on the LAST
+  // `:` so a typePattern containing `:` (rare today, future-proofing)
+  // still parses cleanly.
+  const removedRow = (literal: string): string => {
+    const lastColon = literal.lastIndexOf(":");
+    const typePattern = lastColon > 0 ? literal.slice(0, lastColon) : literal;
+    const description = descriptionFor(typePattern);
+    const humanLine = description
+      ? `<span class="scope-human">${escapeHtml(description)}</span>`
+      : "";
+    return `<div class="scope-row scope-row--removed">
+      <code class="scope-literal">${escapeHtml(literal)}</code>
+      ${humanLine}
+    </div>`;
   };
 
   const safeClient = escapeHtml(params.clientName);
@@ -74,24 +100,86 @@ export function renderConsentScreen(params: ConsentParams): string {
   const safeState = escapeHtml(params.state);
   const safeResponseType = escapeHtml(params.responseType);
 
-  const readSection =
-    readScopes.length > 0
-      ? `<div class="section">
-          <h2>Read access</h2>
-          ${readScopes.map(scopeCheckbox).join("\n")}
-        </div>`
-      : "";
+  // Decide diff-vs-flat rendering. Diff path triggers when caller
+  // passed `priorScopes` and there's at least one scope on either
+  // side — empty-prior + empty-next never happens (we'd have rejected
+  // earlier), and a single-empty side trivially collapses to flat.
+  const showDiff = params.priorScopes !== undefined;
 
-  const writeSection =
-    writeScopes.length > 0
-      ? `<div class="section">
-          <h2>Read and write access</h2>
-          ${writeScopes.map(scopeCheckbox).join("\n")}
-        </div>`
-      : "";
+  let scopesHtml: string;
+  if (showDiff) {
+    // Compute diff against literal scope strings (`<type>:<verb>`).
+    const nextLiterals = params.scopes.map(
+      (s) => `${s.typePattern}:${s.operation}`,
+    );
+    const diff = computeConsentDiff(params.priorScopes ?? [], nextLiterals);
+    // Re-hydrate the kept / added literals back to ParsedScopes so
+    // the renderer can split read/write description lookup. Map by
+    // literal back to the input.
+    const parsedByLiteral = new Map<string, ParsedScope>();
+    for (const scope of params.scopes) {
+      parsedByLiteral.set(`${scope.typePattern}:${scope.operation}`, scope);
+    }
+    const keptParsed = diff.kept
+      .map((lit) => parsedByLiteral.get(lit))
+      .filter((s): s is ParsedScope => s !== undefined);
+    const addedParsed = diff.added
+      .map((lit) => parsedByLiteral.get(lit))
+      .filter((s): s is ParsedScope => s !== undefined);
+
+    const keptSection =
+      keptParsed.length > 0
+        ? `<div class="section section--kept">
+            <h2>Previously granted</h2>
+            ${keptParsed.map((s) => scopeCheckbox(s)).join("\n")}
+          </div>`
+        : "";
+    const addedSection =
+      addedParsed.length > 0
+        ? `<div class="section section--added">
+            <h2>New permissions</h2>
+            ${addedParsed.map((s) => scopeCheckbox(s)).join("\n")}
+          </div>`
+        : "";
+    const removedSection =
+      diff.removed.length > 0
+        ? `<div class="section section--removed">
+            <h2>No longer requested</h2>
+            <p class="field__hint">These permissions were granted previously but the app isn't asking for them now. They'll be dropped when you approve.</p>
+            ${diff.removed.map((lit) => removedRow(lit)).join("\n")}
+          </div>`
+        : "";
+    scopesHtml = `${keptSection}${addedSection}${removedSection}`;
+  } else {
+    // First-time consent — flat read / write split.
+    const readScopes = params.scopes.filter((s) => s.operation === "read");
+    const writeScopes = params.scopes.filter((s) => s.operation === "write");
+
+    const readSection =
+      readScopes.length > 0
+        ? `<div class="section">
+            <h2>Read access</h2>
+            ${readScopes.map((s) => scopeCheckbox(s)).join("\n")}
+          </div>`
+        : "";
+    const writeSection =
+      writeScopes.length > 0
+        ? `<div class="section">
+            <h2>Read and write access</h2>
+            ${writeScopes.map((s) => scopeCheckbox(s)).join("\n")}
+          </div>`
+        : "";
+    scopesHtml = `${readSection}${writeSection}`;
+  }
+
+  // Lede copy reflects whether we're showing a fresh consent or a
+  // re-consent with changes.
+  const leadeText = showDiff
+    ? `<span class="client-name">${safeClient}</span> is requesting updated access to your data`
+    : `<span class="client-name">${safeClient}</span> wants to access your data`;
 
   const bodyHtml = `
-    <h1><span class="client-name">${safeClient}</span> wants to access your data</h1>
+    <h1>${leadeText}</h1>
     <form method="POST" action="/auth/authorize">
       <input type="hidden" name="client_id" value="${safeClientId}">
       <input type="hidden" name="redirect_uri" value="${safeRedirectUri}">
@@ -100,8 +188,7 @@ export function renderConsentScreen(params: ConsentParams): string {
       <input type="hidden" name="state" value="${safeState}">
       <input type="hidden" name="response_type" value="${safeResponseType}">
 
-      ${readSection}
-      ${writeSection}
+      ${scopesHtml}
 
       <div class="actions">
         <button type="submit" name="action" value="approve" class="btn btn--primary">Approve</button>
