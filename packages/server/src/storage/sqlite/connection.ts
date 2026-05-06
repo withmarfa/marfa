@@ -147,6 +147,19 @@ export function createConnection(sqlitePath: string): {
     CREATE INDEX IF NOT EXISTS idx_api_keys_connection_id
       ON api_keys(connection_id) WHERE connection_id IS NOT NULL;
 
+    -- T-052: per-tenant resource quotas (Wave B PR4). NULL columns fall
+    -- back to env defaults; missing rows mean "use defaults across the
+    -- board" (the common case for newly-created tenants).
+    CREATE TABLE IF NOT EXISTS tenant_quotas (
+      tenant_id TEXT PRIMARY KEY,
+      items_limit INTEGER,
+      webhooks_limit INTEGER,
+      blobs_limit INTEGER,
+      storage_bytes_limit INTEGER,
+      rate_per_minute_limit INTEGER,
+      updated_at TEXT NOT NULL
+    );
+
     -- T-049: composite PK on (tenant_id, hash). Empty-string sentinel for
     -- instance-wide / single-tenant / platform-admin rows. Different tenants
     -- uploading the same hash bytes get separate rows; storage backend dedupes

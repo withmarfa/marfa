@@ -101,6 +101,7 @@ Server package (not needed for shared or SDK development):
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
 - `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
+- `MYME_DEFAULT_QUOTA_ITEMS` / `MYME_DEFAULT_QUOTA_WEBHOOKS` / `MYME_DEFAULT_QUOTA_BLOBS` / `MYME_DEFAULT_QUOTA_STORAGE_BYTES` / `MYME_DEFAULT_QUOTA_RATE_PER_MINUTE` — T-052 default per-tenant ceilings. Unset = unlimited (no enforcement). Per-tenant overrides via `tenant_quotas` rows take precedence. Today only `items` and `webhooks` enforcement is wired; the others are scaffolded for follow-ons.
 - `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000)
 - `RATE_LIMIT_ENABLED` — set to `false` to disable rate limiting entirely (on by default)
 - `ENABLE_HSTS` — `true` to add Strict-Transport-Security header (only behind TLS)

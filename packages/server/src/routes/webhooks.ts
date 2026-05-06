@@ -2,6 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MymeError, ErrorCode } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireWorkspaceAdmin } from "../middleware/auth.js";
+import { enforceQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -281,6 +282,12 @@ export function webhookRoutes(storage: Storage) {
     // layer's list/get/update/delete already filter by `key.tenant_id`,
     // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireWorkspaceAdmin(c);
+
+    // T-052: per-tenant quota check. No-op for keys without tenant_id
+    // (single-tenant + platform admin). Throws 429 quota_exceeded if
+    // the new webhook would push the tenant past its ceiling.
+    await enforceQuota(c, storage, "webhooks");
+
     const body = c.req.valid("json");
 
     // URL validation beyond what Zod handles

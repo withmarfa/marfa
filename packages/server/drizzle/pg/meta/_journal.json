@@ -246,6 +246,13 @@
       "when": 1778260000000,
       "tag": "0034_blobs_tenant_id",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1778280000000,
+      "tag": "0036_tenant_quotas",
+      "breakpoints": true
     }
   ]
 }

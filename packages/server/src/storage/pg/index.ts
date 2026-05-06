@@ -28,6 +28,7 @@ import { PgEdgeStore } from "./edge-store.js";
 import { PgEdgeTypeStore } from "./edge-type-store.js";
 import { PgSettingsStore } from "./settings-store.js";
 import { PgCoordinationStore } from "./coordination-store.js";
+import { PgTenantQuotaStore } from "./tenant-quota-store.js";
 
 export async function createPgStorage(
   connectionString: string,
@@ -99,6 +100,7 @@ export async function createPgStorage(
     eventLog: eventLogStore,
     settings: new PgSettingsStore(db),
     coordination: new PgCoordinationStore(client),
+    tenantQuotas: new PgTenantQuotaStore(db),
     ...(options?.authMode === "hosted" && {
       users: new PgUserStore(db),
       tenants: new PgTenantStore(db),

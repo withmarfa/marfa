@@ -22,6 +22,14 @@ export enum ErrorCode {
   EXPIRED_TOKEN = "expired_token",
   TOKEN_REUSE_DETECTED = "token_reuse_detected",
   RATE_LIMITED = "rate_limited",
+  /**
+   * T-052: per-tenant resource cap exceeded. Body details carry the
+   * resource (`items` | `webhooks` | `blobs` | `storage_bytes` |
+   * `rate_per_minute`), the configured limit, and the current count
+   * before the request was rejected — operators wire alerts off the
+   * shape so a tenant approaching their cap can be flagged early.
+   */
+  QUOTA_EXCEEDED = "quota_exceeded",
   CONFLICT = "conflict",
   TYPE_ALREADY_EXISTS = "type_already_exists",
   TYPE_IN_USE = "type_in_use",
@@ -142,6 +150,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.EXPIRED_TOKEN]: 401,
   [ErrorCode.TOKEN_REUSE_DETECTED]: 400,
   [ErrorCode.RATE_LIMITED]: 429,
+  [ErrorCode.QUOTA_EXCEEDED]: 429,
   [ErrorCode.CONFLICT]: 409,
   [ErrorCode.TYPE_ALREADY_EXISTS]: 409,
   [ErrorCode.TYPE_IN_USE]: 409,
