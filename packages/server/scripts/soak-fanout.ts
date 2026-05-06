@@ -94,7 +94,7 @@ function syntheticManifest(name: string): Record<string, unknown> {
       partial_write_mode: "all-or-nothing",
     },
     oauth_requirements: {},
-    webhook_verification: { method: "none" },
+    webhook_verification: { method: "hmac-sha256" },
     manifest_schema_version: "1.0.0",
   };
 }
@@ -136,8 +136,14 @@ async function postJson(
 async function main(): Promise<void> {
   const config = parseArgs();
   const startedAt = Date.now();
-  const runTag = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
-  const manifestName = `myme.soak-fanout-${runTag}`;
+  // Manifest names follow `<publisher>.<lowercase-alphanumeric-hyphens>`;
+  // `myme` is a reserved root, so use `acme` for the synthetic publisher
+  // and lowercase the timestamp to satisfy the grammar.
+  const runTag = `${new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-")
+    .toLowerCase()}-${Math.random().toString(36).slice(2, 8)}`;
+  const manifestName = `acme.soak-fanout-${runTag}`;
 
   console.log("======================================================");
   console.log("T-040 reactive-run bridge soak harness");
