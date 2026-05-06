@@ -127,6 +127,20 @@ const coreMedia: TypeSchema = {
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
+const coreMessage: TypeSchema = {
+  id: "core.message",
+  label: "Message",
+  description: "A light, cross-platform message. Threading is edge-based via in-thread; reply trees via parent-of. Tool-specific richness lives in app namespaces.",
+  version: 1,
+  fields: {
+    body: { type: "string", description: "The message text", required: true },
+    from: { type: "string", description: "Sender identifier — format-agnostic (phone number, email, handle, etc.)", required: true },
+    to: { type: "array", description: "Recipient identifiers — same format-agnostic shape as from", items_type: "string" },
+  },
+  display_hints: { body_field: "body" },
+  merge_policy: { fields: { body: "keep_both_copies" }, default: "last_writer_wins" },
+};
+
 const coreNote: TypeSchema = {
   id: "core.note",
   label: "Note",
@@ -513,6 +527,7 @@ export const ALL_TYPES: TypeSchema[] = [
   coreFile,
   coreHighlight,
   coreMedia,
+  coreMessage,
   coreNote,
   coreTask,
   coreEntityPerson,

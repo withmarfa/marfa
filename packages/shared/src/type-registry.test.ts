@@ -13,8 +13,8 @@ import {
 import type { ItemState } from "@mymehq/types";
 
 describe("TYPE_REGISTRY", () => {
-  it("contains 21 core types and 7 system types (TSC42 §4)", () => {
-    expect(TYPE_REGISTRY.size).toBe(28);
+  it("contains 22 core types and 7 system types (TSC42 §4)", () => {
+    expect(TYPE_REGISTRY.size).toBe(29);
     expect(TYPE_REGISTRY.has("system.device")).toBe(true);
     expect(TYPE_REGISTRY.has("system.credential")).toBe(true);
     expect(TYPE_REGISTRY.has("system.webhook")).toBe(true);
@@ -71,6 +71,7 @@ describe("TYPE_REGISTRY", () => {
       "core.task",
       "core.event",
       "core.highlight",
+      "core.message",
     ];
     for (const id of standalone) {
       expect(TYPE_REGISTRY.has(id), `missing ${id}`).toBe(true);
@@ -272,6 +273,85 @@ describe("validateProperties", () => {
       height: 1080,
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("core.message — light cross-platform message", () => {
+  // T-054: a deliberately light core type. Required fields are body+from;
+  // to is optional. Threading reuses existing edges (`in-thread`,
+  // `parent-of`) — the schema must NOT carry a `thread_id` field.
+  it("registers core.message in TYPE_REGISTRY", () => {
+    expect(TYPE_REGISTRY.has("core.message")).toBe(true);
+    const schema = getTypeSchema("core.message");
+    expect(schema?.id).toBe("core.message");
+    expect(schema?.label).toBe("Message");
+  });
+
+  it("declares body, from, and to as its own fields with the right requiredness", () => {
+    const schema = getTypeSchema("core.message");
+    expect(schema?.fields).toBeDefined();
+    // The schema's own fields — not the resolved set, which injects the
+    // universal `attachments` and `links` fields onto every type.
+    expect(Object.keys(schema?.fields ?? {}).sort()).toEqual(
+      ["body", "from", "to"].sort(),
+    );
+    const fields = getResolvedFields("core.message");
+    expect(fields).toHaveProperty("body.required", true);
+    expect(fields).toHaveProperty("from.required", true);
+    // `to` is optional — `required: true` should be absent.
+    expect(fields?.to?.required).toBeUndefined();
+    expect(fields?.to?.type).toBe("array");
+  });
+
+  it("has no thread_id field — threading is edge-based", () => {
+    const schema = getTypeSchema("core.message");
+    expect(schema?.fields).not.toHaveProperty("thread_id");
+  });
+
+  it("accepts a valid message with body and from", () => {
+    const result = validateProperties("core.message", {
+      body: "Hello",
+      from: "+447700900000",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a message missing body", () => {
+    const result = validateProperties("core.message", {
+      from: "+447700900000",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.some((e) => e.field === "body")).toBe(true);
+    }
+  });
+
+  it("rejects a message missing from", () => {
+    const result = validateProperties("core.message", {
+      body: "Hello",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.some((e) => e.field === "from")).toBe(true);
+    }
+  });
+
+  it("accepts to as an optional string array", () => {
+    const result = validateProperties("core.message", {
+      body: "Hi",
+      from: "alice@example.com",
+      to: ["bob@example.com", "carol@example.com"],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects to when not an array", () => {
+    const result = validateProperties("core.message", {
+      body: "Hi",
+      from: "alice@example.com",
+      to: "bob@example.com",
+    });
+    expect(result.success).toBe(false);
   });
 });
 
@@ -660,6 +740,11 @@ describe("merge_policy — per-type registry snapshot", () => {
     {
       typeId: "core.highlight",
       expectedKeepBoth: ["note"],
+      expectedDefault: "last_writer_wins",
+    },
+    {
+      typeId: "core.message",
+      expectedKeepBoth: ["body"],
       expectedDefault: "last_writer_wins",
     },
     {
