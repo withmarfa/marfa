@@ -2,6 +2,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema.js";
 import { stampPgDrizzleMigrations } from "../bootstrap-stamp.js";
+import { wrapDbWithRequestContext } from "./request-context.js";
 
 export type PgDb = ReturnType<typeof drizzle<typeof schema>>;
 export type PgClient = ReturnType<typeof postgres>;
@@ -417,12 +418,28 @@ BEGIN
 END
 $$;
 GRANT USAGE ON SCHEMA public TO "myme_app";
+-- T-025 part 1 grants — RLS-policied tables + instance-wide reads.
 GRANT SELECT, INSERT, UPDATE, DELETE ON
   "items", "edges", "versions", "metadata", "api_keys", "blobs",
   "custom_types", "custom_edge_types", "outbound_webhooks",
   "outbound_webhook_deliveries", "audit_log", "event_log",
   "tenants", "settings"
 TO "myme_app";
+-- T-025 part 2 grants — remaining tables myme_app needs to satisfy
+-- request paths once role-switch-on-checkout activates. RLS policies
+-- on inbound_webhooks, connection_oauth_tokens, and
+-- connection_leased_tokens are filed as follow-on; for now the
+-- application layer is still the tenant fence on those (same posture
+-- as Part 1 pre-policy state on the other eleven tables).
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  "inbound_webhooks", "inbound_webhook_events",
+  "connection_oauth_tokens", "connection_leased_tokens",
+  "oauth_clients", "oauth_codes", "oauth_tokens", "oauth_device_codes",
+  "users", "tenant_quotas"
+TO "myme_app";
+-- Sequence usage so myme_app can insert into identity columns
+-- (event_log.id BIGINT GENERATED ALWAYS AS IDENTITY).
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "myme_app";
 
 ALTER TABLE "items" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "items_tenant_isolation" ON "items";
@@ -510,7 +527,21 @@ CREATE POLICY "event_log_tenant_isolation" ON "event_log"
 `;
 
 export async function createConnection(connectionString: string): Promise<{
+  /**
+   * Drizzle instance wrapped with the per-request context proxy
+   * (T-025 part 2). Storage classes consume this so per-request
+   * transactions (set up by the RLS middleware) transparently
+   * substitute. Use for everything except Better Auth.
+   */
   db: PgDb;
+  /**
+   * Unwrapped base Drizzle instance — bypasses the per-request
+   * context. Reserved for Better Auth, which manages its own
+   * connection / cookie context outside the data-plane request
+   * middleware. Auth tables (`auth_*`) have no RLS policies and
+   * always operate as the connection owner.
+   */
+  baseDb: PgDb;
   client: PgClient;
   close: () => Promise<void>;
 }> {
@@ -519,7 +550,8 @@ export async function createConnection(connectionString: string): Promise<{
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     onnotice: () => {},
   });
-  const db = drizzle(client, { schema });
+  const baseDb = drizzle(client, { schema });
+  const db = wrapDbWithRequestContext(baseDb);
 
   // Apply schema — use advisory lock to prevent concurrent DDL race conditions.
   //
@@ -532,27 +564,28 @@ export async function createConnection(connectionString: string): Promise<{
   // The FTS5 virtual table in sqlite/connection.ts remains inline because
   // Drizzle Kit cannot express it.
   //
-  // ─── Postgres Row Level Security — intentionally NOT enabled ────────────
+  // ─── Postgres Row Level Security ─────────────────────────────────────────
   //
-  // A previous version of this file shipped dormant RLS policies on items,
-  // api_keys, metadata, and versions. They had no runtime effect: the pool
-  // user is the table owner and the table owner always bypasses RLS. To a
-  // reader that's a credibility trap — security primitives that look like
-  // they're guarding the data when they aren't.
+  // RLS lands in two coordinated parts:
   //
-  // Real RLS would require three coordinated changes that we have not yet
-  // made:
-  //   1. A non-owner DB role (e.g. `myme_app`) granted CRUD on the tenant-
-  //      scoped tables.
-  //   2. `SET ROLE myme_app` on every connection check-out from the pool.
-  //   3. Middleware that issues `SET LOCAL myme.tenant_id = $tenant` per
-  //      request.
+  // - T-025 part 1 (#161) — the schema scaffold: `myme_app` non-owner role,
+  //   per-table CRUD grants, RLS-enabled tables, per-table policies keyed on
+  //   `current_setting('myme.tenant_id', true)`. Mirrored from migration
+  //   `0035_rls_application_role.sql` into the SCHEMA_SQL bootstrap above.
   //
-  // Until those three land together, RLS provides nothing — so we don't
-  // ship it. Tenant scoping today is enforced in application code: every
-  // tenant-scoped query in item-store, search-store, key-store, and
-  // event-log-store carries `tenant_id = ?`. The Backlog tracks the full
-  // RLS plan for if/when hosted-multi-tenant becomes a concrete need.
+  // - T-025 part 2 (#162-track) — the connection-pool wiring. The Drizzle
+  //   `db` instance is wrapped in a per-request context proxy
+  //   (`request-context.ts`). The RLS middleware (`rls-tenant-context.ts`)
+  //   wraps each tenant-bounded request in a transaction with `SET LOCAL
+  //   ROLE myme_app; SELECT set_config('myme.tenant_id', $1, true)` so
+  //   every storage query in the request flows through the reserved
+  //   connection. Activated via `MYME_RLS_ENFORCE=true`.
+  //
+  // With `MYME_RLS_ENFORCE=false` (the default) the proxy still exists but
+  // the middleware never installs an ALS context, so all queries fall
+  // through to the unwrapped base instance and run as the connection owner
+  // (RLS bypassed by virtue of ownership). Single-tenant self-hosts are
+  // unaffected.
   await client.unsafe(`SELECT pg_advisory_lock(42)`);
   try {
     await client.unsafe(SCHEMA_SQL);
@@ -566,6 +599,7 @@ export async function createConnection(connectionString: string): Promise<{
 
   return {
     db,
+    baseDb,
     client,
     close: async () => {
       await client.end();

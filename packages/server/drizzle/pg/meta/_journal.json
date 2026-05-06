@@ -260,6 +260,13 @@
       "when": 1778280000000,
       "tag": "0036_tenant_quotas",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1778290000000,
+      "tag": "0037_rls_extend_grants",
+      "breakpoints": true
     }
   ]
 }

@@ -49,6 +49,8 @@ import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { cycleMiddleware } from "./middleware/cycle.js";
 import { loggerMiddleware } from "./middleware/logger.js";
+import { rlsTenantContextMiddleware } from "./middleware/rls-tenant-context.js";
+import type { PgDb } from "./storage/pg/connection.js";
 import { healthRoutes } from "./routes/health.js";
 export function createApp(
   storage: Storage,
@@ -193,6 +195,23 @@ export function createApp(
       }),
     );
   }
+
+  // T-025 part 2: Postgres RLS request-level enforcement. Wraps each
+  // tenant-bounded request in a transaction with `SET LOCAL ROLE
+  // myme_app` and `set_config('myme.tenant_id', $tenant, true)` so
+  // the per-table RLS policies (T-025 part 1) actually filter
+  // queries. Pass-through when `MYME_RLS_ENFORCE=false` (the
+  // default), when storage is SQLite (`pgDb` undefined), or when the
+  // request has no tenant on its api key (platform admin / public
+  // routes). See `middleware/rls-tenant-context.ts` for the full
+  // contract — including the streaming-response exemption.
+  app.use(
+    "*",
+    rlsTenantContextMiddleware({
+      rlsEnforce: config.rlsEnforce ?? false,
+      db: (storage.pgDb as PgDb | undefined) ?? null,
+    }),
+  );
 
   // Better Auth setup. Instance is created up front so it can be passed
   // into authRoutes (the OAuth consent screen consumes its cookie-based

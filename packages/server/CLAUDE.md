@@ -68,13 +68,23 @@ Middleware composes shared per-request state on `c.var`. Routes read these direc
 
 Middleware order in `app.ts`: logger → CORS → client-ip → auth → cycle → rate-limit → routes. The cycle resolver depends on auth's `c.var.apiKey`, so it must run after auth.
 
-## Postgres RLS scaffold (T-025 part 1)
+## Postgres RLS (T-025)
 
-The Postgres schema carries a `myme_app` non-owner role + per-table RLS policies on every tenant-scoped table (`items`, `edges`, `versions`, `metadata`, `api_keys`, `blobs`, `custom_types`, `custom_edge_types`, `outbound_webhooks`, `audit_log`, `event_log`). Migration `0035_rls_application_role.sql` and the bootstrap mirror in `pg/connection.ts` both apply the policies.
+Two coordinated PRs land RLS as defence-in-depth beneath the application-layer tenant scoping.
 
-Policies key on `current_setting('myme.tenant_id', true)`; the NULL clause on each policy keeps single-tenant deployments unbroken if RLS is later enabled. The blobs table uses `tenant_id = ''` instead of NULL because its composite PK requires `tenant_id NOT NULL DEFAULT ''`. The metadata + versions tables have no direct `tenant_id` column — their policies join via items.
+**Part 1 — schema scaffold.** Migration `0035_rls_application_role.sql` creates the `myme_app` non-owner role, grants CRUD on the eleven tenant-scoped tables (`items`, `edges`, `versions`, `metadata`, `api_keys`, `blobs`, `custom_types`, `custom_edge_types`, `outbound_webhooks`, `audit_log`, `event_log`) plus instance-wide reads on `tenants`/`settings`, and adds per-table RLS policies keyed on `current_setting('myme.tenant_id', true)`. Bootstrap mirror in `pg/connection.ts` applies the same DDL on fresh databases. The metadata + versions tables have no direct `tenant_id` column — their policies join via items. The blobs table uses `tenant_id = ''` instead of NULL because its composite PK requires `tenant_id NOT NULL DEFAULT ''`.
 
-**RLS is not yet enforced.** With `MYME_RLS_ENFORCE=false` (the default) the application keeps connecting as the table owner and policies have no effect. Flipping the flag does not yet change behaviour — it's read at startup but the connection-pool wiring is T-025 part 2 (a separate PR; see the follow-on ticket). Single-tenant self-hosts and the existing application-layer tenant scoping continue to work unchanged.
+**Part 2 — connection-pool wiring.** Migration `0037_rls_extend_grants.sql` extends GRANTs to the remaining tables `myme_app` needs (`inbound_webhooks`, `inbound_webhook_events`, `connection_oauth_tokens`, `connection_leased_tokens`, `oauth_*`, `users`) plus identity-column sequences. RLS policies on the three direct-tenant_id tables in that list are filed as a follow-on; the application layer remains the load-bearing fence on those.
+
+The Drizzle PG instance is wrapped in a per-request context proxy (`storage/pg/request-context.ts`) that consults an `AsyncLocalStorage` on every method access. The RLS middleware (`middleware/rls-tenant-context.ts`) wraps each tenant-bounded request in `db.transaction(async tx => { SELECT set_config('myme.tenant_id', $1, true); SET LOCAL ROLE myme_app; ... })` and stores `tx` on the ALS. Storage calls during the request flow through `tx`'s reserved connection and are subject to the policies.
+
+**Activation.** Gated by `MYME_RLS_ENFORCE=true`. With the flag unset (the default), the proxy still exists but the middleware never installs an ALS context, so all queries fall through to the unwrapped base instance and run as the connection owner (RLS bypassed by virtue of ownership). Single-tenant self-hosts continue unchanged.
+
+**Bypass paths.** Three intentional carve-outs from the role-switch:
+
+- **Platform-admin / anonymous / bootstrap** — requests with no `apiKey.tenant_id` skip the wrapper and run as the owner. `requireAdmin` is still load-bearing for cross-tenant authority.
+- **Better Auth** — `storage.betterAuthDb` is the unwrapped base instance. The auth library manages its own connection context outside the data-plane request middleware; auth tables (`auth_*`) carry no RLS.
+- **Streaming responses** — `/events` (SSE) and `/export` (NDJSON archive) hold the response open for arbitrary durations; wrapping them in a transaction would hold a pool connection for the same duration. Bypassed by URL prefix. Both are reads with application-layer tenant scoping; RLS depth-of-defence on those endpoints is a deliberate follow-on.
 
 ## Per-tenant quotas (T-052)
 
