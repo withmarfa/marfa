@@ -9,7 +9,13 @@
  * Two modes (password / magic-link) are picked by the `mode` query
  * param — server-rendered "tabs" so switching modes survives form
  * navigation without client-side state.
+ *
+ * Wave C PR4: layout extraction. Inline `<style>` block dropped;
+ * the page now references the shared stylesheet at
+ * `/auth/static/auth.css` via the `renderAuthLayout` helper.
  */
+
+import { renderAuthLayout } from "./auth-layout.js";
 
 interface SignInPageParams {
   /** Active mode — `password` (default) or `magic`. */
@@ -161,26 +167,20 @@ export function renderSignInPage(params: SignInPageParams): string {
 
   const activeForm = isPasswordMode ? passwordForm : magicForm;
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in to Myme</title>
-  <style>${STYLES}</style>
-</head>
-<body>
-  <main class="card" aria-labelledby="page-title">
-    <h1 id="page-title">Sign in to Myme</h1>
+  const bodyHtml = `
+    <h1>Sign in to Myme</h1>
     ${errorBanner}
     ${successBanner}
     ${tabsHtml}
     ${activeForm}
     ${oidcButtons}
     ${signupLink}
-  </main>
-</body>
-</html>`;
+  `;
+
+  return renderAuthLayout({
+    title: "Sign in to Myme",
+    bodyHtml,
+  });
 }
 
 /** Build a URL-encoded query string. Only includes truthy values. */
@@ -230,127 +230,3 @@ export function validateReturnTo(raw: unknown): string {
   if (raw.startsWith("/\\")) return "/";
   return raw;
 }
-
-const STYLES = `
-  :root {
-    color-scheme: light;
-    --bg: #fafaf8;
-    --card: #ffffff;
-    --ink: #1a1a1a;
-    --ink-soft: #555;
-    --ink-faint: #999;
-    --border: #e2e2dc;
-    --accent: #1a1a1a;
-    --accent-hover: #333;
-    --error-bg: #fdecec;
-    --error-border: #f5b8b8;
-    --error-ink: #842424;
-    --success-bg: #ecf6e9;
-    --success-border: #b8d8af;
-    --success-ink: #2a5a1f;
-  }
-  * { box-sizing: border-box; }
-  body {
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    margin: 0;
-    padding: 24px;
-    background: var(--bg);
-    color: var(--ink);
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-  }
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 32px;
-    width: 100%;
-    max-width: 420px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-  }
-  h1 { font-size: 22px; font-weight: 600; margin: 0 0 24px; letter-spacing: -0.01em; }
-  .banner {
-    margin: 0 0 16px;
-    padding: 10px 12px;
-    border-radius: 6px;
-    border: 1px solid;
-    font-size: 13px;
-    line-height: 1.4;
-  }
-  .banner--error { background: var(--error-bg); border-color: var(--error-border); color: var(--error-ink); }
-  .banner--success { background: var(--success-bg); border-color: var(--success-border); color: var(--success-ink); }
-  .tabs {
-    display: flex;
-    gap: 4px;
-    margin: 0 0 20px;
-    border-bottom: 1px solid var(--border);
-  }
-  .tab {
-    padding: 8px 12px;
-    color: var(--ink-soft);
-    text-decoration: none;
-    font-size: 13px;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-  }
-  .tab:hover { color: var(--ink); }
-  .tab--active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 500; }
-  .form { display: flex; flex-direction: column; gap: 14px; }
-  .field { display: flex; flex-direction: column; gap: 6px; }
-  .field__label { font-size: 13px; color: var(--ink-soft); font-weight: 500; }
-  .field__hint { font-size: 12px; color: var(--ink-faint); margin: 0; }
-  input[type="email"], input[type="password"] {
-    font: inherit;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--card);
-    color: var(--ink);
-    width: 100%;
-  }
-  input[type="email"]:focus, input[type="password"]:focus {
-    outline: 2px solid var(--ink);
-    outline-offset: 1px;
-    border-color: var(--ink);
-  }
-  .btn {
-    font: inherit;
-    padding: 10px 16px;
-    border-radius: 6px;
-    border: 1px solid var(--ink);
-    cursor: pointer;
-    font-weight: 500;
-  }
-  .btn--primary { background: var(--accent); color: var(--card); }
-  .btn--primary:hover { background: var(--accent-hover); }
-  .btn--oidc { background: var(--card); color: var(--ink); width: 100%; }
-  .btn--oidc:hover { background: var(--bg); }
-  .btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-  .separator {
-    display: flex;
-    align-items: center;
-    text-align: center;
-    margin: 20px 0 12px;
-    color: var(--ink-faint);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .separator::before, .separator::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--border);
-  }
-  .separator span { padding: 0 12px; }
-  .oidc { display: flex; flex-direction: column; gap: 8px; }
-  .oidc form { margin: 0; }
-  .aux {
-    margin: 20px 0 0;
-    text-align: center;
-    font-size: 13px;
-    color: var(--ink-soft);
-  }
-  .aux a { color: var(--ink); }
-`;

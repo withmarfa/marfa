@@ -13,7 +13,13 @@
  * autoSignIn is enabled in the Better Auth instance config, so a
  * successful sign-up sets a session cookie immediately and the user
  * lands on `return_to` already authenticated.
+ *
+ * Wave C PR4: layout extraction. Inline `<style>` block dropped;
+ * the page now references the shared stylesheet at
+ * `/auth/static/auth.css` via the `renderAuthLayout` helper.
  */
+
+import { renderAuthLayout } from "./auth-layout.js";
 
 interface SignUpPageParams {
   /** Where to send the user after a successful sign-up. Validated by
@@ -55,17 +61,8 @@ export function renderSignUpPage(params: SignUpPageParams): string {
 
   const signInHref = `/auth/sign-in?${escapeHtml(buildQuery({ return_to: params.returnTo }))}`;
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Create your Myme account</title>
-  <style>${STYLES}</style>
-</head>
-<body>
-  <main class="card" aria-labelledby="page-title">
-    <h1 id="page-title">Create your Myme account</h1>
+  const bodyHtml = `
+    <h1>Create your Myme account</h1>
     ${errorBanner}
     <form method="POST" action="/auth/sign-up" class="form" novalidate>
       <input type="hidden" name="return_to" value="${safeReturnTo}">
@@ -109,9 +106,12 @@ export function renderSignUpPage(params: SignUpPageParams): string {
       <button type="submit" class="btn btn--primary">Create account</button>
     </form>
     <p class="aux">Already have an account? <a href="${signInHref}">Sign in</a></p>
-  </main>
-</body>
-</html>`;
+  `;
+
+  return renderAuthLayout({
+    title: "Create your Myme account",
+    bodyHtml,
+  });
 }
 
 /** Build a URL-encoded query string. Only includes truthy values. */
@@ -123,87 +123,3 @@ function buildQuery(params: Record<string, string>): string {
   }
   return parts.join("&");
 }
-
-const STYLES = `
-  :root {
-    color-scheme: light;
-    --bg: #fafaf8;
-    --card: #ffffff;
-    --ink: #1a1a1a;
-    --ink-soft: #555;
-    --ink-faint: #999;
-    --border: #e2e2dc;
-    --accent: #1a1a1a;
-    --accent-hover: #333;
-    --error-bg: #fdecec;
-    --error-border: #f5b8b8;
-    --error-ink: #842424;
-  }
-  * { box-sizing: border-box; }
-  body {
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    margin: 0;
-    padding: 24px;
-    background: var(--bg);
-    color: var(--ink);
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-  }
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 32px;
-    width: 100%;
-    max-width: 420px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-  }
-  h1 { font-size: 22px; font-weight: 600; margin: 0 0 24px; letter-spacing: -0.01em; }
-  .banner {
-    margin: 0 0 16px;
-    padding: 10px 12px;
-    border-radius: 6px;
-    border: 1px solid;
-    font-size: 13px;
-    line-height: 1.4;
-  }
-  .banner--error { background: var(--error-bg); border-color: var(--error-border); color: var(--error-ink); }
-  .form { display: flex; flex-direction: column; gap: 14px; }
-  .field { display: flex; flex-direction: column; gap: 6px; }
-  .field__label { font-size: 13px; color: var(--ink-soft); font-weight: 500; }
-  .field__hint { font-size: 12px; color: var(--ink-faint); margin: 0; }
-  input[type="email"], input[type="password"], input[type="text"] {
-    font: inherit;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--card);
-    color: var(--ink);
-    width: 100%;
-  }
-  input:focus {
-    outline: 2px solid var(--ink);
-    outline-offset: 1px;
-    border-color: var(--ink);
-  }
-  .btn {
-    font: inherit;
-    padding: 10px 16px;
-    border-radius: 6px;
-    border: 1px solid var(--ink);
-    cursor: pointer;
-    font-weight: 500;
-    background: var(--accent);
-    color: var(--card);
-  }
-  .btn--primary:hover { background: var(--accent-hover); }
-  .btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-  .aux {
-    margin: 20px 0 0;
-    text-align: center;
-    font-size: 13px;
-    color: var(--ink-soft);
-  }
-  .aux a { color: var(--ink); }
-`;

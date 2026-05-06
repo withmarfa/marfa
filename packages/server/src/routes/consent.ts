@@ -1,4 +1,21 @@
+/**
+ * OAuth consent screen renderer.
+ *
+ * Wave C PR4: layout extraction. Older inline `<style>` block dropped
+ * in favour of the shared `/auth/static/auth.css` design tokens —
+ * unifies the visual surface with sign-in / sign-up / device-flow
+ * (single dark-ink primary instead of the old blue accent). Class
+ * names migrate to the shared system (`.section`, `.scope-row`,
+ * `.scope-literal`, `.scope-human`, `.actions`, `.btn--primary`,
+ * `.btn`).
+ *
+ * PR5 will extend this with re-consent diff rendering (kept / added /
+ * removed sections) when a prior `system.connection user-app-grant`
+ * for `(user, client_id)` exists.
+ */
+
 import type { ParsedScope } from "@mymehq/shared";
+import { renderAuthLayout } from "./auth-layout.js";
 
 interface ConsentParams {
   clientName: string;
@@ -42,66 +59,60 @@ export function renderConsentScreen(params: ConsentParams): string {
     const humanLine = description
       ? `<span class="scope-human">${escapeHtml(description)}</span>`
       : "";
-    return `<label style="display:block;margin:4px 0">
+    return `<label class="scope-row">
       <input type="checkbox" name="scopes" value="${escapeHtml(literal)}" checked>
       <code class="scope-literal">${escapeHtml(literal)}</code>
       ${humanLine}
     </label>`;
   };
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Authorize ${escapeHtml(params.clientName)}</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
-    h1 { font-size: 1.25rem; margin-bottom: 0.5rem; }
-    .app-name { font-weight: 600; color: #2563eb; }
-    .section { margin: 16px 0; padding: 12px; background: #f9fafb; border-radius: 8px; }
-    .section h2 { font-size: 0.875rem; margin: 0 0 8px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
-    .actions { display: flex; gap: 12px; margin-top: 24px; }
-    button { padding: 10px 20px; border-radius: 6px; font-size: 0.875rem; cursor: pointer; border: 1px solid #d1d5db; }
-    .approve { background: #2563eb; color: white; border-color: #2563eb; }
-    .deny { background: white; color: #374151; }
-    .scope-literal { display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; color: #4b5563; background: #eef2ff; padding: 1px 6px; border-radius: 4px; }
-    .scope-human { display: block; margin-left: 24px; font-size: 0.875rem; color: #1f2937; margin-top: 2px; }
-  </style>
-</head>
-<body>
-  <h1><span class="app-name">${escapeHtml(params.clientName)}</span> wants to access your data</h1>
-  <form method="POST" action="/auth/authorize">
-    <input type="hidden" name="client_id" value="${escapeHtml(params.clientId)}">
-    <input type="hidden" name="redirect_uri" value="${escapeHtml(params.redirectUri)}">
-    <input type="hidden" name="code_challenge" value="${escapeHtml(params.codeChallenge)}">
-    <input type="hidden" name="code_challenge_method" value="${escapeHtml(params.codeChallengeMethod)}">
-    <input type="hidden" name="state" value="${escapeHtml(params.state)}">
-    <input type="hidden" name="response_type" value="${escapeHtml(params.responseType)}">
+  const safeClient = escapeHtml(params.clientName);
+  const safeClientId = escapeHtml(params.clientId);
+  const safeRedirectUri = escapeHtml(params.redirectUri);
+  const safeCodeChallenge = escapeHtml(params.codeChallenge);
+  const safeCodeChallengeMethod = escapeHtml(params.codeChallengeMethod);
+  const safeState = escapeHtml(params.state);
+  const safeResponseType = escapeHtml(params.responseType);
 
-    ${
-      readScopes.length > 0
-        ? `<div class="section">
-            <h2>Read access</h2>
-            ${readScopes.map(scopeCheckbox).join("\n")}
-          </div>`
-        : ""
-    }
+  const readSection =
+    readScopes.length > 0
+      ? `<div class="section">
+          <h2>Read access</h2>
+          ${readScopes.map(scopeCheckbox).join("\n")}
+        </div>`
+      : "";
 
-    ${
-      writeScopes.length > 0
-        ? `<div class="section">
-            <h2>Read and write access</h2>
-            ${writeScopes.map(scopeCheckbox).join("\n")}
-          </div>`
-        : ""
-    }
+  const writeSection =
+    writeScopes.length > 0
+      ? `<div class="section">
+          <h2>Read and write access</h2>
+          ${writeScopes.map(scopeCheckbox).join("\n")}
+        </div>`
+      : "";
 
-    <div class="actions">
-      <button type="submit" name="action" value="approve" class="approve">Approve</button>
-      <button type="submit" name="action" value="deny" class="deny">Deny</button>
-    </div>
-  </form>
-</body>
-</html>`;
+  const bodyHtml = `
+    <h1><span class="client-name">${safeClient}</span> wants to access your data</h1>
+    <form method="POST" action="/auth/authorize">
+      <input type="hidden" name="client_id" value="${safeClientId}">
+      <input type="hidden" name="redirect_uri" value="${safeRedirectUri}">
+      <input type="hidden" name="code_challenge" value="${safeCodeChallenge}">
+      <input type="hidden" name="code_challenge_method" value="${safeCodeChallengeMethod}">
+      <input type="hidden" name="state" value="${safeState}">
+      <input type="hidden" name="response_type" value="${safeResponseType}">
+
+      ${readSection}
+      ${writeSection}
+
+      <div class="actions">
+        <button type="submit" name="action" value="approve" class="btn btn--primary">Approve</button>
+        <button type="submit" name="action" value="deny" class="btn">Deny</button>
+      </div>
+    </form>
+  `;
+
+  return renderAuthLayout({
+    title: `Authorize ${params.clientName}`,
+    bodyHtml,
+    wide: true,
+  });
 }
