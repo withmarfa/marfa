@@ -29,18 +29,22 @@ export async function runPgMigrations(connectionString: string): Promise<void> {
 }
 
 export async function runSqliteMigrations(sqlitePath: string): Promise<void> {
-  const Database = (await import("better-sqlite3")).default;
-  const { drizzle } = await import("drizzle-orm/better-sqlite3");
-  const { migrate } = await import("drizzle-orm/better-sqlite3/migrator");
+  const { createClient } = await import("@libsql/client");
+  const { drizzle } = await import("drizzle-orm/libsql");
+  const { migrate } = await import("drizzle-orm/libsql/migrator");
 
-  const sqlite = new Database(sqlitePath);
-  sqlite.pragma("journal_mode = WAL");
-  const db = drizzle(sqlite);
+  const url =
+    sqlitePath.startsWith("file:") || sqlitePath.startsWith("libsql:")
+      ? sqlitePath
+      : `file:${sqlitePath}`;
+  const client = createClient({ url });
+  await client.execute("PRAGMA journal_mode = WAL");
+  const db = drizzle(client);
 
   try {
-    migrate(db, { migrationsFolder: getMigrationFolder("sqlite") });
+    await migrate(db, { migrationsFolder: getMigrationFolder("sqlite") });
   } finally {
-    sqlite.close();
+    client.close();
   }
 }
 

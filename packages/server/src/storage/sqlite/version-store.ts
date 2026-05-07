@@ -16,16 +16,6 @@ export class SqliteVersionStore implements VersionStore {
     properties: Record<string, unknown>,
     deviceId?: string,
   ): Promise<Version> {
-    return this.createSync(itemId, version, properties, deviceId);
-  }
-
-  /** Synchronous version for use within SQLite transactions. */
-  createSync(
-    itemId: string,
-    version: number,
-    properties: Record<string, unknown>,
-    deviceId?: string,
-  ): Version {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
@@ -35,7 +25,7 @@ export class SqliteVersionStore implements VersionStore {
       created_at: now,
       device: deviceId ?? null,
     };
-    this.db.insert(versions).values(row).run();
+    await this.db.insert(versions).values(row).run();
     return {
       id: row.id,
       item_id: itemId,
@@ -47,7 +37,7 @@ export class SqliteVersionStore implements VersionStore {
   }
 
   async list(itemId: string): Promise<Version[]> {
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(versions)
       .where(eq(versions.item_id, itemId))
@@ -57,7 +47,7 @@ export class SqliteVersionStore implements VersionStore {
   }
 
   async getByVersion(itemId: string, version: number): Promise<Version | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(versions)
       .where(and(eq(versions.item_id, itemId), eq(versions.version, version)))
@@ -66,11 +56,7 @@ export class SqliteVersionStore implements VersionStore {
   }
 
   async getLatestTimestamp(itemId: string): Promise<string | null> {
-    return this.getLatestTimestampSync(itemId);
-  }
-
-  getLatestTimestampSync(itemId: string): string | null {
-    const row = this.db
+    const row = await this.db
       .select({ created_at: versions.created_at })
       .from(versions)
       .where(eq(versions.item_id, itemId))
@@ -82,18 +68,18 @@ export class SqliteVersionStore implements VersionStore {
 
   async deleteByIds(ids: string[]): Promise<number> {
     if (ids.length === 0) return 0;
-    const result = this.db
+    const result = await this.db
       .delete(versions)
       .where(inArray(versions.id, ids))
       .run();
-    return result.changes;
+    return result.rowsAffected;
   }
 
   async listThinningCandidates(
     threshold: number,
     limit: number,
   ): Promise<{ itemId: string; type: string; versionCount: number }[]> {
-    const rows = this.db
+    const rows = await this.db
       .select({
         itemId: versions.item_id,
         type: items.type,

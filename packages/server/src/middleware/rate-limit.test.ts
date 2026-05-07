@@ -27,7 +27,7 @@ async function buildCtx(): Promise<Ctx> {
   // lives in loadConfig). Set them directly on the literal below; the
   // middleware no longer reads process.env.
   const tmpDir = mkdtempSync(join(tmpdir(), "myme-ratelimit-"));
-  const storage = createSqliteStorage(join(tmpDir, "test.db"));
+  const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(storage, blobBackend, {
     port: 0,

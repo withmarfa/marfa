@@ -42,7 +42,7 @@ export class SqliteOAuthStore implements OAuthStore {
   }): Promise<OAuthClient> {
     const now = new Date().toISOString();
     const id = generateId();
-    this.db
+    await this.db
       .insert(oauthClients)
       .values({
         id,
@@ -60,7 +60,7 @@ export class SqliteOAuthStore implements OAuthStore {
   }
 
   async getClient(id: string): Promise<OAuthClient | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(oauthClients)
       .where(eq(oauthClients.id, id))
@@ -77,7 +77,7 @@ export class SqliteOAuthStore implements OAuthStore {
   }
 
   async listClients(): Promise<OAuthClient[]> {
-    const rows = this.db.select().from(oauthClients).all();
+    const rows = await this.db.select().from(oauthClients).all();
     return rows.map((r) => ({
       ...r,
       redirect_uris: safeJsonParse<string[]>(
@@ -99,8 +99,10 @@ export class SqliteOAuthStore implements OAuthStore {
   // -----------------------------------------------------------------------
 
   /** Read scopes off a system.connection item by id. */
-  private getConnectionScopes(connectionItemId: string): string[] {
-    const row = this.db
+  private async getConnectionScopes(
+    connectionItemId: string,
+  ): Promise<string[]> {
+    const row = await this.db
       .select()
       .from(items)
       .where(eq(items.id, connectionItemId))
@@ -128,7 +130,7 @@ export class SqliteOAuthStore implements OAuthStore {
   ): Promise<OAuthCode> {
     const now = new Date().toISOString();
     const id = generateId();
-    this.db
+    await this.db
       .insert(oauthCodes)
       .values({
         id,
@@ -157,7 +159,7 @@ export class SqliteOAuthStore implements OAuthStore {
     codeHash: string,
   ): Promise<(OAuthCode & { scopes: string[] }) | null> {
     const now = new Date().toISOString();
-    const row = this.db
+    const row = await this.db
       .update(oauthCodes)
       .set({ used_at: now })
       .where(
@@ -172,7 +174,7 @@ export class SqliteOAuthStore implements OAuthStore {
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- row is undefined when UPDATE matches no rows
     if (!row) return null;
 
-    const scopes = this.getConnectionScopes(row.connection_item_id);
+    const scopes = await this.getConnectionScopes(row.connection_item_id);
     return {
       id: row.id,
       connection_item_id: row.connection_item_id,
@@ -198,9 +200,9 @@ export class SqliteOAuthStore implements OAuthStore {
   ): Promise<OAuthToken> {
     const now = new Date().toISOString();
     const id = generateId();
-    const scopes = this.getConnectionScopes(connectionItemId);
+    const scopes = await this.getConnectionScopes(connectionItemId);
 
-    this.db
+    await this.db
       .insert(oauthTokens)
       .values({
         id,
@@ -232,7 +234,7 @@ export class SqliteOAuthStore implements OAuthStore {
     // grant's `tenant_id` onto the validation result. The middleware uses this
     // to stamp `tenant_id` on the synthetic ApiKey so storage call sites
     // tenant-filter correctly (T-004).
-    const row = this.db
+    const row = await this.db
       .select({
         id: oauthTokens.id,
         connection_item_id: oauthTokens.connection_item_id,
@@ -250,7 +252,7 @@ export class SqliteOAuthStore implements OAuthStore {
     if (row.revoked_at) return null;
     if (new Date(row.expires_at) < new Date()) return null;
 
-    const scopes = this.getConnectionScopes(row.connection_item_id);
+    const scopes = await this.getConnectionScopes(row.connection_item_id);
     return {
       id: row.id,
       connection_item_id: row.connection_item_id,
@@ -264,24 +266,28 @@ export class SqliteOAuthStore implements OAuthStore {
   }
 
   async listTokens(): Promise<OAuthToken[]> {
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(oauthTokens)
       .where(isNull(oauthTokens.revoked_at))
       .all();
-    return rows.map((row) => ({
-      id: row.id,
-      connection_item_id: row.connection_item_id,
-      token_type: row.token_type as OAuthTokenType,
-      scopes: this.getConnectionScopes(row.connection_item_id),
-      expires_at: row.expires_at,
-      revoked_at: row.revoked_at,
-      created_at: row.created_at,
-    }));
+    const result: OAuthToken[] = [];
+    for (const row of rows) {
+      result.push({
+        id: row.id,
+        connection_item_id: row.connection_item_id,
+        token_type: row.token_type as OAuthTokenType,
+        scopes: await this.getConnectionScopes(row.connection_item_id),
+        expires_at: row.expires_at,
+        revoked_at: row.revoked_at,
+        created_at: row.created_at,
+      });
+    }
+    return result;
   }
 
   async revokeToken(id: string): Promise<void> {
-    this.db
+    await this.db
       .update(oauthTokens)
       .set({ revoked_at: new Date().toISOString() })
       .where(eq(oauthTokens.id, id))
@@ -290,14 +296,14 @@ export class SqliteOAuthStore implements OAuthStore {
 
   async reduceTokenScope(id: string, scopes: string[]): Promise<void> {
     // Reduce scope by intersecting the connection item's scopes.
-    const token = this.db
+    const token = await this.db
       .select()
       .from(oauthTokens)
       .where(eq(oauthTokens.id, id))
       .get();
     if (!token) return;
 
-    const connection = this.db
+    const connection = await this.db
       .select()
       .from(items)
       .where(eq(items.id, token.connection_item_id))
@@ -315,7 +321,7 @@ export class SqliteOAuthStore implements OAuthStore {
     const reduced = currentScopes.filter((s) => scopes.includes(s));
     const updated = { ...props, scopes: reduced };
 
-    this.db
+    await this.db
       .update(items)
       .set({
         properties: JSON.stringify(updated),
@@ -330,7 +336,7 @@ export class SqliteOAuthStore implements OAuthStore {
   // -----------------------------------------------------------------------
 
   async markRefreshUsed(id: string): Promise<boolean> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(oauthTokens)
       .where(eq(oauthTokens.id, id))
@@ -338,7 +344,7 @@ export class SqliteOAuthStore implements OAuthStore {
     if (!row) return false;
     if (row.used_at) return false; // Already used — replay detected
 
-    this.db
+    await this.db
       .update(oauthTokens)
       .set({ used_at: new Date().toISOString() })
       .where(and(eq(oauthTokens.id, id), isNull(oauthTokens.used_at)))
@@ -347,7 +353,7 @@ export class SqliteOAuthStore implements OAuthStore {
   }
 
   async revokeGrantTokens(connectionItemId: string): Promise<void> {
-    this.db
+    await this.db
       .update(oauthTokens)
       .set({ revoked_at: new Date().toISOString() })
       .where(eq(oauthTokens.connection_item_id, connectionItemId))
@@ -368,7 +374,7 @@ export class SqliteOAuthStore implements OAuthStore {
   }): Promise<OAuthDeviceCode> {
     const id = generateId();
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .insert(oauthDeviceCodes)
       .values({
         id,
@@ -401,7 +407,7 @@ export class SqliteOAuthStore implements OAuthStore {
   }
 
   async findDeviceCodeByHash(hash: string): Promise<OAuthDeviceCode | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(oauthDeviceCodes)
       .where(eq(oauthDeviceCodes.device_code_hash, hash))
@@ -412,7 +418,7 @@ export class SqliteOAuthStore implements OAuthStore {
   async findDeviceCodeByUserCode(
     userCode: string,
   ): Promise<OAuthDeviceCode | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(oauthDeviceCodes)
       .where(eq(oauthDeviceCodes.user_code, userCode))
@@ -421,7 +427,7 @@ export class SqliteOAuthStore implements OAuthStore {
   }
 
   async markDeviceCodePolled(id: string, now: string): Promise<void> {
-    this.db
+    await this.db
       .update(oauthDeviceCodes)
       .set({ last_polled_at: now })
       .where(eq(oauthDeviceCodes.id, id))
@@ -432,7 +438,7 @@ export class SqliteOAuthStore implements OAuthStore {
     id: string,
     connectionItemId: string,
   ): Promise<boolean> {
-    const result = this.db
+    const result = await this.db
       .update(oauthDeviceCodes)
       .set({
         status: "approved",
@@ -446,11 +452,11 @@ export class SqliteOAuthStore implements OAuthStore {
         ),
       )
       .run();
-    return result.changes > 0;
+    return result.rowsAffected > 0;
   }
 
   async denyDeviceCode(id: string): Promise<boolean> {
-    const result = this.db
+    const result = await this.db
       .update(oauthDeviceCodes)
       .set({ status: "denied" })
       .where(
@@ -460,7 +466,7 @@ export class SqliteOAuthStore implements OAuthStore {
         ),
       )
       .run();
-    return result.changes > 0;
+    return result.rowsAffected > 0;
   }
 }
 

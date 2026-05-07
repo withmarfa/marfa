@@ -185,7 +185,7 @@ describe("bootstrap sentinel", () => {
       blobPath = join(tmpDir, "blobs");
     } else {
       const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-"));
-      storage = createSqliteStorage(join(tmpDir, "test.db"));
+      storage = await createSqliteStorage(join(tmpDir, "test.db"));
       blobPath = join(tmpDir, "blobs");
     }
     const blobBackend = new FilesystemBlobBackend(blobPath);
@@ -348,12 +348,12 @@ describe("bootstrap sentinel", () => {
     "bootstrap stamps __drizzle_migrations so a follow-up migrate is a no-op (T-014, sqlite)",
     async () => {
       const { storage } = (await freshApp()) as unknown as {
-        storage: ReturnType<typeof createSqliteStorage>;
+        storage: Awaited<ReturnType<typeof createSqliteStorage>>;
       };
       try {
-        const rows = storage.__sqliteAll(
+        const rows = (await storage.__sqliteAll(
           "SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at ASC",
-        ) as { hash: string; created_at: number }[];
+        )) as { hash: string; created_at: number }[];
         // At least one stamped row exists, hashes are non-empty, timestamps
         // are positive — the row shape Drizzle's migrator writes after each
         // applied migration. Drizzle's skip-decision is "if any row's
@@ -379,10 +379,10 @@ describe("bootstrap sentinel", () => {
       // sees stamped rows and short-circuits.
       const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-migrate-"));
       const dbPath = join(tmpDir, "bootstrap-then-migrate.db");
-      const storage = createSqliteStorage(dbPath);
-      const before = storage.__sqliteAll(
+      const storage = await createSqliteStorage(dbPath);
+      const before = (await storage.__sqliteAll(
         "SELECT COUNT(*) AS n FROM __drizzle_migrations",
-      ) as { n: number }[];
+      )) as { n: number }[];
       const beforeCount = before[0]?.n ?? 0;
       expect(beforeCount).toBeGreaterThan(0);
       await storage.close();
@@ -390,11 +390,11 @@ describe("bootstrap sentinel", () => {
       const { runSqliteMigrations } = await import("../storage/migrate.js");
       await expect(runSqliteMigrations(dbPath)).resolves.toBeUndefined();
 
-      const reopened = createSqliteStorage(dbPath);
+      const reopened = await createSqliteStorage(dbPath);
       try {
-        const after = reopened.__sqliteAll(
+        const after = (await reopened.__sqliteAll(
           "SELECT COUNT(*) AS n FROM __drizzle_migrations",
-        ) as { n: number }[];
+        )) as { n: number }[];
         expect(after[0]?.n ?? 0).toBe(beforeCount);
       } finally {
         await reopened.close();
@@ -406,21 +406,21 @@ describe("bootstrap sentinel", () => {
     "bootstrap creates idx_api_keys_connection_id (T-014, sqlite)",
     async () => {
       const { storage } = (await freshApp()) as unknown as {
-        storage: ReturnType<typeof createSqliteStorage>;
+        storage: Awaited<ReturnType<typeof createSqliteStorage>>;
       };
       try {
-        const indexes = storage.__sqliteAll(
+        const indexes = (await storage.__sqliteAll(
           "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_api_keys_connection_id'",
-        ) as { name: string }[];
+        )) as { name: string }[];
         expect(indexes.length).toBe(1);
 
         // EXPLAIN must show the index is consulted on the runtime-credential
         // lookup path. SQLite's planner reports `USING INDEX <name>` when it
         // chooses an index; partial indexes need the WHERE predicate to match
         // for the planner to pick them.
-        const plan = storage.__sqliteAll(
+        const plan = (await storage.__sqliteAll(
           "EXPLAIN QUERY PLAN SELECT * FROM api_keys WHERE connection_id = 'x'",
-        ) as { detail: string }[];
+        )) as { detail: string }[];
         const usesIndex = plan.some((row) =>
           row.detail.includes("idx_api_keys_connection_id"),
         );

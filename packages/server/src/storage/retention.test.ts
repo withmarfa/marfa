@@ -55,9 +55,9 @@ async function seedItemWithUpdatedAt(opts: {
     ]);
   } else {
     const s = ctx.storage as unknown as {
-      __sqliteRun: (sql: string, params: unknown[]) => unknown;
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
     };
-    s.__sqliteRun("UPDATE items SET updated_at = ? WHERE id = ?", [
+    await s.__sqliteRun("UPDATE items SET updated_at = ? WHERE id = ?", [
       opts.updatedAtIso,
       opts.id,
     ]);
@@ -83,11 +83,11 @@ async function rowExists(itemId: string): Promise<boolean> {
     return rows.length > 0;
   }
   const s = ctx.storage as unknown as {
-    __sqliteAll: (q: string) => unknown[];
+    __sqliteAll: (q: string) => Promise<unknown[]>;
   };
   // SQLite escape hatch doesn't bind params, but ids are well-formed
   // UUIDv7 hex+hyphens — no injection risk in this test-only context.
-  const rows = s.__sqliteAll(
+  const rows = await s.__sqliteAll(
     `SELECT 1 FROM items WHERE id = '${itemId.replace(/'/g, "''")}'`,
   );
   return rows.length > 0;

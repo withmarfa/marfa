@@ -16,18 +16,22 @@ export class SqliteTenantStore implements TenantStore {
       name: name ?? null,
       created_at: now,
     };
-    this.db.insert(tenants).values(row).run();
+    await this.db.insert(tenants).values(row).run();
     return { id: row.id, name: row.name, created_at: row.created_at };
   }
 
   async get(id: string): Promise<Tenant | null> {
-    const row = this.db.select().from(tenants).where(eq(tenants.id, id)).get();
+    const row = await this.db
+      .select()
+      .from(tenants)
+      .where(eq(tenants.id, id))
+      .get();
     if (!row) return null;
     return { id: row.id, name: row.name, created_at: row.created_at };
   }
 
   async list(): Promise<Tenant[]> {
-    const rows = this.db.select().from(tenants).all();
+    const rows = await this.db.select().from(tenants).all();
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -36,7 +40,7 @@ export class SqliteTenantStore implements TenantStore {
   }
 
   async getConfig(id: string): Promise<TenantConfig | null> {
-    const row = this.db
+    const row = await this.db
       .select({ config: tenants.config })
       .from(tenants)
       .where(eq(tenants.id, id))
@@ -46,7 +50,7 @@ export class SqliteTenantStore implements TenantStore {
   }
 
   async updateConfig(id: string, config: TenantConfig): Promise<void> {
-    this.db
+    await this.db
       .update(tenants)
       .set({ config: JSON.stringify(config) })
       .where(eq(tenants.id, id))

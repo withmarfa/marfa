@@ -13,12 +13,12 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
   constructor(private db: DrizzleDb) {}
 
   async list(): Promise<EdgeTypeSchema[]> {
-    const rows = this.db.select().from(customEdgeTypes).all();
+    const rows = await this.db.select().from(customEdgeTypes).all();
     return rows.map(parseRow);
   }
 
   async get(id: string): Promise<EdgeTypeSchema | undefined> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(customEdgeTypes)
       .where(eq(customEdgeTypes.id, id))
@@ -39,7 +39,7 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
       );
     }
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .insert(customEdgeTypes)
       .values({
         id: schema.id,
@@ -53,7 +53,10 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
   }
 
   async delete(id: string): Promise<void> {
-    this.db.delete(customEdgeTypes).where(eq(customEdgeTypes.id, id)).run();
+    await this.db
+      .delete(customEdgeTypes)
+      .where(eq(customEdgeTypes.id, id))
+      .run();
   }
 
   async loadCustomEdgeTypes(): Promise<EdgeTypeSchema[]> {

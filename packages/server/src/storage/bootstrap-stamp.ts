@@ -31,7 +31,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type Database from "better-sqlite3";
+import type { Client } from "@libsql/client";
 
 interface JournalEntry {
   idx: number;
@@ -97,7 +97,7 @@ export function readStampedMigrations(
 }
 
 // ---------------------------------------------------------------------------
-// SQLite stamping (synchronous)
+// SQLite stamping (async — libsql)
 // ---------------------------------------------------------------------------
 
 /**
@@ -110,27 +110,28 @@ export function readStampedMigrations(
  * and writes `(hash, created_at)` after each apply. We mirror that shape so a
  * follow-up `pnpm migrate` finds the latest stamp and short-circuits.
  */
-export function stampSqliteDrizzleMigrations(raw: Database.Database): void {
-  raw
-    .prepare(
-      `CREATE TABLE IF NOT EXISTS __drizzle_migrations (
-         id INTEGER PRIMARY KEY AUTOINCREMENT,
-         hash TEXT NOT NULL,
-         created_at NUMERIC
-       )`,
-    )
-    .run();
-  const existing = raw
-    .prepare("SELECT COUNT(*) AS n FROM __drizzle_migrations")
-    .get() as { n: number };
-  if (existing.n > 0) return;
+export async function stampSqliteDrizzleMigrations(
+  client: Client,
+): Promise<void> {
+  await client.execute(
+    `CREATE TABLE IF NOT EXISTS __drizzle_migrations (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       hash TEXT NOT NULL,
+       created_at NUMERIC
+     )`,
+  );
+  const existing = await client.execute(
+    "SELECT COUNT(*) AS n FROM __drizzle_migrations",
+  );
+  const count = Number(existing.rows[0]?.n ?? 0);
+  if (count > 0) return;
 
   const stamped = readStampedMigrations("sqlite");
-  const insert = raw.prepare(
-    "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
-  );
   for (const m of stamped) {
-    insert.run(m.hash, m.created_at);
+    await client.execute({
+      sql: "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+      args: [m.hash, m.created_at],
+    });
   }
 }
 

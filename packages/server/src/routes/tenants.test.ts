@@ -45,7 +45,7 @@ async function createHostedContext(): Promise<HostedContext> {
     }
   } else {
     const dbPath = join(tmpDir, "test.db");
-    storage = createSqliteStorage(dbPath, { authMode: "hosted" });
+    storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
   }
 
   const blobBackend = new FilesystemBlobBackend(blobPath);

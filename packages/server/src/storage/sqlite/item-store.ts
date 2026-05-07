@@ -39,8 +39,8 @@ import type {
 import type { ItemStore, ItemFilters } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { detectConflict } from "../conflict.js";
-import { items, metadata } from "./schema.js";
-import type { DrizzleDb, RawDb } from "./connection.js";
+import { items, metadata, versions } from "./schema.js";
+import type { DrizzleDb } from "./connection.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
 import { rowToItem } from "./helpers.js";
@@ -48,7 +48,6 @@ import { rowToItem } from "./helpers.js";
 export class SqliteItemStore implements ItemStore {
   constructor(
     private db: DrizzleDb,
-    private raw: RawDb,
     private versionStore: SqliteVersionStore,
     private searchStore: SqliteSearchStore,
     private versionSnapshotIntervalMs = 600_000,
@@ -81,14 +80,14 @@ export class SqliteItemStore implements ItemStore {
     const now = new Date().toISOString();
     const state = input.state ?? SYSTEM_DEFAULT_STATE;
 
-    const createFn = this.raw.transaction(() => {
+    return await this.db.transaction(async (tx) => {
       if (input.source && input.source_id) {
         const dedupConditions = [
           eq(items.source, input.source),
           eq(items.source_id, input.source_id),
         ];
         if (tenantId) dedupConditions.push(eq(items.tenant_id, tenantId));
-        const existing = this.db
+        const existing = await tx
           .select({ id: items.id })
           .from(items)
           .where(and(...dedupConditions))
@@ -104,7 +103,7 @@ export class SqliteItemStore implements ItemStore {
 
       const schemaVersion = getTypeSchema(input.type)?.version ?? 1;
 
-      this.db
+      await tx
         .insert(items)
         .values({
           id,
@@ -127,7 +126,7 @@ export class SqliteItemStore implements ItemStore {
         })
         .run();
 
-      this.db
+      await tx
         .insert(metadata)
         .values({
           item_id: id,
@@ -135,7 +134,7 @@ export class SqliteItemStore implements ItemStore {
         })
         .run();
 
-      this.searchStore.indexSync(id, input.properties, input.type);
+      await this.searchStore.index(id, input.properties, input.type);
 
       return {
         id,
@@ -160,13 +159,11 @@ export class SqliteItemStore implements ItemStore {
         }),
       } satisfies Item;
     });
-
-    return createFn();
   }
 
   // Fix 4: trashed items return null (404 to callers)
   async get(id: string, tenantId?: string): Promise<Item | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(items)
       .where(this.tenantWhere(id, tenantId))
@@ -177,8 +174,8 @@ export class SqliteItemStore implements ItemStore {
   }
 
   // Internal get that includes trashed items (for restore, delete, transition)
-  private getRaw(id: string, tenantId?: string): Item | null {
-    const row = this.db
+  private async getRaw(id: string, tenantId?: string): Promise<Item | null> {
+    const row = await this.db
       .select()
       .from(items)
       .where(this.tenantWhere(id, tenantId))
@@ -188,10 +185,10 @@ export class SqliteItemStore implements ItemStore {
   }
 
   getIncludingTrashed(id: string, tenantId?: string): Promise<Item | null> {
-    return Promise.resolve(this.getRaw(id, tenantId));
+    return this.getRaw(id, tenantId);
   }
 
-  findBySourceId(
+  async findBySourceId(
     source: string,
     sourceId: string,
     tenantId?: string,
@@ -201,14 +198,14 @@ export class SqliteItemStore implements ItemStore {
       eq(items.source_id, sourceId),
     ];
     if (tenantId) conditions.push(eq(items.tenant_id, tenantId));
-    const row = this.db
+    const row = await this.db
       .select()
       .from(items)
       .where(and(...conditions))
       .get();
-    if (!row) return Promise.resolve(null);
-    if (row.state === "trashed") return Promise.resolve(null);
-    return Promise.resolve(rowToItem(row));
+    if (!row) return null;
+    if (row.state === "trashed") return null;
+    return rowToItem(row);
   }
 
   async getMany(ids: string[], tenantId?: string): Promise<Map<string, Item>> {
@@ -218,7 +215,7 @@ export class SqliteItemStore implements ItemStore {
     const where = tenantId
       ? and(inArray(items.id, unique), eq(items.tenant_id, tenantId))
       : inArray(items.id, unique);
-    const rows = this.db.select().from(items).where(where).all();
+    const rows = await this.db.select().from(items).where(where).all();
     for (const row of rows) {
       if (row.state === "trashed") continue;
       out.set(row.id, rowToItem(row));
@@ -366,7 +363,7 @@ export class SqliteItemStore implements ItemStore {
         ? [desc(sortCol), desc(items.id)]
         : [asc(sortCol), asc(items.id)];
 
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(items)
       .where(and(...conditions))
@@ -406,8 +403,8 @@ export class SqliteItemStore implements ItemStore {
 
     const whereClause = this.tenantWhere(id, tenantId);
 
-    const updateFn = this.raw.transaction(() => {
-      const row = this.db.select().from(items).where(whereClause).get();
+    return await this.db.transaction(async (tx) => {
+      const row = await tx.select().from(items).where(whereClause).get();
       if (!row) {
         throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
@@ -426,9 +423,35 @@ export class SqliteItemStore implements ItemStore {
       const now = new Date().toISOString();
       const deviceId = row.device ?? undefined;
 
+      // Read latest version timestamp inside the tx so the gating decision
+      // is consistent with the rest of the update.
+      const latestVersionRow = await tx
+        .select({ created_at: versions.created_at })
+        .from(versions)
+        .where(eq(versions.item_id, id))
+        .orderBy(desc(versions.version))
+        .limit(1)
+        .get();
+      const latestTs = latestVersionRow?.created_at ?? null;
+
+      const writeVersion = async (
+        propertiesToSnapshot: Record<string, unknown>,
+      ) => {
+        await tx
+          .insert(versions)
+          .values({
+            id: generateId(),
+            item_id: id,
+            version: row.version,
+            properties: JSON.stringify(propertiesToSnapshot),
+            created_at: now,
+            device: deviceId ?? null,
+          })
+          .run();
+      };
+
       // Fast path: version omitted — always merge, no conflict detection
       if (input.version === undefined || row.version === input.version) {
-        const latestTs = this.versionStore.getLatestTimestampSync(id);
         if (
           shouldCreateVersion(
             latestTs,
@@ -437,7 +460,7 @@ export class SqliteItemStore implements ItemStore {
             input.snapshot === true,
           )
         ) {
-          this.versionStore.createSync(id, row.version, currentProps, deviceId);
+          await writeVersion(currentProps);
         }
 
         const merged = input.properties
@@ -454,10 +477,10 @@ export class SqliteItemStore implements ItemStore {
           ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
         };
 
-        this.db.update(items).set(setClause).where(whereClause).run();
+        await tx.update(items).set(setClause).where(whereClause).run();
 
-        this.searchStore.removeSync(id);
-        this.searchStore.indexSync(id, merged, row.type);
+        await this.searchStore.remove(id);
+        await this.searchStore.index(id, merged, row.type);
 
         return rowToItem({
           ...row,
@@ -498,16 +521,15 @@ export class SqliteItemStore implements ItemStore {
       }
 
       // Auto-merge
-      const mergeLatestTs = this.versionStore.getLatestTimestampSync(id);
       if (
         shouldCreateVersion(
-          mergeLatestTs,
+          latestTs,
           this.versionSnapshotIntervalMs,
           false,
           input.snapshot === true,
         )
       ) {
-        this.versionStore.createSync(id, row.version, currentProps, deviceId);
+        await writeVersion(currentProps);
       }
       const newVersion = row.version + 1;
       const newTier = input.tier ?? row.tier;
@@ -520,10 +542,10 @@ export class SqliteItemStore implements ItemStore {
         ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
       };
 
-      this.db.update(items).set(mergeSet).where(whereClause).run();
+      await tx.update(items).set(mergeSet).where(whereClause).run();
 
-      this.searchStore.removeSync(id);
-      this.searchStore.indexSync(id, result.merged, row.type);
+      await this.searchStore.remove(id);
+      await this.searchStore.index(id, result.merged, row.type);
 
       return rowToItem({
         ...row,
@@ -533,27 +555,25 @@ export class SqliteItemStore implements ItemStore {
         tier: newTier,
       });
     });
-
-    return updateFn();
   }
 
   async delete(id: string, tenantId?: string): Promise<void> {
-    const row = this.getRaw(id, tenantId);
+    const row = await this.getRaw(id, tenantId);
     if (!row) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
-    this.db
+    await this.db
       .update(items)
       .set({ state: "trashed", updated_at: new Date().toISOString() })
       .where(this.tenantWhere(id, tenantId))
       .run();
 
-    this.searchStore.removeSync(id);
+    await this.searchStore.remove(id);
   }
 
   async purge(id: string, tenantId?: string): Promise<void> {
-    const row = this.getRaw(id, tenantId);
+    const row = await this.getRaw(id, tenantId);
     if (!row) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -566,9 +586,9 @@ export class SqliteItemStore implements ItemStore {
 
     // Cascade: metadata and versions are deleted via ON DELETE CASCADE.
     // Search index must be removed explicitly.
-    this.db.delete(items).where(this.tenantWhere(id, tenantId)).run();
+    await this.db.delete(items).where(this.tenantWhere(id, tenantId)).run();
 
-    this.searchStore.removeSync(id);
+    await this.searchStore.remove(id);
   }
 
   async bulkPurge(ids: string[], tenantId?: string): Promise<number> {
@@ -578,22 +598,21 @@ export class SqliteItemStore implements ItemStore {
     if (tenantId) conditions.push(eq(items.tenant_id, tenantId));
     const scopedWhere = and(...conditions);
 
-    const purgeFn = this.raw.transaction(() => {
-      const scopedIds = this.db
+    return await this.db.transaction(async (tx) => {
+      const rows = await tx
         .select({ id: items.id })
         .from(items)
         .where(scopedWhere)
-        .all()
-        .map((row) => row.id);
+        .all();
+      const scopedIds = rows.map((row) => row.id);
       if (scopedIds.length === 0) return 0;
 
       for (const id of scopedIds) {
-        this.searchStore.removeSync(id);
+        await this.searchStore.remove(id);
       }
-      this.db.delete(items).where(inArray(items.id, scopedIds)).run();
+      await tx.delete(items).where(inArray(items.id, scopedIds)).run();
       return scopedIds.length;
     });
-    return purgeFn();
   }
 
   async purgeTrashedOlderThan(
@@ -615,8 +634,8 @@ export class SqliteItemStore implements ItemStore {
     }
     const where = and(...baseConditions);
 
-    const purgeFn = this.raw.transaction(() => {
-      const idRows = this.db
+    return await this.db.transaction(async (tx) => {
+      const idRows = await tx
         .select({ id: items.id })
         .from(items)
         .where(where)
@@ -625,12 +644,11 @@ export class SqliteItemStore implements ItemStore {
 
       const ids = idRows.map((row) => row.id);
       for (const id of ids) {
-        this.searchStore.removeSync(id);
+        await this.searchStore.remove(id);
       }
-      this.db.delete(items).where(inArray(items.id, ids)).run();
+      await tx.delete(items).where(inArray(items.id, ids)).run();
       return ids.length;
     });
-    return purgeFn();
   }
 
   async expireFeedOlderThan(
@@ -648,8 +666,8 @@ export class SqliteItemStore implements ItemStore {
     }
     const where = and(...baseConditions);
 
-    const expireFn = this.raw.transaction(() => {
-      const idRows = this.db
+    return await this.db.transaction(async (tx) => {
+      const idRows = await tx
         .select({ id: items.id })
         .from(items)
         .where(where)
@@ -658,16 +676,15 @@ export class SqliteItemStore implements ItemStore {
 
       const ids = idRows.map((row) => row.id);
       for (const id of ids) {
-        this.searchStore.removeSync(id);
+        await this.searchStore.remove(id);
       }
-      this.db.delete(items).where(inArray(items.id, ids)).run();
+      await tx.delete(items).where(inArray(items.id, ids)).run();
       return ids.length;
     });
-    return expireFn();
   }
 
   async restore(id: string, tenantId?: string): Promise<Item> {
-    const row = this.getRaw(id, tenantId);
+    const row = await this.getRaw(id, tenantId);
     if (!row) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -676,13 +693,13 @@ export class SqliteItemStore implements ItemStore {
     }
 
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .update(items)
       .set({ state: "active", updated_at: now })
       .where(this.tenantWhere(id, tenantId))
       .run();
 
-    this.searchStore.indexSync(id, row.properties, row.type);
+    await this.searchStore.index(id, row.properties, row.type);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
@@ -692,7 +709,7 @@ export class SqliteItemStore implements ItemStore {
     state: ItemState,
     tenantId?: string,
   ): Promise<Item> {
-    const row = this.getRaw(id, tenantId);
+    const row = await this.getRaw(id, tenantId);
     if (!row) {
       throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
@@ -703,7 +720,7 @@ export class SqliteItemStore implements ItemStore {
     }
 
     // State transitions always create a version snapshot
-    this.versionStore.createSync(
+    await this.versionStore.create(
       id,
       row.version,
       row.properties,
@@ -711,48 +728,54 @@ export class SqliteItemStore implements ItemStore {
     );
 
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .update(items)
       .set({ state, updated_at: now })
       .where(this.tenantWhere(id, tenantId))
       .run();
 
     if (state === "trashed") {
-      this.searchStore.removeSync(id);
+      await this.searchStore.remove(id);
     } else if (row.state === "trashed") {
-      this.searchStore.indexSync(id, row.properties, row.type);
+      await this.searchStore.index(id, row.properties, row.type);
     }
 
     return { ...row, state, updated_at: now };
   }
 
-  stats(
+  async stats(
     tenantId?: string,
     allowedTypes?: string[],
   ): Promise<Record<string, number>> {
-    let sql = "SELECT state, COUNT(*) as count FROM items WHERE 1=1";
+    let sqlText = "SELECT state, COUNT(*) as count FROM items WHERE 1=1";
     const params: unknown[] = [];
 
     if (tenantId) {
-      sql += " AND tenant_id = ?";
+      sqlText += " AND tenant_id = ?";
       params.push(tenantId);
     }
 
     if (allowedTypes && allowedTypes.length > 0) {
-      sql += ` AND type IN (${allowedTypes.map(() => "?").join(", ")})`;
+      sqlText += ` AND type IN (${allowedTypes.map(() => "?").join(", ")})`;
       params.push(...allowedTypes);
     }
 
-    sql += " GROUP BY state";
+    sqlText += " GROUP BY state";
 
-    const rows = this.raw.prepare(sql).all(...params) as {
-      state: string;
-      count: number;
-    }[];
+    // Stitch ?-split fragments with drizzle parameter binding.
+    const fragments = sqlText.split("?");
+    const builder = sql.empty();
+    for (let i = 0; i < fragments.length; i++) {
+      builder.append(sql.raw(fragments[i] ?? ""));
+      if (i < fragments.length - 1) {
+        builder.append(sql`${params[i]}`);
+      }
+    }
+    const rows = await this.db.all<{ state: string; count: number }>(builder);
     const result: Record<string, number> = {};
     for (const row of rows) {
       result[row.state] = row.count;
     }
-    return Promise.resolve(result);
+    return result;
   }
 }

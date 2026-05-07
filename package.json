@@ -23,7 +23,7 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild",
-      "better-sqlite3"
+      "libsql"
     ]
   },
   "devDependencies": {

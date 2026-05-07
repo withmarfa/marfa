@@ -51,7 +51,7 @@ export class SqliteAuditStore implements AuditStore {
     if (entry.client_ip !== undefined && entry.client_ip !== null) {
       detailsBlob.client_ip = entry.client_ip;
     }
-    this.db
+    await this.db
       .insert(auditLog)
       .values({
         id: generateId(),
@@ -122,7 +122,7 @@ export class SqliteAuditStore implements AuditStore {
       query = query.where(and(...conditions));
     }
 
-    const rows = query.all();
+    const rows = await query.all();
     const hasMore = rows.length > limit;
     const data = rows.slice(0, limit).map(rowToEntry);
     let nextCursor: string | null = null;
@@ -153,7 +153,7 @@ export class SqliteAuditStore implements AuditStore {
       tenantClause === undefined
         ? lt(auditLog.timestamp, cutoff)
         : and(lt(auditLog.timestamp, cutoff), tenantClause);
-    const result = this.db.delete(auditLog).where(where).run();
-    return result.changes;
+    const result = await this.db.delete(auditLog).where(where).run();
+    return result.rowsAffected;
   }
 }

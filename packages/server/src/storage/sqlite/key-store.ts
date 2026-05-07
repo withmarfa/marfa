@@ -63,12 +63,12 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
 export class SqliteKeyStore implements KeyStore {
   constructor(private db: DrizzleDb) {}
 
-  create(
+  async create(
     input: CreateKeyInput,
     keyHash: string,
     tenantId?: string,
   ): Promise<ApiKey> {
-    const collision = this.db
+    const collision = await this.db
       .select({ id: apiKeys.id })
       .from(apiKeys)
       .where(
@@ -106,8 +106,8 @@ export class SqliteKeyStore implements KeyStore {
       metadata_permissions: JSON.stringify(input.metadata_permissions ?? {}),
       created_at: now,
     };
-    this.db.insert(apiKeys).values(row).run();
-    return Promise.resolve({
+    await this.db.insert(apiKeys).values(row).run();
+    return {
       id: row.id,
       tenant_id: tenantId,
       label: row.label,
@@ -122,15 +122,15 @@ export class SqliteKeyStore implements KeyStore {
       metadata_permissions: input.metadata_permissions ?? {},
       created_at: now,
       last_used_at: null,
-    });
+    };
   }
 
-  createRuntimeCredential(
+  async createRuntimeCredential(
     input: CreateKeyInput & { connection_id: string },
     keyHash: string,
     tenantId?: string,
   ): Promise<ApiKey> {
-    const collision = this.db
+    const collision = await this.db
       .select({ id: apiKeys.id })
       .from(apiKeys)
       .where(
@@ -170,8 +170,8 @@ export class SqliteKeyStore implements KeyStore {
       metadata_permissions: JSON.stringify(input.metadata_permissions ?? {}),
       created_at: now,
     };
-    this.db.insert(apiKeys).values(row).run();
-    return Promise.resolve({
+    await this.db.insert(apiKeys).values(row).run();
+    return {
       id: row.id,
       tenant_id: tenantId,
       label: row.label,
@@ -188,32 +188,32 @@ export class SqliteKeyStore implements KeyStore {
       metadata_permissions: input.metadata_permissions ?? {},
       created_at: now,
       last_used_at: null,
-    });
+    };
   }
 
-  list(): Promise<ApiKey[]> {
-    const rows = this.db
+  async list(): Promise<ApiKey[]> {
+    const rows = await this.db
       .select()
       .from(apiKeys)
       .where(isNull(apiKeys.revoked_at))
       .all();
-    return Promise.resolve(rows.map(mapRow));
+    return rows.map(mapRow);
   }
 
-  get(id: string): Promise<ApiKey | null> {
-    const row = this.db
+  async get(id: string): Promise<ApiKey | null> {
+    const row = await this.db
       .select()
       .from(apiKeys)
       .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
       .get();
-    return Promise.resolve(row ? mapRow(row) : null);
+    return row ? mapRow(row) : null;
   }
 
-  listByConnectionId(
+  async listByConnectionId(
     connectionId: string,
     tenantId?: string,
   ): Promise<ApiKey[]> {
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(apiKeys)
       .where(
@@ -226,11 +226,11 @@ export class SqliteKeyStore implements KeyStore {
         ),
       )
       .all();
-    return Promise.resolve(rows.map(mapRow));
+    return rows.map(mapRow);
   }
 
-  update(id: string, input: UpdateKeyInput): Promise<ApiKey> {
-    const existing = this.db
+  async update(id: string, input: UpdateKeyInput): Promise<ApiKey> {
+    const existing = await this.db
       .select()
       .from(apiKeys)
       .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
@@ -255,10 +255,10 @@ export class SqliteKeyStore implements KeyStore {
       patch.metadata_permissions = JSON.stringify(input.metadata_permissions);
 
     if (Object.keys(patch).length > 0) {
-      this.db.update(apiKeys).set(patch).where(eq(apiKeys.id, id)).run();
+      await this.db.update(apiKeys).set(patch).where(eq(apiKeys.id, id)).run();
     }
 
-    const refreshed = this.db
+    const refreshed = await this.db
       .select()
       .from(apiKeys)
       .where(eq(apiKeys.id, id))
@@ -270,35 +270,34 @@ export class SqliteKeyStore implements KeyStore {
         `Key ${id} disappeared mid-update`,
       );
     }
-    return Promise.resolve(mapRow(refreshed));
+    return mapRow(refreshed);
   }
 
-  validate(
+  async validate(
     keyHash: string,
   ): Promise<
     (ApiKey & { key_hash: string; revoked_at: string | null }) | null
   > {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(apiKeys)
       .where(eq(apiKeys.key_hash, keyHash))
       .get();
-    if (!row) return Promise.resolve(null);
-    if (row.revoked_at) return Promise.resolve(null);
-    return Promise.resolve({
+    if (!row) return null;
+    if (row.revoked_at) return null;
+    return {
       ...mapRow(row),
       key_hash: row.key_hash,
       revoked_at: row.revoked_at,
-    });
+    };
   }
 
-  revoke(id: string): Promise<void> {
-    this.db
+  async revoke(id: string): Promise<void> {
+    await this.db
       .update(apiKeys)
       .set({ revoked_at: new Date().toISOString() })
       .where(eq(apiKeys.id, id))
       .run();
-    return Promise.resolve();
   }
 
   /**
@@ -307,12 +306,12 @@ export class SqliteKeyStore implements KeyStore {
    * middleware across any number of instances without generating a write
    * storm.
    */
-  updateLastUsed(id: string): Promise<void> {
+  async updateLastUsed(id: string): Promise<void> {
     const now = new Date();
     const cutoff = new Date(
       now.getTime() - LAST_USED_DEBOUNCE_MS,
     ).toISOString();
-    this.db
+    await this.db
       .update(apiKeys)
       .set({ last_used_at: now.toISOString() })
       .where(
@@ -322,15 +321,14 @@ export class SqliteKeyStore implements KeyStore {
         ),
       )
       .run();
-    return Promise.resolve();
   }
 
-  count(): Promise<number> {
-    const rows = this.db
+  async count(): Promise<number> {
+    const rows = await this.db
       .select()
       .from(apiKeys)
       .where(isNull(apiKeys.revoked_at))
       .all();
-    return Promise.resolve(rows.length);
+    return rows.length;
   }
 }

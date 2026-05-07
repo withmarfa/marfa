@@ -15,15 +15,12 @@
  * the credential needs the id to bind to. Outcome is identical: no
  * orphan credentials, no half-installed state.
  *
- * Atomicity — the storage abstraction's `runInTransaction` is a real PG
- * transaction but a no-op shim on SQLite (better-sqlite3 doesn't support
- * async transactions, see storage/sqlite/index.ts). Rather than reach
- * around the abstraction, this pipeline uses **compensating writes**:
- * each step records what to undo on failure, and the catch-all reverses
- * them in reverse order. The window between steps is narrow (sequential
- * single-row inserts in-process), and the compensations are
- * idempotent. A future cleanup PR could promote this to a true
- * cross-store transaction once the storage layer grows that primitive.
+ * Atomicity — `storage.runInTransaction` is genuinely transactional on
+ * both dialects (T-071), but install spans multiple storage stores and
+ * external side effects (audit, activity emit), and a single Drizzle tx
+ * doesn't bracket those cleanly. So the pipeline uses **compensating
+ * writes**: each step records what to undo on failure, and the catch-all
+ * reverses them in reverse order. The compensations are idempotent.
  *
  * Internal-call bypass — the runtime credential mint at step 2 calls
  * `storage.keys.createRuntimeCredential` directly rather than going

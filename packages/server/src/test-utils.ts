@@ -63,10 +63,10 @@ export async function markEmailVerified(
     return;
   }
   const sqlite = storage as unknown as {
-    __sqliteRun?: (q: string, p: unknown[]) => { changes: number };
+    __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
   };
   if (sqlite.__sqliteRun) {
-    sqlite.__sqliteRun(
+    await sqlite.__sqliteRun(
       "UPDATE auth_user SET email_verified = 1 WHERE LOWER(email) = ?",
       [lower],
     );
@@ -104,14 +104,14 @@ export async function readLatestResetToken(
     return rows[0]?.identifier.slice("reset-password:".length) ?? null;
   }
   const sqlite = storage as unknown as {
-    __sqliteAll?: (q: string) => unknown[];
+    __sqliteAll?: (q: string) => Promise<unknown[]>;
   };
   if (!sqlite.__sqliteAll) return null;
-  const rows = sqlite.__sqliteAll(
+  const rows = (await sqlite.__sqliteAll(
     `SELECT identifier FROM auth_verification
       WHERE identifier LIKE 'reset-password:%'
       ORDER BY created_at DESC LIMIT 1`,
-  ) as { identifier: string }[];
+  )) as { identifier: string }[];
   if (rows.length === 0) return null;
   return rows[0]?.identifier.slice("reset-password:".length) ?? null;
 }
@@ -132,7 +132,7 @@ export async function createTestContext(
     await truncatePg(storage);
   } else {
     const dbPath = join(tmpDir, "test.db");
-    storage = createSqliteStorage(dbPath);
+    storage = await createSqliteStorage(dbPath);
   }
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
