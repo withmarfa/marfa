@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, waitForAudit } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
@@ -55,12 +55,12 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
     });
     expect(res.status).toBe(302);
 
-    // Allow the fire-and-forget audit to flush.
-    await new Promise((r) => setTimeout(r, 50));
-
-    const rows = await ctx.storage.audit.list({
-      action: "auth.sign_up",
-    });
+    // T-079: poll briefly until the fire-and-forget audit row lands.
+    const ctxRef = ctx;
+    const rows = await waitForAudit(
+      () => ctxRef.storage.audit.list({ action: "auth.sign_up" }),
+      (r) => r.data.length >= 1,
+    );
     expect(rows.data).toHaveLength(1);
     const row = rows.data[0];
     expect(row?.resource_type).toBe("auth_user");
@@ -88,11 +88,12 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
       return_to: "/",
     });
     expect(res.status).toBe(302);
-    await new Promise((r) => setTimeout(r, 50));
-
-    const rows = await ctx.storage.audit.list({
-      action: "auth.sign_in.success",
-    });
+    // T-079: poll until the fire-and-forget audit row lands.
+    const ctxRef = ctx;
+    const rows = await waitForAudit(
+      () => ctxRef.storage.audit.list({ action: "auth.sign_in.success" }),
+      (r) => r.data.some((d) => d.resource_id === "bob@example.com"),
+    );
     expect(rows.data.length).toBeGreaterThanOrEqual(1);
     const row = rows.data.find((r) => r.resource_id === "bob@example.com");
     expect(row).toBeTruthy();
@@ -112,11 +113,12 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
     });
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("error=invalid_credentials");
-    await new Promise((r) => setTimeout(r, 50));
-
-    const rows = await ctx.storage.audit.list({
-      action: "auth.sign_in.failed",
-    });
+    // T-079.
+    const ctxRef = ctx;
+    const rows = await waitForAudit(
+      () => ctxRef.storage.audit.list({ action: "auth.sign_in.failed" }),
+      (r) => r.data.some((d) => d.resource_id === "ghost@example.com"),
+    );
     expect(rows.data.length).toBeGreaterThanOrEqual(1);
     const row = rows.data.find((r) => r.resource_id === "ghost@example.com");
     expect(row).toBeTruthy();
@@ -134,11 +136,13 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
       return_to: "/",
     });
     expect(res.status).toBe(302);
-    await new Promise((r) => setTimeout(r, 50));
-
-    const rows = await ctx.storage.audit.list({
-      action: "auth.password_reset.requested",
-    });
+    // T-079.
+    const ctxRef = ctx;
+    const rows = await waitForAudit(
+      () =>
+        ctxRef.storage.audit.list({ action: "auth.password_reset.requested" }),
+      (r) => r.data.some((d) => d.resource_id === "ghost@example.com"),
+    );
     expect(rows.data.length).toBeGreaterThanOrEqual(1);
     const row = rows.data.find((r) => r.resource_id === "ghost@example.com");
     expect(row).toBeTruthy();
@@ -190,11 +194,13 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
       return_to: "/",
     });
     expect(reset.status).toBe(200);
-    await new Promise((r) => setTimeout(r, 50));
-
-    const rows = await ctx.storage.audit.list({
-      action: "auth.password_reset.completed",
-    });
+    // T-079.
+    const ctxRef = ctx;
+    const rows = await waitForAudit(
+      () =>
+        ctxRef.storage.audit.list({ action: "auth.password_reset.completed" }),
+      (r) => r.data.length >= 1,
+    );
     expect(rows.data.length).toBeGreaterThanOrEqual(1);
   });
 });

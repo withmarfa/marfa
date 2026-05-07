@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, waitForAudit } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 
@@ -357,19 +357,32 @@ describe("POST /items/bulk_action", () => {
       },
     });
 
-    const auditRes = await request(
-      ctx.app,
-      "GET",
-      "/audit?action=items.bulk_action&limit=50",
-      { key: ctx.adminKey },
-    );
-    const auditBody = (await auditRes.json()) as {
+    // T-079: audit insert is fire-and-forget — poll until our row lands.
+    interface AuditDataShape {
       data: {
         action: string;
         resource_type: string;
         details?: Record<string, unknown>;
       }[];
-    };
+    }
+    const auditBody = await waitForAudit<AuditDataShape>(
+      async () => {
+        const auditRes = await request(
+          ctx.app,
+          "GET",
+          "/audit?action=items.bulk_action&limit=50",
+          { key: ctx.adminKey },
+        );
+        return (await auditRes.json()) as AuditDataShape;
+      },
+      (b) =>
+        b.data.some(
+          (e) =>
+            (e.details as { sub_action?: string } | undefined)?.sub_action ===
+              "transition" &&
+            (e.details as { matched?: number } | undefined)?.matched === 3,
+        ),
+    );
     const mine = auditBody.data.find(
       (e) =>
         (e.details as { sub_action?: string } | undefined)?.sub_action ===

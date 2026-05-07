@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Hono } from "hono";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, waitForAudit } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
@@ -233,19 +233,16 @@ describe("Tenant config — hosted mode", () => {
     const getBody = (await getRes.json()) as typeof config;
     expect(getBody.retention["core.note"].feed_days).toBe(45);
 
-    // Audit side effect. Fire-and-forget under PG — poll briefly.
-    const deadline = Date.now() + 2000;
-    let auditResult = await hosted.storage.audit.list({
-      action: "tenant.config.update",
-      resource_id: hosted.tenantId,
-    });
-    while (auditResult.data.length === 0 && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 25));
-      auditResult = await hosted.storage.audit.list({
-        action: "tenant.config.update",
-        resource_id: hosted.tenantId,
-      });
-    }
+    // T-079: audit side effect is fire-and-forget — use the shared
+    // poll helper instead of an inline retry.
+    const auditResult = await waitForAudit(
+      () =>
+        hosted.storage.audit.list({
+          action: "tenant.config.update",
+          resource_id: hosted.tenantId,
+        }),
+      (r) => r.data.length >= 1,
+    );
     expect(auditResult.data.length).toBeGreaterThanOrEqual(1);
     expect(auditResult.data[0]?.resource_type).toBe("tenant");
   });

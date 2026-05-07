@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, waitForAudit } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -12,26 +12,20 @@ afterAll(() => {
   ctx.cleanup();
 });
 
-// Audit writes in the route handlers are fire-and-forget
-// (`void storage.audit.log(...)`). Under Postgres the write is genuinely
-// async — poll briefly so the test doesn't race the pending insert.
-interface AuditRow {
-  action: string;
-  resource_id: string | null;
-  resource_type: string;
-}
-
+// T-079: audit writes in the route handlers are fire-and-forget
+// (`void storage.audit.log(...)`). Under Postgres the write is
+// genuinely async — use the shared `waitForAudit` helper from
+// test-utils.
 async function waitForAuditEntry(filter: {
   action: string;
   resource_id: string;
-}): Promise<{ data: AuditRow[] }> {
-  const deadline = Date.now() + 2000;
-  let result = await ctx.storage.audit.list(filter);
-  while (result.data.length === 0 && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 25));
-    result = await ctx.storage.audit.list(filter);
-  }
-  return result;
+}): Promise<{
+  data: { action: string; resource_id: string | null; resource_type: string }[];
+}> {
+  return waitForAudit(
+    () => ctx.storage.audit.list(filter),
+    (r) => r.data.length > 0,
+  );
 }
 
 interface WebhookResponse {
