@@ -6,6 +6,8 @@ import {
   ErrorCode,
   parseScope,
   expandWildcardScopes,
+  isValidHandle,
+  isReservedHandle,
   TYPE_REGISTRY,
 } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -53,6 +55,20 @@ const METADATA_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "metadata.types": "Register and update custom data types in your workspace",
 };
 
+/**
+ * **T-074: standard OIDC scope literals.** Surfaced on the consent
+ * screen so end-users see what the third-party app is asking for.
+ * Mirrors what `/oauth/userinfo` actually returns when each scope is
+ * granted. The literal `openid` is the OIDC marker that indicates the
+ * client wants an ID token / userinfo lookup at all; `profile` and
+ * `email` gate the field set.
+ */
+const OIDC_SCOPE_DESCRIPTIONS: Record<string, string> = {
+  openid: "Confirm your identity",
+  profile: "Your username, name, bio, and avatar",
+  email: "Your email address",
+};
+
 function generateToken(prefix: string): string {
   return `${prefix}${randomBytes(32).toString("hex")}`;
 }
@@ -84,7 +100,9 @@ async function createUserAppGrant(
 ): Promise<{ id: string }> {
   let tenantId: string | undefined;
   if (storage.users) {
-    const user = await storage.users.getByEmail(consentingUser.email);
+    // T-074: lookup by Better Auth user id (the canonical bridge);
+    // `users.email` no longer exists.
+    const user = await storage.users.getByAuthUserId(consentingUser.id);
     tenantId = user?.tenant_id;
     if (!tenantId) {
       throw new MymeError(
@@ -265,6 +283,12 @@ export function authRoutes(
         if (desc) descriptions[scope.typePattern] = desc;
         continue;
       }
+      // T-074: standard OIDC literals carry their own descriptions.
+      if (scope.kind === "oidc") {
+        const desc = OIDC_SCOPE_DESCRIPTIONS[scope.typePattern];
+        if (desc) descriptions[scope.typePattern] = desc;
+        continue;
+      }
       const schema = TYPE_REGISTRY.get(scope.typePattern);
       if (schema?.description) {
         descriptions[scope.typePattern] = schema.description;
@@ -287,7 +311,8 @@ export function authRoutes(
     const consentingUser = gated.session.user;
     let priorScopes: string[] | undefined;
     if (storage.users) {
-      const userRow = await storage.users.getByEmail(consentingUser.email);
+      // T-074: lookup by Better Auth user id (the canonical bridge).
+      const userRow = await storage.users.getByAuthUserId(consentingUser.id);
       if (userRow?.tenant_id) {
         const items = await storage.items.list({
           type: "system.connection",
@@ -416,6 +441,79 @@ export function authRoutes(
     }
 
     throw new MymeError(ErrorCode.VALIDATION_ERROR, "Unsupported grant_type");
+  });
+
+  // -----------------------------------------------------------------------
+  // T-074: OIDC userinfo endpoint
+  //
+  // Standard OIDC userinfo. Bearer auth (OAuth access token only — raw
+  // API keys are rejected since userinfo is OAuth-flow-bound).
+  // Resolves the consenting user via the access token's tenant binding,
+  // joins `auth_user` for the canonical email, and gates field
+  // visibility on the granted OIDC scopes (`openid` / `profile` /
+  // `email`). `sub` is always present.
+  // -----------------------------------------------------------------------
+
+  router.get("/userinfo", async (c) => {
+    const apiKey = requireAuth(c);
+    if (c.get("authType") !== "oauth") {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        "userinfo is only available to OAuth access tokens",
+      );
+    }
+    if (!storage.users) {
+      // Keys-mode self-host has no per-user binding — userinfo would be
+      // meaningless. Match the profile-route shape.
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        "userinfo is unavailable on instances running in keys mode",
+      );
+    }
+    const tenantId = apiKey.tenant_id;
+    if (!tenantId) {
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        "OAuth token has no tenant binding",
+      );
+    }
+    const user = await storage.users.getByTenantId(tenantId);
+    if (!user) {
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        "No profile bound to this OAuth grant",
+      );
+    }
+    const grantedOidc = new Set(apiKey.oidc_scopes ?? []);
+    const wantsProfile = grantedOidc.has("profile");
+    const wantsEmail = grantedOidc.has("email");
+
+    // sub is the immutable Myme user id — stable across handle changes
+    // and email rotations.
+    const out: Record<string, unknown> = { sub: user.id };
+
+    if (wantsProfile) {
+      const username = user.handle;
+      const avatarUrl = user.avatar_blob_hash
+        ? `/blobs/${user.avatar_blob_hash}`
+        : `/profile/placeholder/${encodeURIComponent(username ?? "user")}.svg`;
+      out.username = username;
+      out.preferred_username = username;
+      out.given_name = user.first_name;
+      out.family_name = user.last_name;
+      out.bio = user.bio;
+      out.picture = avatarUrl;
+    }
+
+    if (wantsEmail) {
+      const authEmail = user.auth_user_id
+        ? await storage.users.getAuthUserEmail(user.auth_user_id)
+        : null;
+      out.email = authEmail?.email ?? "";
+      out.email_verified = authEmail?.email_verified ?? false;
+    }
+
+    return c.json(out, 200);
   });
 
   // -----------------------------------------------------------------------
@@ -786,10 +884,12 @@ export function authRoutes(
     const returnTo = validateReturnTo(formData.get("return_to"));
     const email = formData.get("email");
     const name = formData.get("name");
+    const username = formData.get("username");
     const password = formData.get("password");
     const passwordConfirm = formData.get("password_confirm");
     const emailStr = typeof email === "string" ? email.trim() : "";
     const nameStr = typeof name === "string" ? name.trim() : "";
+    const usernameRaw = typeof username === "string" ? username.trim() : "";
     const passwordStr = typeof password === "string" ? password : "";
     const passwordConfirmStr =
       typeof passwordConfirm === "string" ? passwordConfirm : "";
@@ -797,7 +897,13 @@ export function authRoutes(
     const errorRedirect = (errCode: string): Response =>
       c.redirect(buildSignUpRedirect({ returnTo, error: errCode }), 302);
 
-    if (!emailStr || !nameStr || !passwordStr || !passwordConfirmStr) {
+    if (
+      !emailStr ||
+      !nameStr ||
+      !usernameRaw ||
+      !passwordStr ||
+      !passwordConfirmStr
+    ) {
       return errorRedirect("missing_field");
     }
     if (passwordStr !== passwordConfirmStr) {
@@ -808,6 +914,27 @@ export function authRoutes(
     }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(emailStr)) {
       return errorRedirect("email_invalid");
+    }
+
+    // T-074: pre-validate username BEFORE creating an auth_user row.
+    // Any failure here means we never call Better Auth — no orphan to
+    // roll back. Reserved → invalid → collision, in that order so the
+    // user gets the most-specific error.
+    const usernameLower = usernameRaw.toLowerCase();
+    if (isReservedHandle(usernameLower)) {
+      return errorRedirect("handle_reserved");
+    }
+    if (!isValidHandle(usernameLower)) {
+      return errorRedirect("handle_invalid");
+    }
+    // Hosted-mode is the only path where username makes sense — keys
+    // mode has no per-user tenant. The signup form is gated behind
+    // `allowSignup`, which itself is hosted-mode-only in practice.
+    if (storage.users) {
+      const collision = await storage.users.getByHandle(usernameLower);
+      if (collision) {
+        return errorRedirect("handle_taken");
+      }
     }
 
     const upstream = new Request(new URL("/auth/sign-up/email", c.req.url), {
@@ -826,6 +953,78 @@ export function authRoutes(
     const response = await auth.handler(upstream);
 
     if (response.ok) {
+      // T-074: provision the Myme tenant + users row atomically with the
+      // Better Auth account. Reads the new auth_user.id from the
+      // upstream response body. Better Auth returns 200 with
+      // `{ token, user: { id, email, ... } }` on success — `token` may
+      // be null when requireEmailVerification is on, but `user.id` is
+      // always populated.
+      //
+      // The response body has already been read in some paths below
+      // (verification redirect path doesn't); we tee here so the
+      // post-tee branches still see a fresh body.
+      const responseClone = response.clone();
+      let provisioningError: Error | null = null;
+      let provisionedAuthUserId: string | null = null;
+      if (storage.users && storage.tenants) {
+        try {
+          const upstreamBody = (await responseClone.json()) as {
+            user?: { id?: string };
+          };
+          const authUserId = upstreamBody.user?.id;
+          if (typeof authUserId !== "string" || authUserId.length === 0) {
+            throw new Error(
+              "Better Auth sign-up response missing user.id; refusing to provision tenant blind",
+            );
+          }
+          provisionedAuthUserId = authUserId;
+          // T-074 + Wave C PR2 interaction: with
+          // `requireEmailVerification: true`, Better Auth's
+          // generic-duplicate-response shape returns the existing
+          // user's id (the no-enumeration invariant). If that user
+          // already has a Myme `users` row we skip provisioning —
+          // they're a returning duplicate and the verify-email page is
+          // the right next stop. The handle they typed in this attempt
+          // is silently ignored (no-op) since they've already claimed
+          // theirs at the original signup.
+          const existing = await storage.users.getByAuthUserId(authUserId);
+          if (!existing) {
+            const tenant = await storage.tenants.create(nameStr);
+            await storage.users.create({
+              name: nameStr,
+              provider: "better-auth",
+              provider_id: authUserId,
+              tenant_id: tenant.id,
+              handle: usernameLower,
+              auth_user_id: authUserId,
+            });
+          }
+        } catch (err) {
+          provisioningError =
+            err instanceof Error ? err : new Error(String(err));
+        }
+      }
+      if (provisioningError) {
+        // Best-effort rollback. Better Auth's API exposes
+        // `removeUser({ userId })` via its internal API surface. We
+        // don't have a typed handle to it from inside this wrapper;
+        // log loudly so an operator can clean up the orphan
+        // auth_user row manually. The provisioning error is the
+        // primary signal — the user sees signup_failed and re-tries
+        // with a different (e.g. less collision-prone) input.
+        await storage.audit.log({
+          action: "auth.sign_up.provision_failed",
+          resource_type: "auth_user",
+          resource_id: provisionedAuthUserId ?? emailStr,
+          client_ip: c.var.clientIp ?? null,
+          details: {
+            email: emailStr,
+            error: provisioningError.message,
+          },
+        });
+        return errorRedirect("signup_failed");
+      }
+
       // Wave C PR8 — audit the sign-up. Don't await: audit failures
       // shouldn't block the user's redirect.
       void storage.audit.log({
@@ -833,7 +1032,7 @@ export function authRoutes(
         resource_type: "auth_user",
         resource_id: emailStr,
         client_ip: c.var.clientIp ?? null,
-        details: { email: emailStr },
+        details: { email: emailStr, username: usernameLower },
       });
       // autoSignIn=true on the auth instance means the response carries
       // a session cookie — UNLESS `requireEmailVerification: true`
@@ -1360,7 +1559,8 @@ export function authRoutes(
     //    existing DELETE handler.
     let tenantId: string | undefined;
     if (storage.users) {
-      const userRow = await storage.users.getByEmail(sessionUser.email);
+      // T-074: lookup by Better Auth user id (the canonical bridge).
+      const userRow = await storage.users.getByAuthUserId(sessionUser.id);
       tenantId = userRow?.tenant_id;
     }
     const grantItems = await storage.items.list({
@@ -1418,7 +1618,8 @@ export function authRoutes(
 
     let tenantId: string | undefined;
     if (storage.users) {
-      const userRow = await storage.users.getByEmail(sessionUser.email);
+      // T-074: lookup by Better Auth user id (the canonical bridge).
+      const userRow = await storage.users.getByAuthUserId(sessionUser.id);
       tenantId = userRow?.tenant_id;
     }
     const id = c.req.param("id");
@@ -1697,7 +1898,10 @@ export function authRoutes(
       if (typeEntry?.description) {
         descriptions[s.typePattern] = typeEntry.description;
       } else {
-        const fallback = METADATA_SCOPE_DESCRIPTIONS[s.typePattern];
+        const fallback =
+          METADATA_SCOPE_DESCRIPTIONS[s.typePattern] ??
+          // T-074: OIDC literals (openid / profile / email).
+          OIDC_SCOPE_DESCRIPTIONS[s.typePattern];
         if (fallback) descriptions[s.typePattern] = fallback;
       }
     }
@@ -2035,10 +2239,14 @@ export function discoveryRoutes(baseUrl: string): Hono<AppEnv> {
       authorization_endpoint: `${baseUrl}/auth/authorize`,
       token_endpoint: `${baseUrl}/auth/token`,
       registration_endpoint: `${baseUrl}/auth/clients`,
+      // T-074: standard OIDC userinfo endpoint. Returns `{ sub }` plus
+      // a field set gated by the granted `profile` / `email` scopes.
+      userinfo_endpoint: `${baseUrl}/auth/userinfo`,
       grant_types_supported: ["authorization_code", "refresh_token"],
       response_types_supported: ["code"],
       code_challenge_methods_supported: ["S256"],
       token_endpoint_auth_methods_supported: ["none"],
+      scopes_supported: ["openid", "profile", "email"],
     });
   });
   return router;

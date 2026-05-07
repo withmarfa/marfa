@@ -36,6 +36,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   email_invalid: "That email address looks malformed.",
   email_exists: "An account with that email already exists. Sign in instead.",
   signup_failed: "Couldn't create the account. Try again.",
+  // T-074: username (handle) gating at signup.
+  handle_invalid:
+    "Usernames must be 3-32 lowercase letters, numbers, or hyphens (no leading/trailing hyphens).",
+  handle_reserved: "That username is reserved. Try another.",
+  handle_taken: "That username is already taken. Try another.",
 };
 
 function escapeHtml(str: string): string {
@@ -82,6 +87,21 @@ export function renderSignUpPage(params: SignUpPageParams): string {
                required
                autocomplete="name"
                aria-required="true">
+      </label>
+      <label class="field">
+        <span class="field__label">Username</span>
+        <input type="text"
+               name="username"
+               required
+               pattern="[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?"
+               minlength="3"
+               maxlength="32"
+               autocomplete="username"
+               autocapitalize="none"
+               spellcheck="false"
+               aria-required="true"
+               aria-describedby="username-hint">
+        <span id="username-hint" class="field__hint">Lowercase letters, numbers, hyphens. 3–32 characters. Public — used as your handle on Myme.</span>
       </label>
       <label class="field">
         <span class="field__label">Password</span>

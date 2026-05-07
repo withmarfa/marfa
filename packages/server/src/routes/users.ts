@@ -23,13 +23,16 @@ function generateRawKey(): string {
 
 const UserSchema = z.object({
   id: z.string(),
-  email: z.string(),
   name: z.string().nullable(),
-  avatar_url: z.string().nullable(),
+  first_name: z.string().nullable(),
+  last_name: z.string().nullable(),
+  bio: z.string().nullable(),
+  avatar_blob_hash: z.string().nullable(),
   provider: z.string(),
   provider_id: z.string(),
   tenant_id: z.string(),
   handle: z.string().nullable(),
+  auth_user_id: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -56,9 +59,12 @@ const signupRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
+            // `email` taken for display-name fallback only; not stored on
+            // `users` post-T-074. Modern Better-Auth signup is the
+            // recommended path; this legacy provider-identity surface
+            // exists for back-compat with pre-Better-Auth callers.
             email: z.email("email is required"),
             name: z.string().optional(),
-            avatar_url: z.string().optional(),
             provider: z.string().min(1, "provider is required"),
             provider_account_id: z
               .string()
@@ -219,12 +225,15 @@ export function userAuthRoutes(storage: Storage, salt: string) {
   const userStore = storage.users;
   const tenantStore = storage.tenants;
 
-  // POST /auth/signup — create user + tenant + admin API key
+  // POST /auth/signup — create user + tenant + admin API key.
+  // T-074: legacy provider-identity signup. `email` is taken as input but
+  // not stored on the `users` row (column dropped); used only as a tenant-
+  // name fallback. `avatar_url` likewise dropped from input — modern
+  // avatars go through the blob layer via /profile/me/avatar.
   router.openapi(signupRoute, async (c) => {
     const {
       email,
       name,
-      avatar_url: avatarUrl,
       provider,
       provider_account_id: providerId,
     } = c.req.valid("json");
@@ -238,14 +247,12 @@ export function userAuthRoutes(storage: Storage, salt: string) {
       );
     }
 
-    // Create tenant
+    // Create tenant — `email` only used as a display-name fallback.
     const tenant = await tenantStore.create(name ?? email);
 
-    // Create user
+    // Create user. No auth_user_id (Better Auth is the modern signup path).
     const user = await userStore.create({
-      email,
       name,
-      avatar_url: avatarUrl,
       provider,
       provider_id: providerId,
       tenant_id: tenant.id,

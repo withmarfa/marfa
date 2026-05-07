@@ -51,20 +51,30 @@ export function createConnection(sqlitePath: string): {
       created_at TEXT NOT NULL
     );
 
+    -- T-074: profile columns + auth_user_id FK; email + avatar_url dropped.
+    -- Single source of truth for email lives on auth_user; the profile API
+    -- joins through auth_user_id. Avatar is content-addressed via blob hash.
+    -- Note: auth_user is created later in this script; the FK is captured
+    -- in Drizzle's schema (so migrations emit it) but kept off the bootstrap
+    -- DDL since SQLite doesn't enforce FKs by default.
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
       name TEXT,
-      avatar_url TEXT,
+      first_name TEXT,
+      last_name TEXT,
+      bio TEXT,
+      avatar_blob_hash TEXT,
       provider TEXT NOT NULL,
       provider_id TEXT NOT NULL,
       tenant_id TEXT NOT NULL REFERENCES tenants(id),
       handle TEXT,
+      auth_user_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider ON users(provider, provider_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_handle ON users(handle);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_user_id ON users(auth_user_id);
 
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,

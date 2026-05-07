@@ -18,6 +18,7 @@ import { typeRoutes } from "./routes/types.js";
 import { searchRoutes } from "./routes/search.js";
 import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
+import { profileRoutes } from "./routes/profile.js";
 import { keyRoutes } from "./routes/keys.js";
 import { runtimeCredentialRoutes } from "./routes/runtime-credentials.js";
 import { integrationRoutes } from "./routes/integrations.js";
@@ -318,6 +319,13 @@ export function createApp(
   app.route("/search", searchRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend, config.maxBlobSize));
+  // T-074: profile endpoints. Mounted after /blobs so the avatar set
+  // path can reuse the blob layer; the placeholder SVG endpoint is
+  // public (no auth) but lives under /profile for path locality.
+  app.route(
+    "/profile",
+    profileRoutes(storage, blobBackend, config.maxBlobSize),
+  );
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/system", runtimeCredentialRoutes(storage, config.apiKeySalt));
   app.route("/integrations", integrationRoutes(storage, config.apiKeySalt));

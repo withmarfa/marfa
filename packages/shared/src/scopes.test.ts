@@ -4,6 +4,9 @@ import {
   isValidScope,
   expandWildcardScopes,
   scopesToTypePermissions,
+  scopesToEdgePermissions,
+  scopesToMetadataPermissions,
+  scopesToOidcScopes,
   scopeCovers,
 } from "./scopes.js";
 
@@ -200,5 +203,86 @@ describe("scopeCovers", () => {
 
   it("empty scopes returns false", () => {
     expect(scopeCovers([], "core.note", "read")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-074: OIDC scope literals (openid / profile / email).
+//
+// These don't carry a verb suffix — they're the standard OIDC scopes
+// consumed only by `/oauth/userinfo` to gate field visibility. The
+// guarantees this section locks down:
+//
+//   1. parseScope returns kind="oidc", operation="none" for each.
+//   2. scopesToOidcScopes is the only projection that surfaces them.
+//   3. They MUST NOT bleed into type / edge / metadata permission maps —
+//      a sloppy projection elsewhere could give an OAuth bearer
+//      unintended write access.
+// ---------------------------------------------------------------------------
+
+describe("OIDC scope literals (T-074)", () => {
+  for (const literal of ["openid", "profile", "email"] as const) {
+    it(`parses ${literal} as kind=oidc with operation=none`, () => {
+      expect(parseScope(literal)).toEqual({
+        typePattern: literal,
+        operation: "none",
+        kind: "oidc",
+        oidcScope: literal,
+      });
+      expect(isValidScope(literal)).toBe(true);
+    });
+  }
+
+  it("scopesToOidcScopes returns the granted set", () => {
+    const out = scopesToOidcScopes([
+      "openid",
+      "profile",
+      "email",
+      "core.note:read", // ignored
+      "metadata:write", // ignored
+      "edge.parent-of:read", // ignored
+    ]);
+    expect(out.has("openid")).toBe(true);
+    expect(out.has("profile")).toBe(true);
+    expect(out.has("email")).toBe(true);
+    expect(out.size).toBe(3);
+  });
+
+  it("scopesToOidcScopes ignores unknown literals", () => {
+    const out = scopesToOidcScopes(["address", "phone", "openid"]);
+    expect(Array.from(out)).toEqual(["openid"]);
+  });
+
+  it("OIDC scopes do not project into type_permissions", () => {
+    const perms = scopesToTypePermissions([
+      "openid",
+      "profile",
+      "email",
+      "core.note:read",
+    ]);
+    expect(perms).toEqual({ "core.note": "read" });
+    expect(perms.openid).toBeUndefined();
+    expect(perms.profile).toBeUndefined();
+    expect(perms.email).toBeUndefined();
+  });
+
+  it("OIDC scopes do not project into edge_permissions", () => {
+    const perms = scopesToEdgePermissions([
+      "openid",
+      "profile",
+      "email",
+      "edge.parent-of:write",
+    ]);
+    expect(perms).toEqual({ "parent-of": "write" });
+  });
+
+  it("OIDC scopes do not project into metadata_permissions", () => {
+    const perms = scopesToMetadataPermissions([
+      "openid",
+      "profile",
+      "email",
+      "metadata.types:write",
+    ]);
+    expect(perms).toEqual({ types: "write" });
   });
 });

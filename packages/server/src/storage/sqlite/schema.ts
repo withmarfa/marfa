@@ -24,21 +24,27 @@ export const users = sqliteTable(
   "users",
   {
     id: text("id").primaryKey(),
-    email: text("email").notNull().unique(),
     name: text("name"),
-    avatar_url: text("avatar_url"),
+    first_name: text("first_name"),
+    last_name: text("last_name"),
+    bio: text("bio"),
+    avatar_blob_hash: text("avatar_blob_hash"),
     provider: text("provider").notNull(),
     provider_id: text("provider_id").notNull(),
     tenant_id: text("tenant_id")
       .notNull()
       .references(() => tenants.id),
     handle: text("handle"),
+    auth_user_id: text("auth_user_id").references(() => auth_user.id, {
+      onDelete: "set null",
+    }),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },
   (table) => [
     uniqueIndex("idx_users_provider").on(table.provider, table.provider_id),
     uniqueIndex("idx_users_handle").on(table.handle),
+    uniqueIndex("idx_users_auth_user_id").on(table.auth_user_id),
   ],
 );
 

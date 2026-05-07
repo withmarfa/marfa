@@ -630,23 +630,52 @@ export interface ConnectionLeasedTokenStore {
 // User + Tenant stores (hosted mode only)
 // ---------------------------------------------------------------------------
 
+/** Patch shape for `UserStore.updateProfile` — covers PATCH /profile/me
+ *  + avatar set/clear. `null` clears; `undefined` leaves unchanged. */
+export interface UpdateProfileInput {
+  first_name?: string | null;
+  last_name?: string | null;
+  bio?: string | null;
+  avatar_blob_hash?: string | null;
+}
+
 export interface UserStore {
   create(input: {
-    email: string;
     name?: string;
-    avatar_url?: string;
     provider: string;
     provider_id: string;
     tenant_id: string;
+    /** Optional: claim a handle at creation time (sign-up flow stamps it
+     *  here; legacy `POST /auth/signup` leaves it null). */
+    handle?: string;
+    /** Optional: bind to a Better Auth `auth_user.id`. Stamped at sign-up
+     *  time; legacy `POST /auth/signup` leaves it null. T-074: this is the
+     *  canonical bridge between Better Auth identity and the Myme profile. */
+    auth_user_id?: string;
   }): Promise<User>;
   getById(id: string): Promise<User | null>;
-  getByEmail(email: string): Promise<User | null>;
+  /** T-074: lookup by Better Auth `auth_user.id`. Replaces the previous
+   *  `getByEmail` after `users.email` was dropped (single source of truth
+   *  for email is `auth_user.email`). */
+  getByAuthUserId(authUserId: string): Promise<User | null>;
   getByProvider(provider: string, providerId: string): Promise<User | null>;
   getByTenantId(tenantId: string): Promise<User | null>;
   /** Lookup by claimed handle (TSC42 §8). Used for collision detection. */
   getByHandle(handle: string): Promise<User | null>;
   /** Claim or change a user's handle. Throws on collision. */
   setHandle(id: string, handle: string): Promise<User>;
+  /** T-074: update the editable profile fields (first/last name, bio,
+   *  avatar blob hash). Stamps `updated_at`. `undefined` keys are
+   *  untouched; `null` clears the column. */
+  updateProfile(id: string, patch: UpdateProfileInput): Promise<User>;
+  /** T-074: read the canonical email + verification flag from the
+   *  Better Auth `auth_user` row. Returns `null` if no row matches.
+   *  Used by the profile endpoints + `/oauth/userinfo` to mirror the
+   *  email field without keeping a shadow copy on `users`. */
+  getAuthUserEmail(authUserId: string): Promise<{
+    email: string;
+    email_verified: boolean;
+  } | null>;
 }
 
 export interface TenantStore {

@@ -285,6 +285,15 @@ export interface ApiKey {
    * grant's `metadata.<subresource>:<verb>` scopes.
    */
   metadata_permissions?: Record<string, MetadataPermission>;
+  /**
+   * **T-074: standard OIDC scopes** (`openid` / `profile` / `email`)
+   * granted to this credential. Only ever populated on the synthetic
+   * `ApiKey` records derived from an OAuth access token; raw API keys
+   * leave it absent. Consumed by `/oauth/userinfo` to gate field
+   * visibility — never projected into the type / edge / metadata
+   * permission maps.
+   */
+  oidc_scopes?: readonly ("openid" | "profile" | "email")[];
   created_at: string;
   last_used_at: string | null;
 }
@@ -811,23 +820,87 @@ export interface TenantConfig {
   feed_retention_days?: number;
 }
 
-/** A user account (hosted mode). Owns exactly one tenant. */
+/**
+ * A user account (hosted mode). Owns exactly one tenant.
+ *
+ * **T-074:** the canonical email + display image lives on `auth_user`
+ * (Better Auth). The `email` and `avatar_url` columns were dropped from
+ * `users` to avoid the shadow-copy hazard — every read of email goes
+ * through `auth_user_id` → `auth_user.email`. The avatar is content-
+ * addressed via `avatar_blob_hash`; the public URL is reconstructed at
+ * read time and the placeholder is generated server-side from `handle`.
+ *
+ * The wire shape returned by the profile endpoints is `Profile`, not
+ * `User` — `Profile` is the read-time projection that joins `auth_user`
+ * for email and reconstructs `avatar_url`. `User` stays as the storage-
+ * shape for the legacy hosted-mode signup/session endpoints.
+ */
 export interface User {
   id: string;
-  email: string;
   name: string | null;
-  avatar_url: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  bio: string | null;
+  /** Content-addressed blob hash (`sha256:<hex>`) for the avatar. NULL
+   *  means "no custom avatar"; the placeholder is rendered from the
+   *  handle. Wire URL is reconstructed by the profile endpoint. */
+  avatar_blob_hash: string | null;
   provider: string;
   provider_id: string;
   tenant_id: string;
   /**
-   * Lowercase alphanumeric + hyphens, 3–32 chars. Optional — users claim a
-   * handle through the UX rather than at signup. Per TSC42 §8 the user-id
-   * (the immutable PK) is what foreign references key off; the handle is
-   * potentially renameable in a later iteration. Reserved roots and
-   * reserved structural words cannot be claimed.
+   * Lowercase alphanumeric + hyphens, 3–32 chars. T-074: required at
+   * signup going forward; legacy hosted-mode users get a generated
+   * handle via the grandfather migration script. Per TSC42 §8 the
+   * user-id (the immutable PK) is what foreign references key off;
+   * the handle is potentially renameable in a later iteration.
+   * Reserved roots and reserved structural words cannot be claimed.
    */
   handle: string | null;
+  /** T-074: FK to `auth_user.id` (Better Auth). Canonical bridge from
+   *  authentication identity to Myme profile. NULL only on legacy rows
+   *  the grandfather migration couldn't match (no `auth_user` row with
+   *  the same email at migration time). */
+  auth_user_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * **T-074: Profile** — wire shape returned by the profile endpoints
+ * (`GET /profile/me`, OIDC userinfo, etc.). `system.profile` is a
+ * **virtual type**: no items-table row per user, served entirely by
+ * joining `users` to `auth_user` for the canonical email. Avatar URL
+ * is reconstructed at read time (either `/blobs/<hash>` for an uploaded
+ * avatar or `/profile/placeholder/<username>.svg` when unset).
+ *
+ * Apps compose any display name from `first_name` / `last_name` /
+ * `username` — there is no `display_name` field by design.
+ */
+export interface Profile {
+  /** Same as `users.handle`. Required (the API rejects users without
+   *  one); only nullable here for migration-in-flight rows. */
+  username: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  bio: string | null;
+  /** Reconstructed at read time. Always a string (placeholder URL when
+   *  no upload). */
+  avatar_url: string;
+  /** Mirrored read-only from `auth_user.email`. */
+  email: string;
+  /** Mirrored read-only from `auth_user.email_verified`. */
+  email_verified: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** **T-074: PATCH /profile/me** body. Every field is optional; `null`
+ *  clears the column (where applicable). `username` runs through the
+ *  reserved-handle / collision validators server-side. */
+export interface UpdateProfileInput {
+  username?: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  bio?: string | null;
 }

@@ -48,6 +48,7 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
     const res = await postForm(ctx, "/auth/sign-up", {
       email: "alice@example.com",
       name: "Alice",
+      username: "alice",
       password: "correct horse",
       password_confirm: "correct horse",
       return_to: "/",
