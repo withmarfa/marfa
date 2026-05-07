@@ -98,12 +98,14 @@ async function createHostedContext(): Promise<HostedContext> {
 
 interface User {
   id: string;
-  email: string;
   name: string | null;
   provider: string;
   provider_id: string;
   tenant_id: string;
   handle?: string | null;
+  // T-074: email + avatar_url dropped from `users`; auth_user.email is
+  // canonical. The legacy /auth/signup + /auth/me wire shape no longer
+  // returns email — callers reach for /profile/me (joined to auth_user).
 }
 
 interface Tenant {
@@ -201,7 +203,6 @@ describe("User-auth routes — authMode=hosted", () => {
       });
       expect(res.status).toBe(201);
       const body = (await res.json()) as SignupResponse;
-      expect(body.user.email).toBe(ident.email);
       expect(body.user.provider).toBe(ident.provider);
       expect(body.user.provider_id).toBe(ident.provider_account_id);
       expect(body.user.tenant_id).toBe(body.tenant.id);
@@ -292,7 +293,7 @@ describe("User-auth routes — authMode=hosted", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as MeResponse;
       expect(body.user?.id).toBe(signupBody.user.id);
-      expect(body.user?.email).toBe(ident.email);
+      expect(body.user?.provider_id).toBe(ident.provider_account_id);
       expect(body.tenant.id).toBe(signupBody.tenant.id);
     });
   });

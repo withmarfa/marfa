@@ -5,27 +5,39 @@ import type { MetadataPermission, TypePermission } from "./types.js";
 // ---------------------------------------------------------------------------
 
 /**
- * Parsed representation of a scope string. Four shapes today:
+ * Parsed representation of a scope string. Five shapes today:
  *   - item-type scope:  "core.note:read"     → kind undefined, typePattern="core.note"
  *   - metadata scope:   "metadata:write"     → kind="metadata", subresource undefined
  *   - metadata sub:     "metadata.types:write" → kind="metadata", subresource="types"
  *   - edge scope:       "edge.parent-of:write" or "edge.*:write"
  *                       → kind="edge", edgeType="parent-of" or "*"
+ *   - OIDC literal:     "openid" / "profile" / "email"  (T-074)
+ *                       → kind="oidc", oidcScope=<literal>, no operation suffix
  *
  * Per-edge-type scopes surface fine-grained edge permissions through OAuth,
  * mirroring the `<type>:<verb>` shape used for item-type scopes. Metadata
  * sub-resource scopes (e.g. `metadata.types:write`) gate metadata-layer
- * mutations like type registration.
+ * mutations like type registration. OIDC literals carry no operation —
+ * they're standard OAuth/OIDC scope strings consumed only by the
+ * `/oauth/userinfo` endpoint to gate field visibility, and never project
+ * into `type_permissions` / `edge_permissions` / `metadata_permissions`.
  */
+export type OidcScope = "openid" | "profile" | "email";
+
 export interface ParsedScope {
   typePattern: string;
-  operation: "read" | "write";
-  /** "edge" or "metadata" for the disambiguated families; undefined for type scopes. */
-  kind?: "edge" | "metadata";
+  /** "read" / "write" for type / edge / metadata scopes; "none" for OIDC
+   *  literals (which have no read/write semantics on Myme resources). */
+  operation: "read" | "write" | "none";
+  /** "edge", "metadata", or "oidc" for the disambiguated families;
+   *  undefined for type scopes. */
+  kind?: "edge" | "metadata" | "oidc";
   /** Present when kind === "edge"; the edge type id or "*". */
   edgeType?: string;
   /** Present when kind === "metadata" and the scope names a sub-resource (e.g. "types"). */
   subresource?: string;
+  /** Present when kind === "oidc"; one of the standard OIDC literals. */
+  oidcScope?: OidcScope;
 }
 
 const SCOPE_RE = /^([a-z][a-z0-9_./*-]+):(read|write)$/;
@@ -36,8 +48,26 @@ const EDGE_SCOPE_RE = /^edge\.([a-z0-9_*][a-z0-9_.\-*]*):(read|write)$/;
 // segment (`types`, future siblings).
 const METADATA_SUB_SCOPE_RE = /^metadata\.([a-z][a-z0-9_-]*):(read|write)$/;
 
+/** T-074: standard OIDC literals. Recognised by `parseScope` ahead of the
+ *  `<type>:<verb>` matchers so they can't collide with future type names
+ *  (which require a colon-separated verb). */
+const OIDC_LITERALS: ReadonlySet<OidcScope> = new Set([
+  "openid",
+  "profile",
+  "email",
+]);
+
 /** Parses a scope string into its type pattern and operation. Returns null if invalid. */
 export function parseScope(scope: string): ParsedScope | null {
+  // T-074: OIDC literals (openid / profile / email). No operation suffix.
+  if (OIDC_LITERALS.has(scope as OidcScope)) {
+    return {
+      typePattern: scope,
+      operation: "none",
+      kind: "oidc",
+      oidcScope: scope as OidcScope,
+    };
+  }
   if (scope === "metadata:read" || scope === "metadata:write") {
     return {
       typePattern: "metadata",
@@ -140,8 +170,15 @@ export function scopesToTypePermissions(
     const parsed = parseScope(scope);
     if (!parsed) continue;
 
-    // Skip metadata + edge scopes — they don't map to type_permissions
-    if (parsed.kind === "metadata" || parsed.kind === "edge") continue;
+    // Skip metadata, edge, and OIDC scopes — they don't map to
+    // type_permissions. T-074 added OIDC literals to the grammar; they
+    // surface only on the synthetic ApiKey's `oidc_scopes` set.
+    if (
+      parsed.kind === "metadata" ||
+      parsed.kind === "edge" ||
+      parsed.kind === "oidc"
+    )
+      continue;
 
     const current = perms[parsed.typePattern];
     // Write trumps read, never downgrade
@@ -185,6 +222,9 @@ export function scopesToEdgePermissions(
     const parsed = parseScope(scope);
     if (parsed?.kind !== "edge") continue;
     if (!parsed.edgeType) continue;
+    // Edge parser path only emits "read" / "write" — OIDC literals are
+    // caught by the kind guard above.
+    if (parsed.operation === "none") continue;
     const current = perms[parsed.edgeType];
     if (parsed.operation === "write" || current === undefined) {
       perms[parsed.edgeType] = parsed.operation;
@@ -211,6 +251,9 @@ export function scopesToMetadataPermissions(
   for (const scope of scopes) {
     const parsed = parseScope(scope);
     if (parsed?.kind !== "metadata") continue;
+    // Metadata parser path only emits "read" / "write" — OIDC literals
+    // are caught by the kind guard above.
+    if (parsed.operation === "none") continue;
     const key = parsed.subresource ?? "*";
     const current = perms[key];
     if (parsed.operation === "write" || current === undefined) {
@@ -218,6 +261,23 @@ export function scopesToMetadataPermissions(
     }
   }
   return perms;
+}
+
+/**
+ * **T-074: OIDC scope projection.** Filters a granted scope list down to
+ * the standard OIDC literals (`openid` / `profile` / `email`). Surfaced
+ * on the synthetic OAuth `ApiKey` as `oidc_scopes` and consumed only by
+ * `/oauth/userinfo` to gate field visibility. Unrecognised scopes —
+ * type, edge, metadata, malformed — are ignored.
+ */
+export function scopesToOidcScopes(scopes: string[]): Set<OidcScope> {
+  const out = new Set<OidcScope>();
+  for (const scope of scopes) {
+    const parsed = parseScope(scope);
+    if (parsed?.kind !== "oidc") continue;
+    if (parsed.oidcScope) out.add(parsed.oidcScope);
+  }
+  return out;
 }
 
 /**

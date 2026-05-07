@@ -9,6 +9,7 @@ import {
   scopesToTypePermissions,
   scopesToEdgePermissions,
   scopesToMetadataPermissions,
+  scopesToOidcScopes,
   edgePermissionCovers,
   metadataPermissionCovers,
 } from "@mymehq/shared";
@@ -174,6 +175,10 @@ export function authMiddleware(storage: Storage, salt: string) {
       const metadataPermissions = scopesToMetadataPermissions(
         oauthToken.scopes,
       );
+      // T-074: OIDC literals (openid / profile / email) project onto a
+      // separate field consumed only by /oauth/userinfo. They never
+      // bleed into type / edge / metadata permission maps.
+      const oidcScopes = Array.from(scopesToOidcScopes(oauthToken.scopes));
       const oauthTenantId = oauthToken.tenant_id ?? undefined;
       c.set("apiKey", {
         id: oauthToken.id,
@@ -188,6 +193,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         extension_permissions: {},
         edge_permissions: edgePermissions,
         metadata_permissions: metadataPermissions,
+        oidc_scopes: oidcScopes,
         created_at: oauthToken.created_at,
         last_used_at: null,
       });

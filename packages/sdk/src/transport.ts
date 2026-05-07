@@ -157,7 +157,7 @@ export class HttpTransport {
     path: string,
     options?: {
       body?: unknown;
-      rawBody?: ArrayBuffer | Uint8Array | string;
+      rawBody?: ArrayBuffer | Uint8Array | string | FormData | Blob;
       query?:
         | Record<string, string | number | boolean | string[] | undefined>
         | object;

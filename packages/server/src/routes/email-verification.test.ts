@@ -73,6 +73,7 @@ describe("Wave C PR2: verify-on-signup flow", () => {
     const res = await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",
+      username: "alice",
       password: "correct horse",
       password_confirm: "correct horse",
       return_to: "/auth/authorize?client_id=abc",
@@ -132,6 +133,7 @@ describe("Wave C PR2: verify-on-signup flow", () => {
     await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",
+      username: "alice",
       password: "correct horse",
       password_confirm: "correct horse",
       return_to: "/",
@@ -201,6 +203,7 @@ describe("Wave C PR2: verify-on-signup flow", () => {
     await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",
+      username: "alice",
       password: "correct horse",
       password_confirm: "correct horse",
       return_to: "/",

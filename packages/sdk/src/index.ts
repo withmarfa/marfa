@@ -68,5 +68,8 @@ export type {
   ItemState,
   MergePolicy,
   MergeStrategy,
+  // T-074 — system.profile wire shapes.
+  Profile,
+  UpdateProfileInput,
 } from "@mymehq/shared";
 export type { TypeSchema } from "@mymehq/shared";

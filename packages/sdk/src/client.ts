@@ -16,6 +16,8 @@ import type {
   Edge,
   CreateEdgeInput,
   EdgeTypeSchema,
+  Profile,
+  UpdateProfileInput,
 } from "@mymehq/shared";
 import type {
   TypeSchema,
@@ -1202,6 +1204,73 @@ export class MymeClient {
           { body: input },
         );
       },
+    },
+  };
+
+  // ---- Profile (T-074) ----
+
+  /**
+   * The calling user's profile. `system.profile` is a virtual type —
+   * served by a dedicated endpoint over the `users` table joined to
+   * `auth_user` for the canonical email. Username changes go through
+   * the same handle validators as `PUT /auth/me/handle`.
+   *
+   * Apps that need a third-party-OAuth-style read should use the
+   * standard OIDC `profile` / `email` scopes via `/auth/userinfo`
+   * instead — this surface is for first-party callers (CLI, MCP, the
+   * user themselves) holding a tenant-scoped bearer.
+   */
+  readonly profile = {
+    /** Read the calling user's profile. */
+    get: async (): Promise<Profile> => {
+      return this.transport.request<Profile>("GET", "/profile/me");
+    },
+
+    /**
+     * Update the calling user's profile. Every field optional; `null`
+     * clears (where applicable). `username` runs through the
+     * reserved-handle / collision validators server-side.
+     */
+    update: async (input: UpdateProfileInput): Promise<Profile> => {
+      return this.transport.request<Profile>("PATCH", "/profile/me", {
+        body: input,
+      });
+    },
+
+    /**
+     * Upload an avatar. Accepts a Blob/File or a Uint8Array. The server
+     * stores the bytes in the existing R2-backed blob layer and stamps
+     * the content-addressed hash onto the user row.
+     */
+    setAvatar: async (
+      data: Blob | Uint8Array,
+      mimeType?: string,
+    ): Promise<Profile> => {
+      const form = new FormData();
+      const blob =
+        data instanceof Blob
+          ? data
+          : new Blob([new Uint8Array(data)], {
+              type: mimeType ?? "application/octet-stream",
+            });
+      form.append("file", blob, "avatar");
+      // Bypass the JSON path — multipart needs FormData on rawBody so
+      // fetch sets Content-Type: multipart/form-data with the boundary.
+      const response = await this.transport.rawRequest(
+        "POST",
+        "/profile/me/avatar",
+        { rawBody: form },
+      );
+      const result = (await response.json()) as Profile | { error?: unknown };
+      if (!response.ok) {
+        this.throwRawError(response.status, result);
+      }
+      return result as Profile;
+    },
+
+    /** Clear the avatar; reverts to the deterministic placeholder. */
+    clearAvatar: async (): Promise<Profile> => {
+      return this.transport.request<Profile>("DELETE", "/profile/me/avatar");
     },
   };
 

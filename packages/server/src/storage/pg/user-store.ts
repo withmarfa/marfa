@@ -1,20 +1,23 @@
 import { eq, and } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type { User } from "@mymehq/shared";
-import type { UserStore } from "../interface.js";
-import { users } from "./schema.js";
+import type { UserStore, UpdateProfileInput } from "../interface.js";
+import { users, auth_user } from "./schema.js";
 import type { PgDb } from "./connection.js";
 
 function rowToUser(row: typeof users.$inferSelect): User {
   return {
     id: row.id,
-    email: row.email,
     name: row.name,
-    avatar_url: row.avatar_url,
+    first_name: row.first_name,
+    last_name: row.last_name,
+    bio: row.bio,
+    avatar_blob_hash: row.avatar_blob_hash,
     provider: row.provider,
     provider_id: row.provider_id,
     tenant_id: row.tenant_id,
     handle: row.handle,
+    auth_user_id: row.auth_user_id,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -24,23 +27,26 @@ export class PgUserStore implements UserStore {
   constructor(private db: PgDb) {}
 
   async create(input: {
-    email: string;
     name?: string;
-    avatar_url?: string;
     provider: string;
     provider_id: string;
     tenant_id: string;
+    handle?: string;
+    auth_user_id?: string;
   }): Promise<User> {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
-      email: input.email,
       name: input.name ?? null,
-      avatar_url: input.avatar_url ?? null,
+      first_name: null,
+      last_name: null,
+      bio: null,
+      avatar_blob_hash: null,
       provider: input.provider,
       provider_id: input.provider_id,
       tenant_id: input.tenant_id,
-      handle: null,
+      handle: input.handle ?? null,
+      auth_user_id: input.auth_user_id ?? null,
       created_at: now,
       updated_at: now,
     };
@@ -59,6 +65,21 @@ export class PgUserStore implements UserStore {
     return rowToUser(row);
   }
 
+  async updateProfile(id: string, patch: UpdateProfileInput): Promise<User> {
+    const now = new Date().toISOString();
+    const set: Record<string, string | null> = { updated_at: now };
+    if (patch.first_name !== undefined) set.first_name = patch.first_name;
+    if (patch.last_name !== undefined) set.last_name = patch.last_name;
+    if (patch.bio !== undefined) set.bio = patch.bio;
+    if (patch.avatar_blob_hash !== undefined) {
+      set.avatar_blob_hash = patch.avatar_blob_hash;
+    }
+    await this.db.update(users).set(set).where(eq(users.id, id));
+    const [row] = await this.db.select().from(users).where(eq(users.id, id));
+    if (!row) throw new Error(`User ${id} not found`);
+    return rowToUser(row);
+  }
+
   async getByHandle(handle: string): Promise<User | null> {
     const [row] = await this.db
       .select()
@@ -72,11 +93,11 @@ export class PgUserStore implements UserStore {
     return row ? rowToUser(row) : null;
   }
 
-  async getByEmail(email: string): Promise<User | null> {
+  async getByAuthUserId(authUserId: string): Promise<User | null> {
     const [row] = await this.db
       .select()
       .from(users)
-      .where(eq(users.email, email));
+      .where(eq(users.auth_user_id, authUserId));
     return row ? rowToUser(row) : null;
   }
 
@@ -99,5 +120,19 @@ export class PgUserStore implements UserStore {
       .from(users)
       .where(eq(users.tenant_id, tenantId));
     return row ? rowToUser(row) : null;
+  }
+
+  async getAuthUserEmail(authUserId: string): Promise<{
+    email: string;
+    email_verified: boolean;
+  } | null> {
+    const [row] = await this.db
+      .select({
+        email: auth_user.email,
+        email_verified: auth_user.emailVerified,
+      })
+      .from(auth_user)
+      .where(eq(auth_user.id, authUserId));
+    return row ?? null;
   }
 }

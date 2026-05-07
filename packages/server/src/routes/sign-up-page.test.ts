@@ -1,7 +1,17 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import type { Hono } from "hono";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { renderSignUpPage } from "./sign-up-page.js";
+import { createApp } from "../app.js";
+import { createSqliteStorage } from "../storage/sqlite/index.js";
+import { createPgStorage } from "../storage/pg/index.js";
+import { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import type { AppEnv } from "../middleware/auth.js";
+import type { Storage } from "../storage/interface.js";
 
 /**
  * Smoke tests for GET /auth/sign-up (HTML page) + the POST /auth/sign-up
@@ -196,6 +206,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     const res = await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",
+      username: "alice",
       password: "correct horse",
       password_confirm: "different",
       return_to: "/",
@@ -212,6 +223,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     const res = await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",
+      username: "alice",
       password: "short",
       password_confirm: "short",
       return_to: "/",
@@ -228,6 +240,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     const res = await postSignUpForm(ctx, {
       email: "not-an-email",
       name: "Alice",
+      username: "alice",
       password: "correct horse",
       password_confirm: "correct horse",
       return_to: "/",
@@ -249,6 +262,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     const res = await postSignUpForm(ctx, {
       email: "alice@example.com",
       name: "Alice",
+      username: "alice",
       password: "correct horse",
       password_confirm: "correct horse",
       return_to: "/auth/authorize?client_id=abc",
@@ -282,6 +296,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     const first = await postSignUpForm(ctx, {
       email: "carol@example.com",
       name: "Carol",
+      username: "carol",
       password: "correct horse",
       password_confirm: "correct horse",
       return_to: "/",
@@ -292,6 +307,11 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     const second = await postSignUpForm(ctx, {
       email: "carol@example.com",
       name: "Carol Again",
+      // T-074: a different (non-colliding) handle so the wrapper's
+      // pre-validation pass doesn't bail with handle_taken before
+      // even calling Better Auth — exercising the real generic-
+      // duplicate-response branch downstream of provisioning skip.
+      username: "carol-two",
       password: "correct horse",
       password_confirm: "correct horse",
       return_to: "/",
@@ -302,6 +322,58 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     expect(second.headers.get("location")).not.toContain("error=email_exists");
   });
 
+  // -------------------------------------------------------------------------
+  // T-074: username gating at sign-up.
+  //
+  // Each invariant here protects an attack class:
+  //
+  //   - reserved handles MUST NOT create an auth_user row (lest a
+  //     determined attacker spam Better Auth with reserved-name attempts
+  //     to confirm which words are reserved server-side via timing)
+  //   - invalid handles MUST short-circuit before the upstream call
+  //   - colliding handles likewise (otherwise users.create() throws and
+  //     leaves an orphan auth_user)
+  // -------------------------------------------------------------------------
+
+  it("T-074: redirects to error=missing_field when username is blank", async () => {
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
+    const res = await postSignUpForm(ctx, {
+      email: "alice@example.com",
+      name: "Alice",
+      username: "",
+      password: "correct horse",
+      password_confirm: "correct horse",
+      return_to: "/",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("error=missing_field");
+  });
+
+  it("T-074: redirects to error=handle_invalid on a malformed username", async () => {
+    ctx = await createTestContext({
+      authAllowSignup: true,
+      authRequireEmailVerification: true,
+    });
+    const res = await postSignUpForm(ctx, {
+      email: "alice@example.com",
+      name: "Alice",
+      username: "AB", // too short + uppercase
+      password: "correct horse",
+      password_confirm: "correct horse",
+      return_to: "/",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("error=handle_invalid");
+  });
+
+  // Collision + provisioning cases need hosted-mode storage (the keys-
+  // mode default has no `users` table, so the collision check skips).
+  // Covered by separate describe blocks below; they each spin up a
+  // hosted fixture inline.
+
   it("rejects unsafe return_to values and falls back to / (threaded through the verify-email redirect)", async () => {
     ctx = await createTestContext({
       authAllowSignup: true,
@@ -310,6 +382,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     const res = await postSignUpForm(ctx, {
       email: "dave@example.com",
       name: "Dave",
+      username: "dave",
       password: "correct horse",
       password_confirm: "correct horse",
       return_to: "https://evil.com/",
@@ -321,5 +394,209 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     expect(location).toContain("/auth/verify-email");
     expect(location).toContain("return_to=%2F");
     expect(location).not.toContain("evil.com");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-074: hosted-mode-only sign-up coverage.
+//
+// The username-collision check + the tenant + users-row provisioning step
+// only fire when storage.users is wired (i.e. hosted mode). The default
+// createTestContext is keys mode, so these tests stand up a hosted
+// fixture inline.
+// ---------------------------------------------------------------------------
+
+interface HostedSignUpContext {
+  app: Hono<AppEnv>;
+  storage: Storage;
+  cleanup: () => Promise<void>;
+}
+
+async function createHostedSignUpContext(): Promise<HostedSignUpContext> {
+  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const tmpDir = mkdtempSync(join(tmpdir(), "myme-signup-test-"));
+  const blobPath = join(tmpDir, "blobs");
+
+  let storage: Storage;
+  if (dialect === "pg") {
+    const databaseUrl =
+      process.env.DATABASE_URL ??
+      "postgres://myme:myme_dev@localhost:5434/myme";
+    storage = await createPgStorage(databaseUrl, { authMode: "hosted" });
+    const s = storage as unknown as Record<string, unknown>;
+    if (typeof s._pgTruncate === "function") {
+      await (s._pgTruncate as () => Promise<void>)();
+    }
+  } else {
+    const dbPath = join(tmpDir, "test.db");
+    storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
+  }
+
+  const blobBackend = new FilesystemBlobBackend(blobPath);
+  const app = createApp(storage, blobBackend, {
+    port: 0,
+    storageDialect: dialect as "sqlite" | "pg",
+    sqlitePath: "",
+    databaseUrl: "",
+    blobPath,
+    blobBackend: "fs",
+    maxBlobSize: 50 * 1024 * 1024,
+    s3Bucket: "",
+    s3Region: "us-east-1",
+    s3Endpoint: "",
+    s3AccessKeyId: "",
+    s3SecretAccessKey: "",
+    apiKeySalt: "test-salt",
+    corsOrigins: [],
+    cdnBaseUrl: "",
+    authMode: "hosted",
+    versionSnapshotIntervalMs: 600_000,
+    rateLimitEnabled: false,
+    enableHsts: false,
+    auditRetentionDays: 90,
+    auditCleanupIntervalMs: 86_400_000,
+    eventLogRetentionHours: 168,
+    versionThinningIntervalMs: 3_600_000,
+    versionRecentDays: 30,
+    versionDailySnapshotDays: 90,
+    versionWeeklySnapshotDays: 365,
+    versionMaxVersions: 500,
+    trashRetentionDays: 60,
+    trashPurgeIntervalMs: 3_600_000,
+    feedRetentionDays: 0,
+    feedExpiryIntervalMs: 3_600_000,
+    errorWebhookUrl: "",
+    trustedProxyCidrs: [],
+    authBaseUrl: ORIGIN,
+    authAllowSignup: true,
+    authRequireEmailVerification: true,
+    authSecret: "test-auth-secret",
+    oidcProviders: [],
+    rateLimitDefaultLimit: 1000,
+    rateLimitWindowMs: 60_000,
+    oauthRedirectAllowlist: [],
+  });
+
+  return {
+    app,
+    storage,
+    cleanup: async () => {
+      await storage.close();
+    },
+  };
+}
+
+async function postHostedSignUp(
+  ctx: HostedSignUpContext,
+  fields: Record<string, string>,
+): Promise<Response> {
+  return ctx.app.fetch(
+    new Request(`${ORIGIN}/auth/sign-up`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        origin: ORIGIN,
+      },
+      body: new URLSearchParams(fields).toString(),
+    }),
+  );
+}
+
+describe("POST /auth/sign-up — hosted-mode T-074 invariants", () => {
+  let hosted: HostedSignUpContext | undefined;
+
+  afterEach(async () => {
+    await hosted?.cleanup();
+    hosted = undefined;
+  });
+
+  it("redirects to error=handle_taken when the username is already claimed", async () => {
+    hosted = await createHostedSignUpContext();
+    const first = await postHostedSignUp(hosted, {
+      email: "first@example.com",
+      name: "First",
+      username: "shared",
+      password: "correct horse",
+      password_confirm: "correct horse",
+      return_to: "/",
+    });
+    expect(first.status).toBe(302);
+    expect(first.headers.get("location")).toContain("/auth/verify-email");
+
+    const second = await postHostedSignUp(hosted, {
+      email: "second@example.com",
+      name: "Second",
+      username: "shared",
+      password: "correct horse",
+      password_confirm: "correct horse",
+      return_to: "/",
+    });
+    expect(second.status).toBe(302);
+    expect(second.headers.get("location")).toContain("error=handle_taken");
+  });
+
+  it("provisions a `users` row + tenant + auth_user_id binding atomically", async () => {
+    hosted = await createHostedSignUpContext();
+    const res = await postHostedSignUp(hosted, {
+      email: "newhuman@example.com",
+      name: "New Human",
+      username: "new-human",
+      password: "correct horse",
+      password_confirm: "correct horse",
+      return_to: "/",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("/auth/verify-email");
+
+    const userStore = hosted.storage.users;
+    expect(userStore).toBeDefined();
+    const row = await userStore!.getByHandle("new-human");
+    expect(row).not.toBeNull();
+    expect(row?.auth_user_id).toBeTruthy();
+    expect(row?.tenant_id).toBeTruthy();
+  });
+
+  it("reserved-handle attempts never create an auth_user row", async () => {
+    hosted = await createHostedSignUpContext();
+    const res = await postHostedSignUp(hosted, {
+      email: "alice@example.com",
+      name: "Alice",
+      username: "admin",
+      password: "correct horse",
+      password_confirm: "correct horse",
+      return_to: "/",
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("error=handle_reserved");
+
+    // The invariant: pre-validation runs BEFORE forwarding to Better
+    // Auth, so no auth_user row should exist. The SQLite path uses the
+    // typed helper; the PG path drops to drizzle-orm directly because
+    // there's no equivalent facade.
+    const dialect = (hosted.storage as { betterAuthDialect?: string })
+      .betterAuthDialect;
+    let count: number | undefined;
+    if (dialect === "pg") {
+      const db = (
+        hosted.storage as unknown as {
+          pgDb?: { execute: (q: unknown) => Promise<unknown> };
+        }
+      ).pgDb;
+      if (db) {
+        const { sql } = await import("drizzle-orm");
+        const rows = (await db.execute(
+          sql`SELECT COUNT(*)::int AS n FROM auth_user`,
+        )) as { n: number }[];
+        count = rows[0]?.n;
+      }
+    } else {
+      const rows = await (
+        hosted.storage as unknown as {
+          __sqliteAll?: (q: string) => Promise<{ n: number }[]>;
+        }
+      ).__sqliteAll?.("SELECT COUNT(*) as n FROM auth_user");
+      count = rows?.[0]?.n;
+    }
+    expect(count).toBe(0);
   });
 });
