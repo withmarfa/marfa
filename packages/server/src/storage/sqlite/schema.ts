@@ -225,7 +225,7 @@ export const oauthClients = sqliteTable("oauth_clients", {
 
 // PR 4 of workstream 1: oauth_grants table dropped. The user-facing
 // concept "user X approved client Y with scopes Z" now lives as a
-// `system.connection` item with `kind: user-app-grant`. The token
+// `system.connection` item with `kind: app`. The token
 // tables FK directly to items.id via connection_item_id.
 
 export const oauthTokens = sqliteTable(
@@ -274,7 +274,7 @@ export const oauthDeviceCodes = sqliteTable(
      *  job once `expires_at < now()`. */
     status: text("status").notNull().default("pending"),
     /** Set when status transitions to `approved`. References the
-     *  system.connection (kind: user-app-grant) created on approval. */
+     *  system.connection (kind: app) created on approval. */
     connection_item_id: text("connection_item_id").references(() => items.id, {
       onDelete: "set null",
     }),
@@ -364,7 +364,7 @@ export const inboundWebhooks = sqliteTable(
     id: text("id").primaryKey(),
     tenant_id: text("tenant_id"),
     // App-level reference to a system.connection item (kind:
-    // external-service-connector). Not a DB-level FK — matches the
+    // integration). Not a DB-level FK — matches the
     // existing pattern for other connection-referencing tables (see
     // edges, oauth_codes).
     connection_id: text("connection_id").notNull(),
@@ -434,7 +434,7 @@ export const inboundWebhookEvents = sqliteTable(
 // ---------------------------------------------------------------------------
 // connection_oauth_tokens (workstream 2 PR 6)
 //
-// One row per `system.connection` of kind `external-service-connector` whose
+// One row per `system.connection` of kind `integration` whose
 // connector authenticates with a token-bearing OAuth grant. The proxy route
 // (`POST /connections/:id/proxy/*`) reads from this table, decrypts, and
 // stamps `Authorization: Bearer <access>` on the upstream call.

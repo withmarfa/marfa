@@ -7,7 +7,7 @@
  *
  * Wave C PR5 / T-032: re-consent diff. When the caller passes
  * `priorScopes` (the scope set the user previously approved on this
- * client, looked up via `system.connection` of `kind: user-app-grant`),
+ * client, looked up via `system.connection` of `kind: app`),
  * the screen renders three group blocks — Previously granted (kept),
  * New permissions (added), and No longer requested (removed) —
  * instead of the flat read / write split. First-time consent (no

@@ -1114,7 +1114,7 @@ export class MymeClient {
       );
     },
     /**
-     * Orchestrated uninstall of an `external-service-connector`
+     * Orchestrated uninstall of an `integration`
      * connection. Revokes runtime credentials, deletes upstream OAuth
      * tokens, revokes active leased tokens, disables inbound webhook
      * subscriptions, transitions the system.connection state to

@@ -7,8 +7,8 @@
  *     from configuration (other config fields preserved).
  *   - Skip already-migrated: connection with credential_ref set → counted
  *     as skipped, no new credential.
- *   - Skip wrong kind: user-app-grant connection ignored.
- *   - Skip no OAuth: external-service-connector with no inline OAuth →
+ *   - Skip wrong kind: app connection ignored.
+ *   - Skip no OAuth: integration with no inline OAuth →
  *     counted as skipped.
  *   - Idempotency: running twice doesn't create duplicates.
  */
@@ -43,7 +43,7 @@ async function createConnection(
     {
       type: "system.connection",
       properties: {
-        kind: overrides?.kind ?? "external-service-connector",
+        kind: overrides?.kind ?? "integration",
         status: "active",
         granted_at: new Date().toISOString(),
         ...(overrides?.credential_ref
@@ -123,13 +123,13 @@ describe("migrateOauthToCredential", () => {
     expect(reportBefore.skipped_already_migrated).toBeGreaterThanOrEqual(1);
   });
 
-  it("skips connections of the wrong kind (user-app-grant)", async () => {
-    await createConnection({ ...inlineOauth }, { kind: "user-app-grant" });
+  it("skips connections of the wrong kind (app)", async () => {
+    await createConnection({ ...inlineOauth }, { kind: "app" });
     const report = await migrateOauthToCredential(ctx.storage);
     expect(report.skipped_wrong_kind).toBeGreaterThanOrEqual(1);
   });
 
-  it("skips external-service-connectors without OAuth config", async () => {
+  it("skips integrations without OAuth config", async () => {
     await createConnection({ unrelated: "no-oauth" });
     const report = await migrateOauthToCredential(ctx.storage);
     expect(report.skipped_no_oauth_config).toBeGreaterThanOrEqual(1);

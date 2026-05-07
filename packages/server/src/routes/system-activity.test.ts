@@ -52,7 +52,7 @@ async function createConnection(
       type: "system.connection",
       source,
       properties: {
-        kind: "external-service-connector",
+        kind: "integration",
         status: "active",
         granted_at: "2026-04-30T00:00:00.000Z",
         feed_activity: feedActivity,

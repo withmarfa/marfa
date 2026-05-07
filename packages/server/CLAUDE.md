@@ -118,7 +118,7 @@ OAuth tokens are issued with scopes parsed by `parseScope` in `@mymehq/shared`. 
 - **Empty `allowed_types` filters to zero rows.** The storage layer treats `allowed_types: []` as "no readable types" (forces `1=0` in SQL); previously it silently passed through and returned every row, a real security gap a no-scope token could exploit. Fixed in T-045 alongside the projection wiring.
 - **More-restrictive-wins is automatic.** OAuth tokens are synthetic `ApiKey` records built only from the granted scopes — there's no underlying API key whose permissions might be wider. Scope and credential are the same map.
 
-**Force re-consent on T-045 deploy.** The pre-T-045 regime had most scopes parsed-but-not-gated; tokens issued under that regime carry consent-screen wording the system didn't honour. Forward-compat would mask the new enforcement against existing tokens. The honest path is `pnpm --filter @mymehq/server tsx src/scripts/revoke-oauth-grants-t045.ts --dialect=<sqlite|pg>` — flips every active `user-app-grant` to revoked, cascades through `oauth.revokeGrantTokens`, and writes a per-revocation audit row stamped `{ action: "key.revoke", details: { reason: "scope_grammar_enforcement", ticket: "T-045" } }` so operators have an attributable trail. Idempotent — re-running over already-revoked grants is a no-op. Users re-grant via the existing consent screen.
+**Force re-consent on T-045 deploy.** The pre-T-045 regime had most scopes parsed-but-not-gated; tokens issued under that regime carry consent-screen wording the system didn't honour. Forward-compat would mask the new enforcement against existing tokens. The honest path is `pnpm --filter @mymehq/server tsx src/scripts/revoke-oauth-grants-t045.ts --dialect=<sqlite|pg>` — flips every active `app`-kind connection to revoked, cascades through `oauth.revokeGrantTokens`, and writes a per-revocation audit row stamped `{ action: "key.revoke", details: { reason: "scope_grammar_enforcement", ticket: "T-045" } }` so operators have an attributable trail. Idempotent — re-running over already-revoked grants is a no-op. Users re-grant via the existing consent screen.
 
 ## FTS dialect parity (T-015)
 
@@ -252,7 +252,7 @@ Browser-side WebAuthn ceremony on top of better-auth's passkey plugin.
 
 When a user OAuth-grants the same client a second time and the requested scopes differ from last time, the consent screen renders a diff instead of the flat read / write split.
 
-- **Lookup.** `GET /auth/authorize` queries `system.connection` items in the consenting user's tenant for an active `user-app-grant` matching the request's `client_id`. Most-recently-granted wins. The grant's `properties.scopes` literal set is threaded into `renderConsentScreen` as `priorScopes`.
+- **Lookup.** `GET /auth/authorize` queries `system.connection` items in the consenting user's tenant for an active `app` matching the request's `client_id`. Most-recently-granted wins. The grant's `properties.scopes` literal set is threaded into `renderConsentScreen` as `priorScopes`.
 - **Hosted-mode only.** The user → tenant binding lives in `storage.users` (hosted mode). In keys mode there's no per-user tenant — the lookup is skipped and the screen renders flat. Defensible: keys mode is single-user self-host where a re-consent is rare.
 - **Pure diff helper.** `routes/consent-diff.ts` exports `computeConsentDiff(prev, next): { kept, added, removed }`. Set difference on opaque scope literals (`<typePattern>:<verb>`); preserves `next`-side ordering, de-duplicates.
 - **Rendering.** `consent.ts` switches on `priorScopes`:
@@ -265,7 +265,7 @@ When a user OAuth-grants the same client a second time and the requested scopes 
 
 User-facing page at `/auth/security` listing connected apps and active sessions, with revoke buttons.
 
-- **Connected apps section** — `system.connection user-app-grant` items in the user's tenant. Each row: client name (resolved by joining `oauth_clients` in a single batch list), scope chips, granted-at, last-used-at. Revoke button POSTs to `/auth/grants/:id/revoke` (form-friendly counterpart to the existing `DELETE /auth/grants/:id`); on success the page redirects back with `?notice=grant_revoked`.
+- **Connected apps section** — `system.connection` items of kind `app` in the user's tenant. Each row: client name (resolved by joining `oauth_clients` in a single batch list), scope chips, granted-at, last-used-at. Revoke button POSTs to `/auth/grants/:id/revoke` (form-friendly counterpart to the existing `DELETE /auth/grants/:id`); on success the page redirects back with `?notice=grant_revoked`.
 - **Active sessions section** — better-auth's `GET /auth/list-sessions` output, mapped to `SecurityPageSession` rows. UA is parsed to a friendly device hint (Mac / iPhone / Windows / etc); IP is shown raw. Each row carries a Revoke button POSTing to `/auth/sessions/:id/revoke` — handler looks the session up by id in `list-sessions`, extracts the token, forwards to better-auth's `POST /auth/revoke-session` (token-keyed upstream). The current-session row is tagged "current device" and its Revoke button is disabled (use Sign out everywhere instead).
 - **Sign out everywhere** — bottom-of-page button POSTs to `/auth/sessions/sign-out-all`, which forwards to better-auth's `POST /auth/revoke-sessions` (drops every session for this user, including current) and redirects to `/auth/sign-in`.
 - **Notice flash** — `?notice=…` query param maps to a banner at the top of the page (`grant_revoked`, `session_revoked`, `session_not_found`, `cannot_revoke_current`, etc). Unknown codes resolve to no banner, not a 500.
@@ -275,7 +275,7 @@ User-facing page at `/auth/security` listing connected apps and active sessions,
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:
 
-- **`connection.runtime`** (workstream 2) — verbose per-Connection runtime state for `system.connection` items of kind `external-service-connector`: sync cursors, in-flight idempotency keys, recent error tail, retry counters. Writable only by the connector's own credential (the one referenced by `credential_ref` on the Connection); readable by tenant admins and the connector. The runtime executor in workstream 3 is the legitimate writer; in workstream 2 the namespace is reserved but no internal code writes it yet.
+- **`connection.runtime`** (workstream 2) — verbose per-Connection runtime state for `system.connection` items of kind `integration`: sync cursors, in-flight idempotency keys, recent error tail, retry counters. Writable only by the connector's own credential (the one referenced by `credential_ref` on the Connection); readable by tenant admins and the connector. The runtime executor in workstream 3 is the legitimate writer; in workstream 2 the namespace is reserved but no internal code writes it yet.
 
 Reserved namespaces are documented here so accidental general-purpose use ("just stash some stuff") doesn't conflict with platform semantics. Application-defined extensions should use namespaced keys that don't collide with reserved roots.
 

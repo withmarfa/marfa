@@ -87,7 +87,7 @@ async function createConnection(opts?: {
   skipCredential?: boolean;
 }): Promise<string> {
   const properties: Record<string, unknown> = {
-    kind: "external-service-connector",
+    kind: "integration",
     status: "active",
     granted_at: new Date().toISOString(),
     integration_ref: "acme.demo",
@@ -315,7 +315,7 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
       body: {
         type: "system.connection",
         properties: {
-          kind: "external-service-connector",
+          kind: "integration",
           status: "active",
           granted_at: new Date().toISOString(),
           integration_ref: "acme.demo",

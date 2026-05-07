@@ -1,21 +1,17 @@
 {
   "id": "system.connection",
   "label": "Connection",
-  "description": "An approved relationship between this Myme tenant and an external authority. `kind` discriminates between variants: `user-app-grant` (an OAuth client this user has authorised — workstream 1), `external-service-connector` (a hosted/local connector that reads or writes Myme on the user's behalf — workstream 2), and `tenant-share` (cross-tenant access — future). Lifecycle bounded to active | revoked. Has no tier. The connector kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (no client write path in WS2 — runtime executor lands in WS3).",
+  "description": "An approved relationship between this Myme tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorised — workstream 1), `integration` (a hosted/local connector that reads or writes Myme on the user's behalf — workstream 2), and `tenant` (cross-tenant access — future). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (no client write path in WS2 — runtime executor lands in WS3).",
   "version": 1,
   "fields": {
     "kind": {
       "type": "enum",
       "description": "Discriminator for connection variant",
-      "enum_values": [
-        "user-app-grant",
-        "external-service-connector",
-        "tenant-share"
-      ]
+      "enum_values": ["app", "integration", "tenant"]
     },
     "client_id": {
       "type": "string",
-      "description": "OAuth client identifier (for kind: user-app-grant)"
+      "description": "OAuth client identifier (for kind: app)"
     },
     "scopes": {
       "type": "array",
@@ -41,33 +37,33 @@
     },
     "integration_ref": {
       "type": "string",
-      "description": "For kind: external-service-connector — id of the Integration manifest this connector implements"
+      "description": "For kind: integration — id of the Integration manifest this connection implements"
     },
     "credential_ref": {
       "type": "string",
-      "description": "For kind: external-service-connector — id of a system.credential item holding the connector's API key"
+      "description": "For kind: integration — id of a system.credential item holding the integration's API key"
     },
     "configuration": {
       "type": "object",
-      "description": "For kind: external-service-connector — per-Integration JSON config payload (shape determined by the Integration manifest)"
+      "description": "For kind: integration — per-Integration JSON config payload (shape determined by the Integration manifest)"
     },
     "direction": {
       "type": "enum",
-      "description": "For kind: external-service-connector — does this connector read from, write to, or both",
+      "description": "For kind: integration — does this integration read from, write to, or both",
       "enum_values": ["read", "write", "both"]
     },
     "triggers": {
       "type": "array",
       "items_type": "object",
-      "description": "For kind: external-service-connector — array of trigger declarations. Each entry shape: { type: 'schedule' | 'webhook' | 'item-event' | 'manual', ...per-type config }. The Integration manifest constrains which trigger types are valid."
+      "description": "For kind: integration — array of trigger declarations. Each entry shape: { type: 'schedule' | 'webhook' | 'item-event' | 'manual', ...per-type config }. The Integration manifest constrains which trigger types are valid."
     },
     "attached_device": {
       "type": "string",
-      "description": "For kind: external-service-connector — id of a system.device item; set when the connector runs on a specific local device (e.g. a sync-agent host)"
+      "description": "For kind: integration — id of a system.device item; set when the integration runs on a specific local device (e.g. a sync-agent host)"
     },
     "runtime_status": {
       "type": "enum",
-      "description": "For kind: external-service-connector — operational health, distinct from the universal lifecycle `status`. Server-stamped only in WS2 (no client write surface; runtime executor in WS3 is the legitimate writer).",
+      "description": "For kind: integration — operational health, distinct from the universal lifecycle `status`. Server-stamped only in WS2 (no client write surface; runtime executor in WS3 is the legitimate writer).",
       "enum_values": [
         "healthy",
         "degraded",
@@ -78,19 +74,19 @@
     },
     "last_sync_at": {
       "type": "datetime",
-      "description": "For kind: external-service-connector — last successful sync run timestamp"
+      "description": "For kind: integration — last successful sync run timestamp"
     },
     "next_run_at": {
       "type": "datetime",
-      "description": "For kind: external-service-connector — next scheduled run, when applicable"
+      "description": "For kind: integration — next scheduled run, when applicable"
     },
     "last_error_at": {
       "type": "datetime",
-      "description": "For kind: external-service-connector — most recent failure timestamp (cleared on next success)"
+      "description": "For kind: integration — most recent failure timestamp (cleared on next success)"
     },
     "feed_activity": {
       "type": "boolean",
-      "description": "For kind: external-service-connector — when true, system.activity items emitted by this connector are server-stamped tier:'feed' (otherwise tier is omitted, as for all other system.* writes)"
+      "description": "For kind: integration — when true, system.activity items emitted by this integration are server-stamped tier:'feed' (otherwise tier is omitted, as for all other system.* writes)"
     }
   },
   "required": ["kind", "status", "granted_at"]

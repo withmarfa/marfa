@@ -235,7 +235,7 @@ export const oauthClients = pgTable("oauth_clients", {
 
 // PR 4 of workstream 1: oauth_grants table dropped. The user-facing
 // concept "user X approved client Y with scopes Z" now lives as a
-// `system.connection` item with `kind: user-app-grant`. The token
+// `system.connection` item with `kind: app`. The token
 // tables FK directly to items.id via connection_item_id.
 
 export const oauthTokens = pgTable(
@@ -363,7 +363,7 @@ export const inboundWebhooks = pgTable(
     id: text("id").primaryKey(),
     tenant_id: text("tenant_id"),
     // App-level reference to a system.connection item (kind:
-    // external-service-connector). Not a DB-level FK — matches the
+    // integration). Not a DB-level FK — matches the
     // existing pattern for other connection-referencing tables.
     connection_id: text("connection_id").notNull(),
     // The external service's id for this subscription. Retained for

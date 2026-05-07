@@ -13,7 +13,7 @@ afterAll(() => {
 });
 
 // PR 2 of workstream 2: extends system.connection for the
-// `external-service-connector` kind. WS1 already declared the kind value
+// `integration` kind. WS1 already declared the kind value
 // in the enum but populated no shape. These tests exercise the new fields
 // end-to-end via POST /items + GET /items to confirm the schema accepts
 // them, persists them, and rejects invalid enum values.
@@ -40,7 +40,7 @@ interface ErrorResponse {
 const VALID_CONNECTOR = {
   type: "system.connection",
   properties: {
-    kind: "external-service-connector",
+    kind: "integration",
     status: "active",
     granted_at: "2026-04-30T00:00:00.000Z",
     integration_ref: "integration.acme.calendar",
@@ -55,7 +55,7 @@ const VALID_CONNECTOR = {
   },
 };
 
-describe("system.connection — kind: external-service-connector shape", () => {
+describe("system.connection — kind: integration shape", () => {
   it("accepts and persists every connector-shape field", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
@@ -65,7 +65,7 @@ describe("system.connection — kind: external-service-connector shape", () => {
     const created = (await res.json()) as ItemResponse;
     expect(created.item.type).toBe("system.connection");
     const props = created.item.properties;
-    expect(props.kind).toBe("external-service-connector");
+    expect(props.kind).toBe("integration");
     expect(props.integration_ref).toBe("integration.acme.calendar");
     expect(props.credential_ref).toBe("cred-abc-123");
     expect(props.configuration).toEqual({ calendar_id: "primary" });
@@ -153,14 +153,14 @@ describe("system.connection — kind: external-service-connector shape", () => {
   });
 
   // The new connector-specific fields are additive; existing
-  // user-app-grant items must continue to validate without them.
-  it("regression: user-app-grant kind still validates with the WS1 shape", async () => {
+  // app items must continue to validate without them.
+  it("regression: app kind still validates with the WS1 shape", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
         type: "system.connection",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           client_id: "client-test-123",
           scopes: ["core.note:read"],
           status: "active",
@@ -170,6 +170,6 @@ describe("system.connection — kind: external-service-connector shape", () => {
     });
     expect(res.status).toBe(201);
     const created = (await res.json()) as ItemResponse;
-    expect(created.item.properties.kind).toBe("user-app-grant");
+    expect(created.item.properties.kind).toBe("app");
   });
 });

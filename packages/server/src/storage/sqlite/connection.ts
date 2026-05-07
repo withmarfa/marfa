@@ -211,7 +211,7 @@ export function createConnection(sqlitePath: string): {
     );
 
     -- PR 4 of workstream 1: oauth_grants dropped. Grants now live as
-    -- system.connection items (kind: user-app-grant) referenced via
+    -- system.connection items (kind: app) referenced via
     -- connection_item_id (FK to items.id).
     CREATE TABLE IF NOT EXISTS oauth_tokens (
       id TEXT PRIMARY KEY,

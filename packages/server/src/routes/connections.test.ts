@@ -179,7 +179,7 @@ describe("POST /connections/install — happy path", () => {
     const conn = await ctx.storage.items.get(body.connection_id, undefined);
     expect(conn?.type).toBe("system.connection");
     const props = conn?.properties as { kind: string; integration_ref: string };
-    expect(props.kind).toBe("external-service-connector");
+    expect(props.kind).toBe("integration");
     expect(props.integration_ref).toBe(integration.id);
   });
 
@@ -353,12 +353,12 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
     expect(body.error.details?.uninstall_error_code).toBe("already_revoked");
   });
 
-  it("returns 400 with uninstall_error_code=wrong_connection_kind for a user-app-grant", async () => {
+  it("returns 400 with uninstall_error_code=wrong_connection_kind for an app", async () => {
     const grant = await ctx.storage.items.create(
       {
         type: "system.connection",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           status: "active",
           granted_at: new Date().toISOString(),
         },

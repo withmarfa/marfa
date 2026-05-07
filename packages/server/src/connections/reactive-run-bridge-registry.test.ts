@@ -92,7 +92,7 @@ async function createConnection(opts: {
     {
       type: "system.connection",
       properties: {
-        kind: opts.kind ?? "external-service-connector",
+        kind: opts.kind ?? "integration",
         status: opts.status ?? "active",
         granted_at: new Date().toISOString(),
         integration_ref: opts.integrationRef,
@@ -137,11 +137,11 @@ describe("buildEntryForConnection", () => {
     expect(entry).toBeNull();
   });
 
-  it("returns null when kind is not external-service-connector", async () => {
+  it("returns null when kind is not integration", async () => {
     const intId = await createIntegration(manifest({ name: "acme.kind-skip" }));
     const connId = await createConnection({
       integrationRef: intId,
-      kind: "user-app-grant",
+      kind: "app",
     });
     const item = await ctx.storage.items.get(connId);
     if (!item) throw new Error("connection missing after create");

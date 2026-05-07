@@ -490,11 +490,11 @@ describe("coexistence with API keys", () => {
   });
 });
 
-describe("user-app-grant ItemStore integrity (T-005)", () => {
+describe("app ItemStore integrity (T-005)", () => {
   it("/auth/authorize routes the grant through ItemStore.create — full metadata, source, validation", async () => {
     const { client } = await performOAuthFlow(["core.note:read"]);
 
-    // The grant is the system.connection item with kind: user-app-grant for
+    // The grant is the system.connection item with kind: app for
     // this client. Find it via tenant-less list (single-tenant test context).
     const list = await ctx.storage.items.list({
       type: "system.connection",
@@ -502,8 +502,7 @@ describe("user-app-grant ItemStore integrity (T-005)", () => {
     });
     const grant = list.data.find(
       (i) =>
-        i.properties.kind === "user-app-grant" &&
-        i.properties.client_id === client.id,
+        i.properties.kind === "app" && i.properties.client_id === client.id,
     );
     expect(grant).toBeDefined();
 
@@ -530,7 +529,7 @@ describe("user-app-grant ItemStore integrity (T-005)", () => {
 });
 
 describe("OAuth tenant scoping (T-004)", () => {
-  it("validateToken projects tenant_id from the underlying user-app-grant", async () => {
+  it("validateToken projects tenant_id from the underlying app", async () => {
     // Set up a tenant-scoped grant via storage.items.create. The OAuth
     // route would resolve tenant_id from the consenting user; this test
     // hits the storage layer directly to isolate the join.
@@ -541,7 +540,7 @@ describe("OAuth tenant scoping (T-004)", () => {
         state: "active",
         tier: "library",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           client_id: "test-client",
           scopes: ["core.note:read"],
           status: "active",
@@ -589,7 +588,7 @@ describe("OAuth tenant scoping (T-004)", () => {
         state: "active",
         tier: "library",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           client_id: "client-b",
           scopes: ["core.note:read"],
           status: "active",
@@ -628,7 +627,7 @@ describe("OAuth tenant scoping (T-004)", () => {
         state: "active",
         tier: "library",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           client_id: "client-a-list",
           scopes: ["core.note:read"],
           status: "active",
@@ -645,7 +644,7 @@ describe("OAuth tenant scoping (T-004)", () => {
         state: "active",
         tier: "library",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           client_id: "client-b-list",
           scopes: ["core.note:read"],
           status: "active",
@@ -692,7 +691,7 @@ describe("OAuth tenant scoping (T-004)", () => {
         state: "active",
         tier: "library",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           client_id: "client-b-rev",
           scopes: ["core.note:read"],
           status: "active",
@@ -746,7 +745,7 @@ describe("OAuth tenant scoping (T-004)", () => {
         state: "active",
         tier: "library",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           client_id: "client-a",
           scopes: ["core.note:read"],
           status: "active",

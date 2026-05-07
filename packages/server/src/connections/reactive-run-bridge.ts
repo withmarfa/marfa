@@ -25,7 +25,7 @@
  *
  * Layer 2 PR 3 — subscription registry. The bridge maintains an
  * in-memory map of `connection_id → { integration_name, ... }` for every
- * `system.connection` of kind `external-service-connector` whose
+ * `system.connection` of kind `integration` whose
  * Integration manifest declares at least one `item-event` trigger. Each
  * inbound event fans out to one queue message per subscribing connection
  * with `integration_name` populated. Cache invalidation: a separate
@@ -134,7 +134,7 @@ export function tryStartReactiveRunBridge(
 /**
  * Inspect a connection's manifest and return a SubscriptionEntry when
  * the connection should receive item-event fanout. Returns null when:
- *   - The connection isn't an external-service-connector
+ *   - The connection isn't of kind `integration`
  *   - The connection has no integration_ref
  *   - The integration_ref doesn't resolve to a system.integration
  *   - The manifest is invalid (validateManifest rejects it)
@@ -146,7 +146,7 @@ async function buildEntryForConnection(
   connection: { id: string; properties: unknown; tenant_id?: string | null },
 ): Promise<SubscriptionEntry | null> {
   const props = connection.properties as ConnectionProperties;
-  if (props.kind !== "external-service-connector") return null;
+  if (props.kind !== "integration") return null;
   if (props.status && props.status !== "active") return null;
   const ref = props.integration_ref;
   if (!ref) return null;

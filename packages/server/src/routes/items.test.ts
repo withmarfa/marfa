@@ -273,7 +273,7 @@ describe("POST /items — platform-credential gate (TSC42 §3/§4)", () => {
       body: {
         type: "system.connection",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           client_id: "x",
           scopes: [],
           status: "active",
@@ -297,7 +297,7 @@ describe("POST /items — platform-credential gate (TSC42 §3/§4)", () => {
       body: {
         type: "system.connection",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           client_id: "platform-write-ok",
           scopes: [],
           status: "active",
@@ -347,7 +347,7 @@ describe("POST /items — platform-credential gate (TSC42 §3/§4)", () => {
       body: {
         type: "system.connection",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           client_id: "x",
           scopes: [],
           status: "active",

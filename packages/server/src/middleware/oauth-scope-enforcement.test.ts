@@ -37,7 +37,7 @@ interface MintedToken {
 }
 
 /**
- * Mints an OAuth token bound to a fresh user-app-grant `system.connection`
+ * Mints an OAuth token bound to a fresh app `system.connection`
  * stamped with the requested scopes. Returns both the bearer token and
  * the grant's item id (for revocation tests).
  */
@@ -55,7 +55,7 @@ async function mintOAuthToken(opts: {
       state: "active",
       tier: "library",
       properties: {
-        kind: "user-app-grant",
+        kind: "app",
         client_id: client.id,
         scopes: opts.scopes,
         status: "active",

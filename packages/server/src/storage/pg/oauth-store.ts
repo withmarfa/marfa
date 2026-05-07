@@ -20,7 +20,7 @@ import {
 import type { PgDb } from "./connection.js";
 
 /**
- * OAuth storage backed by a `system.connection` item per user-app-grant.
+ * OAuth storage backed by a `system.connection` item per app.
  *
  * PR 4 of workstream 1 dropped the standalone `oauth_grants` table; the
  * durable record of "user X approved client Y with scopes Z" now lives
@@ -86,10 +86,10 @@ export class PgOAuthStore implements OAuthStore {
   }
 
   // -----------------------------------------------------------------------
-  // Grants (system.connection items, kind: user-app-grant)
+  // Grants (system.connection items, kind: app)
   //
   // Grant creation is performed at the route layer via `storage.items.create`
-  // so the user-app-grant item gets full ItemStore treatment: `tenant_id`
+  // so the app item gets full ItemStore treatment: `tenant_id`
   // stamping, search indexing, metadata-row insertion, type validation, and
   // event emission. Direct `db.insert(items)` here was the WS1-PR4 source of
   // the cross-tenant leak (T-005).
@@ -219,7 +219,7 @@ export class PgOAuthStore implements OAuthStore {
   ): Promise<
     (OAuthToken & { scopes: string[]; tenant_id: string | null }) | null
   > {
-    // Join through to the user-app-grant `system.connection` to project the
+    // Join through to the app `system.connection` to project the
     // grant's `tenant_id` onto the validation result. The middleware uses this
     // to stamp `tenant_id` on the synthetic ApiKey so storage call sites
     // tenant-filter correctly (T-004).

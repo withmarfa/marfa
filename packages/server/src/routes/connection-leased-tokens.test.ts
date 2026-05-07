@@ -67,7 +67,7 @@ async function createConnection(): Promise<string> {
     body: {
       type: "system.connection",
       properties: {
-        kind: "external-service-connector",
+        kind: "integration",
         status: "active",
         granted_at: new Date().toISOString(),
         integration_ref: integrationId,
@@ -182,7 +182,7 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
       body: {
         type: "system.connection",
         properties: {
-          kind: "external-service-connector",
+          kind: "integration",
           status: "active",
           granted_at: new Date().toISOString(),
         },
@@ -213,7 +213,7 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
       body: {
         type: "system.connection",
         properties: {
-          kind: "external-service-connector",
+          kind: "integration",
           status: "active",
           granted_at: new Date().toISOString(),
           integration_ref: reg.id,

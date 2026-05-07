@@ -3,7 +3,7 @@
  *
  * Reverses what `performInstall` and the OAuth-bootstrap / leased-token /
  * inbound-webhook subsystems may have left attached to a
- * `system.connection` of kind `external-service-connector`. Mirrors
+ * `system.connection` of kind `integration`. Mirrors
  * `install-pipeline.ts`'s shape but inverts the meaning of "atomicity":
  * uninstall is *monotonic toward "uninstalled"*, so we don't compensate
  * earlier steps when a later step fails — partial uninstall is closer to
@@ -97,10 +97,10 @@ export async function performUninstall(
     );
   }
   const kind = connection.properties.kind as string | undefined;
-  if (kind !== "external-service-connector") {
+  if (kind !== "integration") {
     throw new UninstallError(
       "wrong_connection_kind",
-      `Connection ${input.connectionId} has kind "${kind ?? "<missing>"}"; uninstall accepts only "external-service-connector"`,
+      `Connection ${input.connectionId} has kind "${kind ?? "<missing>"}"; uninstall accepts only "integration"`,
     );
   }
   if (connection.state === "revoked") {

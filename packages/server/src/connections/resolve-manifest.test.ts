@@ -53,7 +53,7 @@ async function createConnection(integrationRef?: string): Promise<string> {
     {
       type: "system.connection",
       properties: {
-        kind: "external-service-connector",
+        kind: "integration",
         status: "active",
         granted_at: new Date().toISOString(),
         integration_ref: integrationRef,

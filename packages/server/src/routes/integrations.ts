@@ -2,7 +2,7 @@
  * Integration registry — workstream 3 Layer 2 PR 1.
  *
  * Persists Integration manifests as `system.integration` items so that:
- *   - `system.connection.external-service-connector.integration_ref` resolves
+ *   - `system.connection.integration.integration_ref` resolves
  *     to a stable item id at runtime (replacing WS2's inline-manifest path
  *     in routes/inbound-webhooks.ts and routes/connection-leased-tokens.ts —
  *     PR 2 of Layer 2 swaps those reads to the registry).

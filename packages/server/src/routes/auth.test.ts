@@ -292,8 +292,8 @@ describe("KeyStore.updateLastUsed — DB-side debounce", () => {
 });
 
 describe("OAuth synthetic apiKey advances grant last_used_at (§3.4)", () => {
-  it("stamps last_used_at on the user-app-grant connection on a successful access-token request", async () => {
-    // Set up a user-app-grant + access token directly through the storage
+  it("stamps last_used_at on the app connection on a successful access-token request", async () => {
+    // Set up a app + access token directly through the storage
     // layer; the public OAuth flow is exercised in oauth.test.ts.
     const client = await ctx.storage.oauth.createClient({
       name: "Test App (last_used_at)",
@@ -304,7 +304,7 @@ describe("OAuth synthetic apiKey advances grant last_used_at (§3.4)", () => {
       state: "active",
       tier: "library",
       properties: {
-        kind: "user-app-grant",
+        kind: "app",
         client_id: client.id,
         scopes: ["core.note:read"],
         status: "active",

@@ -69,7 +69,7 @@ async function createConnection(credentialId: string): Promise<string> {
     body: {
       type: "system.connection",
       properties: {
-        kind: "external-service-connector",
+        kind: "integration",
         status: "active",
         granted_at: new Date().toISOString(),
         credential_ref: credentialId,
@@ -429,7 +429,7 @@ describe("redirect_uri allow-list (T-010)", () => {
         body: {
           type: "system.connection",
           properties: {
-            kind: "external-service-connector",
+            kind: "integration",
             status: "active",
             granted_at: new Date().toISOString(),
             credential_ref: credId,
@@ -486,7 +486,7 @@ describe("redirect_uri allow-list (T-010)", () => {
         body: {
           type: "system.connection",
           properties: {
-            kind: "external-service-connector",
+            kind: "integration",
             status: "active",
             granted_at: new Date().toISOString(),
             credential_ref: credId,
