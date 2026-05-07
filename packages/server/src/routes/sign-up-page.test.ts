@@ -569,11 +569,34 @@ describe("POST /auth/sign-up — hosted-mode T-074 invariants", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("error=handle_reserved");
 
-    const all = await (
-      hosted.storage as unknown as {
-        __sqliteAll?: (q: string) => Promise<unknown[]>;
+    // The invariant: pre-validation runs BEFORE forwarding to Better
+    // Auth, so no auth_user row should exist. The SQLite path uses the
+    // typed helper; the PG path drops to drizzle-orm directly because
+    // there's no equivalent facade.
+    const dialect = (hosted.storage as { betterAuthDialect?: string })
+      .betterAuthDialect;
+    let count: number | undefined;
+    if (dialect === "pg") {
+      const db = (
+        hosted.storage as unknown as {
+          pgDb?: { execute: (q: unknown) => Promise<unknown> };
+        }
+      ).pgDb;
+      if (db) {
+        const { sql } = await import("drizzle-orm");
+        const rows = (await db.execute(
+          sql`SELECT COUNT(*)::int AS n FROM auth_user`,
+        )) as { n: number }[];
+        count = rows[0]?.n;
       }
-    ).__sqliteAll?.("SELECT COUNT(*) as n FROM auth_user");
-    expect((all?.[0] as { n: number } | undefined)?.n).toBe(0);
+    } else {
+      const rows = await (
+        hosted.storage as unknown as {
+          __sqliteAll?: (q: string) => Promise<{ n: number }[]>;
+        }
+      ).__sqliteAll?.("SELECT COUNT(*) as n FROM auth_user");
+      count = rows?.[0]?.n;
+    }
+    expect(count).toBe(0);
   });
 });
