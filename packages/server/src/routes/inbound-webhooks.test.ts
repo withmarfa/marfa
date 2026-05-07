@@ -65,7 +65,7 @@ async function createConnection(refOverride?: string): Promise<string> {
     body: {
       type: "system.connection",
       properties: {
-        kind: "external-service-connector",
+        kind: "integration",
         status: "active",
         granted_at: new Date().toISOString(),
         integration_ref: refOverride ?? integrationId,
@@ -147,7 +147,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
       body: {
         type: "system.connection",
         properties: {
-          kind: "external-service-connector",
+          kind: "integration",
           status: "active",
           granted_at: new Date().toISOString(),
         },
@@ -245,7 +245,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
       body: {
         type: "system.connection",
         properties: {
-          kind: "external-service-connector",
+          kind: "integration",
           status: "active",
           granted_at: new Date().toISOString(),
           integration_ref: reg.id,

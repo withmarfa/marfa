@@ -726,7 +726,7 @@ export interface OAuthStore {
     expiresAt: string,
   ): Promise<import("@mymehq/shared").OAuthToken>;
   /** Validates a token hash. Returns null if not found, expired, or revoked.
-   *  `tenant_id` is read off the underlying `system.connection` user-app-grant
+   *  `tenant_id` is read off the underlying `system.connection` app
    *  item; null when the grant predates tenant scoping (single-tenant). */
   validateToken(tokenHash: string): Promise<
     | (import("@mymehq/shared").OAuthToken & {

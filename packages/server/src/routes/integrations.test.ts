@@ -284,7 +284,7 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
       direction: string;
       runtime_status: string;
     };
-    expect(props.kind).toBe("external-service-connector");
+    expect(props.kind).toBe("integration");
     expect(props.status).toBe("active");
     expect(props.direction).toBe("read");
     expect(props.runtime_status).toBe("healthy");

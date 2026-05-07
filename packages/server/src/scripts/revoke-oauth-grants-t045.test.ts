@@ -35,7 +35,7 @@ async function seedActiveGrant(scopes: string[]): Promise<{
     state: "active",
     tier: "library",
     properties: {
-      kind: "user-app-grant",
+      kind: "app",
       client_id: client.id,
       scopes,
       status: "active",
@@ -56,7 +56,7 @@ async function seedActiveGrant(scopes: string[]): Promise<{
 }
 
 describe("revokeOauthGrantsT045 — re-consent migration", () => {
-  it("revokes every active user-app-grant and cascades through tokens", async () => {
+  it("revokes every active app and cascades through tokens", async () => {
     const { grantId, tokenHash } = await seedActiveGrant([
       "core.note:read",
       "edge.parent-of:write",
@@ -107,10 +107,9 @@ describe("revokeOauthGrantsT045 — re-consent migration", () => {
     expect(second.skipped_already_revoked).toBe(1);
   });
 
-  it("skips system.connection items of other kinds (external-service-connector)", async () => {
+  it("skips system.connection items of other kinds (integration)", async () => {
     // Real-world DBs have a mix of kinds; the script must only touch
-    // user-app-grants. Not a tenant-share, not an external-service-
-    // connector.
+    // apps. Not a tenant, not an integration.
     const client = await ctx.storage.oauth.createClient({
       name: "Test App",
       redirect_uris: ["http://localhost/cb"],
@@ -120,7 +119,7 @@ describe("revokeOauthGrantsT045 — re-consent migration", () => {
       state: "active",
       tier: "library",
       properties: {
-        kind: "external-service-connector",
+        kind: "integration",
         client_id: client.id,
         configuration: { upstream_base_url: "https://example.com" },
         status: "active",
@@ -133,7 +132,7 @@ describe("revokeOauthGrantsT045 — re-consent migration", () => {
     const { grantId } = await seedActiveGrant(["core.note:read"]);
 
     const report = await revokeOauthGrantsT045(ctx.storage);
-    expect(report.total).toBe(1); // only the user-app-grant counts
+    expect(report.total).toBe(1); // only the app counts
     expect(report.skipped_wrong_kind).toBeGreaterThanOrEqual(1);
     expect(report.revoked).toBe(1);
 

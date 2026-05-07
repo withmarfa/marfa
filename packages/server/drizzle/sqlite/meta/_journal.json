@@ -253,6 +253,13 @@
       "when": 1778090000000,
       "tag": "0035_grandfather_email_verified",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1778500000000,
+      "tag": "0036_rename_connection_kinds",
+      "breakpoints": true
     }
   ]
 }

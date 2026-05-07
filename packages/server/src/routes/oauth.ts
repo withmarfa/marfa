@@ -62,7 +62,7 @@ function sha256(input: string): string {
 }
 
 /**
- * Persist a user-app-grant connection through `ItemStore.create` so the
+ * Persist a `kind: app` connection through `ItemStore.create` so the
  * row gets full ItemStore treatment: `tenant_id` stamping (T-004), search
  * indexing, metadata-row insertion (so subsequent setTags / setExtension
  * actually write), the `created` event emission, and `source` / `origin`
@@ -100,7 +100,7 @@ async function createUserAppGrant(
       tier: "library",
       state: "active",
       properties: {
-        kind: "user-app-grant",
+        kind: "app",
         client_id: clientId,
         scopes,
         status: "active",
@@ -272,7 +272,7 @@ export function authRoutes(
     }
 
     // Wave C PR5 / T-032: re-consent diff. Look for an existing
-    // `system.connection user-app-grant` for `(user, client_id)`.
+    // `system.connection` of kind `app` for `(user, client_id)`.
     // The grant carries a literal scope set; we hand it to
     // `renderConsentScreen` as `priorScopes` and the renderer
     // switches to the diff variant. When there's no prior grant
@@ -300,7 +300,7 @@ export function authRoutes(
         // default, so the first match wins.
         for (const item of items.data) {
           const props = item.properties;
-          if (props.kind !== "user-app-grant") continue;
+          if (props.kind !== "app") continue;
           if (props.status !== "active") continue;
           if (props.client_id !== clientId) continue;
           if (Array.isArray(props.scopes)) {
@@ -448,7 +448,7 @@ export function authRoutes(
   // /auth/grants — typed query into system.connection items
   //
   // The user's "approved apps" surface. Reads system.connection items
-  // with kind: user-app-grant. DELETE flips status → revoked and
+  // with kind: app. DELETE flips status → revoked and
   // cascades through revokeGrantTokens to invalidate every token issued
   // under the grant.
   // -----------------------------------------------------------------------
@@ -482,7 +482,7 @@ export function authRoutes(
     }[] = [];
     for (const item of items.data) {
       const props = item.properties;
-      if (props.kind !== "user-app-grant") continue;
+      if (props.kind !== "app") continue;
       if (props.status !== "active") continue;
       grants.push({
         id: item.id,
@@ -515,7 +515,7 @@ export function authRoutes(
       throw new MymeError(ErrorCode.NOT_FOUND, "Grant not found");
     }
     const props = item.properties;
-    if (props.kind !== "user-app-grant") {
+    if (props.kind !== "app") {
       throw new MymeError(ErrorCode.NOT_FOUND, "Grant not found");
     }
     const now = new Date().toISOString();
@@ -1378,7 +1378,7 @@ export function authRoutes(
     const grants: SecurityPageGrant[] = [];
     for (const item of grantItems.data) {
       const props = item.properties;
-      if (props.kind !== "user-app-grant") continue;
+      if (props.kind !== "app") continue;
       if (props.status !== "active") continue;
       const clientId =
         typeof props.client_id === "string" ? props.client_id : "";
@@ -1427,7 +1427,7 @@ export function authRoutes(
       return c.redirect("/auth/security?notice=grant_not_found", 302);
     }
     const props = item.properties;
-    if (props.kind !== "user-app-grant") {
+    if (props.kind !== "app") {
       return c.redirect("/auth/security?notice=grant_not_found", 302);
     }
     const now = new Date().toISOString();
@@ -1750,7 +1750,7 @@ export function authRoutes(
       return c.html(renderDeviceDecisionPage({ approved: false }));
     }
 
-    // Approve: create a system.connection (kind: user-app-grant) routed
+    // Approve: create a system.connection (kind: app) routed
     // through ItemStore.create (T-005) and flip the device-code row to
     // approved.
     const grant = await createUserAppGrant(

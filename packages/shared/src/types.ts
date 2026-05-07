@@ -416,7 +416,7 @@ export interface CreateOAuthClientInput {
  * A user's approval for a client — records which scopes were granted.
  *
  * PR 4 of workstream 1 moved the durable grant record onto `system.connection`
- * items (kind: user-app-grant). The `id` field below is the underlying item
+ * items (kind: app). The `id` field below is the underlying item
  * id; subsequent OAuth records (codes, tokens) reference it as
  * `connection_item_id`.
  */
@@ -463,7 +463,7 @@ export interface OAuthCode {
  * `POST /auth/device/token` with `device_code` until approved.
  *
  * `connection_item_id` is set when status transitions to `approved`
- * (the system.connection user-app-grant created at approval time).
+ * (the `system.connection` of kind `app` created at approval time).
  */
 export interface OAuthDeviceCode {
   id: string;
@@ -538,7 +538,7 @@ export interface WebhookDelivery {
  *
  * Inbound webhooks are external services posting into Myme via
  * `POST /webhooks/inbound/:id`. Each subscription belongs to a
- * `system.connection` of kind `external-service-connector` and stamps
+ * `system.connection` of kind `integration` and stamps
  * its verification method (read from the Integration manifest) at
  * creation time. The raw shared secret is returned ONLY in the create
  * response; subsequent reads always redact it.

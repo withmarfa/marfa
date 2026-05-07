@@ -14375,7 +14375,7 @@
         "tags": [
           "Connections"
         ],
-        "summary": "Orchestrated uninstall of an external-service-connector connection",
+        "summary": "Orchestrated uninstall of an integration connection",
         "description": "Revokes the connection's runtime credentials, deletes any upstream OAuth tokens, revokes active leased tokens, disables inbound webhook subscriptions, transitions the system.connection to state `revoked`, and emits a system.activity row. Audit-logged. Idempotent at the artefact level (revoking an already-revoked artefact is a no-op), but rejects with 400 when the connection itself is already revoked.",
         "security": [
           {
@@ -14437,7 +14437,7 @@
             }
           },
           "400": {
-            "description": "Connection is not an external-service-connector, or already revoked.",
+            "description": "Connection is not an integration, or already revoked.",
             "content": {
               "application/json": {
                 "schema": {

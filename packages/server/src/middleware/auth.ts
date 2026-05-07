@@ -164,7 +164,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       // are synthesised here; full parity with stored API keys remains
       // outstanding.
       //
-      // `tenant_id` projects from the user-app-grant's `system.connection`
+      // `tenant_id` projects from the app's `system.connection`
       // item. Storage call sites (`items.get(id, tenantId)`, etc.) treat
       // `undefined` tenantId as cross-tenant (admin-style) — without this
       // projection an OAuth bearer would read items across all tenants in
@@ -193,8 +193,8 @@ export function authMiddleware(storage: Storage, salt: string) {
       });
       c.set("authType", "oauth");
 
-      // Debounced last_used_at update on the underlying user-app-grant
-      // connection (system.connection of kind: user-app-grant). The
+      // Debounced last_used_at update on the underlying app
+      // connection (system.connection of kind: app). The
       // /auth/grants surface reads this from the connection's properties
       // to show "active-but-rarely-used" grants accurately. Same DEBOUNCE_MS
       // as the api-key path: at most one write per process per grant per

@@ -97,7 +97,7 @@ describe("migrateSyncJsonToConnection", () => {
         runtime_compatibility?: string[];
         configuration?: Record<string, unknown>;
       };
-      expect(connProps.kind).toBe("external-service-connector");
+      expect(connProps.kind).toBe("integration");
       expect(connProps.integration_ref).toBe(pointer.integration_id);
       expect(connProps.credential_ref).toBe(pointer.credential_id);
       expect(connProps.runtime_compatibility).toEqual(["local"]);

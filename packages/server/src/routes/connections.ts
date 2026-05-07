@@ -23,7 +23,7 @@ import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
 //     `my connections install` command. Calls `performInstall` directly.
 //
 //   - `POST /connections/:id/uninstall` — orchestrated uninstall of an
-//     `external-service-connector` connection. Revokes runtime
+//     `integration` connection. Revokes runtime
 //     credentials, drops upstream OAuth tokens, revokes leased tokens,
 //     disables inbound webhooks, transitions the system.connection to
 //     revoked, and emits a system.activity row — all in one place. See
@@ -108,7 +108,7 @@ const uninstallRoute = createRoute({
   method: "post",
   path: "/{id}/uninstall",
   tags: ["Connections"],
-  summary: "Orchestrated uninstall of an external-service-connector connection",
+  summary: "Orchestrated uninstall of an integration connection",
   description:
     "Revokes the connection's runtime credentials, deletes any upstream OAuth tokens, revokes active leased tokens, disables inbound webhook subscriptions, transitions the system.connection to state `revoked`, and emits a system.activity row. Audit-logged. Idempotent at the artefact level (revoking an already-revoked artefact is a no-op), but rejects with 400 when the connection itself is already revoked.",
   security: [{ bearerAuth: [] }],
@@ -123,8 +123,7 @@ const uninstallRoute = createRoute({
     },
     400: {
       content: { "application/json": { schema: ErrorResponseSchema } },
-      description:
-        "Connection is not an external-service-connector, or already revoked.",
+      description: "Connection is not an integration, or already revoked.",
     },
     401: {
       content: { "application/json": { schema: ErrorResponseSchema } },

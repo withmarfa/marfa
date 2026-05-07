@@ -3,7 +3,7 @@
  *
  * Wave C PR7 / T-031. Auth-gated. Shows two surfaces:
  *
- *   1. Connected apps — `system.connection user-app-grant` items
+ *   1. Connected apps — `system.connection` items of kind `app`
  *      with name (resolved from oauth_clients), scope summary,
  *      granted date, last-used date (if any), and a Revoke button
  *      that POSTs to `/auth/grants/:id/revoke` (form-friendly

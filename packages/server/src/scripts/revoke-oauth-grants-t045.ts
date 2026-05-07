@@ -12,13 +12,13 @@
  * data plane (because nothing checked the scope), so a bug fix that
  * suddenly enforces the scope might mask broader access the user
  * didn't realise they had granted. The honest path is to revoke
- * every existing user-app-grant on T-045 deploy and let users
+ * every existing app on T-045 deploy and let users
  * re-grant via the consent screen — minor user friction once, no
  * silent semantic drift.
  *
  * What this script does:
  *   1. Finds every active `system.connection` of kind
- *      `user-app-grant` across all tenants.
+ *      `app` across all tenants.
  *   2. Flips each grant's `properties.status` to `revoked` and stamps
  *      `revoked_at` + `revoke_reason: "scope_grammar_enforcement"`.
  *   3. Calls `oauth.revokeGrantTokens(grant.id)` so every access /
@@ -78,7 +78,7 @@ export async function revokeOauthGrantsT045(storage: Storage): Promise<Report> {
         kind?: string;
         status?: string;
       };
-      if (props.kind !== "user-app-grant") {
+      if (props.kind !== "app") {
         report.skipped_wrong_kind += 1;
         continue;
       }
@@ -165,9 +165,7 @@ async function main(): Promise<void> {
     storage = createSqliteStorage(sqlitePath);
   }
 
-  console.log(
-    `[t045-revoke] Scanning user-app-grants on ${dialect} storage...`,
-  );
+  console.log(`[t045-revoke] Scanning apps on ${dialect} storage...`);
   const report = await revokeOauthGrantsT045(storage);
   console.log("[t045-revoke] Report:", JSON.stringify(report, null, 2));
   await storage.close();

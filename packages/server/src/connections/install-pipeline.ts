@@ -2,7 +2,7 @@
  * Integration install pipeline — workstream 3 Layer 2 PR 1.
  *
  * Owns the multi-step install of an Integration manifest into a tenant:
- *   1. Insert a `system.connection.external-service-connector` item bound
+ *   1. Insert a `system.connection.integration` item bound
  *      to the Integration's id (via `integration_ref`).
  *   2. Mint a runtime credential bound to the new connection id (apiKeys
  *      row stamped with `is_runtime_credential: true` and `connection_id`).
@@ -164,7 +164,7 @@ export async function performInstall(
   // Step 1: insert the system.connection item.
   // -------------------------------------------------------------------
   const connectionProperties = {
-    kind: "external-service-connector" as const,
+    kind: "integration" as const,
     status: "active" as const,
     granted_at: now,
     integration_ref: input.integrationItemId,

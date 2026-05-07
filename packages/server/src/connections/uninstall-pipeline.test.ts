@@ -167,14 +167,14 @@ describe("performUninstall — error paths", () => {
   });
 
   it("throws UninstallError(wrong_connection_kind) when called against a non-connector connection", async () => {
-    // Mint a system.connection with kind: user-app-grant (the OAuth-grant
+    // Mint a system.connection with kind: app (the OAuth-grant
     // shape) and confirm uninstall rejects it. Uninstall is scoped to
-    // external-service-connector kinds.
+    // integration kinds.
     const grant = await ctx.storage.items.create(
       {
         type: "system.connection",
         properties: {
-          kind: "user-app-grant",
+          kind: "app",
           status: "active",
           granted_at: new Date().toISOString(),
         },

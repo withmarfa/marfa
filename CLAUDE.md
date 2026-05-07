@@ -55,7 +55,7 @@ Email verification is required (Wave C PR2). New accounts sign up successfully b
 
 Sign-in methods land per workstream-1 plan: email + password (PR 1), passkey + magic link (PR 2), generic OIDC client / federated (PR 3), Myme as IdP via OIDC Provider plugin (PR 5).
 
-User-app grants are stored as `system.connection` items with `kind: user-app-grant`. The OAuth tables `oauth_codes` and `oauth_tokens` reference the item id via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE). The previous standalone `oauth_grants` table is dropped. The same `system.connection` type carries the other two kinds shipped by the Connections build: `external-service-connector` (a connected upstream service such as Google Calendar) and `tenant-share` (a relationship between two tenants).
+User-app grants are stored as `system.connection` items with `kind: app`. The OAuth tables `oauth_codes` and `oauth_tokens` reference the item id via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE). The previous standalone `oauth_grants` table is dropped. The same `system.connection` type carries the other two kinds shipped by the Connections build: `integration` (a connected upstream service such as Google Calendar) and `tenant` (a relationship between two tenants).
 
 The OAuth consent endpoints (`GET/POST /auth/authorize`) gate on the better-auth session cookie, not admin bearer tokens. End users sign in via `/auth/sign-in` and approve their own grants; an unauthenticated request to `/auth/authorize` redirects to `/auth/sign-in?return_to=<original-url>`. Admin bearer tokens are still required for `/auth/clients` (client registration) and `/auth/tokens` (token management).
 
@@ -74,7 +74,7 @@ Only platform-flagged credentials (`is_platform: true`) can write to `system.*`;
 
 ## Reserved extension namespaces
 
-The metadata-layer `extensions` map is otherwise free-form, but a handful of namespaces under `connection.*` are reserved with constrained write semantics. The canonical entry is **`connection.runtime`** — verbose per-Connection runtime state for `system.connection` items of kind `external-service-connector`: sync cursors, in-flight idempotency keys, recent error tail, retry counters. Writable only by the connector's own runtime credential; readable by tenant admins and the connector. The `packages/server/CLAUDE.md` carries the full list.
+The metadata-layer `extensions` map is otherwise free-form, but a handful of namespaces under `connection.*` are reserved with constrained write semantics. The canonical entry is **`connection.runtime`** — verbose per-Connection runtime state for `system.connection` items of kind `integration`: sync cursors, in-flight idempotency keys, recent error tail, retry counters. Writable only by the connection's own runtime credential; readable by tenant admins and the connection. The `packages/server/CLAUDE.md` carries the full list.
 
 ## Connections runtime substrate
 

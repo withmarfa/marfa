@@ -1,7 +1,7 @@
 /**
  * One-shot data migration — Layer 2 PR 4.
  *
- * Walks every `system.connection` of kind `external-service-connector`,
+ * Walks every `system.connection` of kind `integration`,
  * extracts the OAuth provider config from `properties.configuration`,
  * encrypts the `oauth_client_secret` under the `connectionOauthToken`
  * HKDF domain, mints a new `system.credential` item with
@@ -106,7 +106,7 @@ export async function migrateOauthToCredential(
         configuration?: unknown;
       };
 
-      if (props.kind !== "external-service-connector") {
+      if (props.kind !== "integration") {
         report.skipped_wrong_kind += 1;
         continue;
       }

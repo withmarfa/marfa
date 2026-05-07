@@ -2,7 +2,7 @@
  * One-shot data migration — Layer 3 PR 4 (sync-agent re-presentation).
  *
  * Re-presents an existing `~/.myme/sync.json` configuration as a
- * `system.connection` (kind: external-service-connector,
+ * `system.connection` (kind: integration,
  * runtime_compatibility: ["local"]) plus a `system.credential`
  * (kind: api_key, secret_encrypted under
  * SECRET_INFO.apiKeyCredential).
@@ -155,7 +155,7 @@ export async function migrateSyncJsonToConnection(
     {
       type: "system.connection",
       properties: {
-        kind: "external-service-connector",
+        kind: "integration",
         status: "active",
         granted_at: new Date().toISOString(),
         integration_ref: integrationId,

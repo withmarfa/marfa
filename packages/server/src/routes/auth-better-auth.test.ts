@@ -301,7 +301,7 @@ describe("better-auth /auth/* surface", () => {
     expect(body.code_challenge_methods_supported).toEqual(["S256"]);
   });
 
-  it("/auth/grants returns user-app-grant connections, /auth/grants/{id} revokes", async () => {
+  it("/auth/grants returns app connections, /auth/grants/{id} revokes", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
 
     // Create an OAuth client and a grant via the storage layer (the public
@@ -315,7 +315,7 @@ describe("better-auth /auth/* surface", () => {
       state: "active",
       tier: "library",
       properties: {
-        kind: "user-app-grant",
+        kind: "app",
         client_id: client.id,
         scopes: ["core.note:read"],
         status: "active",
