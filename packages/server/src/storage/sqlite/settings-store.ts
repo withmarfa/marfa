@@ -6,34 +6,33 @@ import type { DrizzleDb } from "./connection.js";
 export class SqliteSettingsStore implements SettingsStore {
   constructor(private db: DrizzleDb) {}
 
-  get(key: string): Promise<string | null> {
-    const row = this.db
+  async get(key: string): Promise<string | null> {
+    const row = await this.db
       .select({ value: settings.value })
       .from(settings)
       .where(eq(settings.key, key))
       .get();
-    return Promise.resolve(row?.value ?? null);
+    return row?.value ?? null;
   }
 
-  set(key: string, value: string): Promise<void> {
-    this.db
+  async set(key: string, value: string): Promise<void> {
+    await this.db
       .insert(settings)
       .values({ key, value })
       .onConflictDoUpdate({ target: settings.key, set: { value } })
       .run();
-    return Promise.resolve();
   }
 
-  claim(key: string, value: string): Promise<boolean> {
+  async claim(key: string, value: string): Promise<boolean> {
     // INSERT ... ON CONFLICT DO NOTHING RETURNING — better-sqlite3 returns
     // the inserted rows, or an empty array on conflict. The winner of the
     // first concurrent insert sees length === 1; everyone else sees 0.
-    const rows = this.db
+    const rows = await this.db
       .insert(settings)
       .values({ key, value })
       .onConflictDoNothing()
       .returning({ key: settings.key })
       .all();
-    return Promise.resolve(rows.length > 0);
+    return rows.length > 0;
   }
 }

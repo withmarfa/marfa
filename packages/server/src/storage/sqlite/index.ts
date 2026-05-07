@@ -1,5 +1,6 @@
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
+import { wrapDbWithRequestContext, withSqliteTx } from "./request-context.js";
 import { SqliteItemStore } from "./item-store.js";
 import { SqliteMetadataStore } from "./metadata-store.js";
 import { SqliteVersionStore } from "./version-store.js";
@@ -24,36 +25,49 @@ import { SqliteSettingsStore } from "./settings-store.js";
 import { SqliteCoordinationStore } from "./coordination-store.js";
 import { SqliteTenantQuotaStore } from "./tenant-quota-store.js";
 import { SqliteEmailSuppressionsStore } from "./email-suppressions-store.js";
-import { registerEdgeTypeSchema, isCoreEdgeType } from "@mymehq/shared";
+import {
+  registerEdgeTypeSchema,
+  isCoreEdgeType,
+  registerTypeSchema,
+  isCoreType,
+} from "@mymehq/shared";
 
-export function createSqliteStorage(
+export async function createSqliteStorage(
   sqlitePath: string,
   options?: {
     versionSnapshotIntervalMs?: number;
     authMode?: "hosted" | "keys";
   },
-): Storage & {
-  __sqliteAll(query: string): unknown[];
-  __sqliteRun(query: string, params: unknown[]): { changes: number };
-  /** Required (not optional) at this concrete factory: the SQLite storage
-   *  always exposes a Drizzle handle for the better-auth adapter. The
-   *  `Storage` interface widens to optional. */
-  betterAuthDb: unknown;
-  betterAuthDialect: "sqlite";
-} {
-  const { db, raw, close } = createConnection(sqlitePath);
+): Promise<
+  Storage & {
+    __sqliteAll(query: string): Promise<unknown[]>;
+    __sqliteRun(query: string, params: unknown[]): Promise<{ changes: number }>;
+    /** Required (not optional) at this concrete factory: the SQLite storage
+     *  always exposes a Drizzle handle for the better-auth adapter. The
+     *  `Storage` interface widens to optional. */
+    betterAuthDb: unknown;
+    betterAuthDialect: "sqlite";
+  }
+> {
+  const { db: baseDb, raw, close } = await createConnection(sqlitePath);
+
+  // Wrap the Drizzle instance with the per-request context proxy. Stores
+  // capture the wrapped instance and call `this.db.foo()` unchanged; the
+  // proxy redirects to the active transaction when one is in flight (set
+  // by `runInTransaction` below) and falls through to the base instance
+  // otherwise.
+  const db = wrapDbWithRequestContext(baseDb);
 
   const versionStore = new SqliteVersionStore(db);
-  const searchStore = new SqliteSearchStore(raw);
+  const searchStore = new SqliteSearchStore(db);
   const itemStore = new SqliteItemStore(
     db,
-    raw,
     versionStore,
     searchStore,
     options?.versionSnapshotIntervalMs,
   );
-  const metadataStore = new SqliteMetadataStore(db, raw);
-  const typeStore = new SqliteTypeStore(db, raw);
+  const metadataStore = new SqliteMetadataStore(db);
+  const typeStore = new SqliteTypeStore(db);
   const keyStore = new SqliteKeyStore(db);
   const blobStore = new SqliteBlobStore(db);
   const oauthStore = new SqliteOAuthStore(db);
@@ -64,7 +78,7 @@ export function createSqliteStorage(
   const connectionOauthTokenStore = new SqliteConnectionOAuthTokenStore(db);
   const connectionLeasedTokenStore = new SqliteConnectionLeasedTokenStore(db);
   const auditStore = new SqliteAuditStore(db);
-  const eventLogStore = new SqliteEventLogStore(db, raw);
+  const eventLogStore = new SqliteEventLogStore(db);
   const edgeStore = new SqliteEdgeStore(db);
   const edgeTypeStore = new SqliteEdgeTypeStore(db);
 
@@ -74,6 +88,15 @@ export function createSqliteStorage(
   void edgeTypeStore.loadCustomEdgeTypes().then((types) => {
     for (const ct of types) {
       if (!isCoreEdgeType(ct.id)) registerEdgeTypeSchema(ct);
+    }
+  });
+
+  // Same pattern for the custom-type registry. T-071: pre-driver-swap this
+  // ran synchronously in the SqliteTypeStore constructor via better-sqlite3;
+  // libsql is async-only, so it's now an explicit fire-and-forget warm-up.
+  void typeStore.loadCustomTypes().then((types) => {
+    for (const t of types) {
+      if (!isCoreType(t.id)) registerTypeSchema(t);
     }
   });
 
@@ -110,28 +133,41 @@ export function createSqliteStorage(
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),
     }),
+    /**
+     * Genuinely transactional under libsql + ALS routing (T-071). Opens a
+     * libsql `BEGIN IMMEDIATE` via Drizzle's `db.transaction(async tx => …)`,
+     * stores `tx` on the per-request ALS so every store call inside `fn`
+     * resolves its executor to the transaction, and rolls back on throw.
+     *
+     * Pre-T-071 this was a silent no-op for async bodies (better-sqlite3
+     * has no async transaction API). The shim is gone; rollback is real.
+     */
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
-      // better-sqlite3 transactions are synchronous. For sync callbacks,
-      // wrapping in a transaction gives a ~100x speedup on bulk inserts.
-      // For async callbacks, we run without a transaction wrapper since
-      // better-sqlite3 doesn't support async transactions.
-      return fn();
+      return await baseDb.transaction(async (tx) => {
+        return await withSqliteTx(tx, async () => fn());
+      });
     },
-    betterAuthDb: db,
+    betterAuthDb: baseDb,
     betterAuthDialect: "sqlite" as const,
     /** Raw query escape hatch — used by retention tests. */
-    __sqliteAll(query: string): unknown[] {
-      return raw.prepare(query).all();
+    async __sqliteAll(query: string): Promise<unknown[]> {
+      const result = await raw.execute(query);
+      return result.rows;
     },
     /** Parameterised raw mutation escape hatch — used by retention tests
      *  that need to plant non-default `updated_at` values. */
-    __sqliteRun(query: string, params: unknown[]): { changes: number } {
-      const result = raw.prepare(query).run(...params) as { changes: number };
-      return { changes: result.changes };
+    async __sqliteRun(
+      query: string,
+      params: unknown[],
+    ): Promise<{ changes: number }> {
+      const result = await raw.execute({
+        sql: query,
+        args: params as (string | number | boolean | null)[],
+      });
+      return { changes: result.rowsAffected };
     },
-    close() {
-      close();
-      return Promise.resolve();
+    async close() {
+      await close();
     },
   };
 }

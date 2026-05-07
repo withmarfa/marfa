@@ -1,13 +1,10 @@
-import { gt, and, eq, lt, isNull } from "drizzle-orm";
+import { gt, and, eq, lt, isNull, sql } from "drizzle-orm";
 import type { EventLogStore, PersistedEvent } from "../interface.js";
 import { eventLog } from "./schema.js";
-import type { DrizzleDb, RawDb } from "./connection.js";
+import type { DrizzleDb } from "./connection.js";
 
 export class SqliteEventLogStore implements EventLogStore {
-  constructor(
-    private db: DrizzleDb,
-    private raw: RawDb,
-  ) {}
+  constructor(private db: DrizzleDb) {}
 
   async append(entry: {
     event_type: string;
@@ -18,26 +15,18 @@ export class SqliteEventLogStore implements EventLogStore {
     originating_connection_id?: string | null;
     hop_count?: number;
   }): Promise<bigint> {
-    const stmt = this.raw.prepare(
-      `INSERT INTO event_log (event_type, item_id, edge_id, tenant_id, payload, originating_connection_id, hop_count, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    const result = stmt.run(
-      entry.event_type,
-      entry.item_id ?? null,
-      entry.edge_id ?? null,
-      entry.tenant_id ?? null,
-      entry.payload,
-      entry.originating_connection_id ?? null,
-      entry.hop_count ?? 0,
-      new Date().toISOString(),
-    );
-    // better-sqlite3 returns lastInsertRowid as `number | bigint`; the row id
-    // is i64 underneath. Normalise to `bigint` so PG and SQLite present the
-    // same wire type to the rest of the server.
-    return typeof result.lastInsertRowid === "bigint"
-      ? result.lastInsertRowid
-      : BigInt(result.lastInsertRowid);
+    const result = await this.db.run(sql`
+      INSERT INTO event_log (event_type, item_id, edge_id, tenant_id, payload, originating_connection_id, hop_count, created_at)
+      VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.tenant_id ?? null}, ${entry.payload}, ${entry.originating_connection_id ?? null}, ${entry.hop_count ?? 0}, ${new Date().toISOString()})
+    `);
+    // libsql returns lastInsertRowid as `bigint`. Match better-sqlite3's prior
+    // behaviour of normalising to bigint either way so the public wire shape
+    // is identical to the PG side.
+    const id = result.lastInsertRowid;
+    if (id == null) {
+      throw new Error("event_log insert did not return a rowid");
+    }
+    return typeof id === "bigint" ? id : BigInt(id);
   }
 
   async getAfter(
@@ -51,7 +40,7 @@ export class SqliteEventLogStore implements EventLogStore {
     const conditions = [gt(eventLog.id, Number(afterId))];
     if (tenantId) conditions.push(eq(eventLog.tenant_id, tenantId));
 
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(eventLog)
       .where(and(...conditions))
@@ -90,19 +79,19 @@ export class SqliteEventLogStore implements EventLogStore {
       tenantClause === undefined
         ? lt(eventLog.created_at, cutoff)
         : and(lt(eventLog.created_at, cutoff), tenantClause);
-    const result = this.db.delete(eventLog).where(where).run();
-    return result.changes;
+    const result = await this.db.delete(eventLog).where(where).run();
+    return result.rowsAffected;
   }
 
   async getMinRetainedId(tenantId?: string): Promise<bigint | null> {
-    const row = (
-      tenantId
-        ? this.raw
-            .prepare(`SELECT MIN(id) AS min FROM event_log WHERE tenant_id = ?`)
-            .get(tenantId)
-        : this.raw.prepare(`SELECT MIN(id) AS min FROM event_log`).get()
-    ) as { min: number | bigint | null } | undefined;
-    if (row?.min == null) return null;
-    return typeof row.min === "bigint" ? row.min : BigInt(row.min);
+    const result = tenantId
+      ? await this.db.get<{ min: number | bigint | null }>(
+          sql`SELECT MIN(id) AS min FROM event_log WHERE tenant_id = ${tenantId}`,
+        )
+      : await this.db.get<{ min: number | bigint | null }>(
+          sql`SELECT MIN(id) AS min FROM event_log`,
+        );
+    if (result.min == null) return null;
+    return typeof result.min === "bigint" ? result.min : BigInt(result.min);
   }
 }

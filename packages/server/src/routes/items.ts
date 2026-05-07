@@ -1245,11 +1245,9 @@ export function itemRoutes(storage: Storage) {
 
     // Pre-validate the edges payload before any mutation: edge type
     // exists, each target item exists + type-constraint-compatible, and
-    // (after-delete) cardinality stays within bounds. Runs before the
-    // delete-and-create pass so sqlite (whose runInTransaction can't
-    // rollback async work) doesn't leave a half-applied state on a
-    // validation failure. pg's runInTransaction rollback still kicks
-    // in for lower-level surprises.
+    // (after-delete) cardinality stays within bounds. Fast-fails on bad
+    // input before the delete-and-create pass; the inner transaction
+    // rolls back lower-level surprises on either dialect.
     if (hasEdges && body.edges) {
       for (const [edgeType, targets] of Object.entries(body.edges)) {
         const schema = getEdgeTypeSchema(edgeType);
@@ -1402,31 +1400,32 @@ export function itemRoutes(storage: Storage) {
     }
     requireTypeAccess(c, targetItem.type, "write");
 
-    await storage.runInTransaction(async () => {
-      // Walk the edge graph to plan the cascade + reject block-edges.
+    // Walk the edge graph + delete inside the tx. Snapshots feed the
+    // post-commit publish loop below.
+    const snapshots = await storage.runInTransaction(async () => {
       const toDelete = await planCascadeDelete(storage.edges, id);
-
-      // Fetch snapshots before deletion for event payloads.
-      const snapshots = await Promise.all(
+      const snaps = await Promise.all(
         toDelete.map((delId) => storage.items.get(delId, tid)),
       );
-
       for (const delId of toDelete) {
         await storage.items.delete(delId, tid);
       }
-
-      // Publish one deleted event per item (post-order: leaves first).
-      for (const snapshot of snapshots) {
-        if (snapshot) {
-          await publish({
-            type: "deleted",
-            item: { ...snapshot, state: "trashed" as ItemState },
-            tenantId: tid,
-            ...c.var.cycle,
-          });
-        }
-      }
+      return snaps;
     });
+
+    // Publish one deleted event per item (post-order: leaves first).
+    // Webhook side effects must fire post-commit so a rollback cannot
+    // leak a `deleted` event for items that were never actually trashed.
+    for (const snapshot of snapshots) {
+      if (snapshot) {
+        await publish({
+          type: "deleted",
+          item: { ...snapshot, state: "trashed" as ItemState },
+          tenantId: tid,
+          ...c.var.cycle,
+        });
+      }
+    }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,

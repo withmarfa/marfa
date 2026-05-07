@@ -52,7 +52,7 @@ async function main() {
       authMode: config.authMode,
     });
   } else {
-    storage = createSqliteStorage(config.sqlitePath, {
+    storage = await createSqliteStorage(config.sqlitePath, {
       versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,
       authMode: config.authMode,
     });

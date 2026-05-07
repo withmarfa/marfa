@@ -44,24 +44,28 @@ export class SqliteUserStore implements UserStore {
       created_at: now,
       updated_at: now,
     };
-    this.db.insert(users).values(row).run();
+    await this.db.insert(users).values(row).run();
     return rowToUser(row);
   }
 
   async setHandle(id: string, handle: string): Promise<User> {
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .update(users)
       .set({ handle, updated_at: now })
       .where(eq(users.id, id))
       .run();
-    const row = this.db.select().from(users).where(eq(users.id, id)).get();
+    const row = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, id))
+      .get();
     if (!row) throw new Error(`User ${id} not found`);
     return rowToUser(row);
   }
 
   async getByHandle(handle: string): Promise<User | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(users)
       .where(eq(users.handle, handle))
@@ -70,12 +74,16 @@ export class SqliteUserStore implements UserStore {
   }
 
   async getById(id: string): Promise<User | null> {
-    const row = this.db.select().from(users).where(eq(users.id, id)).get();
+    const row = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, id))
+      .get();
     return row ? rowToUser(row) : null;
   }
 
   async getByEmail(email: string): Promise<User | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(users)
       .where(eq(users.email, email))
@@ -87,7 +95,7 @@ export class SqliteUserStore implements UserStore {
     provider: string,
     providerId: string,
   ): Promise<User | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(users)
       .where(
@@ -98,7 +106,7 @@ export class SqliteUserStore implements UserStore {
   }
 
   async getByTenantId(tenantId: string): Promise<User | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(users)
       .where(eq(users.tenant_id, tenantId))

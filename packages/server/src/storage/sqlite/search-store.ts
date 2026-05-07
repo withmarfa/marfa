@@ -1,7 +1,8 @@
+import { sql } from "drizzle-orm";
 import { parseFilter, type SearchResult } from "@mymehq/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql } from "../filter-sql.js";
-import type { RawDb } from "./connection.js";
+import type { DrizzleDb } from "./connection.js";
 import { rowToItem, rowToMetadata } from "./helpers.js";
 import type { items } from "./schema.js";
 // T-015: shared FTS text extractor — both dialects consult this so
@@ -30,45 +31,22 @@ function buildFtsQuery(query: string): string {
 }
 
 export class SqliteSearchStore implements SearchStore {
-  constructor(private raw: RawDb) {}
+  constructor(private db: DrizzleDb) {}
 
   async index(
     itemId: string,
     properties: Record<string, unknown>,
     typeId?: string,
   ): Promise<void> {
-    this.indexSync(itemId, properties, typeId);
+    const text = extractSearchableText(properties, typeId);
+    await this.db.run(sql`
+      INSERT INTO items_fts(item_id, title, body, description, name, extra)
+      VALUES (${itemId}, ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra})
+    `);
   }
 
   async remove(itemId: string): Promise<void> {
-    this.removeSync(itemId);
-  }
-
-  /** Synchronous version for use within SQLite transactions. */
-  indexSync(
-    itemId: string,
-    properties: Record<string, unknown>,
-    typeId?: string,
-  ): void {
-    const text = extractSearchableText(properties, typeId);
-    this.raw
-      .prepare(
-        `INSERT INTO items_fts(item_id, title, body, description, name, extra)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        itemId,
-        text.title,
-        text.body,
-        text.description,
-        text.name,
-        text.extra,
-      );
-  }
-
-  /** Synchronous version for use within SQLite transactions. */
-  removeSync(itemId: string): void {
-    this.raw.prepare("DELETE FROM items_fts WHERE item_id = ?").run(itemId);
+    await this.db.run(sql`DELETE FROM items_fts WHERE item_id = ${itemId}`);
   }
 
   async search(query: string, filters: SearchFilters): Promise<SearchResult[]> {
@@ -178,10 +156,21 @@ export class SqliteSearchStore implements SearchStore {
       LIMIT ? OFFSET ?
     `;
 
-    const rows = this.raw.prepare(rawSql).all(...params) as Record<
-      string,
-      unknown
-    >[];
+    // Build the prepared SQL by stitching `?`-split fragments together with
+    // drizzle's parameter binding for each inline value. Drizzle's `sql`
+    // template binds JS values to libsql's positional `?` parameters; we
+    // can't pass a pre-formatted SQL string with `?`s through `sql.raw`
+    // because raw fragments don't bind params.
+    const fragments = rawSql.split("?");
+    const builder = sql.empty();
+    for (let i = 0; i < fragments.length; i++) {
+      builder.append(sql.raw(fragments[i] ?? ""));
+      if (i < fragments.length - 1) {
+        builder.append(sql`${params[i]}`);
+      }
+    }
+
+    const rows = await this.db.all<Record<string, unknown>>(builder);
 
     return rows.map((row) => ({
       // tier is a plain text column; rowToItem normalizes the value.

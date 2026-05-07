@@ -24,7 +24,7 @@ function rowToEvent(
 export class SqliteInboundWebhookEventStore implements InboundWebhookEventStore {
   constructor(private db: DrizzleDb) {}
 
-  insert(input: {
+  async insert(input: {
     id: string;
     inbound_webhook_id: string;
     external_delivery_id: string;
@@ -38,7 +38,7 @@ export class SqliteInboundWebhookEventStore implements InboundWebhookEventStore 
     // (inbound_webhook_id, external_delivery_id) constraint catches
     // dup-replays. RETURNING surfaces the inserted row's id; on
     // conflict the result is empty and we look up the existing row.
-    const inserted = this.db
+    const inserted = await this.db
       .insert(inboundWebhookEvents)
       .values({
         id: input.id,
@@ -59,11 +59,11 @@ export class SqliteInboundWebhookEventStore implements InboundWebhookEventStore 
 
     const insertedId = inserted[0]?.id;
     if (insertedId !== undefined) {
-      return Promise.resolve({ id: insertedId, inserted: true });
+      return { id: insertedId, inserted: true };
     }
 
     // Conflict path: look up the existing row id for the dedup pair.
-    const existing = this.db
+    const existing = await this.db
       .select({ id: inboundWebhookEvents.id })
       .from(inboundWebhookEvents)
       .where(
@@ -71,34 +71,37 @@ export class SqliteInboundWebhookEventStore implements InboundWebhookEventStore 
             AND ${inboundWebhookEvents.external_delivery_id} = ${input.external_delivery_id}`,
       )
       .get();
-    return Promise.resolve({
+    return {
       id: existing?.id ?? input.id,
       inserted: false,
-    });
+    };
   }
 
-  list(inboundWebhookId: string, limit = 50): Promise<InboundWebhookEvent[]> {
-    const rows = this.db
+  async list(
+    inboundWebhookId: string,
+    limit = 50,
+  ): Promise<InboundWebhookEvent[]> {
+    const rows = await this.db
       .select()
       .from(inboundWebhookEvents)
       .where(eq(inboundWebhookEvents.inbound_webhook_id, inboundWebhookId))
       .orderBy(desc(inboundWebhookEvents.received_at))
       .limit(limit)
       .all();
-    return Promise.resolve(rows.map(rowToEvent));
+    return rows.map(rowToEvent);
   }
 
-  get(id: string): Promise<InboundWebhookEvent | null> {
-    const row = this.db
+  async get(id: string): Promise<InboundWebhookEvent | null> {
+    const row = await this.db
       .select()
       .from(inboundWebhookEvents)
       .where(eq(inboundWebhookEvents.id, id))
       .get();
-    return Promise.resolve(row ? rowToEvent(row) : null);
+    return row ? rowToEvent(row) : null;
   }
 
-  resetForRetry(id: string, nextAttemptAt: string): Promise<void> {
-    this.db
+  async resetForRetry(id: string, nextAttemptAt: string): Promise<void> {
+    await this.db
       .update(inboundWebhookEvents)
       .set({
         retry_count: 0,
@@ -107,6 +110,5 @@ export class SqliteInboundWebhookEventStore implements InboundWebhookEventStore 
       })
       .where(eq(inboundWebhookEvents.id, id))
       .run();
-    return Promise.resolve();
   }
 }

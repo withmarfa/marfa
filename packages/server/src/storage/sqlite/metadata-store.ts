@@ -1,22 +1,19 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { Metadata } from "@mymehq/shared";
 import type { MetadataStore } from "../interface.js";
 import { metadata } from "./schema.js";
-import type { DrizzleDb, RawDb } from "./connection.js";
+import type { DrizzleDb } from "./connection.js";
 import { rowToMetadata } from "./helpers.js";
 
 export class SqliteMetadataStore implements MetadataStore {
-  constructor(
-    private db: DrizzleDb,
-    private raw: RawDb,
-  ) {}
+  constructor(private db: DrizzleDb) {}
 
   /**
    * Aggregate distinct tags across items the caller can read. Uses
    * `json_each` to unnest the tags JSON arrays; tenant + type-permission
    * filtering applied via a join to `items`. Excludes trashed items.
    */
-  listTags(filters: {
+  async listTags(filters: {
     tenantId?: string;
     allowedTypes?: string[];
   }): Promise<{ tag: string; count: number }[]> {
@@ -51,46 +48,52 @@ export class SqliteMetadataStore implements MetadataStore {
       GROUP BY je.value
       ORDER BY count DESC, tag ASC
     `;
-    const rows = this.raw.prepare(sqlText).all(...params) as {
-      tag: string;
-      count: number;
-    }[];
-    return Promise.resolve(rows);
+    // Stitch `?`-split fragments with drizzle parameter binding for each
+    // inline value (drizzle's `sql.raw` does not bind, so we can't pass a
+    // pre-formatted string with `?`s through it).
+    const fragments = sqlText.split("?");
+    const builder = sql.empty();
+    for (let i = 0; i < fragments.length; i++) {
+      builder.append(sql.raw(fragments[i] ?? ""));
+      if (i < fragments.length - 1) {
+        builder.append(sql`${params[i]}`);
+      }
+    }
+    const rows = await this.db.all<{ tag: string; count: number }>(builder);
+    return rows;
   }
 
-  getMany(itemIds: string[]): Promise<Metadata[]> {
-    if (itemIds.length === 0) return Promise.resolve([]);
-    const rows = this.db
+  async getMany(itemIds: string[]): Promise<Metadata[]> {
+    if (itemIds.length === 0) return [];
+    const rows = await this.db
       .select()
       .from(metadata)
       .where(inArray(metadata.item_id, itemIds))
       .all();
     const map = new Map(rows.map((r) => [r.item_id, rowToMetadata(r)]));
-    return Promise.resolve(
-      itemIds.map(
-        (id) => map.get(id) ?? { item_id: id, tags: [], extensions: {} },
-      ),
+    return itemIds.map(
+      (id) => map.get(id) ?? { item_id: id, tags: [], extensions: {} },
     );
   }
 
-  get(itemId: string): Promise<Metadata> {
-    const row = this.db
+  async get(itemId: string): Promise<Metadata> {
+    const row = await this.db
       .select()
       .from(metadata)
       .where(eq(metadata.item_id, itemId))
       .get();
     if (!row) {
-      return Promise.resolve({
+      return {
         item_id: itemId,
         tags: [],
         extensions: {},
-      });
+      };
     }
-    return Promise.resolve(rowToMetadata(row));
+    return rowToMetadata(row);
   }
 
-  set(itemId: string, tags: string[]): Promise<Metadata> {
-    this.db
+  async set(itemId: string, tags: string[]): Promise<Metadata> {
+    await this.db
       .update(metadata)
       .set({ tags: JSON.stringify(tags) })
       .where(eq(metadata.item_id, itemId))
@@ -99,8 +102,8 @@ export class SqliteMetadataStore implements MetadataStore {
   }
 
   async merge(itemId: string, tags?: string[]): Promise<Metadata> {
-    const mergeFn = this.raw.transaction(() => {
-      const row = this.db
+    return await this.db.transaction(async (tx) => {
+      const row = await tx
         .select()
         .from(metadata)
         .where(eq(metadata.item_id, itemId))
@@ -111,26 +114,24 @@ export class SqliteMetadataStore implements MetadataStore {
       const mergedTags = tags
         ? [...new Set([...current.tags, ...tags])]
         : current.tags;
-      this.db
+      await tx
         .update(metadata)
         .set({ tags: JSON.stringify(mergedTags) })
         .where(eq(metadata.item_id, itemId))
         .run();
-      return rowToMetadata(
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
-        this.db
-          .select()
-          .from(metadata)
-          .where(eq(metadata.item_id, itemId))
-          .get()!,
-      );
+      const after = await tx
+        .select()
+        .from(metadata)
+        .where(eq(metadata.item_id, itemId))
+        .get();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
+      return rowToMetadata(after!);
     });
-    return mergeFn();
   }
 
   async addTags(itemId: string, tags: string[]): Promise<Metadata> {
-    const addFn = this.raw.transaction(() => {
-      const row = this.db
+    return await this.db.transaction(async (tx) => {
+      const row = await tx
         .select()
         .from(metadata)
         .where(eq(metadata.item_id, itemId))
@@ -139,26 +140,24 @@ export class SqliteMetadataStore implements MetadataStore {
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const merged = [...new Set([...current.tags, ...tags])];
-      this.db
+      await tx
         .update(metadata)
         .set({ tags: JSON.stringify(merged) })
         .where(eq(metadata.item_id, itemId))
         .run();
-      return rowToMetadata(
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
-        this.db
-          .select()
-          .from(metadata)
-          .where(eq(metadata.item_id, itemId))
-          .get()!,
-      );
+      const after = await tx
+        .select()
+        .from(metadata)
+        .where(eq(metadata.item_id, itemId))
+        .get();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
+      return rowToMetadata(after!);
     });
-    return addFn();
   }
 
   async removeTag(itemId: string, tag: string): Promise<Metadata> {
-    const removeFn = this.raw.transaction(() => {
-      const row = this.db
+    return await this.db.transaction(async (tx) => {
+      const row = await tx
         .select()
         .from(metadata)
         .where(eq(metadata.item_id, itemId))
@@ -167,21 +166,19 @@ export class SqliteMetadataStore implements MetadataStore {
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const filtered = current.tags.filter((t) => t !== tag);
-      this.db
+      await tx
         .update(metadata)
         .set({ tags: JSON.stringify(filtered) })
         .where(eq(metadata.item_id, itemId))
         .run();
-      return rowToMetadata(
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
-        this.db
-          .select()
-          .from(metadata)
-          .where(eq(metadata.item_id, itemId))
-          .get()!,
-      );
+      const after = await tx
+        .select()
+        .from(metadata)
+        .where(eq(metadata.item_id, itemId))
+        .get();
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
+      return rowToMetadata(after!);
     });
-    return removeFn();
   }
 
   async getExtensions(
@@ -191,25 +188,27 @@ export class SqliteMetadataStore implements MetadataStore {
     return current.extensions;
   }
 
-  getExtensionsForItems(
+  async getExtensionsForItems(
     itemIds: string[],
   ): Promise<Map<string, Record<string, Record<string, unknown>>>> {
     const out = new Map<string, Record<string, Record<string, unknown>>>();
-    if (itemIds.length === 0) return Promise.resolve(out);
-    const rows = this.db
+    if (itemIds.length === 0) return out;
+    const rows = await this.db
       .select({ item_id: metadata.item_id, extensions: metadata.extensions })
       .from(metadata)
       .where(inArray(metadata.item_id, itemIds))
       .all();
     const byId = new Map(rows.map((r) => [r.item_id, r.extensions]));
     for (const id of itemIds) {
-      const raw = byId.get(id);
+      const rawExt = byId.get(id);
       out.set(
         id,
-        raw ? (JSON.parse(raw) as Record<string, Record<string, unknown>>) : {},
+        rawExt
+          ? (JSON.parse(rawExt) as Record<string, Record<string, unknown>>)
+          : {},
       );
     }
-    return Promise.resolve(out);
+    return out;
   }
 
   async setExtension(
@@ -217,8 +216,8 @@ export class SqliteMetadataStore implements MetadataStore {
     namespace: string,
     data: Record<string, unknown>,
   ): Promise<Record<string, Record<string, unknown>>> {
-    const setFn = this.raw.transaction(() => {
-      const row = this.db
+    return await this.db.transaction(async (tx) => {
+      const row = await tx
         .select()
         .from(metadata)
         .where(eq(metadata.item_id, itemId))
@@ -227,22 +226,21 @@ export class SqliteMetadataStore implements MetadataStore {
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const extensions = { ...current.extensions, [namespace]: data };
-      this.db
+      await tx
         .update(metadata)
         .set({ extensions: JSON.stringify(extensions) })
         .where(eq(metadata.item_id, itemId))
         .run();
       return extensions;
     });
-    return setFn();
   }
 
   async deleteExtension(
     itemId: string,
     namespace: string,
   ): Promise<Record<string, Record<string, unknown>>> {
-    const deleteFn = this.raw.transaction(() => {
-      const row = this.db
+    return await this.db.transaction(async (tx) => {
+      const row = await tx
         .select()
         .from(metadata)
         .where(eq(metadata.item_id, itemId))
@@ -253,13 +251,12 @@ export class SqliteMetadataStore implements MetadataStore {
       const rest = Object.fromEntries(
         Object.entries(current.extensions).filter(([k]) => k !== namespace),
       );
-      this.db
+      await tx
         .update(metadata)
         .set({ extensions: JSON.stringify(rest) })
         .where(eq(metadata.item_id, itemId))
         .run();
       return rest;
     });
-    return deleteFn();
   }
 }

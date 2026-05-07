@@ -162,7 +162,7 @@ async function main(): Promise<void> {
   } else {
     const { createSqliteStorage } = await import("../storage/sqlite/index.js");
     const sqlitePath = process.env.SQLITE_PATH ?? "./data/myme.db";
-    storage = createSqliteStorage(sqlitePath);
+    storage = await createSqliteStorage(sqlitePath);
   }
 
   console.log(`[t045-revoke] Scanning apps on ${dialect} storage...`);

@@ -27,7 +27,7 @@ function rowToLease(
 export class SqliteConnectionLeasedTokenStore implements ConnectionLeasedTokenStore {
   constructor(private db: DrizzleDb) {}
 
-  create(input: {
+  async create(input: {
     id: string;
     connection_id: string;
     tenant_id?: string;
@@ -50,33 +50,36 @@ export class SqliteConnectionLeasedTokenStore implements ConnectionLeasedTokenSt
       issued_by_key_id: input.issued_by_key_id ?? null,
       created_at: now,
     };
-    this.db.insert(connectionLeasedTokens).values(row).run();
-    return Promise.resolve(rowToLease(row));
+    await this.db.insert(connectionLeasedTokens).values(row).run();
+    return rowToLease(row);
   }
 
-  findByHash(hash: string): Promise<ConnectionLeasedTokenRow | null> {
-    const row = this.db
+  async findByHash(hash: string): Promise<ConnectionLeasedTokenRow | null> {
+    const row = await this.db
       .select()
       .from(connectionLeasedTokens)
       .where(eq(connectionLeasedTokens.lease_token_hash, hash))
       .get();
-    return Promise.resolve(row ? rowToLease(row) : null);
+    return row ? rowToLease(row) : null;
   }
 
-  get(id: string, tenantId?: string): Promise<ConnectionLeasedTokenRow | null> {
+  async get(
+    id: string,
+    tenantId?: string,
+  ): Promise<ConnectionLeasedTokenRow | null> {
     const conditions = [eq(connectionLeasedTokens.id, id)];
     if (tenantId !== undefined) {
       conditions.push(eq(connectionLeasedTokens.tenant_id, tenantId));
     }
-    const row = this.db
+    const row = await this.db
       .select()
       .from(connectionLeasedTokens)
       .where(and(...conditions))
       .get();
-    return Promise.resolve(row ? rowToLease(row) : null);
+    return row ? rowToLease(row) : null;
   }
 
-  listActiveByConnection(
+  async listActiveByConnection(
     connectionId: string,
     nowIso: string,
     tenantId?: string,
@@ -89,16 +92,16 @@ export class SqliteConnectionLeasedTokenStore implements ConnectionLeasedTokenSt
     if (tenantId !== undefined) {
       conditions.push(eq(connectionLeasedTokens.tenant_id, tenantId));
     }
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(connectionLeasedTokens)
       .where(and(...conditions))
       .all();
-    return Promise.resolve(rows.map(rowToLease));
+    return rows.map(rowToLease);
   }
 
-  revoke(id: string, nowIso: string): Promise<boolean> {
-    const result = this.db
+  async revoke(id: string, nowIso: string): Promise<boolean> {
+    const result = await this.db
       .update(connectionLeasedTokens)
       .set({ revoked_at: nowIso })
       .where(
@@ -108,6 +111,6 @@ export class SqliteConnectionLeasedTokenStore implements ConnectionLeasedTokenSt
         ),
       )
       .run();
-    return Promise.resolve(result.changes > 0);
+    return result.rowsAffected > 0;
   }
 }

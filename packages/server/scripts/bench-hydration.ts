@@ -12,7 +12,7 @@ import { hashApiKey } from "../src/middleware/auth.js";
 
 async function main(): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "bench-"));
-  const storage = createSqliteStorage(join(dir, "b.db"));
+  const storage = await createSqliteStorage(join(dir, "b.db"));
   const blob = new FilesystemBlobBackend(join(dir, "blobs"));
   const app = createApp(storage, blob, {
     port: 0,

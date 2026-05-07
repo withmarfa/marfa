@@ -161,17 +161,17 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
     // Read the verification row that better-auth wrote.
     const verRows = (
       ctx.storage as unknown as {
-        __sqliteAll?: (q: string) => unknown[];
+        __sqliteAll?: (q: string) => Promise<unknown[]>;
         __pgClient?: (q: string) => Promise<unknown[]>;
       }
     ).__sqliteAll
-      ? ((
+      ? ((await (
           ctx.storage as unknown as {
-            __sqliteAll: (q: string) => unknown[];
+            __sqliteAll: (q: string) => Promise<unknown[]>;
           }
         ).__sqliteAll(
           `SELECT identifier FROM auth_verification WHERE identifier LIKE 'reset-password:%' ORDER BY created_at DESC LIMIT 1`,
-        ) as { identifier: string }[])
+        )) as { identifier: string }[])
       : ((await (
           ctx.storage as unknown as {
             __pgClient: (q: string) => Promise<unknown[]>;

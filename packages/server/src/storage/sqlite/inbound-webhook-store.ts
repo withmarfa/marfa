@@ -25,7 +25,7 @@ function rowToInboundWebhook(
 export class SqliteInboundWebhookStore implements InboundWebhookStore {
   constructor(private db: DrizzleDb) {}
 
-  create(input: {
+  async create(input: {
     id: string;
     tenant_id?: string;
     connection_id: string;
@@ -49,33 +49,33 @@ export class SqliteInboundWebhookStore implements InboundWebhookStore {
       created_at: now,
       updated_at: now,
     };
-    this.db.insert(inboundWebhooks).values(row).run();
-    return Promise.resolve(rowToInboundWebhook(row));
+    await this.db.insert(inboundWebhooks).values(row).run();
+    return rowToInboundWebhook(row);
   }
 
-  get(id: string, tenantId?: string): Promise<InboundWebhookRow | null> {
+  async get(id: string, tenantId?: string): Promise<InboundWebhookRow | null> {
     const conditions = [eq(inboundWebhooks.id, id)];
     if (tenantId !== undefined) {
       conditions.push(eq(inboundWebhooks.tenant_id, tenantId));
     }
-    const row = this.db
+    const row = await this.db
       .select()
       .from(inboundWebhooks)
       .where(and(...conditions))
       .get();
-    return Promise.resolve(row ? rowToInboundWebhook(row) : null);
+    return row ? rowToInboundWebhook(row) : null;
   }
 
-  getAny(id: string): Promise<InboundWebhookRow | null> {
-    const row = this.db
+  async getAny(id: string): Promise<InboundWebhookRow | null> {
+    const row = await this.db
       .select()
       .from(inboundWebhooks)
       .where(eq(inboundWebhooks.id, id))
       .get();
-    return Promise.resolve(row ? rowToInboundWebhook(row) : null);
+    return row ? rowToInboundWebhook(row) : null;
   }
 
-  listByConnection(
+  async listByConnection(
     connectionId: string,
     tenantId?: string,
   ): Promise<InboundWebhookRow[]> {
@@ -83,20 +83,19 @@ export class SqliteInboundWebhookStore implements InboundWebhookStore {
     if (tenantId !== undefined) {
       conditions.push(eq(inboundWebhooks.tenant_id, tenantId));
     }
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(inboundWebhooks)
       .where(and(...conditions))
       .all();
-    return Promise.resolve(rows.map(rowToInboundWebhook));
+    return rows.map(rowToInboundWebhook);
   }
 
-  setDisabled(id: string, disabled: boolean): Promise<void> {
-    this.db
+  async setDisabled(id: string, disabled: boolean): Promise<void> {
+    await this.db
       .update(inboundWebhooks)
       .set({ disabled: disabled ? 1 : 0, updated_at: new Date().toISOString() })
       .where(eq(inboundWebhooks.id, id))
       .run();
-    return Promise.resolve();
   }
 }

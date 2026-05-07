@@ -26,14 +26,14 @@ const isPg = (): boolean => (process.env.STORAGE_DIALECT ?? "sqlite") === "pg";
  * table — tsvectors are computed at query time). On SQLite, queries the
  * items_fts virtual table directly.
  */
-function ftsRowCount(itemId: string): number {
+async function ftsRowCount(itemId: string): Promise<number> {
   if (isPg()) return 0;
   const s = ctx.storage as unknown as {
-    __sqliteAll: (q: string) => unknown[];
+    __sqliteAll: (q: string) => Promise<unknown[]>;
   };
   // ids are well-formed UUIDv7 hex+hyphens; safe to interpolate in this
   // test-only context (the escape hatch doesn't bind params).
-  const rows = s.__sqliteAll(
+  const rows = await s.__sqliteAll(
     `SELECT 1 FROM items_fts WHERE item_id = '${itemId.replace(/'/g, "''")}'`,
   );
   return rows.length;
@@ -55,9 +55,9 @@ async function setUpdatedAt(itemId: string, isoDate: string): Promise<void> {
     ]);
   } else {
     const s = ctx.storage as unknown as {
-      __sqliteRun: (sql: string, params: unknown[]) => unknown;
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
     };
-    s.__sqliteRun("UPDATE items SET updated_at = ? WHERE id = ?", [
+    await s.__sqliteRun("UPDATE items SET updated_at = ? WHERE id = ?", [
       isoDate,
       itemId,
     ]);
@@ -85,7 +85,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
     expect(deleted).toBe(1);
 
     // SQLite: FTS row gone. PG: vacuously 0.
-    expect(ftsRowCount(itemId)).toBe(0);
+    expect(await ftsRowCount(itemId)).toBe(0);
 
     const after = await ctx.storage.search.search("alphabravo", {});
     expect(after.some((h) => h.item.id === itemId)).toBe(false);
@@ -114,7 +114,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
     );
     expect(deleted).toBe(1);
 
-    expect(ftsRowCount(itemId)).toBe(0);
+    expect(await ftsRowCount(itemId)).toBe(0);
 
     const after = await ctx.storage.search.search("charliedelta", {});
     expect(after.some((h) => h.item.id === itemId)).toBe(false);
@@ -141,7 +141,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
     );
     expect(deleted).toBe(1);
 
-    expect(ftsRowCount(itemId)).toBe(0);
+    expect(await ftsRowCount(itemId)).toBe(0);
 
     const after = await ctx.storage.search.search("echofoxtrot", {});
     expect(after.some((h) => h.item.id === itemId)).toBe(false);
@@ -180,15 +180,17 @@ describe("ItemStore.bulkPurge — atomicity", () => {
 
       // Force the second FTS removal to throw, mid-transaction.
       const search = ctx.storage.search as unknown as {
-        removeSync: (id: string) => void;
+        remove: (id: string) => Promise<void>;
       };
-      const orig = search.removeSync.bind(search);
+      const orig = search.remove.bind(search);
       let calls = 0;
-      vi.spyOn(search, "removeSync").mockImplementation((targetId: string) => {
-        calls += 1;
-        if (calls === 2) throw new Error("simulated FTS failure");
-        orig(targetId);
-      });
+      vi.spyOn(search, "remove").mockImplementation(
+        async (targetId: string) => {
+          calls += 1;
+          if (calls === 2) throw new Error("simulated FTS failure");
+          await orig(targetId);
+        },
+      );
 
       await expect(ctx.storage.items.bulkPurge([id1, id2])).rejects.toThrow(
         /simulated FTS failure/,
@@ -198,8 +200,8 @@ describe("ItemStore.bulkPurge — atomicity", () => {
       // the first FTS removal must have been rolled back.
       expect(await ctx.storage.items.get(id1)).not.toBeNull();
       expect(await ctx.storage.items.get(id2)).not.toBeNull();
-      expect(ftsRowCount(id1)).toBe(1);
-      expect(ftsRowCount(id2)).toBe(1);
+      expect(await ftsRowCount(id1)).toBe(1);
+      expect(await ftsRowCount(id2)).toBe(1);
     },
   );
 });

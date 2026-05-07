@@ -45,7 +45,7 @@ function createTestFetch(app: {
 
 beforeAll(async () => {
   const tmpDir = mkdtempSync(join(tmpdir(), "myme-sdk-test-"));
-  const storage = createSqliteStorage(join(tmpDir, "test.db"));
+  const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(storage, blobBackend, {
     port: 0,

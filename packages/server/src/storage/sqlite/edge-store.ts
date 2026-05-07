@@ -41,20 +41,24 @@ export class SqliteEdgeStore implements EdgeStore {
       created_at: now,
       updated_at: now,
     };
-    this.db.insert(edges).values(row).run();
+    await this.db.insert(edges).values(row).run();
     return rowToEdge(row);
   }
 
   async get(id: string): Promise<Edge | null> {
-    const row = this.db.select().from(edges).where(eq(edges.id, id)).get();
+    const row = await this.db
+      .select()
+      .from(edges)
+      .where(eq(edges.id, id))
+      .get();
     return row ? rowToEdge(row) : null;
   }
 
-  private listByKey(
+  private async listByKey(
     keyColumn: typeof edges.source_id | typeof edges.target_id,
     value: string,
     filters?: EdgeListFilters,
-  ): PaginatedResult<Edge> {
+  ): Promise<PaginatedResult<Edge>> {
     const limit = clampLimit(filters?.limit);
     const conditions = [eq(keyColumn, value)];
     const typed = typeFilter(filters?.edge_type);
@@ -69,7 +73,7 @@ export class SqliteEdgeStore implements EdgeStore {
       if (cursorCondition) conditions.push(cursorCondition);
     }
 
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(edges)
       .where(and(...conditions))
@@ -91,17 +95,17 @@ export class SqliteEdgeStore implements EdgeStore {
     sourceId: string,
     filters?: EdgeListFilters,
   ): Promise<PaginatedResult<Edge>> {
-    return Promise.resolve(this.listByKey(edges.source_id, sourceId, filters));
+    return this.listByKey(edges.source_id, sourceId, filters);
   }
 
   listToTarget(
     targetId: string,
     filters?: EdgeListFilters,
   ): Promise<PaginatedResult<Edge>> {
-    return Promise.resolve(this.listByKey(edges.target_id, targetId, filters));
+    return this.listByKey(edges.target_id, targetId, filters);
   }
 
-  list(
+  async list(
     filters?: EdgeListFilters & { tenantId?: string },
   ): Promise<PaginatedResult<Edge>> {
     const limit = clampLimit(filters?.limit);
@@ -121,7 +125,7 @@ export class SqliteEdgeStore implements EdgeStore {
       if (cursorCondition) conditions.push(cursorCondition);
     }
 
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(edges)
       .where(conditions.length ? and(...conditions) : undefined)
@@ -136,11 +140,11 @@ export class SqliteEdgeStore implements EdgeStore {
       const last = slice.at(-1);
       if (last) cursor = encodeCursor(last.created_at, last.id);
     }
-    return Promise.resolve({
+    return {
       data: slice.map(rowToEdge),
       cursor,
       has_more: hasMore,
-    });
+    };
   }
 
   async updateProperties(
@@ -148,36 +152,40 @@ export class SqliteEdgeStore implements EdgeStore {
     properties: Record<string, unknown>,
   ): Promise<Edge> {
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .update(edges)
       .set({ properties: JSON.stringify(properties), updated_at: now })
       .where(eq(edges.id, id))
       .run();
-    const row = this.db.select().from(edges).where(eq(edges.id, id)).get();
+    const row = await this.db
+      .select()
+      .from(edges)
+      .where(eq(edges.id, id))
+      .get();
     if (!row) throw new Error(`edge ${id} not found`);
     return rowToEdge(row);
   }
 
   async delete(id: string): Promise<void> {
-    this.db.delete(edges).where(eq(edges.id, id)).run();
+    await this.db.delete(edges).where(eq(edges.id, id)).run();
   }
 
   async deleteBySource(sourceId: string, edgeType?: string): Promise<void> {
     const where = edgeType
       ? and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType))
       : eq(edges.source_id, sourceId);
-    this.db.delete(edges).where(where).run();
+    await this.db.delete(edges).where(where).run();
   }
 
   async deleteByTarget(targetId: string, edgeType?: string): Promise<void> {
     const where = edgeType
       ? and(eq(edges.target_id, targetId), eq(edges.edge_type, edgeType))
       : eq(edges.target_id, targetId);
-    this.db.delete(edges).where(where).run();
+    await this.db.delete(edges).where(where).run();
   }
 
   async countBySource(sourceId: string, edgeType: string): Promise<number> {
-    const row = this.db
+    const row = await this.db
       .select({ c: count() })
       .from(edges)
       .where(and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType)))
@@ -186,7 +194,7 @@ export class SqliteEdgeStore implements EdgeStore {
   }
 
   async countByTarget(targetId: string, edgeType: string): Promise<number> {
-    const row = this.db
+    const row = await this.db
       .select({ c: count() })
       .from(edges)
       .where(and(eq(edges.target_id, targetId), eq(edges.edge_type, edgeType)))
@@ -199,7 +207,7 @@ export class SqliteEdgeStore implements EdgeStore {
     targetId: string,
     edgeType: string,
   ): Promise<boolean> {
-    const row = this.db
+    const row = await this.db
       .select({ id: edges.id })
       .from(edges)
       .where(
@@ -227,7 +235,7 @@ export class SqliteEdgeStore implements EdgeStore {
     }
     for (const [edgeType, sourceIds] of byType) {
       const ids = Array.from(sourceIds);
-      const rows = this.db
+      const rows = await this.db
         .select({
           source_id: edges.source_id,
           c: count(),
@@ -258,7 +266,7 @@ export class SqliteEdgeStore implements EdgeStore {
     }
     for (const [edgeType, targetIds] of byType) {
       const ids = Array.from(targetIds);
-      const rows = this.db
+      const rows = await this.db
         .select({
           target_id: edges.target_id,
           c: count(),
@@ -300,7 +308,7 @@ export class SqliteEdgeStore implements EdgeStore {
       // Over-fetch the Cartesian intersection, then filter in-memory to the
       // requested pairs. For typical batch sizes (≤ dozens) the filter cost is
       // negligible and the SQL stays portable across dialects.
-      const rows = this.db
+      const rows = await this.db
         .select({
           source_id: edges.source_id,
           target_id: edges.target_id,
@@ -343,7 +351,7 @@ export class SqliteEdgeStore implements EdgeStore {
       const sourceIds = Array.from(new Set(entries.map((e) => e.s)));
       const targetIds = Array.from(new Set(entries.map((e) => e.t)));
       const wanted = new Set(entries.map((e) => `${e.s}|${e.t}`));
-      const rows = this.db
+      const rows = await this.db
         .select()
         .from(edges)
         .where(
@@ -371,7 +379,7 @@ export class SqliteEdgeStore implements EdgeStore {
     sourceId: string,
     edgeType: string,
   ): Promise<Edge[]> {
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(edges)
       .where(and(eq(edges.source_id, sourceId), eq(edges.edge_type, edgeType)))
@@ -382,7 +390,7 @@ export class SqliteEdgeStore implements EdgeStore {
   async listAllByItem(
     itemId: string,
   ): Promise<{ outbound: Edge[]; inbound: Edge[] }> {
-    const rows = this.db
+    const rows = await this.db
       .select()
       .from(edges)
       .where(or(eq(edges.source_id, itemId), eq(edges.target_id, itemId)))
@@ -404,7 +412,7 @@ export class SqliteEdgeStore implements EdgeStore {
     // SQLite supports window functions since 3.25; use ROW_NUMBER() to cap per
     // (source_id, edge_type) bucket. Raw SQL because Drizzle lacks a first-
     // class windowed query builder.
-    const rows = this.db.all<{
+    const rows = await this.db.all<{
       id: string;
       tenant_id: string | null;
       source_id: string;

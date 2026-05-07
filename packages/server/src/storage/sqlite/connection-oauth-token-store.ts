@@ -28,7 +28,7 @@ function rowToToken(
 export class SqliteConnectionOAuthTokenStore implements ConnectionOAuthTokenStore {
   constructor(private db: DrizzleDb) {}
 
-  upsert(input: {
+  async upsert(input: {
     connection_id: string;
     tenant_id?: string;
     access_token_encrypted: string;
@@ -38,7 +38,7 @@ export class SqliteConnectionOAuthTokenStore implements ConnectionOAuthTokenStor
     previous_refresh_hash?: string | null;
   }): Promise<ConnectionOAuthTokenRow> {
     const now = new Date().toISOString();
-    const existing = this.db
+    const existing = await this.db
       .select()
       .from(connectionOauthTokens)
       .where(eq(connectionOauthTokens.connection_id, input.connection_id))
@@ -58,12 +58,12 @@ export class SqliteConnectionOAuthTokenStore implements ConnectionOAuthTokenStor
             : existing.previous_refresh_hash,
         updated_at: now,
       };
-      this.db
+      await this.db
         .update(connectionOauthTokens)
         .set(updated)
         .where(eq(connectionOauthTokens.id, existing.id))
         .run();
-      return Promise.resolve(rowToToken(updated));
+      return rowToToken(updated);
     }
 
     const row = {
@@ -78,11 +78,11 @@ export class SqliteConnectionOAuthTokenStore implements ConnectionOAuthTokenStor
       created_at: now,
       updated_at: now,
     };
-    this.db.insert(connectionOauthTokens).values(row).run();
-    return Promise.resolve(rowToToken(row));
+    await this.db.insert(connectionOauthTokens).values(row).run();
+    return rowToToken(row);
   }
 
-  get(
+  async get(
     connectionId: string,
     tenantId?: string,
   ): Promise<ConnectionOAuthTokenRow | null> {
@@ -90,19 +90,18 @@ export class SqliteConnectionOAuthTokenStore implements ConnectionOAuthTokenStor
     if (tenantId !== undefined) {
       conditions.push(eq(connectionOauthTokens.tenant_id, tenantId));
     }
-    const row = this.db
+    const row = await this.db
       .select()
       .from(connectionOauthTokens)
       .where(and(...conditions))
       .get();
-    return Promise.resolve(row ? rowToToken(row) : null);
+    return row ? rowToToken(row) : null;
   }
 
-  delete(connectionId: string): Promise<void> {
-    this.db
+  async delete(connectionId: string): Promise<void> {
+    await this.db
       .delete(connectionOauthTokens)
       .where(eq(connectionOauthTokens.connection_id, connectionId))
       .run();
-    return Promise.resolve();
   }
 }
