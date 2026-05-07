@@ -1,6 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode, isValidHandle } from "@mymehq/shared";
+import {
+  MymeError,
+  ErrorCode,
+  isValidHandle,
+  isReservedHandle,
+} from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hashApiKey, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -366,10 +371,17 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     }
     const { handle: rawHandle } = c.req.valid("json");
     const handle = rawHandle.toLowerCase();
+    if (isReservedHandle(handle)) {
+      throw new MymeError(
+        ErrorCode.HANDLE_RESERVED,
+        `Handle "${handle}" is reserved`,
+        { handle: rawHandle },
+      );
+    }
     if (!isValidHandle(handle)) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
-        "Invalid handle: lowercase alphanumeric + hyphens, 3-32 chars; reserved roots and reserved words rejected",
+        "Invalid handle: lowercase alphanumeric + hyphens, 3-32 chars",
         { handle: rawHandle },
       );
     }

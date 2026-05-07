@@ -112,15 +112,32 @@ export function isValidLanguageCode(value: string): boolean {
 //                                non-reserved-root handle
 const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
 
-const RESERVED_ROOTS = new Set(["core", "system", "app", "user", "myme"]);
+export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
+  "core",
+  "system",
+  "app",
+  "user",
+  "myme",
+]);
 
 /**
- * Preliminary reserved structural words for the handle namespace (TSC42 §8).
- * Final list lands in a separate stream before the public registry opens —
- * this is the launch-blocking subset needed to keep operational paths and
- * common URL slugs out of the user namespace.
+ * Reserved structural words for the handle namespace (TSC42 §8). Four
+ * categories:
+ *   - Common-meaning structural words (admin, api, support, login, ...)
+ *     that would clash with operational URL slugs and pronouns.
+ *   - Future-reserved namespaces (sync, auth, data) — names plausibly
+ *     needed for future platform-shipped namespaces. Cheap to lock now,
+ *     easy to release later if no concrete driver materialises.
+ *   - Major tech companies — squatting on these would create the most
+ *     likely confusion vectors for end users browsing the marketplace.
+ *   - Major consumer apps and platforms — same rationale.
+ *
+ * The list is intentionally non-exhaustive. A pre-launch tightening pass
+ * will review and expand. Domain-verified claim-with-verification can
+ * unlock specific entries for the legitimate owner once that flow lands.
  */
-const RESERVED_HANDLE_WORDS: ReadonlySet<string> = new Set([
+export const RESERVED_HANDLE_WORDS: ReadonlySet<string> = new Set([
+  // Structural / operational
   "admin",
   "api",
   "support",
@@ -144,7 +161,48 @@ const RESERVED_HANDLE_WORDS: ReadonlySet<string> = new Set([
   "we",
   "us",
   "myme",
+  // Future-reserved namespaces
+  "sync",
+  "data",
+  // Major tech companies
+  "google",
+  "apple",
+  "microsoft",
+  "meta",
+  "amazon",
+  "netflix",
+  "twitter",
+  "x",
+  "linkedin",
+  "github",
+  "gitlab",
+  "openai",
+  "anthropic",
+  "mistral",
+  "cohere",
+  // Major consumer apps and platforms
+  "obsidian",
+  "notion",
+  "figma",
+  "linear",
+  "slack",
+  "discord",
+  "spotify",
+  "dropbox",
+  "evernote",
+  "todoist",
 ]);
+
+/**
+ * Returns true if the value matches a reserved root or a reserved
+ * handle word (in either set). Callers needing a typed-error surface
+ * should branch on this BEFORE calling `isValidHandle`, which
+ * collapses every failure mode into a single boolean.
+ */
+export function isReservedHandle(value: string): boolean {
+  if (typeof value !== "string") return false;
+  return RESERVED_ROOTS.has(value) || RESERVED_HANDLE_WORDS.has(value);
+}
 
 const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 

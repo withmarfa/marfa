@@ -103,6 +103,7 @@ interface User {
   provider: string;
   provider_id: string;
   tenant_id: string;
+  handle?: string | null;
 }
 
 interface Tenant {
@@ -293,6 +294,139 @@ describe("User-auth routes — authMode=hosted", () => {
       expect(body.user?.id).toBe(signupBody.user.id);
       expect(body.user?.email).toBe(ident.email);
       expect(body.tenant.id).toBe(signupBody.tenant.id);
+    });
+  });
+
+  describe("PUT /auth/me/handle", () => {
+    it("rejects unauthenticated requests with 401", async () => {
+      const res = await request(hosted.app, "PUT", "/auth/me/handle", {
+        body: { handle: "alice" },
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it("claims a valid handle and persists it on the user (200)", async () => {
+      const ident = uniqueProvider("handle-happy");
+      const signup = await request(hosted.app, "POST", "/auth/signup", {
+        body: { ...ident, name: "Handle Test" },
+      });
+      const signupBody = (await signup.json()) as SignupResponse;
+
+      const res = await request(hosted.app, "PUT", "/auth/me/handle", {
+        key: signupBody.api_key,
+        body: { handle: ident.provider_account_id },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { user: User };
+      expect(body.user.handle).toBe(ident.provider_account_id);
+    });
+
+    it("rejects a reserved brand handle with 400 handle_reserved", async () => {
+      const ident = uniqueProvider("reserved-brand");
+      const signup = await request(hosted.app, "POST", "/auth/signup", {
+        body: { ...ident, name: "Reserved Test" },
+      });
+      const signupBody = (await signup.json()) as SignupResponse;
+
+      const res = await request(hosted.app, "PUT", "/auth/me/handle", {
+        key: signupBody.api_key,
+        body: { handle: "google" },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as ErrorBody;
+      expect(body.error.code).toBe("handle_reserved");
+    });
+
+    it("rejects a reserved structural word with 400 handle_reserved", async () => {
+      const ident = uniqueProvider("reserved-struct");
+      const signup = await request(hosted.app, "POST", "/auth/signup", {
+        body: { ...ident, name: "Reserved Test" },
+      });
+      const signupBody = (await signup.json()) as SignupResponse;
+
+      const res = await request(hosted.app, "PUT", "/auth/me/handle", {
+        key: signupBody.api_key,
+        body: { handle: "admin" },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as ErrorBody;
+      expect(body.error.code).toBe("handle_reserved");
+    });
+
+    it("rejects a reserved namespace root with 400 handle_reserved", async () => {
+      const ident = uniqueProvider("reserved-root");
+      const signup = await request(hosted.app, "POST", "/auth/signup", {
+        body: { ...ident, name: "Reserved Test" },
+      });
+      const signupBody = (await signup.json()) as SignupResponse;
+
+      const res = await request(hosted.app, "PUT", "/auth/me/handle", {
+        key: signupBody.api_key,
+        body: { handle: "core" },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as ErrorBody;
+      expect(body.error.code).toBe("handle_reserved");
+    });
+
+    it("rejects a reserved future-namespace handle with 400 handle_reserved", async () => {
+      const ident = uniqueProvider("reserved-sync");
+      const signup = await request(hosted.app, "POST", "/auth/signup", {
+        body: { ...ident, name: "Reserved Test" },
+      });
+      const signupBody = (await signup.json()) as SignupResponse;
+
+      const res = await request(hosted.app, "PUT", "/auth/me/handle", {
+        key: signupBody.api_key,
+        body: { handle: "sync" },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as ErrorBody;
+      expect(body.error.code).toBe("handle_reserved");
+    });
+
+    it("rejects a malformed handle with 400 validation_error", async () => {
+      const ident = uniqueProvider("malformed");
+      const signup = await request(hosted.app, "POST", "/auth/signup", {
+        body: { ...ident, name: "Malformed Test" },
+      });
+      const signupBody = (await signup.json()) as SignupResponse;
+
+      const res = await request(hosted.app, "PUT", "/auth/me/handle", {
+        key: signupBody.api_key,
+        body: { handle: "--abc" },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as ErrorBody;
+      expect(body.error.code).toBe("validation_error");
+    });
+
+    it("rejects an already-claimed handle with 409 conflict", async () => {
+      const a = uniqueProvider("collide-a");
+      const b = uniqueProvider("collide-b");
+      const sa = await request(hosted.app, "POST", "/auth/signup", {
+        body: { ...a, name: "A" },
+      });
+      const sb = await request(hosted.app, "POST", "/auth/signup", {
+        body: { ...b, name: "B" },
+      });
+      const saBody = (await sa.json()) as SignupResponse;
+      const sbBody = (await sb.json()) as SignupResponse;
+
+      const taken = `taken-${Math.random().toString(36).slice(2, 10)}`;
+      const claim = await request(hosted.app, "PUT", "/auth/me/handle", {
+        key: saBody.api_key,
+        body: { handle: taken },
+      });
+      expect(claim.status).toBe(200);
+
+      const collide = await request(hosted.app, "PUT", "/auth/me/handle", {
+        key: sbBody.api_key,
+        body: { handle: taken },
+      });
+      expect(collide.status).toBe(409);
+      const body = (await collide.json()) as ErrorBody;
+      expect(body.error.code).toBe("conflict");
     });
   });
 });
