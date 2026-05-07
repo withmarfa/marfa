@@ -150,6 +150,15 @@ export enum ErrorCode {
    * (5xx / 429 / network) which the route handler may retry.
    */
   EMAIL_SEND_FAILED = "email_send_failed",
+  /**
+   * Handle claim was rejected because the value is on the reserved list
+   * (a structural-namespace word, a future-reserved namespace, or a
+   * brand the registry blocks at signup to prevent squatting and
+   * impersonation). Distinct from `validation_error` so the API caller
+   * can show a specific message and, eventually, route the claimant
+   * into a domain-verification flow if they own the matching domain.
+   */
+  HANDLE_RESERVED = "handle_reserved",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -209,6 +218,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.EMAIL_TRANSPORT_NOT_CONFIGURED]: 503,
   [ErrorCode.EMAIL_SUPPRESSED]: 422,
   [ErrorCode.EMAIL_SEND_FAILED]: 502,
+  [ErrorCode.HANDLE_RESERVED]: 400,
 };
 
 /** Returns the HTTP status code for a given error code. */

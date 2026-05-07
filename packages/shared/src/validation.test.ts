@@ -7,6 +7,8 @@ import {
   isValidEmail,
   isValidLanguageCode,
   isValidTypeIdentifier,
+  isValidHandle,
+  isReservedHandle,
   matchesTypePattern,
   resolveTypePermission,
 } from "./validation.js";
@@ -295,5 +297,128 @@ describe("resolveTypePermission", () => {
         "core.media.*": "write",
       }),
     ).toBe("write");
+  });
+});
+
+describe("isValidHandle", () => {
+  it("accepts plain alphanumeric handles within length bounds", () => {
+    expect(isValidHandle("alice")).toBe(true);
+    expect(isValidHandle("a1b2c3")).toBe(true);
+    expect(isValidHandle("abc")).toBe(true);
+    expect(isValidHandle("a".repeat(32))).toBe(true);
+  });
+
+  it("accepts hyphenated handles where the hyphens are interior", () => {
+    expect(isValidHandle("august-cayzer")).toBe(true);
+    expect(isValidHandle("a-b-c")).toBe(true);
+  });
+
+  it("rejects handles outside the 3–32 length window", () => {
+    expect(isValidHandle("ab")).toBe(false);
+    expect(isValidHandle("a")).toBe(false);
+    expect(isValidHandle("")).toBe(false);
+    expect(isValidHandle("a".repeat(33))).toBe(false);
+  });
+
+  it("rejects leading or trailing hyphens", () => {
+    expect(isValidHandle("-abc")).toBe(false);
+    expect(isValidHandle("abc-")).toBe(false);
+  });
+
+  it("rejects consecutive hyphens", () => {
+    expect(isValidHandle("a--b")).toBe(false);
+    expect(isValidHandle("foo--bar")).toBe(false);
+  });
+
+  it("rejects uppercase characters (canonical form is lowercase)", () => {
+    expect(isValidHandle("Abc")).toBe(false);
+    expect(isValidHandle("ABC")).toBe(false);
+  });
+
+  it("rejects non-alphanumeric characters other than hyphen", () => {
+    expect(isValidHandle("foo.bar")).toBe(false);
+    expect(isValidHandle("foo_bar")).toBe(false);
+    expect(isValidHandle("foo bar")).toBe(false);
+  });
+
+  it("rejects reserved namespace roots", () => {
+    expect(isValidHandle("core")).toBe(false);
+    expect(isValidHandle("system")).toBe(false);
+    expect(isValidHandle("app")).toBe(false);
+    expect(isValidHandle("user")).toBe(false);
+    expect(isValidHandle("myme")).toBe(false);
+  });
+
+  it("rejects reserved structural words", () => {
+    expect(isValidHandle("admin")).toBe(false);
+    expect(isValidHandle("api")).toBe(false);
+    expect(isValidHandle("login")).toBe(false);
+    expect(isValidHandle("settings")).toBe(false);
+  });
+
+  it("rejects future-reserved namespace handles", () => {
+    expect(isValidHandle("sync")).toBe(false);
+    expect(isValidHandle("auth")).toBe(false);
+    expect(isValidHandle("data")).toBe(false);
+  });
+
+  it("rejects major tech-company brand handles", () => {
+    expect(isValidHandle("google")).toBe(false);
+    expect(isValidHandle("apple")).toBe(false);
+    expect(isValidHandle("microsoft")).toBe(false);
+    expect(isValidHandle("github")).toBe(false);
+    expect(isValidHandle("openai")).toBe(false);
+    expect(isValidHandle("anthropic")).toBe(false);
+  });
+
+  it("rejects major consumer-app brand handles", () => {
+    expect(isValidHandle("obsidian")).toBe(false);
+    expect(isValidHandle("notion")).toBe(false);
+    expect(isValidHandle("figma")).toBe(false);
+    expect(isValidHandle("linear")).toBe(false);
+    expect(isValidHandle("slack")).toBe(false);
+  });
+
+  it("returns false for non-string input", () => {
+    expect(isValidHandle(undefined as unknown as string)).toBe(false);
+    expect(isValidHandle(null as unknown as string)).toBe(false);
+    expect(isValidHandle(42 as unknown as string)).toBe(false);
+  });
+});
+
+describe("isReservedHandle", () => {
+  it("returns true for reserved namespace roots", () => {
+    expect(isReservedHandle("core")).toBe(true);
+    expect(isReservedHandle("system")).toBe(true);
+    expect(isReservedHandle("app")).toBe(true);
+    expect(isReservedHandle("user")).toBe(true);
+    expect(isReservedHandle("myme")).toBe(true);
+  });
+
+  it("returns true for reserved structural and brand words", () => {
+    expect(isReservedHandle("admin")).toBe(true);
+    expect(isReservedHandle("google")).toBe(true);
+    expect(isReservedHandle("obsidian")).toBe(true);
+    expect(isReservedHandle("sync")).toBe(true);
+    expect(isReservedHandle("data")).toBe(true);
+  });
+
+  it("returns false for handles that aren't on either list", () => {
+    expect(isReservedHandle("alice")).toBe(false);
+    expect(isReservedHandle("august-cayzer")).toBe(false);
+    expect(isReservedHandle("a1b2c3")).toBe(false);
+  });
+
+  it("does not enforce length or grammar — that's isValidHandle's job", () => {
+    // A too-short string is not "reserved" — it just isn't valid. The
+    // route layer calls isReservedHandle first to surface a typed error,
+    // then falls through to isValidHandle for everything else.
+    expect(isReservedHandle("ab")).toBe(false);
+    expect(isReservedHandle("--bad")).toBe(false);
+  });
+
+  it("returns false for non-string input", () => {
+    expect(isReservedHandle(undefined as unknown as string)).toBe(false);
+    expect(isReservedHandle(null as unknown as string)).toBe(false);
   });
 });
