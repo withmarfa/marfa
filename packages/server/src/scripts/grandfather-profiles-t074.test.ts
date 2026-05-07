@@ -44,7 +44,7 @@ async function makeStorage(): Promise<Ctx> {
     }
   } else {
     const dbPath = join(tmpDir, "test.db");
-    storage = createSqliteStorage(dbPath, { authMode: "hosted" });
+    storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
   }
   return {
     storage,
@@ -68,18 +68,21 @@ async function insertAuthUser(
     ).pgDb;
     if (!db) throw new Error("pgDb missing");
     const { sql } = await import("drizzle-orm");
+    // postgres-js's parameter binder rejects raw Date in the str()
+    // step — pass an ISO string and let the driver cast to TIMESTAMPTZ.
+    const nowIso = now.toISOString();
     await db.execute(
-      sql`INSERT INTO auth_user (id, email, name, email_verified, created_at, updated_at) VALUES (${row.id}, ${row.email}, ${row.name ?? "Test"}, ${true}, ${now}, ${now})`,
+      sql`INSERT INTO auth_user (id, email, name, email_verified, created_at, updated_at) VALUES (${row.id}, ${row.email}, ${row.name ?? "Test"}, ${true}, ${nowIso}, ${nowIso})`,
     );
     return;
   }
   const runner = (
     storage as unknown as {
-      __sqliteRun?: (q: string, p: unknown[]) => { changes: number };
+      __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
     }
   ).__sqliteRun;
   if (!runner) throw new Error("sqlite run missing");
-  runner(
+  await runner(
     "INSERT INTO auth_user (id, email, name, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
     [row.id, row.email, row.name ?? "Test", 1, now.getTime(), now.getTime()],
   );

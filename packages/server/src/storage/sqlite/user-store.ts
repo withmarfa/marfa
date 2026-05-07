@@ -50,18 +50,22 @@ export class SqliteUserStore implements UserStore {
       created_at: now,
       updated_at: now,
     };
-    this.db.insert(users).values(row).run();
+    await this.db.insert(users).values(row).run();
     return rowToUser(row);
   }
 
   async setHandle(id: string, handle: string): Promise<User> {
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .update(users)
       .set({ handle, updated_at: now })
       .where(eq(users.id, id))
       .run();
-    const row = this.db.select().from(users).where(eq(users.id, id)).get();
+    const row = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, id))
+      .get();
     if (!row) throw new Error(`User ${id} not found`);
     return rowToUser(row);
   }
@@ -75,14 +79,18 @@ export class SqliteUserStore implements UserStore {
     if (patch.avatar_blob_hash !== undefined) {
       set.avatar_blob_hash = patch.avatar_blob_hash;
     }
-    this.db.update(users).set(set).where(eq(users.id, id)).run();
-    const row = this.db.select().from(users).where(eq(users.id, id)).get();
+    await this.db.update(users).set(set).where(eq(users.id, id)).run();
+    const row = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, id))
+      .get();
     if (!row) throw new Error(`User ${id} not found`);
     return rowToUser(row);
   }
 
   async getByHandle(handle: string): Promise<User | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(users)
       .where(eq(users.handle, handle))
@@ -91,12 +99,16 @@ export class SqliteUserStore implements UserStore {
   }
 
   async getById(id: string): Promise<User | null> {
-    const row = this.db.select().from(users).where(eq(users.id, id)).get();
+    const row = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, id))
+      .get();
     return row ? rowToUser(row) : null;
   }
 
   async getByAuthUserId(authUserId: string): Promise<User | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(users)
       .where(eq(users.auth_user_id, authUserId))
@@ -108,7 +120,7 @@ export class SqliteUserStore implements UserStore {
     provider: string,
     providerId: string,
   ): Promise<User | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(users)
       .where(
@@ -119,7 +131,7 @@ export class SqliteUserStore implements UserStore {
   }
 
   async getByTenantId(tenantId: string): Promise<User | null> {
-    const row = this.db
+    const row = await this.db
       .select()
       .from(users)
       .where(eq(users.tenant_id, tenantId))
@@ -131,7 +143,7 @@ export class SqliteUserStore implements UserStore {
     email: string;
     email_verified: boolean;
   } | null> {
-    const row = this.db
+    const row = await this.db
       .select({
         email: auth_user.email,
         email_verified: auth_user.emailVerified,

@@ -55,7 +55,7 @@ const config: AppConfig = {
   oauthRedirectAllowlist: [],
 };
 
-const storage = createSqliteStorage(":memory:");
+const storage = await createSqliteStorage(":memory:");
 const blobBackend = new FilesystemBlobBackend("/tmp/myme-openapi-blobs");
 const app = createApp(storage, blobBackend, config);
 

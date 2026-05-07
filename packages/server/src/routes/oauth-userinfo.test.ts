@@ -57,7 +57,7 @@ async function createHostedContext(): Promise<HostedContext> {
     }
   } else {
     const dbPath = join(tmpDir, "test.db");
-    storage = createSqliteStorage(dbPath, { authMode: "hosted" });
+    storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
   }
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
@@ -251,18 +251,25 @@ async function insertAuthUser(
     ).pgDb;
     if (!db) throw new Error("pgDb missing on storage");
     const { sql } = await import("drizzle-orm");
+    // postgres-js requires string/Buffer/ArrayBuffer in the parameter
+    // binder; ISO strings round-trip cleanly into TIMESTAMPTZ columns.
+    const createdAtIso = row.createdAt.toISOString();
+    const updatedAtIso = row.updatedAt.toISOString();
     await db.execute(
-      sql`INSERT INTO auth_user (id, email, name, email_verified, created_at, updated_at) VALUES (${row.id}, ${row.email}, ${row.name}, ${row.emailVerified}, ${row.createdAt}, ${row.updatedAt})`,
+      sql`INSERT INTO auth_user (id, email, name, email_verified, created_at, updated_at) VALUES (${row.id}, ${row.email}, ${row.name}, ${row.emailVerified}, ${createdAtIso}, ${updatedAtIso})`,
     );
     return;
   }
   const runner = (
     storage as unknown as {
-      __sqliteRun?: (q: string, params: unknown[]) => { changes: number };
+      __sqliteRun?: (
+        q: string,
+        params: unknown[],
+      ) => Promise<{ changes: number }>;
     }
   ).__sqliteRun;
   if (!runner) throw new Error("sqlite run helper missing on storage");
-  runner(
+  await runner(
     "INSERT INTO auth_user (id, email, name, email_verified, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
     [
       row.id,

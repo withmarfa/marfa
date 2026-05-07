@@ -432,11 +432,11 @@ describe("POST /lease-tokens/validate", () => {
     // the storage's escape hatch where available.
     const sqliteRun = (
       ctx.storage as unknown as {
-        __sqliteRun?: (q: string, p: unknown[]) => unknown;
+        __sqliteRun?: (q: string, p: unknown[]) => Promise<unknown>;
       }
     ).__sqliteRun;
     if (sqliteRun) {
-      sqliteRun(
+      await sqliteRun(
         "UPDATE connection_leased_tokens SET expires_at = ? WHERE id = ?",
         ["2020-01-01T00:00:00.000Z", created.id],
       );

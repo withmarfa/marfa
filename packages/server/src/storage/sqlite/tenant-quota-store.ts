@@ -18,14 +18,14 @@ import type { DrizzleDb } from "./connection.js";
 export class SqliteTenantQuotaStore implements TenantQuotaStore {
   constructor(private db: DrizzleDb) {}
 
-  get(tenantId: string): Promise<TenantQuota | null> {
-    const row = this.db
+  async get(tenantId: string): Promise<TenantQuota | null> {
+    const row = await this.db
       .select()
       .from(tenantQuotas)
       .where(eq(tenantQuotas.tenant_id, tenantId))
       .get();
-    if (!row) return Promise.resolve(null);
-    return Promise.resolve({
+    if (!row) return null;
+    return {
       tenant_id: row.tenant_id,
       items_limit: row.items_limit,
       webhooks_limit: row.webhooks_limit,
@@ -33,10 +33,10 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
       storage_bytes_limit: row.storage_bytes_limit,
       rate_per_minute_limit: row.rate_per_minute_limit,
       updated_at: row.updated_at,
-    });
+    };
   }
 
-  set(
+  async set(
     tenantId: string,
     input: {
       items_limit?: number | null;
@@ -47,7 +47,7 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
     },
   ): Promise<TenantQuota> {
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .insert(tenantQuotas)
       .values({
         tenant_id: tenantId,
@@ -70,7 +70,7 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
         },
       })
       .run();
-    return Promise.resolve({
+    return {
       tenant_id: tenantId,
       items_limit: input.items_limit ?? null,
       webhooks_limit: input.webhooks_limit ?? null,
@@ -78,33 +78,33 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
       storage_bytes_limit: input.storage_bytes_limit ?? null,
       rate_per_minute_limit: input.rate_per_minute_limit ?? null,
       updated_at: now,
-    });
+    };
   }
 
-  count(tenantId: string, resource: QuotaResource): Promise<number> {
+  async count(tenantId: string, resource: QuotaResource): Promise<number> {
     if (resource === "items") {
-      const row = this.db
+      const row = await this.db
         .select({ c: sql<number>`count(*)` })
         .from(items)
         .where(eq(items.tenant_id, tenantId))
         .get();
-      return Promise.resolve(row?.c ?? 0);
+      return row?.c ?? 0;
     }
     if (resource === "webhooks") {
-      const row = this.db
+      const row = await this.db
         .select({ c: sql<number>`count(*)` })
         .from(outboundWebhooks)
         .where(eq(outboundWebhooks.tenant_id, tenantId))
         .get();
-      return Promise.resolve(row?.c ?? 0);
+      return row?.c ?? 0;
     }
     if (resource === "blobs") {
-      const row = this.db
+      const row = await this.db
         .select({ c: sql<number>`count(*)` })
         .from(blobs)
         .where(eq(blobs.tenant_id, tenantId))
         .get();
-      return Promise.resolve(row?.c ?? 0);
+      return row?.c ?? 0;
     }
     if (resource === "storage_bytes") {
       // SUM(size) across the tenant's blob metadata rows. T-052
@@ -112,15 +112,15 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
       // physical file by hash, so this counts every blob row whose
       // tenant_id matches — different tenants uploading the same
       // hash see the row in their own scope (T-049 multi-row design).
-      const row = this.db
+      const row = await this.db
         .select({ s: sql<number>`coalesce(sum(${blobs.size}), 0)` })
         .from(blobs)
         .where(eq(blobs.tenant_id, tenantId))
         .get();
-      return Promise.resolve(row?.s ?? 0);
+      return row?.s ?? 0;
     }
     // rate_per_minute is enforced via the rate-limit middleware's
     // sliding-window counter, not via tenant_quotas.count.
-    return Promise.resolve(0);
+    return 0;
   }
 }

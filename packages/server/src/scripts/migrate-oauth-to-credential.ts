@@ -262,7 +262,7 @@ async function main(): Promise<void> {
   } else {
     const { createSqliteStorage } = await import("../storage/sqlite/index.js");
     const path = process.env.SQLITE_PATH ?? "./data/myme.db";
-    storage = createSqliteStorage(path);
+    storage = await createSqliteStorage(path);
   }
 
   try {

@@ -429,7 +429,7 @@ async function createHostedSignUpContext(): Promise<HostedSignUpContext> {
     }
   } else {
     const dbPath = join(tmpDir, "test.db");
-    storage = createSqliteStorage(dbPath, { authMode: "hosted" });
+    storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
   }
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
@@ -569,9 +569,9 @@ describe("POST /auth/sign-up — hosted-mode T-074 invariants", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("error=handle_reserved");
 
-    const all = (
+    const all = await (
       hosted.storage as unknown as {
-        __sqliteAll?: (q: string) => unknown[];
+        __sqliteAll?: (q: string) => Promise<unknown[]>;
       }
     ).__sqliteAll?.("SELECT COUNT(*) as n FROM auth_user");
     expect((all?.[0] as { n: number } | undefined)?.n).toBe(0);

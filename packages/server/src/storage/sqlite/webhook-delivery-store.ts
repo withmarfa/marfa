@@ -27,7 +27,7 @@ function rowToDelivery(
 export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
   constructor(private db: DrizzleDb) {}
 
-  log(entry: {
+  async log(entry: {
     webhookId: string;
     event: string;
     statusCode?: number;
@@ -35,7 +35,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     success: boolean;
     error?: string;
   }): Promise<void> {
-    this.db
+    await this.db
       .insert(outboundWebhookDeliveries)
       .values({
         id: generateId(),
@@ -48,21 +48,20 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         created_at: new Date().toISOString(),
       })
       .run();
-    return Promise.resolve();
   }
 
-  list(webhookId: string, limit = 50): Promise<WebhookDelivery[]> {
-    const rows = this.db
+  async list(webhookId: string, limit = 50): Promise<WebhookDelivery[]> {
+    const rows = await this.db
       .select()
       .from(outboundWebhookDeliveries)
       .where(eq(outboundWebhookDeliveries.webhook_id, webhookId))
       .orderBy(desc(outboundWebhookDeliveries.created_at))
       .limit(limit)
       .all();
-    return Promise.resolve(rows.map(rowToDelivery));
+    return rows.map(rowToDelivery);
   }
 
-  schedule(entry: {
+  async schedule(entry: {
     webhookId: string;
     event: string;
     payload: string;
@@ -71,7 +70,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     nextAttemptAt: string;
   }): Promise<string> {
     const id = generateId();
-    this.db
+    await this.db
       .insert(outboundWebhookDeliveries)
       .values({
         id,
@@ -90,12 +89,12 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         status: "pending",
       })
       .run();
-    return Promise.resolve(id);
+    return id;
   }
 
-  getPending(now: string, limit = 50): Promise<PendingWebhookDelivery[]> {
+  async getPending(now: string, limit = 50): Promise<PendingWebhookDelivery[]> {
     const claimExpiry = new Date(Date.now() + CLAIM_LOCK_TTL_MS).toISOString();
-    const rows = this.db.all<{
+    const rows = await this.db.all<{
       id: string;
       webhook_id: string;
       event: string;
@@ -117,28 +116,26 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
           RETURNING id, webhook_id, event, payload, webhook_url, webhook_secret, attempt, max_attempts
         `,
     );
-    return Promise.resolve(
-      rows.map((r) => ({
-        id: r.id,
-        webhook_id: r.webhook_id,
-        event: r.event,
-        payload: r.payload ?? "",
-        webhook_url: r.webhook_url ?? "",
-        webhook_secret: r.webhook_secret ?? "",
-        attempt: r.attempt,
-        max_attempts: r.max_attempts,
-      })),
-    );
+    return rows.map((r) => ({
+      id: r.id,
+      webhook_id: r.webhook_id,
+      event: r.event,
+      payload: r.payload ?? "",
+      webhook_url: r.webhook_url ?? "",
+      webhook_secret: r.webhook_secret ?? "",
+      attempt: r.attempt,
+      max_attempts: r.max_attempts,
+    }));
   }
 
   /** See PG store for rationale. SQLite is single-process so the CAS
    *  serialises trivially at the statement level. */
-  claimById(
+  async claimById(
     id: string,
     claimExpiry: string,
     now: string,
   ): Promise<PendingWebhookDelivery | null> {
-    const rows = this.db.all<{
+    const rows = await this.db.all<{
       id: string;
       webhook_id: string;
       event: string;
@@ -158,8 +155,8 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         `,
     );
     const row = rows[0];
-    if (!row) return Promise.resolve(null);
-    return Promise.resolve({
+    if (!row) return null;
+    return {
       id: row.id,
       webhook_id: row.webhook_id,
       event: row.event,
@@ -168,11 +165,15 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       webhook_secret: row.webhook_secret ?? "",
       attempt: row.attempt,
       max_attempts: row.max_attempts,
-    });
+    };
   }
 
-  markSuccess(id: string, statusCode: number, attempt: number): Promise<void> {
-    this.db
+  async markSuccess(
+    id: string,
+    statusCode: number,
+    attempt: number,
+  ): Promise<void> {
+    await this.db
       .update(outboundWebhookDeliveries)
       .set({
         status: "success",
@@ -182,17 +183,16 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       })
       .where(eq(outboundWebhookDeliveries.id, id))
       .run();
-    return Promise.resolve();
   }
 
-  markFailed(
+  async markFailed(
     id: string,
     statusCode: number | undefined,
     error: string,
     attempt: number,
     nextAttemptAt: string | null,
   ): Promise<void> {
-    this.db
+    await this.db
       .update(outboundWebhookDeliveries)
       .set({
         status_code: statusCode ?? null,
@@ -203,15 +203,13 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       })
       .where(eq(outboundWebhookDeliveries.id, id))
       .run();
-    return Promise.resolve();
   }
 
-  markDeadLetter(id: string): Promise<void> {
-    this.db
+  async markDeadLetter(id: string): Promise<void> {
+    await this.db
       .update(outboundWebhookDeliveries)
       .set({ status: "dead_letter" })
       .where(eq(outboundWebhookDeliveries.id, id))
       .run();
-    return Promise.resolve();
   }
 }

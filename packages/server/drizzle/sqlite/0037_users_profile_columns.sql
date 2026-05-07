@@ -29,6 +29,9 @@ WHERE `auth_user_id` IS NULL
     WHERE LOWER(`auth_user`.`email`) = LOWER(`users`.`email`)
   );--> statement-breakpoint
 
--- 3. Drop the legacy columns.
+-- 3. Drop the legacy columns. SQLite's ALTER TABLE DROP COLUMN refuses
+-- to proceed while a unique index references the column (the original
+-- 0000 migration created `users_email_unique`); drop the index first.
+DROP INDEX IF EXISTS `users_email_unique`;--> statement-breakpoint
 ALTER TABLE `users` DROP COLUMN `email`;--> statement-breakpoint
 ALTER TABLE `users` DROP COLUMN `avatar_url`;

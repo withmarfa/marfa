@@ -137,16 +137,19 @@ async function listAuthUsers(storage: Storage): Promise<AuthUserRow[]> {
     const db = (
       storage as unknown as {
         pgDb?: {
-          execute: (q: unknown) => Promise<{
-            rows: { id: string; email: string; name: string | null }[];
-          }>;
+          execute: (q: unknown) => Promise<unknown>;
         };
       }
     ).pgDb;
     if (!db) throw new Error("pgDb missing on storage");
     const { sql } = await import("drizzle-orm");
-    const result = await db.execute(sql`SELECT id, email, name FROM auth_user`);
-    return result.rows.map((r) => ({
+    // postgres-js returns the rows array directly from `db.execute(...)`,
+    // not wrapped in `{ rows }` like node-postgres does. Cast through
+    // `unknown` so neither shape gives a false sense of safety.
+    const result = (await db.execute(
+      sql`SELECT id, email, name FROM auth_user`,
+    )) as AuthUserRow[];
+    return result.map((r) => ({
       id: r.id,
       email: r.email,
       name: r.name,
@@ -154,11 +157,13 @@ async function listAuthUsers(storage: Storage): Promise<AuthUserRow[]> {
   }
   const all = (
     storage as unknown as {
-      __sqliteAll?: (q: string) => {
-        id: string;
-        email: string;
-        name: string | null;
-      }[];
+      __sqliteAll?: (q: string) => Promise<
+        {
+          id: string;
+          email: string;
+          name: string | null;
+        }[]
+      >;
     }
   ).__sqliteAll;
   if (!all) throw new Error("sqlite __sqliteAll missing on storage");
@@ -174,25 +179,25 @@ async function listUsersNeedingHandle(
     const db = (
       storage as unknown as {
         pgDb?: {
-          execute: (q: unknown) => Promise<{
-            rows: { id: string; auth_user_id: string }[];
-          }>;
+          execute: (q: unknown) => Promise<unknown>;
         };
       }
     ).pgDb;
     if (!db) throw new Error("pgDb missing on storage");
     const { sql } = await import("drizzle-orm");
-    const result = await db.execute(
+    // postgres-js returns the rows array directly (not `{ rows }`).
+    return (await db.execute(
       sql`SELECT id, auth_user_id FROM users WHERE handle IS NULL AND auth_user_id IS NOT NULL`,
-    );
-    return result.rows;
+    )) as { id: string; auth_user_id: string }[];
   }
   const all = (
     storage as unknown as {
-      __sqliteAll?: (q: string) => {
-        id: string;
-        auth_user_id: string;
-      }[];
+      __sqliteAll?: (q: string) => Promise<
+        {
+          id: string;
+          auth_user_id: string;
+        }[]
+      >;
     }
   ).__sqliteAll;
   if (!all) throw new Error("sqlite __sqliteAll missing on storage");
@@ -332,7 +337,7 @@ async function main(): Promise<void> {
   } else {
     const { createSqliteStorage } = await import("../storage/sqlite/index.js");
     const sqlitePath = process.env.SQLITE_PATH ?? "./data/myme.db";
-    storage = createSqliteStorage(sqlitePath, { authMode: "hosted" });
+    storage = await createSqliteStorage(sqlitePath, { authMode: "hosted" });
   }
 
   console.log(
