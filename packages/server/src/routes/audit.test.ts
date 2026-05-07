@@ -3,6 +3,7 @@ import {
   createTestContext,
   request,
   TEST_API_KEY_SALT,
+  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { parseTrustedProxyCidrs } from "../middleware/client-ip.js";
@@ -179,14 +180,21 @@ describe("GET /audit", () => {
 
     // Look up the audit row for the item we just created — most reliable
     // way to find our own row vs. unrelated noise from other tests.
-    const listRes = await request(
-      ctx.app,
-      "GET",
-      `/audit?action=item.create&resource_id=${created.item.id}`,
-      { key: ctx.adminKey, peer: "203.0.113.42" },
+    // T-079: poll briefly because `audit.log` is fire-and-forget — under
+    // PG the insert sometimes lands after this GET would otherwise return.
+    const body = await waitForAudit(
+      async () => {
+        const listRes = await request(
+          ctx.app,
+          "GET",
+          `/audit?action=item.create&resource_id=${created.item.id}`,
+          { key: ctx.adminKey, peer: "203.0.113.42" },
+        );
+        expect(listRes.status).toBe(200);
+        return (await listRes.json()) as AuditPage;
+      },
+      (b) => b.data.length >= 1,
     );
-    expect(listRes.status).toBe(200);
-    const body = (await listRes.json()) as AuditPage;
     expect(body.data).toHaveLength(1);
     expect(body.data[0]?.client_ip).toBe("203.0.113.42");
     // client_ip is also folded into the details JSON — the persistence
@@ -360,18 +368,24 @@ describe("GET /audit", () => {
       expect(res.status).toBe(201);
       const created = (await res.json()) as { item: { id: string } };
 
-      const listRes = await request(
-        trustedCtx.app,
-        "GET",
-        `/audit?action=item.create&resource_id=${created.item.id}`,
-        {
-          key: trustedCtx.adminKey,
-          peer: "10.0.0.5",
-          headers: { "x-forwarded-for": "203.0.113.7" },
+      // T-079: same fire-and-forget audit race — poll until the row lands.
+      const body = await waitForAudit(
+        async () => {
+          const listRes = await request(
+            trustedCtx.app,
+            "GET",
+            `/audit?action=item.create&resource_id=${created.item.id}`,
+            {
+              key: trustedCtx.adminKey,
+              peer: "10.0.0.5",
+              headers: { "x-forwarded-for": "203.0.113.7" },
+            },
+          );
+          expect(listRes.status).toBe(200);
+          return (await listRes.json()) as AuditPage;
         },
+        (b) => b.data.length >= 1,
       );
-      expect(listRes.status).toBe(200);
-      const body = (await listRes.json()) as AuditPage;
       expect(body.data).toHaveLength(1);
       // The leftmost untrusted hop is the recorded IP — NOT the peer
       // (which was a trusted proxy) and NOT some other XFF entry.

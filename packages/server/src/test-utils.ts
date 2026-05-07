@@ -116,6 +116,45 @@ export async function readLatestResetToken(
   return rows[0]?.identifier.slice("reset-password:".length) ?? null;
 }
 
+/**
+ * T-079 — retry-poll helper for fire-and-forget audit assertions.
+ *
+ * Most route handlers emit audit rows via `void storage.audit.log(...)`
+ * — the audit insert is intentionally off the critical path so it
+ * doesn't add latency to every API call. Tests that immediately query
+ * audit after the action will sometimes win the race against the
+ * pending insert (typically on SQLite) and sometimes lose it
+ * (consistently on slower PG). Rather than make `audit.log` awaitable
+ * for production, tests poll briefly until the row appears.
+ *
+ * Pass either:
+ *   - `{ filter }` — runs `storage.audit.list(filter)` until at least
+ *     `min` rows match, OR
+ *   - `{ probe }` — calls the user-supplied async probe (e.g. a
+ *     `GET /audit?...` HTTP request) and asserts the predicate.
+ *
+ * Returns the final result so the caller can chain assertions.
+ *
+ * Bounded to ~2s with 25ms polls — long enough to cover any audit
+ * insert latency on a loaded Docker Postgres, short enough that a real
+ * regression (the row genuinely never lands) still surfaces fast.
+ */
+export async function waitForAudit<T>(
+  probe: () => Promise<T>,
+  predicate: (result: T) => boolean,
+  options?: { timeoutMs?: number; intervalMs?: number },
+): Promise<T> {
+  const timeoutMs = options?.timeoutMs ?? 2000;
+  const intervalMs = options?.intervalMs ?? 25;
+  const deadline = Date.now() + timeoutMs;
+  let result = await probe();
+  while (!predicate(result) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    result = await probe();
+  }
+  return result;
+}
+
 export async function createTestContext(
   overrides?: Partial<AppConfig>,
 ): Promise<TestContext> {
