@@ -107,6 +107,23 @@ describe("renderDeviceConsentScreen (Wave C PR4)", () => {
     expect(html).not.toContain("<script>x</script>");
     expect(html).toContain("&lt;script&gt;");
   });
+
+  it("renders OIDC scopes as the bare literal, not <literal>:none", () => {
+    const html = renderDeviceConsentScreen({
+      ...PARAMS,
+      scopes: [
+        {
+          typePattern: "openid",
+          operation: "none",
+          kind: "oidc",
+          oidcScope: "openid",
+        },
+        { typePattern: "core.note", operation: "read" },
+      ],
+    });
+    expect(html).toContain("<code>openid</code>");
+    expect(html).not.toContain("openid:none");
+  });
 });
 
 describe("renderDeviceDecisionPage (Wave C PR4)", () => {

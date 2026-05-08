@@ -96,7 +96,10 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
   const safeUserCode = escapeHtml(params.userCode);
   const scopeItems = params.scopes
     .map((s) => {
-      const literal = `${s.typePattern}:${s.operation}`;
+      const literal =
+        s.kind === "oidc"
+          ? (s.oidcScope ?? s.typePattern)
+          : `${s.typePattern}:${s.operation}`;
       const desc = params.descriptions?.[s.typePattern];
       return `<li>
         ${desc ? `<div>${escapeHtml(desc)}</div>` : ""}
