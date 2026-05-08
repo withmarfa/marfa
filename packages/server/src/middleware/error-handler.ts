@@ -1,4 +1,5 @@
 import type { ErrorHandler } from "hono";
+import { HTTPException } from "hono/http-exception";
 import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
 import { notifyError } from "./error-notifier.js";
@@ -44,12 +45,66 @@ export function createErrorHandler(config: {
       return jsonResponse({ error }, err.status, err.code);
     }
 
-    if (err instanceof SyntaxError && err.message.includes("JSON")) {
+    // Malformed JSON (`{not valid json`) and empty bodies on routes
+    // that declare a JSON validator. Hono's validator throws an
+    // `HTTPException` with the literal message "Malformed JSON in
+    // request body" before user middleware runs. Surface as our
+    // typed 400 so the conformance suite's adversarial probes don't
+    // see 500s and operator logs aren't noisy with false incidents.
+    if (
+      err instanceof HTTPException &&
+      err.message === "Malformed JSON in request body"
+    ) {
       return jsonResponse(
         {
           error: {
             code: "validation_error",
             message: "Invalid JSON in request body",
+          },
+        },
+        400,
+        "validation_error",
+      );
+    }
+
+    // Other HTTPExceptions (e.g. forwarded from Hono internals)
+    // surface their own status. Wrap in our error envelope.
+    if (err instanceof HTTPException) {
+      const code = err.status >= 500 ? "internal_error" : "validation_error";
+      return jsonResponse(
+        { error: { code, message: err.message } },
+        err.status,
+        code,
+      );
+    }
+
+    // Defensive: a `SyntaxError` thrown directly by `JSON.parse` (not
+    // wrapped by Hono's validator) should also map to 400.
+    if (err instanceof SyntaxError) {
+      return jsonResponse(
+        {
+          error: {
+            code: "validation_error",
+            message: "Invalid JSON in request body",
+          },
+        },
+        400,
+        "validation_error",
+      );
+    }
+
+    // Zod schema validation failures that escaped the route-level
+    // validator. Duck-typed by `name` so we don't take a direct zod
+    // dep here.
+    if (
+      typeof err === "object" &&
+      (err as { name?: string }).name === "ZodError"
+    ) {
+      return jsonResponse(
+        {
+          error: {
+            code: "validation_error",
+            message: "Request body failed validation",
           },
         },
         400,
