@@ -62,7 +62,10 @@ export function renderConsentScreen(params: ConsentParams): string {
   // The "removed" branch only carries literals (no `ParsedScope`),
   // since we render them as-is without splitting on read/write.
   const scopeCheckbox = (scope: ParsedScope, opts?: { checked?: boolean }) => {
-    const literal = `${scope.typePattern}:${scope.operation}`;
+    const literal =
+      scope.kind === "oidc"
+        ? (scope.oidcScope ?? scope.typePattern)
+        : `${scope.typePattern}:${scope.operation}`;
     const description = descriptionFor(scope.typePattern);
     const humanLine = description
       ? `<span class="scope-human">${escapeHtml(description)}</span>`
@@ -108,17 +111,19 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   let scopesHtml: string;
   if (showDiff) {
-    // Compute diff against literal scope strings (`<type>:<verb>`).
-    const nextLiterals = params.scopes.map(
-      (s) => `${s.typePattern}:${s.operation}`,
-    );
+    // Compute diff against literal scope strings (`<type>:<verb>` or bare OIDC literal).
+    const scopeLiteral = (s: ParsedScope) =>
+      s.kind === "oidc"
+        ? (s.oidcScope ?? s.typePattern)
+        : `${s.typePattern}:${s.operation}`;
+    const nextLiterals = params.scopes.map(scopeLiteral);
     const diff = computeConsentDiff(params.priorScopes ?? [], nextLiterals);
     // Re-hydrate the kept / added literals back to ParsedScopes so
     // the renderer can split read/write description lookup. Map by
     // literal back to the input.
     const parsedByLiteral = new Map<string, ParsedScope>();
     for (const scope of params.scopes) {
-      parsedByLiteral.set(`${scope.typePattern}:${scope.operation}`, scope);
+      parsedByLiteral.set(scopeLiteral(scope), scope);
     }
     const keptParsed = diff.kept
       .map((lit) => parsedByLiteral.get(lit))
@@ -151,10 +156,18 @@ export function renderConsentScreen(params: ConsentParams): string {
         : "";
     scopesHtml = `${keptSection}${addedSection}${removedSection}`;
   } else {
-    // First-time consent — flat read / write split.
+    // First-time consent — OIDC identity / read / write sections.
+    const oidcScopes = params.scopes.filter((s) => s.kind === "oidc");
     const readScopes = params.scopes.filter((s) => s.operation === "read");
     const writeScopes = params.scopes.filter((s) => s.operation === "write");
 
+    const oidcSection =
+      oidcScopes.length > 0
+        ? `<div class="section">
+            <h2>Identity</h2>
+            ${oidcScopes.map((s) => scopeCheckbox(s)).join("\n")}
+          </div>`
+        : "";
     const readSection =
       readScopes.length > 0
         ? `<div class="section">
@@ -169,7 +182,7 @@ export function renderConsentScreen(params: ConsentParams): string {
             ${writeScopes.map((s) => scopeCheckbox(s)).join("\n")}
           </div>`
         : "";
-    scopesHtml = `${readSection}${writeSection}`;
+    scopesHtml = `${oidcSection}${readSection}${writeSection}`;
   }
 
   // Lede copy reflects whether we're showing a fresh consent or a
