@@ -145,6 +145,62 @@ const InboundSubscriptionSchema = z.object({
   disabled: z.boolean(),
 });
 
+// ---------------------------------------------------------------------------
+// Verify-context lookup — control-plane internal (T-082).
+//
+// Resolves the bits of state the runtime-control verify route needs to
+// build a queue message envelope and dispatch it: the connection itself
+// (validated as kind `integration` and active), the integration manifest
+// name, and the tenant_id. Gated on `is_platform: true` — operator-debug
+// surface, not consumer-facing. Mirrors the same gate the
+// `/system/runtime-credentials` endpoint applies (line 30 of this file).
+// ---------------------------------------------------------------------------
+
+const VerifyContextSchema = z.object({
+  connection_id: z.string(),
+  integration_name: z.string(),
+  tenant_id: z.string().nullable(),
+});
+
+const verifyContextRoute = createRoute({
+  method: "get",
+  path: "/connections/{connection_id}/verify-context",
+  tags: ["System"],
+  summary:
+    "Resolve the verify-route inputs for a Connection — control-plane only (T-082)",
+  description:
+    "Returns the manifest `integration_name` and `tenant_id` the runtime-control verify route needs to construct a queue envelope. Validates the connection exists, is `kind: integration`, and is active. Platform-credential gated; operator-debug surface.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      connection_id: z.string().min(1),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: VerifyContextSchema } },
+      description: "Verify context resolved.",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Caller lacks is_platform: true",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description:
+        "Connection is not of kind `integration`, not active, or has an unresolved integration_ref.",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Connection not found.",
+    },
+  },
+});
+
 const lookupInboundWebhooksRoute = createRoute({
   method: "get",
   path: "/inbound-webhook-subscriptions/{connection_id}",
@@ -244,6 +300,76 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
         created_at: stored.created_at,
       },
       201,
+    );
+  });
+
+  router.openapi(verifyContextRoute, async (c) => {
+    const apiKey = requireAuth(c);
+    if (!apiKey.is_platform) {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        "Verify context lookup requires a platform credential (is_platform: true)",
+      );
+    }
+    const { connection_id } = c.req.valid("param");
+    const connection = await storage.items.get(connection_id);
+    if (!connection) {
+      throw new MymeError(ErrorCode.NOT_FOUND, "Connection not found");
+    }
+    if (connection.type !== "system.connection") {
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        "Item is not a system.connection",
+      );
+    }
+    const props = connection.properties as {
+      kind?: string;
+      status?: string;
+      integration_ref?: string;
+    };
+    if (props.kind !== "integration") {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Connection is not of kind `integration`",
+        { kind: props.kind },
+      );
+    }
+    if (connection.state !== "active" || props.status !== "active") {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Connection is not active",
+        { state: connection.state, status: props.status },
+      );
+    }
+    if (!props.integration_ref) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Connection has no integration_ref",
+      );
+    }
+    const integration = await storage.items.get(props.integration_ref);
+    if (integration?.type !== "system.integration") {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Connection's integration_ref does not resolve to a system.integration",
+      );
+    }
+    const integrationName = (
+      integration.properties as { manifest_name?: string }
+    ).manifest_name;
+    if (typeof integrationName !== "string" || integrationName.length === 0) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Integration manifest is missing a name",
+      );
+    }
+    return c.json(
+      {
+        connection_id: connection.id,
+        integration_name: integrationName,
+        tenant_id: connection.tenant_id ?? null,
+      },
+      200,
     );
   });
 

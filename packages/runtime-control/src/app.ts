@@ -5,6 +5,7 @@ import { registerWebhookRoutes } from "./routes/webhooks.js";
 import { registerLeaseRoutes } from "./routes/lease.js";
 import { registerInstallCallbackRoute } from "./routes/install-callback.js";
 import { registerArmScheduleRoute } from "./routes/arm-schedule.js";
+import { registerVerifyRoute } from "./routes/verify.js";
 
 export const VERSION = "0.0.1";
 
@@ -20,6 +21,7 @@ export function buildApp(): Hono<{ Bindings: ControlPlaneEnv }> {
   registerLeaseRoutes(app);
   registerInstallCallbackRoute(app);
   registerArmScheduleRoute(app);
+  registerVerifyRoute(app);
 
   app.notFound((c) => c.json({ error: "not_found", path: c.req.path }, 404));
 

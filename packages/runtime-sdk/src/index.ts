@@ -60,6 +60,12 @@ export type { ConnectionContext } from "./connection-context.js";
 export { consumeBatch, buildConnectionContext } from "./queue-consumer.js";
 export type { ConsumerEnvironment } from "./queue-consumer.js";
 
+export { verifyHandler } from "./verify-handler.js";
+export type {
+  VerifyRequestBody,
+  VerifyResponseBody,
+} from "./verify-handler.js";
+
 export type {
   CycleMetadata,
   QueueEnvelopeBase,
