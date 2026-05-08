@@ -225,6 +225,19 @@ function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
 }
 
 /**
+ * Resolve the per-tenant hop budget without invoking the publish path.
+ * Public counterpart to the module-private `getHopBudget` so debug
+ * surfaces (T-083 preview-event) can report what the budget would be
+ * for a tenant. Falls back to `DEFAULT_HOP_BUDGET` in keys-mode (no
+ * tenant scope) and when the wiring isn't initialised (tests).
+ */
+export async function resolveHopBudget(
+  tenantId: string | undefined,
+): Promise<number> {
+  return getHopBudget(tenantId);
+}
+
+/**
  * Check whether the event would exceed the tenant's hop budget. When it
  * does, fire the overflow hook and return false so the caller skips
  * persistence + emission. Returns true on the happy path.

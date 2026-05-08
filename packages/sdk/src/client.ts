@@ -28,6 +28,8 @@ import type {
   UpdateWebhookInput,
   ConnectionInstallResult,
   ConnectionUninstallResult,
+  PreviewEventRequest,
+  PreviewEventResult,
 } from "@mymehq/shared";
 import { HttpTransport } from "./transport.js";
 import {
@@ -1131,6 +1133,29 @@ export class MymeClient {
       return this.transport.request<ConnectionUninstallResult>(
         "POST",
         `/connections/${id}/uninstall`,
+      );
+    },
+    /**
+     * Preview the wire envelopes the reactive-run bridge would emit for
+     * a synthetic item-event, without dispatching anything. Operator
+     * debugging surface (T-083): given an existing item id and an event
+     * type, the route returns one row per subscribing connection — either
+     * `would_dispatch: true` with the synthesised envelope, or
+     * `would_dispatch: false` with a `dispatch_reason` (`self_event`,
+     * `cross_tenant`, `hop_budget_exceeded`, `subscription_inactive`).
+     *
+     * Defaults to all subscribers in the caller's tenant; pass
+     * `connection_id` to filter to one. The optional `cycle` override
+     * lets you reproduce reactive scenarios ("what if hop_count was N?").
+     * Workspace-admin only.
+     */
+    previewEvent: async (
+      input: PreviewEventRequest,
+    ): Promise<PreviewEventResult> => {
+      return this.transport.request<PreviewEventResult>(
+        "POST",
+        "/connections/preview-event",
+        { body: input },
       );
     },
   };

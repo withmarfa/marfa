@@ -181,3 +181,106 @@ describe("client.connections.uninstall", () => {
     });
   });
 });
+
+describe("client.connections.previewEvent", () => {
+  it("issues POST /connections/preview-event with the typed body and returns the typed result", async () => {
+    const fakeResult = {
+      envelopes: [
+        {
+          connection_id: "itm_conn_1",
+          integration_name: "acme.slack",
+          would_dispatch: true,
+          dispatch_reason: "ok",
+          envelope: {
+            kind: "item-event",
+            integration_name: "acme.slack",
+            connection_id: "itm_conn_1",
+            event_type: "item.created",
+            item_id: "itm_note_1",
+            cycle: { originating_connection_id: null, hop_count: 0 },
+            payload: {},
+          },
+        },
+      ],
+      hop_budget: { max: 5, used: 0 },
+    };
+
+    const mockFetch = vi.fn(
+      (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const urlStr =
+          typeof url === "string"
+            ? url
+            : url instanceof URL
+              ? url.href
+              : url.url;
+        expect(urlStr).toBe("http://example.test/connections/preview-event");
+        expect(init?.method).toBe("POST");
+        const body = JSON.parse(init?.body as string) as Record<
+          string,
+          unknown
+        >;
+        expect(body).toEqual({
+          item_id: "itm_note_1",
+          event_type: "created",
+          connection_id: "itm_conn_1",
+        });
+        return Promise.resolve(makeJsonResponse(200, fakeResult));
+      },
+    );
+
+    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    const result = await client.connections.previewEvent({
+      item_id: "itm_note_1",
+      event_type: "created",
+      connection_id: "itm_conn_1",
+    });
+
+    expect(result).toEqual(fakeResult);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards an optional cycle override unchanged", async () => {
+    const mockFetch = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const body = JSON.parse(init?.body as string) as Record<
+          string,
+          unknown
+        >;
+        expect(body).toEqual({
+          item_id: "itm_note_2",
+          event_type: "updated",
+          cycle: { originating_connection_id: "itm_conn_2", hop_count: 4 },
+        });
+        return Promise.resolve(
+          makeJsonResponse(200, {
+            envelopes: [],
+            hop_budget: { max: 5, used: 4 },
+          }),
+        );
+      },
+    );
+
+    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+    await client.connections.previewEvent({
+      item_id: "itm_note_2",
+      event_type: "updated",
+      cycle: { originating_connection_id: "itm_conn_2", hop_count: 4 },
+    });
+  });
+
+  it("propagates 404 errors through the typed-error mapping", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      makeJsonResponse(404, {
+        error: { code: "not_found", message: "Item not found" },
+      }),
+    );
+    const client = makeClient(mockFetch as unknown as typeof globalThis.fetch);
+
+    await expect(
+      client.connections.previewEvent({
+        item_id: "itm_missing",
+        event_type: "created",
+      }),
+    ).rejects.toMatchObject({ code: "not_found", status: 404 });
+  });
+});

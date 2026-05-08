@@ -1,9 +1,15 @@
 /**
- * Tests for `POST /connections/install` (T-040 JSON install) and
- * `POST /connections/:id/uninstall`. Pipeline-level mechanics are covered
- * by `connections/install-pipeline.test.ts` and
- * `connections/uninstall-pipeline.test.ts`; this file pins the route-layer
- * behaviour: auth gating, integration-id validation, error mapping, and
+ * Tests for the three connection-management routes that live alongside
+ * each other in `routes/connections.ts`:
+ *   - `POST /connections/install` (T-040 JSON install)
+ *   - `POST /connections/:id/uninstall`
+ *   - `POST /connections/preview-event` (T-083 — bridge-envelope preview)
+ *
+ * Pipeline-level mechanics live in
+ * `connections/install-pipeline.test.ts` and
+ * `connections/uninstall-pipeline.test.ts`; reactive-run-bridge fanout
+ * tests cover the queue-producer side. This file pins the route-layer
+ * behaviour: auth gating, request-shape validation, error mapping, and
  * the JSON response shapes the SDK consumes.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -378,5 +384,326 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
     expect(body.error.details?.uninstall_error_code).toBe(
       "wrong_connection_kind",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `POST /connections/preview-event` (T-083) — render bridge envelopes for a
+// synthetic event without dispatch. Auth gate, the four `dispatch_reason`s
+// the route surfaces, and the unfiltered walk's silence on non-subscribers.
+// Cross-tenant gating is exercised by the bridge's own tests; the preview
+// route's single-tenant tests don't recreate that fixture.
+// ---------------------------------------------------------------------------
+
+interface PreviewBody {
+  envelopes: {
+    connection_id: string;
+    integration_name: string;
+    would_dispatch: boolean;
+    dispatch_reason:
+      | "ok"
+      | "self_event"
+      | "cross_tenant"
+      | "hop_budget_exceeded"
+      | "subscription_inactive";
+    envelope?: {
+      kind: "item-event";
+      integration_name: string;
+      connection_id: string;
+      event_type: string;
+      item_id: string;
+      cycle: {
+        originating_connection_id: string | null;
+        hop_count: number;
+      };
+      payload: unknown;
+    };
+  }[];
+  hop_budget: { max: number; used: number };
+}
+
+function manifestWithItemEventTrigger(name: string): IntegrationManifest {
+  return {
+    name,
+    version: "1.0.0",
+    publisher: "Acme",
+    description: "preview-event route test",
+    direction: "both",
+    // The bridge subscribes connections whose manifest declares an
+    // `item-event` trigger. Set it explicitly so the preview route's
+    // `buildEntryForConnection` returns a non-null entry.
+    triggers: [{ type: "item-event" }],
+    target_types: ["core.note"],
+    runtime_compatibility: ["hosted"],
+    bidirectional_handling: {
+      echo_ttl_seconds: 60,
+      lag_window_seconds: 60,
+      tombstone_mapping: "prompt-user",
+      partial_write_mode: "all-or-nothing",
+    },
+    oauth_requirements: {},
+    webhook_verification: { method: "hmac-sha256" },
+    manifest_schema_version: "1.0.0",
+  };
+}
+
+async function installItemEventConnection(): Promise<{
+  connectionId: string;
+}> {
+  const adminKey = await ctx.storage.keys
+    .list()
+    .then((keys) => keys.find((k) => k.role === "admin"));
+  if (!adminKey) throw new Error("admin key not found in test ctx");
+
+  const integrationName = `acme.preview-event-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
+  const integration = await ctx.storage.items.create(
+    {
+      type: "system.integration",
+      properties: {
+        manifest_name: integrationName,
+        manifest_version: "1.0.0",
+        publisher: "Acme",
+        direction: "both",
+        runtime_compatibility: ["hosted"],
+        manifest: manifestWithItemEventTrigger(
+          integrationName,
+        ) as unknown as Record<string, unknown>,
+        registered_at: new Date().toISOString(),
+      },
+    },
+    undefined,
+  );
+  const result = await performInstall(ctx.storage, "test-salt", {
+    apiKeyId: adminKey.id,
+    tenantId: undefined,
+    integrationItemId: integration.id,
+    manifest: manifestWithItemEventTrigger(integrationName),
+    label: integrationName,
+  });
+  return { connectionId: result.connection_id };
+}
+
+describe("POST /connections/preview-event — auth", () => {
+  it("rejects unauthenticated callers with 401", async () => {
+    const res = await request(ctx.app, "POST", "/connections/preview-event", {
+      body: {
+        item_id: "00000000-0000-7000-8000-000000000000",
+        event_type: "created",
+      },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects non-admin (member) callers with 403", async () => {
+    const memberKeyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "preview-member",
+        source: `preview-member-${Date.now().toString()}`,
+        role: "member",
+      },
+    });
+    const memberKey = ((await memberKeyRes.json()) as { key: string }).key;
+
+    const res = await request(ctx.app, "POST", "/connections/preview-event", {
+      key: memberKey,
+      body: {
+        item_id: "00000000-0000-7000-8000-000000000000",
+        event_type: "created",
+      },
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /connections/preview-event — error mapping", () => {
+  it("returns 404 when item_id does not resolve", async () => {
+    const res = await request(ctx.app, "POST", "/connections/preview-event", {
+      key: ctx.adminKey,
+      body: {
+        item_id: "00000000-0000-7000-8000-000000000000",
+        event_type: "created",
+      },
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as ErrorBody;
+    expect(body.error.code).toBe("not_found");
+  });
+
+  it("returns 404 when the filtered connection_id does not resolve", async () => {
+    const note = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "preview target" } },
+      undefined,
+    );
+    const res = await request(ctx.app, "POST", "/connections/preview-event", {
+      key: ctx.adminKey,
+      body: {
+        item_id: note.id,
+        event_type: "created",
+        connection_id: "00000000-0000-7000-8000-000000000000",
+      },
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /connections/preview-event — happy path", () => {
+  it("returns the bridge envelope for an active item-event subscriber (filtered to one connection)", async () => {
+    const { connectionId } = await installItemEventConnection();
+    const note = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "preview target" } },
+      undefined,
+    );
+
+    const res = await request(ctx.app, "POST", "/connections/preview-event", {
+      key: ctx.adminKey,
+      body: {
+        item_id: note.id,
+        event_type: "created",
+        connection_id: connectionId,
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+    expect(body.envelopes).toHaveLength(1);
+    const row = body.envelopes[0]!;
+    expect(row.would_dispatch).toBe(true);
+    expect(row.dispatch_reason).toBe("ok");
+    expect(row.connection_id).toBe(connectionId);
+    expect(row.envelope?.kind).toBe("item-event");
+    expect(row.envelope?.event_type).toBe("item.created");
+    expect(row.envelope?.item_id).toBe(note.id);
+    expect(row.envelope?.cycle.hop_count).toBe(0);
+    expect(row.envelope?.cycle.originating_connection_id).toBeNull();
+    expect(body.hop_budget.max).toBe(5);
+    expect(body.hop_budget.used).toBe(0);
+  });
+
+  it("walks all subscribers when connection_id is omitted, and silently skips non-subscribers", async () => {
+    const { connectionId } = await installItemEventConnection();
+    // A second `system.connection` of kind `app` (not an item-event
+    // subscriber) — should not appear in the envelopes list because the
+    // unfiltered case omits non-subscribers as noise.
+    const appConn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+
+    const note = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "preview target" } },
+      undefined,
+    );
+
+    const res = await request(ctx.app, "POST", "/connections/preview-event", {
+      key: ctx.adminKey,
+      body: { item_id: note.id, event_type: "created" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+
+    const ids = body.envelopes.map((e) => e.connection_id);
+    expect(ids).toContain(connectionId);
+    expect(ids).not.toContain(appConn.id);
+  });
+});
+
+describe("POST /connections/preview-event — non-dispatch reasons", () => {
+  it("reports `subscription_inactive` when the filtered connection_id is not an item-event subscriber", async () => {
+    // An app-kind connection — buildEntryForConnection returns null so
+    // the route stamps subscription_inactive instead of building an
+    // envelope.
+    const appConn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const note = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "preview target" } },
+      undefined,
+    );
+
+    const res = await request(ctx.app, "POST", "/connections/preview-event", {
+      key: ctx.adminKey,
+      body: {
+        item_id: note.id,
+        event_type: "created",
+        connection_id: appConn.id,
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+    expect(body.envelopes).toHaveLength(1);
+    const row = body.envelopes[0]!;
+    expect(row.would_dispatch).toBe(false);
+    expect(row.dispatch_reason).toBe("subscription_inactive");
+    expect(row.envelope).toBeUndefined();
+  });
+
+  it("reports `self_event` when the synthetic event originates from the subscribed connection itself", async () => {
+    const { connectionId } = await installItemEventConnection();
+    const note = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "preview target" } },
+      undefined,
+    );
+
+    const res = await request(ctx.app, "POST", "/connections/preview-event", {
+      key: ctx.adminKey,
+      body: {
+        item_id: note.id,
+        event_type: "created",
+        connection_id: connectionId,
+        cycle: { originating_connection_id: connectionId, hop_count: 1 },
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+    const row = body.envelopes[0]!;
+    expect(row.would_dispatch).toBe(false);
+    expect(row.dispatch_reason).toBe("self_event");
+    expect(body.hop_budget.used).toBe(1);
+  });
+
+  it("reports `hop_budget_exceeded` when the synthetic event would have been dropped upstream of the bridge", async () => {
+    const { connectionId } = await installItemEventConnection();
+    const note = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "preview target" } },
+      undefined,
+    );
+
+    // Default hop budget is 5; hop_count: 99 with a non-null originating
+    // id makes this connector-originated and over budget.
+    const res = await request(ctx.app, "POST", "/connections/preview-event", {
+      key: ctx.adminKey,
+      body: {
+        item_id: note.id,
+        event_type: "created",
+        connection_id: connectionId,
+        cycle: {
+          originating_connection_id: "00000000-0000-7000-8000-000000000999",
+          hop_count: 99,
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PreviewBody;
+    const row = body.envelopes[0]!;
+    expect(row.would_dispatch).toBe(false);
+    expect(row.dispatch_reason).toBe("hop_budget_exceeded");
+    expect(row.envelope).toBeUndefined();
+    expect(body.hop_budget.used).toBe(99);
+    expect(body.hop_budget.max).toBe(5);
   });
 });
