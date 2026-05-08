@@ -112,7 +112,12 @@ describe("renderDeviceConsentScreen (Wave C PR4)", () => {
     const html = renderDeviceConsentScreen({
       ...PARAMS,
       scopes: [
-        { typePattern: "openid", operation: "none", kind: "oidc", oidcScope: "openid" },
+        {
+          typePattern: "openid",
+          operation: "none",
+          kind: "oidc",
+          oidcScope: "openid",
+        },
         { typePattern: "core.note", operation: "read" },
       ],
     });
