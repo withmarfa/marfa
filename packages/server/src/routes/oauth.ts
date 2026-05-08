@@ -2372,6 +2372,14 @@ export function discoveryRoutes(
     // a field set gated by the granted `profile` / `email` scopes.
     userinfo_endpoint: `${baseUrl}/auth/userinfo`,
     jwks_uri: `${baseUrl}/.well-known/jwks.json`,
+    // RFC 8414 §2 — token revocation endpoint. Public-client posture
+    // matches /auth/token: no client credentials, the token itself is
+    // the auth.
+    revocation_endpoint: `${baseUrl}/auth/revoke`,
+    revocation_endpoint_auth_methods_supported: ["none"],
+    // RFC 8628 §4 — device authorization endpoint. The polling endpoint
+    // (/auth/device/token) is implicit per RFC 8628 §3.4.
+    device_authorization_endpoint: `${baseUrl}/auth/device`,
     grant_types_supported: [
       "authorization_code",
       "refresh_token",
