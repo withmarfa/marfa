@@ -1,0 +1,65 @@
+#:schema node_modules/wrangler/config-schema.json
+# Per-Integration Worker for mymehq.task-auto-archive.
+# Item-event + schedule fallback (daily 03:00 UTC).
+# Reactive-run is consumed exclusively here; scheduled-poll is per-
+# integration to coexist with rss-watcher.
+
+name = "myme-integration-task-auto-archive"
+main = "src/worker.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "fb81b3c1ad68ef6dbd689897e8897b10"
+
+[vars]
+INTEGRATION_NAME = "mymehq.task-auto-archive"
+MANIFEST_CRON = "0 3 * * *"
+ENVIRONMENT = "dev"
+
+[[durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# ---- Staging --------------------------------------------------------------
+[env.staging]
+name = "myme-integration-task-auto-archive-staging"
+account_id = "fb81b3c1ad68ef6dbd689897e8897b10"
+
+[env.staging.vars]
+INTEGRATION_NAME = "mymehq.task-auto-archive"
+MANIFEST_CRON = "0 3 * * *"
+ENVIRONMENT = "staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-task-auto-archive-staging"
+
+[[env.staging.queues.consumers]]
+queue = "myme-scheduled-poll-task-auto-archive-staging"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "myme-scheduled-poll-task-auto-archive-staging-dlq"
+
+[[env.staging.queues.consumers]]
+queue = "myme-reactive-run-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 6
+dead_letter_queue = "myme-reactive-run-staging-dlq"
+
+# Secrets (`wrangler secret put --env staging`):
+#   - MYME_API_URL
+#   - MYME_RUNTIME_CONTROL_URL
+#   - MYME_RUNTIME_BROKER_KEY
