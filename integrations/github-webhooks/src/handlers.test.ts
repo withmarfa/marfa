@@ -98,6 +98,8 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
 const ISSUES_OPENED = {
   action: "opened",
   issue: {
+    id: 1234567890,
+    node_id: "I_kwDOABCDEFG12345",
     number: 42,
     title: "Repro: connector misses ping",
     body: "Steps to reproduce…",
@@ -113,6 +115,8 @@ const ISSUES_OPENED = {
 const PR_OPENED = {
   action: "opened",
   pull_request: {
+    id: 9876543210,
+    node_id: "PR_kwDOABCDEFG67890",
     number: 7,
     title: "Add Layer-3 RSS connector",
     body: "First Layer-3 PR.",
@@ -180,10 +184,16 @@ describe("github-webhooks handler", () => {
       source_url: "https://github.com/mymehq/myme",
       source_title: "mymehq/myme / issues",
     });
+    // T-087: source_id populated from the GraphQL node_id, threading the
+    // server's `(source, source_id)` natural-key contract.
+    expect(created[0]!.source_id).toBe("I_kwDOABCDEFG12345");
+    // T-087: activity summary references the real bookmark id, not the
+    // literal string "undefined" (the runtime-sdk envelope-unwrap bug).
     const summary = emitted.at(-1);
     expect(summary?.properties?.summary).toMatch(
-      /created issues bookmark itm_/,
+      /created issues bookmark itm_\d+$/,
     );
+    expect(summary?.properties?.summary).not.toContain("undefined");
   });
 
   it("creates a core.bookmark on pull_request.opened", async () => {
@@ -199,6 +209,27 @@ describe("github-webhooks handler", () => {
       author: "augustcayzer",
       source_title: "mymehq/myme / pull_requests",
     });
+    expect(created[0]!.source_id).toBe("PR_kwDOABCDEFG67890");
+  });
+
+  it("falls back to numeric id for source_id when node_id is missing", async () => {
+    const { ctx, created } = buildContext();
+    const noNodeId = {
+      action: "opened",
+      issue: {
+        id: 555,
+        // node_id intentionally absent
+        number: 99,
+        title: "No node id",
+        html_url: "https://github.com/mymehq/myme/issues/99",
+      },
+      repository: { full_name: "mymehq/myme" },
+    };
+    await handleGithubWebhook(
+      ctx,
+      makeWebhookMessage(noNodeId, "issues", "delivery_no_node"),
+    );
+    expect(created[0]!.source_id).toBe("555");
   });
 
   it("does not create a bookmark for pull_request.closed (action filtered)", async () => {
