@@ -6,7 +6,11 @@ import { createTestContext, request } from "../test-utils.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { createApp } from "../app.js";
-import { hashApiKey, touchLastUsedCache } from "../middleware/auth.js";
+import {
+  hashApiKey,
+  touchLastUsedCache,
+  _clearOAuthLastUsedCacheForTesting,
+} from "../middleware/auth.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -77,6 +81,7 @@ describe("bootstrap mode", () => {
       trashPurgeIntervalMs: 86_400_000,
       feedRetentionDays: 0,
       feedExpiryIntervalMs: 86_400_000,
+      authSessionCleanupIntervalMs: 3_600_000,
       errorWebhookUrl: "",
       trustedProxyCidrs: [],
       authBaseUrl: "http://localhost:0",
@@ -293,6 +298,7 @@ describe("KeyStore.updateLastUsed — DB-side debounce", () => {
 
 describe("OAuth synthetic apiKey advances grant last_used_at (§3.4)", () => {
   it("stamps last_used_at on the app connection on a successful access-token request", async () => {
+    _clearOAuthLastUsedCacheForTesting();
     // Set up a app + access token directly through the storage
     // layer; the public OAuth flow is exercised in oauth.test.ts.
     const client = await ctx.storage.oauth.createClient({
@@ -337,6 +343,126 @@ describe("OAuth synthetic apiKey advances grant last_used_at (§3.4)", () => {
     expect(afterItem?.properties.last_used_at).toEqual(expect.any(String));
     const stamped = afterItem?.properties.last_used_at as string;
     expect(Date.parse(stamped)).toBeGreaterThan(0);
+  });
+});
+
+describe("T-098: /auth/token refresh advances grant last_used_at", () => {
+  it("stamps last_used_at on the app connection when a refresh_token is exchanged for a new pair", async () => {
+    _clearOAuthLastUsedCacheForTesting();
+
+    const client = await ctx.storage.oauth.createClient({
+      name: "Test App (T-098 refresh)",
+      redirect_uris: ["http://localhost:5173/callback"],
+    });
+    const grant = await ctx.storage.items.create({
+      type: "system.connection",
+      state: "active",
+      tier: "library",
+      properties: {
+        kind: "app",
+        client_id: client.id,
+        scopes: ["core.note:read"],
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+      source: "test/oauth-refresh",
+      origin: "user",
+    });
+    const refreshRaw = `myme_rt_${Math.random().toString(36).slice(2)}_t098`;
+    const refreshHash = hashApiKey(refreshRaw, "test-salt");
+    await ctx.storage.oauth.createToken(
+      grant.id,
+      refreshHash,
+      "refresh",
+      new Date(Date.now() + 90 * 24 * 3600_000).toISOString(),
+    );
+
+    const beforeItem = await ctx.storage.items.get(grant.id);
+    expect(beforeItem?.properties.last_used_at).toBeUndefined();
+
+    // Hit /auth/token with grant_type=refresh_token. No bearer header —
+    // the refresh_token is in the form body. Pre-T-098 the middleware
+    // never fires the stamp on this path; the new stamper call inside
+    // handleRefresh covers the gap.
+    const params = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshRaw,
+    });
+    const res = await ctx.app.fetch(
+      new Request("http://test/auth/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    const afterItem = await ctx.storage.items.get(grant.id);
+    expect(afterItem?.properties.last_used_at).toEqual(expect.any(String));
+  });
+
+  it("debounce holds — a second refresh inside the window does not re-stamp the timestamp", async () => {
+    _clearOAuthLastUsedCacheForTesting();
+
+    const client = await ctx.storage.oauth.createClient({
+      name: "Test App (T-098 debounce)",
+      redirect_uris: ["http://localhost:5173/callback"],
+    });
+    const grant = await ctx.storage.items.create({
+      type: "system.connection",
+      state: "active",
+      tier: "library",
+      properties: {
+        kind: "app",
+        client_id: client.id,
+        scopes: ["core.note:read"],
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+      source: "test/oauth-debounce",
+      origin: "user",
+    });
+    // Two consecutive refresh tokens — the first refresh consumes one,
+    // the second uses the rotated token issued by the first call.
+    const refreshRaw1 = `myme_rt_${Math.random().toString(36).slice(2)}_db1`;
+    const refreshHash1 = hashApiKey(refreshRaw1, "test-salt");
+    await ctx.storage.oauth.createToken(
+      grant.id,
+      refreshHash1,
+      "refresh",
+      new Date(Date.now() + 90 * 24 * 3600_000).toISOString(),
+    );
+
+    const fire = async (rt: string): Promise<Response> => {
+      const params = new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: rt,
+      });
+      return ctx.app.fetch(
+        new Request("http://test/auth/token", {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: params.toString(),
+        }),
+      );
+    };
+
+    const firstRes = await fire(refreshRaw1);
+    expect(firstRes.status).toBe(200);
+    const firstBody = (await firstRes.json()) as { refresh_token: string };
+    const stamped1 = (await ctx.storage.items.get(grant.id))?.properties
+      .last_used_at as string;
+    expect(stamped1).toEqual(expect.any(String));
+
+    const secondRes = await fire(firstBody.refresh_token);
+    expect(secondRes.status).toBe(200);
+    const stamped2 = (await ctx.storage.items.get(grant.id))?.properties
+      .last_used_at as string;
+    // Inside the 1h debounce window the in-memory cache short-circuits
+    // the stamp, so the timestamp is unchanged. (The grant.updated_at
+    // would change if the stamp had fired again — we read last_used_at
+    // directly, which is the field the security page surfaces.)
+    expect(stamped2).toBe(stamped1);
   });
 });
 
