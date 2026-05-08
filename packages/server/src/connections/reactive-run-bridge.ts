@@ -36,7 +36,13 @@
  */
 import { publish, subscribe, type ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
-import { validateManifest } from "../integrations/validate-manifest.js";
+import {
+  buildEntryForConnection,
+  buildQueueMessageBody,
+  evaluateDispatch,
+  type QueueMessageBody,
+  type SubscriptionEntry,
+} from "./envelope.js";
 
 export interface BridgeConfig {
   queueUrl: string;
@@ -65,49 +71,6 @@ export interface BridgeRuntime {
   stop(): Promise<void>;
 }
 
-interface QueueMessageBody {
-  kind: "item-event";
-  integration_name: string;
-  connection_id: string;
-  tenant_id?: string;
-  event_type: string;
-  item_id: string;
-  cycle: {
-    originating_connection_id: string | null;
-    hop_count: number;
-  };
-  payload: unknown;
-}
-
-interface SubscriptionEntry {
-  connection_id: string;
-  integration_name: string;
-  /**
-   * Tenant scope (T-042). Read from `connection.tenant_id` at registry-load
-   * time so `fanoutEvent` can drop cross-tenant fanout before invoking
-   * `sendOne`. Single-tenant self-hosted installs leave this null on every
-   * connection — the gate trivially passes (null === null). Hosted multi-
-   * tenant: the gate is the cheap-and-correct first guard ahead of the
-   * downstream credential authorisation that catches the same condition
-   * later.
-   */
-  tenant_id: string | null;
-}
-
-interface ConnectionProperties {
-  kind?: string;
-  integration_ref?: string;
-  status?: string;
-}
-
-interface IntegrationProperties {
-  manifest?: unknown;
-}
-
-interface ManifestTrigger {
-  type: string;
-}
-
 /**
  * Build a bridge runtime that connects the in-process pubsub to the
  * Cloudflare Queues HTTP producer. Returns null when the bridge env
@@ -129,44 +92,6 @@ export function tryStartReactiveRunBridge(
     sendTimeoutMs: config?.sendTimeoutMs ?? 5000,
     fetch: config?.fetch,
   });
-}
-
-/**
- * Inspect a connection's manifest and return a SubscriptionEntry when
- * the connection should receive item-event fanout. Returns null when:
- *   - The connection isn't of kind `integration`
- *   - The connection has no integration_ref
- *   - The integration_ref doesn't resolve to a system.integration
- *   - The manifest is invalid (validateManifest rejects it)
- *   - The manifest declares no `item-event` trigger
- *   - The connection is revoked (status !== "active")
- */
-async function buildEntryForConnection(
-  storage: Storage,
-  connection: { id: string; properties: unknown; tenant_id?: string | null },
-): Promise<SubscriptionEntry | null> {
-  const props = connection.properties as ConnectionProperties;
-  if (props.kind !== "integration") return null;
-  if (props.status && props.status !== "active") return null;
-  const ref = props.integration_ref;
-  if (!ref) return null;
-  const integration = await storage.items.get(ref);
-  if (integration?.type !== "system.integration") return null;
-  const intProps = integration.properties as IntegrationProperties;
-  const validated = validateManifest(intProps.manifest);
-  if (!validated.ok) return null;
-  const triggers = validated.manifest.triggers as ManifestTrigger[] | undefined;
-  const hasItemEventTrigger =
-    Array.isArray(triggers) && triggers.some((t) => t.type === "item-event");
-  if (!hasItemEventTrigger) return null;
-  return {
-    connection_id: connection.id,
-    integration_name: validated.manifest.name,
-    // T-042: stamp the connection's tenant scope at registry-load time.
-    // Read from the storage row directly — `Item.tenant_id` is now
-    // populated by `rowToItem` in both dialects.
-    tenant_id: connection.tenant_id ?? null,
-  };
 }
 
 /**
@@ -433,32 +358,12 @@ async function fanoutEvent(
   storage: Storage,
 ): Promise<void> {
   const tasks: Promise<unknown>[] = [];
-  // Normalise to null on both sides so single-tenant self-hosted (where
-  // both event.tenantId and entry.tenant_id are typically `undefined`)
-  // doesn't fall foul of `undefined !== null` and accidentally drop every
-  // subscriber. Hosted multi-tenant: both sides carry strings; the
-  // comparison is the explicit cross-tenant guard.
-  const eventTenantId = event.tenantId ?? null;
   for (const entry of subscriptions.values()) {
-    if (entry.connection_id === event.originatingConnectionId) continue;
-    // T-042: cross-tenant fanout drops here, ahead of any queue-producer
-    // work. Self-event filter stays as the first gate; tenant gate is the
-    // second. Order matters only for code readability — a self-event from
-    // tenant A can't be a tenant-B subscriber's event anyway.
-    if ((entry.tenant_id ?? null) !== eventTenantId) continue;
-    const body: QueueMessageBody = {
-      kind: "item-event",
-      integration_name: entry.integration_name,
-      connection_id: entry.connection_id,
-      tenant_id: event.tenantId,
-      event_type: `item.${event.type}`,
-      item_id: event.item.id,
-      cycle: {
-        originating_connection_id: event.originatingConnectionId ?? null,
-        hop_count: event.hopCount ?? 0,
-      },
-      payload: { item: event.item, metadata: event.metadata },
-    };
+    // The bridge's per-subscriber gate (self-event + tenant) is shared
+    // with `POST /connections/preview-event` via the `evaluateDispatch`
+    // helper — same code, same semantics, two callers.
+    if (!evaluateDispatch(event, entry).would_dispatch) continue;
+    const body = buildQueueMessageBody(event, entry);
     // T-013: each subscriber's send is wrapped in a per-fetch timeout
     // and an isolated try/catch. A slow / wedged Cloudflare Queues
     // endpoint for one subscriber doesn't break the rest. T-036:

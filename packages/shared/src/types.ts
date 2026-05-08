@@ -692,6 +692,138 @@ export interface ConnectionUninstallResult {
 }
 
 /**
+ * Item-event types the reactive-run bridge fans out to integration
+ * connectors. Mirrors the `ItemEvent['type']` union in `packages/server/
+ * src/pubsub.ts`. Used by `POST /connections/preview-event` (T-083) for
+ * the operator-supplied `event_type` in the preview-event request.
+ */
+export type PreviewEventItemEventType =
+  | "created"
+  | "updated"
+  | "deleted"
+  | "restored"
+  | "state_changed"
+  | "metadata_changed";
+
+/**
+ * Optional cycle metadata an operator can override on a preview-event
+ * request. Maps to the cycle-detection fields stamped server-side at
+ * `pubsub.publish` time (`originatingConnectionId`, `hopCount`). Default
+ * values — `originating_connection_id: null`, `hop_count: 0` — describe
+ * a human-originated event that always passes the per-tenant hop budget.
+ *
+ * Set both fields to model a reactive event mid-chain ("what would happen
+ * if connection X re-published this at hop 4?").
+ */
+export interface PreviewEventCycleOverride {
+  originating_connection_id?: string | null;
+  hop_count?: number;
+}
+
+/**
+ * Wire shape for `POST /connections/preview-event` (T-083). Operator
+ * supplies an existing item id plus an event type; the route renders the
+ * `QueueMessageBody` envelopes the reactive-run bridge would emit, and
+ * for each subscribing connection that wouldn't be dispatched, the reason
+ * why. Pure server-side transform — no handler invocation, no queue
+ * producer call. Workspace-admin scoped.
+ */
+export interface PreviewEventRequest {
+  /** id of an existing item the operator wants to simulate fanout for. */
+  item_id: string;
+  /** Item-event type to simulate. */
+  event_type: PreviewEventItemEventType;
+  /**
+   * Optional filter to a single subscribing connection id. Default behaviour
+   * (omitted) renders all subscribers in the caller's tenant.
+   */
+  connection_id?: string;
+  /**
+   * Optional override for the cycle-detection metadata stamped on the
+   * synthetic event. Defaults to a human-originated shape that passes the
+   * hop budget. Useful for reproducing "what if hop_count was N?"
+   * scenarios.
+   */
+  cycle?: PreviewEventCycleOverride;
+}
+
+/**
+ * One row in the preview response — the bridge's verdict for one
+ * (event, subscriber) pair.
+ *
+ * `dispatch_reason` values:
+ *   - `ok`: would dispatch; `envelope` is populated.
+ *   - `self_event`: subscriber is the connection that originated the event.
+ *   - `cross_tenant`: subscriber's tenant doesn't match the event's tenant.
+ *   - `hop_budget_exceeded`: per-tenant `max_event_hop_budget` would
+ *     refuse to publish the event upstream of the bridge — applies to
+ *     every subscriber when the gate trips.
+ *   - `subscription_inactive`: the operator filtered to a connection id
+ *     that isn't currently a subscriber (revoked, wrong kind, manifest
+ *     missing an `item-event` trigger, etc.).
+ */
+export interface PreviewEventEnvelope {
+  connection_id: string;
+  /** Manifest name from the connection's bound integration; "" when the
+   *  connection is not a subscriber (only on `subscription_inactive`). */
+  integration_name: string;
+  would_dispatch: boolean;
+  dispatch_reason:
+    | "ok"
+    | "self_event"
+    | "cross_tenant"
+    | "hop_budget_exceeded"
+    | "subscription_inactive";
+  /**
+   * The wire envelope the bridge would POST to Cloudflare Queues, present
+   * iff `would_dispatch === true`. Mirrors the bridge's internal
+   * `QueueMessageBody`.
+   */
+  envelope?: PreviewEventQueueBody;
+}
+
+/**
+ * Mirror of the reactive-run bridge's `QueueMessageBody`. Surfaced
+ * publicly only via the preview-event route so operators (and the SDK)
+ * can read what the bridge would have emitted without invoking handlers.
+ */
+export interface PreviewEventQueueBody {
+  kind: "item-event";
+  integration_name: string;
+  connection_id: string;
+  tenant_id?: string;
+  /** Wire form, e.g. `item.created`, `item.metadata_changed`. */
+  event_type: string;
+  item_id: string;
+  cycle: {
+    originating_connection_id: string | null;
+    hop_count: number;
+  };
+  payload: unknown;
+}
+
+/**
+ * Wire shape returned by `POST /connections/preview-event`. The
+ * `envelopes` array is one entry per subscribing connection (or one per
+ * filtered-to connection); `hop_budget` reports the tenant-resolved
+ * budget alongside what was used by the previewed event so the operator
+ * can see how close to the cap they are.
+ */
+export interface PreviewEventResult {
+  envelopes: PreviewEventEnvelope[];
+  hop_budget: {
+    /** Tenant-resolved `max_event_hop_budget` (default 5). */
+    max: number;
+    /**
+     * Hop-count the synthetic event would carry under the `cycle`
+     * override (default 0). Useful alongside `max` to see whether the
+     * event would have been dropped before reaching the bridge.
+     */
+    used: number;
+  };
+}
+
+/**
  * RFC 7662-shaped introspection response from
  * `POST /lease-tokens/validate`. `active: false` when the lease is
  * unknown, expired, or revoked; the route returns 200 in either case so

@@ -15077,6 +15077,332 @@
         }
       }
     },
+    "/connections/preview-event": {
+      "post": {
+        "tags": [
+          "Connections"
+        ],
+        "summary": "Preview the bridge envelopes a synthetic item event would produce (no dispatch)",
+        "description": "Renders the wire envelopes the reactive-run bridge would POST to Cloudflare Queues for a given item-event, without invoking any handler or producing a queue message. Operator debugging surface (T-083). Returns one entry per subscribing connection in the caller's tenant — `would_dispatch: true` with the synthesised envelope, or `would_dispatch: false` with a `dispatch_reason` so the operator can see why a subscriber would be skipped (self-event / cross-tenant / hop-budget / subscription_inactive). Defaults to all subscribers; pass `connection_id` to filter to one. Workspace-admin only.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "item_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "event_type": {
+                    "type": "string",
+                    "enum": [
+                      "created",
+                      "updated",
+                      "deleted",
+                      "restored",
+                      "state_changed",
+                      "metadata_changed"
+                    ]
+                  },
+                  "connection_id": {
+                    "type": "string"
+                  },
+                  "cycle": {
+                    "type": "object",
+                    "properties": {
+                      "originating_connection_id": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "hop_count": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "item_id",
+                  "event_type"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One entry per subscriber the operator asked about, plus the tenant's hop budget.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "envelopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "connection_id": {
+                            "type": "string"
+                          },
+                          "integration_name": {
+                            "type": "string"
+                          },
+                          "would_dispatch": {
+                            "type": "boolean"
+                          },
+                          "dispatch_reason": {
+                            "type": "string",
+                            "enum": [
+                              "ok",
+                              "self_event",
+                              "cross_tenant",
+                              "hop_budget_exceeded",
+                              "subscription_inactive"
+                            ]
+                          },
+                          "envelope": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "item-event"
+                                ]
+                              },
+                              "integration_name": {
+                                "type": "string"
+                              },
+                              "connection_id": {
+                                "type": "string"
+                              },
+                              "tenant_id": {
+                                "type": "string"
+                              },
+                              "event_type": {
+                                "type": "string"
+                              },
+                              "item_id": {
+                                "type": "string"
+                              },
+                              "cycle": {
+                                "type": "object",
+                                "properties": {
+                                  "originating_connection_id": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "hop_count": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  }
+                                },
+                                "required": [
+                                  "originating_connection_id",
+                                  "hop_count"
+                                ]
+                              },
+                              "payload": {
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "integration_name",
+                              "connection_id",
+                              "event_type",
+                              "item_id",
+                              "cycle"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "connection_id",
+                          "integration_name",
+                          "would_dispatch",
+                          "dispatch_reason"
+                        ]
+                      }
+                    },
+                    "hop_budget": {
+                      "type": "object",
+                      "properties": {
+                        "max": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "used": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "max",
+                        "used"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "envelopes",
+                    "hop_budget"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not a workspace admin or platform admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`item_id` does not resolve in the caller's tenant scope, or the filtered `connection_id` does not exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/connections/{id}/uninstall": {
       "post": {
         "tags": [
