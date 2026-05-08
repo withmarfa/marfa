@@ -285,6 +285,14 @@ describe("T-090: OIDC id_token + JWKS", () => {
         expect.arrayContaining(["openid", "profile", "email"]),
       );
       expect(body.userinfo_endpoint).toBe(`${AUTH_BASE_URL}/auth/userinfo`);
+      // RFC 8414 §2 + RFC 8628 §4 — revocation + device authorization
+      // endpoints. Strict OIDC RPs need both advertised here so they
+      // can dispatch sign-out + headless flows without hard-coded paths.
+      expect(body.revocation_endpoint).toBe(`${AUTH_BASE_URL}/auth/revoke`);
+      expect(body.revocation_endpoint_auth_methods_supported).toEqual(["none"]);
+      expect(body.device_authorization_endpoint).toBe(
+        `${AUTH_BASE_URL}/auth/device`,
+      );
     });
 
     it("oauth-authorization-server carries the same surface", async () => {
@@ -296,6 +304,11 @@ describe("T-090: OIDC id_token + JWKS", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, unknown>;
       expect(body.jwks_uri).toBe(`${AUTH_BASE_URL}/.well-known/jwks.json`);
+      expect(body.revocation_endpoint).toBe(`${AUTH_BASE_URL}/auth/revoke`);
+      expect(body.revocation_endpoint_auth_methods_supported).toEqual(["none"]);
+      expect(body.device_authorization_endpoint).toBe(
+        `${AUTH_BASE_URL}/auth/device`,
+      );
     });
   });
 
