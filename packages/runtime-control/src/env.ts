@@ -26,6 +26,26 @@ export interface ControlPlaneEnv {
   REACTIVE_RUN_QUEUE?: QueueProducer;
   /** Short-lived idempotency cache keyed by `${webhook_id}:${delivery_id}`. */
   IDEMPOTENCY_KV?: KVNamespace;
+
+  // ---- Service bindings to per-Integration Workers --------------------
+  /**
+   * Service bindings to each in-tree Integration Worker. The control
+   * plane uses these to call `/arm-schedule` on a connection's per-
+   * Integration Worker at install time. Bound by integration name in
+   * `wrangler.control.toml`. New integrations need a new binding.
+   *
+   * The binding is optional at the type level so the Worker can boot
+   * before all integrations are deployed; routes that reach for a
+   * missing binding return 503 with a clear reason.
+   */
+  INTEGRATION_RSS_WATCHER?: ServiceBinding;
+  INTEGRATION_GITHUB_WEBHOOKS?: ServiceBinding;
+  INTEGRATION_TASK_AUTO_ARCHIVE?: ServiceBinding;
+}
+
+/** Subset of Cloudflare's Fetcher binding (service binding) we use. */
+interface ServiceBinding {
+  fetch(request: Request): Promise<Response>;
 }
 
 /** Slim shape we accept for tests — the real Cloudflare QueueProducer

@@ -8,7 +8,11 @@ import {
   performUninstall,
   UninstallError,
 } from "../connections/uninstall-pipeline.js";
-import { performInstall } from "../connections/install-pipeline.js";
+import {
+  armScheduleForInstall,
+  performInstall,
+} from "../connections/install-pipeline.js";
+import type { IntegrationManifest } from "@mymehq/shared";
 import { publish, resolveHopBudget } from "../pubsub.js";
 import type { ItemEventWithId } from "../pubsub.js";
 import {
@@ -307,6 +311,21 @@ export function connectionRoutes(storage: Storage, salt: string) {
       label: effectiveLabel,
       clientIp,
     });
+
+    // Best-effort: arm the schedule alarm if the manifest has a schedule
+    // trigger. Failures surface as system.activity action_required;
+    // install itself stays successful.
+    const controlPlaneUrl = process.env.MYME_RUNTIME_CONTROL_URL;
+    const runtimeBrokerKey = process.env.MYME_RUNTIME_BROKER_KEY;
+    if (controlPlaneUrl && runtimeBrokerKey) {
+      await armScheduleForInstall(storage, {
+        manifest: props.manifest as IntegrationManifest,
+        connectionId: result.connection_id,
+        tenantId,
+        controlPlaneUrl,
+        runtimeBrokerKey,
+      });
+    }
 
     // Hydrate the new system.connection item and publish a `created`
     // event onto pubsub. Without this the reactive-run bridge's
