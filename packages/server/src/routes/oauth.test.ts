@@ -513,6 +513,91 @@ describe("token management", () => {
   });
 });
 
+// RFC 7009 token revocation. Smoke harness for the issue surfaced in
+// iPhone testing: the SDK posted to `/auth/revoke` and got 404, so
+// `signOut(_:)` swallowed the error silently and the connected app
+// stayed `active` in the user's security page. The endpoint now flips
+// every token on the grant + the `system.connection` row itself.
+describe("/auth/revoke (RFC 7009)", () => {
+  it("revokes the grant + every token on it when the access token is presented", async () => {
+    const { tokens, client } = await performOAuthFlow(["core.note:read"]);
+
+    const revokeRes = await request(ctx.app, "POST", "/auth/revoke", {
+      form: { token: tokens.access_token },
+    });
+    expect(revokeRes.status).toBe(200);
+
+    // Both access and refresh are dead.
+    const noteRead = await request(ctx.app, "GET", "/items", {
+      key: tokens.access_token,
+    });
+    expect(noteRead.status).toBe(401);
+
+    const refreshAttempt = await request(ctx.app, "POST", "/auth/token", {
+      form: {
+        grant_type: "refresh_token",
+        refresh_token: tokens.refresh_token,
+      },
+    });
+    expect(refreshAttempt.status).toBe(400);
+
+    // Grant flipped to revoked so the user's connected-apps surface
+    // reflects it. `/auth/grants` filters out non-active grants, so a
+    // revoked grant disappears from the list — the inverse assertion.
+    const grants = await request(ctx.app, "GET", "/auth/grants", {
+      key: ctx.adminKey,
+    });
+    const grantsBody = (await grants.json()) as {
+      client_id: string;
+      status: string;
+    }[];
+    const stillListed = grantsBody.find((g) => g.client_id === client.id);
+    expect(stillListed).toBeUndefined();
+  });
+
+  it("works when called with the refresh token instead", async () => {
+    const { tokens } = await performOAuthFlow(["core.note:read"]);
+
+    const revokeRes = await request(ctx.app, "POST", "/auth/revoke", {
+      form: {
+        token: tokens.refresh_token,
+        token_type_hint: "refresh_token",
+      },
+    });
+    expect(revokeRes.status).toBe(200);
+
+    const noteRead = await request(ctx.app, "GET", "/items", {
+      key: tokens.access_token,
+    });
+    expect(noteRead.status).toBe(401);
+  });
+
+  it("returns 200 for unknown tokens (RFC 7009 §2.2 — no probing)", async () => {
+    const revokeRes = await request(ctx.app, "POST", "/auth/revoke", {
+      form: { token: "myme_at_does_not_exist" },
+    });
+    expect(revokeRes.status).toBe(200);
+  });
+
+  it("rejects non-form-encoded bodies", async () => {
+    const res = await ctx.app.request("/auth/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "x" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("validation_error");
+  });
+
+  it("rejects requests missing the token parameter", async () => {
+    const res = await request(ctx.app, "POST", "/auth/revoke", {
+      form: {},
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("coexistence with API keys", () => {
   it("API key auth still works", async () => {
     const res = await request(ctx.app, "GET", "/items", { key: ctx.adminKey });
