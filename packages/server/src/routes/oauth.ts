@@ -39,6 +39,7 @@ import {
 import { setNoStore } from "./no-store.js";
 import { constantTimeEqual } from "../utils/crypto.js";
 import { publish } from "../pubsub.js";
+import type { OidcSigner } from "../auth/oidc-signing.js";
 
 const ACCESS_TOKEN_PREFIX = "myme_at_";
 const REFRESH_TOKEN_PREFIX = "myme_rt_";
@@ -138,6 +139,7 @@ export function authRoutes(
   storage: Storage,
   salt: string,
   auth?: MymeAuth,
+  oidcSigner?: OidcSigner,
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
   const knownTypes = Array.from(TYPE_REGISTRY.keys());
@@ -430,14 +432,31 @@ export function authRoutes(
   // -----------------------------------------------------------------------
 
   router.post("/token", async (c) => {
-    const body = await c.req.json();
+    // OAuth 2.0 §3.2 mandates `application/x-www-form-urlencoded` on the
+    // token endpoint. We accept that exclusively — no JSON path. RFC 6749
+    // §B.1 also requires UTF-8; URL-decoding gets us there.
+    const contentType = c.req.header("content-type") ?? "";
+    if (!contentType.includes("application/x-www-form-urlencoded")) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Token endpoint requires application/x-www-form-urlencoded body per OAuth 2.0 §3.2",
+      );
+    }
+    const formData = await c.req.parseBody();
+    const body: Record<string, string> = {};
+    for (const [k, v] of Object.entries(formData)) {
+      if (typeof v === "string") body[k] = v;
+    }
     const grantType = body.grant_type;
 
+    const issuer = auth?.baseURL ?? new URL(c.req.url).origin;
+    const idTokenCtx: IdTokenContext = { storage, signer: oidcSigner, issuer };
+
     if (grantType === "authorization_code") {
-      return handleCodeExchange(c, body, storage, salt);
+      return handleCodeExchange(c, body, storage, salt, idTokenCtx);
     }
     if (grantType === "refresh_token") {
-      return handleRefresh(c, body, storage, salt);
+      return handleRefresh(c, body, storage, salt, idTokenCtx);
     }
 
     throw new MymeError(ErrorCode.VALIDATION_ERROR, "Unsupported grant_type");
@@ -2231,24 +2250,80 @@ function forwardHeaders(
 // /.well-known/oauth-authorization-server — discovery doc
 // ---------------------------------------------------------------------------
 
-export function discoveryRoutes(baseUrl: string): Hono<AppEnv> {
+export function discoveryRoutes(
+  baseUrl: string,
+  oidcSigner?: OidcSigner,
+): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
-  router.get("/oauth-authorization-server", (c) => {
-    return c.json({
-      issuer: baseUrl,
-      authorization_endpoint: `${baseUrl}/auth/authorize`,
-      token_endpoint: `${baseUrl}/auth/token`,
-      registration_endpoint: `${baseUrl}/auth/clients`,
-      // T-074: standard OIDC userinfo endpoint. Returns `{ sub }` plus
-      // a field set gated by the granted `profile` / `email` scopes.
-      userinfo_endpoint: `${baseUrl}/auth/userinfo`,
-      grant_types_supported: ["authorization_code", "refresh_token"],
-      response_types_supported: ["code"],
-      code_challenge_methods_supported: ["S256"],
-      token_endpoint_auth_methods_supported: ["none"],
-      scopes_supported: ["openid", "profile", "email"],
-    });
+
+  // T-090: shared shape for both /oauth-authorization-server and
+  // /openid-configuration. Strict OIDC RPs prefer the latter; OAuth 2.0
+  // metadata consumers read the former. Same payload (with OIDC-specific
+  // additions) keeps both honest.
+  const baseMetadata = {
+    issuer: baseUrl,
+    authorization_endpoint: `${baseUrl}/auth/authorize`,
+    token_endpoint: `${baseUrl}/auth/token`,
+    registration_endpoint: `${baseUrl}/auth/clients`,
+    // T-074: standard OIDC userinfo endpoint. Returns `{ sub }` plus
+    // a field set gated by the granted `profile` / `email` scopes.
+    userinfo_endpoint: `${baseUrl}/auth/userinfo`,
+    jwks_uri: `${baseUrl}/.well-known/jwks.json`,
+    grant_types_supported: [
+      "authorization_code",
+      "refresh_token",
+      "urn:ietf:params:oauth:grant-type:device_code",
+    ],
+    response_types_supported: ["code"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none"],
+    scopes_supported: ["openid", "profile", "email"],
+    id_token_signing_alg_values_supported: oidcSigner
+      ? [oidcSigner.algorithm]
+      : ["RS256"],
+    subject_types_supported: ["public"],
+  };
+
+  router.get("/oauth-authorization-server", (c) => c.json(baseMetadata));
+
+  // T-090: OIDC discovery endpoint. Strict OIDC consumers (federated
+  // identity bridges, third-party Sign-in-with-Myme RPs) discover the
+  // surface here rather than the OAuth-2.0 metadata sibling.
+  router.get("/openid-configuration", (c) =>
+    c.json({
+      ...baseMetadata,
+      claims_supported: [
+        "sub",
+        "iss",
+        "aud",
+        "exp",
+        "iat",
+        "preferred_username",
+        "name",
+        "given_name",
+        "family_name",
+        "picture",
+        "email",
+        "email_verified",
+      ],
+    }),
+  );
+
+  // T-090: JWKS endpoint. Public-half RSA JWK that signs id_tokens.
+  // Cache headers bias toward freshness over cacheability — a tested
+  // RP can re-fetch every minute without measurable load and key
+  // rotation propagates promptly.
+  router.get("/jwks.json", (c) => {
+    if (!oidcSigner) {
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        "OIDC signing keypair not initialised on this instance",
+      );
+    }
+    c.header("Cache-Control", "public, max-age=60, must-revalidate");
+    return c.json(oidcSigner.jwks());
   });
+
   return router;
 }
 
@@ -2256,11 +2331,73 @@ export function discoveryRoutes(baseUrl: string): Hono<AppEnv> {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** T-090: dependencies for OIDC `id_token` issuance from the token endpoint.
+ *  Threaded through both `handleCodeExchange` and `handleRefresh` so a token
+ *  rotation also rotates the id_token (per the OIDC spec). When `signer` is
+ *  undefined, id_token issuance is silently skipped — keeps existing
+ *  non-OIDC tests untouched. */
+interface IdTokenContext {
+  storage: Storage;
+  signer: OidcSigner | undefined;
+  issuer: string;
+}
+
+/** Builds the OIDC `id_token` claims for a given grant + scope set, or
+ *  `null` if the grant doesn't include `openid` (or no signer / no
+ *  hosted-mode user binding). */
+async function buildIdTokenClaims(
+  ctx: IdTokenContext,
+  connectionItemId: string,
+  clientId: string,
+  scopes: string[],
+): Promise<import("../auth/oidc-signing.js").IdTokenClaims | null> {
+  if (!ctx.signer) return null;
+  const oidcScopes = scopes.filter(
+    (s) => s === "openid" || s === "profile" || s === "email",
+  );
+  if (!oidcScopes.includes("openid")) return null;
+  if (!ctx.storage.users) return null;
+
+  const grant = await ctx.storage.items.get(connectionItemId);
+  if (!grant?.tenant_id) return null;
+  const user = await ctx.storage.users.getByTenantId(grant.tenant_id);
+  if (!user) return null;
+
+  const claims: import("../auth/oidc-signing.js").IdTokenClaims = {
+    iss: ctx.issuer,
+    sub: user.id,
+    aud: clientId,
+  };
+
+  if (oidcScopes.includes("profile")) {
+    claims.preferred_username = user.handle;
+    claims.given_name = user.first_name;
+    claims.family_name = user.last_name;
+    if (user.first_name || user.last_name) {
+      claims.name = [user.first_name, user.last_name].filter(Boolean).join(" ");
+    }
+    claims.picture = user.avatar_blob_hash
+      ? `/blobs/${user.avatar_blob_hash}`
+      : `/profile/placeholder/${encodeURIComponent(user.handle ?? "user")}.svg`;
+  }
+
+  if (oidcScopes.includes("email")) {
+    const authEmail = user.auth_user_id
+      ? await ctx.storage.users.getAuthUserEmail(user.auth_user_id)
+      : null;
+    claims.email = authEmail?.email ?? null;
+    claims.email_verified = authEmail?.email_verified ?? false;
+  }
+
+  return claims;
+}
+
 async function handleCodeExchange(
   c: { json: (data: unknown, status?: number) => Response },
   body: Record<string, string>,
   storage: Storage,
   salt: string,
+  idTokenCtx: IdTokenContext,
 ): Promise<Response> {
   const { code, code_verifier, redirect_uri } = body;
 
@@ -2323,12 +2460,31 @@ async function handleCodeExchange(
     refreshExpiresAt,
   );
 
+  // T-090: mint id_token when openid scope was granted. The grant carries
+  // the client_id we need for the `aud` claim.
+  const grant = await storage.items.get(codeRecord.connection_item_id);
+  const clientId =
+    typeof grant?.properties.client_id === "string"
+      ? grant.properties.client_id
+      : "";
+  const claims = await buildIdTokenClaims(
+    idTokenCtx,
+    codeRecord.connection_item_id,
+    clientId,
+    accessToken.scopes,
+  );
+  const idToken =
+    claims && idTokenCtx.signer
+      ? await idTokenCtx.signer.signIdToken(claims)
+      : undefined;
+
   return c.json({
     access_token: accessRaw,
     refresh_token: refreshRaw,
     token_type: "bearer",
     expires_in: 3600,
     scope: accessToken.scopes.join(" "),
+    ...(idToken !== undefined && { id_token: idToken }),
   });
 }
 
@@ -2337,6 +2493,7 @@ async function handleRefresh(
   body: Record<string, string>,
   storage: Storage,
   salt: string,
+  idTokenCtx: IdTokenContext,
 ): Promise<Response> {
   const { refresh_token } = body;
 
@@ -2390,11 +2547,30 @@ async function handleRefresh(
     refreshExpiresAt,
   );
 
+  // T-090: rotate id_token alongside the access token so a fresh JWT is
+  // issued with each refresh (per OIDC Core §12.1).
+  const grant = await storage.items.get(refreshRecord.connection_item_id);
+  const clientId =
+    typeof grant?.properties.client_id === "string"
+      ? grant.properties.client_id
+      : "";
+  const claims = await buildIdTokenClaims(
+    idTokenCtx,
+    refreshRecord.connection_item_id,
+    clientId,
+    accessToken.scopes,
+  );
+  const idToken =
+    claims && idTokenCtx.signer
+      ? await idTokenCtx.signer.signIdToken(claims)
+      : undefined;
+
   return c.json({
     access_token: accessRaw,
     refresh_token: newRefreshRaw,
     token_type: "bearer",
     expires_in: 3600,
     scope: accessToken.scopes.join(" "),
+    ...(idToken !== undefined && { id_token: idToken }),
   });
 }

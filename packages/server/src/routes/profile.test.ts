@@ -291,6 +291,61 @@ describe("Profile routes (T-074)", () => {
       const res = await request(hosted.app, "GET", "/profile/me");
       expect(res.status).toBe(401);
     });
+
+    // T-091: confirm /profile/me resolves the same user payload when the
+    // bearer is an OAuth access token (synthetic ApiKey with `tenant_id`
+    // populated from the grant) — matches the userinfo path. The earlier
+    // smoke report described this as "null fields" because optional
+    // first_name / last_name / bio were unset; the resolution path itself
+    // works fine. This test locks in that contract.
+    it("returns the populated profile when authenticated by an OAuth bearer", async () => {
+      const u = await provisionUser(hosted, {
+        handle: "olive",
+        email: "olive@example.com",
+      });
+
+      // Create a `system.connection` grant of kind: app for olive's tenant
+      // and mint an access token against it. Mirrors what /auth/authorize
+      // → /auth/token would produce; bypasses the consent UI for unit-test
+      // determinism.
+      const grant = await hosted.storage.items.create(
+        {
+          type: "system.connection",
+          state: "active",
+          tier: "library",
+          properties: {
+            kind: "app",
+            client_id: "olive-test-client",
+            scopes: ["openid", "profile", "email"],
+            oidc_scopes: ["openid", "profile", "email"],
+            status: "active",
+            granted_at: new Date().toISOString(),
+          },
+          source: "test/oauth-bearer-profile",
+          origin: "user",
+        },
+        u.tenantId,
+      );
+
+      const rawToken = `myme_at_test_${Math.random().toString(36).slice(2, 18)}`;
+      const tokenHash = hashApiKey(rawToken, SALT);
+      await hosted.storage.oauth.createToken(
+        grant.id,
+        tokenHash,
+        "access",
+        new Date(Date.now() + 3600_000).toISOString(),
+      );
+
+      const res = await request(hosted.app, "GET", "/profile/me", {
+        key: rawToken,
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as ProfileBody;
+      expect(body.username).toBe("olive");
+      expect(body.email).toBe("olive@example.com");
+      expect(body.email_verified).toBe(true);
+      expect(body.avatar_url).toBe("/profile/placeholder/olive.svg");
+    });
   });
 
   describe("PATCH /profile/me", () => {

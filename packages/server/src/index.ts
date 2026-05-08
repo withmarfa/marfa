@@ -20,6 +20,7 @@ import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
 import { tryStartReactiveRunBridge } from "./connections/reactive-run-bridge.js";
 import { log } from "./middleware/logger.js";
 import { createEmailTransport } from "./email/index.js";
+import { OidcSigner } from "./auth/oidc-signing.js";
 
 async function main() {
   const config = loadConfig();
@@ -244,7 +245,18 @@ async function main() {
       : undefined,
   });
 
-  const app = createApp(storage, blobBackend, config, emailTransport);
+  // T-090: OIDC signer (RSA keypair persisted in `settings`). Init at
+  // boot so the JWKS endpoint and id_token issuance can use it
+  // synchronously inside request handlers.
+  const oidcSigner = await OidcSigner.init(storage);
+
+  const app = createApp(
+    storage,
+    blobBackend,
+    config,
+    emailTransport,
+    oidcSigner,
+  );
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     log("info", `Myme server listening on port ${String(info.port)}`);

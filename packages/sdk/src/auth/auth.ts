@@ -137,16 +137,17 @@ export class MymeAuth {
       throw new OAuthError("invalid_request", "State mismatch on callback");
     }
 
+    // OAuth 2.0 §3.2: token endpoint takes form-encoded.
     const res = await this.fetch(`${this.issuer}/auth/token`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
         grant_type: "authorization_code",
         code,
         code_verifier: pending.verifier,
         redirect_uri: pending.redirectUri,
         client_id: this.clientId,
-      }),
+      }).toString(),
     });
     const body = (await res.json()) as {
       access_token?: string;

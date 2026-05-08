@@ -134,7 +134,12 @@ describe("POST /auth/device — initiate", () => {
     expect(result.device_code).toMatch(/^myme_dc_/);
     expect(result.user_code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
     expect(result.verification_uri).toMatch(/\/auth\/device$/);
-    expect(result.verification_uri_complete).toMatch(/\?user_code=/);
+    // T-096: complete URI must carry the issued user_code (URL-encoded
+    // since the canonical form has a hyphen) so the verification page
+    // can pre-fill from `?user_code=`.
+    expect(result.verification_uri_complete).toBe(
+      `${result.verification_uri}?user_code=${encodeURIComponent(result.user_code)}`,
+    );
     expect(result.expires_in).toBe(600);
     expect(result.interval).toBe(5);
   });

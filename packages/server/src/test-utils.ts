@@ -1,4 +1,5 @@
 import { createApp } from "./app.js";
+import { OidcSigner } from "./auth/oidc-signing.js";
 import type { AppConfig } from "./config.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
@@ -218,7 +219,10 @@ export async function createTestContext(
     oauthRedirectAllowlist: [],
     ...overrides,
   };
-  const app = createApp(storage, blobBackend, config);
+  // T-090: every test gets a real OIDC signer so id_token issuance and
+  // JWKS endpoints behave the same as production.
+  const oidcSigner = await OidcSigner.init(storage);
+  const app = createApp(storage, blobBackend, config, undefined, oidcSigner);
 
   // Create a bootstrap admin key (unique per test context to avoid PG conflicts)
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -263,6 +267,12 @@ export function request(
   path: string,
   options?: {
     body?: unknown;
+    /**
+     * Form-encoded body (mutually exclusive with `body`). Used by
+     * OAuth 2.0 surfaces that must accept `application/x-www-form-urlencoded`
+     * — `/auth/token`, `/auth/authorize` POST, `/auth/device/token`.
+     */
+    form?: Record<string, string | string[]>;
     headers?: Record<string, string>;
     key?: string;
     /**
@@ -283,7 +293,15 @@ export function request(
   }
 
   const init: RequestInit = { method, headers };
-  if (options?.body !== undefined) {
+  if (options?.form !== undefined) {
+    headers["Content-Type"] = "application/x-www-form-urlencoded";
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(options.form)) {
+      if (Array.isArray(v)) for (const item of v) params.append(k, item);
+      else params.append(k, v);
+    }
+    init.body = params.toString();
+  } else if (options?.body !== undefined) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(options.body);
   }

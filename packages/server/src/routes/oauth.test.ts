@@ -138,7 +138,7 @@ async function performOAuthFlow(
 
   // Exchange code for tokens
   const tokenRes = await request(ctx.app, "POST", "/auth/token", {
-    body: {
+    form: {
       grant_type: "authorization_code",
       code,
       code_verifier: codeVerifier,
@@ -330,7 +330,7 @@ describe("PKCE verification", () => {
 
     // Exchange with wrong verifier
     const tokenRes = await request(ctx.app, "POST", "/auth/token", {
-      body: {
+      form: {
         grant_type: "authorization_code",
         code,
         code_verifier: "wrong-verifier-that-does-not-match",
@@ -340,6 +340,43 @@ describe("PKCE verification", () => {
     expect(tokenRes.status).toBe(400);
     const data = (await tokenRes.json()) as { error: { code: string } };
     expect(data.error.code).toBe("invalid_grant");
+  });
+});
+
+// T-094: token endpoint enforces OAuth 2.0 §3.2's `application/x-www-form-urlencoded`
+// requirement. JSON bodies (the pre-fix shape that some clients sent) get
+// a clean validation_error rather than the inscrutable "Invalid JSON in
+// request body" the legacy `c.req.json()` path produced when handed a
+// form body.
+describe("/auth/token Content-Type enforcement (T-094)", () => {
+  it("rejects application/json with a clear validation_error", async () => {
+    const res = await ctx.app.request("/auth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        code: "x",
+        code_verifier: "y",
+        redirect_uri: "z",
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.message).toContain("application/x-www-form-urlencoded");
+    expect(body.error.message).not.toContain("Invalid JSON");
+  });
+
+  it("rejects empty / unset Content-Type with the same error", async () => {
+    const res = await ctx.app.request("/auth/token", {
+      method: "POST",
+      body: "grant_type=authorization_code",
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("validation_error");
   });
 });
 
@@ -391,7 +428,7 @@ describe("refresh token rotation", () => {
     const { tokens } = await performOAuthFlow(["core.note:write"]);
 
     const refreshRes = await request(ctx.app, "POST", "/auth/token", {
-      body: {
+      form: {
         grant_type: "refresh_token",
         refresh_token: tokens.refresh_token,
       },
@@ -411,7 +448,7 @@ describe("refresh token rotation", () => {
 
     // First refresh succeeds
     const firstRefresh = await request(ctx.app, "POST", "/auth/token", {
-      body: {
+      form: {
         grant_type: "refresh_token",
         refresh_token: tokens.refresh_token,
       },
@@ -421,7 +458,7 @@ describe("refresh token rotation", () => {
 
     // Second use of same refresh token — replay detected
     const secondRefresh = await request(ctx.app, "POST", "/auth/token", {
-      body: {
+      form: {
         grant_type: "refresh_token",
         refresh_token: tokens.refresh_token,
       },
