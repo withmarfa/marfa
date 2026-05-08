@@ -1,0 +1,51 @@
+#:schema node_modules/wrangler/config-schema.json
+# Per-Integration Worker for mymehq.github-webhooks.
+# Webhook-only integration — consumes the shared webhook-receipt queue
+# (it's the sole consumer for that queue on staging).
+
+name = "myme-integration-github-webhooks"
+main = "src/worker.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "fb81b3c1ad68ef6dbd689897e8897b10"
+
+[vars]
+INTEGRATION_NAME = "mymehq.github-webhooks"
+ENVIRONMENT = "dev"
+
+[[durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# ---- Staging --------------------------------------------------------------
+[env.staging]
+name = "myme-integration-github-webhooks-staging"
+account_id = "fb81b3c1ad68ef6dbd689897e8897b10"
+
+[env.staging.vars]
+INTEGRATION_NAME = "mymehq.github-webhooks"
+ENVIRONMENT = "staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.staging.queues.consumers]]
+queue = "myme-webhook-receipt-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 6
+dead_letter_queue = "myme-webhook-receipt-staging-dlq"
+
+# Secrets (`wrangler secret put --env staging`):
+#   - MYME_API_URL
+#   - MYME_RUNTIME_CONTROL_URL
+#   - MYME_RUNTIME_BROKER_KEY

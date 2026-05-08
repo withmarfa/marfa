@@ -1,30 +1,20 @@
 /**
  * Cloudflare Worker entrypoint for the RSS Watcher integration.
  *
- * Same shape as the template:
- *   1. Import + register handlers at module load.
+ * Wiring shape:
+ *   1. Register the schedule handler at module load.
  *   2. Re-export PerConnectionState so the DO binding resolves.
- *   3. Default fetch returns a small JSON sentinel — HTTP unused.
+ *   3. Export a default `{ fetch, queue }` built from the SDK helper.
  */
+import { createIntegrationWorker } from "@mymehq/runtime-sdk";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
+import { RSS_WATCHER_MANIFEST } from "./manifest.js";
 
 registerHandlers();
 
 export { PerConnectionState };
 
-export default {
-  fetch(request: Request, env: unknown, ctx: ExecutionContext): Response {
-    void request;
-    void env;
-    void ctx;
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        integration: "mymehq.rss-watcher",
-        message:
-          "RSS Watcher Integration. Schedule handler registered; HTTP surface unused.",
-      }),
-      { headers: { "Content-Type": "application/json" } },
-    );
-  },
-};
+export default createIntegrationWorker({
+  integrationName: RSS_WATCHER_MANIFEST.name,
+  echo: RSS_WATCHER_MANIFEST.bidirectional_handling,
+});

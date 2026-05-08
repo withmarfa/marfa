@@ -77,6 +77,26 @@ binding = "IDEMPOTENCY_KV"
 id = "REPLACE_WITH_PROD_KV_ID"
 
 # ---------------------------------------------------------------------------
+# Service bindings — control plane → per-Integration Workers.
+# Used by POST /connections/:id/arm-schedule (T-085) to call
+# /arm-schedule on the right per-Integration Worker. New integrations
+# need an entry here AND a corresponding service binding in the
+# arm-schedule route's `resolveServiceBinding` switch.
+# ---------------------------------------------------------------------------
+
+[[env.staging.services]]
+binding = "INTEGRATION_RSS_WATCHER"
+service = "myme-integration-rss-watcher-staging"
+
+[[env.staging.services]]
+binding = "INTEGRATION_GITHUB_WEBHOOKS"
+service = "myme-integration-github-webhooks-staging"
+
+[[env.staging.services]]
+binding = "INTEGRATION_TASK_AUTO_ARCHIVE"
+service = "myme-integration-task-auto-archive-staging"
+
+# ---------------------------------------------------------------------------
 # R2 — Layer 2 wires this for large inbound webhook bodies (>256KB).
 #
 # Secrets (set via `wrangler secret put` per env):

@@ -76,3 +76,14 @@ export {
   nextHopMetadata,
   decodeBase64ToArrayBuffer,
 } from "./types.js";
+
+export { computeNextRunAt, isValidCron } from "./cron.js";
+
+export { createIntegrationWorker } from "./worker-entry.js";
+export type {
+  IntegrationWorkerEnv,
+  IntegrationWorkerConfig,
+  IntegrationWorkerExport,
+} from "./worker-entry.js";
+
+export type { PerConnectionAlarmEnv } from "./per-connection-state.js";

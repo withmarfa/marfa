@@ -1,25 +1,15 @@
 /**
  * Cloudflare Worker entrypoint for the GitHub Webhooks integration.
  */
+import { createIntegrationWorker } from "@mymehq/runtime-sdk";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
+import { GITHUB_WEBHOOKS_MANIFEST } from "./manifest.js";
 
 registerHandlers();
 
 export { PerConnectionState };
 
-export default {
-  fetch(request: Request, env: unknown, ctx: ExecutionContext): Response {
-    void request;
-    void env;
-    void ctx;
-    return new Response(
-      JSON.stringify({
-        ok: true,
-        integration: "mymehq.github-webhooks",
-        message:
-          "GitHub Webhooks Integration. Webhook handler registered; HTTP surface unused (deliveries flow via the inbound webhook subsystem and the reactive queue).",
-      }),
-      { headers: { "Content-Type": "application/json" } },
-    );
-  },
-};
+export default createIntegrationWorker({
+  integrationName: GITHUB_WEBHOOKS_MANIFEST.name,
+  echo: GITHUB_WEBHOOKS_MANIFEST.bidirectional_handling,
+});
