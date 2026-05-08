@@ -16,6 +16,7 @@ import { SqliteInboundWebhookEventStore } from "./inbound-webhook-event-store.js
 import { SqliteConnectionOAuthTokenStore } from "./connection-oauth-token-store.js";
 import { SqliteConnectionLeasedTokenStore } from "./connection-leased-token-store.js";
 import { SqliteAuditStore } from "./audit-store.js";
+import { SqliteAuthSessionStore } from "./auth-session-store.js";
 import { SqliteEventLogStore } from "./event-log-store.js";
 import { SqliteUserStore } from "./user-store.js";
 import { SqliteTenantStore } from "./tenant-store.js";
@@ -79,6 +80,8 @@ export async function createSqliteStorage(
   const connectionLeasedTokenStore = new SqliteConnectionLeasedTokenStore(db);
   const auditStore = new SqliteAuditStore(db);
   const eventLogStore = new SqliteEventLogStore(db);
+  // T-097: auth_session sweep — instance-wide, no tenant scoping.
+  const authSessionStore = new SqliteAuthSessionStore(db);
   const edgeStore = new SqliteEdgeStore(db);
   const edgeTypeStore = new SqliteEdgeTypeStore(db);
 
@@ -119,6 +122,7 @@ export async function createSqliteStorage(
     connectionLeasedTokens: connectionLeasedTokenStore,
     audit: auditStore,
     eventLog: eventLogStore,
+    authSessions: authSessionStore,
     settings: new SqliteSettingsStore(db),
     coordination: new SqliteCoordinationStore(),
     tenantQuotas: new SqliteTenantQuotaStore(db),

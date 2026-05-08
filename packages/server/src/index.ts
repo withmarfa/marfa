@@ -13,6 +13,7 @@ import { VersionThinner } from "./storage/version-thinner.js";
 import {
   TrashPurger,
   FeedExpirer,
+  AuthSessionCleaner,
   runTenantCleanup,
 } from "./storage/retention.js";
 import type { TenantFanout } from "./storage/retention.js";
@@ -213,6 +214,19 @@ async function main() {
   );
   feedExpirer.start();
 
+  // T-097: drop expired better-auth `auth_session` rows on a periodic
+  // tick. Gated on the storage adapter exposing `authSessions` (test
+  // contexts that don't wire better-auth skip the job entirely).
+  const authSessionCleaner = storage.authSessions
+    ? new AuthSessionCleaner(
+        storage.authSessions,
+        config.authSessionCleanupIntervalMs ?? 3_600_000,
+        undefined,
+        storage.coordination,
+      )
+    : undefined;
+  authSessionCleaner?.start();
+
   // Wave C PR1: construct the email transport once at boot and thread
   // it into createApp. The factory's sender-domain check fails loud
   // here if MYME_EMAIL_FROM doesn't end @mail.myme.so on the Resend
@@ -274,6 +288,7 @@ async function main() {
     versionThinner.stop();
     trashPurger.stop();
     feedExpirer.stop();
+    authSessionCleaner?.stop();
     if (reactiveRunBridge) {
       void reactiveRunBridge.stop().catch(() => {
         // Bridge cleanup errors during shutdown are swallowed; the

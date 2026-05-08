@@ -94,9 +94,6 @@ export function hashApiKey(raw: string, salt: string): string {
  * JS, so deleting the first key drops the oldest entry. Re-insertion of
  * an existing key (delete + set) moves it to the back, keeping hot keys
  * in cache.
- *
- * Exported for test access only — production callers go through
- * `authMiddleware`'s closed-over instance.
  */
 export function touchLastUsedCache(
   cache: Map<string, number>,
@@ -112,14 +109,82 @@ export function touchLastUsedCache(
 }
 
 // ---------------------------------------------------------------------------
+// OAuth grant `last_used_at` debounce — module-scoped (T-098)
+// ---------------------------------------------------------------------------
+
+/**
+ * Module-scoped debounce cache for OAuth-grant `last_used_at` writes,
+ * promoted from a closure inside `authMiddleware` so route handlers
+ * (token-issuance / refresh paths that don't carry a bearer header
+ * through the middleware) can share the same throttle. Keys are
+ * `oauth:<connection_item_id>`; values are millisecond timestamps.
+ *
+ * The api-key debounce stays inside `authMiddleware`'s closure — its
+ * authoritative throttle lives in `KeyStore.updateLastUsed` (DB-side
+ * conditional write), so the in-memory cache is just a per-instance
+ * round-trip skip and is fine to keep closure-local. The OAuth path
+ * has no DB-side debounce, so the in-memory cache is the throttle.
+ */
+const oauthLastUsedCache = new Map<string, number>();
+
+/**
+ * T-098: stamp `last_used_at` on the underlying `system.connection`
+ * (kind: app) for an OAuth grant. Debounced via the shared module
+ * cache: at most one DB write per process per grant per
+ * `DEBOUNCE_MS`. Callers fire-and-forget — failures must never break
+ * the auth path. Tenant-scoped via `tenantId` so a hosted-mode
+ * caller cannot trip this against another tenant's grant row.
+ *
+ * Used by:
+ *   - `authMiddleware` for every authenticated bearer-bearing request.
+ *   - The `/auth/token` (authorization_code + refresh_token) and
+ *     `/auth/device/token` handlers, which issue tokens without
+ *     resolving a bearer through the middleware.
+ */
+export async function stampOAuthGrantLastUsed(
+  storage: Storage,
+  connectionItemId: string,
+  tenantId: string | undefined,
+): Promise<void> {
+  const cacheKey = `oauth:${connectionItemId}`;
+  const now = Date.now();
+  const lastTracked = oauthLastUsedCache.get(cacheKey) ?? 0;
+  if (now - lastTracked <= DEBOUNCE_MS) return;
+  touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
+  try {
+    const grant = await storage.items.get(connectionItemId, tenantId);
+    if (grant) {
+      await storage.items.update(
+        connectionItemId,
+        {
+          properties: {
+            ...grant.properties,
+            last_used_at: new Date(now).toISOString(),
+          },
+        },
+        tenantId,
+      );
+    }
+  } catch {
+    // Best-effort; the cache mark above prevents a stampede.
+  }
+}
+
+/** Test helper: drops every entry from the OAuth grant debounce cache.
+ *  Tests calling `stampOAuthGrantLastUsed` directly or exercising the
+ *  refresh / userinfo paths use this between cases to avoid carryover. */
+export function _clearOAuthLastUsedCacheForTesting(): void {
+  oauthLastUsedCache.clear();
+}
+
+// ---------------------------------------------------------------------------
 // Auth middleware
 // ---------------------------------------------------------------------------
 
 export function authMiddleware(storage: Storage, salt: string) {
-  // Bounded LRU keyed by `key:<api-key-id>` for stored keys and
-  // `oauth:<connection-item-id>` for OAuth grants. Two namespaces on a
-  // single map keeps the eviction story simple; the prefix prevents
-  // accidental collision between the two id spaces.
+  // Bounded LRU keyed by `key:<api-key-id>` for the stored-key path.
+  // OAuth grants get their throttle from `oauthLastUsedCache` (module-
+  // scoped) so route-handler stampers can share the same window.
   const lastUsedCache = new Map<string, number>();
 
   return createMiddleware<AppEnv>(async (c, next) => {
@@ -199,41 +264,20 @@ export function authMiddleware(storage: Storage, salt: string) {
       });
       c.set("authType", "oauth");
 
-      // Debounced last_used_at update on the underlying app
-      // connection (system.connection of kind: app). The
-      // /auth/grants surface reads this from the connection's properties
-      // to show "active-but-rarely-used" grants accurately. Same DEBOUNCE_MS
-      // as the api-key path: at most one write per process per grant per
-      // hour. Best-effort — failures must never break the auth path, hence
-      // the try/catch. Tenant-scoped via the projected `oauthTenantId` so a
-      // hosted-mode bearer cannot trip this path against another tenant's
-      // grant row.
-      const oauthCacheKey = `oauth:${oauthToken.connection_item_id}`;
-      const oauthNow = Date.now();
-      const oauthLastTracked = lastUsedCache.get(oauthCacheKey) ?? 0;
-      if (oauthNow - oauthLastTracked > DEBOUNCE_MS) {
-        touchLastUsedCache(lastUsedCache, oauthCacheKey, oauthNow);
-        try {
-          const grant = await storage.items.get(
-            oauthToken.connection_item_id,
-            oauthTenantId,
-          );
-          if (grant) {
-            await storage.items.update(
-              oauthToken.connection_item_id,
-              {
-                properties: {
-                  ...grant.properties,
-                  last_used_at: new Date(oauthNow).toISOString(),
-                },
-              },
-              oauthTenantId,
-            );
-          }
-        } catch {
-          // Best-effort; the cache mark above prevents a stampede.
-        }
-      }
+      // Debounced last_used_at update on the underlying app connection
+      // (T-098). The /auth/security surface reads this to show
+      // "active-but-rarely-used" grants accurately. The cache is module-
+      // scoped so the token-issuance / refresh paths in `routes/oauth.ts`
+      // (which don't carry a bearer through this middleware) share the
+      // same throttle. Awaited (not fire-and-forget) so a write that
+      // happens during a request flow finishes before the next request
+      // races it — matters for the SQLite test path where concurrent
+      // writes against the same row trip SQLITE_BUSY.
+      await stampOAuthGrantLastUsed(
+        storage,
+        oauthToken.connection_item_id,
+        oauthTenantId,
+      );
 
       return next();
     }

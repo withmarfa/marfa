@@ -4,7 +4,7 @@ The Hono HTTP server exposing the Myme API. Private package — never published 
 
 ## Layout
 
-- `src/index.ts` — the entry point. Boots storage, blob backend, retention workers (`TrashPurger`, `FeedExpirer`, `VersionThinner`, audit cleanup, event-log cleanup), and the Hono app.
+- `src/index.ts` — the entry point. Boots storage, blob backend, retention workers (`TrashPurger`, `FeedExpirer`, `VersionThinner`, audit cleanup, event-log cleanup, `AuthSessionCleaner`), and the Hono app.
 - `src/app.ts` — composes the router from per-route modules; sets up middleware (auth, rate limit, CORS, logging).
 - `src/routes/*.ts` — one file per route group: `items.ts`, `types.ts`, `keys.ts`, `tenants.ts`, `users.ts`, `edges.ts`, `search.ts`, `bulk.ts`, etc. Routes use `@hono/zod-openapi`'s `createRoute` so OpenAPI generation falls out for free.
 - `src/storage/` — dual-dialect Drizzle layer. `interface.ts` defines `Storage`, `ItemStore`, `KeyStore`, etc.; `pg/` and `sqlite/` are sibling implementations. `connection.ts` carries the bootstrap `SCHEMA_SQL` block (mirrors what migrations would produce on a fresh DB).
@@ -106,6 +106,10 @@ Per-tenant overrides on `TenantConfig`:
 Coordination locks are keyed per-tenant (`<jobName>:<tenant-id>`, plus `<jobName>:_no_tenant` for the NULL bucket) so multi-instance deployments don't double-process a single tenant. Cost is O(tenants) per cleanup tick — cleanup is off the request hot path, so the unbounded scan is acceptable at the scale we're targeting.
 
 The `runTenantCleanup` helper in `storage/retention.ts` is the shared fan-out runner; the in-class `TrashPurger.runOnce` / `FeedExpirer.runOnce` accept an optional `TenantFanout` config that wires the same fan-out semantics for the items-table jobs.
+
+## Auth session cleanup (T-097)
+
+`AuthSessionCleaner` in `storage/retention.ts` drops `auth_session` rows past their `expires_at`. **Instance-wide, not tenant-scoped** — the table carries no `tenant_id` column, the deletion criterion is purely time-based, and Better Auth itself owns the session TTL. Cluster-wide coordination lock keyed `"auth-session-cleanup"`. Cadence configured via `AUTH_SESSION_CLEANUP_INTERVAL_MS` (default 1h). Logs only on non-zero deletes.
 
 ## OAuth scope grammar enforcement (T-045)
 

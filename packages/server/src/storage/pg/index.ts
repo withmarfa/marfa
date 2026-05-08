@@ -21,6 +21,7 @@ import { PgInboundWebhookEventStore } from "./inbound-webhook-event-store.js";
 import { PgConnectionOAuthTokenStore } from "./connection-oauth-token-store.js";
 import { PgConnectionLeasedTokenStore } from "./connection-leased-token-store.js";
 import { PgAuditStore } from "./audit-store.js";
+import { PgAuthSessionStore } from "./auth-session-store.js";
 import { PgEventLogStore } from "./event-log-store.js";
 import { PgUserStore } from "./user-store.js";
 import { PgTenantStore } from "./tenant-store.js";
@@ -73,6 +74,9 @@ export async function createPgStorage(
   const connectionLeasedTokenStore = new PgConnectionLeasedTokenStore(db);
   const auditStore = new PgAuditStore(db);
   const eventLogStore = new PgEventLogStore(db);
+  // T-097: auth_session sweep runs against the unwrapped owner instance,
+  // matching how better-auth itself talks to its tables (baseDb).
+  const authSessionStore = new PgAuthSessionStore(baseDb);
   const edgeStore = new PgEdgeStore(db);
   const edgeTypeStore = new PgEdgeTypeStore(db);
 
@@ -103,6 +107,7 @@ export async function createPgStorage(
     connectionLeasedTokens: connectionLeasedTokenStore,
     audit: auditStore,
     eventLog: eventLogStore,
+    authSessions: authSessionStore,
     settings: new PgSettingsStore(db),
     coordination: new PgCoordinationStore(client),
     tenantQuotas: new PgTenantQuotaStore(db),

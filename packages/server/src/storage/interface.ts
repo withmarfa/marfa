@@ -1090,6 +1090,23 @@ export interface EdgeStore {
  * instance per tick. On SQLite, every backing database is single-process
  * by definition, so the implementation is a pass-through.
  */
+/**
+ * T-097: cleanup hooks for the better-auth `auth_session` table. Better
+ * Auth itself owns the session TTL via `expiresAt`; this store exists
+ * only to drop rows past that timestamp on a periodic sweep so the
+ * table doesn't grow unbounded across hosted multi-tenant scale.
+ *
+ * Instance-wide by design — `auth_session` carries no `tenant_id`
+ * column, the deletion criterion is purely time-based, and there's no
+ * per-tenant retention knob. Mirrors the `VersionThinner` shape rather
+ * than the `T-050` per-tenant fan-out used for retention-window jobs.
+ */
+export interface AuthSessionStore {
+  /** Delete every `auth_session` row whose `expires_at` is strictly
+   *  before `now`. Returns the number of rows deleted. */
+  deleteExpired(now: Date): Promise<number>;
+}
+
 export interface CoordinationStore {
   /**
    * Attempt to acquire a named coordination lock, run `fn`, release the
@@ -1206,6 +1223,10 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   connectionLeasedTokens: ConnectionLeasedTokenStore;
   audit: AuditStore;
   eventLog: EventLogStore;
+  /** T-097: optional sweep store for expired better-auth session rows.
+   *  Absent on test contexts that don't wire better-auth (the cleanup
+   *  job in `index.ts` is gated on this being present). */
+  authSessions?: AuthSessionStore;
   settings: SettingsStore;
   coordination: CoordinationStore;
 

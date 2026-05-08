@@ -11,7 +11,12 @@ import {
   TYPE_REGISTRY,
 } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin, requireAuth, hashApiKey } from "../middleware/auth.js";
+import {
+  requireAdmin,
+  requireAuth,
+  hashApiKey,
+  stampOAuthGrantLastUsed,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type {
   MymeAuth,
@@ -2205,6 +2210,17 @@ export function authRoutes(
       refreshExpiresAt,
     );
 
+    // T-098: device-flow token issuance — same rationale as the
+    // authorization_code path. No bearer in headers, so the middleware
+    // doesn't fire; stamp explicitly. Tenant comes off the underlying
+    // grant item.
+    const deviceGrant = await storage.items.get(row.connection_item_id);
+    await stampOAuthGrantLastUsed(
+      storage,
+      row.connection_item_id,
+      deviceGrant?.tenant_id ?? undefined,
+    );
+
     return c.json({
       access_token: accessRaw,
       refresh_token: refreshRaw,
@@ -2589,6 +2605,18 @@ async function handleCodeExchange(
       ? await idTokenCtx.signer.signIdToken(claims)
       : undefined;
 
+  // T-098: stamp last_used_at on the underlying app connection at
+  // initial token issuance so the /auth/security page doesn't show
+  // a freshly-granted client as "never used". Awaited so the write
+  // finishes inside the request flow rather than racing the next test
+  // (SQLite SQLITE_BUSY otherwise) and so the security page reads
+  // a consistent state immediately after token issuance.
+  await stampOAuthGrantLastUsed(
+    storage,
+    codeRecord.connection_item_id,
+    grant?.tenant_id ?? undefined,
+  );
+
   return c.json({
     access_token: accessRaw,
     refresh_token: refreshRaw,
@@ -2675,6 +2703,16 @@ async function handleRefresh(
     claims && idTokenCtx.signer
       ? await idTokenCtx.signer.signIdToken(claims)
       : undefined;
+
+  // T-098: refresh-rotation is itself a "use" of the grant, but the
+  // request carries no bearer (the refresh_token is in the body), so
+  // the auth middleware never fires the stamp. Do it explicitly here,
+  // awaited (see handleCodeExchange for the rationale).
+  await stampOAuthGrantLastUsed(
+    storage,
+    refreshRecord.connection_item_id,
+    refreshRecord.tenant_id ?? undefined,
+  );
 
   return c.json({
     access_token: accessRaw,
