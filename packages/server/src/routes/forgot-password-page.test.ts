@@ -167,6 +167,31 @@ describe("POST /auth/forgot-password (form wrapper)", () => {
     expect(res.headers.get("location")).toContain("sent=1");
   });
 
+  it("T-078: emits no ERROR log when the email doesn't exist", async () => {
+    ctx = await createTestContext();
+    const captured: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: unknown) => {
+      captured.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      const res = await postForm(ctx, {
+        email: "ghost@example.com",
+        return_to: "/",
+      });
+      expect(res.status).toBe(302);
+    } finally {
+      process.stdout.write = original;
+    }
+    const errorLines = captured.filter(
+      (line) =>
+        line.includes('"level":"error"') &&
+        /Reset Password.*User not found/.test(line),
+    );
+    expect(errorLines).toEqual([]);
+  });
+
   it("redirects without sent=1 when the email is malformed", async () => {
     ctx = await createTestContext();
     const res = await postForm(ctx, {
