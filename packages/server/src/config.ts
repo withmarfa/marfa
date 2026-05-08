@@ -80,6 +80,15 @@ export interface AppConfig {
    *  state. `0` disables the job (the default). */
   feedRetentionDays: number;
   feedExpiryIntervalMs: number;
+  /** T-097: cadence (ms) for the better-auth session cleanup sweep —
+   *  drops `auth_session` rows whose `expires_at` has passed. Default
+   *  3_600_000 (1h); env override `AUTH_SESSION_CLEANUP_INTERVAL_MS`.
+   *  No retention-window knob — Better Auth itself owns the TTL.
+   *
+   *  Optional on the type so test contexts that construct AppConfig
+   *  literals don't have to supply it; `index.ts` applies the 1h
+   *  fallback. */
+  authSessionCleanupIntervalMs?: number;
   errorWebhookUrl: string;
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
@@ -291,6 +300,10 @@ export function loadConfig(): AppConfig {
     feedExpiryIntervalMs: envNumber(
       process.env.FEED_EXPIRY_INTERVAL_MS,
       86_400_000,
+    ),
+    authSessionCleanupIntervalMs: envNumber(
+      process.env.AUTH_SESSION_CLEANUP_INTERVAL_MS,
+      3_600_000,
     ),
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
     // Parse + validate at startup. Malformed CIDRs throw — we want bad

@@ -1,7 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { TrashPurger, FeedExpirer, runTenantCleanup } from "./retention.js";
+import {
+  TrashPurger,
+  FeedExpirer,
+  AuthSessionCleaner,
+  runTenantCleanup,
+} from "./retention.js";
 import type { TenantFanout } from "./retention.js";
 
 let ctx: TestContext;
@@ -583,5 +588,135 @@ describe("runTenantCleanup — audit and event-log fan-out", () => {
     expect(calls[0]?.retention).toBe(90);
     expect(calls[0]?.tenantId).toBeUndefined();
     expect(total).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-097: AuthSessionCleaner — drop expired better-auth session rows.
+// ---------------------------------------------------------------------------
+
+/**
+ * Insert an `auth_session` row directly via the storage escape hatches.
+ * We seed a parent `auth_user` row first because of the FK constraint,
+ * then plant the session with a contrived `expires_at`. PG accepts ISO
+ * strings via `__pgClient`; SQLite stores `integer({ mode: "timestamp" })`
+ * as Unix seconds.
+ */
+async function seedAuthSession(opts: {
+  userId: string;
+  sessionId: string;
+  token: string;
+  expiresAt: Date;
+}): Promise<void> {
+  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const nowIso = new Date().toISOString();
+  const expiresIso = opts.expiresAt.toISOString();
+  if (dialect === "pg") {
+    const s = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    await s.__pgClient(
+      `INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $5)
+       ON CONFLICT (id) DO NOTHING`,
+      [opts.userId, "test", `${opts.userId}@example.com`, true, nowIso],
+    );
+    await s.__pgClient(
+      `INSERT INTO auth_session (id, expires_at, token, created_at, updated_at, user_id)
+       VALUES ($1, $2, $3, $4, $4, $5)`,
+      [opts.sessionId, expiresIso, opts.token, nowIso, opts.userId],
+    );
+  } else {
+    const s = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expiresSec = Math.floor(opts.expiresAt.getTime() / 1000);
+    await s.__sqliteRun(
+      `INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [opts.userId, "test", `${opts.userId}@example.com`, 1, nowSec, nowSec],
+    );
+    await s.__sqliteRun(
+      `INSERT INTO auth_session (id, expires_at, token, created_at, updated_at, user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [opts.sessionId, expiresSec, opts.token, nowSec, nowSec, opts.userId],
+    );
+  }
+}
+
+async function authSessionExists(sessionId: string): Promise<boolean> {
+  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  if (dialect === "pg") {
+    const s = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    const rows = await s.__pgClient(
+      "SELECT 1 FROM auth_session WHERE id = $1",
+      [sessionId],
+    );
+    return rows.length > 0;
+  }
+  const s = ctx.storage as unknown as {
+    __sqliteAll: (q: string) => Promise<unknown[]>;
+  };
+  const rows = await s.__sqliteAll(
+    `SELECT 1 FROM auth_session WHERE id = '${sessionId.replace(/'/g, "''")}'`,
+  );
+  return rows.length > 0;
+}
+
+describe("AuthSessionCleaner.runOnce — drops expired auth_session rows", () => {
+  it("deletes rows whose expires_at is strictly before now, keeps the rest", async () => {
+    if (!ctx.storage.authSessions) {
+      throw new Error("storage.authSessions not wired in test context");
+    }
+
+    const userId = "test-user-t097";
+    await seedAuthSession({
+      userId,
+      sessionId: "sess-expired",
+      token: "tok-expired",
+      expiresAt: new Date(FIXED_NOW.getTime() - 60_000),
+    });
+    await seedAuthSession({
+      userId,
+      sessionId: "sess-active",
+      token: "tok-active",
+      expiresAt: new Date(FIXED_NOW.getTime() + 60_000),
+    });
+
+    const cleaner = new AuthSessionCleaner(
+      ctx.storage.authSessions,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+
+    const deleted = await cleaner.runOnce();
+    expect(deleted).toBe(1);
+    expect(await authSessionExists("sess-expired")).toBe(false);
+    expect(await authSessionExists("sess-active")).toBe(true);
+  });
+
+  it("is idempotent — running twice with no fresh expiries returns 0 the second time", async () => {
+    if (!ctx.storage.authSessions) {
+      throw new Error("storage.authSessions not wired in test context");
+    }
+
+    await seedAuthSession({
+      userId: "test-user-t097-idem",
+      sessionId: "sess-idem",
+      token: "tok-idem",
+      expiresAt: new Date(FIXED_NOW.getTime() - 60_000),
+    });
+
+    const cleaner = new AuthSessionCleaner(
+      ctx.storage.authSessions,
+      3_600_000,
+      () => FIXED_NOW,
+    );
+
+    expect(await cleaner.runOnce()).toBe(1);
+    expect(await cleaner.runOnce()).toBe(0);
   });
 });

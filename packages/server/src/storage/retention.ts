@@ -1,4 +1,9 @@
-import type { CoordinationStore, ItemStore, TenantStore } from "./interface.js";
+import type {
+  AuthSessionStore,
+  CoordinationStore,
+  ItemStore,
+  TenantStore,
+} from "./interface.js";
 import type { TenantConfig } from "@mymehq/shared";
 import { log } from "../middleware/logger.js";
 
@@ -226,6 +231,70 @@ export class FeedExpirer {
       }
     } catch (err) {
       log("error", "Feed expiry error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
+/**
+ * T-097: drops expired better-auth `auth_session` rows on a periodic
+ * tick. Better Auth itself owns the session TTL via `expiresAt`; this
+ * job exists only so the table doesn't grow unbounded between natural
+ * expiries (browser-side ephemeral cookies vanish on tab close, but
+ * the server-side row stays around until the sweep catches up).
+ *
+ * Instance-wide — `auth_session` carries no `tenant_id` column and the
+ * deletion criterion is purely time-based, so the per-tenant fan-out
+ * shape used by retention-window jobs (T-050) doesn't apply. Cluster-
+ * wide coordination lock keyed `"auth-session-cleanup"` keeps multi-
+ * instance deployments running once per tick.
+ */
+export class AuthSessionCleaner {
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(
+    private store: AuthSessionStore,
+    private intervalMs: number,
+    private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
+  ) {}
+
+  start(): void {
+    this.startupTimeout = setTimeout(() => void this.poll(), 10_000);
+    this.interval = setInterval(() => void this.poll(), this.intervalMs);
+  }
+
+  stop(): void {
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+
+  /** Test entry point — drops every row whose `expires_at` is strictly
+   *  before the injected clock. */
+  async runOnce(): Promise<number> {
+    return this.store.deleteExpired(this.nowFn());
+  }
+
+  private async poll(): Promise<void> {
+    try {
+      const deleted = this.coordination
+        ? await this.coordination.withJobLock("auth-session-cleanup", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (deleted !== undefined && deleted > 0) {
+        log("info", "Auth session cleanup", { deleted });
+      }
+    } catch (err) {
+      log("error", "Auth session cleanup error", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
