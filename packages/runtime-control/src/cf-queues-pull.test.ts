@@ -68,7 +68,9 @@ describe("cf-queues-pull", () => {
         "https://api.cloudflare.com/client/v4/accounts/acc_test/queues/queue_uuid/messages/pull",
       );
       expect(init.method).toBe("POST");
-      expect(JSON.parse(typeof init.body === "string" ? init.body : "")).toEqual({
+      expect(
+        JSON.parse(typeof init.body === "string" ? init.body : ""),
+      ).toEqual({
         batch_size: 50,
         visibility_timeout_ms: 5000,
       });
@@ -140,9 +142,9 @@ describe("cf-queues-pull", () => {
         ),
       );
 
-      await expect(
-        pullMessages(VALID_ENV, "queue_uuid"),
-      ).rejects.toThrow(/queue not found/);
+      await expect(pullMessages(VALID_ENV, "queue_uuid")).rejects.toThrow(
+        /queue not found/,
+      );
     });
   });
 
@@ -168,7 +170,9 @@ describe("cf-queues-pull", () => {
       expect(url).toBe(
         "https://api.cloudflare.com/client/v4/accounts/acc_test/queues/queue_uuid/messages/ack",
       );
-      expect(JSON.parse(typeof init.body === "string" ? init.body : "")).toEqual({
+      expect(
+        JSON.parse(typeof init.body === "string" ? init.body : ""),
+      ).toEqual({
         acks: [{ lease_id: "lease_a" }, { lease_id: "lease_b" }],
       });
       expect(result.ackCount).toBe(2);

@@ -31,7 +31,10 @@ interface ProducerCall {
 }
 
 function mockProducer(opts: { failsToSend?: boolean } = {}): {
-  send: (body: unknown, sopts?: { contentType?: "json" | "text" }) => Promise<void>;
+  send: (
+    body: unknown,
+    sopts?: { contentType?: "json" | "text" },
+  ) => Promise<void>;
   calls: ProducerCall[];
 } {
   const calls: ProducerCall[] = [];
@@ -510,9 +513,7 @@ describe("POST /dlq/replay", () => {
         { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
       ],
       pullByQueueId: {
-        "qid-wh": [
-          mkMessage("mid-1", "lease-1", { connection_id: "conn_x" }),
-        ],
+        "qid-wh": [mkMessage("mid-1", "lease-1", { connection_id: "conn_x" })],
       },
     });
     const res = await buildApp().request(
@@ -550,9 +551,7 @@ describe("POST /dlq/replay", () => {
         { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
       ],
       pullByQueueId: {
-        "qid-wh": [
-          mkMessage("mid-1", "lease-1", { connection_id: "conn_x" }),
-        ],
+        "qid-wh": [mkMessage("mid-1", "lease-1", { connection_id: "conn_x" })],
       },
     });
     const res = await buildApp().request(

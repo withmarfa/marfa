@@ -53,7 +53,10 @@ interface DlqQueueDescriptor {
   mainName: string;
   /** Producer binding for the *main* queue, used on replay. */
   mainProducer?: {
-    send(body: unknown, opts?: { contentType?: "json" | "text" }): Promise<void>;
+    send(
+      body: unknown,
+      opts?: { contentType?: "json" | "text" },
+    ): Promise<void>;
   };
 }
 
@@ -150,15 +153,13 @@ export function registerDlqRoutes(
       return c.json({ error: "invalid_json" }, 400);
     }
     if (!body.connection_id || typeof body.connection_id !== "string") {
-      return c.json(
-        { error: "missing_field", field: "connection_id" },
-        400,
-      );
+      return c.json({ error: "missing_field", field: "connection_id" }, 400);
     }
     const connectionId = body.connection_id;
-    const limit = typeof body.limit === "number" && body.limit > 0
-      ? Math.floor(body.limit)
-      : 50;
+    const limit =
+      typeof body.limit === "number" && body.limit > 0
+        ? Math.floor(body.limit)
+        : 50;
     const sinceMs = body.since ? Date.parse(body.since) : null;
     if (body.since && (sinceMs === null || Number.isNaN(sinceMs))) {
       return c.json({ error: "invalid_since" }, 400);
@@ -251,10 +252,7 @@ export function registerDlqRoutes(
       return c.json({ error: "invalid_json" }, 400);
     }
     if (!body.connection_id || typeof body.connection_id !== "string") {
-      return c.json(
-        { error: "missing_field", field: "connection_id" },
-        400,
-      );
+      return c.json({ error: "missing_field", field: "connection_id" }, 400);
     }
     const connectionId = body.connection_id;
     const requestedIds =
