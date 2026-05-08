@@ -55,9 +55,10 @@ describe("ConnectionClient", () => {
       fetch: makeFetch(
         [
           () =>
-            new Response(JSON.stringify({ id: "item_1", type: "core.note" }), {
-              status: 201,
-            }),
+            new Response(
+              JSON.stringify({ item: { id: "item_1", type: "core.note" } }),
+              { status: 201 },
+            ),
         ],
         captured,
       ),
@@ -86,9 +87,10 @@ describe("ConnectionClient", () => {
         [
           () => new Response("", { status: 401 }),
           () =>
-            new Response(JSON.stringify({ id: "item_2", type: "core.note" }), {
-              status: 201,
-            }),
+            new Response(
+              JSON.stringify({ item: { id: "item_2", type: "core.note" } }),
+              { status: 201 },
+            ),
         ],
         captured,
       ),
@@ -270,9 +272,10 @@ describe("ConnectionClient cycle headers (T-039)", () => {
       fetch: makeFetch(
         [
           () =>
-            new Response(JSON.stringify({ id: "item_1", type: "core.note" }), {
-              status: 201,
-            }),
+            new Response(
+              JSON.stringify({ item: { id: "item_1", type: "core.note" } }),
+              { status: 201 },
+            ),
         ],
         captured,
       ),
@@ -293,9 +296,10 @@ describe("ConnectionClient cycle headers (T-039)", () => {
       fetch: makeFetch(
         [
           () =>
-            new Response(JSON.stringify({ id: "item_1", type: "core.note" }), {
-              status: 201,
-            }),
+            new Response(
+              JSON.stringify({ item: { id: "item_1", type: "core.note" } }),
+              { status: 201 },
+            ),
         ],
         captured,
       ),
@@ -347,17 +351,22 @@ describe("ConnectionClient cycle headers (T-039)", () => {
       fetch: makeFetch(
         [
           () =>
-            new Response(JSON.stringify({ id: "item_1", type: "core.note" }), {
-              status: 201,
-            }),
+            new Response(
+              JSON.stringify({ item: { id: "item_1", type: "core.note" } }),
+              { status: 201 },
+            ),
           () =>
-            new Response(JSON.stringify({ id: "item_2", type: "core.note" }), {
-              status: 201,
-            }),
+            new Response(
+              JSON.stringify({ item: { id: "item_2", type: "core.note" } }),
+              { status: 201 },
+            ),
           () =>
-            new Response(JSON.stringify({ id: "item_3", type: "core.note" }), {
-              status: 201,
-            }),
+            new Response(
+              JSON.stringify({ item: { id: "item_3", type: "core.note" } }),
+              {
+                status: 201,
+              },
+            ),
         ],
         captured,
       ),

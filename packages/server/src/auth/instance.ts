@@ -197,6 +197,32 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
     basePath: "/auth",
     secret: options.secret,
     trustedOrigins: options.trustedOrigins,
+    // T-078: suppress the ERROR-level log Better Auth emits when a
+    // `request-password-reset` hits a non-existent email. The forgot-
+    // password wrapper deliberately swallows that case to honour the
+    // no-enumeration invariant (always 302 with `?sent=1`); BA's own
+    // logger fires synchronously inside the handler, so the only seam
+    // to keep operator logs clean is BA's logger config. Pass every
+    // other line through to the structured `log` helper.
+    logger: {
+      disabled: false,
+      level: "info",
+      log: (level, message, ...args) => {
+        if (
+          level === "error" &&
+          message.includes("Reset Password") &&
+          message.includes("User not found")
+        ) {
+          return;
+        }
+        const mapped = level === "debug" ? "info" : level;
+        log(
+          mapped,
+          `Better Auth: ${message}`,
+          args.length > 0 ? { args } : undefined,
+        );
+      },
+    },
     database: drizzleAdapter(options.db, {
       provider: options.dialect === "pg" ? "pg" : "sqlite",
       schema,

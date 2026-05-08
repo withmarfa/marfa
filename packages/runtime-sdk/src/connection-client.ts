@@ -132,7 +132,21 @@ export class ConnectionClient {
   }
 
   async createItem(input: CreateItemInput): Promise<ItemResource> {
-    return this.request<ItemResource>("POST", "/items", input);
+    // T-087: server returns `{ item, metadata }` for `POST /items`;
+    // unwrap so callers see the bare `ItemResource` like every other
+    // method on this client. `transitionItem` already does the same.
+    // Pre-fix this method returned the wrapper as `ItemResource`, so
+    // `created.id` was `undefined` at the call site (visible in the
+    // github-webhooks "bookmark undefined" activity title).
+    const wrapped = await this.request<{ item: ItemResource } | ItemResource>(
+      "POST",
+      "/items",
+      input,
+    );
+    if ("item" in wrapped && typeof wrapped.item === "object") {
+      return wrapped.item;
+    }
+    return wrapped as ItemResource;
   }
 
   async getItem(id: string): Promise<ItemResource | null> {

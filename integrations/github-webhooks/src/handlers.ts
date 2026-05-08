@@ -36,6 +36,8 @@ interface DeliveryRing {
 interface IssuePayload {
   action: string;
   issue?: {
+    id?: number;
+    node_id?: string;
     number?: number;
     title?: string;
     body?: string | null;
@@ -48,6 +50,8 @@ interface IssuePayload {
 interface PullRequestPayload {
   action: string;
   pull_request?: {
+    id?: number;
+    node_id?: string;
     number?: number;
     title?: string;
     body?: string | null;
@@ -178,7 +182,14 @@ function buildIssueBookmark(payload: IssuePayload): CreateItemInput | null {
   if (payload.repository?.full_name !== undefined) {
     properties.source_title = `${payload.repository.full_name} / issues`;
   }
-  return { type: "core.bookmark", properties };
+  // T-087: prefer GraphQL global node_id (opaque, stable) over numeric
+  // id; fall back to id when the payload lacks node_id. Threads the
+  // server's `(source, source_id)` natural-key contract so a duplicate
+  // delivery can't produce two rows.
+  const sourceId = pickSourceId(issue.node_id, issue.id);
+  return sourceId === undefined
+    ? { type: "core.bookmark", properties }
+    : { type: "core.bookmark", source_id: sourceId, properties };
 }
 
 function buildPullRequestBookmark(
@@ -199,7 +210,19 @@ function buildPullRequestBookmark(
   if (payload.repository?.full_name !== undefined) {
     properties.source_title = `${payload.repository.full_name} / pull_requests`;
   }
-  return { type: "core.bookmark", properties };
+  const sourceId = pickSourceId(pr.node_id, pr.id);
+  return sourceId === undefined
+    ? { type: "core.bookmark", properties }
+    : { type: "core.bookmark", source_id: sourceId, properties };
+}
+
+function pickSourceId(
+  nodeId: string | undefined,
+  numericId: number | undefined,
+): string | undefined {
+  if (typeof nodeId === "string" && nodeId.length > 0) return nodeId;
+  if (typeof numericId === "number") return String(numericId);
+  return undefined;
 }
 
 function getHeader(

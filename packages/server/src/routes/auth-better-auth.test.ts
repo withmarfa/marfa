@@ -301,6 +301,41 @@ describe("better-auth /auth/* surface", () => {
     expect(body.code_challenge_methods_supported).toEqual(["S256"]);
   });
 
+  it("T-080: every discovery-doc URL field is prefixed with the configured authBaseUrl", async () => {
+    const base = "https://example.test";
+    ctx = await createTestContext({
+      authAllowSignup: false,
+      authBaseUrl: base,
+    });
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/.well-known/oauth-authorization-server",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+
+    // issuer is the bare base URL.
+    expect(body.issuer).toBe(base);
+
+    // Every absolute-URL field starts with the configured base. If
+    // staging's plist is missing MYME_AUTH_BASE_URL the server falls
+    // back to `http://localhost:<port>` which the host header rewrites
+    // to the internal hostname (`http://aic-atlas:8602` in the wild).
+    // Asserting the prefix here catches that regression.
+    const urlFields = [
+      "authorization_endpoint",
+      "token_endpoint",
+      "registration_endpoint",
+      "userinfo_endpoint",
+    ];
+    for (const field of urlFields) {
+      const value = body[field];
+      expect(typeof value).toBe("string");
+      expect(value as string).toMatch(new RegExp(`^${base}/`));
+    }
+  });
+
   it("/auth/grants returns app connections, /auth/grants/{id} revokes", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
 
