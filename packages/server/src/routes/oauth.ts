@@ -1868,10 +1868,29 @@ export function authRoutes(
 
   router.get("/device", (c) => {
     const url = new URL(c.req.url);
-    const prefilled = url.searchParams.get("user_code") ?? "";
+    const rawCode = url.searchParams.get("user_code") ?? "";
     const error = url.searchParams.get("error") ?? undefined;
+
+    // T-093 follow-on: if the URL carries a user_code (i.e. the user
+    // followed `verification_uri_complete`) and there's no error to
+    // surface, jump straight to the consent screen — skipping the
+    // manual "Continue" click on a form that's already pre-filled.
+    // The consent route 302s to /auth/sign-in if there's no session
+    // yet (preserving the user_code via return_to), so this stays
+    // safe — no auto-approval, just one fewer tap. Falls through to
+    // the form if the code is empty/garbled or an error is being
+    // surfaced.
+    const normalised = normaliseUserCode(
+      rawCode.trim().toUpperCase().replace(/\s+/g, ""),
+    );
+    if (!error && normalised && /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(normalised)) {
+      return c.redirect(
+        `/auth/device/consent?user_code=${encodeURIComponent(normalised)}`,
+        302,
+      );
+    }
     setNoStore(c);
-    return c.html(renderDevicePage({ prefilled, error }));
+    return c.html(renderDevicePage({ prefilled: rawCode, error }));
   });
 
   router.get("/device/consent", async (c) => {

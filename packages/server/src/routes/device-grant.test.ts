@@ -186,7 +186,11 @@ describe("GET /auth/device — verification form", () => {
     expect(html).not.toContain('role="alert"');
   });
 
-  it("pre-fills the user_code from ?user_code=X", async () => {
+  it("redirects canonical-shape user_code straight to consent (T-086 follow-on)", async () => {
+    // verification_uri_complete pre-fill UX: when the URL carries a
+    // well-formed code, skip the manual "Continue" tap and route the
+    // user straight to /auth/device/consent. The consent route handles
+    // sign-in fallback via return_to, so this stays safe.
     ctx = await createTestContext();
     const res = await request(
       ctx.app,
@@ -194,7 +198,37 @@ describe("GET /auth/device — verification form", () => {
       "/auth/device?user_code=ABCD-EFGH",
       { headers: { origin: ORIGIN } },
     );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(
+      "/auth/device/consent?user_code=ABCD-EFGH",
+    );
+  });
+
+  it("renders the form pre-filled when the user_code is malformed", async () => {
+    // Garbled code (lowercase / wrong length / non-canonical chars) —
+    // fall through to the form so the user can correct it.
+    ctx = await createTestContext();
+    const res = await request(ctx.app, "GET", "/auth/device?user_code=zz", {
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).toBe(200);
     const html = await res.text();
+    expect(html).toContain('value="zz"');
+  });
+
+  it("renders the form when an error is being surfaced (no auto-redirect)", async () => {
+    // If `?error=` is set, render the form with the banner — auto-
+    // redirecting would hide the error from the user.
+    ctx = await createTestContext();
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/auth/device?user_code=ABCD-EFGH&error=invalid_code",
+      { headers: { origin: ORIGIN } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('role="alert"');
     expect(html).toContain('value="ABCD-EFGH"');
   });
 
