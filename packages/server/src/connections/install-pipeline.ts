@@ -298,9 +298,7 @@ export async function armScheduleForInstall(
     runtimeBrokerKey: string;
   },
 ): Promise<void> {
-  const hasSchedule = args.manifest.triggers.some(
-    (t) => t.type === "schedule",
-  );
+  const hasSchedule = args.manifest.triggers.some((t) => t.type === "schedule");
   if (!hasSchedule) return;
 
   const url = `${args.controlPlaneUrl.replace(/\/$/, "")}/connections/${args.connectionId}/arm-schedule`;

@@ -203,10 +203,7 @@ export class PerConnectionState implements DurableObject {
       await this.state.storage.delete(key);
       return Response.json({ ok: true });
     }
-    return Response.json(
-      { ok: false, reason: "unknown_op" },
-      { status: 400 },
-    );
+    return Response.json({ ok: false, reason: "unknown_op" }, { status: 400 });
   }
 
   /**

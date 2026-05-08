@@ -111,9 +111,7 @@ export function createIntegrationWorker<
         const innerUrl = new URL(request.url);
         innerUrl.pathname = "/arm-schedule";
         innerUrl.search = "";
-        return stub.fetch(
-          new Request(innerUrl.toString(), { method: "POST" }),
-        );
+        return stub.fetch(new Request(innerUrl.toString(), { method: "POST" }));
       }
       return Response.json({
         ok: true,
@@ -164,7 +162,11 @@ export function createIntegrationWorker<
  * DO directly.
  */
 function makeStorageProxy(stub: DurableObjectStub) {
-  const send = async (op: "get" | "put" | "delete", key: string, value?: unknown) => {
+  const send = async (
+    op: "get" | "put" | "delete",
+    key: string,
+    value?: unknown,
+  ) => {
     const url = new URL("https://do.invalid/storage");
     url.searchParams.set("op", op);
     url.searchParams.set("key", key);
