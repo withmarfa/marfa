@@ -40,6 +40,14 @@ ENVIRONMENT = "dev"
 # (PR 3 wires these. Each integration consumes its slice of the queue;
 # the producer envelopes messages with `integration_name`.)
 #
+# Note on DLQ access (T-084): the per-Integration Worker does NOT need
+# a consumer binding for the `*-dlq` queues. DLQ inspection and replay
+# happen via Cloudflare's account-scoped HTTP-pull API, used by the
+# runtime-control Worker's `POST /dlq/peek` + `POST /dlq/replay`
+# routes. Consumer bindings are reserved for the *main* queues each
+# Integration processes; DLQ messages re-enter the main queue via
+# replay, where the existing consumer picks them up normally.
+#
 # [[queues.consumers]]
 # queue = "myme-webhook-receipt"
 # max_batch_size = 10

@@ -15,6 +15,18 @@ export interface ControlPlaneEnv {
   /** Environment label surfaced in /health responses. */
   ENVIRONMENT?: string;
 
+  // ---- Cloudflare Queues HTTP-pull config (T-084) ---------------------
+  /** Account-scoped Cloudflare API token with `queues_read` +
+   *  `queues_write` permissions. Used by the DLQ peek/replay routes
+   *  to access the HTTP-pull substrate (the runtime-control Worker
+   *  itself is not a queue consumer; pull is on-demand). Set via
+   *  `wrangler secret put CLOUDFLARE_QUEUES_API_TOKEN --env <env>`. */
+  CLOUDFLARE_QUEUES_API_TOKEN?: string;
+  /** Cloudflare account id the queues live in. Set as a wrangler
+   *  `[vars]` entry (not secret — also hardcoded as `account_id` at
+   *  the top of wrangler.control.toml). */
+  CLOUDFLARE_ACCOUNT_ID?: string;
+
   // ---- Bindings provisioned via wrangler.control.toml -----------------
   /** Cloudflare Queue producer for verified inbound webhook deliveries.
    *  Per-Integration Workers consume from this queue. Wired in PR 3 of
@@ -24,6 +36,11 @@ export interface ControlPlaneEnv {
    *  the control plane keeps it bound for future use cases like
    *  re-broadcasting from the webhook flow). */
   REACTIVE_RUN_QUEUE?: QueueProducer;
+  /** Scheduled-poll producer. Bound for DLQ replay (T-084) — when
+   *  an operator replays a `myme-scheduled-poll-${env}-dlq` message,
+   *  it gets re-enqueued onto this main queue via the producer
+   *  binding. Not used on hot paths today. */
+  SCHEDULED_POLL_QUEUE?: QueueProducer;
   /** Short-lived idempotency cache keyed by `${webhook_id}:${delivery_id}`. */
   IDEMPOTENCY_KV?: KVNamespace;
 

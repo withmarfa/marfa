@@ -201,6 +201,59 @@ const verifyContextRoute = createRoute({
   },
 });
 
+// ---------------------------------------------------------------------------
+// DLQ-context lookup — control-plane internal (T-084).
+//
+// Sibling of verify-context, but without the kind/state narrowing. DLQ
+// inspection should work even on paused or revoked connections — that's
+// often *why* an operator is inspecting. Confirms the connection exists,
+// surfaces enough metadata for the DLQ routes to operate, and gates on
+// `is_platform: true`. Used as the auth-forwarding seam by
+// runtime-control's POST /dlq/peek and POST /dlq/replay routes.
+// ---------------------------------------------------------------------------
+
+const DlqContextSchema = z.object({
+  connection_id: z.string(),
+  kind: z.string(),
+  state: z.string(),
+  integration_name: z.string().nullable(),
+  tenant_id: z.string().nullable(),
+});
+
+const dlqContextRoute = createRoute({
+  method: "get",
+  path: "/connections/{connection_id}/dlq-context",
+  tags: ["System"],
+  summary:
+    "Resolve the DLQ-route inputs for a Connection — control-plane only (T-084)",
+  description:
+    "Returns minimal connection metadata for the runtime-control DLQ peek/replay routes. Platform-credential gated; operator-debug surface. Unlike verify-context, this does NOT narrow by kind or state — operators inspect DLQs precisely when a connection is unhealthy.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      connection_id: z.string().min(1),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: DlqContextSchema } },
+      description: "DLQ context resolved.",
+    },
+    401: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Unauthorized",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Caller lacks is_platform: true",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Connection not found.",
+    },
+  },
+});
+
 const lookupInboundWebhooksRoute = createRoute({
   method: "get",
   path: "/inbound-webhook-subscriptions/{connection_id}",
@@ -366,6 +419,53 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     return c.json(
       {
         connection_id: connection.id,
+        integration_name: integrationName,
+        tenant_id: connection.tenant_id ?? null,
+      },
+      200,
+    );
+  });
+
+  router.openapi(dlqContextRoute, async (c) => {
+    const apiKey = requireAuth(c);
+    if (!apiKey.is_platform) {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        "DLQ context lookup requires a platform credential (is_platform: true)",
+      );
+    }
+    const { connection_id } = c.req.valid("param");
+    const connection = await storage.items.get(connection_id);
+    if (!connection) {
+      throw new MymeError(ErrorCode.NOT_FOUND, "Connection not found");
+    }
+    if (connection.type !== "system.connection") {
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        "Item is not a system.connection",
+      );
+    }
+    const props = connection.properties as {
+      kind?: string;
+      status?: string;
+      integration_ref?: string;
+    };
+    let integrationName: string | null = null;
+    if (props.integration_ref) {
+      const integration = await storage.items.get(props.integration_ref);
+      if (integration?.type === "system.integration") {
+        const name = (integration.properties as { manifest_name?: string })
+          .manifest_name;
+        if (typeof name === "string" && name.length > 0) {
+          integrationName = name;
+        }
+      }
+    }
+    return c.json(
+      {
+        connection_id: connection.id,
+        kind: props.kind ?? "unknown",
+        state: connection.state,
         integration_name: integrationName,
         tenant_id: connection.tenant_id ?? null,
       },

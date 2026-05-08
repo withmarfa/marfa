@@ -477,3 +477,188 @@ describe("GET /system/connections/:id/verify-context", () => {
     expect(body.error.message).toMatch(/not active/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /system/connections/:id/dlq-context (T-084) — control-plane lookup
+// for the runtime-control DLQ peek/replay routes. Platform-credential gated.
+// Sibling of verify-context but does NOT narrow by kind or state — DLQs are
+// often inspected precisely because the connection is unhealthy.
+// ---------------------------------------------------------------------------
+
+describe("GET /system/connections/:id/dlq-context", () => {
+  it("returns the connection metadata for an active integration connection", async () => {
+    const integrationName = `acme.dlq-ctx-${Math.random().toString(36).slice(2, 10)}`;
+    const integration = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: integrationName,
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          manifest: {
+            name: integrationName,
+            version: "1.0.0",
+            publisher: "Acme",
+          },
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const conn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: integration.id,
+        },
+      },
+      undefined,
+    );
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/system/connections/${conn.id}/dlq-context`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      connection_id: string;
+      kind: string;
+      state: string;
+      integration_name: string | null;
+      tenant_id: string | null;
+    };
+    expect(body.connection_id).toBe(conn.id);
+    expect(body.kind).toBe("integration");
+    expect(body.state).toBe("active");
+    expect(body.integration_name).toBe(integrationName);
+  });
+
+  it("returns metadata for a revoked connection (DLQ inspection of unhealthy connections is the point)", async () => {
+    const integrationName = `acme.dlq-ctx-revoked-${Math.random().toString(36).slice(2, 10)}`;
+    const integration = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: integrationName,
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          manifest: {
+            name: integrationName,
+            version: "1.0.0",
+            publisher: "Acme",
+          },
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const conn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "revoked",
+          granted_at: new Date().toISOString(),
+          integration_ref: integration.id,
+        },
+      },
+      undefined,
+    );
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/system/connections/${conn.id}/dlq-context`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      kind: string;
+      integration_name: string | null;
+    };
+    expect(body.kind).toBe("integration");
+    expect(body.integration_name).toBe(integrationName);
+  });
+
+  it("rejects callers without is_platform: true", async () => {
+    const conn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const memberRaw = `myme_k1_dlq_member_${suffix}`;
+    await ctx.storage.keys.create(
+      {
+        label: `dlq-member-${suffix}`,
+        source: `dlq-member-${suffix}`,
+        role: "admin",
+        type_permissions: { "*": "write" },
+        is_platform: false,
+      },
+      hashApiKey(memberRaw, "test-salt"),
+    );
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/system/connections/${conn.id}/dlq-context`,
+      { key: memberRaw },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects unauthenticated callers", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/system/connections/conn_nope/dlq-context",
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 when the connection does not exist", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/system/connections/00000000-0000-7000-8000-000000000000/dlq-context",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("returns null integration_name when integration_ref is missing", async () => {
+    const conn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "tenant",
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/system/connections/${conn.id}/dlq-context`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      kind: string;
+      integration_name: string | null;
+    };
+    expect(body.kind).toBe("tenant");
+    expect(body.integration_name).toBeNull();
+  });
+});

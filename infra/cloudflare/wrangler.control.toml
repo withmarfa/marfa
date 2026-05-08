@@ -17,6 +17,7 @@ account_id = "fb81b3c1ad68ef6dbd689897e8897b10"
 
 [vars]
 ENVIRONMENT = "dev"
+CLOUDFLARE_ACCOUNT_ID = "fb81b3c1ad68ef6dbd689897e8897b10"
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
@@ -27,6 +28,7 @@ routes = [
 
 [env.staging.vars]
 ENVIRONMENT = "staging"
+CLOUDFLARE_ACCOUNT_ID = "fb81b3c1ad68ef6dbd689897e8897b10"
 
 # ---- Production -----------------------------------------------------------
 [env.prod]
@@ -37,13 +39,18 @@ routes = [
 
 [env.prod.vars]
 ENVIRONMENT = "prod"
+CLOUDFLARE_ACCOUNT_ID = "fb81b3c1ad68ef6dbd689897e8897b10"
 
 # ---------------------------------------------------------------------------
-# Queue producers — wired in PR 3 of Layer 1.
+# Queue producers — wired in PR 3 of Layer 1; scheduled-poll added by T-084.
 # webhook-receipt   — produced by control plane on verified inbound;
 #                     consumed by per-Integration Workers
 # reactive-run      — produced by the server-side reactive-run-bridge;
 #                     consumed by per-Integration Workers
+# scheduled-poll    — bound for DLQ replay (T-084). When an operator
+#                     replays a `myme-scheduled-poll-<env>-dlq` message,
+#                     it gets re-enqueued onto this main queue. Not used
+#                     on hot paths today.
 # ---------------------------------------------------------------------------
 
 [[env.staging.queues.producers]]
@@ -54,6 +61,10 @@ queue = "myme-webhook-receipt-staging"
 binding = "REACTIVE_RUN_QUEUE"
 queue = "myme-reactive-run-staging"
 
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-staging"
+
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE"
 queue = "myme-webhook-receipt-prod"
@@ -61,6 +72,10 @@ queue = "myme-webhook-receipt-prod"
 [[env.prod.queues.producers]]
 binding = "REACTIVE_RUN_QUEUE"
 queue = "myme-reactive-run-prod"
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-prod"
 
 # ---------------------------------------------------------------------------
 # KV — short-lived idempotency cache used by the control plane to
@@ -118,8 +133,23 @@ service = "myme-integration-task-auto-archive-staging"
 # R2 — Layer 2 wires this for large inbound webhook bodies (>256KB).
 #
 # Secrets (set via `wrangler secret put` per env):
-#   - MYME_API_URL           (every env)
-#   - MYME_RUNTIME_BROKER_KEY (PR 4 — server-issued long-lived key the
-#                              control plane uses to mint per-Connection
-#                              runtime credentials)
+#   - MYME_API_URL              (every env)
+#   - MYME_RUNTIME_BROKER_KEY   (PR 4 — server-issued long-lived key the
+#                                control plane uses to mint per-Connection
+#                                runtime credentials)
+#   - CLOUDFLARE_QUEUES_API_TOKEN (T-084 — account-scoped CF API token
+#                                  with `queues_read` + `queues_write`
+#                                  permissions. Used by the DLQ
+#                                  peek/replay routes' HTTP-pull client.
+#                                  Per-Worker-instance secret; the token
+#                                  itself can be the same one the staging
+#                                  server's plist already carries —
+#                                  reuse the value, separate `wrangler
+#                                  secret put` per env.)
+#
+# Vars (set in [env.<env>.vars] above):
+#   - ENVIRONMENT
+#   - CLOUDFLARE_ACCOUNT_ID  (T-084 — same account_id hardcoded at the
+#                             top of this file. The DLQ HTTP-pull client
+#                             reads it via env so tests can swap it.)
 # ---------------------------------------------------------------------------
