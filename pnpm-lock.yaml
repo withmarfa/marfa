@@ -297,6 +297,9 @@ importers:
       ipaddr.js:
         specifier: ^2.3.0
         version: 2.3.0
+      jose:
+        specifier: ^6.2.3
+        version: 6.2.3
       nodemailer:
         specifier: ^7.0.3
         version: 7.0.13

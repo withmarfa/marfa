@@ -9,6 +9,7 @@ import type { Storage } from "./storage/interface.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import type { MymeAuth } from "./auth/instance.js";
 import { createMymeAuth } from "./auth/instance.js";
+import type { OidcSigner } from "./auth/oidc-signing.js";
 import { itemRoutes } from "./routes/items.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
@@ -61,6 +62,7 @@ export function createApp(
   blobBackend: BlobBackend,
   config: AppConfig,
   emailTransport?: MymeEmailTransport,
+  oidcSigner?: OidcSigner,
 ) {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -175,7 +177,7 @@ export function createApp(
   );
 
   // OAuth 2.1 discovery doc — public, unauthenticated.
-  app.route("/.well-known", discoveryRoutes(config.authBaseUrl));
+  app.route("/.well-known", discoveryRoutes(config.authBaseUrl, oidcSigner));
 
   // Wave C PR4: shared auth-page stylesheet. Public — anyone landing
   // on `/auth/sign-in` must be able to fetch the CSS without a
@@ -216,31 +218,38 @@ export function createApp(
         windowMs: config.rateLimitWindowMs,
         pathLimits: {
           "/keys": 200,
-          "/auth/token": 20,
-          // Wave C PR8 — per-IP caps on auth abuse-prone surfaces.
           // Insertion order matters: the middleware iterates and
           // takes the FIRST `path.startsWith(prefix)` match, so
           // place more-specific prefixes ahead of broader siblings
-          // (otherwise `/auth/sign-in/magic-link` would resolve
-          // against `/auth/sign-in` first).
+          // (e.g. `/auth/device/token` MUST precede `/auth/device`,
+          // and `/auth/sign-in/magic-link` MUST precede `/auth/sign-in`).
           //
-          // Auth endpoints get small caps that suit their realistic
-          // call frequency: a human signs in / signs up / requests
-          // a reset a handful of times per session, never hundreds.
-          // The global default (1000/window) bounds anything else.
+          // Auth-endpoint caps (T-095): calibrated for realistic human
+          // retry patterns plus iterative smoke testing. The global
+          // default (1000/window) bounds anything else.
+          //
+          // Device-flow polling (`/auth/device/token`) gets its own
+          // budget independent of the sign-in / token-exchange paths:
+          // RFC 8628's default 5-second poll interval means a single
+          // in-flight device flow burns 12 calls/minute, so 60/min
+          // accommodates ~5 concurrent flows without sharing budget
+          // with /auth/token.
           //
           // The per-email throttle on `/auth/forgot-password`
           // (3/hour, in-route) is the inner cap; the per-IP cap
           // here is the outer cap that prevents a single client
           // botnet from running thousands of reset attempts across
           // many addresses in one window.
-          "/auth/sign-in/magic-link": 5,
-          "/auth/sign-in/email": 10,
-          "/auth/sign-in": 10,
-          "/auth/sign-up": 5,
-          "/auth/forgot-password": 5,
-          "/auth/reset-password": 10,
-          "/auth/verify-email/resend": 5,
+          "/auth/device/token": 60,
+          "/auth/device": 30,
+          "/auth/sign-in/magic-link": 15,
+          "/auth/sign-in/email": 30,
+          "/auth/sign-in": 30,
+          "/auth/sign-up": 15,
+          "/auth/forgot-password": 15,
+          "/auth/reset-password": 30,
+          "/auth/verify-email/resend": 15,
+          "/auth/token": 60,
         },
         trustedProxyCidrs: config.trustedProxyCidrs,
         // T-052 follow-on (Wave B Part 2): per-tenant rate ceiling on
@@ -332,7 +341,7 @@ export function createApp(
   app.route("/tenants", tenantRoutes(storage));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   app.route("/export", exportRoutes(storage, blobBackend));
-  app.route("/auth", authRoutes(storage, config.apiKeySalt, auth));
+  app.route("/auth", authRoutes(storage, config.apiKeySalt, auth, oidcSigner));
   if (config.authMode === "hosted" && storage.users && storage.tenants) {
     app.route("/auth", userAuthRoutes(storage, config.apiKeySalt));
   }
