@@ -92,6 +92,55 @@ export class MymeServerClient {
   }
 
   /**
+   * Look up the DLQ-route inputs for a Connection (T-084). Forwards
+   * the operator's bearer to the server, which gates on `is_platform: true`
+   * and confirms the connection exists. Unlike `getVerifyContext`, this
+   * does NOT narrow by kind or state — DLQ inspection is most relevant
+   * precisely when a connection is unhealthy. Returns 401/403/404 as a
+   * tagged result so the route can surface the right status to the
+   * operator.
+   */
+  async getDlqContext(
+    connectionId: string,
+    operatorBearer: string,
+  ): Promise<
+    | {
+        ok: true;
+        connection_id: string;
+        kind: string;
+        state: string;
+        integration_name: string | null;
+        tenant_id: string | null;
+      }
+    | { ok: false; status: number; message: string }
+  > {
+    const res = await this.fetchImpl(
+      `${this.apiUrl}/system/connections/${encodeURIComponent(connectionId)}/dlq-context`,
+      { headers: { Authorization: `Bearer ${operatorBearer}` } },
+    );
+    if (res.ok) {
+      const body = await res.json<{
+        connection_id: string;
+        kind: string;
+        state: string;
+        integration_name: string | null;
+        tenant_id: string | null;
+      }>();
+      return { ok: true, ...body };
+    }
+    let message = `dlq-context lookup failed: ${String(res.status)}`;
+    try {
+      const errBody = await res.json<{ error?: { message?: string } }>();
+      if (typeof errBody.error?.message === "string") {
+        message = errBody.error.message;
+      }
+    } catch {
+      // not JSON — keep the status-based message
+    }
+    return { ok: false, status: res.status, message };
+  }
+
+  /**
    * List system.activity rows tagged with a connection_id since a given
    * timestamp (T-082). Forwards the operator's bearer so the server's
    * tenant scoping applies — operators see only their tenant's rows
