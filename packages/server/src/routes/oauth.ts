@@ -463,6 +463,90 @@ export function authRoutes(
   });
 
   // -----------------------------------------------------------------------
+  // RFC 7009 token revocation endpoint
+  //
+  // Public endpoint — no caller auth beyond the token itself, matching the
+  // OAuth public-client posture of the rest of the auth surface. The
+  // endpoint accepts `application/x-www-form-urlencoded` (RFC 7009 §2.1),
+  // mirroring `/auth/token`.
+  //
+  // Behaviour: revoke every token on the same grant (so passing either
+  // the access OR refresh token kills both — matches OIDC client
+  // expectations and avoids leaving an orphaned partner) AND flip the
+  // `system.connection` grant item to `status: revoked` so the user's
+  // Connected Apps list reflects the change. Per RFC 7009 §2.2 the
+  // endpoint MUST respond 200 to all valid requests, including those
+  // referring to unknown / already-revoked tokens, to prevent
+  // token-existence probing.
+  // -----------------------------------------------------------------------
+
+  router.post("/revoke", async (c) => {
+    const contentType = c.req.header("content-type") ?? "";
+    if (!contentType.includes("application/x-www-form-urlencoded")) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "Revoke endpoint requires application/x-www-form-urlencoded body per RFC 7009 §2.1",
+      );
+    }
+    const formData = await c.req.parseBody();
+    const tokenStr = typeof formData.token === "string" ? formData.token : "";
+    if (!tokenStr) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "token parameter is required",
+      );
+    }
+
+    // Look up the token. Unknown / already-revoked / expired tokens are
+    // a no-op per RFC 7009 §2.2 — return 200 silently.
+    const tokenHash = hashApiKey(tokenStr, salt);
+    const record = await storage.oauth.validateToken(tokenHash);
+    if (!record) {
+      return c.body(null, 200);
+    }
+
+    // Revoke every token on the grant — single call covers both access
+    // and refresh — and flip the grant status so the security page
+    // reflects the disconnection.
+    await storage.oauth.revokeGrantTokens(record.connection_item_id);
+    const grant = await storage.items.get(record.connection_item_id);
+    if (
+      grant?.type === "system.connection" &&
+      grant.properties.kind === "app"
+    ) {
+      const now = new Date().toISOString();
+      await storage.items.update(
+        record.connection_item_id,
+        {
+          properties: {
+            ...grant.properties,
+            status: "revoked",
+            revoked_at: now,
+          },
+        },
+        record.tenant_id ?? undefined,
+      );
+    }
+
+    void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      tenant_id: record.tenant_id,
+      key_id: undefined,
+      action: "oauth.token.revoke",
+      resource_type: "oauth_grant",
+      resource_id: record.connection_item_id,
+      details: {
+        token_type_hint:
+          typeof formData.token_type_hint === "string"
+            ? formData.token_type_hint
+            : undefined,
+      },
+    });
+
+    return c.body(null, 200);
+  });
+
+  // -----------------------------------------------------------------------
   // T-074: OIDC userinfo endpoint
   //
   // Standard OIDC userinfo. Bearer auth (OAuth access token only — raw
