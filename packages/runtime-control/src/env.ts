@@ -31,8 +31,20 @@ export interface ControlPlaneEnv {
   /**
    * Service bindings to each in-tree Integration Worker. The control
    * plane uses these to call `/arm-schedule` on a connection's per-
-   * Integration Worker at install time. Bound by integration name in
+   * Integration Worker at install time and `/verify` (T-082) for the
+   * synchronous operator-debug dispatch. Bound by integration name in
    * `wrangler.control.toml`. New integrations need a new binding.
+   *
+   * **Bounded-set assumption (T-082).** This per-integration binding
+   * pattern works for the in-tree set declared in `wrangler.control.toml`
+   * — small, stable, low maintenance cost. It does NOT scale to
+   * community-published integrations from a future marketplace where
+   * runtime-control can't pre-declare bindings for arbitrary third-party
+   * Workers. Marketplace integrations will need a different dispatch
+   * path (HTTP fetch via Workers Platform service URLs, or a queue-
+   * mediated sync polling pattern). The arm-schedule + verify routes
+   * surface `no_service_binding` (503) for missing entries so this
+   * limitation is visible at the call site rather than buried.
    *
    * The binding is optional at the type level so the Worker can boot
    * before all integrations are deployed; routes that reach for a

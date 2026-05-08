@@ -48,6 +48,80 @@ export class MymeServerClient {
     this.apiUrl = apiUrl.replace(/\/$/, "");
   }
 
+  /**
+   * Look up the verify-route inputs for a Connection (T-082). Forwards
+   * the operator's bearer to the server, which gates on `is_platform: true`
+   * and validates the connection exists, is `kind: integration`, and is
+   * active. Returns 401/403/404/400 as a tagged result so the route can
+   * surface the right status to the operator.
+   */
+  async getVerifyContext(
+    connectionId: string,
+    operatorBearer: string,
+  ): Promise<
+    | {
+        ok: true;
+        connection_id: string;
+        integration_name: string;
+        tenant_id: string | null;
+      }
+    | { ok: false; status: number; message: string }
+  > {
+    const res = await this.fetchImpl(
+      `${this.apiUrl}/system/connections/${encodeURIComponent(connectionId)}/verify-context`,
+      { headers: { Authorization: `Bearer ${operatorBearer}` } },
+    );
+    if (res.ok) {
+      const body = await res.json<{
+        connection_id: string;
+        integration_name: string;
+        tenant_id: string | null;
+      }>();
+      return { ok: true, ...body };
+    }
+    let message = `verify-context lookup failed: ${String(res.status)}`;
+    try {
+      const errBody = await res.json<{ error?: { message?: string } }>();
+      if (typeof errBody.error?.message === "string") {
+        message = errBody.error.message;
+      }
+    } catch {
+      // not JSON — keep the status-based message
+    }
+    return { ok: false, status: res.status, message };
+  }
+
+  /**
+   * List system.activity rows tagged with a connection_id since a given
+   * timestamp (T-082). Forwards the operator's bearer so the server's
+   * tenant scoping applies — operators see only their tenant's rows
+   * unless they're using a platform credential.
+   */
+  async listActivitySince(
+    connectionId: string,
+    sinceIso: string,
+    operatorBearer: string,
+  ): Promise<unknown[]> {
+    const filter = `properties.connection_id eq "${connectionId.replace(/"/g, '\\"')}"`;
+    const url = new URL(`${this.apiUrl}/items`);
+    url.searchParams.set("type", "system.activity");
+    url.searchParams.set("filter", filter);
+    url.searchParams.set("since", sinceIso);
+    url.searchParams.set("sort", "created_at");
+    url.searchParams.set("direction", "asc");
+    url.searchParams.set("limit", "100");
+    const res = await this.fetchImpl(url.toString(), {
+      headers: { Authorization: `Bearer ${operatorBearer}` },
+    });
+    if (!res.ok) {
+      throw new Error(
+        `Activity lookup failed: ${String(res.status)} ${res.statusText}`,
+      );
+    }
+    const body = await res.json<{ data: unknown[] }>();
+    return body.data;
+  }
+
   async lookupInboundWebhookSubscriptions(
     connectionId: string,
   ): Promise<InboundSubscription[]> {

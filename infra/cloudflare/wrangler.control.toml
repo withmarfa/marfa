@@ -78,10 +78,28 @@ id = "REPLACE_WITH_PROD_KV_ID"
 
 # ---------------------------------------------------------------------------
 # Service bindings — control plane → per-Integration Workers.
-# Used by POST /connections/:id/arm-schedule (T-085) to call
-# /arm-schedule on the right per-Integration Worker. New integrations
-# need an entry here AND a corresponding service binding in the
-# arm-schedule route's `resolveServiceBinding` switch.
+# Used by:
+#   - POST /connections/:id/arm-schedule (T-085) → /arm-schedule
+#   - POST /connections/:id/verify       (T-082) → /verify
+# Each in-tree integration that ships as a deployed Worker gets a
+# binding here AND a corresponding entry in the routes'
+# `resolveServiceBinding` switch (`arm-schedule.ts`, `verify.ts`).
+#
+# In-tree integrations without a deployed Worker today
+# (`_template`, `mymehq.google-calendar`, `mymehq.sync-agent`) intentionally
+# have NO service binding. The verify route surfaces `no_service_binding`
+# (503) for those — wiring them up requires the integration to first
+# ship its own `wrangler.toml` and pass `wrangler deploy`.
+#
+# **Bounded-set assumption.** This per-integration binding pattern works
+# for the in-tree set — small, stable, low maintenance cost. It does
+# NOT scale to community-published integrations from a future
+# marketplace where runtime-control can't pre-declare bindings for
+# arbitrary third-party Workers. When marketplace integrations land,
+# the verify dispatch path will need to revisit (probably HTTP fetch
+# via Workers Platform service URLs, or queue-mediated sync polling).
+# Out of scope today; documented so future readers see the hidden
+# assumption (mirrored in `env.ts`).
 # ---------------------------------------------------------------------------
 
 [[env.staging.services]]

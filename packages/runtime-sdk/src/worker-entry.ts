@@ -16,6 +16,7 @@
 import { consumeBatch, type ConsumerEnvironment } from "./queue-consumer.js";
 import type { PerConnectionAlarmEnv } from "./per-connection-state.js";
 import type { QueueMessage, RuntimeCredential } from "./types.js";
+import { verifyHandler } from "./verify-handler.js";
 
 /**
  * Worker `env` shape this helper expects. Integrations may extend it
@@ -88,6 +89,37 @@ async function mintCredentialViaBroker(
  * `registerWebhookHandler` / `registerItemEventHandler` calls before
  * this runs.
  */
+function buildConsumerEnv(
+  env: IntegrationWorkerEnv,
+  config: IntegrationWorkerConfig,
+): ConsumerEnvironment {
+  return {
+    apiUrl: env.MYME_API_URL,
+    integrationName: config.integrationName,
+    echo: config.echo,
+    storageFor(connectionId: string) {
+      const stub = env.PER_CONNECTION_STATE.get(
+        env.PER_CONNECTION_STATE.idFromName(connectionId),
+      );
+      // The SDK's cursor + echo + idempotency helpers consume the
+      // CursorStorageAdapter shape directly; the DO's internal
+      // PerConnectionStateCore exposes that subset of
+      // DurableObjectStorage. We can't reach into the DO from
+      // outside, so we hand back a façade that proxies each KV
+      // call through a request to the DO's fetch handler — but
+      // since the queue message dispatches the handler INSIDE the
+      // DO would be cleaner. For Layer 3 we keep the SDK helpers
+      // running in the Worker isolate (matches the in-memory test
+      // harness shape) and reach into the DO state only through
+      // setAlarm / setNextRunAt on the alarm path. Storage proxy
+      // below is simple per-key over fetch.
+      return makeStorageProxy(stub);
+    },
+    mintCredential: (connectionId: string) =>
+      mintCredentialViaBroker(env, connectionId),
+  };
+}
+
 export function createIntegrationWorker<
   E extends IntegrationWorkerEnv = IntegrationWorkerEnv,
 >(config: IntegrationWorkerConfig): IntegrationWorkerExport<E> {
@@ -113,39 +145,24 @@ export function createIntegrationWorker<
         innerUrl.search = "";
         return stub.fetch(new Request(innerUrl.toString(), { method: "POST" }));
       }
+      // T-082: synchronous one-shot dispatch from the runtime-control
+      // verify route. Reuses the same ConsumerEnvironment the queue
+      // consumer builds so the handler runs against the real per-
+      // Connection runtime credential and writes through the same
+      // Myme client — verify is real-handler, real-writes.
+      if (url.pathname === "/verify" && request.method === "POST") {
+        const consumerEnv = buildConsumerEnv(env, config);
+        return verifyHandler(consumerEnv, request);
+      }
       return Response.json({
         ok: true,
         integration: config.integrationName,
         message:
-          "Per-Integration Worker. Queue + DO traffic only; HTTP surface limited to /arm-schedule.",
+          "Per-Integration Worker. Queue + DO traffic only; HTTP surface limited to /arm-schedule and /verify.",
       });
     },
     async queue(batch: MessageBatch<QueueMessage>, env: E) {
-      const consumerEnv: ConsumerEnvironment = {
-        apiUrl: env.MYME_API_URL,
-        integrationName: config.integrationName,
-        echo: config.echo,
-        storageFor(connectionId: string) {
-          const stub = env.PER_CONNECTION_STATE.get(
-            env.PER_CONNECTION_STATE.idFromName(connectionId),
-          );
-          // The SDK's cursor + echo + idempotency helpers consume the
-          // CursorStorageAdapter shape directly; the DO's internal
-          // PerConnectionStateCore exposes that subset of
-          // DurableObjectStorage. We can't reach into the DO from
-          // outside, so we hand back a façade that proxies each KV
-          // call through a request to the DO's fetch handler — but
-          // since the queue message dispatches the handler INSIDE the
-          // DO would be cleaner. For Layer 3 we keep the SDK helpers
-          // running in the Worker isolate (matches the in-memory test
-          // harness shape) and reach into the DO state only through
-          // setAlarm / setNextRunAt on the alarm path. Storage proxy
-          // below is simple per-key over fetch.
-          return makeStorageProxy(stub);
-        },
-        mintCredential: (connectionId: string) =>
-          mintCredentialViaBroker(env, connectionId),
-      };
+      const consumerEnv = buildConsumerEnv(env, config);
       // Cloudflare types `MessageBatch.messages` as readonly; consumeBatch
       // takes a mutable array. The function never mutates the array — slice
       // produces a fresh mutable copy.

@@ -288,3 +288,192 @@ describe("connection.runtime extension gate", () => {
     expect(stored?.connection_id).toBe(connectionId);
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /system/connections/:id/verify-context (T-082) — control-plane lookup
+// for the runtime-control verify route. Platform-credential gated; resolves
+// integration_name + tenant_id from the connection's integration_ref.
+// ---------------------------------------------------------------------------
+
+describe("GET /system/connections/:id/verify-context", () => {
+  async function buildActiveIntegrationConnection(
+    integrationName: string,
+  ): Promise<string> {
+    const integration = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: integrationName,
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          direction: "both",
+          runtime_compatibility: ["hosted"],
+          manifest: {
+            name: integrationName,
+            version: "1.0.0",
+            publisher: "Acme",
+          },
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const conn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: integration.id,
+          configuration: {},
+          runtime_status: "healthy",
+        },
+      },
+      undefined,
+    );
+    return conn.id;
+  }
+
+  it("returns the integration_name + tenant_id for an active integration connection", async () => {
+    const integrationName = `acme.verify-ctx-${Math.random().toString(36).slice(2, 10)}`;
+    const id = await buildActiveIntegrationConnection(integrationName);
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/system/connections/${id}/verify-context`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      connection_id: string;
+      integration_name: string;
+      tenant_id: string | null;
+    };
+    expect(body.connection_id).toBe(id);
+    expect(body.integration_name).toBe(integrationName);
+  });
+
+  it("rejects callers without is_platform: true", async () => {
+    const integrationName = `acme.verify-ctx-${Math.random().toString(36).slice(2, 10)}`;
+    const id = await buildActiveIntegrationConnection(integrationName);
+
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const memberRaw = `myme_k1_verify_member_${suffix}`;
+    await ctx.storage.keys.create(
+      {
+        label: `verify-member-${suffix}`,
+        source: `verify-member-${suffix}`,
+        role: "admin",
+        type_permissions: { "*": "write" },
+        is_platform: false,
+      },
+      hashApiKey(memberRaw, "test-salt"),
+    );
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/system/connections/${id}/verify-context`,
+      { key: memberRaw },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects unauthenticated callers", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/system/connections/conn_nope/verify-context",
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 when the connection does not exist", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/system/connections/00000000-0000-7000-8000-000000000000/verify-context",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when the item is not kind=integration", async () => {
+    const integration = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: "acme.app",
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          manifest: { name: "acme.app", version: "1.0.0", publisher: "Acme" },
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const conn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: integration.id,
+        },
+      },
+      undefined,
+    );
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/system/connections/${conn.id}/verify-context`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as ErrorResponse;
+    expect(body.error.message).toMatch(/integration/i);
+  });
+
+  it("returns 400 when the connection is not active", async () => {
+    const integrationName = `acme.verify-ctx-paused-${Math.random().toString(36).slice(2, 10)}`;
+    const integration = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: integrationName,
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          manifest: {
+            name: integrationName,
+            version: "1.0.0",
+            publisher: "Acme",
+          },
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const conn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "revoked",
+          granted_at: new Date().toISOString(),
+          integration_ref: integration.id,
+        },
+      },
+      undefined,
+    );
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/system/connections/${conn.id}/verify-context`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as ErrorResponse;
+    expect(body.error.message).toMatch(/not active/i);
+  });
+});
