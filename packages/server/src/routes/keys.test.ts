@@ -219,8 +219,6 @@ describe("bootstrap sentinel", () => {
       versionMaxVersions: 500,
       trashRetentionDays: 60,
       trashPurgeIntervalMs: 3_600_000,
-      feedRetentionDays: 0,
-      feedExpiryIntervalMs: 3_600_000,
       errorWebhookUrl: "",
       trustedProxyCidrs: [],
       authBaseUrl: "http://localhost:0",

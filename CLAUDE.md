@@ -119,8 +119,6 @@ Server package (not needed for shared or SDK development):
 - `VERSION_THINNING_INTERVAL_MS` — thinning job interval in ms (default: 3600000)
 - `TRASH_RETENTION_DAYS` — days a trashed item survives before hard-delete (default: 60; `0` disables). Tenant-scoped overrides via `TenantConfig.trash_retention_days` (T-050) take precedence per tenant; the env default applies to the NULL-tenant bucket and to tenants without an override.
 - `TRASH_PURGE_INTERVAL_MS` — trash purge job interval in ms (default: 86400000)
-- `FEED_RETENTION_DAYS` — days a feed-tier item survives before hard-delete, regardless of state (default: 0 / disabled). Tenant override: `TenantConfig.feed_retention_days`.
-- `FEED_EXPIRY_INTERVAL_MS` — feed expiry job interval in ms (default: 86400000)
 - `AUTH_SESSION_CLEANUP_INTERVAL_MS` — cadence (ms) for the better-auth session cleanup sweep that drops `auth_session` rows past their `expires_at` (default: 3600000 / 1h). Instance-wide, not tenant-scoped — Better Auth owns the TTL.
 - `ERROR_WEBHOOK_URL` — webhook URL for 500 error notifications (optional, debounced)
 - `MYME_AUTH_BASE_URL` — issuer URL the better-auth instance is reached at (e.g. `http://localhost:8602`). Drives cookie domains and the OAuth issuer field on the discovery doc. Defaults to `http://localhost:<PORT>`.

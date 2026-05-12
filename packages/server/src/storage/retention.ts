@@ -37,7 +37,6 @@ export interface TenantFanout {
   configField: keyof Pick<
     TenantConfig,
     | "trash_retention_days"
-    | "feed_retention_days"
     | "audit_retention_days"
     | "event_log_retention_hours"
   >;
@@ -151,93 +150,6 @@ export class TrashPurger {
 }
 
 /**
- * Hard-deletes feed-tier items whose `updated_at` is older than the
- * configured retention window. Operates regardless of state — feed
- * capture is short-retention by definition.
- *
- * If `retentionDays <= 0`, the job is a no-op. The default at the config
- * layer is 0 (disabled) — feed retention is opt-in per deployment.
- *
- * T-050: same fan-out shape as `TrashPurger`; when `fanout` is wired
- * the job iterates per-tenant honouring `feed_retention_days`
- * overrides.
- */
-export class FeedExpirer {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  constructor(
-    private items: ItemStore,
-    private retentionDays: number,
-    private intervalMs: number,
-    private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
-    private fanout?: TenantFanout,
-  ) {}
-
-  start(): void {
-    this.startupTimeout = setTimeout(() => void this.poll(), 5_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  async runOnce(): Promise<number> {
-    return this.fanout
-      ? runTenantFanout({
-          jobName: "feed-expiry",
-          coordination: this.coordination,
-          fanout: this.fanout,
-          nowFn: this.nowFn,
-          instanceDefault: this.retentionDays,
-          unitMs: MS_PER_DAY,
-          sweep: (cutoff, tenantId) =>
-            this.items.expireFeedOlderThan(cutoff, tenantId),
-        })
-      : this.runOnceGlobal();
-  }
-
-  private async runOnceGlobal(): Promise<number> {
-    if (this.retentionDays <= 0) return 0;
-    const cutoff = new Date(
-      this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
-    ).toISOString();
-    return this.items.expireFeedOlderThan(cutoff);
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const deleted = this.fanout
-        ? await this.runOnce()
-        : this.coordination
-          ? await this.coordination.withJobLock("feed-expiry", () =>
-              this.runOnce(),
-            )
-          : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
-        log("info", "Feed expiry", {
-          deleted,
-          retentionDays: this.retentionDays,
-        });
-      }
-    } catch (err) {
-      log("error", "Feed expiry error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-}
-
-/**
  * T-097: drops expired better-auth `auth_session` rows on a periodic
  * tick. Better Auth itself owns the session TTL via `expiresAt`; this
  * job exists only so the table doesn't grow unbounded between natural
@@ -306,9 +218,9 @@ export class AuthSessionCleaner {
 // ---------------------------------------------------------------------------
 
 /**
- * T-050: shared fan-out runner. Used by `TrashPurger` and `FeedExpirer`
- * for the unit-of-days delete jobs (and exposed via {@link runTenantCleanup}
- * for the audit + event-log jobs which live inline in `index.ts`).
+ * T-050: shared fan-out runner. Used by `TrashPurger` for the
+ * unit-of-days delete job (and exposed via {@link runTenantCleanup} for
+ * the audit + event-log jobs which live inline in `index.ts`).
  *
  * For each tenant + the NULL-tenant bucket, resolves an effective
  * retention (per-tenant override OR `instanceDefault`) and runs a

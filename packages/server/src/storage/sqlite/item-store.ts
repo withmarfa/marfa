@@ -651,38 +651,6 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async expireFeedOlderThan(
-    beforeDate: string,
-    tenantId?: string | null,
-  ): Promise<number> {
-    const baseConditions = [
-      eq(items.tier, "feed"),
-      lt(items.updated_at, beforeDate),
-    ];
-    if (tenantId === null) {
-      baseConditions.push(isNull(items.tenant_id));
-    } else if (tenantId !== undefined) {
-      baseConditions.push(eq(items.tenant_id, tenantId));
-    }
-    const where = and(...baseConditions);
-
-    return await this.db.transaction(async (tx) => {
-      const idRows = await tx
-        .select({ id: items.id })
-        .from(items)
-        .where(where)
-        .all();
-      if (idRows.length === 0) return 0;
-
-      const ids = idRows.map((row) => row.id);
-      for (const id of ids) {
-        await this.searchStore.remove(id);
-      }
-      await tx.delete(items).where(inArray(items.id, ids)).run();
-      return ids.length;
-    });
-  }
-
   async restore(id: string, tenantId?: string): Promise<Item> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {
