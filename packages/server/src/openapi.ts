@@ -58,6 +58,28 @@ export const ErrorResponseSchema = z.object({
   }),
 });
 
+/**
+ * Per-operation error response schema with a closed enum of `code` values.
+ *
+ * Renders as `error.code: "x" | "y" | "z"` in the OpenAPI spec so SDK codegen
+ * and the API reference can show typed-enum branches instead of `string`.
+ * Use this in `responses` maps to enumerate exactly which codes a given
+ * handler can emit on a given status. The generic `ErrorResponseSchema`
+ * remains for catch-all paths where the code set genuinely can't be
+ * enumerated tightly.
+ */
+export function makeErrorResponseSchema<
+  const C extends readonly [string, ...string[]],
+>(codes: C) {
+  return z.object({
+    error: z.object({
+      code: z.enum(codes),
+      message: z.string(),
+      details: z.record(z.string(), z.unknown()).optional(),
+    }),
+  });
+}
+
 export const OkResponseSchema = z.object({
   ok: z.literal(true),
 });

@@ -4,7 +4,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireTypeAccess } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { publish } from "../pubsub.js";
-import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
 
@@ -39,11 +39,19 @@ const restoreItemRoute = createRoute({
       description: "Item restored",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
       description: "Item not found",
     },
   },
@@ -77,15 +85,32 @@ const transitionItemRoute = createRoute({
       description: "Item state changed",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+            "invalid_id",
+            "invalid_transition",
+          ]),
+        },
+      },
       description: "Invalid transition",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
       description: "Item not found",
     },
   },
