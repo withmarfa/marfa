@@ -284,7 +284,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const integration = await storage.items.get(integration_id, tenantId);
     if (!integration) {
       throw new MymeError(
-        ErrorCode.NOT_FOUND,
+        ErrorCode.INTEGRATION_NOT_FOUND,
         "Integration not found in this tenant scope",
       );
     }
@@ -363,7 +363,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const item = await storage.items.get(body.item_id, tenantId);
     if (!item) {
       throw new MymeError(
-        ErrorCode.NOT_FOUND,
+        ErrorCode.ITEM_NOT_FOUND,
         "Item not found in this tenant scope",
         { item_id: body.item_id },
       );
@@ -453,7 +453,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
       const conn = await storage.items.get(body.connection_id, tenantId);
       if (!conn) {
         throw new MymeError(
-          ErrorCode.NOT_FOUND,
+          ErrorCode.CONNECTION_NOT_FOUND,
           "Connection not found in this tenant scope",
           { connection_id: body.connection_id },
         );
@@ -522,7 +522,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
     } catch (err) {
       if (err instanceof UninstallError) {
         if (err.code === "connection_not_found") {
-          throw new MymeError(ErrorCode.NOT_FOUND, err.message);
+          throw new MymeError(ErrorCode.CONNECTION_NOT_FOUND, err.message);
         }
         throw new MymeError(ErrorCode.VALIDATION_ERROR, err.message, {
           uninstall_error_code: err.code,

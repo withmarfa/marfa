@@ -229,7 +229,7 @@ describe("POST /connections/install — error mapping", () => {
     });
     expect(res.status).toBe(404);
     const body = (await res.json()) as ErrorBody;
-    expect(body.error.code).toBe("not_found");
+    expect(body.error.code).toBe("integration_not_found");
   });
 
   it("returns 400 when integration_id refers to a non-system.integration item", async () => {
@@ -331,7 +331,7 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as ErrorBody;
-    expect(body.error.code).toBe("not_found");
+    expect(body.error.code).toBe("connection_not_found");
   });
 
   it("returns 400 with uninstall_error_code=already_revoked on second call", async () => {
@@ -527,7 +527,7 @@ describe("POST /connections/preview-event — error mapping", () => {
     });
     expect(res.status).toBe(404);
     const body = (await res.json()) as ErrorBody;
-    expect(body.error.code).toBe("not_found");
+    expect(body.error.code).toBe("item_not_found");
   });
 
   it("returns 404 when the filtered connection_id does not resolve", async () => {
