@@ -8,7 +8,6 @@ import type {
   EdgePermission,
   ExtensionPermission,
   MetadataPermission,
-  Origin,
   Tier,
   TypePermission,
 } from "@mymehq/shared";
@@ -30,7 +29,6 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     label: row.label,
     source: row.source,
     role: row.role as "admin" | "workspace_admin" | "member",
-    default_origin: row.default_origin as Exclude<Origin, "system">,
     default_tier: row.default_tier as Tier,
     is_platform: row.is_platform,
     is_runtime_credential: row.is_runtime_credential,
@@ -96,7 +94,6 @@ export class PgKeyStore implements KeyStore {
       label: input.label,
       source: input.source,
       role: input.role,
-      default_origin: input.default_origin ?? "user",
       default_tier: input.default_tier ?? "library",
       is_platform: input.is_platform ?? false,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
@@ -112,7 +109,6 @@ export class PgKeyStore implements KeyStore {
       label: row.label,
       source: row.source,
       role: input.role,
-      default_origin: row.default_origin,
       default_tier: row.default_tier,
       is_platform: row.is_platform,
       type_permissions: input.type_permissions ?? {},
@@ -157,7 +153,6 @@ export class PgKeyStore implements KeyStore {
       label: input.label,
       source: input.source,
       role: input.role,
-      default_origin: input.default_origin ?? "user",
       default_tier: input.default_tier ?? "library",
       is_platform: false,
       is_runtime_credential: true,
@@ -175,7 +170,6 @@ export class PgKeyStore implements KeyStore {
       label: row.label,
       source: row.source,
       role: input.role,
-      default_origin: row.default_origin,
       default_tier: row.default_tier,
       is_platform: false,
       is_runtime_credential: true,
@@ -235,8 +229,6 @@ export class PgKeyStore implements KeyStore {
 
     const patch: Partial<typeof apiKeys.$inferInsert> = {};
     if (input.label !== undefined) patch.label = input.label;
-    if (input.default_origin !== undefined)
-      patch.default_origin = input.default_origin;
     if (input.default_tier !== undefined)
       patch.default_tier = input.default_tier;
     if (input.type_permissions !== undefined)

@@ -66,7 +66,6 @@ export const items = sqliteTable(
     timestamp: text("timestamp").notNull(),
     source: text("source"),
     source_id: text("source_id"),
-    origin: text("origin"),
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
     device: text("device"),
@@ -160,7 +159,6 @@ export const apiKeys = sqliteTable(
     label: text("label").notNull(),
     source: text("source").notNull(),
     role: text("role").notNull().default("member"),
-    default_origin: text("default_origin").notNull().default("user"),
     default_tier: text("default_tier").notNull().default("library"),
     is_platform: integer("is_platform", { mode: "boolean" })
       .notNull()

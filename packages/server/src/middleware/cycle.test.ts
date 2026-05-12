@@ -34,7 +34,6 @@ function apiKey(overrides: Partial<ApiKey> = {}): ApiKey {
     label: "test",
     source: "test",
     role: "admin",
-    default_origin: "user",
     default_tier: "library",
     is_platform: false,
     type_permissions: {},

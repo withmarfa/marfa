@@ -101,7 +101,6 @@ const createItemRoute = createRoute({
             timestamp: z.string().optional(),
             source: z.string().optional(),
             source_id: z.string().optional(),
-            origin: z.enum(["user", "ai", "worker"]).optional(),
             tier: z.enum(["library", "feed"]).optional(),
             device: z.string().optional(),
             capture_latitude: z.number().optional(),
@@ -623,13 +622,12 @@ export function itemRoutes(storage: Storage) {
     const enforcement = resolveEnforcement(tenantConfig, c.get("apiKey"));
 
     // source is non-forgeable: always stamped from the credential.
-    // origin and tier fall back to credential defaults when absent.
+    // tier falls back to the credential default when absent.
     // Final fallback is `tier: "library"` ("save it" — the curated layer is
     // the intended default when neither caller nor credential expresses
     // intent). TSC42 §1.
     const credential = c.get("apiKey");
     const stampedSource = credential?.source;
-    const stampedOrigin = body.origin ?? credential?.default_origin;
 
     // Source allow-list (TSC42 §5): when configured for this type, the
     // credential's source must be in the allowed list.
@@ -860,7 +858,6 @@ export function itemRoutes(storage: Storage) {
           timestamp: body.timestamp,
           source: stampedSource,
           source_id: body.source_id,
-          origin: stampedOrigin,
           device: body.device,
           capture_latitude: body.capture_latitude,
           capture_longitude: body.capture_longitude,

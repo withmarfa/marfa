@@ -30,7 +30,6 @@ const KeyResponseSchema = z.object({
   label: z.string(),
   source: z.string(),
   role: z.enum(["admin", "workspace_admin", "member"]),
-  default_origin: z.enum(["user", "ai", "worker"]),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -50,7 +49,6 @@ const KeyListItemSchema = z.object({
   label: z.string(),
   source: z.string(),
   role: z.string(),
-  default_origin: z.enum(["user", "ai", "worker"]),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -88,7 +86,6 @@ const createKeyRoute = createRoute({
               .min(1, "source display name is required")
               .max(200),
             role: z.enum(["admin", "workspace_admin", "member"]).optional(),
-            default_origin: z.enum(["user", "ai", "worker"]).optional(),
             default_tier: z.enum(["library", "feed"]).optional(),
             is_platform: z.boolean().optional(),
             type_permissions: z
@@ -179,7 +176,6 @@ const revokeKeyRoute = createRoute({
 // handler with a readable error instead of a generic "unrecognized keys".
 const UpdateKeyBodySchema = z.object({
   label: z.string().min(1).optional(),
-  default_origin: z.enum(["user", "ai", "worker"]).optional(),
   default_tier: z.enum(["library", "feed"]).optional(),
   type_permissions: z
     .record(z.string(), z.enum(["read", "write", "none"]))
@@ -200,7 +196,6 @@ const KeyDetailSchema = z.object({
   label: z.string(),
   source: z.string(),
   role: z.enum(["admin", "workspace_admin", "member"]),
-  default_origin: z.enum(["user", "ai", "worker"]),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -325,7 +320,6 @@ export function keyRoutes(storage: Storage, salt: string) {
         label: body.label.trim(),
         source: body.source.trim(),
         role: role,
-        default_origin: body.default_origin,
         default_tier: body.default_tier,
         is_platform: isPlatform,
         type_permissions: typePermissions,
@@ -358,7 +352,6 @@ export function keyRoutes(storage: Storage, salt: string) {
         label: stored.label,
         source: stored.source,
         role: stored.role,
-        default_origin: stored.default_origin,
         default_tier: stored.default_tier,
         is_platform: stored.is_platform,
         type_permissions: stored.type_permissions,
@@ -455,7 +448,6 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     const updated = await storage.keys.update(id, {
       label: body.label,
-      default_origin: body.default_origin,
       default_tier: body.default_tier,
       type_permissions: body.type_permissions,
       extension_permissions: body.extension_permissions,
@@ -481,7 +473,6 @@ export function keyRoutes(storage: Storage, salt: string) {
         label: updated.label,
         source: updated.source,
         role: updated.role,
-        default_origin: updated.default_origin,
         default_tier: updated.default_tier,
         is_platform: updated.is_platform,
         type_permissions: updated.type_permissions,

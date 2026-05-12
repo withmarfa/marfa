@@ -45,7 +45,6 @@ export const ItemSchema = z.object({
   schema_version: z.number().int(),
   source: z.string(),
   source_id: z.string().optional(),
-  origin: z.enum(["user", "ai", "worker", "system"]),
   device: z.string().optional(),
   capture_latitude: z.number().optional(),
   capture_longitude: z.number().optional(),

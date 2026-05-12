@@ -131,7 +131,6 @@ async function createUserAppGrant(
         granted_at: now,
       },
       source,
-      origin: "user",
     },
     tenantId,
   );

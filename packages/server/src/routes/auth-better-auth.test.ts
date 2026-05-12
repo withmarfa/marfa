@@ -357,7 +357,6 @@ describe("better-auth /auth/* surface", () => {
         granted_at: new Date().toISOString(),
       },
       source: "test/oauth",
-      origin: "user",
     });
 
     const listRes = await request(ctx.app, "GET", "/auth/grants", {

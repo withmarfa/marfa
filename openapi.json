@@ -59,14 +59,6 @@
                   "source_id": {
                     "type": "string"
                   },
-                  "origin": {
-                    "type": "string",
-                    "enum": [
-                      "user",
-                      "ai",
-                      "worker"
-                    ]
-                  },
                   "tier": {
                     "type": "string",
                     "enum": [
@@ -161,15 +153,6 @@
                         "source_id": {
                           "type": "string"
                         },
-                        "origin": {
-                          "type": "string",
-                          "enum": [
-                            "user",
-                            "ai",
-                            "worker",
-                            "system"
-                          ]
-                        },
                         "device": {
                           "type": "string"
                         },
@@ -269,7 +252,6 @@
                         "version",
                         "schema_version",
                         "source",
-                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -363,15 +345,6 @@
                         "source_id": {
                           "type": "string"
                         },
-                        "origin": {
-                          "type": "string",
-                          "enum": [
-                            "user",
-                            "ai",
-                            "worker",
-                            "system"
-                          ]
-                        },
                         "device": {
                           "type": "string"
                         },
@@ -471,7 +444,6 @@
                         "version",
                         "schema_version",
                         "source",
-                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -813,15 +785,6 @@
                               "source_id": {
                                 "type": "string"
                               },
-                              "origin": {
-                                "type": "string",
-                                "enum": [
-                                  "user",
-                                  "ai",
-                                  "worker",
-                                  "system"
-                                ]
-                              },
                               "device": {
                                 "type": "string"
                               },
@@ -921,7 +884,6 @@
                               "version",
                               "schema_version",
                               "source",
-                              "origin",
                               "timestamp",
                               "created_at",
                               "updated_at"
@@ -996,15 +958,6 @@
                                   },
                                   "source_id": {
                                     "type": "string"
-                                  },
-                                  "origin": {
-                                    "type": "string",
-                                    "enum": [
-                                      "user",
-                                      "ai",
-                                      "worker",
-                                      "system"
-                                    ]
                                   },
                                   "device": {
                                     "type": "string"
@@ -1105,7 +1058,6 @@
                                   "version",
                                   "schema_version",
                                   "source",
-                                  "origin",
                                   "timestamp",
                                   "created_at",
                                   "updated_at"
@@ -1377,15 +1329,6 @@
                         "source_id": {
                           "type": "string"
                         },
-                        "origin": {
-                          "type": "string",
-                          "enum": [
-                            "user",
-                            "ai",
-                            "worker",
-                            "system"
-                          ]
-                        },
                         "device": {
                           "type": "string"
                         },
@@ -1485,7 +1428,6 @@
                         "version",
                         "schema_version",
                         "source",
-                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -1717,15 +1659,6 @@
                         "source_id": {
                           "type": "string"
                         },
-                        "origin": {
-                          "type": "string",
-                          "enum": [
-                            "user",
-                            "ai",
-                            "worker",
-                            "system"
-                          ]
-                        },
                         "device": {
                           "type": "string"
                         },
@@ -1825,7 +1758,6 @@
                         "version",
                         "schema_version",
                         "source",
-                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -2236,15 +2168,6 @@
                         "source_id": {
                           "type": "string"
                         },
-                        "origin": {
-                          "type": "string",
-                          "enum": [
-                            "user",
-                            "ai",
-                            "worker",
-                            "system"
-                          ]
-                        },
                         "device": {
                           "type": "string"
                         },
@@ -2344,7 +2267,6 @@
                         "version",
                         "schema_version",
                         "source",
-                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -2557,15 +2479,6 @@
                         "source_id": {
                           "type": "string"
                         },
-                        "origin": {
-                          "type": "string",
-                          "enum": [
-                            "user",
-                            "ai",
-                            "worker",
-                            "system"
-                          ]
-                        },
                         "device": {
                           "type": "string"
                         },
@@ -2665,7 +2578,6 @@
                         "version",
                         "schema_version",
                         "source",
-                        "origin",
                         "timestamp",
                         "created_at",
                         "updated_at"
@@ -3992,14 +3904,6 @@
                         },
                         "source_id": {
                           "type": "string"
-                        },
-                        "origin": {
-                          "type": "string",
-                          "enum": [
-                            "user",
-                            "ai",
-                            "worker"
-                          ]
                         },
                         "device": {
                           "type": "string"
@@ -8525,15 +8429,6 @@
                               "source_id": {
                                 "type": "string"
                               },
-                              "origin": {
-                                "type": "string",
-                                "enum": [
-                                  "user",
-                                  "ai",
-                                  "worker",
-                                  "system"
-                                ]
-                              },
                               "device": {
                                 "type": "string"
                               },
@@ -8633,7 +8528,6 @@
                               "version",
                               "schema_version",
                               "source",
-                              "origin",
                               "timestamp",
                               "created_at",
                               "updated_at"
@@ -10254,14 +10148,6 @@
                       "member"
                     ]
                   },
-                  "default_origin": {
-                    "type": "string",
-                    "enum": [
-                      "user",
-                      "ai",
-                      "worker"
-                    ]
-                  },
                   "default_tier": {
                     "type": "string",
                     "enum": [
@@ -10350,14 +10236,6 @@
                         "member"
                       ]
                     },
-                    "default_origin": {
-                      "type": "string",
-                      "enum": [
-                        "user",
-                        "ai",
-                        "worker"
-                      ]
-                    },
                     "default_tier": {
                       "type": "string",
                       "enum": [
@@ -10423,7 +10301,6 @@
                     "label",
                     "source",
                     "role",
-                    "default_origin",
                     "default_tier",
                     "is_platform",
                     "type_permissions",
@@ -10507,14 +10384,6 @@
                           "role": {
                             "type": "string"
                           },
-                          "default_origin": {
-                            "type": "string",
-                            "enum": [
-                              "user",
-                              "ai",
-                              "worker"
-                            ]
-                          },
                           "default_tier": {
                             "type": "string",
                             "enum": [
@@ -10579,7 +10448,6 @@
                           "label",
                           "source",
                           "role",
-                          "default_origin",
                           "default_tier",
                           "is_platform",
                           "type_permissions",
@@ -10747,14 +10615,6 @@
                     "type": "string",
                     "minLength": 1
                   },
-                  "default_origin": {
-                    "type": "string",
-                    "enum": [
-                      "user",
-                      "ai",
-                      "worker"
-                    ]
-                  },
                   "default_tier": {
                     "type": "string",
                     "enum": [
@@ -10839,14 +10699,6 @@
                         "member"
                       ]
                     },
-                    "default_origin": {
-                      "type": "string",
-                      "enum": [
-                        "user",
-                        "ai",
-                        "worker"
-                      ]
-                    },
                     "default_tier": {
                       "type": "string",
                       "enum": [
@@ -10911,7 +10763,6 @@
                     "label",
                     "source",
                     "role",
-                    "default_origin",
                     "default_tier",
                     "is_platform",
                     "type_permissions",

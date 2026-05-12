@@ -52,7 +52,7 @@ Most write routes follow the same gate sequence:
 4. Resolve enforcement levers (TSC42 §5): tenant config + per-credential override → effective `EnforcementSettings`.
 5. Apply source allow-list (reject if violating).
 6. Apply strict-mode validation (reject unknown properties when on).
-7. Stamp `source`, `origin`, `tier` from credential defaults.
+7. Stamp `source`, `tier` from credential defaults.
 8. Run the storage write inside a transaction.
 9. Hydrate the response (edges, metadata) and return.
 

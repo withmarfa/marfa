@@ -143,7 +143,7 @@ export class SqliteSearchStore implements SearchStore {
         snippet(items_fts, 1, '<mark>', '</mark>', '...', 32) AS snippet,
         bm25(items_fts) AS rank,
         i.id, i.type, i.state, i.properties, i.created_at, i.updated_at,
-        i.timestamp, i.source, i.source_id, i.origin, i.version,
+        i.timestamp, i.source, i.source_id, i.version,
         i.schema_version, i.device, i.tier,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions

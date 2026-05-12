@@ -41,7 +41,6 @@ function fakeKey(
     source: "test",
     role,
     is_platform: false,
-    default_origin: "user",
     default_tier: "library",
     type_permissions: {},
     extension_permissions: {},

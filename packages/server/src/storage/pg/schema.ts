@@ -80,7 +80,6 @@ export const items = pgTable(
     timestamp: text("timestamp").notNull(),
     source: text("source"),
     source_id: text("source_id"),
-    origin: text("origin"),
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
     device: text("device"),
@@ -183,7 +182,6 @@ export const apiKeys = pgTable(
     label: text("label").notNull(),
     source: text("source").notNull(),
     role: text("role").notNull().default("member"),
-    default_origin: text("default_origin").notNull().default("user"),
     default_tier: text("default_tier").notNull().default("library"),
     is_platform: boolean("is_platform").notNull().default(false),
     is_runtime_credential: boolean("is_runtime_credential")

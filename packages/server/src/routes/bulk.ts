@@ -63,7 +63,6 @@ const BulkInputItemSchema = z.object({
   /** Ignored on the wire — server stamps `source` from the credential. */
   source: z.string().optional(),
   source_id: z.string().optional(),
-  origin: z.enum(["user", "ai", "worker"]).optional(),
   device: z.string().optional(),
   tags: z.array(z.string()).optional(),
   /** Inline edges (replace-all semantics per edge_type) applied after
@@ -389,7 +388,6 @@ async function processBulkItem(
       ...(raw.timestamp !== undefined && { timestamp: raw.timestamp }),
       ...(stampedSource !== undefined && { source: stampedSource }),
       ...(sourceId !== undefined && { source_id: sourceId }),
-      ...(raw.origin !== undefined && { origin: raw.origin }),
       ...(raw.device !== undefined && { device: raw.device }),
       ...(raw.tags !== undefined && { tags: raw.tags }),
     };

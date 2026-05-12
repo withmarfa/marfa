@@ -42,7 +42,6 @@ async function seedActiveGrant(scopes: string[]): Promise<{
       granted_at: new Date().toISOString(),
     },
     source: "test/oauth",
-    origin: "user",
   });
   const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_pre`;
   const tokenHash = hashApiKey(rawToken, TEST_API_KEY_SALT);
@@ -126,7 +125,6 @@ describe("revokeOauthGrantsT045 — re-consent migration", () => {
         granted_at: new Date().toISOString(),
       },
       source: "test/connector",
-      origin: "user",
     });
     // Plus one real grant to confirm it's revoked alongside.
     const { grantId } = await seedActiveGrant(["core.note:read"]);

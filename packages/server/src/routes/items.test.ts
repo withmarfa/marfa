@@ -1569,7 +1569,6 @@ describe("permission-gate ordering (priority cluster)", () => {
         label: `gate-member-${suffix}`,
         source: `gate-member-${suffix}`,
         role: "member",
-        default_origin: "user",
         default_tier: "feed",
         type_permissions: permissions,
         extension_permissions: {},

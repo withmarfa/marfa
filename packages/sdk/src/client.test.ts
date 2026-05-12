@@ -830,7 +830,6 @@ describe("keys", () => {
       label: "update-me",
       source: "update-me-source",
       role: "member",
-      default_origin: "user",
       default_tier: "feed",
       type_permissions: { "core.note": "read" },
     });
@@ -952,7 +951,6 @@ describe("Extended SDK surface", () => {
     expect(created.label).toBe("wave2-sdk-test");
     expect(created.source).toBe("wave2-sdk-test-src");
     expect(created.role).toBe("member");
-    expect(created.default_origin).toBe("user");
     expect(created.default_tier).toBe("library");
     expect(created.type_permissions).toEqual({ "*": "write" });
   });

@@ -63,11 +63,10 @@ const SYSTEM_FIELDS = new Set([
   "state",
   "type",
   "source",
-  "origin",
   "timestamp",
   "created_at",
   "updated_at",
-  // System fields beyond the original seven. parent_id and in-thread
+  // System fields beyond the original six. parent_id and in-thread
   // membership are carried as edges, not as generic-query-language filters;
   // use edge[<type>]= clauses for those.
   "tier",

@@ -315,7 +315,6 @@ describe("OAuth synthetic apiKey advances grant last_used_at (§3.4)", () => {
         granted_at: new Date().toISOString(),
       },
       source: "test/oauth",
-      origin: "user",
     });
     const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_lru_test`;
     const tokenHash = hashApiKey(rawToken, "test-salt");
@@ -364,7 +363,6 @@ describe("T-098: /auth/token refresh advances grant last_used_at", () => {
         granted_at: new Date().toISOString(),
       },
       source: "test/oauth-refresh",
-      origin: "user",
     });
     const refreshRaw = `myme_rt_${Math.random().toString(36).slice(2)}_t098`;
     const refreshHash = hashApiKey(refreshRaw, "test-salt");
@@ -418,7 +416,6 @@ describe("T-098: /auth/token refresh advances grant last_used_at", () => {
         granted_at: new Date().toISOString(),
       },
       source: "test/oauth-debounce",
-      origin: "user",
     });
     // Two consecutive refresh tokens — the first refresh consumes one,
     // the second uses the rotated token issued by the first call.

@@ -204,7 +204,6 @@ async function provisionFlow(
         granted_at: grantedAt,
       },
       source: "myme/oauth/test",
-      origin: "user",
     },
     tenant.id,
   );

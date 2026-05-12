@@ -1,12 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
-import type {
-  Item,
-  ItemState,
-  Metadata,
-  Origin,
-  Tier,
-  Version,
-} from "@mymehq/shared";
+import type { Item, ItemState, Metadata, Tier, Version } from "@mymehq/shared";
 import type { items, metadata, versions } from "./schema.js";
 
 type ItemRow = typeof items.$inferSelect;
@@ -35,7 +28,6 @@ export function rowToItem(row: ItemRow): Item {
     version: row.version,
     source: row.source ?? "unknown",
     ...(row.source_id != null && { source_id: row.source_id }),
-    origin: (row.origin as Origin | null) ?? "user",
     schema_version: row.schema_version ?? 1,
     ...(row.device != null && { device: row.device }),
     ...(row.capture_latitude != null && {
