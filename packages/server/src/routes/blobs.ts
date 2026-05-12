@@ -53,6 +53,8 @@ const uploadBlobRoute = createRoute({
   path: "/",
   tags: ["Blobs"],
   summary: "Upload a blob",
+  description:
+    "Uploads binary content and returns its `sha256:<hex>` content-addressed hash. Accepts `multipart/form-data` (typical for browser file inputs) or `application/octet-stream` (raw bytes for SDK / CLI uploads).\n\nUploads are idempotent: re-uploading identical bytes returns the existing hash without re-storing — the storage backend deduplicates by hash. `MAX_BLOB_SIZE` (default 50 MB) caps individual uploads; over-size returns `413 blob_too_large`. Tenant blob count and storage-byte quotas (`blobs`, `storage_bytes`) gate uploads.\n\nReference the returned `hash` from item properties (`blob_ref` on `core.file.*` types) or attachment entries. See [Blobs](/concepts/blobs).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -91,6 +93,8 @@ const getBlobRoute = createRoute({
   path: "/{hash}",
   tags: ["Blobs"],
   summary: "Download blob binary",
+  description:
+    "Streams the bytes for a previously-uploaded blob, identified by its `sha256:<hex>` hash. Response is `application/octet-stream` with the raw bytes. Tenant-scoped — a hash uploaded in tenant A is not visible to tenant B; cross-tenant probes return 404.\n\nFor S3-backed deployments serving images and other static assets, prefer `GET /blobs/{hash}/url` (presigned URL) so the browser fetches directly from the object store and the API isn't a proxy.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -126,6 +130,8 @@ const getBlobUrlRoute = createRoute({
   path: "/{hash}/url",
   tags: ["Blobs"],
   summary: "Get a presigned download URL for a blob",
+  description:
+    "Returns a time-limited presigned URL pointing directly at the underlying S3-compatible object store. The `ttl` query parameter (seconds, default 3600) sets the URL's lifetime. Useful for serving images and other static assets without proxying them through the API server.\n\nAvailable only when `BLOB_BACKEND=s3`. Filesystem-backed deployments return `400` — use `GET /blobs/{hash}` to stream bytes instead.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -164,6 +170,8 @@ const cleanupBlobsRoute = createRoute({
   path: "/cleanup",
   tags: ["Blobs"],
   summary: "Remove unreferenced blobs",
+  description:
+    "Removes blobs that no item references — including items in trash. Run periodically to reclaim storage after item deletion accumulates orphaned blobs. Set `dry_run=true` to preview what would be removed without writing. Admin-only.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({

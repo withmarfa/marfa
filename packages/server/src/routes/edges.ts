@@ -70,6 +70,8 @@ const listEdgesRoute = createRoute({
   path: "/",
   tags: ["Edges"],
   summary: "List edges",
+  description:
+    "Returns a paginated list of edges across the tenant, optionally filtered by edge type. Use for taxonomy-style traversals — every reply, every annotation, every parent-of edge — without having to walk items first. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope; omit to list every edge. Tenant-scoped.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -104,6 +106,8 @@ const createEdgeRoute = createRoute({
   path: "/",
   tags: ["Edges"],
   summary: "Create an edge",
+  description:
+    "Creates a single typed edge from source to target. Edges are first-class — they carry their own id, properties, and audit trail; they are not embedded references on the item. Source and target must both exist in the caller's tenant.\n\nEdge writes are **dual-gated**: the caller needs both write permission on the source item's type AND write permission on the edge type. Cardinalities and source/target type constraints are enforced at create time — violations return `400 edge_constraint_violation`. Cycles on `parent-of` and `supersedes` are rejected with `400 edge_cycle`. See [Permissions — dual-gate](/api/permissions#the-dual-gate-rule) and [Edges](/concepts/edges).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -146,6 +150,8 @@ const updateEdgeRoute = createRoute({
   path: "/{id}",
   tags: ["Edges"],
   summary: "Update an edge",
+  description:
+    "Updates the `properties` JSON on an edge. Identity fields — `edge_type`, `source_id`, `target_id` — are immutable after creation; attempts to change them return `400 validation_error`. To re-point an edge to a different target, delete the existing edge and create a new one.\n\nDual-gated on the source item's type write permission and the edge type's write permission, same as edge create.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string() }),
@@ -182,6 +188,8 @@ const deleteEdgeRoute = createRoute({
   path: "/{id}",
   tags: ["Edges"],
   summary: "Delete an edge",
+  description:
+    "Deletes a single edge by id. Dual-gated on the source item's type write permission and the edge type's write permission. Cascade behaviour on the connected items is determined by the edge type's `cascade_on_delete`: `cascade` deletes connected items, `orphan` leaves them in place, `block` rejects the delete if endpoints remain. See [Edges — cascade on delete](/concepts/edges#cascade-on-delete).",
   security: [{ bearerAuth: [] }],
   request: { params: z.object({ id: z.string() }) },
   responses: {
@@ -366,6 +374,8 @@ const listFromSourceRoute = createRoute({
   path: "/{id}/edges",
   tags: ["Edges"],
   summary: "List outbound edges from an item",
+  description:
+    "Returns the edges where this item is the **source**, paginated and optionally filtered by edge type. Use to walk an item's relationships outward — what does this note reference, what does this entity author. For the reverse direction (edges pointing AT this item), use `GET /items/{id}/backrefs`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string() }),
@@ -396,6 +406,8 @@ const listBackrefsRoute = createRoute({
   path: "/{id}/backrefs",
   tags: ["Edges"],
   summary: "List inbound edges to an item",
+  description:
+    "Returns the edges where this item is the **target** (backrefs), paginated and optionally filtered by edge type. Use to walk an item's relationships inward — what notes are about this entity, what items are in this thread. For the forward direction, use `GET /items/{id}/edges`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string() }),

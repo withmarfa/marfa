@@ -88,6 +88,8 @@ const createItemRoute = createRoute({
   path: "/",
   tags: ["Items"],
   summary: "Create an item",
+  description:
+    "Creates an item against its type schema and persists it. The server stamps `id`, `created_at`, `version`, and `source` (from the caller's credential — not forgeable). Type-schema validation runs before any write.\n\nIf `source_id` is supplied and an existing non-trashed item in the tenant already has the same `(source, source_id)` pair, the call short-circuits to update — properties shallow-merge, tags replace if provided, edges replace per-type if provided. The HTTP status flips from 201 to 200; the response body is the updated item either way. See [Items — natural-key upsert](/concepts/items#natural-key-upsert) for the wider semantics.\n\nAn `edges` block on the request body creates the item and its outbound edges in one transaction; either the whole write succeeds or nothing persists. See [Edges — atomic item + edges write](/concepts/edges#atomic-item--edges-write).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -152,6 +154,8 @@ const getItemStatsRoute = createRoute({
   path: "/stats",
   tags: ["Items"],
   summary: "Get item counts by state",
+  description:
+    "Returns a count of items per lifecycle `state` (`active`, `archived`, `trashed`) for the tenant. Useful for surfacing item totals in a dashboard or sidebar without paging through `/items`. Type-permission scoped: a credential sees only the counts for types it can read. See [Lifecycle](/concepts/lifecycle).",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -174,6 +178,8 @@ const listItemsRoute = createRoute({
   path: "/",
   tags: ["Items"],
   summary: "List items",
+  description:
+    "Returns a paginated list of items in the tenant, narrowed by the supplied query parameters. `type` matches subtypes via inheritance — `type=core.media` returns `core.media.book`, `core.media.article`, etc. `since` / `until` operate on the item's effective time (`timestamp`, falling back to `created_at`), not `updated_at`. `tier` accepts `library`, `feed`, or `all` (omitting returns both slices).\n\nLists are lean by default — no edges, no metadata, no extensions. The `include` parameter is the escape hatch: `?include=edges,metadata` hydrates the matching extras inline so the caller avoids the N+1 trap. See [Items — lists are lean](/concepts/items#lists-are-lean-opt-into-extras) and [Search and query](/api/search-and-query) for the filter grammar.\n\nCursors are stable for ~24 hours; concurrent writes don't shift pages already returned.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -228,6 +234,8 @@ const getItemRoute = createRoute({
   path: "/{id}",
   tags: ["Items"],
   summary: "Get an item",
+  description:
+    "Returns a single item with its metadata layer flattened onto the object (`tags`, `tier`, `state`) and outbound edges hydrated inline, grouped by edge type. Extensions are NOT included — fetch them through the `/items/{id}/extensions` endpoints.\n\nIf the item exists but isn't visible to the caller (type permissions, source filter, cross-tenant), the response is `404 item_not_found`. The server doesn't leak existence.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -255,6 +263,8 @@ const updateItemRoute = createRoute({
   path: "/{id}",
   tags: ["Items"],
   summary: "Update an item",
+  description:
+    "Updates an item's properties, tier, or timestamp. Properties shallow-merge into the existing row (unmentioned keys keep their values). The optional `version` field enables optimistic concurrency — pass the version the caller is editing from; a mismatch returns `409 version_conflict` with the three-way context (current, ancestor, conflicting fields, resolved merge policy) the client needs to resolve. See [Conflicts](/concepts/conflicts) and [Errors — version_conflict](/api/errors#version-conflict).\n\nThe `edges` block has replace-all-for-specified-types semantics: any edge_type listed wipes existing outbound edges of that type from this item, then creates new edges to each listed target. Empty array for an edge_type deletes all edges of that type. Unmentioned edge types are untouched.\n\nTier and timestamp updates are last-writer-wins and never produce a version conflict.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -313,6 +323,8 @@ const deleteItemRoute = createRoute({
   path: "/{id}",
   tags: ["Items"],
   summary: "Soft delete an item",
+  description:
+    "Transitions the item to `state: trashed`. Reversible via `POST /items/{id}/restore` until the trash retention window expires (`TRASH_RETENTION_DAYS`, default 60 days; configurable per tenant via `TenantConfig.trash_retention_days`). After the window, the trash purger removes the row permanently.\n\nFor immediate hard deletion, use `DELETE /items/{id}/purge` instead — admin-only, no recovery. See [Lifecycle](/concepts/lifecycle).",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -336,6 +348,8 @@ const getMetadataRoute = createRoute({
   path: "/{id}/metadata",
   tags: ["Items"],
   summary: "Get item metadata",
+  description:
+    "Returns the metadata layer for one item — `tags`, `tier`, `state`. Use when you have the item id and need the metadata fields without fetching the full item. For bulk reads, prefer `GET /items?include=metadata` to hydrate metadata inline across a page. See [Metadata](/concepts/metadata).",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -365,6 +379,8 @@ const putMetadataRoute = createRoute({
   path: "/{id}/metadata",
   tags: ["Items"],
   summary: "Replace item metadata tags",
+  description:
+    "Replaces the item's tag set with the supplied array. An empty array clears all tags. The other metadata-layer fields (`tier`, `state`) are not affected — flip those through `PATCH /items/{id}` (for `tier`) or the lifecycle endpoints (for `state`).\n\nConcurrent tag writes from different clients auto-merge as set union on the read-through path; this endpoint is the explicit-replace counterpart. See [Metadata](/concepts/metadata).",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -407,6 +423,8 @@ const patchMetadataRoute = createRoute({
   path: "/{id}/metadata",
   tags: ["Items"],
   summary: "Merge item metadata",
+  description:
+    "Set-union-merges the supplied tags into the existing tag set. Existing tags survive; duplicates are deduped. Use this when an integration knows the tags it wants to add but doesn't want to clobber tags another source has already attached. For full replacement, use `PUT /items/{id}/metadata`. For incremental add / remove, use the dedicated tag endpoints.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -449,6 +467,8 @@ const addTagsRoute = createRoute({
   path: "/{id}/tags",
   tags: ["Items"],
   summary: "Add tags to an item",
+  description:
+    "Adds one or more tags to the item. Idempotent — tags already present are not duplicated. Tag strings should be kebab-case; reserved prefixes (`collection:`, `folder:`, `status:`, `priority:`) carry cross-app conventions. See [Metadata — tags](/concepts/metadata#tags).",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -493,6 +513,8 @@ const removeTagRoute = createRoute({
   path: "/{id}/tags/{tag}",
   tags: ["Items"],
   summary: "Remove a tag from an item",
+  description:
+    "Removes one tag from the item. Idempotent — removing a tag the item doesn't carry returns 200 with the unchanged metadata. To bulk-remove tags or replace the full tag set, use `PUT /items/{id}/metadata` instead.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -525,6 +547,8 @@ const purgeItemRoute = createRoute({
   path: "/{id}/purge",
   tags: ["Items"],
   summary: "Permanently delete an item",
+  description:
+    "Hard-deletes the item — irreversible. Removes the item row, all edges with this item as source or target, the metadata row, every extension scoped to this item, and attachment references. Blob bytes themselves are content-addressed and may be retained if referenced by other items. Admin-only; the normal `DELETE /items/{id}` is the soft-delete-via-trash path most clients want. See [Lifecycle — hard deletion](/concepts/lifecycle#hard-deletion).",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
