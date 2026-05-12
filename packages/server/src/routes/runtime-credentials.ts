@@ -86,7 +86,7 @@ const createRuntimeCredentialRoute = createRoute({
   tags: ["System"],
   summary: "Issue a runtime credential",
   description:
-    "Mints a short-lived API key scoped to a single connection. The runtime-control plane calls this to provision the credential a per-integration Worker presents when invoking Myme on the connection's behalf. The `api_key` field is returned **once**; subsequent reads omit it. Platform-credential gated.",
+    "Mints a short-lived API key scoped to a single connection. The runtime-control plane calls this to provision the credential a per-integration Worker presents when invoking Myme on the connection's behalf. The `api_key` field is returned **once**; subsequent reads omit it.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -169,7 +169,7 @@ const verifyContextRoute = createRoute({
   tags: ["System"],
   summary: "Get verify context for a connection",
   description:
-    "Returns the manifest `integration_name` and `tenant_id` the runtime-control verify route needs to construct a queue envelope. Validates the connection exists, is `kind: integration`, and is active. Platform-credential gated; operator-debug surface.",
+    "Returns the manifest `integration_name` and `tenant_id` the runtime-control verify route needs to construct a queue envelope. Validates the connection exists, is `kind: integration`, and is active. Operator-debug surface.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -226,7 +226,7 @@ const dlqContextRoute = createRoute({
   tags: ["System"],
   summary: "Get DLQ context for a connection",
   description:
-    "Returns minimal connection metadata for the runtime-control DLQ peek/replay routes. Platform-credential gated; operator-debug surface. Unlike verify-context, this does NOT narrow by kind or state — operators inspect DLQs precisely when a connection is unhealthy.",
+    "Returns minimal connection metadata for the runtime-control DLQ peek/replay routes. Operator-debug surface. Unlike verify-context, this does NOT narrow by kind or state — operators inspect DLQs precisely when a connection is unhealthy.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -259,7 +259,7 @@ const lookupInboundWebhooksRoute = createRoute({
   tags: ["System"],
   summary: "List inbound webhook subscriptions",
   description:
-    "Returns every inbound-webhook subscription attached to a connection, with decrypted secrets included so the runtime-control plane can verify inbound HMAC signatures. Platform-credential gated; never exposed to consumer-facing API surfaces.",
+    "Returns every inbound-webhook subscription attached to a connection, with decrypted secrets included so the runtime-control plane can verify inbound HMAC signatures.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

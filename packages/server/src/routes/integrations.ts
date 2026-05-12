@@ -58,7 +58,7 @@ const registerRoute = createRoute({
   tags: ["Integrations"],
   summary: "Register an integration manifest",
   description:
-    "Registers an integration manifest as a `system.integration` item. One row per `(manifest_name, manifest_version)` pair; subsequent versions register as sibling items, not edits. The manifest is validated against `IntegrationManifestSchema` — declared triggers, OAuth requirements, webhook verification method, target types, permissions.\n\nPlatform-credential only (`is_platform: true`). Once registered, the manifest is installable into any tenant via `POST /integrations/{id}/install` (consent flow) or `POST /connections/install` (server-side admin install). See [Integrations](/concepts/integrations) and [Marketplace](/concepts/marketplace).",
+    "Registers an integration manifest as a `system.integration` item. One row per `(manifest_name, manifest_version)` pair; subsequent versions register as sibling items, not edits. The manifest is validated against `IntegrationManifestSchema` — declared triggers, OAuth requirements, webhook verification method, target types, permissions.\n\nOnce registered, the manifest is installable into any tenant via `POST /integrations/{id}/install` (consent flow) or `POST /connections/install` (server-side admin install). See [Integrations](/concepts/integrations) and [Marketplace](/concepts/marketplace).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
