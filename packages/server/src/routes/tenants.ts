@@ -46,7 +46,7 @@ const getConfigRoute = createRoute({
   tags: ["Tenants"],
   summary: "Get the current tenant's configuration",
   description:
-    "Admin only. Returns tenant-scoped config (per-type feed retention overrides). An empty object is returned when nothing is configured.",
+    "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the T-050 cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or workspace_admin.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -72,7 +72,7 @@ const putConfigRoute = createRoute({
   tags: ["Tenants"],
   summary: "Replace the current tenant's configuration",
   description:
-    "Admin only. Overwrites the tenant's config with the supplied object. Validates that retention type IDs resolve in the registry.",
+    "Overwrites the tenant's config with the supplied object — full replacement, not merge. Validates the supplied enforcement levers against the registry (type IDs in `strict_mode`, `source_allowlist`, `source_filter` must resolve). Cleanup-job override values must be non-negative — `0` disables the corresponding job for this tenant.\n\nAdmin or workspace_admin. See [Schema enforcement](/concepts/schema-enforcement).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -122,6 +122,8 @@ const getQuotasRoute = createRoute({
   path: "/{id}/quotas",
   tags: ["Tenants"],
   summary: "Get tenant quotas",
+  description:
+    "Returns the per-tenant quota ceilings for a specific tenant — items, webhooks, blobs, storage bytes, and per-minute rate limit. `null` on a field means the env default applies; an entirely-null payload means no per-tenant override is configured. Platform-admin only — workspace admins use `GET /tenants/me/quotas` to read their own ceilings without knowing their tenant id.",
   security: [{ bearerAuth: [] }],
   request: { params: z.object({ id: z.string() }) },
   responses: {
@@ -153,10 +155,7 @@ const getOwnQuotasRoute = createRoute({
   tags: ["Tenants"],
   summary: "Get current tenant quotas",
   description:
-    "Workspace_admin or admin. Returns the calling key's tenant quota row " +
-    "(or a row of nulls if none is configured — env defaults apply). " +
-    "Platform-admin keys with no tenant_id receive 400 — use " +
-    "`GET /tenants/{id}/quotas` with the explicit id instead.",
+    "Returns the calling tenant's quota ceilings — resolved from `c.var.apiKey.tenant_id` so the caller doesn't need to know its own tenant id. Returns a row of nulls when no per-tenant override is configured (env defaults apply). Platform-admin keys with no tenant_id receive `400` — use `GET /tenants/{id}/quotas` with the explicit id instead. Admin or workspace_admin.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -183,6 +182,8 @@ const putQuotasRoute = createRoute({
   path: "/{id}/quotas",
   tags: ["Tenants"],
   summary: "Update tenant quotas",
+  description:
+    "Sets the per-tenant quota ceilings for a specific tenant. Each field is independent — supplied non-null values override the env default; supplied `null` resets to the env default for that field. Platform-admin only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string() }),

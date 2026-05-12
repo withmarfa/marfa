@@ -4809,6 +4809,7 @@
           "Extensions"
         ],
         "summary": "List extension namespaces for an item",
+        "description": "Returns every extension namespace attached to the item that the caller has permission to read. Extensions are namespaced JSON sidecars (`<app>.*`, `<publisher>.*`, `user.*`) — credentials must declare each namespace in their `extension_permissions` map; namespaces outside that map are silently filtered.\n\nFor list views, prefer `GET /items?include=extensions` to hydrate extensions inline across a page with the same permission rule applied. See [Extensions](/concepts/extensions).",
         "security": [
           {
             "bearerAuth": []
@@ -4966,6 +4967,7 @@
           "Extensions"
         ],
         "summary": "Get an extension namespace",
+        "description": "Returns the JSON payload for one extension namespace on the item. The caller must hold `read` (or `write`) on the namespace in `extension_permissions` — missing permission returns `403 forbidden` regardless of the caller's type access to the parent item.",
         "security": [
           {
             "bearerAuth": []
@@ -5167,6 +5169,7 @@
           "Extensions"
         ],
         "summary": "Replace an extension namespace",
+        "description": "Replaces the JSON payload for one extension namespace on the item. Body size is capped at 100KB — over-size payloads belong in a custom type with attachments or a `derived-from` edge, not in an extension. Requires `write` on the namespace in `extension_permissions`. Reserved namespaces (e.g. `connection.runtime`) carry additional write constraints — see the reserved-namespace list in the server's extension policy.",
         "security": [
           {
             "bearerAuth": []
@@ -5378,6 +5381,7 @@
           "Extensions"
         ],
         "summary": "Delete an extension namespace",
+        "description": "Removes one extension namespace from the item. Requires `write` on the namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response.",
         "security": [
           {
             "bearerAuth": []
@@ -7371,7 +7375,7 @@
           "Types"
         ],
         "summary": "List types",
-        "description": "Returns all registered types including core and custom types.",
+        "description": "Returns every type registered in the tenant — the core type catalogue plus any custom types registered via `POST /types`. Each entry carries the type identifier, parent (for inheriting types), fields, optional `display_hints`, `merge_policy`, and `version_policy`. Use as the manifest a custom-type-aware client reads at startup. See [Types](/concepts/types).",
         "security": [
           {
             "bearerAuth": []
@@ -7512,7 +7516,7 @@
           "Types"
         ],
         "summary": "Register a custom type",
-        "description": "Register a new custom type schema. Admin keys bypass; non-admin credentials need the `metadata.types:write` scope (default-off for new keys). Body is validated via validateTypeSchema().",
+        "description": "Registers a custom type at runtime. Identifier must namespace under one of `app.<app-name>.<type>`, `user.<type>`, or `<publisher>.<type>` — reserved roots (`core`, `system`, `myme`) reject with `400 reserved_namespace`. Bodies are validated; mismatched semver bumps (additive change submitted as major, etc.) reject with `400 version_bump_mismatch`. Child types may not redefine ancestor fields — `400 inheritance_violation`.\n\nAdmin keys bypass; non-admin credentials need the `metadata.types:write` scope, default-off for new keys. See [Authoring types](/concepts/authoring-types) for the rubric and error catalogue.",
         "security": [
           {
             "bearerAuth": []
@@ -7744,6 +7748,7 @@
           "Types"
         ],
         "summary": "Get a type",
+        "description": "Returns the full schema for a single type — fields, parent, `display_hints`, `merge_policy`, `version_policy`. Resolves both core and tenant-registered custom types by identifier.",
         "security": [
           {
             "bearerAuth": []
@@ -7927,7 +7932,7 @@
           "Types"
         ],
         "summary": "Update a custom type",
-        "description": "Update an existing custom type schema. Admin only. Core types cannot be modified. Body is validated via validateTypeSchema().",
+        "description": "Replaces a custom type's schema. Admin-only — core types are immutable and return 400. Re-runs the registration-time correctness rails (semver diff, inheritance check, field-name validation). The diff between the prior and new version sets the required version bump; mismatched bumps reject with `400 version_bump_mismatch`. See [Authoring types — semver diff](/concepts/authoring-types#server-side-semver-diff).",
         "security": [
           {
             "bearerAuth": []
@@ -8131,7 +8136,7 @@
           "Types"
         ],
         "summary": "Delete a custom type",
-        "description": "Delete a custom type. Admin only. Core types cannot be deleted. Use ?force=true to delete even if items exist.",
+        "description": "Removes a custom type registration. Admin-only — core types are immutable. By default, deletion is rejected if any item of the type still exists. Pass `?force=true` to delete the type and orphan existing rows (rows persist with the type identifier intact, but new writes against that type return `400 invalid_type`).",
         "security": [
           {
             "bearerAuth": []
@@ -12302,7 +12307,7 @@
           "Tenants"
         ],
         "summary": "Get the current tenant's configuration",
-        "description": "Admin only. Returns tenant-scoped config (per-type feed retention overrides). An empty object is returned when nothing is configured.",
+        "description": "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the T-050 cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or workspace_admin.",
         "security": [
           {
             "bearerAuth": []
@@ -12489,7 +12494,7 @@
           "Tenants"
         ],
         "summary": "Replace the current tenant's configuration",
-        "description": "Admin only. Overwrites the tenant's config with the supplied object. Validates that retention type IDs resolve in the registry.",
+        "description": "Overwrites the tenant's config with the supplied object — full replacement, not merge. Validates the supplied enforcement levers against the registry (type IDs in `strict_mode`, `source_allowlist`, `source_filter` must resolve). Cleanup-job override values must be non-negative — `0` disables the corresponding job for this tenant.\n\nAdmin or workspace_admin. See [Schema enforcement](/concepts/schema-enforcement).",
         "security": [
           {
             "bearerAuth": []
@@ -12814,7 +12819,7 @@
           "Tenants"
         ],
         "summary": "Get current tenant quotas",
-        "description": "Workspace_admin or admin. Returns the calling key's tenant quota row (or a row of nulls if none is configured — env defaults apply). Platform-admin keys with no tenant_id receive 400 — use `GET /tenants/{id}/quotas` with the explicit id instead.",
+        "description": "Returns the calling tenant's quota ceilings — resolved from `c.var.apiKey.tenant_id` so the caller doesn't need to know its own tenant id. Returns a row of nulls when no per-tenant override is configured (env defaults apply). Platform-admin keys with no tenant_id receive `400` — use `GET /tenants/{id}/quotas` with the explicit id instead. Admin or workspace_admin.",
         "security": [
           {
             "bearerAuth": []
@@ -12986,6 +12991,7 @@
           "Tenants"
         ],
         "summary": "Get tenant quotas",
+        "description": "Returns the per-tenant quota ceilings for a specific tenant — items, webhooks, blobs, storage bytes, and per-minute rate limit. `null` on a field means the env default applies; an entirely-null payload means no per-tenant override is configured. Platform-admin only — workspace admins use `GET /tenants/me/quotas` to read their own ceilings without knowing their tenant id.",
         "security": [
           {
             "bearerAuth": []
@@ -13129,6 +13135,7 @@
           "Tenants"
         ],
         "summary": "Update tenant quotas",
+        "description": "Sets the per-tenant quota ceilings for a specific tenant. Each field is independent — supplied non-null values override the env default; supplied `null` resets to the env default for that field. Platform-admin only.",
         "security": [
           {
             "bearerAuth": []
@@ -13473,6 +13480,7 @@
           "Export"
         ],
         "summary": "Export tenant data",
+        "description": "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON or a tar.gz archive. Filterable by `type`, `state`, `tags`, `tier`, `since` / `until`. NDJSON is the default — one JSON object per line, items first then edges then metadata, suitable for piping into another store or `jq`. `format=archive` produces a `myme-archive-v1.tar.gz` ingestible by `POST /admin/restore-archive` for tenant-to-tenant migrations.\n\nLong-running; the response keeps streaming until the filter is exhausted. Tenant-scoped — exports only what the caller can read. See [Bulk operations — archive restore](/api/bulk-operations#archive-restore) for the round-trip.",
         "security": [
           {
             "bearerAuth": []
@@ -17029,6 +17037,7 @@
           "Admin"
         ],
         "summary": "List audit log entries",
+        "description": "Returns audit-log entries in reverse-chronological order, optionally filtered by `action`, `resource_type`, `resource_id`, or a `since` / `until` time range. Cursor-paginated. Each entry carries the credential that performed the action (`key_id`), the resolved client IP (subject to `TRUSTED_PROXY_CIDRS`), and a structured `details` payload that varies by action.\n\nThe audit log records every state-changing API call plus a few admin-side reads. Item / edge reads, SSE subscribe/unsubscribe, and search queries are NOT logged — those land in request logs instead. Retention is `AUDIT_RETENTION_DAYS` (default 90; per-tenant override via `TenantConfig.audit_retention_days`); older rows are removed by a periodic cleanup job. Tenant-scoped admin keys see their own tenant's rows; tenantless bootstrap-admin keys see every row.\n\nNon-admin credentials return `403 forbidden`. See [Audit log](/concepts/audit).",
         "security": [
           {
             "bearerAuth": []
