@@ -53,7 +53,7 @@ const signupRoute = createRoute({
   tags: ["Auth"],
   summary: "Sign up a user and create a tenant",
   description:
-    "Sign up a new user with a provider identity. Creates a tenant and an admin API key.",
+    "Creates a user, a tenant owned by that user, and a tenant-admin API key — all atomically. The user is identified by the `(provider, provider_account_id)` pair, typically sourced from an upstream identity provider (Google, GitHub, etc.). Calling again with the same pair returns the existing tenant plus a freshly-rotated admin key.\n\nLegacy provider-identity surface; the Better Auth flow at `/auth/sign-up/email` is the recommended sign-up path. Requires `AUTH_MODE=hosted`. See [Hosted mode](/self-hosting/hosted-mode).",
   request: {
     body: {
       content: {
@@ -100,7 +100,7 @@ const sessionRoute = createRoute({
   tags: ["Auth"],
   summary: "Exchange a provider identity for an API key",
   description:
-    "Look up an existing user by provider identity and return a session API key.",
+    "Looks up an existing user by `(provider, provider_account_id)` and returns a session API key. Used by hosted-mode clients re-establishing access for a previously-signed-up user. If no user matches, returns `404 not_found`.\n\nLegacy provider-identity surface; the Better Auth sign-in flow is the recommended path. Requires `AUTH_MODE=hosted`.",
   request: {
     body: {
       content: {
@@ -140,7 +140,7 @@ const setHandleRoute = createRoute({
   tags: ["Auth"],
   summary: "Update the current user's handle",
   description:
-    "Sets the handle on the authenticated user (TSC42 §8). Lowercase alphanumeric and hyphens, 3–32 chars; reserved roots and structural words rejected. Returns 409 on case-insensitive collision with another user.",
+    "Claims or changes the handle on the authenticated user. The handle is the user's public identifier — the same string that namespaces published types as `<handle>.<type>`. Lowercase alphanumeric and hyphens, 3–32 characters, no leading/trailing hyphens, no consecutive hyphens.\n\nReserved roots (`core`, `system`, `app`, `user`, `myme`) and a list of structural words (`admin`, `api`, etc.) are rejected with `400 handle_reserved`. Case-insensitive collision with another user returns `409 conflict`. See [Handles and publishers](/concepts/handles-and-publishers).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -179,7 +179,7 @@ const meRoute = createRoute({
   tags: ["Auth"],
   summary: "Get the current user",
   description:
-    "Return the current user profile and tenant info for the authenticated key.",
+    "Returns the user record and the tenant the calling API key belongs to. Use to render account state (handle, name, tenant id) once a session is established. For the richer profile shape (avatar, bio), use `GET /profile/me`. See [Profile](/concepts/profile).",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

@@ -73,7 +73,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key. In bootstrap mode (zero keys exist), no auth is required and the key is always admin.",
+    "Creates a new API key in the caller's tenant. The plaintext `key` field is returned **once** in the response — the server never shows it again. Store it securely; rotating means revoking the old key and creating a new one.\n\n`role` controls scope: `admin` bypasses every permission check; `workspace_admin` is the admin tier within a tenant; `member` is scoped by the three permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`) plus `metadata_permissions`. `source` is stamped onto every item written by the key and is unique per tenant. `default_tier` stamps `library` or `feed` when the writing client omits a tier.\n\nIn bootstrap mode (zero keys exist on a fresh server), no auth is required and the minted key is always admin. Once any key exists, bootstrap mode disables — further key creation requires an admin or workspace_admin token. See [Authentication](/api/authentication) and [Permissions](/api/permissions).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -126,6 +126,8 @@ const listKeysRoute = createRoute({
   path: "/",
   tags: ["Keys"],
   summary: "List API keys",
+  description:
+    "Returns every API key in the caller's tenant. Hashes are returned in lieu of plaintext — the plaintext is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour per key; treat it as a coarse activity signal, not an audit log. Admin or workspace_admin only.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -150,6 +152,8 @@ const revokeKeyRoute = createRoute({
   path: "/{id}",
   tags: ["Keys"],
   summary: "Revoke an API key",
+  description:
+    "Revokes the key immediately. The next request bearing the revoked token returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. The revocation is audit-logged. Admin or workspace_admin only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -216,7 +220,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates mutable fields on an API key. `source` and `role` are immutable after creation and rejected with 400 if present. Admin only.",
+    "Updates mutable fields on an API key in place — `label`, `default_tier`, and the four permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`, `metadata_permissions`). `source` and `role` are immutable after creation and rejected with `400 validation_error` if present in the body — to change them, revoke and recreate. Admin or workspace_admin only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string() }),
