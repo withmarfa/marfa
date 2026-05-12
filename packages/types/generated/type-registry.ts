@@ -92,7 +92,7 @@ const coreFile: TypeSchema = {
 const coreHighlight: TypeSchema = {
   id: "core.highlight",
   label: "Highlight",
-  description: "A user's engagement with content — the highlighted passage plus optional annotation. The canonical relationship (what was highlighted) is carried by an annotates edge; the moment of highlighting is the system timestamp.",
+  description: "A user's engagement with content — the highlighted passage plus optional annotation. The canonical relationship (what was highlighted) is carried by a references edge; the moment of highlighting is the system timestamp.",
   version: 1,
   fields: {
     text: { type: "string", description: "The highlighted passage", required: true },

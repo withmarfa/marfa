@@ -278,7 +278,7 @@ describe("T-045 — OAuth scope grammar enforcement on the data plane", () => {
         body: {
           source_id: a.item.id,
           target_id: b.item.id,
-          edge_type: "annotates",
+          edge_type: "references",
         },
       });
       expect(edgeRes.status).toBe(201);

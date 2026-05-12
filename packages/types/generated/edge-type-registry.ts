@@ -14,11 +14,11 @@ const about: EdgeTypeSchema = {
   property_schema: {},
 };
 
-const annotates: EdgeTypeSchema = {
-  id: "annotates",
-  label: "Annotates",
-  description: "Source annotates the target. Canonical case: a core.highlight annotating a media item. Source annotates at most one target.",
-  cardinality: "many-to-one",
+const attachedTo: EdgeTypeSchema = {
+  id: "attached-to",
+  label: "Attached to",
+  description: "Source is an attachment (a file or media item) belonging to the target. Many-to-many: a file may be attached to multiple hosts; a host may have multiple attachments. Deleting the host orphans the attachment (it may still be attached to other items).",
+  cardinality: "many-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "orphan",
@@ -71,10 +71,10 @@ const parentOf: EdgeTypeSchema = {
   property_schema: {},
 };
 
-const pinnedTo: EdgeTypeSchema = {
-  id: "pinned-to",
-  label: "Pinned to",
-  description: "Source is a member of a group / folder / collection item represented by the target.",
+const references: EdgeTypeSchema = {
+  id: "references",
+  label: "References",
+  description: "Source explicitly references the target. Distinct from `about` (topical) and `derived-from` (provenance). Covers wikilink-style mentions and the highlight-on-a-book case.",
   cardinality: "many-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
@@ -95,12 +95,12 @@ const supersedes: EdgeTypeSchema = {
 
 export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [
   about,
-  annotates,
+  attachedTo,
   authoredBy,
   derivedFrom,
   inThread,
   parentOf,
-  pinnedTo,
+  references,
   supersedes,
 ];
 

@@ -330,6 +330,13 @@
       "when": 1778941300000,
       "tag": "0046_drop_origin_and_default_origin",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1778941400000,
+      "tag": "0047_drop_retired_edge_types",
+      "breakpoints": true
     }
   ]
 }
