@@ -9,8 +9,8 @@ import {
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
-  ErrorResponseSchema,
   OkResponseSchema,
+  makeErrorResponseSchema,
 } from "../openapi.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
@@ -91,11 +91,19 @@ const listEdgesRoute = createRoute({
       description: "Edges, paginated",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
       description: "Validation error (e.g. too many edge types in filter)",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
   },
@@ -131,15 +139,36 @@ const createEdgeRoute = createRoute({
       description: "Edge created",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+            "invalid_id",
+            "edge_constraint_violation",
+            "edge_cycle",
+          ]),
+        },
+      },
       description: "Validation / constraint / cycle error",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "item_not_found",
+            "edge_type_not_found",
+          ]),
+        },
+      },
       description: "Source, target, or edge type not found",
     },
   },
@@ -173,11 +202,22 @@ const updateEdgeRoute = createRoute({
       description: "Edge updated",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
       description: "Attempted to change immutable field",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["edge_not_found"]),
+        },
+      },
       description: "Edge not found",
     },
   },
@@ -198,7 +238,11 @@ const deleteEdgeRoute = createRoute({
       description: "Deleted",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["edge_not_found"]),
+        },
+      },
       description: "Edge not found",
     },
   },
@@ -391,11 +435,19 @@ const listFromSourceRoute = createRoute({
       description: "Outbound edges",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
       description: "Item not found",
     },
   },
@@ -423,11 +475,19 @@ const listBackrefsRoute = createRoute({
       description: "Inbound edges",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
       description: "Item not found",
     },
   },

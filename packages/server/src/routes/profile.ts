@@ -27,7 +27,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { enforceQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
-import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -97,11 +97,19 @@ const getProfileRoute = createRoute({
       description: "Profile",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
       description: "No profile bound to this credential",
     },
   },
@@ -126,19 +134,39 @@ const updateProfileRoute = createRoute({
       description: "Updated profile",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+            "handle_reserved",
+          ]),
+        },
+      },
       description: "Invalid handle format or field length",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
       description: "No profile bound to this credential",
     },
     409: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["conflict"]),
+        },
+      },
       description: "Handle already claimed by another user",
     },
   },
@@ -163,15 +191,30 @@ const setAvatarRoute = createRoute({
       description: "Avatar set; returns the updated profile",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
       description: "Invalid file (missing, empty, or unsupported MIME type)",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     413: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["blob_too_large"]),
+        },
+      },
       description: "Avatar exceeds maximum blob size",
     },
   },
@@ -191,11 +234,19 @@ const deleteAvatarRoute = createRoute({
       description: "Avatar cleared; returns the updated profile",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
       description: "No profile bound to this credential",
     },
   },

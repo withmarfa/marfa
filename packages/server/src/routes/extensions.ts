@@ -30,7 +30,7 @@ const RUNTIME_NAMESPACE = "connection.runtime";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -72,15 +72,27 @@ const listExtensionsRoute = createRoute({
       description: "Extension namespaces (filtered by permissions)",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["invalid_id"]),
+        },
+      },
       description: "Invalid item ID",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
       description: "Item not found",
     },
   },
@@ -110,19 +122,35 @@ const getExtensionRoute = createRoute({
       description: "Extension namespace data",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["invalid_id"]),
+        },
+      },
       description: "Invalid item ID",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "No read access to namespace",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
       description: "Item not found",
     },
   },
@@ -159,19 +187,39 @@ const setExtensionRoute = createRoute({
       description: "Updated extensions",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+            "invalid_id",
+          ]),
+        },
+      },
       description: "Validation error",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "No write access to namespace",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
       description: "Item not found",
     },
   },
@@ -201,19 +249,35 @@ const deleteExtensionRoute = createRoute({
       description: "Remaining extensions after deletion",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["invalid_id"]),
+        },
+      },
       description: "Invalid item ID",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "No write access to namespace",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
       description: "Item not found",
     },
   },

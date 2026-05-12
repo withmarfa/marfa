@@ -2,7 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 const AuditEntrySchema = z.object({
   id: z.string(),
@@ -57,7 +57,11 @@ const listAuditRoute = createRoute({
       description: "Paginated audit log entries",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
   },

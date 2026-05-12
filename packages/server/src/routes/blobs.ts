@@ -7,7 +7,7 @@ import { enforceQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
-import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -78,11 +78,22 @@ const uploadBlobRoute = createRoute({
       description: "Blob uploaded",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
       description: "Validation error",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
   },
@@ -111,15 +122,27 @@ const getBlobRoute = createRoute({
       description: "Blob binary data",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
       description: "Invalid blob hash",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["blob_not_found"]),
+        },
+      },
       description: "Blob not found",
     },
   },
@@ -151,15 +174,27 @@ const getBlobUrlRoute = createRoute({
       description: "Presigned URL",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
       description: "Invalid blob hash or presigned URLs not available",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["blob_not_found"]),
+        },
+      },
       description: "Blob not found",
     },
   },
@@ -188,7 +223,11 @@ const cleanupBlobsRoute = createRoute({
       description: "Cleanup result",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
   },
@@ -219,11 +258,19 @@ const reconcileBlobsRoute = createRoute({
       description: "Reconciliation result",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
       description: "Backend does not support listing",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
   },

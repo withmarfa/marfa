@@ -18,8 +18,8 @@ import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
-  ErrorResponseSchema,
   OkResponseSchema,
+  makeErrorResponseSchema,
 } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
@@ -98,15 +98,30 @@ const createEdgeTypeRoute = createRoute({
       description: "Edge type registered",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
       description: "Validation error",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Admin required",
     },
     409: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["conflict"]),
+        },
+      },
       description: "Edge type already exists",
     },
   },
@@ -149,11 +164,19 @@ const deleteEdgeTypeRoute = createRoute({
       description: "Deleted",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
       description: "Can't delete a core edge type",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["edge_type_not_found"]),
+        },
+      },
       description: "Edge type not found",
     },
   },

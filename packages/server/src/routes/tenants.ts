@@ -4,7 +4,7 @@ import type { TenantConfig } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, requireWorkspaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 const RetentionOverrideSchema = z.object({
   feed_days: z.number().int().positive(),
@@ -56,11 +56,19 @@ const getConfigRoute = createRoute({
       description: "Tenant config",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Forbidden",
     },
   },
@@ -89,15 +97,30 @@ const putConfigRoute = createRoute({
       description: "Tenant config updated",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
       description: "Validation error",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Forbidden",
     },
   },
@@ -134,11 +157,19 @@ const getQuotasRoute = createRoute({
         "An entirely-null payload means no per-tenant override is set.",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Forbidden",
     },
   },
@@ -163,15 +194,27 @@ const getOwnQuotasRoute = createRoute({
       description: "Quota row for the calling tenant.",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
       description: "Caller has no tenant_id (platform admin).",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Forbidden",
     },
   },
@@ -207,11 +250,19 @@ const putQuotasRoute = createRoute({
       description: "Quota row updated.",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Forbidden",
     },
   },

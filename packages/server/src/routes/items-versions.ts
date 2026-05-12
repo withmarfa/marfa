@@ -3,7 +3,7 @@ import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireTypeAccess } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -49,11 +49,19 @@ const listVersionsRoute = createRoute({
       description: "Version history",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["item_not_found"]),
+        },
+      },
       description: "Item not found",
     },
   },

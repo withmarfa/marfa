@@ -17,8 +17,8 @@ import type {
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
 import {
   createOpenAPIRouter,
-  ErrorResponseSchema,
   OkResponseSchema,
+  makeErrorResponseSchema,
 } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
@@ -196,23 +196,47 @@ const issueLeaseRoute = createRoute({
         "Lease issued. The `lease_token` field is returned ONCE; subsequent reads omit it.",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+            "lease_ttl_out_of_range",
+          ]),
+        },
+      },
       description: "Invalid input or TTL out of range",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Caller cannot manage this connection",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
       description: "Connection not found",
     },
     422: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["lease_capability_not_declared"]),
+        },
+      },
       description: "Manifest doesn't declare the capability as leased",
     },
   },
@@ -237,15 +261,27 @@ const listLeasesRoute = createRoute({
       description: "Active (non-revoked, non-expired) leases",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Caller cannot read this connection",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
       description: "Connection not found",
     },
   },
@@ -266,15 +302,30 @@ const revokeLeaseRoute = createRoute({
       description: "Lease revoked (or already revoked)",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Caller cannot manage this connection",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "not_found",
+            "lease_token_not_found",
+          ]),
+        },
+      },
       description: "Connection or lease not found",
     },
   },
@@ -303,7 +354,14 @@ const introspectLeaseRoute = createRoute({
         "Active flag plus lease metadata when active. Returns 200 with `active: false` for unknown / expired / revoked leases.",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
       description: "Missing lease_token",
     },
   },

@@ -25,7 +25,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
-import { createOpenAPIRouter, ErrorResponseSchema } from "../openapi.js";
+import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { renderInstallConsentScreen } from "./integration-install-page.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import { publish } from "../pubsub.js";
@@ -74,19 +74,38 @@ const registerRoute = createRoute({
         "Integration registered. Subsequent versions register as sibling items.",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
       description: "Validation error (manifest schema rejection)",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Caller lacks is_platform: true",
     },
     409: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["conflict"]),
+        },
+      },
       description: "manifest_name + manifest_version already registered",
     },
   },
@@ -114,7 +133,11 @@ const listRoute = createRoute({
       description: "List of registered Integrations",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
   },
@@ -137,11 +160,19 @@ const getRoute = createRoute({
       description: "The Integration item",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["integration_not_found"]),
+        },
+      },
       description: "Not found",
     },
   },

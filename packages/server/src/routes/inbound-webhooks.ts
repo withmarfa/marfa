@@ -19,8 +19,8 @@ import {
 import { ADAPTERS, isVerificationMethod } from "@mymehq/webhooks";
 import {
   createOpenAPIRouter,
-  ErrorResponseSchema,
   OkResponseSchema,
+  makeErrorResponseSchema,
 } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
@@ -176,19 +176,38 @@ const createInboundWebhookRoute = createRoute({
         "Subscription created. The `secret` field is returned ONCE; subsequent reads redact it.",
     },
     400: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
       description: "Validation error or invalid manifest",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Caller cannot manage this connection",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["connection_not_found"]),
+        },
+      },
       description: "Connection not found",
     },
   },
@@ -217,15 +236,27 @@ const listInboundWebhooksRoute = createRoute({
       description: "Subscriptions for this connection (secrets redacted)",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Caller cannot read this connection",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["connection_not_found"]),
+        },
+      },
       description: "Connection not found",
     },
   },
@@ -262,15 +293,30 @@ const listDeliveriesRoute = createRoute({
       description: "Recent receipts (verified + unverified)",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Caller cannot read this connection",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "connection_not_found",
+            "inbound_webhook_not_found",
+          ]),
+        },
+      },
       description: "Connection or subscription not found",
     },
   },
@@ -297,15 +343,31 @@ const retryDeliveryRoute = createRoute({
       description: "Event row reset; back in the pending queue",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Caller cannot manage this connection",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "connection_not_found",
+            "inbound_webhook_not_found",
+            "inbound_webhook_event_not_found",
+          ]),
+        },
+      },
       description: "Connection, subscription, or event not found",
     },
   },
@@ -490,15 +552,29 @@ const receiveInboundWebhookRoute = createRoute({
       description: "Verified and accepted (or duplicate, idempotent)",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "inbound_webhook_verification_failed",
+          ]),
+        },
+      },
       description: "Signature verification failed",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["inbound_webhook_not_found"]),
+        },
+      },
       description: "Subscription not found",
     },
     410: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["inbound_webhook_disabled"]),
+        },
+      },
       description: "Subscription is disabled",
     },
   },

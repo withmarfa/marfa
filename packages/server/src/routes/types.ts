@@ -21,8 +21,8 @@ import type { Storage } from "../storage/interface.js";
 import { resolveTypeSchema } from "../storage/policy.js";
 import {
   createOpenAPIRouter,
-  ErrorResponseSchema,
   OkResponseSchema,
+  makeErrorResponseSchema,
 } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
@@ -121,7 +121,11 @@ const listTypesRoute = createRoute({
       description: "List of all type schemas",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
   },
@@ -150,11 +154,19 @@ const getTypeRoute = createRoute({
       description: "Type schema",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_found"]),
+        },
+      },
       description: "Type not found",
     },
   },
@@ -187,15 +199,27 @@ const registerTypeRoute = createRoute({
       description: "Custom type registered",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     403: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
       description: "Missing metadata.types:write permission",
     },
     409: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_already_exists"]),
+        },
+      },
       description: "Type already exists",
     },
   },
@@ -231,11 +255,19 @@ const updateTypeRoute = createRoute({
       description: "Custom type updated",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_found"]),
+        },
+      },
       description: "Type not found",
     },
   },
@@ -267,15 +299,27 @@ const deleteTypeRoute = createRoute({
       description: "Type deleted",
     },
     401: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
       description: "Unauthorized",
     },
     404: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_found"]),
+        },
+      },
       description: "Type not found",
     },
     409: {
-      content: { "application/json": { schema: ErrorResponseSchema } },
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_in_use"]),
+        },
+      },
       description: "Type in use",
     },
   },
