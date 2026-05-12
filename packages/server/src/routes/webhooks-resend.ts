@@ -26,6 +26,7 @@
  * scope based on the tag.
  */
 import { Hono } from "hono";
+import { ErrorCode, MymeError } from "@mymehq/shared";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
 
@@ -60,7 +61,10 @@ export function resendWebhookRoutes(
 
     if (!svixId || !svixTimestamp || !svixSignature) {
       log("warn", "Resend webhook rejected: missing svix headers");
-      return c.json({ error: "missing_signature_headers" }, 400);
+      throw new MymeError(
+        ErrorCode.WEBHOOK_SIGNATURE_MISSING,
+        "Resend webhook request is missing one or more svix signature headers",
+      );
     }
 
     if (!webhookSecret) {
@@ -69,7 +73,10 @@ export function resendWebhookRoutes(
         "error",
         "Resend webhook called but RESEND_WEBHOOK_SECRET_MYME unset",
       );
-      return c.json({ error: "webhook_secret_not_configured" }, 503);
+      throw new MymeError(
+        ErrorCode.WEBHOOK_SECRET_NOT_CONFIGURED,
+        "Resend webhook secret is not configured on this instance",
+      );
     }
 
     const rawBody = await c.req.text();
@@ -92,7 +99,10 @@ export function resendWebhookRoutes(
         error: err instanceof Error ? err.message : String(err),
         svix_id: svixId,
       });
-      return c.json({ error: "invalid_signature" }, 401);
+      throw new MymeError(
+        ErrorCode.WEBHOOK_SIGNATURE_INVALID,
+        "Resend webhook signature failed verification",
+      );
     }
 
     // 2. Parse event
@@ -100,7 +110,10 @@ export function resendWebhookRoutes(
     try {
       event = JSON.parse(rawBody) as ResendWebhookEvent;
     } catch {
-      return c.json({ error: "invalid_payload" }, 400);
+      throw new MymeError(
+        ErrorCode.WEBHOOK_PAYLOAD_INVALID,
+        "Resend webhook body is not valid JSON",
+      );
     }
 
     // 3. Process — upserts only on bounce-permanent / complaint. Other

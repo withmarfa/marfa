@@ -19,6 +19,15 @@ export enum ErrorCode {
   INVALID_GRANT = "invalid_grant",
   INVALID_CLIENT = "invalid_client",
   INVALID_SCOPE = "invalid_scope",
+  /**
+   * RFC 6749 §5.2 parity. The OAuth device-flow endpoints continue to
+   * emit the flat RFC error shape (`{ error: "invalid_request", ... }`)
+   * directly for spec compliance; this enum entry exists so non-OAuth
+   * call sites that want a generic "the request itself is malformed"
+   * code can throw a `MymeError` instead of leaning on `VALIDATION_ERROR`
+   * (which is reserved for body-shape failures).
+   */
+  INVALID_REQUEST = "invalid_request",
   EXPIRED_TOKEN = "expired_token",
   TOKEN_REUSE_DETECTED = "token_reuse_detected",
   RATE_LIMITED = "rate_limited",
@@ -35,6 +44,30 @@ export enum ErrorCode {
   TYPE_IN_USE = "type_in_use",
   CORE_TYPE_IMMUTABLE = "core_type_immutable",
   WEBHOOK_NOT_FOUND = "webhook_not_found",
+  /**
+   * T-111: signed-webhook receiver (e.g. `POST /webhooks/resend`) rejected
+   * a request that omitted the verification headers required to compute
+   * the signature. Distinct from `INBOUND_WEBHOOK_VERIFICATION_FAILED`
+   * (which means headers were present but the signature didn't validate).
+   */
+  WEBHOOK_SIGNATURE_MISSING = "webhook_signature_missing",
+  /**
+   * T-111: signed-webhook receiver rejected a request whose signature
+   * headers were present but failed verification against the configured
+   * shared secret.
+   */
+  WEBHOOK_SIGNATURE_INVALID = "webhook_signature_invalid",
+  /**
+   * T-111: signed-webhook receiver has no shared secret configured.
+   * Returned as HTTP 503 so the upstream (e.g. Resend, Svix) retries
+   * after the operator wires the secret.
+   */
+  WEBHOOK_SECRET_NOT_CONFIGURED = "webhook_secret_not_configured",
+  /**
+   * T-111: signed-webhook receiver verified the signature but the
+   * payload itself could not be parsed as the expected JSON shape.
+   */
+  WEBHOOK_PAYLOAD_INVALID = "webhook_payload_invalid",
   INBOUND_WEBHOOK_NOT_FOUND = "inbound_webhook_not_found",
   /**
    * The inbound webhook subscription is `disabled = true`. Receipts to a
@@ -65,6 +98,29 @@ export enum ErrorCode {
    * connection's `configuration.upstream_base_url` is unset or invalid.
    */
   OAUTH_PROXY_UPSTREAM_INVALID = "oauth_proxy_upstream_invalid",
+  /**
+   * T-111: `system.connection` item lookup by id returned no row.
+   * Replaces generic `NOT_FOUND` on connection-resolving routes so
+   * clients can branch on the specific resource type.
+   */
+  CONNECTION_NOT_FOUND = "connection_not_found",
+  /**
+   * T-111: API key lookup by id returned no row. Replaces generic
+   * `NOT_FOUND` on `/keys/:id` routes.
+   */
+  API_KEY_NOT_FOUND = "api_key_not_found",
+  /**
+   * T-111: Integration manifest lookup by id (or `name@version`)
+   * returned no row in the registry. Replaces generic `NOT_FOUND`
+   * on the integrations registry surface.
+   */
+  INTEGRATION_NOT_FOUND = "integration_not_found",
+  /**
+   * T-111: OAuth grant (`oauth_codes` / token row) lookup returned
+   * no row. Replaces generic `NOT_FOUND` on grant-revocation and
+   * grant-introspection paths.
+   */
+  OAUTH_GRANT_NOT_FOUND = "oauth_grant_not_found",
   /**
    * Lease issuance was requested for a `capability_id` the supplied
    * Integration manifest doesn't declare with `oauth_requirements:
@@ -180,6 +236,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INVALID_GRANT]: 400,
   [ErrorCode.INVALID_CLIENT]: 400,
   [ErrorCode.INVALID_SCOPE]: 400,
+  [ErrorCode.INVALID_REQUEST]: 400,
   [ErrorCode.EXPIRED_TOKEN]: 401,
   [ErrorCode.TOKEN_REUSE_DETECTED]: 400,
   [ErrorCode.RATE_LIMITED]: 429,
@@ -189,6 +246,10 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.TYPE_IN_USE]: 409,
   [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,
   [ErrorCode.WEBHOOK_NOT_FOUND]: 404,
+  [ErrorCode.WEBHOOK_SIGNATURE_MISSING]: 400,
+  [ErrorCode.WEBHOOK_SIGNATURE_INVALID]: 401,
+  [ErrorCode.WEBHOOK_SECRET_NOT_CONFIGURED]: 503,
+  [ErrorCode.WEBHOOK_PAYLOAD_INVALID]: 400,
   [ErrorCode.INBOUND_WEBHOOK_NOT_FOUND]: 404,
   [ErrorCode.INBOUND_WEBHOOK_DISABLED]: 410,
   [ErrorCode.INBOUND_WEBHOOK_EVENT_NOT_FOUND]: 404,
@@ -196,6 +257,10 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED]: 401,
   [ErrorCode.OAUTH_PROXY_TOKEN_MISSING]: 404,
   [ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID]: 422,
+  [ErrorCode.CONNECTION_NOT_FOUND]: 404,
+  [ErrorCode.API_KEY_NOT_FOUND]: 404,
+  [ErrorCode.INTEGRATION_NOT_FOUND]: 404,
+  [ErrorCode.OAUTH_GRANT_NOT_FOUND]: 404,
   [ErrorCode.LEASE_CAPABILITY_NOT_DECLARED]: 422,
   [ErrorCode.LEASE_TTL_OUT_OF_RANGE]: 400,
   [ErrorCode.LEASE_TOKEN_NOT_FOUND]: 404,

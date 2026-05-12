@@ -718,11 +718,11 @@ export function authRoutes(
     const id = c.req.param("id");
     const item = await storage.items.get(id, tenantId);
     if (item?.type !== "system.connection") {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Grant not found");
+      throw new MymeError(ErrorCode.OAUTH_GRANT_NOT_FOUND, "Grant not found");
     }
     const props = item.properties;
     if (props.kind !== "app") {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Grant not found");
+      throw new MymeError(ErrorCode.OAUTH_GRANT_NOT_FOUND, "Grant not found");
     }
     const now = new Date().toISOString();
     await storage.items.update(

@@ -400,7 +400,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     if (key.role === "workspace_admin" && key.tenant_id) {
       const target = await storage.keys.get(id);
       if (target?.tenant_id !== key.tenant_id) {
-        throw new MymeError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
+        throw new MymeError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
       }
     }
 
@@ -441,7 +441,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     const existing = await storage.keys.get(id);
     if (!existing) {
-      throw new MymeError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
+      throw new MymeError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
     // workspace_admin can only update keys in its own tenant — same
     // 404 cloak as revoke.
@@ -450,7 +450,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       key.tenant_id &&
       existing.tenant_id !== key.tenant_id
     ) {
-      throw new MymeError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
+      throw new MymeError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
 
     const updated = await storage.keys.update(id, {

@@ -508,7 +508,7 @@ async function requireConnectionProxyAccess(
   const tenantId = key.tenant_id ?? undefined;
   const connection = await storage.items.get(connectionId, tenantId);
   if (connection?.type !== "system.connection") {
-    throw new MymeError(ErrorCode.NOT_FOUND, "Connection not found");
+    throw new MymeError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found");
   }
   const isAdmin = key.role === "admin" || key.is_platform;
   const isConnector = key.source === `oauth:${connectionId}`;

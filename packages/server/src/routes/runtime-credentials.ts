@@ -367,11 +367,14 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     const { connection_id } = c.req.valid("param");
     const connection = await storage.items.get(connection_id);
     if (!connection) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Connection not found");
+      throw new MymeError(
+        ErrorCode.CONNECTION_NOT_FOUND,
+        "Connection not found",
+      );
     }
     if (connection.type !== "system.connection") {
       throw new MymeError(
-        ErrorCode.NOT_FOUND,
+        ErrorCode.CONNECTION_NOT_FOUND,
         "Item is not a system.connection",
       );
     }
@@ -437,11 +440,14 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     const { connection_id } = c.req.valid("param");
     const connection = await storage.items.get(connection_id);
     if (!connection) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Connection not found");
+      throw new MymeError(
+        ErrorCode.CONNECTION_NOT_FOUND,
+        "Connection not found",
+      );
     }
     if (connection.type !== "system.connection") {
       throw new MymeError(
-        ErrorCode.NOT_FOUND,
+        ErrorCode.CONNECTION_NOT_FOUND,
         "Item is not a system.connection",
       );
     }

@@ -282,7 +282,10 @@ export function integrationRoutes(storage: Storage, salt: string) {
     const id = c.req.valid("param").id;
     const item = await storage.items.get(id, apiKey.tenant_id);
     if (item?.type !== "system.integration") {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Integration not found");
+      throw new MymeError(
+        ErrorCode.INTEGRATION_NOT_FOUND,
+        "Integration not found",
+      );
     }
     return c.json(toResponse(item), 200);
   });
@@ -302,7 +305,10 @@ export function integrationRoutes(storage: Storage, salt: string) {
     const id = c.req.param("id");
     const item = await storage.items.get(id, apiKey.tenant_id);
     if (item?.type !== "system.integration") {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Integration not found");
+      throw new MymeError(
+        ErrorCode.INTEGRATION_NOT_FOUND,
+        "Integration not found",
+      );
     }
     const props = item.properties as unknown as IntegrationProperties;
     const html = renderInstallConsentScreen({
@@ -322,7 +328,10 @@ export function integrationRoutes(storage: Storage, salt: string) {
     const id = c.req.param("id");
     const item = await storage.items.get(id, apiKey.tenant_id);
     if (item?.type !== "system.integration") {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Integration not found");
+      throw new MymeError(
+        ErrorCode.INTEGRATION_NOT_FOUND,
+        "Integration not found",
+      );
     }
     const props = item.properties as unknown as IntegrationProperties;
 
