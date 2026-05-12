@@ -53,7 +53,7 @@ const signupRoute = createRoute({
   tags: ["Auth"],
   summary: "Sign up a user and create a tenant",
   description:
-    "Creates a user, a tenant owned by that user, and a tenant-admin API key — all atomically. The user is identified by the `(provider, provider_account_id)` pair, typically sourced from an upstream identity provider (Google, GitHub, etc.). Calling again with the same pair returns the existing tenant plus a freshly-rotated admin key.\n\nLegacy provider-identity surface; the Better Auth flow at `/auth/sign-up/email` is the recommended sign-up path. Requires `AUTH_MODE=hosted`. See [Hosted mode](/self-hosting/hosted-mode).",
+    "Creates a user, a tenant owned by that user, and a tenant-admin API key — all atomically. The user is identified by the `(provider, provider_account_id)` pair, typically sourced from an upstream identity provider (Google, GitHub, etc.). If a user already exists for that pair, returns `409 conflict` — use `POST /auth/session` to retrieve a fresh session key instead.\n\nLegacy provider-identity surface; the Better Auth flow at `/auth/sign-up/email` is the recommended sign-up path. Requires `AUTH_MODE=hosted`. See [Hosted mode](/self-hosting/hosted-mode).",
   request: {
     body: {
       content: {
