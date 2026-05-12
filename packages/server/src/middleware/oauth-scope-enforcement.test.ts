@@ -62,7 +62,6 @@ async function mintOAuthToken(opts: {
         granted_at: new Date().toISOString(),
       },
       source: "test/oauth-scope",
-      origin: "user",
     },
     opts.tenantId,
   );

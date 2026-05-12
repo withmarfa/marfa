@@ -1112,7 +1112,6 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
         label: `edge-gate-${suffix}`,
         source: `edge-gate-${suffix}`,
         role: "member",
-        default_origin: "user",
         default_tier: "feed",
         type_permissions: typePermissions,
         extension_permissions: {},

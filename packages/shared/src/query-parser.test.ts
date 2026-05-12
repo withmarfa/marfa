@@ -174,7 +174,6 @@ describe("parseFilter", () => {
         "state",
         "type",
         "source",
-        "origin",
         "timestamp",
         "created_at",
         "updated_at",
@@ -534,7 +533,7 @@ describe("parseFilter", () => {
     });
   });
 
-  describe("system fields beyond the original seven", () => {
+  describe("system fields beyond the original six", () => {
     it('parses tier eq "library" (TSC42 §1)', () => {
       const result = parseFilter('tier eq "library"');
       expect(result.conditions[0]?.field).toEqual({

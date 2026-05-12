@@ -630,7 +630,6 @@ describe("app ItemStore integrity (T-005)", () => {
 
     // T-005 expectations: full ItemStore treatment.
     expect(grant!.source).toBe("myme/oauth/authorize"); // stamped
-    expect(grant!.origin).toBe("user");
     expect(grant!.tier).toBe("library");
     expect(grant!.state).toBe("active");
     expect(grant!.properties.status).toBe("active");
@@ -669,7 +668,6 @@ describe("OAuth tenant scoping (T-004)", () => {
           granted_at: new Date().toISOString(),
         },
         source: "test/oauth",
-        origin: "user",
       },
       TENANT,
     );
@@ -698,7 +696,6 @@ describe("OAuth tenant scoping (T-004)", () => {
         type: "core.note",
         properties: { body: "tenant-a-only" },
         source: "test",
-        origin: "user",
       },
       TENANT_A,
     );
@@ -717,7 +714,6 @@ describe("OAuth tenant scoping (T-004)", () => {
           granted_at: new Date().toISOString(),
         },
         source: "test/oauth",
-        origin: "user",
       },
       TENANT_B,
     );
@@ -756,7 +752,6 @@ describe("OAuth tenant scoping (T-004)", () => {
           granted_at: new Date().toISOString(),
         },
         source: "test/oauth",
-        origin: "user",
       },
       TENANT_A,
     );
@@ -773,7 +768,6 @@ describe("OAuth tenant scoping (T-004)", () => {
           granted_at: new Date().toISOString(),
         },
         source: "test/oauth",
-        origin: "user",
       },
       TENANT_B,
     );
@@ -820,7 +814,6 @@ describe("OAuth tenant scoping (T-004)", () => {
           granted_at: new Date().toISOString(),
         },
         source: "test/oauth",
-        origin: "user",
       },
       TENANT_B,
     );
@@ -856,7 +849,6 @@ describe("OAuth tenant scoping (T-004)", () => {
         type: "core.note",
         properties: { body: "same-tenant" },
         source: "test",
-        origin: "user",
       },
       TENANT,
     );
@@ -874,7 +866,6 @@ describe("OAuth tenant scoping (T-004)", () => {
           granted_at: new Date().toISOString(),
         },
         source: "test/oauth",
-        origin: "user",
       },
       TENANT,
     );

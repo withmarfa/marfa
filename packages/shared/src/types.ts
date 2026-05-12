@@ -12,21 +12,6 @@ export const ITEM_STATES: readonly ItemState[] = [
 ] as const;
 
 /**
- * Authorship class of an item's content. `system` is reserved for items the
- * server creates internally (notably `system.*` items like devices,
- * credentials, webhooks, and registered apps); callers cannot stamp it.
- */
-export type Origin = "user" | "ai" | "worker" | "system";
-
-/** Valid origin values as a readonly array, useful for validation. */
-export const ORIGINS: readonly Origin[] = [
-  "user",
-  "ai",
-  "worker",
-  "system",
-] as const;
-
-/**
  * The intent tier on an item — `library` is curated, kept, indexed; `feed`
  * is high-volume, low-intent capture. Items move between them through manual
  * or automated curation. `system.*` items have no tier (the dimension does
@@ -96,7 +81,6 @@ export interface Item {
   timestamp: string;
   source: string;
   source_id?: string;
-  origin: Origin;
   version: number;
   schema_version: number;
   device?: string;
@@ -116,7 +100,6 @@ export interface CreateItemInput {
   /** Ignored on the wire — server always stamps source from the credential. */
   source?: string;
   source_id?: string;
-  origin?: Origin;
   device?: string;
   capture_latitude?: number;
   capture_longitude?: number;
@@ -262,9 +245,6 @@ export interface ApiKey {
    * tenant config without override.
    */
   enforcement_override?: EnforcementSettings;
-  /** Origin stamped onto items when the client doesn't supply one.
-   *  `system` is excluded — server-stamped only, never a credential default. */
-  default_origin: Exclude<Origin, "system">;
   /** Tier stamped onto items when the client doesn't supply one. */
   default_tier: Tier;
   type_permissions: Record<string, TypePermission>;
@@ -303,7 +283,6 @@ export interface CreateKeyInput {
   label: string;
   source: string;
   role: KeyRole;
-  default_origin?: Exclude<Origin, "system">;
   default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
@@ -324,7 +303,6 @@ export interface CreateKeyInput {
  */
 export interface UpdateKeyInput {
   label?: string;
-  default_origin?: Exclude<Origin, "system">;
   default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;

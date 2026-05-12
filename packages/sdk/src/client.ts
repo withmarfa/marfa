@@ -998,7 +998,7 @@ export class MymeClient {
   readonly keys = {
     /** Creates an API key. The raw key value is returned exactly once on
      * creation; the rest of the shape mirrors the persisted ApiKey record
-     * (source, default_origin, default_tier, type_permissions, and
+     * (source, default_tier, type_permissions, and
      * extension_permissions are all stamped at create time and visible
      * here so the caller doesn't need a follow-up GET /keys to inspect
      * them). */

@@ -32,7 +32,6 @@ async function createKey(overrides: Record<string, unknown> = {}): Promise<{
       label: `subject-${suffix}`,
       source: `subject-${suffix}`,
       role: "member",
-      default_origin: "user",
       default_tier: "feed",
       type_permissions: { "core.note": "read" },
       extension_permissions: {},
@@ -57,7 +56,6 @@ describe("PATCH /keys/{id}", () => {
       key: ctx.adminKey,
       body: {
         label: "renamed",
-        default_origin: "ai",
         default_tier: "library",
         type_permissions: { "core.note": "write" },
         extension_permissions: { "my-app.prefs": "read" },
@@ -72,7 +70,6 @@ describe("PATCH /keys/{id}", () => {
     // source is immutable — it must not have changed
     expect(updated.source).toBe(source);
     expect(updated.role).toBe("member");
-    expect(updated.default_origin).toBe("ai");
     expect(updated.default_tier).toBe("library");
     expect(updated.type_permissions).toEqual({ "core.note": "write" });
     expect(updated.extension_permissions).toEqual({ "my-app.prefs": "read" });
@@ -240,7 +237,6 @@ describe("bootstrap sentinel", () => {
           label: "first-admin",
           source: "first-admin",
           role: "member",
-          default_origin: "user",
           default_tier: "feed",
           type_permissions: { "*": "write" },
           extension_permissions: {},
@@ -268,7 +264,6 @@ describe("bootstrap sentinel", () => {
           label: "first-admin",
           source: "first-admin",
           role: "member",
-          default_origin: "user",
           default_tier: "feed",
           type_permissions: { "*": "write" },
           extension_permissions: {},
@@ -288,7 +283,6 @@ describe("bootstrap sentinel", () => {
           label: "takeover",
           source: "takeover",
           role: "member",
-          default_origin: "user",
           default_tier: "feed",
           type_permissions: { "*": "write" },
           extension_permissions: {},

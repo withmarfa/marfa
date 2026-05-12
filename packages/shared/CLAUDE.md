@@ -12,7 +12,7 @@ Contents (`src/`):
 - `diff-type-schemas.ts` — `diffTypeSchemas` (TSC42 §7) classifies a registration diff as `noop | patch | minor | major`; `isValidVersionBump` encodes the integer-version semantics.
 - `edge-registry.ts` — same shape as type-registry, for edge types.
 - `scopes.ts` — OAuth scope grammar (`<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`); `parseScope`, `scopesToTypePermissions`, etc.
-- `query-parser.ts` — the `?filter=` DSL parser used by `/items` and `/search`. `SYSTEM_FIELDS` lists the columns the parser knows (state, type, source, origin, timestamp, created_at, updated_at, tier, device, version, id).
+- `query-parser.ts` — the `?filter=` DSL parser used by `/items` and `/search`. `SYSTEM_FIELDS` lists the columns the parser knows (state, type, source, timestamp, created_at, updated_at, tier, device, version, id).
 
 ## Authoring rules
 

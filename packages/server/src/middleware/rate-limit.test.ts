@@ -108,7 +108,6 @@ async function makeMemberKey(ctx: Ctx, label: string): Promise<string> {
       label,
       source: `${label}-${suffix}`,
       role: "member",
-      default_origin: "user",
       default_tier: "feed",
       type_permissions: { "*": "read" },
       extension_permissions: {},

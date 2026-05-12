@@ -320,7 +320,6 @@ describe("Profile routes (T-074)", () => {
             granted_at: new Date().toISOString(),
           },
           source: "test/oauth-bearer-profile",
-          origin: "user",
         },
         u.tenantId,
       );

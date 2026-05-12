@@ -323,6 +323,13 @@
       "when": 1778941200000,
       "tag": "0045_drop_feed_retention_config_key",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1778941300000,
+      "tag": "0046_drop_origin_and_default_origin",
+      "breakpoints": true
     }
   ]
 }

@@ -226,9 +226,8 @@ export function authMiddleware(storage: Storage, salt: string) {
       }
 
       // Build a synthetic ApiKey from the OAuth token's scopes.
-      // Credential-default fields (source, default_origin, default_tier)
-      // are synthesised here; full parity with stored API keys remains
-      // outstanding.
+      // Credential-default fields (source, default_tier) are synthesised
+      // here; full parity with stored API keys remains outstanding.
       //
       // `tenant_id` projects from the app's `system.connection`
       // item. Storage call sites (`items.get(id, tenantId)`, etc.) treat
@@ -251,7 +250,6 @@ export function authMiddleware(storage: Storage, salt: string) {
         label: `oauth:${oauthToken.connection_item_id}`,
         source: `oauth:${oauthToken.connection_item_id}`,
         role: "member",
-        default_origin: "user",
         default_tier: "library",
         is_platform: false,
         type_permissions: typePermissions,
@@ -299,7 +297,6 @@ export function authMiddleware(storage: Storage, salt: string) {
         label: stored.label,
         source: stored.source,
         role: stored.role,
-        default_origin: stored.default_origin,
         default_tier: stored.default_tier,
         is_platform: stored.is_platform,
         is_runtime_credential: stored.is_runtime_credential,

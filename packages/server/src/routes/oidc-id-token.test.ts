@@ -134,7 +134,6 @@ async function mintTokenWithScopes(
         granted_at: new Date().toISOString(),
       },
       source: "test/oidc-id-token",
-      origin: "user",
     },
     user.tenantId,
   );

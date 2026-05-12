@@ -51,7 +51,6 @@ function fakeItem(id: string, type = "core.note"): Item {
     updated_at: now,
     timestamp: now,
     source: "test",
-    origin: "user",
     version: 1,
     schema_version: 1,
   };

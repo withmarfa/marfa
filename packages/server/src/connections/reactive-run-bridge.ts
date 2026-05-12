@@ -297,7 +297,6 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
             version: 1,
             schema_version: 1,
             source: "stop-sentinel",
-            origin: "system",
           } as unknown as ItemEventWithId["item"],
         });
       } catch {

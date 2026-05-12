@@ -126,7 +126,6 @@ export class PgItemStore implements ItemStore {
           timestamp: input.timestamp ?? now,
           source: input.source,
           source_id: input.source_id,
-          origin: input.origin,
           version: 1,
           schema_version: schemaVersion,
           device: input.device,
@@ -154,7 +153,6 @@ export class PgItemStore implements ItemStore {
           schema_version: schemaVersion,
           source: input.source ?? "unknown",
           ...(input.source_id != null && { source_id: input.source_id }),
-          origin: input.origin ?? "user",
           ...(input.device != null && { device: input.device }),
           ...(input.capture_latitude != null && {
             capture_latitude: input.capture_latitude,

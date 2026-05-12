@@ -61,7 +61,7 @@ The OAuth consent endpoints (`GET/POST /auth/authorize`) gate on the better-auth
 
 ## System types
 
-The reserved `system.*` namespace carries platform-internal items. All `system.*` types use a bounded lifecycle (`active | revoked` only — not the universal three-state) and are stamped with `origin: system` server-side.
+The reserved `system.*` namespace carries platform-internal items. All `system.*` types use a bounded lifecycle (`active | revoked` only — not the universal three-state). Only platform-flagged credentials (`is_platform: true`) can write `system.*` items; ordinary tenant credentials are rejected at `POST /items`.
 
 - `system.device` — connected devices (name, kind, last-active timestamp).
 - `system.credential` — API keys and OAuth tokens (encrypted at rest under per-domain HKDF tags).
