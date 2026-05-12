@@ -89,9 +89,7 @@ const getProfileRoute = createRoute({
   tags: ["Profile"],
   summary: "Get the calling user's profile",
   description:
-    "Returns the profile record for the user who owns the calling " +
-    "credential's tenant. T-074: email is mirrored read-only from the " +
-    "Better Auth identity record.",
+    "Returns the profile for the user who owns the caller's tenant — `username`, `first_name`, `last_name`, `bio`, `avatar_url`, plus `email` (mirrored read-only from the auth identity record).\n\nThe `avatar_url` resolves to the uploaded avatar when present, or to a deterministic placeholder generated from `username` when none is set. Profile is virtual — there's no items-table row per user; this endpoint reads from the underlying user record. For OIDC-shaped userinfo, use `GET /auth/userinfo` instead. See [Profile](/concepts/profile).",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -114,6 +112,8 @@ const updateProfileRoute = createRoute({
   path: "/me",
   tags: ["Profile"],
   summary: "Update the calling user's profile",
+  description:
+    "Updates any subset of `username`, `first_name`, `last_name`, `bio`. Username changes flow through the same validators as handle claims (reserved-handle and uniqueness checks). Username collisions return `409 conflict`; reserved values return `400 handle_reserved`. Email is read-only from the auth identity record and cannot be updated here.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -149,6 +149,8 @@ const setAvatarRoute = createRoute({
   path: "/me/avatar",
   tags: ["Profile"],
   summary: "Upload an avatar",
+  description:
+    "Uploads an image as the user's avatar. Accepts `image/png`, `image/jpeg`, `image/webp`, `image/svg+xml`. Subject to the standard blob size cap and the tenant's `blobs` and `storage_bytes` quotas — over-size returns `413`. The uploaded image is stored as a content-addressed blob; the public `avatar_url` on the profile reconstructs at read time.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -180,6 +182,8 @@ const deleteAvatarRoute = createRoute({
   path: "/me/avatar",
   tags: ["Profile"],
   summary: "Delete the avatar",
+  description:
+    "Clears the uploaded avatar. The next read of the profile resolves `avatar_url` to a deterministic placeholder generated from `username`. Idempotent — clearing when no avatar is set returns the unchanged profile.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

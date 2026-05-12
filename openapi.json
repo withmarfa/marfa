@@ -9445,7 +9445,7 @@
           "Profile"
         ],
         "summary": "Get the calling user's profile",
-        "description": "Returns the profile record for the user who owns the calling credential's tenant. T-074: email is mirrored read-only from the Better Auth identity record.",
+        "description": "Returns the profile for the user who owns the caller's tenant — `username`, `first_name`, `last_name`, `bio`, `avatar_url`, plus `email` (mirrored read-only from the auth identity record).\n\nThe `avatar_url` resolves to the uploaded avatar when present, or to a deterministic placeholder generated from `username` when none is set. Profile is virtual — there's no items-table row per user; this endpoint reads from the underlying user record. For OIDC-shaped userinfo, use `GET /auth/userinfo` instead. See [Profile](/concepts/profile).",
         "security": [
           {
             "bearerAuth": []
@@ -9585,6 +9585,7 @@
           "Profile"
         ],
         "summary": "Update the calling user's profile",
+        "description": "Updates any subset of `username`, `first_name`, `last_name`, `bio`. Username changes flow through the same validators as handle claims (reserved-handle and uniqueness checks). Username collisions return `409 conflict`; reserved values return `400 handle_reserved`. Email is read-only from the auth identity record and cannot be updated here.",
         "security": [
           {
             "bearerAuth": []
@@ -9827,6 +9828,7 @@
           "Profile"
         ],
         "summary": "Upload an avatar",
+        "description": "Uploads an image as the user's avatar. Accepts `image/png`, `image/jpeg`, `image/webp`, `image/svg+xml`. Subject to the standard blob size cap and the tenant's `blobs` and `storage_bytes` quotas — over-size returns `413`. The uploaded image is stored as a content-addressed blob; the public `avatar_url` on the profile reconstructs at read time.",
         "security": [
           {
             "bearerAuth": []
@@ -10011,6 +10013,7 @@
           "Profile"
         ],
         "summary": "Delete the avatar",
+        "description": "Clears the uploaded avatar. The next read of the profile resolves `avatar_url` to a deterministic placeholder generated from `username`. Idempotent — clearing when no avatar is set returns the unchanged profile.",
         "security": [
           {
             "bearerAuth": []
@@ -10152,7 +10155,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key. In bootstrap mode (zero keys exist), no auth is required and the key is always admin.",
+        "description": "Creates a new API key in the caller's tenant. The plaintext `key` field is returned **once** in the response — the server never shows it again. Store it securely; rotating means revoking the old key and creating a new one.\n\n`role` controls scope: `admin` bypasses every permission check; `workspace_admin` is the admin tier within a tenant; `member` is scoped by the three permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`) plus `metadata_permissions`. `source` is stamped onto every item written by the key and is unique per tenant. `default_tier` stamps `library` or `feed` when the writing client omits a tier.\n\nIn bootstrap mode (zero keys exist on a fresh server), no auth is required and the minted key is always admin. Once any key exists, bootstrap mode disables — further key creation requires an admin or workspace_admin token. See [Authentication](/api/authentication) and [Permissions](/api/permissions).",
         "security": [
           {
             "bearerAuth": []
@@ -10387,6 +10390,7 @@
           "Keys"
         ],
         "summary": "List API keys",
+        "description": "Returns every API key in the caller's tenant. Hashes are returned in lieu of plaintext — the plaintext is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour per key; treat it as a coarse activity signal, not an audit log. Admin or workspace_admin only.",
         "security": [
           {
             "bearerAuth": []
@@ -10542,6 +10546,7 @@
           "Keys"
         ],
         "summary": "Revoke an API key",
+        "description": "Revokes the key immediately. The next request bearing the revoked token returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. The revocation is audit-logged. Admin or workspace_admin only.",
         "security": [
           {
             "bearerAuth": []
@@ -10622,7 +10627,7 @@
           "Keys"
         ],
         "summary": "Update an API key",
-        "description": "Updates mutable fields on an API key. `source` and `role` are immutable after creation and rejected with 400 if present. Admin only.",
+        "description": "Updates mutable fields on an API key in place — `label`, `default_tier`, and the four permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`, `metadata_permissions`). `source` and `role` are immutable after creation and rejected with `400 validation_error` if present in the body — to change them, revoke and recreate. Admin or workspace_admin only.",
         "security": [
           {
             "bearerAuth": []
