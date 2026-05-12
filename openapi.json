@@ -24,6 +24,7 @@
           "Items"
         ],
         "summary": "Create an item",
+        "description": "Creates an item against its type schema and persists it. The server stamps `id`, `created_at`, `version`, and `source` (from the caller's credential — not forgeable). Type-schema validation runs before any write.\n\nIf `source_id` is supplied and an existing non-trashed item in the tenant already has the same `(source, source_id)` pair, the call short-circuits to update — properties shallow-merge, tags replace if provided, edges replace per-type if provided. The HTTP status flips from 201 to 200; the response body is the updated item either way. See [Items — natural-key upsert](/concepts/items#natural-key-upsert) for the wider semantics.\n\nAn `edges` block on the request body creates the item and its outbound edges in one transaction; either the whole write succeeds or nothing persists. See [Edges — atomic item + edges write](/concepts/edges#atomic-item--edges-write).",
         "security": [
           {
             "bearerAuth": []
@@ -598,6 +599,7 @@
           "Items"
         ],
         "summary": "List items",
+        "description": "Returns a paginated list of items in the tenant, narrowed by the supplied query parameters. `type` matches subtypes via inheritance — `type=core.media` returns `core.media.book`, `core.media.article`, etc. `since` / `until` operate on the item's effective time (`timestamp`, falling back to `created_at`), not `updated_at`. `tier` accepts `library`, `feed`, or `all` (omitting returns both slices).\n\nLists are lean by default — no edges, no metadata, no extensions. The `include` parameter is the escape hatch: `?include=edges,metadata` hydrates the matching extras inline so the caller avoids the N+1 trap. See [Items — lists are lean](/concepts/items#lists-are-lean-opt-into-extras) and [Search and query](/api/search-and-query) for the filter grammar.\n\nCursors are stable for ~24 hours; concurrent writes don't shift pages already returned.",
         "security": [
           {
             "bearerAuth": []
@@ -1195,6 +1197,7 @@
           "Items"
         ],
         "summary": "Get item counts by state",
+        "description": "Returns a count of items per lifecycle `state` (`active`, `archived`, `trashed`) for the tenant. Useful for surfacing item totals in a dashboard or sidebar without paging through `/items`. Type-permission scoped: a credential sees only the counts for types it can read. See [Lifecycle](/concepts/lifecycle).",
         "security": [
           {
             "bearerAuth": []
@@ -1259,6 +1262,7 @@
           "Items"
         ],
         "summary": "Get an item",
+        "description": "Returns a single item with its metadata layer flattened onto the object (`tags`, `tier`, `state`) and outbound edges hydrated inline, grouped by edge type. Extensions are NOT included — fetch them through the `/items/{id}/extensions` endpoints.\n\nIf the item exists but isn't visible to the caller (type permissions, source filter, cross-tenant), the response is `404 item_not_found`. The server doesn't leak existence.",
         "security": [
           {
             "bearerAuth": []
@@ -1546,6 +1550,7 @@
           "Items"
         ],
         "summary": "Update an item",
+        "description": "Updates an item's properties, tier, or timestamp. Properties shallow-merge into the existing row (unmentioned keys keep their values). The optional `version` field enables optimistic concurrency — pass the version the caller is editing from; a mismatch returns `409 version_conflict` with the three-way context (current, ancestor, conflicting fields, resolved merge policy) the client needs to resolve. See [Conflicts](/concepts/conflicts) and [Errors — version_conflict](/api/errors#version-conflict).\n\nThe `edges` block has replace-all-for-specified-types semantics: any edge_type listed wipes existing outbound edges of that type from this item, then creates new edges to each listed target. Empty array for an edge_type deletes all edges of that type. Unmentioned edge types are untouched.\n\nTier and timestamp updates are last-writer-wins and never produce a version conflict.",
         "security": [
           {
             "bearerAuth": []
@@ -2016,6 +2021,7 @@
           "Items"
         ],
         "summary": "Soft delete an item",
+        "description": "Transitions the item to `state: trashed`. Reversible via `POST /items/{id}/restore` until the trash retention window expires (`TRASH_RETENTION_DAYS`, default 60 days; configurable per tenant via `TenantConfig.trash_retention_days`). After the window, the trash purger removes the row permanently.\n\nFor immediate hard deletion, use `DELETE /items/{id}/purge` instead — admin-only, no recovery. See [Lifecycle](/concepts/lifecycle).",
         "security": [
           {
             "bearerAuth": []
@@ -2098,6 +2104,7 @@
           "Items"
         ],
         "summary": "Restore a trashed item",
+        "description": "Restores a `trashed` item to `active`. Sugar for the common case; the universal entry point is `POST /items/{id}/transition` with `state: active`. Trashed items are auto-purged after `TRASH_RETENTION_DAYS` (default 60) — restore before that window to keep the row. See [Lifecycle](/concepts/lifecycle).",
         "security": [
           {
             "bearerAuth": []
@@ -2387,6 +2394,7 @@
           "Items"
         ],
         "summary": "Transition item state",
+        "description": "Transitions the item to the supplied `state`. Valid transitions: `active ↔ archived`, `active → trashed`, `archived → trashed`, `trashed → active` (restore). Direct `trashed → archived` is rejected with `400 invalid_transition` — restore to active first. Universal entry point used by the dedicated `restore` and soft-delete routes underneath. See [Lifecycle](/concepts/lifecycle).",
         "security": [
           {
             "bearerAuth": []
@@ -2734,6 +2742,7 @@
           "Items"
         ],
         "summary": "List item versions",
+        "description": "Returns the version-snapshot history for one item, newest first. Each snapshot carries the version number, the timestamp of the update that produced it, the full properties at that version, and the credential that wrote it.\n\nSnapshots are thinned on a rolling schedule — every snapshot in the recent window, one per calendar day in the daily window, one per ISO week in the weekly window, dropped beyond. The most recent snapshot is never thinned. To restore from a version, fetch its properties and re-send them through `PATCH /items/{id}` — the restore becomes a new forward version. See [Versions](/concepts/versions).",
         "security": [
           {
             "bearerAuth": []
@@ -2882,6 +2891,7 @@
           "Items"
         ],
         "summary": "Get item metadata",
+        "description": "Returns the metadata layer for one item — `tags`, `tier`, `state`. Use when you have the item id and need the metadata fields without fetching the full item. For bulk reads, prefer `GET /items?include=metadata` to hydrate metadata inline across a page. See [Metadata](/concepts/metadata).",
         "security": [
           {
             "bearerAuth": []
@@ -3017,6 +3027,7 @@
           "Items"
         ],
         "summary": "Replace item metadata tags",
+        "description": "Replaces the item's tag set with the supplied array. An empty array clears all tags. The other metadata-layer fields (`tier`, `state`) are not affected — flip those through `PATCH /items/{id}` (for `tier`) or the lifecycle endpoints (for `state`).\n\nConcurrent tag writes from different clients auto-merge as set union on the read-through path; this endpoint is the explicit-replace counterpart. See [Metadata](/concepts/metadata).",
         "security": [
           {
             "bearerAuth": []
@@ -3206,6 +3217,7 @@
           "Items"
         ],
         "summary": "Merge item metadata",
+        "description": "Set-union-merges the supplied tags into the existing tag set. Existing tags survive; duplicates are deduped. Use this when an integration knows the tags it wants to add but doesn't want to clobber tags another source has already attached. For full replacement, use `PUT /items/{id}/metadata`. For incremental add / remove, use the dedicated tag endpoints.",
         "security": [
           {
             "bearerAuth": []
@@ -3396,6 +3408,7 @@
           "Items"
         ],
         "summary": "Add tags to an item",
+        "description": "Adds one or more tags to the item. Idempotent — tags already present are not duplicated. Tag strings should be kebab-case; reserved prefixes (`collection:`, `folder:`, `status:`, `priority:`) carry cross-app conventions. See [Metadata — tags](/concepts/metadata#tags).",
         "security": [
           {
             "bearerAuth": []
@@ -3590,6 +3603,7 @@
           "Items"
         ],
         "summary": "Permanently delete an item",
+        "description": "Hard-deletes the item — irreversible. Removes the item row, all edges with this item as source or target, the metadata row, every extension scoped to this item, and attachment references. Blob bytes themselves are content-addressed and may be retained if referenced by other items. Admin-only; the normal `DELETE /items/{id}` is the soft-delete-via-trash path most clients want. See [Lifecycle — hard deletion](/concepts/lifecycle#hard-deletion).",
         "security": [
           {
             "bearerAuth": []
@@ -3708,6 +3722,7 @@
           "Items"
         ],
         "summary": "Remove a tag from an item",
+        "description": "Removes one tag from the item. Idempotent — removing a tag the item doesn't carry returns 200 with the unchanged metadata. To bulk-remove tags or replace the full tag set, use `PUT /items/{id}/metadata` instead.",
         "security": [
           {
             "bearerAuth": []
@@ -3853,6 +3868,7 @@
           "Items"
         ],
         "summary": "Bulk upsert items",
+        "description": "Creates or upserts up to 5000 items in one call. Use for tenant migrations, importer runs, replays of an external source. Replaces the historical `/import` endpoint.\n\nModes: `upsert` (default) matches existing rows on `(source, source_id)` and updates in place — properties shallow-merge, tags replace if provided, edges union-merge if provided; `create_only` surfaces matching rows as `skipped`. Atomic by default — `atomic: true` wraps the batch in one transaction; `atomic: false` runs per-item with per-item outcomes. `emit_events: false` is the default; opt in with `emit_events: true` if subscribers should fan out per item.\n\nInline `edges` blocks on items have replace-all-per-type semantics within the batch. For cross-batch edges, use `POST /edges/bulk` after items land.\n\nAdmin-only. `source` is server-stamped from the credential — any caller-supplied `source` is silently overwritten. See [Bulk operations](/api/bulk-operations).",
         "security": [
           {
             "bearerAuth": []
@@ -4152,6 +4168,7 @@
           "Items"
         ],
         "summary": "Apply a bulk action",
+        "description": "Applies one action to every item matching a filter. Use to archive everything tagged `wip`, purge every trashed item older than 90 days, retier a slice of items, retag a source's items in bulk.\n\nSix actions, discriminated on `action`: `transition` (move to a target state), `purge` (hard-delete; admin-only; requires `confirm: PURGE`), `update_tags` (`add` / `remove`), `update_tier`, `update_properties` (shallow merge into properties), `update_timestamp`.\n\nNon-admin callers see their match set narrowed to types they hold write on. `purge` is admin-only regardless of filter. Safety rails: `dry_run: true` returns matched ids and count without writing; `max_items` caps the match set (default 10000, hard ceiling 50000); going over returns `400 bulk_cap_exceeded`. See [Bulk operations](/api/bulk-operations).",
         "security": [
           {
             "bearerAuth": []
@@ -5562,6 +5579,7 @@
           "Edges"
         ],
         "summary": "List outbound edges from an item",
+        "description": "Returns the edges where this item is the **source**, paginated and optionally filtered by edge type. Use to walk an item's relationships outward — what does this note reference, what does this entity author. For the reverse direction (edges pointing AT this item), use `GET /items/{id}/backrefs`.",
         "security": [
           {
             "bearerAuth": []
@@ -5754,6 +5772,7 @@
           "Edges"
         ],
         "summary": "List inbound edges to an item",
+        "description": "Returns the edges where this item is the **target** (backrefs), paginated and optionally filtered by edge type. Use to walk an item's relationships inward — what notes are about this entity, what items are in this thread. For the forward direction, use `GET /items/{id}/edges`.",
         "security": [
           {
             "bearerAuth": []
@@ -5946,6 +5965,7 @@
           "Edges"
         ],
         "summary": "List edges",
+        "description": "Returns a paginated list of edges across the tenant, optionally filtered by edge type. Use for taxonomy-style traversals — every reply, every annotation, every parent-of edge — without having to walk items first. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope; omit to list every edge. Tenant-scoped.",
         "security": [
           {
             "bearerAuth": []
@@ -6130,6 +6150,7 @@
           "Edges"
         ],
         "summary": "Create an edge",
+        "description": "Creates a single typed edge from source to target. Edges are first-class — they carry their own id, properties, and audit trail; they are not embedded references on the item. Source and target must both exist in the caller's tenant.\n\nEdge writes are **dual-gated**: the caller needs both write permission on the source item's type AND write permission on the edge type. Cardinalities and source/target type constraints are enforced at create time — violations return `400 edge_constraint_violation`. Cycles on `parent-of` and `supersedes` are rejected with `400 edge_cycle`. See [Permissions — dual-gate](/api/permissions#the-dual-gate-rule) and [Edges](/concepts/edges).",
         "security": [
           {
             "bearerAuth": []
@@ -6341,6 +6362,7 @@
           "Edges"
         ],
         "summary": "Update an edge",
+        "description": "Updates the `properties` JSON on an edge. Identity fields — `edge_type`, `source_id`, `target_id` — are immutable after creation; attempts to change them return `400 validation_error`. To re-point an edge to a different target, delete the existing edge and create a new one.\n\nDual-gated on the source item's type write permission and the edge type's write permission, same as edge create.",
         "security": [
           {
             "bearerAuth": []
@@ -6513,6 +6535,7 @@
           "Edges"
         ],
         "summary": "Delete an edge",
+        "description": "Deletes a single edge by id. Dual-gated on the source item's type write permission and the edge type's write permission. Cascade behaviour on the connected items is determined by the edge type's `cascade_on_delete`: `cascade` deletes connected items, `orphan` leaves them in place, `block` rejects the delete if endpoints remain. See [Edges — cascade on delete](/concepts/edges#cascade-on-delete).",
         "security": [
           {
             "bearerAuth": []
@@ -6595,6 +6618,7 @@
           "Edges"
         ],
         "summary": "Bulk upsert edges",
+        "description": "Creates or upserts up to 5000 edges in one call. Sibling to `POST /items/bulk` for the graph half of tenant migrations — items created in an earlier bulk call exist on the server; a second pass through this endpoint wires them together without having to hold source and target in the same payload.\n\nModes: `upsert` (default) matches existing rows on `(source_id, target_id, edge_type)` and replaces `properties` in place; `create_only` surfaces matching rows as `skipped` with reason `duplicate_edge`. Atomic by default — any failure rolls back the batch. Set `atomic: false` to run per-edge with per-edge outcomes. `emit_events: true` fires an `edge.created` webhook per newly-created edge; `updated` outcomes emit nothing.\n\nAdmin-only. See [Bulk operations](/api/bulk-operations) for outcome shape and event semantics.",
         "security": [
           {
             "bearerAuth": []
@@ -6860,6 +6884,7 @@
           "EdgeTypes"
         ],
         "summary": "Register an edge type",
+        "description": "Registers a custom edge type. Carries `cardinality` (`one-to-one` / `one-to-many` / `many-to-one` / `many-to-many`), `cascade_on_delete` (`cascade` / `orphan` / `block`), source and target type constraints, and an optional `property_schema`. Core edge type names (`about`, `parent-of`, `in-thread`, `attached-to`, `references`, `authored-by`, `derived-from`, `supersedes`) are reserved and collide with `409 conflict`.\n\nAdmin-only. Custom edge types do not inherit — they're flat. See [Edges — custom edge types](/concepts/edges#custom-edge-types).",
         "security": [
           {
             "bearerAuth": []
@@ -7136,6 +7161,7 @@
           "EdgeTypes"
         ],
         "summary": "List edge types",
+        "description": "Returns every edge type registered in the tenant — the eight core types (`about`, `parent-of`, `in-thread`, `attached-to`, `references`, `authored-by`, `derived-from`, `supersedes`) plus any custom types registered via `POST /edges/types`. Each entry carries its cardinality, cascade behaviour, and source/target type constraints.",
         "security": [
           {
             "bearerAuth": []
@@ -7226,6 +7252,7 @@
           "EdgeTypes"
         ],
         "summary": "Delete an edge type",
+        "description": "Removes a custom edge type registration. Core edge types are immutable and rejected with 400. If existing edges of this type remain, the request fails — delete or migrate them first. Admin-only.",
         "security": [
           {
             "bearerAuth": []
@@ -8271,6 +8298,7 @@
           "Search"
         ],
         "summary": "Search items",
+        "description": "Full-text search across the tenant's items. Indexes textual properties (body, title, description, name, and other string-typed fields not flagged `searchable: false`) plus tags. Ranking is by relevance with a configurable recency boost.\n\nAccepts the same filter parameters as `GET /items` — narrow by `type`, `state`, `tier`, `tags`, source, edge / backref clauses — so the search query and the filter set compose. `tags` is comma-separated with AND semantics.\n\nUses `limit` / `offset` pagination rather than cursors. Result ordering is stable for the query's lifetime; absolute `score` values are not guaranteed across index rebuilds. See [Search and query](/api/search-and-query).",
         "security": [
           {
             "bearerAuth": []
@@ -8634,6 +8662,7 @@
           "Metadata"
         ],
         "summary": "List distinct tags in use",
+        "description": "Returns every distinct tag in use across items the caller can read, with a usage count per tag, sorted by count descending then tag ascending. Tenant-scoped, type-permission scoped, excludes trashed items. Use to populate tag pickers, autocomplete, or `all tags` UI without iterating items. See [Metadata — listing all tags](/concepts/metadata#listing-all-tags).",
         "security": [
           {
             "bearerAuth": []
@@ -8718,6 +8747,7 @@
           "Blobs"
         ],
         "summary": "Upload a blob",
+        "description": "Uploads binary content and returns its `sha256:<hex>` content-addressed hash. Accepts `multipart/form-data` (typical for browser file inputs) or `application/octet-stream` (raw bytes for SDK / CLI uploads).\n\nUploads are idempotent: re-uploading identical bytes returns the existing hash without re-storing — the storage backend deduplicates by hash. `MAX_BLOB_SIZE` (default 50 MB) caps individual uploads; over-size returns `413 blob_too_large`. Tenant blob count and storage-byte quotas (`blobs`, `storage_bytes`) gate uploads.\n\nReference the returned `hash` from item properties (`blob_ref` on `core.file.*` types) or attachment entries. See [Blobs](/concepts/blobs).",
         "security": [
           {
             "bearerAuth": []
@@ -8845,6 +8875,7 @@
           "Blobs"
         ],
         "summary": "Download blob binary",
+        "description": "Streams the bytes for a previously-uploaded blob, identified by its `sha256:<hex>` hash. Response is `application/octet-stream` with the raw bytes. Tenant-scoped — a hash uploaded in tenant A is not visible to tenant B; cross-tenant probes return 404.\n\nFor S3-backed deployments serving images and other static assets, prefer `GET /blobs/{hash}/url` (presigned URL) so the browser fetches directly from the object store and the API isn't a proxy.",
         "security": [
           {
             "bearerAuth": []
@@ -8988,6 +9019,7 @@
           "Blobs"
         ],
         "summary": "Get a presigned download URL for a blob",
+        "description": "Returns a time-limited presigned URL pointing directly at the underlying S3-compatible object store. The `ttl` query parameter (seconds, default 3600) sets the URL's lifetime. Useful for serving images and other static assets without proxying them through the API server.\n\nAvailable only when `BLOB_BACKEND=s3`. Filesystem-backed deployments return `400` — use `GET /blobs/{hash}` to stream bytes instead.",
         "security": [
           {
             "bearerAuth": []
@@ -9153,6 +9185,7 @@
           "Blobs"
         ],
         "summary": "Remove unreferenced blobs",
+        "description": "Removes blobs that no item references — including items in trash. Run periodically to reclaim storage after item deletion accumulates orphaned blobs. Set `dry_run=true` to preview what would be removed without writing. Admin-only.",
         "security": [
           {
             "bearerAuth": []

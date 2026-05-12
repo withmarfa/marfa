@@ -84,6 +84,8 @@ const edgesBulkRoute = createRoute({
   path: "/bulk",
   tags: ["Edges"],
   summary: "Bulk upsert edges",
+  description:
+    "Creates or upserts up to 5000 edges in one call. Sibling to `POST /items/bulk` for the graph half of tenant migrations — items created in an earlier bulk call exist on the server; a second pass through this endpoint wires them together without having to hold source and target in the same payload.\n\nModes: `upsert` (default) matches existing rows on `(source_id, target_id, edge_type)` and replaces `properties` in place; `create_only` surfaces matching rows as `skipped` with reason `duplicate_edge`. Atomic by default — any failure rolls back the batch. Set `atomic: false` to run per-edge with per-edge outcomes. `emit_events: true` fires an `edge.created` webhook per newly-created edge; `updated` outcomes emit nothing.\n\nAdmin-only. See [Bulk operations](/api/bulk-operations) for outcome shape and event semantics.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {

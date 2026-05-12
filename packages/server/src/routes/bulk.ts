@@ -182,6 +182,8 @@ const bulkRoute = createRoute({
   path: "/bulk",
   tags: ["Items"],
   summary: "Bulk upsert items",
+  description:
+    "Creates or upserts up to 5000 items in one call. Use for tenant migrations, importer runs, replays of an external source. Replaces the historical `/import` endpoint.\n\nModes: `upsert` (default) matches existing rows on `(source, source_id)` and updates in place — properties shallow-merge, tags replace if provided, edges union-merge if provided; `create_only` surfaces matching rows as `skipped`. Atomic by default — `atomic: true` wraps the batch in one transaction; `atomic: false` runs per-item with per-item outcomes. `emit_events: false` is the default; opt in with `emit_events: true` if subscribers should fan out per item.\n\nInline `edges` blocks on items have replace-all-per-type semantics within the batch. For cross-batch edges, use `POST /edges/bulk` after items land.\n\nAdmin-only. `source` is server-stamped from the credential — any caller-supplied `source` is silently overwritten. See [Bulk operations](/api/bulk-operations).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -224,6 +226,8 @@ const bulkActionRoute = createRoute({
   path: "/bulk_action",
   tags: ["Items"],
   summary: "Apply a bulk action",
+  description:
+    "Applies one action to every item matching a filter. Use to archive everything tagged `wip`, purge every trashed item older than 90 days, retier a slice of items, retag a source's items in bulk.\n\nSix actions, discriminated on `action`: `transition` (move to a target state), `purge` (hard-delete; admin-only; requires `confirm: PURGE`), `update_tags` (`add` / `remove`), `update_tier`, `update_properties` (shallow merge into properties), `update_timestamp`.\n\nNon-admin callers see their match set narrowed to types they hold write on. `purge` is admin-only regardless of filter. Safety rails: `dry_run: true` returns matched ids and count without writing; `max_items` caps the match set (default 10000, hard ceiling 50000); going over returns `400 bulk_cap_exceeded`. See [Bulk operations](/api/bulk-operations).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {

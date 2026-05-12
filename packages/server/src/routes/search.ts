@@ -41,6 +41,8 @@ const searchRoute = createRoute({
   path: "/",
   tags: ["Search"],
   summary: "Search items",
+  description:
+    "Full-text search across the tenant's items. Indexes textual properties (body, title, description, name, and other string-typed fields not flagged `searchable: false`) plus tags. Ranking is by relevance with a configurable recency boost.\n\nAccepts the same filter parameters as `GET /items` — narrow by `type`, `state`, `tier`, `tags`, source, edge / backref clauses — so the search query and the filter set compose. `tags` is comma-separated with AND semantics.\n\nUses `limit` / `offset` pagination rather than cursors. Result ordering is stable for the query's lifetime; absolute `score` values are not guaranteed across index rebuilds. See [Search and query](/api/search-and-query).",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
