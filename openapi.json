@@ -9828,7 +9828,7 @@
           "Profile"
         ],
         "summary": "Upload an avatar",
-        "description": "Uploads an image as the user's avatar. Accepts `image/png`, `image/jpeg`, `image/webp`, `image/svg+xml`. Subject to the standard blob size cap and the tenant's `blobs` and `storage_bytes` quotas — over-size returns `413`. The uploaded image is stored as a content-addressed blob; the public `avatar_url` on the profile reconstructs at read time.",
+        "description": "Uploads an image as the user's avatar. The accepted MIME types are enumerated on the request body schema. Subject to the standard blob size cap and the tenant's `blobs` and `storage_bytes` quotas — over-size returns `413`. The uploaded image is stored as a content-addressed blob; the public `avatar_url` on the profile reconstructs at read time.",
         "security": [
           {
             "bearerAuth": []
@@ -10155,7 +10155,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key in the caller's tenant. The plaintext `key` field is returned **once** in the response — the server never shows it again. Store it securely; rotating means revoking the old key and creating a new one.\n\n`role` controls scope: `admin` bypasses every permission check; `workspace_admin` is the admin tier within a tenant; `member` is scoped by the three permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`) plus `metadata_permissions`. `source` is stamped onto every item written by the key and is unique per tenant. `default_tier` stamps `library` or `feed` when the writing client omits a tier.\n\nIn bootstrap mode (zero keys exist on a fresh server), no auth is required and the minted key is always admin. Once any key exists, bootstrap mode disables — further key creation requires an admin or workspace_admin token. See [Authentication](/api/authentication) and [Permissions](/api/permissions).",
+        "description": "Creates a new API key in the caller's tenant. The plaintext `key` field is returned **once** in the response — the server never shows it again. Store it securely; rotating means revoking the old key and creating a new one.\n\n`role` controls scope: `admin` bypasses every permission check; `workspace_admin` is the admin tier within a tenant; `member` is scoped by the three permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`) plus `metadata_permissions`. `source` is stamped onto every item written by the key and is unique per tenant. `default_tier` stamps `library` or `feed` when the writing client omits a tier.\n\nIn bootstrap mode (zero keys exist on a fresh server), no auth is required and the minted key is always admin. Once any key exists, bootstrap mode disables — further key creation requires an admin or workspace_admin token. See [Permissions](/api/permissions) for the permission-map grammar.",
         "security": [
           {
             "bearerAuth": []

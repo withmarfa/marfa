@@ -150,7 +150,7 @@ const setAvatarRoute = createRoute({
   tags: ["Profile"],
   summary: "Upload an avatar",
   description:
-    "Uploads an image as the user's avatar. Accepts `image/png`, `image/jpeg`, `image/webp`, `image/svg+xml`. Subject to the standard blob size cap and the tenant's `blobs` and `storage_bytes` quotas — over-size returns `413`. The uploaded image is stored as a content-addressed blob; the public `avatar_url` on the profile reconstructs at read time.",
+    "Uploads an image as the user's avatar. The accepted MIME types are enumerated on the request body schema. Subject to the standard blob size cap and the tenant's `blobs` and `storage_bytes` quotas — over-size returns `413`. The uploaded image is stored as a content-addressed blob; the public `avatar_url` on the profile reconstructs at read time.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
