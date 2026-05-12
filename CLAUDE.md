@@ -223,7 +223,7 @@ Lifecycle is universal — the metadata-layer `state` axis is `active | archived
 
 ## Edges
 
-Relationships between items are first-class typed edges, not embedded references. Eight core edge types live as JSON under `packages/types/core/edges/` and seed the in-memory registry at startup: `about`, `parent-of`, `in-thread`, `annotates`, `authored-by`, `derived-from`, `supersedes`, `pinned-to`. Each carries cardinality (`one-to-one` / `one-to-many` / `many-to-one` / `many-to-many`), `cascade_on_delete` (`cascade` / `orphan` / `block`), and source / target type constraints.
+Relationships between items are first-class typed edges, not embedded references. Eight core edge types live as JSON under `packages/types/core/edges/` and seed the in-memory registry at startup: `about`, `parent-of`, `in-thread`, `attached-to`, `references`, `authored-by`, `derived-from`, `supersedes`. Each carries cardinality (`one-to-one` / `one-to-many` / `many-to-one` / `many-to-many`), `cascade_on_delete` (`cascade` / `orphan` / `block`), and source / target type constraints.
 
 **Direction is spec-exact.** For `parent-of` source = parent, target = child. For `in-thread` source = member, target = thread. Every consumer (cycle-detection walks, filter SQL, cascade planner) obeys this.
 

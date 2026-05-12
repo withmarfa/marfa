@@ -1,0 +1,10 @@
+{
+  "id": "attached-to",
+  "label": "Attached to",
+  "description": "Source is an attachment (a file or media item) belonging to the target. Many-to-many: a file may be attached to multiple hosts; a host may have multiple attachments. Deleting the host orphans the attachment (it may still be attached to other items).",
+  "cardinality": "many-to-many",
+  "source_type_constraints": ["*"],
+  "target_type_constraints": ["*"],
+  "cascade_on_delete": "orphan",
+  "property_schema": {}
+}
