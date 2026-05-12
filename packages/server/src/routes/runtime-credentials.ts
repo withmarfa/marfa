@@ -85,6 +85,8 @@ const createRuntimeCredentialRoute = createRoute({
   path: "/runtime-credentials",
   tags: ["System"],
   summary: "Issue a runtime credential",
+  description:
+    "Mints a short-lived API key scoped to a single connection. The runtime-control plane calls this to provision the credential a per-integration Worker presents when invoking Myme on the connection's behalf. The `api_key` field is returned **once**; subsequent reads omit it. Platform-credential gated.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -256,6 +258,8 @@ const lookupInboundWebhooksRoute = createRoute({
   path: "/inbound-webhook-subscriptions/{connection_id}",
   tags: ["System"],
   summary: "List inbound webhook subscriptions",
+  description:
+    "Returns every inbound-webhook subscription attached to a connection, with decrypted secrets included so the runtime-control plane can verify inbound HMAC signatures. Platform-credential gated; never exposed to consumer-facing API surfaces.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

@@ -153,6 +153,8 @@ const createInboundWebhookRoute = createRoute({
   path: "/{id}/inbound-webhooks",
   tags: ["Inbound Webhooks"],
   summary: "Register an inbound webhook subscription on a connection",
+  description:
+    "Registers an inbound-webhook subscription on an integration connection. External services (the connection's upstream) deliver events into Myme by POSTing to the public receipt URL the platform exposes per subscription. Signature verification uses the adapter named in `webhook_verification.method` on the connection's manifest — `hmac-sha256`, `slack`, `stripe`, or `github`.\n\nThe `secret` is returned **once** in the creation response — store it then; subsequent reads redact it. See [Inbound webhooks](/api/inbound-webhooks).",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -197,6 +199,8 @@ const listInboundWebhooksRoute = createRoute({
   path: "/{id}/inbound-webhooks",
   tags: ["Inbound Webhooks"],
   summary: "List inbound webhook subscriptions on a connection",
+  description:
+    "Returns every inbound-webhook subscription attached to the connection. Secrets are redacted in list responses — they only return at creation time. Use to render an operator surface showing what an integration is subscribed to upstream.",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -237,6 +241,8 @@ const listDeliveriesRoute = createRoute({
   path: "/{id}/inbound-webhooks/{webhook_id}/deliveries",
   tags: ["Inbound Webhooks"],
   summary: "List recent receipts for an inbound webhook subscription",
+  description:
+    "Returns recent inbound deliveries received on this subscription, newest first. Each entry records the sender's delivery id, the resolved adapter, the verification outcome (verified / unverified / dedup-hit), the dispatch outcome (ok / retry / failed), and any error reason. Use to debug a failing connector or audit what the upstream service has sent.",
   security: [{ bearerAuth: [] }],
   request: {
     params: InboundWebhookIdsParam,
@@ -281,6 +287,8 @@ const retryDeliveryRoute = createRoute({
   path: "/{id}/inbound-webhooks/{webhook_id}/deliveries/{event_id}/retry",
   tags: ["Inbound Webhooks"],
   summary: "Replay an inbound webhook delivery",
+  description:
+    "Re-dispatches a previously-received inbound delivery from the DLQ. The original envelope is preserved verbatim — signature verification is not re-run (the receipt is already trusted), and the dedup window is bypassed (the operator is intentionally re-delivering). Use after deploying a connector-side fix to clear stuck deliveries. See [Inbound webhooks — manual replay](/api/inbound-webhooks#manual-replay).",
   security: [{ bearerAuth: [] }],
   request: { params: RetryParams },
   responses: {
@@ -471,6 +479,8 @@ const receiveInboundWebhookRoute = createRoute({
   path: "/{id}",
   tags: ["Inbound Webhooks"],
   summary: "Deliver an inbound webhook",
+  description:
+    "Public receipt endpoint that accepts a signed payload from an external service. The platform verifies the signature using the connection manifest's `webhook_verification.method` adapter, deduplicates against the sender's delivery id (1-hour KV cache), and enqueues the envelope for the per-integration Worker. Failed verification returns `401 invalid_signature` and the body is not forwarded. See [Inbound webhooks](/api/inbound-webhooks).",
   request: {
     params: ReceiptIdParam,
   },

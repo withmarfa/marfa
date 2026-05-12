@@ -63,6 +63,8 @@ const createWebhookRoute = createRoute({
   path: "/",
   tags: ["Webhooks"],
   summary: "Create a webhook",
+  description:
+    "Registers an outbound webhook subscription. Each subscription targets a URL and one or more event names (`item.created`, `item.updated`, `edge.created`, etc. — wildcards accepted). The optional `type_filter` narrows item events to specific item types.\n\nThe `secret` field is the HMAC-SHA256 signing key the server will use on every delivery; if omitted, the server generates one and returns it in the response. The plaintext secret is returned **only** on creation — store it then. Subsequent reads redact it. See [Webhooks](/api/webhooks) for delivery semantics, retry schedule, and signature verification.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -105,6 +107,8 @@ const listWebhooksRoute = createRoute({
   path: "/",
   tags: ["Webhooks"],
   summary: "List webhooks",
+  description:
+    "Returns every outbound webhook subscription in the caller's tenant. Secrets are redacted in every list response — the plaintext is only returned at create time. Use to render an operator surface for inspecting registered URLs, events, and filters.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -129,6 +133,8 @@ const getWebhookRoute = createRoute({
   path: "/{id}",
   tags: ["Webhooks"],
   summary: "Get a webhook",
+  description:
+    "Returns one outbound webhook subscription by id. Secret is redacted. To pair with delivery history, use `GET /webhooks/{id}/deliveries`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -160,6 +166,8 @@ const updateWebhookRoute = createRoute({
   path: "/{id}",
   tags: ["Webhooks"],
   summary: "Update a webhook",
+  description:
+    "Updates mutable fields on an outbound webhook subscription — `url`, `events`, `type_filter`, `active`. Body is a partial: unsupplied fields keep their existing values. To rotate the signing secret, delete the subscription and create a new one.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -207,6 +215,8 @@ const deleteWebhookRoute = createRoute({
   path: "/{id}",
   tags: ["Webhooks"],
   summary: "Delete a webhook",
+  description:
+    "Removes the subscription. In-flight deliveries already queued continue to fire and retry per the standard schedule; no new deliveries are queued. Delivery history rows are retained until the audit retention window expires.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -238,6 +248,8 @@ const listDeliveriesRoute = createRoute({
   path: "/{id}/deliveries",
   tags: ["Webhooks"],
   summary: "List webhook deliveries",
+  description:
+    "Returns recent delivery attempts for one subscription, newest first. Each entry carries the event id, the resolved URL, the response status, attempt count, and the next retry time (when retrying). Use to debug delivery failures and confirm that `X-Myme-Event-Id` deduplication is working on the receiver side.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
