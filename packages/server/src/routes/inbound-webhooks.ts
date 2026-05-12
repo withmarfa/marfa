@@ -480,7 +480,7 @@ const receiveInboundWebhookRoute = createRoute({
   tags: ["Inbound Webhooks"],
   summary: "Deliver an inbound webhook",
   description:
-    "Public receipt endpoint that accepts a signed payload from an external service. The platform verifies the signature using the connection manifest's `webhook_verification.method` adapter, deduplicates against the sender's delivery id (1-hour KV cache), and enqueues the envelope for the per-integration Worker. Failed verification returns `401 invalid_signature` and the body is not forwarded. See [Inbound webhooks](/api/inbound-webhooks).",
+    "Public receipt endpoint that accepts a signed payload from an external service. The platform verifies the signature using the connection manifest's `webhook_verification.method` adapter, deduplicates against the sender's `external_delivery_id` (a unique index on `(subscription_id, external_delivery_id)` collapses repeat presentations to the original receipt row), and enqueues the envelope for the per-integration Worker. Failed verification returns `401 invalid_signature` and the body is not forwarded. See [Inbound webhooks](/api/inbound-webhooks).",
   request: {
     params: ReceiptIdParam,
   },

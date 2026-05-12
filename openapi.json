@@ -10969,7 +10969,7 @@
           "System"
         ],
         "summary": "Issue a runtime credential",
-        "description": "Mints a short-lived API key scoped to a single connection. The runtime-control plane calls this to provision the credential a per-integration Worker presents when invoking Myme on the connection's behalf. The `api_key` field is returned **once**; subsequent reads omit it. Platform-credential gated.",
+        "description": "Mints a short-lived API key scoped to a single connection. The runtime-control plane calls this to provision the credential a per-integration Worker presents when invoking Myme on the connection's behalf. The `api_key` field is returned **once**; subsequent reads omit it.",
         "security": [
           {
             "bearerAuth": []
@@ -11237,7 +11237,7 @@
           "System"
         ],
         "summary": "Get verify context for a connection",
-        "description": "Returns the manifest `integration_name` and `tenant_id` the runtime-control verify route needs to construct a queue envelope. Validates the connection exists, is `kind: integration`, and is active. Platform-credential gated; operator-debug surface.",
+        "description": "Returns the manifest `integration_name` and `tenant_id` the runtime-control verify route needs to construct a queue envelope. Validates the connection exists, is `kind: integration`, and is active. Operator-debug surface.",
         "security": [
           {
             "bearerAuth": []
@@ -11435,7 +11435,7 @@
           "System"
         ],
         "summary": "Get DLQ context for a connection",
-        "description": "Returns minimal connection metadata for the runtime-control DLQ peek/replay routes. Platform-credential gated; operator-debug surface. Unlike verify-context, this does NOT narrow by kind or state — operators inspect DLQs precisely when a connection is unhealthy.",
+        "description": "Returns minimal connection metadata for the runtime-control DLQ peek/replay routes. Operator-debug surface. Unlike verify-context, this does NOT narrow by kind or state — operators inspect DLQs precisely when a connection is unhealthy.",
         "security": [
           {
             "bearerAuth": []
@@ -11606,7 +11606,7 @@
           "System"
         ],
         "summary": "List inbound webhook subscriptions",
-        "description": "Returns every inbound-webhook subscription attached to a connection, with decrypted secrets included so the runtime-control plane can verify inbound HMAC signatures. Platform-credential gated; never exposed to consumer-facing API surfaces.",
+        "description": "Returns every inbound-webhook subscription attached to a connection, with decrypted secrets included so the runtime-control plane can verify inbound HMAC signatures.",
         "security": [
           {
             "bearerAuth": []
@@ -11772,7 +11772,7 @@
           "Integrations"
         ],
         "summary": "Register an integration manifest",
-        "description": "Registers an integration manifest as a `system.integration` item. One row per `(manifest_name, manifest_version)` pair; subsequent versions register as sibling items, not edits. The manifest is validated against `IntegrationManifestSchema` — declared triggers, OAuth requirements, webhook verification method, target types, permissions.\n\nPlatform-credential only (`is_platform: true`). Once registered, the manifest is installable into any tenant via `POST /integrations/{id}/install` (consent flow) or `POST /connections/install` (server-side admin install). See [Integrations](/concepts/integrations) and [Marketplace](/concepts/marketplace).",
+        "description": "Registers an integration manifest as a `system.integration` item. One row per `(manifest_name, manifest_version)` pair; subsequent versions register as sibling items, not edits. The manifest is validated against `IntegrationManifestSchema` — declared triggers, OAuth requirements, webhook verification method, target types, permissions.\n\nOnce registered, the manifest is installable into any tenant via `POST /integrations/{id}/install` (consent flow) or `POST /connections/install` (server-side admin install). See [Integrations](/concepts/integrations) and [Marketplace](/concepts/marketplace).",
         "security": [
           {
             "bearerAuth": []
@@ -15349,7 +15349,7 @@
           "Connections"
         ],
         "summary": "Preview event dispatch envelopes",
-        "description": "Renders the wire envelopes the reactive-run bridge would POST to Cloudflare Queues for a given item-event, without invoking any handler or producing a queue message. Operator debugging surface. Returns one entry per subscribing connection in the caller's tenant — `would_dispatch: true` with the synthesised envelope, or `would_dispatch: false` with a `dispatch_reason` so the operator can see why a subscriber would be skipped (self-event / cross-tenant / hop-budget / subscription_inactive). Defaults to all subscribers; pass `connection_id` to filter to one. Workspace-admin only.",
+        "description": "Renders the wire envelopes the reactive-run bridge would POST to Cloudflare Queues for a given item-event, without invoking any handler or producing a queue message. Operator debugging surface. Returns one entry per subscribing connection in the caller's tenant — `would_dispatch: true` with the synthesised envelope, or `would_dispatch: false` with a `dispatch_reason` so the operator can see why a subscriber would be skipped (self-event / cross-tenant / hop-budget / subscription_inactive). Defaults to all subscribers; pass `connection_id` to filter to one.",
         "security": [
           {
             "bearerAuth": []
@@ -15986,7 +15986,7 @@
           "Inbound Webhooks"
         ],
         "summary": "Deliver an inbound webhook",
-        "description": "Public receipt endpoint that accepts a signed payload from an external service. The platform verifies the signature using the connection manifest's `webhook_verification.method` adapter, deduplicates against the sender's delivery id (1-hour KV cache), and enqueues the envelope for the per-integration Worker. Failed verification returns `401 invalid_signature` and the body is not forwarded. See [Inbound webhooks](/api/inbound-webhooks).",
+        "description": "Public receipt endpoint that accepts a signed payload from an external service. The platform verifies the signature using the connection manifest's `webhook_verification.method` adapter, deduplicates against the sender's `external_delivery_id` (a unique index on `(subscription_id, external_delivery_id)` collapses repeat presentations to the original receipt row), and enqueues the envelope for the per-integration Worker. Failed verification returns `401 invalid_signature` and the body is not forwarded. See [Inbound webhooks](/api/inbound-webhooks).",
         "parameters": [
           {
             "schema": {
