@@ -46,7 +46,7 @@ const getMetricsRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Admin"],
-  summary: "Get server metrics and statistics",
+  summary: "Get server metrics",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

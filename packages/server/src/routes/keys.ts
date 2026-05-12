@@ -71,7 +71,7 @@ const createKeyRoute = createRoute({
   method: "post",
   path: "/",
   tags: ["Keys"],
-  summary: "Create a new API key",
+  summary: "Create an API key",
   description:
     "Creates a new API key. In bootstrap mode (zero keys exist), no auth is required and the key is always admin.",
   security: [{ bearerAuth: [] }],
@@ -125,7 +125,7 @@ const listKeysRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Keys"],
-  summary: "List all API keys",
+  summary: "List API keys",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -214,7 +214,7 @@ const updateKeyRoute = createRoute({
   method: "patch",
   path: "/{id}",
   tags: ["Keys"],
-  summary: "Update an API key in place",
+  summary: "Update an API key",
   description:
     "Updates mutable fields on an API key. `source` and `role` are immutable after creation and rejected with 400 if present. Admin only.",
   security: [{ bearerAuth: [] }],

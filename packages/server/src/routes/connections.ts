@@ -76,7 +76,7 @@ const installRoute = createRoute({
   method: "post",
   path: "/install",
   tags: ["Connections"],
-  summary: "JSON install of an Integration manifest (admin only)",
+  summary: "Install an integration",
   description:
     "Server-side sibling of the browser consent flow at `POST /integrations/:id/install`. Skips the HTML consent screen — admin-only — so operators and tooling can install connections non-interactively. Body carries `integration_id` and an optional `label`. Returns the connection id, the seed runtime credential id, and the system.activity row id from the install pipeline. Same compensating-write pipeline as the HTML path; same audit trail.",
   security: [{ bearerAuth: [] }],
@@ -126,7 +126,7 @@ const uninstallRoute = createRoute({
   method: "post",
   path: "/{id}/uninstall",
   tags: ["Connections"],
-  summary: "Orchestrated uninstall of an integration connection",
+  summary: "Uninstall an integration connection",
   description:
     "Revokes the connection's runtime credentials, deletes any upstream OAuth tokens, revokes active leased tokens, disables inbound webhook subscriptions, transitions the system.connection to state `revoked`, and emits a system.activity row. Audit-logged. Idempotent at the artefact level (revoking an already-revoked artefact is a no-op), but rejects with 400 when the connection itself is already revoked.",
   security: [{ bearerAuth: [] }],
@@ -231,8 +231,7 @@ const previewEventRoute = createRoute({
   method: "post",
   path: "/preview-event",
   tags: ["Connections"],
-  summary:
-    "Preview the bridge envelopes a synthetic item event would produce (no dispatch)",
+  summary: "Preview event dispatch envelopes",
   description:
     "Renders the wire envelopes the reactive-run bridge would POST to Cloudflare Queues for a given item-event, without invoking any handler or producing a queue message. Operator debugging surface (T-083). Returns one entry per subscribing connection in the caller's tenant — `would_dispatch: true` with the synthesised envelope, or `would_dispatch: false` with a `dispatch_reason` so the operator can see why a subscriber would be skipped (self-event / cross-tenant / hop-budget / subscription_inactive). Defaults to all subscribers; pass `connection_id` to filter to one. Workspace-admin only.",
   security: [{ bearerAuth: [] }],

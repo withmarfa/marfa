@@ -166,7 +166,7 @@ const issueLeaseRoute = createRoute({
   method: "post",
   path: "/{id}/lease-token",
   tags: ["Connection Leased Tokens"],
-  summary: "Issue a short-TTL bearer token for a manifest-declared capability",
+  summary: "Issue a leased token",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -251,7 +251,7 @@ const revokeLeaseRoute = createRoute({
   method: "post",
   path: "/{id}/lease-tokens/{lease_id}/revoke",
   tags: ["Connection Leased Tokens"],
-  summary: "Revoke a leased token mid-flight",
+  summary: "Revoke a leased token",
   security: [{ bearerAuth: [] }],
   request: { params: LeaseIdsParam },
   responses: {
@@ -278,7 +278,7 @@ const introspectLeaseRoute = createRoute({
   method: "post",
   path: "/validate",
   tags: ["Connection Leased Tokens"],
-  summary: "Introspect a leased token (RFC 7662-shaped)",
+  summary: "Introspect a leased token",
   request: {
     body: {
       content: {

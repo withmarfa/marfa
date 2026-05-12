@@ -46,7 +46,7 @@ const restoreArchiveRoute = createRoute({
   method: "post",
   path: "/restore-archive",
   tags: ["Admin"],
-  summary: "Restore items and blobs from a myme-archive-v1 tar.gz (admin only)",
+  summary: "Restore items and blobs from an archive",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({

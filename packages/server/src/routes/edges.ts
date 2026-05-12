@@ -69,7 +69,7 @@ const listEdgesRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Edges"],
-  summary: "List all edges across the tenant, filtered by edge type",
+  summary: "List edges",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -103,7 +103,7 @@ const createEdgeRoute = createRoute({
   method: "post",
   path: "/",
   tags: ["Edges"],
-  summary: "Create a single edge",
+  summary: "Create an edge",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -145,8 +145,7 @@ const updateEdgeRoute = createRoute({
   method: "patch",
   path: "/{id}",
   tags: ["Edges"],
-  summary:
-    "Update edge properties (edge_type, source_id, target_id are immutable)",
+  summary: "Update an edge",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string() }),
@@ -396,7 +395,7 @@ const listBackrefsRoute = createRoute({
   method: "get",
   path: "/{id}/backrefs",
   tags: ["Edges"],
-  summary: "List inbound edges (backrefs) targeting an item",
+  summary: "List inbound edges to an item",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string() }),

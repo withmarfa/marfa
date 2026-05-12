@@ -77,7 +77,7 @@ const createEdgeTypeRoute = createRoute({
   method: "post",
   path: "/types",
   tags: ["EdgeTypes"],
-  summary: "Register a custom edge type (admin)",
+  summary: "Register an edge type",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -114,7 +114,7 @@ const listEdgeTypesRoute = createRoute({
   method: "get",
   path: "/types",
   tags: ["EdgeTypes"],
-  summary: "List all edge types (core + custom)",
+  summary: "List edge types",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -134,7 +134,7 @@ const deleteEdgeTypeRoute = createRoute({
   method: "delete",
   path: "/types/{id}",
   tags: ["EdgeTypes"],
-  summary: "Unregister a custom edge type (admin)",
+  summary: "Delete an edge type",
   security: [{ bearerAuth: [] }],
   request: { params: z.object({ id: z.string() }) },
   responses: {

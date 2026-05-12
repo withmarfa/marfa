@@ -51,7 +51,7 @@ const signupRoute = createRoute({
   method: "post",
   path: "/signup",
   tags: ["Auth"],
-  summary: "Create user, tenant, and admin API key",
+  summary: "Sign up a user and create a tenant",
   description:
     "Sign up a new user with a provider identity. Creates a tenant and an admin API key.",
   request: {
@@ -98,7 +98,7 @@ const sessionRoute = createRoute({
   method: "post",
   path: "/session",
   tags: ["Auth"],
-  summary: "Exchange provider identity for an API key",
+  summary: "Exchange a provider identity for an API key",
   description:
     "Look up an existing user by provider identity and return a session API key.",
   request: {
@@ -138,7 +138,7 @@ const setHandleRoute = createRoute({
   method: "put",
   path: "/me/handle",
   tags: ["Auth"],
-  summary: "Claim or change the current user's handle",
+  summary: "Update the current user's handle",
   description:
     "Sets the handle on the authenticated user (TSC42 §8). Lowercase alphanumeric and hyphens, 3–32 chars; reserved roots and structural words rejected. Returns 409 on case-insensitive collision with another user.",
   security: [{ bearerAuth: [] }],
@@ -177,7 +177,7 @@ const meRoute = createRoute({
   method: "get",
   path: "/me",
   tags: ["Auth"],
-  summary: "Get current user profile",
+  summary: "Get the current user",
   description:
     "Return the current user profile and tenant info for the authenticated key.",
   security: [{ bearerAuth: [] }],

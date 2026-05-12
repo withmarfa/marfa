@@ -173,7 +173,7 @@ const listItemsRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Items"],
-  summary: "List items with filtering and pagination",
+  summary: "List items",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -227,7 +227,7 @@ const getItemRoute = createRoute({
   method: "get",
   path: "/{id}",
   tags: ["Items"],
-  summary: "Get a single item",
+  summary: "Get an item",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -254,7 +254,7 @@ const updateItemRoute = createRoute({
   method: "patch",
   path: "/{id}",
   tags: ["Items"],
-  summary: "Update an item with conflict detection",
+  summary: "Update an item",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -312,7 +312,7 @@ const deleteItemRoute = createRoute({
   method: "delete",
   path: "/{id}",
   tags: ["Items"],
-  summary: "Soft delete (trash) an item",
+  summary: "Soft delete an item",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -364,7 +364,7 @@ const putMetadataRoute = createRoute({
   method: "put",
   path: "/{id}/metadata",
   tags: ["Items"],
-  summary: "Replace item metadata",
+  summary: "Replace item metadata tags",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -406,7 +406,7 @@ const patchMetadataRoute = createRoute({
   method: "patch",
   path: "/{id}/metadata",
   tags: ["Items"],
-  summary: "Merge metadata (set-union)",
+  summary: "Merge item metadata",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -524,7 +524,7 @@ const purgeItemRoute = createRoute({
   method: "delete",
   path: "/{id}/purge",
   tags: ["Items"],
-  summary: "Permanently delete a trashed item (admin only)",
+  summary: "Permanently delete an item",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,

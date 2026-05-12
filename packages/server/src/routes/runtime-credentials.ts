@@ -84,8 +84,7 @@ const createRuntimeCredentialRoute = createRoute({
   method: "post",
   path: "/runtime-credentials",
   tags: ["System"],
-  summary:
-    "Mint a per-Connection runtime credential (control-plane lease broker only)",
+  summary: "Issue a runtime credential",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -166,8 +165,7 @@ const verifyContextRoute = createRoute({
   method: "get",
   path: "/connections/{connection_id}/verify-context",
   tags: ["System"],
-  summary:
-    "Resolve the verify-route inputs for a Connection — control-plane only (T-082)",
+  summary: "Get verify context for a connection",
   description:
     "Returns the manifest `integration_name` and `tenant_id` the runtime-control verify route needs to construct a queue envelope. Validates the connection exists, is `kind: integration`, and is active. Platform-credential gated; operator-debug surface.",
   security: [{ bearerAuth: [] }],
@@ -224,8 +222,7 @@ const dlqContextRoute = createRoute({
   method: "get",
   path: "/connections/{connection_id}/dlq-context",
   tags: ["System"],
-  summary:
-    "Resolve the DLQ-route inputs for a Connection — control-plane only (T-084)",
+  summary: "Get DLQ context for a connection",
   description:
     "Returns minimal connection metadata for the runtime-control DLQ peek/replay routes. Platform-credential gated; operator-debug surface. Unlike verify-context, this does NOT narrow by kind or state — operators inspect DLQs precisely when a connection is unhealthy.",
   security: [{ bearerAuth: [] }],
@@ -258,8 +255,7 @@ const lookupInboundWebhooksRoute = createRoute({
   method: "get",
   path: "/inbound-webhook-subscriptions/{connection_id}",
   tags: ["System"],
-  summary:
-    "Look up inbound webhook subscriptions for a Connection — control-plane only",
+  summary: "List inbound webhook subscriptions",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

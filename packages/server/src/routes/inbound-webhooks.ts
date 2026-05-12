@@ -280,7 +280,7 @@ const retryDeliveryRoute = createRoute({
   method: "post",
   path: "/{id}/inbound-webhooks/{webhook_id}/deliveries/{event_id}/retry",
   tags: ["Inbound Webhooks"],
-  summary: "Reset an event row for manual replay from DLQ",
+  summary: "Replay an inbound webhook delivery",
   security: [{ bearerAuth: [] }],
   request: { params: RetryParams },
   responses: {
@@ -470,7 +470,7 @@ const receiveInboundWebhookRoute = createRoute({
   method: "post",
   path: "/{id}",
   tags: ["Inbound Webhooks"],
-  summary: "Receive a signed payload from an external service (public)",
+  summary: "Deliver an inbound webhook",
   request: {
     params: ReceiptIdParam,
   },

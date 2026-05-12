@@ -83,8 +83,7 @@ const edgesBulkRoute = createRoute({
   method: "post",
   path: "/bulk",
   tags: ["Edges"],
-  summary:
-    "Create or upsert many edges in one call (admin only). Parallel to /items/bulk.",
+  summary: "Bulk upsert edges",
   security: [{ bearerAuth: [] }],
   request: {
     body: {

@@ -597,7 +597,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "List items with filtering and pagination",
+        "summary": "List items",
         "security": [
           {
             "bearerAuth": []
@@ -1258,7 +1258,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "Get a single item",
+        "summary": "Get an item",
         "security": [
           {
             "bearerAuth": []
@@ -1545,7 +1545,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "Update an item with conflict detection",
+        "summary": "Update an item",
         "security": [
           {
             "bearerAuth": []
@@ -2015,7 +2015,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "Soft delete (trash) an item",
+        "summary": "Soft delete an item",
         "security": [
           {
             "bearerAuth": []
@@ -2733,7 +2733,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "List version history for an item",
+        "summary": "List item versions",
         "security": [
           {
             "bearerAuth": []
@@ -3016,7 +3016,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "Replace item metadata",
+        "summary": "Replace item metadata tags",
         "security": [
           {
             "bearerAuth": []
@@ -3205,7 +3205,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "Merge metadata (set-union)",
+        "summary": "Merge item metadata",
         "security": [
           {
             "bearerAuth": []
@@ -3589,7 +3589,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "Permanently delete a trashed item (admin only)",
+        "summary": "Permanently delete an item",
         "security": [
           {
             "bearerAuth": []
@@ -3852,7 +3852,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "Create or upsert many items in one call (admin only). Replaces /import.",
+        "summary": "Bulk upsert items",
         "security": [
           {
             "bearerAuth": []
@@ -4151,7 +4151,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "Apply one action to every item matching a filter.",
+        "summary": "Apply a bulk action",
         "security": [
           {
             "bearerAuth": []
@@ -4791,7 +4791,7 @@
         "tags": [
           "Extensions"
         ],
-        "summary": "List all extension namespaces for an item",
+        "summary": "List extension namespaces for an item",
         "security": [
           {
             "bearerAuth": []
@@ -4948,7 +4948,7 @@
         "tags": [
           "Extensions"
         ],
-        "summary": "Read a specific extension namespace",
+        "summary": "Get an extension namespace",
         "security": [
           {
             "bearerAuth": []
@@ -5149,7 +5149,7 @@
         "tags": [
           "Extensions"
         ],
-        "summary": "Write to a specific extension namespace (100KB limit)",
+        "summary": "Replace an extension namespace",
         "security": [
           {
             "bearerAuth": []
@@ -5753,7 +5753,7 @@
         "tags": [
           "Edges"
         ],
-        "summary": "List inbound edges (backrefs) targeting an item",
+        "summary": "List inbound edges to an item",
         "security": [
           {
             "bearerAuth": []
@@ -5945,7 +5945,7 @@
         "tags": [
           "Edges"
         ],
-        "summary": "List all edges across the tenant, filtered by edge type",
+        "summary": "List edges",
         "security": [
           {
             "bearerAuth": []
@@ -6129,7 +6129,7 @@
         "tags": [
           "Edges"
         ],
-        "summary": "Create a single edge",
+        "summary": "Create an edge",
         "security": [
           {
             "bearerAuth": []
@@ -6340,7 +6340,7 @@
         "tags": [
           "Edges"
         ],
-        "summary": "Update edge properties (edge_type, source_id, target_id are immutable)",
+        "summary": "Update an edge",
         "security": [
           {
             "bearerAuth": []
@@ -6594,7 +6594,7 @@
         "tags": [
           "Edges"
         ],
-        "summary": "Create or upsert many edges in one call (admin only). Parallel to /items/bulk.",
+        "summary": "Bulk upsert edges",
         "security": [
           {
             "bearerAuth": []
@@ -6859,7 +6859,7 @@
         "tags": [
           "EdgeTypes"
         ],
-        "summary": "Register a custom edge type (admin)",
+        "summary": "Register an edge type",
         "security": [
           {
             "bearerAuth": []
@@ -7135,7 +7135,7 @@
         "tags": [
           "EdgeTypes"
         ],
-        "summary": "List all edge types (core + custom)",
+        "summary": "List edge types",
         "security": [
           {
             "bearerAuth": []
@@ -7225,7 +7225,7 @@
         "tags": [
           "EdgeTypes"
         ],
-        "summary": "Unregister a custom edge type (admin)",
+        "summary": "Delete an edge type",
         "security": [
           {
             "bearerAuth": []
@@ -7343,7 +7343,7 @@
         "tags": [
           "Types"
         ],
-        "summary": "List all registered types",
+        "summary": "List types",
         "description": "Returns all registered types including core and custom types.",
         "security": [
           {
@@ -7716,7 +7716,7 @@
         "tags": [
           "Types"
         ],
-        "summary": "Get a single type schema",
+        "summary": "Get a type",
         "security": [
           {
             "bearerAuth": []
@@ -8270,7 +8270,7 @@
         "tags": [
           "Search"
         ],
-        "summary": "Full-text search across items",
+        "summary": "Search items",
         "security": [
           {
             "bearerAuth": []
@@ -8633,7 +8633,7 @@
         "tags": [
           "Metadata"
         ],
-        "summary": "Enumerate distinct tags in use across visible items",
+        "summary": "List distinct tags in use",
         "security": [
           {
             "bearerAuth": []
@@ -8717,7 +8717,7 @@
         "tags": [
           "Blobs"
         ],
-        "summary": "Upload a blob (multipart or raw binary)",
+        "summary": "Upload a blob",
         "security": [
           {
             "bearerAuth": []
@@ -9152,7 +9152,7 @@
         "tags": [
           "Blobs"
         ],
-        "summary": "Remove unreferenced blobs (admin only)",
+        "summary": "Remove unreferenced blobs",
         "security": [
           {
             "bearerAuth": []
@@ -9252,7 +9252,7 @@
         "tags": [
           "Blobs"
         ],
-        "summary": "Reconcile blob storage against database (admin only)",
+        "summary": "Reconcile blob storage",
         "description": "Compares the blob storage backend against the database to find orphaned files (in storage but not DB) and missing files (in DB but not storage). Defaults to dry_run=true for safety.",
         "security": [
           {
@@ -9793,7 +9793,7 @@
         "tags": [
           "Profile"
         ],
-        "summary": "Upload a new avatar (multipart)",
+        "summary": "Upload an avatar",
         "security": [
           {
             "bearerAuth": []
@@ -9977,7 +9977,7 @@
         "tags": [
           "Profile"
         ],
-        "summary": "Clear the avatar; revert to placeholder",
+        "summary": "Delete the avatar",
         "security": [
           {
             "bearerAuth": []
@@ -10118,7 +10118,7 @@
         "tags": [
           "Keys"
         ],
-        "summary": "Create a new API key",
+        "summary": "Create an API key",
         "description": "Creates a new API key. In bootstrap mode (zero keys exist), no auth is required and the key is always admin.",
         "security": [
           {
@@ -10353,7 +10353,7 @@
         "tags": [
           "Keys"
         ],
-        "summary": "List all API keys",
+        "summary": "List API keys",
         "security": [
           {
             "bearerAuth": []
@@ -10588,7 +10588,7 @@
         "tags": [
           "Keys"
         ],
-        "summary": "Update an API key in place",
+        "summary": "Update an API key",
         "description": "Updates mutable fields on an API key. `source` and `role` are immutable after creation and rejected with 400 if present. Admin only.",
         "security": [
           {
@@ -10925,7 +10925,7 @@
         "tags": [
           "System"
         ],
-        "summary": "Mint a per-Connection runtime credential (control-plane lease broker only)",
+        "summary": "Issue a runtime credential",
         "security": [
           {
             "bearerAuth": []
@@ -11192,7 +11192,7 @@
         "tags": [
           "System"
         ],
-        "summary": "Resolve the verify-route inputs for a Connection — control-plane only (T-082)",
+        "summary": "Get verify context for a connection",
         "description": "Returns the manifest `integration_name` and `tenant_id` the runtime-control verify route needs to construct a queue envelope. Validates the connection exists, is `kind: integration`, and is active. Platform-credential gated; operator-debug surface.",
         "security": [
           {
@@ -11390,7 +11390,7 @@
         "tags": [
           "System"
         ],
-        "summary": "Resolve the DLQ-route inputs for a Connection — control-plane only (T-084)",
+        "summary": "Get DLQ context for a connection",
         "description": "Returns minimal connection metadata for the runtime-control DLQ peek/replay routes. Platform-credential gated; operator-debug surface. Unlike verify-context, this does NOT narrow by kind or state — operators inspect DLQs precisely when a connection is unhealthy.",
         "security": [
           {
@@ -11561,7 +11561,7 @@
         "tags": [
           "System"
         ],
-        "summary": "Look up inbound webhook subscriptions for a Connection — control-plane only",
+        "summary": "List inbound webhook subscriptions",
         "security": [
           {
             "bearerAuth": []
@@ -11726,7 +11726,7 @@
         "tags": [
           "Integrations"
         ],
-        "summary": "Register a new Integration manifest (platform credential only)",
+        "summary": "Register an integration manifest",
         "security": [
           {
             "bearerAuth": []
@@ -11963,7 +11963,7 @@
         "tags": [
           "Integrations"
         ],
-        "summary": "List registered Integrations",
+        "summary": "List integrations",
         "security": [
           {
             "bearerAuth": []
@@ -12105,7 +12105,7 @@
         "tags": [
           "Integrations"
         ],
-        "summary": "Get one registered Integration by id",
+        "summary": "Get an integration",
         "security": [
           {
             "bearerAuth": []
@@ -12775,7 +12775,7 @@
         "tags": [
           "Tenants"
         ],
-        "summary": "Read the calling tenant's quota ceilings",
+        "summary": "Get current tenant quotas",
         "description": "Workspace_admin or admin. Returns the calling key's tenant quota row (or a row of nulls if none is configured — env defaults apply). Platform-admin keys with no tenant_id receive 400 — use `GET /tenants/{id}/quotas` with the explicit id instead.",
         "security": [
           {
@@ -12947,7 +12947,7 @@
         "tags": [
           "Tenants"
         ],
-        "summary": "Read per-tenant quota ceilings (admin only)",
+        "summary": "Get tenant quotas",
         "security": [
           {
             "bearerAuth": []
@@ -13090,7 +13090,7 @@
         "tags": [
           "Tenants"
         ],
-        "summary": "Set per-tenant quota ceilings (admin only)",
+        "summary": "Update tenant quotas",
         "security": [
           {
             "bearerAuth": []
@@ -13266,7 +13266,7 @@
         "tags": [
           "Admin"
         ],
-        "summary": "Restore items and blobs from a myme-archive-v1 tar.gz (admin only)",
+        "summary": "Restore items and blobs from an archive",
         "security": [
           {
             "bearerAuth": []
@@ -13434,7 +13434,7 @@
         "tags": [
           "Export"
         ],
-        "summary": "Streaming NDJSON or archive export with filters",
+        "summary": "Export tenant data",
         "security": [
           {
             "bearerAuth": []
@@ -14268,7 +14268,7 @@
         "tags": [
           "Inbound Webhooks"
         ],
-        "summary": "Reset an event row for manual replay from DLQ",
+        "summary": "Replay an inbound webhook delivery",
         "security": [
           {
             "bearerAuth": []
@@ -14438,7 +14438,7 @@
         "tags": [
           "Connection Leased Tokens"
         ],
-        "summary": "Issue a short-TTL bearer token for a manifest-declared capability",
+        "summary": "Issue a leased token",
         "security": [
           {
             "bearerAuth": []
@@ -14922,7 +14922,7 @@
         "tags": [
           "Connection Leased Tokens"
         ],
-        "summary": "Revoke a leased token mid-flight",
+        "summary": "Revoke a leased token",
         "security": [
           {
             "bearerAuth": []
@@ -15084,7 +15084,7 @@
         "tags": [
           "Connections"
         ],
-        "summary": "JSON install of an Integration manifest (admin only)",
+        "summary": "Install an integration",
         "description": "Server-side sibling of the browser consent flow at `POST /integrations/:id/install`. Skips the HTML consent screen — admin-only — so operators and tooling can install connections non-interactively. Body carries `integration_id` and an optional `label`. Returns the connection id, the seed runtime credential id, and the system.activity row id from the install pipeline. Same compensating-write pipeline as the HTML path; same audit trail.",
         "security": [
           {
@@ -15290,7 +15290,7 @@
         "tags": [
           "Connections"
         ],
-        "summary": "Preview the bridge envelopes a synthetic item event would produce (no dispatch)",
+        "summary": "Preview event dispatch envelopes",
         "description": "Renders the wire envelopes the reactive-run bridge would POST to Cloudflare Queues for a given item-event, without invoking any handler or producing a queue message. Operator debugging surface (T-083). Returns one entry per subscribing connection in the caller's tenant — `would_dispatch: true` with the synthesised envelope, or `would_dispatch: false` with a `dispatch_reason` so the operator can see why a subscriber would be skipped (self-event / cross-tenant / hop-budget / subscription_inactive). Defaults to all subscribers; pass `connection_id` to filter to one. Workspace-admin only.",
         "security": [
           {
@@ -15616,7 +15616,7 @@
         "tags": [
           "Connections"
         ],
-        "summary": "Orchestrated uninstall of an integration connection",
+        "summary": "Uninstall an integration connection",
         "description": "Revokes the connection's runtime credentials, deletes any upstream OAuth tokens, revokes active leased tokens, disables inbound webhook subscriptions, transitions the system.connection to state `revoked`, and emits a system.activity row. Audit-logged. Idempotent at the artefact level (revoking an already-revoked artefact is a no-op), but rejects with 400 when the connection itself is already revoked.",
         "security": [
           {
@@ -15829,7 +15829,7 @@
         "tags": [
           "Connection Leased Tokens"
         ],
-        "summary": "Introspect a leased token (RFC 7662-shaped)",
+        "summary": "Introspect a leased token",
         "requestBody": {
           "content": {
             "application/json": {
@@ -15926,7 +15926,7 @@
         "tags": [
           "Inbound Webhooks"
         ],
-        "summary": "Receive a signed payload from an external service (public)",
+        "summary": "Deliver an inbound webhook",
         "parameters": [
           {
             "schema": {
@@ -16075,7 +16075,7 @@
         "tags": [
           "Webhooks"
         ],
-        "summary": "Create a new webhook",
+        "summary": "Create a webhook",
         "security": [
           {
             "bearerAuth": []
@@ -16242,7 +16242,7 @@
         "tags": [
           "Webhooks"
         ],
-        "summary": "List all webhooks",
+        "summary": "List webhooks",
         "security": [
           {
             "bearerAuth": []
@@ -16353,7 +16353,7 @@
         "tags": [
           "Webhooks"
         ],
-        "summary": "Get a single webhook",
+        "summary": "Get a webhook",
         "security": [
           {
             "bearerAuth": []
@@ -16497,7 +16497,7 @@
         "tags": [
           "Webhooks"
         ],
-        "summary": "Partially update a webhook",
+        "summary": "Update a webhook",
         "security": [
           {
             "bearerAuth": []
@@ -16823,7 +16823,7 @@
         "tags": [
           "Webhooks"
         ],
-        "summary": "List recent delivery attempts for a webhook",
+        "summary": "List webhook deliveries",
         "security": [
           {
             "bearerAuth": []
@@ -17179,7 +17179,7 @@
         "tags": [
           "Admin"
         ],
-        "summary": "Get server metrics and statistics",
+        "summary": "Get server metrics",
         "security": [
           {
             "bearerAuth": []

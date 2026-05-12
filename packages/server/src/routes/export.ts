@@ -73,7 +73,7 @@ const exportRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Export"],
-  summary: "Streaming NDJSON or archive export with filters",
+  summary: "Export tenant data",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
