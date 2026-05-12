@@ -167,6 +167,8 @@ const issueLeaseRoute = createRoute({
   path: "/{id}/lease-token",
   tags: ["Connection Leased Tokens"],
   summary: "Issue a leased token",
+  description:
+    "Mints a short-TTL bearer token an external service can use to call back into Myme directly, without holding the connection's full runtime credential. The capability must be declared on the connection's integration manifest with `oauth_requirements: leased`; capabilities not declared as leased reject with `422`.\n\nThe `lease_token` field is returned **once** in the creation response; subsequent reads omit it. See [Integrations — OAuth proxy and leased tokens](/concepts/integrations#oauth-proxy-and-leased-tokens).",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -221,6 +223,8 @@ const listLeasesRoute = createRoute({
   path: "/{id}/lease-tokens",
   tags: ["Connection Leased Tokens"],
   summary: "List active leases for a connection",
+  description:
+    "Returns leases attached to the connection that are not revoked and have not expired. Lease tokens themselves are never returned in list responses — only the lease metadata (id, capability, scopes, TTL, granted-at, last-used-at).",
   security: [{ bearerAuth: [] }],
   request: { params: ConnectionIdParam },
   responses: {
@@ -252,6 +256,8 @@ const revokeLeaseRoute = createRoute({
   path: "/{id}/lease-tokens/{lease_id}/revoke",
   tags: ["Connection Leased Tokens"],
   summary: "Revoke a leased token",
+  description:
+    "Invalidates a lease before its TTL expires. The next presentation of the token at `POST /lease-tokens/validate` returns `active: false`. Idempotent — revoking an already-revoked lease returns 200.",
   security: [{ bearerAuth: [] }],
   request: { params: LeaseIdsParam },
   responses: {
@@ -279,6 +285,8 @@ const introspectLeaseRoute = createRoute({
   path: "/validate",
   tags: ["Connection Leased Tokens"],
   summary: "Introspect a leased token",
+  description:
+    "Introspects a lease token. Returns RFC 7662–shaped fields — `active`, `connection_id`, `capability`, `scope`, `exp`, `iat` — for an external service to verify the token is still valid before honouring a callback. Tokens that are revoked, expired, or unrecognised return `active: false` with no further metadata.",
   request: {
     body: {
       content: {

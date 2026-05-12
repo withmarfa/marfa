@@ -57,6 +57,8 @@ const registerRoute = createRoute({
   path: "/",
   tags: ["Integrations"],
   summary: "Register an integration manifest",
+  description:
+    "Registers an integration manifest as a `system.integration` item. One row per `(manifest_name, manifest_version)` pair; subsequent versions register as sibling items, not edits. The manifest is validated against `IntegrationManifestSchema` — declared triggers, OAuth requirements, webhook verification method, target types, permissions.\n\nPlatform-credential only (`is_platform: true`). Once registered, the manifest is installable into any tenant via `POST /integrations/{id}/install` (consent flow) or `POST /connections/install` (server-side admin install). See [Integrations](/concepts/integrations) and [Marketplace](/concepts/marketplace).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -95,6 +97,8 @@ const listRoute = createRoute({
   path: "/",
   tags: ["Integrations"],
   summary: "List integrations",
+  description:
+    "Returns every registered integration manifest. Filter by `manifest_name` to enumerate versions of one integration. Each row carries the manifest contents, publisher metadata, and registration timestamps — use to render a marketplace surface or pick a version to install.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -121,6 +125,8 @@ const getRoute = createRoute({
   path: "/{id}",
   tags: ["Integrations"],
   summary: "Get an integration",
+  description:
+    "Returns one integration manifest by id. The full manifest body is included — triggers, OAuth requirements, webhook verification, target types, permissions, bidirectional handling. Use as the source-of-truth payload at install time so the consent screen renders the actual scopes the user is approving.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().min(1) }),
