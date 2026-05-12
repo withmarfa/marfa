@@ -76,10 +76,6 @@ export interface AppConfig {
    *  purger. `0` disables the job. Default: 60. */
   trashRetentionDays: number;
   trashPurgeIntervalMs: number;
-  /** Days a feed-tier item survives before it's hard-deleted, regardless of
-   *  state. `0` disables the job (the default). */
-  feedRetentionDays: number;
-  feedExpiryIntervalMs: number;
   /** T-097: cadence (ms) for the better-auth session cleanup sweep —
    *  drops `auth_session` rows whose `expires_at` has passed. Default
    *  3_600_000 (1h); env override `AUTH_SESSION_CLEANUP_INTERVAL_MS`.
@@ -294,11 +290,6 @@ export function loadConfig(): AppConfig {
     trashRetentionDays: envNumber(process.env.TRASH_RETENTION_DAYS, 60),
     trashPurgeIntervalMs: envNumber(
       process.env.TRASH_PURGE_INTERVAL_MS,
-      86_400_000,
-    ),
-    feedRetentionDays: envNumber(process.env.FEED_RETENTION_DAYS, 0),
-    feedExpiryIntervalMs: envNumber(
-      process.env.FEED_EXPIRY_INTERVAL_MS,
       86_400_000,
     ),
     authSessionCleanupIntervalMs: envNumber(

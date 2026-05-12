@@ -119,33 +119,6 @@ describe("ItemStore purge methods — FTS coverage", () => {
     const after = await ctx.storage.search.search("charliedelta", {});
     expect(after.some((h) => h.item.id === itemId)).toBe(false);
   });
-
-  it("expireFeedOlderThan removes FTS entries for expired feed items", async () => {
-    const itemId = id("aaa3");
-    await ctx.storage.items.create(
-      {
-        id: itemId,
-        type: "core.note",
-        properties: { body: "echofoxtrot searchable" },
-        tier: "feed",
-      },
-      undefined,
-    );
-    await setUpdatedAt(
-      itemId,
-      new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY).toISOString(),
-    );
-
-    const deleted = await ctx.storage.items.expireFeedOlderThan(
-      FIXED_NOW.toISOString(),
-    );
-    expect(deleted).toBe(1);
-
-    expect(await ftsRowCount(itemId)).toBe(0);
-
-    const after = await ctx.storage.search.search("echofoxtrot", {});
-    expect(after.some((h) => h.item.id === itemId)).toBe(false);
-  });
 });
 
 describe("ItemStore.bulkPurge — atomicity", () => {

@@ -3,7 +3,6 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   TrashPurger,
-  FeedExpirer,
   AuthSessionCleaner,
   runTenantCleanup,
 } from "./retention.js";
@@ -225,112 +224,6 @@ describe("TrashPurger.runOnce — behavioural", () => {
   });
 });
 
-describe("FeedExpirer.runOnce — behavioural", () => {
-  it("deletes feed items older than the retention window, keeps library items and newer feed items", async () => {
-    const ids = {
-      youngFeed: id("ddd1"),
-      oldFeed: id("ddd2"),
-      ancientFeed: id("ddd3"),
-      ancientLibrary: id("ddd4"),
-      ancientArchivedFeed: id("ddd5"),
-      ancientTrashedFeed: id("ddd6"),
-    };
-
-    // Feed item inside retention window (29 days old): survives.
-    await seedItemWithUpdatedAt({
-      id: ids.youngFeed,
-      state: "active",
-      tier: "feed",
-      updatedAtIso: new Date(
-        FIXED_NOW.getTime() - 29 * MS_PER_DAY,
-      ).toISOString(),
-    });
-    // Feed item just past cutoff (31 days): expires.
-    await seedItemWithUpdatedAt({
-      id: ids.oldFeed,
-      state: "active",
-      tier: "feed",
-      updatedAtIso: new Date(
-        FIXED_NOW.getTime() - 31 * MS_PER_DAY,
-      ).toISOString(),
-    });
-    // Feed item 100 days old: expires.
-    await seedItemWithUpdatedAt({
-      id: ids.ancientFeed,
-      state: "active",
-      tier: "feed",
-      updatedAtIso: new Date(
-        FIXED_NOW.getTime() - 100 * MS_PER_DAY,
-      ).toISOString(),
-    });
-    // Library item, also 100 days old: survives (library gate).
-    await seedItemWithUpdatedAt({
-      id: ids.ancientLibrary,
-      state: "active",
-      tier: "library",
-      updatedAtIso: new Date(
-        FIXED_NOW.getTime() - 100 * MS_PER_DAY,
-      ).toISOString(),
-    });
-    // Feed item archived 100 days ago: still expires (state-agnostic).
-    await seedItemWithUpdatedAt({
-      id: ids.ancientArchivedFeed,
-      state: "archived",
-      tier: "feed",
-      updatedAtIso: new Date(
-        FIXED_NOW.getTime() - 100 * MS_PER_DAY,
-      ).toISOString(),
-    });
-    // Feed item trashed 100 days ago: also expires.
-    await seedItemWithUpdatedAt({
-      id: ids.ancientTrashedFeed,
-      state: "trashed",
-      tier: "feed",
-      updatedAtIso: new Date(
-        FIXED_NOW.getTime() - 100 * MS_PER_DAY,
-      ).toISOString(),
-    });
-
-    const expirer = new FeedExpirer(
-      ctx.storage.items,
-      30,
-      3_600_000,
-      () => FIXED_NOW,
-    );
-
-    const deleted = await expirer.runOnce();
-    expect(deleted).toBe(4);
-
-    expect(await rowExists(ids.youngFeed)).toBe(true);
-    expect(await rowExists(ids.ancientLibrary)).toBe(true);
-    expect(await rowExists(ids.oldFeed)).toBe(false);
-    expect(await rowExists(ids.ancientFeed)).toBe(false);
-    expect(await rowExists(ids.ancientArchivedFeed)).toBe(false);
-    expect(await rowExists(ids.ancientTrashedFeed)).toBe(false);
-  });
-
-  it("is a no-op when retentionDays <= 0 (the default)", async () => {
-    const itemId = id("eee1");
-    await seedItemWithUpdatedAt({
-      id: itemId,
-      state: "active",
-      tier: "feed",
-      updatedAtIso: new Date(
-        FIXED_NOW.getTime() - 365 * MS_PER_DAY,
-      ).toISOString(),
-    });
-
-    const disabled = new FeedExpirer(
-      ctx.storage.items,
-      0,
-      3_600_000,
-      () => FIXED_NOW,
-    );
-    expect(await disabled.runOnce()).toBe(0);
-    expect(await rowExists(itemId)).toBe(true);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // T-050: per-tenant fan-out
 // ---------------------------------------------------------------------------
@@ -447,56 +340,6 @@ describe("TrashPurger fan-out — per-tenant retention overrides", () => {
     const deleted = await purger.runOnce();
     expect(deleted).toBe(0);
     expect(await rowExists(itemId)).toBe(true);
-  });
-});
-
-describe("FeedExpirer fan-out — per-tenant retention overrides", () => {
-  it("honours per-tenant feed_retention_days independently from trash retention", async () => {
-    if (!ctx.storage.tenants) throw new Error("tenants store missing");
-    const tA = await ctx.storage.tenants.create("feed-tenant-A");
-    const tB = await ctx.storage.tenants.create("feed-tenant-B");
-    await ctx.storage.tenants.updateConfig(tA.id, {
-      feed_retention_days: 1,
-    });
-    await ctx.storage.tenants.updateConfig(tB.id, {
-      feed_retention_days: 14,
-    });
-
-    const ids2 = { a: id("fc01"), b: id("fc02") };
-    const sevenDaysAgo = new Date(
-      FIXED_NOW.getTime() - 7 * MS_PER_DAY,
-    ).toISOString();
-    await seedItemWithUpdatedAt({
-      id: ids2.a,
-      state: "active",
-      tier: "feed",
-      updatedAtIso: sevenDaysAgo,
-      tenantId: tA.id,
-    });
-    await seedItemWithUpdatedAt({
-      id: ids2.b,
-      state: "active",
-      tier: "feed",
-      updatedAtIso: sevenDaysAgo,
-      tenantId: tB.id,
-    });
-
-    const fanout: TenantFanout = {
-      tenants: ctx.storage.tenants,
-      configField: "feed_retention_days",
-    };
-    const expirer = new FeedExpirer(
-      ctx.storage.items,
-      0, // instance default disabled — purely per-tenant
-      3_600_000,
-      () => FIXED_NOW,
-      ctx.storage.coordination,
-      fanout,
-    );
-    const deleted = await expirer.runOnce();
-    expect(deleted).toBe(1); // A (7 > 1) expires, B (7 < 14) survives
-    expect(await rowExists(ids2.a)).toBe(false);
-    expect(await rowExists(ids2.b)).toBe(true);
   });
 });
 

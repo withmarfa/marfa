@@ -316,6 +316,13 @@
       "when": 1778600000000,
       "tag": "0044_users_profile_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1778941200000,
+      "tag": "0045_drop_feed_retention_config_key",
+      "breakpoints": true
     }
   ]
 }

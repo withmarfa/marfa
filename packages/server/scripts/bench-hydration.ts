@@ -44,8 +44,6 @@ async function main(): Promise<void> {
     versionMaxVersions: 500,
     trashRetentionDays: 60,
     trashPurgeIntervalMs: 86_400_000,
-    feedRetentionDays: 0,
-    feedExpiryIntervalMs: 86_400_000,
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",

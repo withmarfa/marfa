@@ -182,14 +182,6 @@ export interface ItemStore {
     beforeDate: string,
     tenantId?: string | null,
   ): Promise<number>;
-  /** Hard-delete every feed-tier item whose `updated_at` is strictly older
-   *  than `beforeDate`, regardless of state. Cleans the search index for
-   *  each row. Same tenant semantics as `purgeTrashedOlderThan`. Returns
-   *  the number of rows deleted. */
-  expireFeedOlderThan(
-    beforeDate: string,
-    tenantId?: string | null,
-  ): Promise<number>;
 }
 
 export interface MetadataStore {

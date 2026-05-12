@@ -4,7 +4,7 @@ The Hono HTTP server exposing the Myme API. Private package — never published 
 
 ## Layout
 
-- `src/index.ts` — the entry point. Boots storage, blob backend, retention workers (`TrashPurger`, `FeedExpirer`, `VersionThinner`, audit cleanup, event-log cleanup, `AuthSessionCleaner`), and the Hono app.
+- `src/index.ts` — the entry point. Boots storage, blob backend, retention workers (`TrashPurger`, `VersionThinner`, audit cleanup, event-log cleanup, `AuthSessionCleaner`), and the Hono app.
 - `src/app.ts` — composes the router from per-route modules; sets up middleware (auth, rate limit, CORS, logging).
 - `src/routes/*.ts` — one file per route group: `items.ts`, `types.ts`, `keys.ts`, `tenants.ts`, `users.ts`, `edges.ts`, `search.ts`, `bulk.ts`, etc. Routes use `@hono/zod-openapi`'s `createRoute` so OpenAPI generation falls out for free.
 - `src/storage/` — dual-dialect Drizzle layer. `interface.ts` defines `Storage`, `ItemStore`, `KeyStore`, etc.; `pg/` and `sqlite/` are sibling implementations. `connection.ts` carries the bootstrap `SCHEMA_SQL` block (mirrors what migrations would produce on a fresh DB).
@@ -92,20 +92,19 @@ The Drizzle PG instance is wrapped in a per-request context proxy (`storage/pg/r
 
 ## Per-tenant background cleanup (T-050)
 
-Four cleanup jobs (`TrashPurger`, `FeedExpirer`, audit cleanup, event-log cleanup) fan out per-tenant. Each tick the job lists every tenant via `TenantStore.list()`, resolves the effective retention (per-tenant `TenantConfig` override OR env default), and runs the cleanup once per tenant scope plus once for the NULL-tenant bucket (single-tenant self-host items + any unscoped legacy rows).
+Three cleanup jobs (`TrashPurger`, audit cleanup, event-log cleanup) fan out per-tenant. Each tick the job lists every tenant via `TenantStore.list()`, resolves the effective retention (per-tenant `TenantConfig` override OR env default), and runs the cleanup once per tenant scope plus once for the NULL-tenant bucket (single-tenant self-host items + any unscoped legacy rows).
 
 Per-tenant overrides on `TenantConfig`:
 
 - `audit_retention_days` — overrides `AUDIT_RETENTION_DAYS`.
 - `event_log_retention_hours` — overrides `MYME_EVENT_LOG_RETENTION_HOURS`.
 - `trash_retention_days` — overrides `TRASH_RETENTION_DAYS`.
-- `feed_retention_days` — overrides `FEED_RETENTION_DAYS`.
 
-`0` disables the job for that tenant — matches the env-default semantics for `TRASH_RETENTION_DAYS=0` / `FEED_RETENTION_DAYS=0`. Negatives are rejected at write.
+`0` disables the job for that tenant — matches the env-default semantics for `TRASH_RETENTION_DAYS=0`. Negatives are rejected at write.
 
 Coordination locks are keyed per-tenant (`<jobName>:<tenant-id>`, plus `<jobName>:_no_tenant` for the NULL bucket) so multi-instance deployments don't double-process a single tenant. Cost is O(tenants) per cleanup tick — cleanup is off the request hot path, so the unbounded scan is acceptable at the scale we're targeting.
 
-The `runTenantCleanup` helper in `storage/retention.ts` is the shared fan-out runner; the in-class `TrashPurger.runOnce` / `FeedExpirer.runOnce` accept an optional `TenantFanout` config that wires the same fan-out semantics for the items-table jobs.
+The `runTenantCleanup` helper in `storage/retention.ts` is the shared fan-out runner; `TrashPurger.runOnce` accepts an optional `TenantFanout` config that wires the same fan-out semantics for the items-table job.
 
 ## Auth session cleanup (T-097)
 

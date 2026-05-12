@@ -12,7 +12,6 @@ import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
 import { VersionThinner } from "./storage/version-thinner.js";
 import {
   TrashPurger,
-  FeedExpirer,
   AuthSessionCleaner,
   runTenantCleanup,
 } from "./storage/retention.js";
@@ -117,9 +116,6 @@ async function main() {
   const trashFanout: TenantFanout | undefined = storage.tenants
     ? { tenants: storage.tenants, configField: "trash_retention_days" }
     : undefined;
-  const feedFanout: TenantFanout | undefined = storage.tenants
-    ? { tenants: storage.tenants, configField: "feed_retention_days" }
-    : undefined;
 
   // Event log retention — clean up events older than the configured
   // window (default 168h / 7d; override via MYME_EVENT_LOG_RETENTION_HOURS,
@@ -204,16 +200,6 @@ async function main() {
   );
   trashPurger.start();
 
-  const feedExpirer = new FeedExpirer(
-    storage.items,
-    config.feedRetentionDays,
-    config.feedExpiryIntervalMs,
-    undefined,
-    storage.coordination,
-    feedFanout,
-  );
-  feedExpirer.start();
-
   // T-097: drop expired better-auth `auth_session` rows on a periodic
   // tick. Gated on the storage adapter exposing `authSessions` (test
   // contexts that don't wire better-auth skip the job entirely).
@@ -287,7 +273,6 @@ async function main() {
     clearInterval(auditCleanupInterval);
     versionThinner.stop();
     trashPurger.stop();
-    feedExpirer.stop();
     authSessionCleaner?.stop();
     if (reactiveRunBridge) {
       void reactiveRunBridge.stop().catch(() => {

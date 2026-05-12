@@ -940,16 +940,15 @@ export interface TenantConfig {
    */
   max_event_hop_budget?: number;
   /**
-   * T-050: tenant-scoped retention overrides for the four cleanup jobs.
+   * T-050: tenant-scoped retention overrides for the cleanup jobs.
    * Each falls back to the instance env default when unset. Values must
    * be non-negative; `0` disables the job for that tenant (matches the
-   * env-default semantics for `TRASH_RETENTION_DAYS=0` /
-   * `FEED_RETENTION_DAYS=0`). Negative values are rejected at write.
+   * env-default semantics for `TRASH_RETENTION_DAYS=0`). Negative values
+   * are rejected at write.
    */
   audit_retention_days?: number;
   event_log_retention_hours?: number;
   trash_retention_days?: number;
-  feed_retention_days?: number;
 }
 
 /**
