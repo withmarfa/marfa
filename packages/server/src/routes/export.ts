@@ -74,6 +74,8 @@ const exportRoute = createRoute({
   path: "/",
   tags: ["Export"],
   summary: "Export tenant data",
+  description:
+    "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON or a tar.gz archive. Filterable by `type`, `state`, `tags`, `tier`, `since` / `until`. NDJSON is the default — one JSON object per line, items first then edges then metadata, suitable for piping into another store or `jq`. `format=archive` produces a `myme-archive-v1.tar.gz` ingestible by `POST /admin/restore-archive` for tenant-to-tenant migrations.\n\nLong-running; the response keeps streaming until the filter is exhausted. Tenant-scoped — exports only what the caller can read. See [Bulk operations — archive restore](/api/bulk-operations#archive-restore) for the round-trip.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({

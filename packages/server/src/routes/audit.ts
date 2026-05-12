@@ -29,6 +29,8 @@ const listAuditRoute = createRoute({
   path: "/",
   tags: ["Admin"],
   summary: "List audit log entries",
+  description:
+    "Returns audit-log entries in reverse-chronological order, optionally filtered by `action`, `resource_type`, `resource_id`, or a `since` / `until` time range. Cursor-paginated. Each entry carries the credential that performed the action (`key_id`), the resolved client IP (subject to `TRUSTED_PROXY_CIDRS`), and a structured `details` payload that varies by action.\n\nThe audit log records every state-changing API call plus a few admin-side reads. Item / edge reads, SSE subscribe/unsubscribe, and search queries are NOT logged — those land in request logs instead. Retention is `AUDIT_RETENTION_DAYS` (default 90; per-tenant override via `TenantConfig.audit_retention_days`); older rows are removed by a periodic cleanup job. Tenant-scoped admin keys see their own tenant's rows; tenantless bootstrap-admin keys see every row.\n\nNon-admin credentials return `403 forbidden`. See [Audit log](/concepts/audit).",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({

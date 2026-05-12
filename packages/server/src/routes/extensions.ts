@@ -54,6 +54,8 @@ const listExtensionsRoute = createRoute({
   path: "/{id}/extensions",
   tags: ["Extensions"],
   summary: "List extension namespaces for an item",
+  description:
+    "Returns every extension namespace attached to the item that the caller has permission to read. Extensions are namespaced JSON sidecars (`<app>.*`, `<publisher>.*`, `user.*`) — credentials must declare each namespace in their `extension_permissions` map; namespaces outside that map are silently filtered.\n\nFor list views, prefer `GET /items?include=extensions` to hydrate extensions inline across a page with the same permission rule applied. See [Extensions](/concepts/extensions).",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -89,6 +91,8 @@ const getExtensionRoute = createRoute({
   path: "/{id}/extensions/{namespace}",
   tags: ["Extensions"],
   summary: "Get an extension namespace",
+  description:
+    "Returns the JSON payload for one extension namespace on the item. The caller must hold `read` (or `write`) on the namespace in `extension_permissions` — missing permission returns `403 forbidden` regardless of the caller's type access to the parent item.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -129,6 +133,8 @@ const setExtensionRoute = createRoute({
   path: "/{id}/extensions/{namespace}",
   tags: ["Extensions"],
   summary: "Replace an extension namespace",
+  description:
+    "Replaces the JSON payload for one extension namespace on the item. Body size is capped at 100KB — over-size payloads belong in a custom type with attachments or a `derived-from` edge, not in an extension. Requires `write` on the namespace in `extension_permissions`. Reserved namespaces (e.g. `connection.runtime`) carry additional write constraints — see the reserved-namespace list in the server's extension policy.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -176,6 +182,8 @@ const deleteExtensionRoute = createRoute({
   path: "/{id}/extensions/{namespace}",
   tags: ["Extensions"],
   summary: "Delete an extension namespace",
+  description:
+    "Removes one extension namespace from the item. Requires `write` on the namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

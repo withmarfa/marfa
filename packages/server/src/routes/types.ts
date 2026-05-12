@@ -108,7 +108,8 @@ const listTypesRoute = createRoute({
   path: "/",
   tags: ["Types"],
   summary: "List types",
-  description: "Returns all registered types including core and custom types.",
+  description:
+    "Returns every type registered in the tenant — the core type catalogue plus any custom types registered via `POST /types`. Each entry carries the type identifier, parent (for inheriting types), fields, optional `display_hints`, `merge_policy`, and `version_policy`. Use as the manifest a custom-type-aware client reads at startup. See [Types](/concepts/types).",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -131,6 +132,8 @@ const getTypeRoute = createRoute({
   path: "/{id}",
   tags: ["Types"],
   summary: "Get a type",
+  description:
+    "Returns the full schema for a single type — fields, parent, `display_hints`, `merge_policy`, `version_policy`. Resolves both core and tenant-registered custom types by identifier.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -163,7 +166,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a custom type",
   description:
-    "Register a new custom type schema. Admin keys bypass; non-admin credentials need the `metadata.types:write` scope (default-off for new keys). Body is validated via validateTypeSchema().",
+    "Registers a custom type at runtime. Identifier must namespace under one of `app.<app-name>.<type>`, `user.<type>`, or `<publisher>.<type>` — reserved roots (`core`, `system`, `myme`) reject with `400 reserved_namespace`. Bodies are validated; mismatched semver bumps (additive change submitted as major, etc.) reject with `400 version_bump_mismatch`. Child types may not redefine ancestor fields — `400 inheritance_violation`.\n\nAdmin keys bypass; non-admin credentials need the `metadata.types:write` scope, default-off for new keys. See [Authoring types](/concepts/authoring-types) for the rubric and error catalogue.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -204,7 +207,7 @@ const updateTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Update a custom type",
   description:
-    "Update an existing custom type schema. Admin only. Core types cannot be modified. Body is validated via validateTypeSchema().",
+    "Replaces a custom type's schema. Admin-only — core types are immutable and return 400. Re-runs the registration-time correctness rails (semver diff, inheritance check, field-name validation). The diff between the prior and new version sets the required version bump; mismatched bumps reject with `400 version_bump_mismatch`. See [Authoring types — semver diff](/concepts/authoring-types#server-side-semver-diff).",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -244,7 +247,7 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a custom type",
   description:
-    "Delete a custom type. Admin only. Core types cannot be deleted. Use ?force=true to delete even if items exist.",
+    "Removes a custom type registration. Admin-only — core types are immutable. By default, deletion is rejected if any item of the type still exists. Pass `?force=true` to delete the type and orphan existing rows (rows persist with the type identifier intact, but new writes against that type return `400 invalid_type`).",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
