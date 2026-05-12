@@ -46,7 +46,7 @@ const getConfigRoute = createRoute({
   tags: ["Tenants"],
   summary: "Get the current tenant's configuration",
   description:
-    "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the T-050 cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or workspace_admin.",
+    "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or workspace_admin.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -155,7 +155,7 @@ const getOwnQuotasRoute = createRoute({
   tags: ["Tenants"],
   summary: "Get current tenant quotas",
   description:
-    "Returns the calling tenant's quota ceilings — resolved from `c.var.apiKey.tenant_id` so the caller doesn't need to know its own tenant id. Returns a row of nulls when no per-tenant override is configured (env defaults apply). Platform-admin keys with no tenant_id receive `400` — use `GET /tenants/{id}/quotas` with the explicit id instead. Admin or workspace_admin.",
+    "Returns the calling tenant's quota ceilings, resolved from the calling credential's tenant so the caller doesn't need to know its own tenant id. Returns a row of nulls when no per-tenant override is configured (env defaults apply). Platform-admin keys with no tenant id receive `400` — use `GET /tenants/{id}/quotas` with the explicit id instead. Admin or workspace_admin.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
