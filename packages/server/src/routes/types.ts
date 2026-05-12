@@ -107,7 +107,7 @@ const listTypesRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Types"],
-  summary: "List all registered types",
+  summary: "List types",
   description: "Returns all registered types including core and custom types.",
   security: [{ bearerAuth: [] }],
   responses: {
@@ -130,7 +130,7 @@ const getTypeRoute = createRoute({
   method: "get",
   path: "/{id}",
   tags: ["Types"],
-  summary: "Get a single type schema",
+  summary: "Get a type",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

@@ -121,7 +121,7 @@ const getQuotasRoute = createRoute({
   method: "get",
   path: "/{id}/quotas",
   tags: ["Tenants"],
-  summary: "Read per-tenant quota ceilings (admin only)",
+  summary: "Get tenant quotas",
   security: [{ bearerAuth: [] }],
   request: { params: z.object({ id: z.string() }) },
   responses: {
@@ -151,7 +151,7 @@ const getOwnQuotasRoute = createRoute({
   method: "get",
   path: "/me/quotas",
   tags: ["Tenants"],
-  summary: "Read the calling tenant's quota ceilings",
+  summary: "Get current tenant quotas",
   description:
     "Workspace_admin or admin. Returns the calling key's tenant quota row " +
     "(or a row of nulls if none is configured — env defaults apply). " +
@@ -182,7 +182,7 @@ const putQuotasRoute = createRoute({
   method: "put",
   path: "/{id}/quotas",
   tags: ["Tenants"],
-  summary: "Set per-tenant quota ceilings (admin only)",
+  summary: "Update tenant quotas",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string() }),

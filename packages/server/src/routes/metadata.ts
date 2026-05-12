@@ -25,7 +25,7 @@ const listTagsRoute = createRoute({
   method: "get",
   path: "/tags",
   tags: ["Metadata"],
-  summary: "Enumerate distinct tags in use across visible items",
+  summary: "List distinct tags in use",
   security: [{ bearerAuth: [] }],
   request: {},
   responses: {

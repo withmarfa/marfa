@@ -40,7 +40,7 @@ const searchRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Search"],
-  summary: "Full-text search across items",
+  summary: "Search items",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({

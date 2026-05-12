@@ -53,7 +53,7 @@ const listExtensionsRoute = createRoute({
   method: "get",
   path: "/{id}/extensions",
   tags: ["Extensions"],
-  summary: "List all extension namespaces for an item",
+  summary: "List extension namespaces for an item",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -88,7 +88,7 @@ const getExtensionRoute = createRoute({
   method: "get",
   path: "/{id}/extensions/{namespace}",
   tags: ["Extensions"],
-  summary: "Read a specific extension namespace",
+  summary: "Get an extension namespace",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -128,7 +128,7 @@ const setExtensionRoute = createRoute({
   method: "put",
   path: "/{id}/extensions/{namespace}",
   tags: ["Extensions"],
-  summary: "Write to a specific extension namespace (100KB limit)",
+  summary: "Replace an extension namespace",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

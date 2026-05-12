@@ -52,7 +52,7 @@ const uploadBlobRoute = createRoute({
   method: "post",
   path: "/",
   tags: ["Blobs"],
-  summary: "Upload a blob (multipart or raw binary)",
+  summary: "Upload a blob",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -163,7 +163,7 @@ const cleanupBlobsRoute = createRoute({
   method: "post",
   path: "/cleanup",
   tags: ["Blobs"],
-  summary: "Remove unreferenced blobs (admin only)",
+  summary: "Remove unreferenced blobs",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -190,7 +190,7 @@ const reconcileBlobsRoute = createRoute({
   method: "post",
   path: "/reconcile",
   tags: ["Blobs"],
-  summary: "Reconcile blob storage against database (admin only)",
+  summary: "Reconcile blob storage",
   description:
     "Compares the blob storage backend against the database to find " +
     "orphaned files (in storage but not DB) and missing files (in DB but " +

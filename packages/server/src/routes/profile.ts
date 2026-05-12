@@ -148,7 +148,7 @@ const setAvatarRoute = createRoute({
   method: "post",
   path: "/me/avatar",
   tags: ["Profile"],
-  summary: "Upload a new avatar (multipart)",
+  summary: "Upload an avatar",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -179,7 +179,7 @@ const deleteAvatarRoute = createRoute({
   method: "delete",
   path: "/me/avatar",
   tags: ["Profile"],
-  summary: "Clear the avatar; revert to placeholder",
+  summary: "Delete the avatar",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

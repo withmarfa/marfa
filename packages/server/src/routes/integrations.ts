@@ -56,7 +56,7 @@ const registerRoute = createRoute({
   method: "post",
   path: "/",
   tags: ["Integrations"],
-  summary: "Register a new Integration manifest (platform credential only)",
+  summary: "Register an integration manifest",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -94,7 +94,7 @@ const listRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Integrations"],
-  summary: "List registered Integrations",
+  summary: "List integrations",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -120,7 +120,7 @@ const getRoute = createRoute({
   method: "get",
   path: "/{id}",
   tags: ["Integrations"],
-  summary: "Get one registered Integration by id",
+  summary: "Get an integration",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().min(1) }),

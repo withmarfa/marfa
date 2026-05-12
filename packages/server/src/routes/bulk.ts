@@ -181,8 +181,7 @@ const bulkRoute = createRoute({
   method: "post",
   path: "/bulk",
   tags: ["Items"],
-  summary:
-    "Create or upsert many items in one call (admin only). Replaces /import.",
+  summary: "Bulk upsert items",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -224,7 +223,7 @@ const bulkActionRoute = createRoute({
   method: "post",
   path: "/bulk_action",
   tags: ["Items"],
-  summary: "Apply one action to every item matching a filter.",
+  summary: "Apply a bulk action",
   security: [{ bearerAuth: [] }],
   request: {
     body: {

@@ -30,7 +30,7 @@ const listVersionsRoute = createRoute({
   method: "get",
   path: "/{id}/versions",
   tags: ["Items"],
-  summary: "List version history for an item",
+  summary: "List item versions",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,

@@ -62,7 +62,7 @@ const createWebhookRoute = createRoute({
   method: "post",
   path: "/",
   tags: ["Webhooks"],
-  summary: "Create a new webhook",
+  summary: "Create a webhook",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -104,7 +104,7 @@ const listWebhooksRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Webhooks"],
-  summary: "List all webhooks",
+  summary: "List webhooks",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -128,7 +128,7 @@ const getWebhookRoute = createRoute({
   method: "get",
   path: "/{id}",
   tags: ["Webhooks"],
-  summary: "Get a single webhook",
+  summary: "Get a webhook",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -159,7 +159,7 @@ const updateWebhookRoute = createRoute({
   method: "patch",
   path: "/{id}",
   tags: ["Webhooks"],
-  summary: "Partially update a webhook",
+  summary: "Update a webhook",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -237,7 +237,7 @@ const listDeliveriesRoute = createRoute({
   method: "get",
   path: "/{id}/deliveries",
   tags: ["Webhooks"],
-  summary: "List recent delivery attempts for a webhook",
+  summary: "List webhook deliveries",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
