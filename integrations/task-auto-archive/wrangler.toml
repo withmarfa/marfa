@@ -45,6 +45,18 @@ new_sqlite_classes = ["PerConnectionState"]
 binding = "SCHEDULED_POLL_QUEUE"
 queue = "myme-scheduled-poll-task-auto-archive-staging"
 
+# T-103: DLQ producer bindings so the consumer wrapper can stamp
+# `_failure_reason` on permanent failures before they leave the
+# operator's peekable surface. One binding per consumer queue family
+# this Worker consumes (schedule + item-event).
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "myme-scheduled-poll-task-auto-archive-staging-dlq"
+
+[[env.staging.queues.producers]]
+binding = "REACTIVE_RUN_DLQ_QUEUE"
+queue = "myme-reactive-run-staging-dlq"
+
 [[env.staging.queues.consumers]]
 queue = "myme-scheduled-poll-task-auto-archive-staging"
 max_batch_size = 5

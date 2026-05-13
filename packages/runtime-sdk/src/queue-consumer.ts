@@ -31,10 +31,25 @@ import { createEchoSuppression } from "./echo-suppression.js";
 import type { ConnectionContext } from "./connection-context.js";
 import {
   SDK_DEFAULT_HOP_BUDGET,
+  type FailureReason,
   type HandlerResult,
   type QueueMessage,
   type RuntimeCredential,
 } from "./types.js";
+
+/**
+ * Minimal Cloudflare Queue producer shape — matches the binding the
+ * Worker runtime hands the consumer when a `[[queues.producers]]`
+ * entry names a queue. The wrapper only needs `send`; `sendBatch` is
+ * unused, and the type is widened across queue families so a single
+ * `dlqProducerFor` can route by message kind.
+ */
+export interface DlqProducer {
+  send(
+    body: unknown,
+    options?: { contentType?: "json" | "text" | "v8" },
+  ): Promise<void>;
+}
 
 export interface ConsumerEnvironment {
   /** Base URL of the Myme server. */
@@ -68,6 +83,20 @@ export interface ConsumerEnvironment {
    * without applying the gate. Defaults to `SDK_DEFAULT_HOP_BUDGET`.
    */
   hopBudget?: number;
+  /**
+   * Resolve a DLQ producer binding for a given message kind (T-103). On
+   * permanent failure the wrapper sends an enriched copy of the message
+   * (carrying `_failure_reason`) to the resolved DLQ before acking the
+   * original. Returning `null` (or omitting the resolver entirely) keeps
+   * the pre-T-103 behaviour: ack + activity emit only, message
+   * effectively dropped from operator-peekable surfaces.
+   *
+   * Routing by `message.kind` (webhook / schedule / item-event) lets a
+   * Worker that consumes multiple queue families (e.g. task-auto-archive
+   * consumes both `schedule` and `item-event`) wire the matching DLQ for
+   * each family.
+   */
+  dlqProducerFor?: (kind: QueueMessage["kind"]) => DlqProducer | null;
 }
 
 interface ConsumeOutcome {
@@ -243,15 +272,26 @@ export async function consumeBatch(
     let ctx: ConnectionContext | null = null;
     let result: HandlerResult;
     let dispatchThrew = false;
+    // Captured separately for the `_failure_reason` stamp on permanent
+    // failure (T-103). We keep `result.reason` carrying the legacy
+    // `"dispatch_threw: ..."` prefix because the activity-emit `detail.reason`
+    // path has consumed that shape since T-043; the DLQ-stamp path uses
+    // the bare error message + class name so the flattened
+    // `<class>: <message> (attempts: <n>)` operator string isn't double-prefixed.
+    let thrownClassName: string | null = null;
+    let thrownMessage: string | null = null;
     try {
       ctx = await buildConnectionContext(env, message);
       result = await dispatchMessage(ctx, message);
     } catch (err) {
       dispatchThrew = true;
+      thrownClassName =
+        err instanceof Error ? err.constructor.name || "Error" : "unknown";
+      thrownMessage = err instanceof Error ? err.message : String(err);
       result = {
         ok: false,
         retry: false,
-        reason: `dispatch_threw: ${err instanceof Error ? err.message : String(err)}`,
+        reason: `dispatch_threw: ${thrownMessage}`,
       };
     }
 
@@ -277,9 +317,49 @@ export async function consumeBatch(
     }
 
     // Permanent failure — handler returned `retry: false`, OR dispatch
-    // threw on a retried attempt. Ack the message so it leaves the
-    // queue, and best-effort emit an action_required activity so an
-    // operator sees the failure in the inbox.
+    // threw on a retried attempt. Three best-effort observability steps:
+    //
+    //   1. Stamp `_failure_reason` and forward to the configured DLQ
+    //      producer (T-103). Operators peeking the DLQ via
+    //      `cf-queues-pull` see a real reason rather than `null`.
+    //   2. Ack the original so it leaves the main queue.
+    //   3. Emit an `action_required` activity so the Repairs-style
+    //      inbox surfaces the failure.
+    //
+    // The DLQ forward, ack, and activity emit are independent — a
+    // failure in one does not block the others.
+    //
+    // At-least-once: if the DLQ send succeeds and the ack fails (or vice
+    // versa) the original message stays on the main queue and gets
+    // redelivered. On redelivery it'll fail again and produce a SECOND
+    // DLQ entry. This is intentional — losing the operator surface to a
+    // transient ack flake is worse than a duplicate DLQ entry, and the
+    // peek route already documents at-least-once semantics elsewhere.
+    const failureReason: FailureReason = {
+      // On the throw path use the bare error message (not the
+      // `dispatch_threw: …` prefixed `result.reason`) so the flattened
+      // peek string isn't double-prefixed alongside `class_name`.
+      message: dispatchThrew ? (thrownMessage ?? result.reason) : result.reason,
+      class_name: dispatchThrew
+        ? (thrownClassName ?? "unknown")
+        : "HandlerResult",
+      attempts: msg.attempts,
+      failed_at: new Date().toISOString(),
+    };
+
+    const dlqProducer = env.dlqProducerFor?.(message.kind) ?? null;
+    if (dlqProducer) {
+      try {
+        await dlqProducer.send(
+          { ...message, _failure_reason: failureReason },
+          { contentType: "json" },
+        );
+      } catch {
+        // Swallow — DLQ enrichment is best-effort. The activity emit
+        // below is the backstop operator surface; CF logs the throw.
+      }
+    }
+
     msg.ack();
     outcome.failed++;
     try {

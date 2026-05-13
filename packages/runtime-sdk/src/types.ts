@@ -47,6 +47,32 @@ export function nextHopMetadata(
   };
 }
 
+/**
+ * Stamped on the message body by the queue-consumer wrapper when a
+ * handler permanently fails (T-103). Routes through the per-Worker
+ * DLQ producer binding so `cf-queues-pull` peek surfaces a real reason
+ * rather than `null`. Optional because:
+ *
+ *   - Messages on the main queue never carry this — it's a DLQ marker.
+ *   - The wrapper only stamps when a `dlqProducerFor` binding is wired,
+ *     so integrations without DLQ-routing keep their old behaviour.
+ *   - DLQ landings via Cloudflare's auto-routing (`attempts > max_retries`
+ *     on a `retry: true` loop) can't be enriched in flight, so peek
+ *     output for those still shows `null` — see the route's fallback.
+ */
+export interface FailureReason {
+  /** The handler-reported reason, or the thrown error's `message`. */
+  message: string;
+  /** Error class name when the failure path was a throw (e.g. `Error`,
+   *  `TypeError`); `"HandlerResult"` when the failure path was a
+   *  `{ ok: false, retry: false }` return. */
+  class_name: string;
+  /** `Message.attempts` at the point the failure was finalised. */
+  attempts: number;
+  /** ISO timestamp the wrapper produced the enrichment. */
+  failed_at: string;
+}
+
 /** Common envelope fields every queue message carries. */
 export interface QueueEnvelopeBase {
   integration_name: string;
@@ -54,6 +80,10 @@ export interface QueueEnvelopeBase {
   /** Server-stamped tenant id, when known. Used for permission gates
    *  and for activity emission attribution. */
   tenant_id?: string;
+  /** Set only on messages routed to a DLQ by the runtime-sdk consumer
+   *  wrapper on permanent failure (T-103). Read by `cf-queues-pull`
+   *  peek to populate `failure_reason`. */
+  _failure_reason?: FailureReason;
 }
 
 /** Triggered by the control plane after verifying an inbound webhook

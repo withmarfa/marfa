@@ -13,7 +13,11 @@
  * handlers, call `createIntegrationWorker(...)`, re-export
  * `PerConnectionState`.
  */
-import { consumeBatch, type ConsumerEnvironment } from "./queue-consumer.js";
+import {
+  consumeBatch,
+  type ConsumerEnvironment,
+  type DlqProducer,
+} from "./queue-consumer.js";
 import type { PerConnectionAlarmEnv } from "./per-connection-state.js";
 import type { QueueMessage, RuntimeCredential } from "./types.js";
 import { verifyHandler } from "./verify-handler.js";
@@ -38,6 +42,20 @@ export interface IntegrationWorkerEnv extends PerConnectionAlarmEnv {
    * credentials. Never leaves the Worker.
    */
   MYME_RUNTIME_BROKER_KEY: string;
+  /**
+   * Optional DLQ producer bindings (T-103). Wire whichever DLQ queues
+   * the Worker's main consumers spill into; the wrapper routes by
+   * message kind so an integration that consumes multiple queue
+   * families gets the matching DLQ for each. Bindings are declared
+   * per-env in the integration's `wrangler.toml` as
+   * `[[env.<env>.queues.producers]]` pointing at the relevant DLQ.
+   *
+   * When a binding is unset, the wrapper falls through to its pre-T-103
+   * permanent-failure path (ack + activity emit only).
+   */
+  WEBHOOK_RECEIPT_DLQ_QUEUE?: DlqProducer;
+  SCHEDULED_POLL_DLQ_QUEUE?: DlqProducer;
+  REACTIVE_RUN_DLQ_QUEUE?: DlqProducer;
 }
 
 /**
@@ -88,8 +106,12 @@ async function mintCredentialViaBroker(
  * caller is responsible for `registerScheduleHandler` /
  * `registerWebhookHandler` / `registerItemEventHandler` calls before
  * this runs.
+ *
+ * Exported for unit-testing the env→consumer wiring (specifically the
+ * `dlqProducerFor` kind→binding map added in T-103); not part of the
+ * public Worker bootstrap surface.
  */
-function buildConsumerEnv(
+export function buildConsumerEnv(
   env: IntegrationWorkerEnv,
   config: IntegrationWorkerConfig,
 ): ConsumerEnvironment {
@@ -117,6 +139,22 @@ function buildConsumerEnv(
     },
     mintCredential: (connectionId: string) =>
       mintCredentialViaBroker(env, connectionId),
+    dlqProducerFor: (kind) => {
+      switch (kind) {
+        case "webhook":
+          return env.WEBHOOK_RECEIPT_DLQ_QUEUE ?? null;
+        case "schedule":
+          return env.SCHEDULED_POLL_DLQ_QUEUE ?? null;
+        case "item-event":
+          return env.REACTIVE_RUN_DLQ_QUEUE ?? null;
+        default: {
+          // Exhaustiveness — adding a new `QueueMessage["kind"]` without
+          // a matching DLQ binding case is a compile-time error.
+          const _exhaustive: never = kind;
+          return _exhaustive;
+        }
+      }
+    },
   };
 }
 
