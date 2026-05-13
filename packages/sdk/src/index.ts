@@ -21,6 +21,10 @@ export type {
   BulkEdgeInputItem,
   BulkEdgeResult,
   BulkEdgeResultEntry,
+  // T-100 — createWithAttachments helper.
+  CreateWithAttachmentsInput,
+  CreateWithAttachmentsAttachment,
+  CreateWithAttachmentsResult,
 } from "./client.js";
 
 // Errors

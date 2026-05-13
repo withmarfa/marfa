@@ -31,6 +31,7 @@ import type {
   PreviewEventRequest,
   PreviewEventResult,
 } from "@mymehq/shared";
+import { generateId } from "@mymehq/shared";
 import { HttpTransport } from "./transport.js";
 import {
   MymeError,
@@ -211,6 +212,60 @@ export interface BulkItemInput {
 }
 
 export type BulkMode = "upsert" | "create_only";
+
+/**
+ * Input to `client.items.createWithAttachments(...)` (T-100). Wraps the
+ * existing blob-upload + `items.bulk` pattern: upload each attachment's
+ * blob, then issue one atomic bulk call containing the host item and the
+ * `core.file.*` items with inline `attached-to` edges from each
+ * attachment back to the host.
+ */
+export interface CreateWithAttachmentsInput {
+  /** The host item — the thing the attachments are attached *to* (note,
+   *  message, etc.). May carry an explicit `id` for client-minted UUIDs
+   *  and arbitrary `edges` of its own (passed through unchanged into the
+   *  bulk payload). */
+  item: CreateItemInput & {
+    id?: string;
+    edges?: Record<string, string[]>;
+  };
+  /** Attachments in caller-passed order. The returned `attachments`
+   *  array preserves the same order. Empty arrays are valid: the helper
+   *  still issues one `items.bulk` call with just the host item. */
+  attachments: CreateWithAttachmentsAttachment[];
+  /** Edge type from each attachment back to the host. Defaults to
+   *  `"attached-to"` (the canonical attachment edge — T-108). Override
+   *  for app-specific semantics like `"cover-image"`. */
+  edgeType?: string;
+}
+
+export interface CreateWithAttachmentsAttachment {
+  /** Type id, e.g. `"core.file.image"`. */
+  type: string;
+  /** Raw blob bytes. Uploaded via `POST /blobs`. */
+  blob: Uint8Array | ArrayBuffer;
+  /** Sent as the `Content-Type` of the blob upload. Stamped onto the
+   *  attachment item's `mime_type` property automatically. */
+  mimeType: string;
+  /** Caller-supplied properties for this attachment item (e.g. `width`
+   *  and `height` for `core.file.image`). The helper auto-fills
+   *  `blob_ref` (= upload hash) and `mime_type` after upload; do not
+   *  pre-populate them. */
+  properties?: Record<string, unknown>;
+  /** Optional additional edges on the attachment item. The helper
+   *  appends its own `[edgeType]: [hostId]` entry; if you pass a value
+   *  for the same `edgeType`, your ids are merged with the host id
+   *  (helper-added edges are additive, never stripping). */
+  edges?: Record<string, string[]>;
+  /** Explicit attachment id (defaults to a client-minted UUIDv7). */
+  id?: string;
+}
+
+export interface CreateWithAttachmentsResult {
+  host: Item;
+  /** Attachment items in the same order as `input.attachments`. */
+  attachments: Item[];
+}
 
 export interface BulkInput {
   items: BulkItemInput[];
@@ -575,6 +630,152 @@ export class MymeClient {
       return this.transport.request<BulkResult>("POST", "/items/bulk", {
         body: input,
       });
+    },
+
+    /**
+     * Create a host item plus a set of attached `core.file.*` items in
+     * one call (T-100). Wraps the existing `blobs.upload` + `items.bulk`
+     * primitives: each attachment's blob is uploaded concurrently, then a
+     * single atomic bulk call writes the host and the attachments
+     * together with inline `attached-to` edges from each attachment back
+     * to the host (matching T-108's spec direction).
+     *
+     * **Partial-failure contract.** Blob uploads run concurrently via
+     * `Promise.all`. On upload failure, throws with the failing
+     * attachment's index in the message. Successfully-uploaded blobs are
+     * not cleaned up; the server's CAS dedupe (`blob_ref` is the
+     * content hash) makes orphaned uploads cost-trivial — the same bytes
+     * uploaded later resolve to the same hash. Callers are expected to
+     * retry the whole call rather than reason about partial state.
+     *
+     * **Empty `attachments`** is valid and supported: the helper still
+     * issues one `items.bulk` call with just the host item, no blob
+     * uploads, no auto-edges. Lets callers use this method as a uniform
+     * entry point regardless of whether attachments are present.
+     *
+     * **Caller-provided edges co-exist with the auto-`attached-to`
+     * edges.** If the caller passes edges on the host item, they're
+     * passed through unchanged. If the caller passes edges on an
+     * attachment item with the same `edgeType` key, the helper's host id
+     * is appended to that array (additive, never strip-and-replace).
+     */
+    createWithAttachments: async (
+      input: CreateWithAttachmentsInput,
+    ): Promise<CreateWithAttachmentsResult> => {
+      const edgeType = input.edgeType ?? "attached-to";
+      const hostId = input.item.id ?? generateId();
+
+      // Upload blobs concurrently. Promise.all surfaces the first
+      // rejection; we rewrap so the operator sees which attachment
+      // failed (the original error becomes the cause).
+      const uploadResults = await Promise.all(
+        input.attachments.map(async (att, idx) => {
+          try {
+            return await this.blobs.upload(att.blob, att.mimeType);
+          } catch (err) {
+            throw new MymeError(
+              "blob_upload_failed",
+              `createWithAttachments: blob upload failed for attachments[${String(idx)}] (type=${att.type}): ${err instanceof Error ? err.message : String(err)}`,
+              502,
+            );
+          }
+        }),
+      );
+
+      // Build the bulk payload. Host first (caller's input passed
+      // through), then each attachment with auto blob_ref / mime_type
+      // and the `attached-to` edge pointing at the host id.
+      const hostBulkItem: BulkItemInput = {
+        ...input.item,
+        id: hostId,
+      };
+
+      const attachmentIds: string[] = [];
+      const attachmentBulkItems: BulkItemInput[] = input.attachments.map(
+        (att, idx) => {
+          const attachmentId = att.id ?? generateId();
+          attachmentIds.push(attachmentId);
+          // Promise.all preserves index ↔ result ordering, so uploadResults[idx]
+          // is guaranteed populated when we reach this point.
+          const upload = uploadResults[idx];
+          if (!upload) {
+            throw new MymeError(
+              "internal_error",
+              `createWithAttachments: upload result missing for attachments[${String(idx)}]`,
+              500,
+            );
+          }
+
+          // Merge caller-supplied edges with the helper's `attached-to`
+          // (or whatever `edgeType` resolves to). Additive on collision:
+          // host id is appended rather than overwriting.
+          const callerEdges = att.edges ?? {};
+          const callerSameType = callerEdges[edgeType] ?? [];
+          const mergedEdges: Record<string, string[]> = {
+            ...callerEdges,
+            [edgeType]: [...callerSameType, hostId],
+          };
+
+          return {
+            id: attachmentId,
+            type: att.type,
+            properties: {
+              ...(att.properties ?? {}),
+              blob_ref: upload.hash,
+              mime_type: att.mimeType,
+            },
+            edges: mergedEdges,
+          };
+        },
+      );
+
+      const bulkResult = await this.items.bulk({
+        items: [hostBulkItem, ...attachmentBulkItems],
+        mode: "create_only",
+        atomic: true,
+      });
+
+      // Distil the bulk result into typed { host, attachments } using
+      // the minted ids as the join key. Bulk returns one entry per input
+      // item; on the atomic happy path every outcome is `"created"`.
+      // Errored AND skipped entries surface as a MymeError — the helper
+      // guarantees a fresh create on every call, so any non-created
+      // outcome (typically a `create_only` collision on a caller-supplied
+      // `input.item.id`) is a programming error rather than success.
+      const errored = bulkResult.results.find((r) => r.outcome === "errored");
+      if (errored) {
+        throw new MymeError(
+          errored.error?.code ?? "bulk_failed",
+          `createWithAttachments: bulk write failed at index ${String(errored.index)}: ${errored.error?.message ?? errored.reason ?? "unknown"}`,
+          400,
+        );
+      }
+      const skipped = bulkResult.results.find((r) => r.outcome === "skipped");
+      if (skipped) {
+        throw new MymeError(
+          "duplicate_id",
+          `createWithAttachments: bulk write skipped at index ${String(skipped.index)} (reason: ${skipped.reason ?? "unknown"}). The helper requires fresh ids — if you passed an explicit \`item.id\`, it must not already exist.`,
+          409,
+        );
+      }
+
+      // Hydrate the items via individual reads — `items.bulk` returns
+      // `BulkResultEntry { id, outcome }`, not the full `Item`. One round
+      // trip per item; acceptable for the typical attachment-count
+      // (1–5) and avoids needing a second wire endpoint. Concurrent.
+      const hydrated = await Promise.all(
+        [hostId, ...attachmentIds].map((id) => this.items.get(id)),
+      );
+      const [host, ...attachments] = hydrated;
+      if (!host) {
+        throw new MymeError(
+          "internal_error",
+          "createWithAttachments: host hydration returned no item",
+          500,
+        );
+      }
+
+      return { host, attachments };
     },
 
     /**
