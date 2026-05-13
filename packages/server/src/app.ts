@@ -48,11 +48,13 @@ import {
 import { connectionRoutes } from "./routes/connections.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
+import { adminRoutes } from "./routes/admin.js";
 import { userAuthRoutes } from "./routes/users.js";
 import { tenantRoutes } from "./routes/tenants.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { cycleMiddleware } from "./middleware/cycle.js";
+import { tenantSuspensionMiddleware } from "./middleware/tenant-suspension.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { rlsTenantContextMiddleware } from "./middleware/rls-tenant-context.js";
 import type { PgDb } from "./storage/pg/connection.js";
@@ -196,6 +198,13 @@ export function createApp(
   // the credential id (per-credential enforcement). Anonymous requests
   // still fall through to IP-based limiting inside rateLimitMiddleware.
   app.use("*", authMiddleware(storage, config.apiKeySalt));
+
+  // T-117: tenant-suspension write-guard. Sits AFTER `authMiddleware`
+  // so the credential is resolved when this runs. Rejects every non-GET
+  // request from a non-platform credential whose tenant is suspended
+  // with HTTP 403 `tenant_suspended`. Reads pass through; platform-
+  // admin keys bypass so operators can manage a suspended tenant.
+  app.use("*", tenantSuspensionMiddleware(storage));
 
   // Cycle metadata resolution (T-039). Reads X-Myme-Cycle-Origin /
   // X-Myme-Cycle-Hop headers (a connector continuing a chain) or falls
@@ -388,6 +397,8 @@ export function createApp(
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
+  // T-117: operator surface — `my admin` CLI calls into these.
+  app.route("/admin", adminRoutes(storage));
 
   // OpenAPI spec — generated from route definitions
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {

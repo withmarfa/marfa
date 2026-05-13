@@ -191,6 +191,14 @@ export class PgKeyStore implements KeyStore {
     return rows.map(mapRow);
   }
 
+  async listForTenant(tenantId: string): Promise<ApiKey[]> {
+    const rows = await this.db
+      .select()
+      .from(apiKeys)
+      .where(and(eq(apiKeys.tenant_id, tenantId), isNull(apiKeys.revoked_at)));
+    return rows.map(mapRow);
+  }
+
   async get(id: string): Promise<ApiKey | null> {
     const [row] = await this.db
       .select()

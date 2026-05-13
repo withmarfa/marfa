@@ -25,6 +25,8 @@ export type {
   CreateWithAttachmentsInput,
   CreateWithAttachmentsAttachment,
   CreateWithAttachmentsResult,
+  // T-117 — admin keys list response shape.
+  TenantApiKeySummary,
 } from "./client.js";
 
 // Errors
@@ -75,5 +77,11 @@ export type {
   // T-074 — system.profile wire shapes.
   Profile,
   UpdateProfileInput,
+  // T-117 — admin tenant types.
+  Tenant,
+  TenantStatus,
+  TenantMetrics,
+  TenantActivityEntry,
+  TenantQuota,
 } from "@mymehq/shared";
 export type { TypeSchema } from "@mymehq/shared";

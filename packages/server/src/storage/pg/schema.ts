@@ -32,6 +32,11 @@ export const tenants = pgTable("tenants", {
   name: text("name"),
   config: jsonb("config"),
   created_at: text("created_at").notNull(),
+  // T-117: operator-controlled tenant status. `'active'` (default) allows
+  // writes; `'suspended'` blocks them at the auth middleware. Reads pass
+  // through regardless. Platform-admin keys bypass the gate so operators
+  // can inspect a suspended tenant.
+  status: text("status").notNull().default("active"),
 });
 
 export const users = pgTable(
