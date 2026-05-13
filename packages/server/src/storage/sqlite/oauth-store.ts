@@ -1,5 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
-import { eq, and, isNull, gt } from "drizzle-orm";
+import { eq, and, isNull, gt, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type {
   OAuthClient,
@@ -467,6 +467,43 @@ export class SqliteOAuthStore implements OAuthStore {
       )
       .run();
     return result.rowsAffected > 0;
+  }
+
+  /**
+   * T-101: DB-side debounce for OAuth-grant `last_used_at`. See the
+   * pg `updateLastUsedAt` docstring — the conditional WHERE makes
+   * cluster-wide debounce authoritative; the middleware's in-memory
+   * cache stays as the per-instance round-trip skip on top.
+   *
+   * SQLite uses `json_set` to merge `last_used_at` into the
+   * `properties` text blob in place, and `json_extract` to read the
+   * existing value for the conditional check. ISO-8601 timestamps
+   * sort correctly as text, so the comparison is a plain `<`.
+   */
+  async updateLastUsedAt(
+    connectionItemId: string,
+    tenantId: string | null,
+    thresholdMs: number,
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const cutoffIso = new Date(Date.now() - thresholdMs).toISOString();
+    const tenantPredicate =
+      tenantId === null
+        ? sql`${items.tenant_id} IS NULL`
+        : sql`${items.tenant_id} = ${tenantId}`;
+    await this.db
+      .update(items)
+      .set({
+        properties: sql`json_set(${items.properties}, '$.last_used_at', ${nowIso})`,
+      })
+      .where(
+        and(
+          eq(items.id, connectionItemId),
+          tenantPredicate,
+          sql`(json_extract(${items.properties}, '$.last_used_at') IS NULL OR json_extract(${items.properties}, '$.last_used_at') < ${cutoffIso})`,
+        ),
+      )
+      .run();
   }
 }
 

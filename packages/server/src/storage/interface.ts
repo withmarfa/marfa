@@ -801,6 +801,34 @@ export interface OAuthStore {
 
   /** Flip status to `denied`. Returns false if the row was not pending. */
   denyDeviceCode(id: string): Promise<boolean>;
+
+  /**
+   * Conditional `last_used_at` stamp on the underlying `system.connection`
+   * (kind: app) for an OAuth grant. Mirrors `KeyStore.updateLastUsed` in
+   * shape (T-101): the WHERE clause only writes when the existing
+   * `properties.last_used_at` is NULL or older than `now - thresholdMs`,
+   * so the row is updated at most once per `thresholdMs` regardless of
+   * how many instances call concurrently.
+   *
+   * The auth middleware layers a per-process in-memory cache on top to
+   * skip the DB round-trip when the calling instance has already stamped
+   * inside the window — that cache is a first-line short-circuit, not
+   * the authoritative throttle. Cluster-wide debounce comes from the
+   * conditional UPDATE here.
+   *
+   * Tenant-scoped: the WHERE matches `(id, tenant_id)` so a hosted-mode
+   * caller cannot trip this against another tenant's grant row. Pass
+   * `null` for the unscoped (single-tenant self-host) case.
+   *
+   * Best-effort: callers swallow errors. The middleware-side cache mark
+   * already prevents a stampede; storage failures must never break the
+   * auth path.
+   */
+  updateLastUsedAt(
+    connectionItemId: string,
+    tenantId: string | null,
+    thresholdMs: number,
+  ): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

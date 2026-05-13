@@ -109,7 +109,7 @@ export function touchLastUsedCache(
 }
 
 // ---------------------------------------------------------------------------
-// OAuth grant `last_used_at` debounce — module-scoped (T-098)
+// OAuth grant `last_used_at` debounce — module-scoped (T-098, T-101)
 // ---------------------------------------------------------------------------
 
 /**
@@ -119,21 +119,31 @@ export function touchLastUsedCache(
  * through the middleware) can share the same throttle. Keys are
  * `oauth:<connection_item_id>`; values are millisecond timestamps.
  *
- * The api-key debounce stays inside `authMiddleware`'s closure — its
- * authoritative throttle lives in `KeyStore.updateLastUsed` (DB-side
- * conditional write), so the in-memory cache is just a per-instance
- * round-trip skip and is fine to keep closure-local. The OAuth path
- * has no DB-side debounce, so the in-memory cache is the throttle.
+ * **First-line short-circuit, not the floor.** T-101 added a DB-side
+ * conditional UPDATE in `OAuthStore.updateLastUsedAt`, mirroring the
+ * api-key path: the row only writes when the existing
+ * `properties.last_used_at` is older than `DEBOUNCE_MS`. That makes
+ * the debounce authoritative across instances. This in-memory cache
+ * stays to skip a DB round-trip when the calling instance has already
+ * stamped inside the window — same role as the api-key middleware's
+ * closure-local cache.
  */
 const oauthLastUsedCache = new Map<string, number>();
 
 /**
  * T-098: stamp `last_used_at` on the underlying `system.connection`
- * (kind: app) for an OAuth grant. Debounced via the shared module
- * cache: at most one DB write per process per grant per
- * `DEBOUNCE_MS`. Callers fire-and-forget — failures must never break
- * the auth path. Tenant-scoped via `tenantId` so a hosted-mode
- * caller cannot trip this against another tenant's grant row.
+ * (kind: app) for an OAuth grant. Two-layer debounce (T-101):
+ *
+ *   1. Module-scoped in-memory cache (`oauthLastUsedCache`) — skips
+ *      the DB round-trip when this instance has already stamped
+ *      inside `DEBOUNCE_MS`.
+ *   2. DB-side conditional UPDATE in `OAuthStore.updateLastUsedAt` —
+ *      collapses concurrent writes from any number of instances to at
+ *      most one row write per `DEBOUNCE_MS` per grant.
+ *
+ * Callers fire-and-forget — failures must never break the auth path.
+ * Tenant-scoped via `tenantId` so a hosted-mode caller cannot trip
+ * this against another tenant's grant row.
  *
  * Used by:
  *   - `authMiddleware` for every authenticated bearer-bearing request.
@@ -152,19 +162,11 @@ export async function stampOAuthGrantLastUsed(
   if (now - lastTracked <= DEBOUNCE_MS) return;
   touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
   try {
-    const grant = await storage.items.get(connectionItemId, tenantId);
-    if (grant) {
-      await storage.items.update(
-        connectionItemId,
-        {
-          properties: {
-            ...grant.properties,
-            last_used_at: new Date(now).toISOString(),
-          },
-        },
-        tenantId,
-      );
-    }
+    await storage.oauth.updateLastUsedAt(
+      connectionItemId,
+      tenantId ?? null,
+      DEBOUNCE_MS,
+    );
   } catch {
     // Best-effort; the cache mark above prevents a stampede.
   }
