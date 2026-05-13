@@ -337,6 +337,13 @@
       "when": 1778941400000,
       "tag": "0047_drop_retired_edge_types",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1778941500000,
+      "tag": "0048_drop_tenant_config_retention_key",
+      "breakpoints": true
     }
   ]
 }

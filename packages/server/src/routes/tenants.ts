@@ -1,14 +1,10 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ErrorCode, MymeError, TYPE_REGISTRY } from "@mymehq/shared";
+import { ErrorCode, MymeError } from "@mymehq/shared";
 import type { TenantConfig } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, requireWorkspaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-
-const RetentionOverrideSchema = z.object({
-  feed_days: z.number().int().positive(),
-});
 
 const EnforcementSchema = z
   .object({
@@ -29,7 +25,6 @@ const EnforcementSchema = z
   .optional();
 
 const TenantConfigSchema = z.object({
-  retention: z.record(z.string(), RetentionOverrideSchema).optional(),
   enforcement: EnforcementSchema,
   // T-050 — tenant-scoped retention overrides for the cleanup
   // jobs. Each falls back to the instance env default when unset.
@@ -46,7 +41,7 @@ const getConfigRoute = createRoute({
   tags: ["Tenants"],
   summary: "Get the current tenant's configuration",
   description:
-    "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or workspace_admin.",
+    "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers under `enforcement` (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or workspace_admin.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -80,7 +75,7 @@ const putConfigRoute = createRoute({
   tags: ["Tenants"],
   summary: "Replace the current tenant's configuration",
   description:
-    "Overwrites the tenant's config with the supplied object — full replacement, not merge. Validates the supplied enforcement levers against the registry (type IDs in `strict_mode`, `source_allowlist`, `source_filter` must resolve). Cleanup-job override values must be non-negative — `0` disables the corresponding job for this tenant.\n\nAdmin or workspace_admin. See [Schema enforcement](/concepts/schema-enforcement).",
+    "Overwrites the tenant's config with the supplied object — full replacement, not merge. The accepted shape carries the optional `enforcement` block (`strict_mode`, `source_allowlist`, `source_filter`) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`). Cleanup-job override values must be non-negative — `0` disables the corresponding job for this tenant.\n\nAdmin or workspace_admin. See [Schema enforcement](/concepts/schema-enforcement).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -283,18 +278,6 @@ export function tenantRoutes(storage: Storage) {
   router.openapi(putConfigRoute, async (c) => {
     const key = requireAdmin(c);
     const body = c.req.valid("json") as TenantConfig;
-
-    if (body.retention) {
-      for (const typeId of Object.keys(body.retention)) {
-        if (!TYPE_REGISTRY.has(typeId)) {
-          throw new MymeError(
-            ErrorCode.VALIDATION_ERROR,
-            `Unknown type "${typeId}" in retention config`,
-            { typeId },
-          );
-        }
-      }
-    }
 
     if (!key.tenant_id || !storage.tenants) {
       throw new MymeError(

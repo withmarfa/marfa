@@ -153,7 +153,7 @@ describe("GET /tenants/current/config — keys-mode fallback", () => {
 describe("PUT /tenants/current/config — keys-mode fallback", () => {
   it("requires admin — 401 without credentials", async () => {
     const res = await request(ctx.app, "PUT", "/tenants/current/config", {
-      body: { retention: {} },
+      body: {},
     });
     expect(res.status).toBe(401);
   });
@@ -161,7 +161,7 @@ describe("PUT /tenants/current/config — keys-mode fallback", () => {
   it("rejects a non-tenant-scoped credential with 400 VALIDATION_ERROR", async () => {
     const res = await request(ctx.app, "PUT", "/tenants/current/config", {
       key: ctx.adminKey,
-      body: { retention: {} },
+      body: {},
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
@@ -184,7 +184,7 @@ describe("Tenant config — hosted mode", () => {
   it("GET returns stored config for a tenant-scoped admin", async () => {
     expect(hosted.storage.tenants).toBeDefined();
     await hosted.storage.tenants!.updateConfig(hosted.tenantId, {
-      retention: { "core.note": { feed_days: 30 } },
+      enforcement: { strict_mode: { types: ["core.note"] } },
     });
 
     const res = await request(hosted.app, "GET", "/tenants/current/config", {
@@ -192,18 +192,16 @@ describe("Tenant config — hosted mode", () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      retention?: Record<string, { feed_days: number }>;
+      enforcement?: { strict_mode?: { types: string[] } };
     };
-    expect(body.retention?.["core.note"]?.feed_days).toBe(30);
+    expect(body.enforcement?.strict_mode?.types).toEqual(["core.note"]);
   });
 
-  it("PUT rejects an unknown retention type with 400", async () => {
+  it("PUT rejects a negative cleanup-job override with 400", async () => {
     const res = await request(hosted.app, "PUT", "/tenants/current/config", {
       key: hosted.tenantAdminKey,
       body: {
-        retention: {
-          "core.definitely-not-a-real-type": { feed_days: 10 },
-        },
+        audit_retention_days: -1,
       },
     });
     expect(res.status).toBe(400);
@@ -213,7 +211,8 @@ describe("Tenant config — hosted mode", () => {
 
   it("PUT persists a valid config and records an audit entry", async () => {
     const config = {
-      retention: { "core.note": { feed_days: 45 } },
+      enforcement: { strict_mode: { types: ["core.note"] } },
+      audit_retention_days: 45,
     };
     const res = await request(hosted.app, "PUT", "/tenants/current/config", {
       key: hosted.tenantAdminKey,
@@ -221,7 +220,8 @@ describe("Tenant config — hosted mode", () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as typeof config;
-    expect(body.retention["core.note"].feed_days).toBe(45);
+    expect(body.enforcement.strict_mode.types).toEqual(["core.note"]);
+    expect(body.audit_retention_days).toBe(45);
 
     // Round-trip: GET must return the persisted value.
     const getRes = await request(hosted.app, "GET", "/tenants/current/config", {
@@ -229,7 +229,8 @@ describe("Tenant config — hosted mode", () => {
     });
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as typeof config;
-    expect(getBody.retention["core.note"].feed_days).toBe(45);
+    expect(getBody.enforcement.strict_mode.types).toEqual(["core.note"]);
+    expect(getBody.audit_retention_days).toBe(45);
 
     // T-079: audit side effect is fire-and-forget — use the shared
     // poll helper instead of an inline retry.
