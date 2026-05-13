@@ -1,6 +1,6 @@
 {
   "name": "@mymehq/sdk",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "type": "module",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
