@@ -848,11 +848,6 @@ export interface Tenant {
   created_at: string;
 }
 
-/** Per-type feed retention override (days before feed-tier items expire). */
-export interface TenantRetentionOverride {
-  feed_days: number;
-}
-
 /**
  * Schema-enforcement levers (TSC42 §5). All three default off; flip on
  * per-type to tighten validation. Applied tenant-wide by default; per-
@@ -907,7 +902,6 @@ export type QuotaResource =
 
 /** Tenant-level configuration. Admin-writable via `/tenants/current/config`. */
 export interface TenantConfig {
-  retention?: Record<string, TenantRetentionOverride>;
   enforcement?: EnforcementSettings;
   /**
    * Maximum number of hops a single event may traverse before the bus

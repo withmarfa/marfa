@@ -1162,9 +1162,11 @@ export class MymeClient {
 
   // ---- Tenants (admin) ----
 
-  /** Tenant-scoped configuration. Controls feed-tier retention per type
-   * and the three optional schema-enforcement levers (TSC42 §5). All
-   * endpoints are admin-only. */
+  /** Tenant-scoped configuration. Carries the three optional schema-
+   * enforcement levers (TSC42 §5: `strict_mode`, `source_allowlist`,
+   * `source_filter`) and the per-tenant cleanup-job overrides
+   * (`audit_retention_days`, `event_log_retention_hours`,
+   * `trash_retention_days`). All endpoints are admin-only. */
   readonly tenants = {
     /** Returns the current tenant's config. Empty object when nothing
      * is configured. */
@@ -1175,8 +1177,8 @@ export class MymeClient {
       );
     },
 
-    /** Replaces the current tenant's config. Server validates that any
-     * type IDs in retention overrides resolve in the registry. */
+    /** Replaces the current tenant's config (PUT semantics — full
+     * replacement, not merge). */
     setConfig: async (config: TenantConfig): Promise<TenantConfig> => {
       return this.transport.request<TenantConfig>(
         "PUT",
