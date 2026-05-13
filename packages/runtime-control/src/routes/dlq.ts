@@ -94,14 +94,35 @@ function extractConnectionId(body: unknown): string | undefined {
 
 function extractFailureReason(message: PulledMessage): string | null {
   // Best-effort. CF Queues messages don't carry a first-class
-  // failure-reason field, so we look in two conventional places:
-  //   1. body._failure_reason — the runtime-sdk consumer wrapper could
-  //      stamp this when a handler throws (DLQ-enrichment is a
-  //      flagged follow-up, not built today).
-  //   2. metadata.failure_reason — Cloudflare-native if it ever lands.
-  // null when neither is present.
+  // failure-reason field, so we look in three conventional places:
+  //   1. body._failure_reason as a structured object — the runtime-sdk
+  //      consumer wrapper stamps this on permanent failure (T-103).
+  //      Shape: `{ message, class_name, attempts, failed_at }`. We
+  //      flatten to "<class>: <message> (attempts: <n>)" for the
+  //      `failure_reason` string field. The full structured shape is
+  //      still readable on `body._failure_reason` itself.
+  //   2. body._failure_reason as a string — older convention / external
+  //      producers that stamp a flat string.
+  //   3. metadata.failure_reason — Cloudflare-native if it ever lands.
+  // null when none of the above is present.
   if (message.body && typeof message.body === "object") {
     const v = (message.body as { _failure_reason?: unknown })._failure_reason;
+    if (v && typeof v === "object") {
+      const obj = v as {
+        message?: unknown;
+        class_name?: unknown;
+        attempts?: unknown;
+      };
+      const msg = typeof obj.message === "string" ? obj.message : null;
+      if (msg !== null) {
+        const cls =
+          typeof obj.class_name === "string" ? obj.class_name : "unknown";
+        const attempts = typeof obj.attempts === "number" ? obj.attempts : null;
+        return attempts === null
+          ? `${cls}: ${msg}`
+          : `${cls}: ${msg} (attempts: ${String(attempts)})`;
+      }
+    }
     if (typeof v === "string") return v;
   }
   const metaReason = message.metadata.failure_reason;

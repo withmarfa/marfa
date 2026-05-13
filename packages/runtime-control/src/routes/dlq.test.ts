@@ -16,7 +16,7 @@ import { _resetQueueIdCacheForTests } from "../cf-queues-pull.js";
 
 interface ResponseShape {
   error?: string;
-  messages?: { cf_message_id: string }[];
+  messages?: { cf_message_id: string; failure_reason?: string | null }[];
   replayed?: string[];
   skipped?: { cf_message_id: string; reason: string }[];
 }
@@ -395,6 +395,93 @@ describe("POST /dlq/peek", () => {
     expect(res.status).toBe(503);
     const body = await readJson(res);
     expect(body.error).toBe("cf_queues_not_configured");
+  });
+
+  it("flattens a structured `body._failure_reason` to '<class>: <message> (attempts: <n>)' (T-103)", async () => {
+    const env: ControlPlaneEnv = {
+      MYME_API_URL: "https://server.invalid",
+      CLOUDFLARE_QUEUES_API_TOKEN: "tok",
+      CLOUDFLARE_ACCOUNT_ID: "acc",
+      ENVIRONMENT: "dev",
+    };
+    globalThis.fetch = buildFetchHarness({
+      queues: [
+        { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
+      ],
+      pullByQueueId: {
+        "qid-wh": [
+          mkMessage(
+            "mid-struct",
+            "lease-struct",
+            {
+              connection_id: "conn_x",
+              _failure_reason: {
+                message: "upstream rejected",
+                class_name: "CustomFailure",
+                attempts: 3,
+                failed_at: "2026-05-13T10:00:00.000Z",
+              },
+            },
+            { attempts: 3 },
+          ),
+        ],
+      },
+    });
+    const res = await buildApp().request(
+      "/dlq/peek",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer op_key",
+        },
+        body: JSON.stringify({ connection_id: "conn_x" }),
+      },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson(res);
+    expect(body.messages).toHaveLength(1);
+    expect(body.messages?.[0]?.failure_reason).toBe(
+      "CustomFailure: upstream rejected (attempts: 3)",
+    );
+  });
+
+  it("still accepts the legacy string `body._failure_reason` (T-103 back-compat)", async () => {
+    const env: ControlPlaneEnv = {
+      MYME_API_URL: "https://server.invalid",
+      CLOUDFLARE_QUEUES_API_TOKEN: "tok",
+      CLOUDFLARE_ACCOUNT_ID: "acc",
+      ENVIRONMENT: "dev",
+    };
+    globalThis.fetch = buildFetchHarness({
+      queues: [
+        { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
+      ],
+      pullByQueueId: {
+        "qid-wh": [
+          mkMessage("mid-str", "lease-str", {
+            connection_id: "conn_x",
+            _failure_reason: "old_flat_reason",
+          }),
+        ],
+      },
+    });
+    const res = await buildApp().request(
+      "/dlq/peek",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer op_key",
+        },
+        body: JSON.stringify({ connection_id: "conn_x" }),
+      },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson(res);
+    expect(body.messages?.[0]?.failure_reason).toBe("old_flat_reason");
   });
 });
 

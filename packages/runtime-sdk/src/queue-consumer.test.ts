@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { consumeBatch, type ConsumerEnvironment } from "./queue-consumer.js";
+import {
+  consumeBatch,
+  type ConsumerEnvironment,
+  type DlqProducer,
+} from "./queue-consumer.js";
 import {
   registerScheduleHandler,
   registerWebhookHandler,
@@ -342,6 +346,182 @@ describe("consumeBatch", () => {
     const outcome = await consumeBatch(env, [makeMsg(overDefault)]);
     expect(outcome.acked).toBe(1);
     expect(dispatched).toBe(0);
+  });
+});
+
+describe("consumeBatch — DLQ failure-reason enrichment (T-103)", () => {
+  beforeEach(() => {
+    _resetHandlers();
+  });
+
+  /** Recording stub for the `DlqProducer.send` calls. */
+  function makeRecordingDlq() {
+    const sent: { body: unknown; contentType: string | undefined }[] = [];
+    const producer: DlqProducer = {
+      send(body, opts) {
+        sent.push({ body, contentType: opts?.contentType });
+        return Promise.resolve();
+      },
+    };
+    return { producer, sent };
+  }
+
+  it("stamps `_failure_reason` and forwards to the DLQ producer when handler returns retry:false", async () => {
+    registerWebhookHandler(() =>
+      Promise.resolve({
+        ok: false,
+        retry: false,
+        reason: "missing_required_field",
+      }),
+    );
+    const dlq = makeRecordingDlq();
+    const env: ConsumerEnvironment = {
+      ...makeEnv(),
+      dlqProducerFor: (kind) => (kind === "webhook" ? dlq.producer : null),
+    };
+    const m = makeMsg(WEBHOOK());
+    const outcome = await consumeBatch(env, [m]);
+
+    expect(outcome).toEqual({ acked: 0, retried: 0, failed: 1 });
+    expect(m.acked).toBe(true);
+    expect(dlq.sent).toHaveLength(1);
+
+    const entry = dlq.sent[0]!;
+    expect(entry.contentType).toBe("json");
+    const sentBody = entry.body as WebhookMessage & {
+      _failure_reason: {
+        message: string;
+        class_name: string;
+        attempts: number;
+        failed_at: string;
+      };
+    };
+    // Original envelope fields survive the round-trip.
+    expect(sentBody.kind).toBe("webhook");
+    expect(sentBody.connection_id).toBe("conn_a");
+    expect(sentBody.delivery_id).toBe("d_1");
+    // Failure-reason fields populated.
+    expect(sentBody._failure_reason.message).toBe("missing_required_field");
+    expect(sentBody._failure_reason.class_name).toBe("HandlerResult");
+    expect(sentBody._failure_reason.attempts).toBe(1);
+    expect(typeof sentBody._failure_reason.failed_at).toBe("string");
+    expect(Number.isNaN(Date.parse(sentBody._failure_reason.failed_at))).toBe(
+      false,
+    );
+  });
+
+  it("captures the thrown class name when dispatch throws on a retried attempt", async () => {
+    class CustomFailure extends Error {
+      constructor() {
+        super("upstream rejected");
+        this.name = "CustomFailure";
+      }
+    }
+    registerScheduleHandler(() => Promise.reject(new CustomFailure()));
+    const dlq = makeRecordingDlq();
+    const env: ConsumerEnvironment = {
+      ...makeEnv(),
+      dlqProducerFor: (kind) => (kind === "schedule" ? dlq.producer : null),
+    };
+    // attempts=2 → throw treated as permanent.
+    const m = makeMsg(SCHED(), 2);
+    const outcome = await consumeBatch(env, [m]);
+
+    expect(outcome).toEqual({ acked: 0, retried: 0, failed: 1 });
+    expect(m.acked).toBe(true);
+    expect(dlq.sent).toHaveLength(1);
+
+    const sentBody = dlq.sent[0]!.body as ScheduleMessage & {
+      _failure_reason: {
+        message: string;
+        class_name: string;
+        attempts: number;
+      };
+    };
+    expect(sentBody._failure_reason.class_name).toBe("CustomFailure");
+    // Bare error message — the wrapper's `dispatch_threw:` prefix on
+    // `result.reason` is intentionally stripped from the DLQ stamp so the
+    // flattened peek string isn't double-prefixed
+    // (`CustomFailure: dispatch_threw: ...`).
+    expect(sentBody._failure_reason.message).toBe("upstream rejected");
+    expect(sentBody._failure_reason.attempts).toBe(2);
+  });
+
+  it("falls through to ack-only when no dlqProducerFor is configured (pre-T-103 behaviour)", async () => {
+    registerWebhookHandler(() =>
+      Promise.resolve({
+        ok: false,
+        retry: false,
+        reason: "permanent_failure",
+      }),
+    );
+    // No dlqProducerFor on env — wrapper should not throw, should still
+    // ack the message, and the outcome counters stay the same.
+    const m = makeMsg(WEBHOOK());
+    const outcome = await consumeBatch(makeEnv(), [m]);
+
+    expect(outcome).toEqual({ acked: 0, retried: 0, failed: 1 });
+    expect(m.acked).toBe(true);
+  });
+
+  it("skips the DLQ send when dlqProducerFor returns null for the message kind", async () => {
+    registerWebhookHandler(() =>
+      Promise.resolve({ ok: false, retry: false, reason: "x" }),
+    );
+    const schedDlq = makeRecordingDlq();
+    // Only wire a schedule-family DLQ; a webhook permanent failure must
+    // not produce to the wrong DLQ.
+    const env: ConsumerEnvironment = {
+      ...makeEnv(),
+      dlqProducerFor: (kind) =>
+        kind === "schedule" ? schedDlq.producer : null,
+    };
+    const m = makeMsg(WEBHOOK());
+    await consumeBatch(env, [m]);
+
+    expect(schedDlq.sent).toHaveLength(0);
+    expect(m.acked).toBe(true);
+  });
+
+  it("does NOT stamp on the transient-retry path", async () => {
+    // `retry: true` keeps using CF's retry mechanism — the wrapper
+    // calls `msg.retry()` with no DLQ forward. (Only permanent failure
+    // routes through the new DLQ producer.)
+    registerWebhookHandler(() =>
+      Promise.resolve({ ok: false, retry: true, reason: "rate_limited" }),
+    );
+    const dlq = makeRecordingDlq();
+    const env: ConsumerEnvironment = {
+      ...makeEnv(),
+      dlqProducerFor: () => dlq.producer,
+    };
+    const m = makeMsg(WEBHOOK());
+    const outcome = await consumeBatch(env, [m]);
+
+    expect(outcome).toEqual({ acked: 0, retried: 1, failed: 0 });
+    expect(m.retried).toBe(true);
+    expect(dlq.sent).toHaveLength(0);
+  });
+
+  it("swallows DLQ-send failures and still acks the original", async () => {
+    // Best-effort enrichment: a producer-side failure must not block
+    // the ack on the main queue.
+    registerWebhookHandler(() =>
+      Promise.resolve({ ok: false, retry: false, reason: "x" }),
+    );
+    const failingProducer: DlqProducer = {
+      send() {
+        return Promise.reject(new Error("dlq send failed"));
+      },
+    };
+    const env: ConsumerEnvironment = {
+      ...makeEnv(),
+      dlqProducerFor: () => failingProducer,
+    };
+    const m = makeMsg(WEBHOOK());
+    const outcome = await consumeBatch(env, [m]);
+    expect(outcome).toEqual({ acked: 0, retried: 0, failed: 1 });
+    expect(m.acked).toBe(true);
   });
 });
 
