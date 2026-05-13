@@ -461,6 +461,178 @@ describe("T-098: /auth/token refresh advances grant last_used_at", () => {
   });
 });
 
+describe("OAuthStore.updateLastUsedAt — DB-side debounce (T-101)", () => {
+  it("collapses concurrent stamps in the same window to a single row write", async () => {
+    // Mirrors the api-key `KeyStore.updateLastUsed` cluster regression
+    // test above. Calling the storage method directly N times bypasses
+    // the middleware-side in-memory cache (`oauthLastUsedCache`) — every
+    // call hits the DB unconditionally. With the conditional WHERE in
+    // place the first call wins and subsequent calls inside `thresholdMs`
+    // are no-ops, demonstrating the cluster-wide guarantee: N instances
+    // racing on the same grant produce one row write per window, not N.
+    const client = await ctx.storage.oauth.createClient({
+      name: "Test App (T-101 DB debounce)",
+      redirect_uris: ["http://localhost:5173/callback"],
+    });
+    const grant = await ctx.storage.items.create({
+      type: "system.connection",
+      state: "active",
+      tier: "library",
+      properties: {
+        kind: "app",
+        client_id: client.id,
+        scopes: ["core.note:read"],
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+      source: "test/oauth-t101-db-debounce",
+    });
+
+    // Pre-condition: no last_used_at stamp yet.
+    const before = await ctx.storage.items.get(grant.id);
+    expect(before?.properties.last_used_at).toBeUndefined();
+
+    // First stamp populates last_used_at.
+    await ctx.storage.oauth.updateLastUsedAt(grant.id, null, 3_600_000);
+    const firstItem = await ctx.storage.items.get(grant.id);
+    const firstStamp = firstItem?.properties.last_used_at as string;
+    expect(firstStamp).toEqual(expect.any(String));
+
+    // Two more stamps in rapid succession. Without the conditional WHERE
+    // (the bug T-101 closes), each unconditional UPDATE would overwrite
+    // the timestamp and the final value would be strictly greater than
+    // `firstStamp`. With the conditional gate, the second and third
+    // writes match zero rows and the timestamp does not move.
+    await new Promise((r) => setTimeout(r, 5));
+    await ctx.storage.oauth.updateLastUsedAt(grant.id, null, 3_600_000);
+    await new Promise((r) => setTimeout(r, 5));
+    await ctx.storage.oauth.updateLastUsedAt(grant.id, null, 3_600_000);
+
+    const afterItem = await ctx.storage.items.get(grant.id);
+    expect(afterItem?.properties.last_used_at).toBe(firstStamp);
+  });
+
+  it("re-stamps once the threshold elapses", async () => {
+    // With a tiny threshold a second call past the window flips the
+    // conditional gate open again and the row writes a fresh stamp.
+    const client = await ctx.storage.oauth.createClient({
+      name: "Test App (T-101 threshold elapses)",
+      redirect_uris: ["http://localhost:5173/callback"],
+    });
+    const grant = await ctx.storage.items.create({
+      type: "system.connection",
+      state: "active",
+      tier: "library",
+      properties: {
+        kind: "app",
+        client_id: client.id,
+        scopes: ["core.note:read"],
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+      source: "test/oauth-t101-threshold",
+    });
+
+    await ctx.storage.oauth.updateLastUsedAt(grant.id, null, 50);
+    const firstStamp = (await ctx.storage.items.get(grant.id))?.properties
+      .last_used_at as string;
+    expect(firstStamp).toEqual(expect.any(String));
+
+    // Wait past the 50ms threshold so the conditional WHERE re-opens.
+    await new Promise((r) => setTimeout(r, 80));
+    await ctx.storage.oauth.updateLastUsedAt(grant.id, null, 50);
+    const secondStamp = (await ctx.storage.items.get(grant.id))?.properties
+      .last_used_at as string;
+    expect(secondStamp).not.toBe(firstStamp);
+    expect(Date.parse(secondStamp)).toBeGreaterThan(Date.parse(firstStamp));
+  });
+
+  it("preserves every other property on the grant when stamping", async () => {
+    // The conditional UPDATE merges last_used_at into the existing
+    // properties JSON via dialect-native helpers (`jsonb_set` /
+    // `json_set`), not by overwriting the blob. Sibling fields must
+    // round-trip untouched.
+    const client = await ctx.storage.oauth.createClient({
+      name: "Test App (T-101 preserve)",
+      redirect_uris: ["http://localhost:5173/callback"],
+    });
+    const grantedAt = new Date().toISOString();
+    const grant = await ctx.storage.items.create({
+      type: "system.connection",
+      state: "active",
+      tier: "library",
+      properties: {
+        kind: "app",
+        client_id: client.id,
+        scopes: ["core.note:read", "core.task:write"],
+        status: "active",
+        granted_at: grantedAt,
+      },
+      source: "test/oauth-t101-preserve",
+    });
+
+    await ctx.storage.oauth.updateLastUsedAt(grant.id, null, 3_600_000);
+    const after = await ctx.storage.items.get(grant.id);
+    expect(after?.properties.kind).toBe("app");
+    expect(after?.properties.client_id).toBe(client.id);
+    expect(after?.properties.scopes).toEqual([
+      "core.note:read",
+      "core.task:write",
+    ]);
+    expect(after?.properties.status).toBe("active");
+    expect(after?.properties.granted_at).toBe(grantedAt);
+    expect(after?.properties.last_used_at).toEqual(expect.any(String));
+  });
+
+  it("respects tenant scoping — wrong tenant id does not stamp", async () => {
+    // The tenant predicate in the WHERE makes the stamp a no-op when
+    // the caller's tenantId does not match the grant's tenant_id.
+    // Mirrors the tenant fence wrapped around `items.update` calls
+    // elsewhere in the auth path.
+    if (!ctx.storage.tenants) {
+      // Test context without the tenants store (unusual) — skip the
+      // hosted-mode-only assertion. The other T-101 cases above still
+      // exercise the conditional WHERE in single-tenant shape.
+      return;
+    }
+    const tenant = await ctx.storage.tenants.create("T-101 tenant fence");
+    const client = await ctx.storage.oauth.createClient({
+      name: "Test App (T-101 tenant fence)",
+      redirect_uris: ["http://localhost:5173/callback"],
+    });
+    const grant = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        state: "active",
+        tier: "library",
+        properties: {
+          kind: "app",
+          client_id: client.id,
+          scopes: ["core.note:read"],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+        source: "test/oauth-t101-tenant",
+      },
+      tenant.id,
+    );
+
+    // Wrong tenant id — no stamp.
+    await ctx.storage.oauth.updateLastUsedAt(
+      grant.id,
+      "tnt_does_not_exist",
+      3_600_000,
+    );
+    const noStamp = await ctx.storage.items.get(grant.id, tenant.id);
+    expect(noStamp?.properties.last_used_at).toBeUndefined();
+
+    // Right tenant id — stamps.
+    await ctx.storage.oauth.updateLastUsedAt(grant.id, tenant.id, 3_600_000);
+    const stamped = await ctx.storage.items.get(grant.id, tenant.id);
+    expect(stamped?.properties.last_used_at).toEqual(expect.any(String));
+  });
+});
+
 describe("touchLastUsedCache — bounded LRU eviction (§3.5)", () => {
   it("evicts the oldest entry when size exceeds cap", () => {
     // Use a tiny cap by overflowing past 32_768 once via direct API; that's

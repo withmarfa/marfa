@@ -1,5 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
-import { eq, and, isNull, gt } from "drizzle-orm";
+import { eq, and, isNull, gt, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import type {
   OAuthClient,
@@ -447,6 +447,45 @@ export class PgOAuthStore implements OAuthStore {
       )
       .returning({ id: oauthDeviceCodes.id });
     return result.length > 0;
+  }
+
+  /**
+   * T-101: DB-side debounce for OAuth-grant `last_used_at`. Mirrors
+   * `KeyStore.updateLastUsed` in shape — the conditional WHERE makes
+   * the floor authoritative across instances. The middleware-side
+   * in-memory cache (`oauthLastUsedCache` in `middleware/auth.ts`)
+   * stays as a per-instance round-trip skip; this is the cluster-wide
+   * guarantee.
+   *
+   * Differs from the api-key path because `last_used_at` for an OAuth
+   * grant is a JSON property inside `items.properties`, not a top-level
+   * column. The merge uses `jsonb_set` to preserve every other property
+   * verbatim. The text column is round-tripped through `::jsonb` for
+   * the comparison and merge, then back to text for storage.
+   */
+  async updateLastUsedAt(
+    connectionItemId: string,
+    tenantId: string | null,
+    thresholdMs: number,
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const cutoffIso = new Date(Date.now() - thresholdMs).toISOString();
+    const tenantPredicate =
+      tenantId === null
+        ? sql`${items.tenant_id} IS NULL`
+        : sql`${items.tenant_id} = ${tenantId}`;
+    await this.db
+      .update(items)
+      .set({
+        properties: sql`(jsonb_set(${items.properties}::jsonb, '{last_used_at}', to_jsonb(${nowIso}::text)))::text`,
+      })
+      .where(
+        and(
+          eq(items.id, connectionItemId),
+          tenantPredicate,
+          sql`(${items.properties}::jsonb->>'last_used_at' IS NULL OR (${items.properties}::jsonb->>'last_used_at') < ${cutoffIso})`,
+        ),
+      );
   }
 }
 
