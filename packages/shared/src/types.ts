@@ -846,6 +846,48 @@ export interface Tenant {
   id: string;
   name: string | null;
   created_at: string;
+  /**
+   * Operator-controlled lifecycle (T-117). `'active'` (default) allows
+   * writes; `'suspended'` blocks them at the auth middleware. Reads pass
+   * through regardless. Platform-admin keys bypass the gate so operators
+   * can inspect a suspended tenant.
+   */
+  status: TenantStatus;
+}
+
+export type TenantStatus = "active" | "suspended";
+
+/**
+ * Per-tenant metrics snapshot (T-117). Returned by
+ * `GET /admin/tenants/:id/metrics` for the named tenant. Same shape as the
+ * existing instance-wide `/metrics` endpoint, scoped to one tenant.
+ */
+export interface TenantMetrics {
+  tenant_id: string;
+  items: {
+    total: number;
+    active: number;
+    archived: number;
+    trashed: number;
+  };
+  blobs: {
+    count: number;
+    total_size: number;
+  };
+  /**
+   * Best-effort recent activity. Last `system.activity` rows for the
+   * tenant, newest-first, capped at the route's `limit` (default 10).
+   * Empty array when the tenant has no activity rows.
+   */
+  recent_activity: TenantActivityEntry[];
+  generated_at: string;
+}
+
+export interface TenantActivityEntry {
+  id: string;
+  severity: string;
+  summary: string;
+  created_at: string;
 }
 
 /**

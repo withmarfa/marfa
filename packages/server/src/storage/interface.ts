@@ -294,6 +294,13 @@ export interface KeyStore {
   list(): Promise<ApiKey[]>;
   get(id: string): Promise<ApiKey | null>;
   /**
+   * T-117: list a single tenant's active (non-revoked) API keys. The
+   * `my admin keys list <tenant>` operator surface uses this so a
+   * platform-admin can discover keys for emergency revocation. Returns
+   * an empty array when the tenant has no keys.
+   */
+  listForTenant(tenantId: string): Promise<ApiKey[]>;
+  /**
    * Active (non-revoked) keys whose `connection_id` matches. The
    * uninstall pipeline uses this to locate the runtime credential bound
    * to a connection before revoking it. Tenant-scoped when supplied —
@@ -686,6 +693,21 @@ export interface TenantStore {
     id: string,
     config: import("@mymehq/shared").TenantConfig,
   ): Promise<void>;
+  /**
+   * T-117: flip tenant status. `suspend` blocks future writes at the auth
+   * middleware (reads pass through); `unsuspend` restores. Both are no-ops
+   * when the tenant is already at the target status. Returns the updated
+   * row (null if the tenant id doesn't exist).
+   */
+  suspend(id: string): Promise<Tenant | null>;
+  unsuspend(id: string): Promise<Tenant | null>;
+  /**
+   * T-117: cheap status read for the auth-middleware write-guard. Returns
+   * `null` when the tenant doesn't exist (the gate treats unknown
+   * tenants as `active` — the credential's own tenant_id mismatch is
+   * handled separately by the standard auth flow).
+   */
+  getStatus(id: string): Promise<import("@mymehq/shared").TenantStatus | null>;
 }
 
 /**

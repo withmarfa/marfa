@@ -83,7 +83,10 @@ export async function createConnection(sqlitePath: string): Promise<{
       id TEXT PRIMARY KEY,
       name TEXT,
       config TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      -- T-117: operator-controlled status. 'active' (default) allows writes;
+      -- 'suspended' blocks them at the auth middleware. Reads pass through.
+      status TEXT NOT NULL DEFAULT 'active'
     );
 
     -- T-074: profile columns + auth_user_id FK; email + avatar_url dropped.

@@ -344,6 +344,13 @@
       "when": 1778941500000,
       "tag": "0048_drop_tenant_config_retention_key",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1778941600000,
+      "tag": "0049_tenants_status",
+      "breakpoints": true
     }
   ]
 }

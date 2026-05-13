@@ -39,6 +39,13 @@ export enum ErrorCode {
    * shape so a tenant approaching their cap can be flagged early.
    */
   QUOTA_EXCEEDED = "quota_exceeded",
+  /**
+   * T-117: tenant operator has suspended this tenant. The auth middleware
+   * rejects every non-GET request with this code; reads pass through.
+   * Platform-admin keys bypass the gate so operators can inspect a
+   * suspended tenant.
+   */
+  TENANT_SUSPENDED = "tenant_suspended",
   CONFLICT = "conflict",
   TYPE_ALREADY_EXISTS = "type_already_exists",
   TYPE_IN_USE = "type_in_use",
@@ -241,6 +248,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.TOKEN_REUSE_DETECTED]: 400,
   [ErrorCode.RATE_LIMITED]: 429,
   [ErrorCode.QUOTA_EXCEEDED]: 429,
+  [ErrorCode.TENANT_SUSPENDED]: 403,
   [ErrorCode.CONFLICT]: 409,
   [ErrorCode.TYPE_ALREADY_EXISTS]: 409,
   [ErrorCode.TYPE_IN_USE]: 409,

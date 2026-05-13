@@ -13,6 +13,9 @@ import type {
   Tier,
   TenantConfig,
   TenantQuota,
+  Tenant,
+  TenantMetrics,
+  TenantActivityEntry,
   Edge,
   CreateEdgeInput,
   EdgeTypeSchema,
@@ -184,6 +187,22 @@ export interface SearchFilters {
 
 export interface MetadataInput {
   tags?: string[];
+}
+
+/**
+ * Compact API-key summary returned by the admin keys-list route
+ * (T-117). The full `ApiKey` shape carries permission maps; the
+ * operator surface deliberately surfaces only the identifying fields +
+ * timestamps needed for emergency revocation.
+ */
+export interface TenantApiKeySummary {
+  id: string;
+  label: string;
+  source: string;
+  role: string;
+  is_platform: boolean;
+  created_at: string;
+  last_used_at: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1431,6 +1450,96 @@ export class MymeClient {
           `/tenants/${encodeURIComponent(tenantId)}/quotas`,
           { body: input },
         );
+      },
+    },
+  };
+
+  // ---- Admin (T-117) ----
+
+  /**
+   * Operator-level admin surface — the `my admin` CLI command tree's
+   * backing endpoints. Every method requires a platform-admin key
+   * (`is_platform: true`). Non-platform credentials get a `403
+   * forbidden`; render `"this command requires a platform-admin key"`
+   * in CLI / UI layers.
+   *
+   * Quota read/write is intentionally NOT duplicated here — it lives on
+   * `client.tenants.quotas.{getById, set}` and is already platform-
+   * admin-gated. The admin namespace mirrors what the CLI's `my admin`
+   * tree exposes; quotas are reached via the existing tenants surface.
+   */
+  readonly admin = {
+    tenants: {
+      /** List every tenant in the instance with current status. */
+      list: async (): Promise<Tenant[]> => {
+        const res = await this.transport.request<{ data: Tenant[] }>(
+          "GET",
+          "/admin/tenants",
+        );
+        return res.data;
+      },
+
+      /**
+       * Single tenant + per-tenant quota overrides + the most-recent
+       * `system.activity` items for the tenant (`null` quotas when no
+       * override is configured; quota fields then resolve to instance
+       * defaults).
+       */
+      show: async (
+        tenantId: string,
+      ): Promise<{
+        tenant: Tenant;
+        quotas: TenantQuota | null;
+        recent_activity: TenantActivityEntry[];
+      }> => {
+        return this.transport.request<{
+          tenant: Tenant;
+          quotas: TenantQuota | null;
+          recent_activity: TenantActivityEntry[];
+        }>("GET", `/admin/tenants/${encodeURIComponent(tenantId)}`);
+      },
+
+      /**
+       * Flip the tenant's status to `'suspended'`. Future non-GET
+       * requests from credentials in the tenant return HTTP 403
+       * `tenant_suspended`. Reads pass through; platform-admin keys
+       * bypass. Idempotent.
+       */
+      suspend: async (tenantId: string): Promise<Tenant> => {
+        return this.transport.request<Tenant>(
+          "POST",
+          `/admin/tenants/${encodeURIComponent(tenantId)}/suspend`,
+        );
+      },
+
+      /** Reverse of `suspend`. Idempotent. */
+      unsuspend: async (tenantId: string): Promise<Tenant> => {
+        return this.transport.request<Tenant>(
+          "POST",
+          `/admin/tenants/${encodeURIComponent(tenantId)}/unsuspend`,
+        );
+      },
+
+      /**
+       * Per-tenant usage snapshot — item count by state, blob count
+       * and total bytes, custom-type count, plus recent activity.
+       */
+      metrics: async (tenantId: string): Promise<TenantMetrics> => {
+        return this.transport.request<TenantMetrics>(
+          "GET",
+          `/admin/tenants/${encodeURIComponent(tenantId)}/metrics`,
+        );
+      },
+    },
+
+    keys: {
+      /** Active (non-revoked) keys for the named tenant. Operator
+       *  surface for emergency revocation — pair with `client.keys.revoke`. */
+      list: async (tenantId: string): Promise<TenantApiKeySummary[]> => {
+        const res = await this.transport.request<{
+          data: TenantApiKeySummary[];
+        }>("GET", `/admin/tenants/${encodeURIComponent(tenantId)}/keys`);
+        return res.data;
       },
     },
   };
