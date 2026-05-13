@@ -1192,6 +1192,247 @@ describe("items.bulk", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// items.createWithAttachments (T-100)
+// ---------------------------------------------------------------------------
+
+describe("items.createWithAttachments", () => {
+  const PNG_BYTES = new Uint8Array([1, 2, 3, 4]);
+  const JPG_BYTES = new Uint8Array([5, 6, 7, 8]);
+
+  /**
+   * Build a fresh client backed by a fetch wrapper that counts `/blobs`
+   * POSTs and `/items/bulk` POSTs and can be told to fail the Nth blob
+   * upload. Used by the partial-failure test to assert that bulk is not
+   * issued when an upload throws.
+   */
+  function makeInstrumentedClient(opts: { failBlobUploadAtIndex?: number }) {
+    const counts = { blobPosts: 0, bulkPosts: 0 };
+    const wrapped: typeof globalThis.fetch = async (input, init) => {
+      const urlStr =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const method = init?.method?.toUpperCase() ?? "GET";
+      if (method === "POST" && urlStr.endsWith("/blobs")) {
+        const idx = counts.blobPosts;
+        counts.blobPosts++;
+        if (idx === opts.failBlobUploadAtIndex) {
+          return new Response(
+            JSON.stringify({ error: "synthetic", message: "boom" }),
+            { status: 500, headers: { "Content-Type": "application/json" } },
+          );
+        }
+      }
+      if (method === "POST" && urlStr.endsWith("/items/bulk")) {
+        counts.bulkPosts++;
+      }
+      return testFetchFn(input, init);
+    };
+    const c = new MymeClient({
+      url: "http://localhost",
+      apiKey: adminKey,
+      fetch: wrapped,
+    });
+    return { client: c, counts };
+  }
+
+  it("happy path — creates host note + two file attachments wired by attached-to edges", async () => {
+    const result = await client.items.createWithAttachments({
+      item: {
+        type: "core.note",
+        properties: { title: "Note with attachments", body: "hello" },
+      },
+      attachments: [
+        { type: "core.file", blob: PNG_BYTES, mimeType: "image/png" },
+        { type: "core.file", blob: JPG_BYTES, mimeType: "image/jpeg" },
+      ],
+    });
+
+    expect(result.host.type).toBe("core.note");
+    expect(result.attachments).toHaveLength(2);
+    expect(result.attachments[0]!.type).toBe("core.file");
+    expect(result.attachments[1]!.type).toBe("core.file");
+
+    // Order preserved: PNG before JPG.
+    expect(
+      (result.attachments[0]!.properties as { mime_type: string }).mime_type,
+    ).toBe("image/png");
+    expect(
+      (result.attachments[1]!.properties as { mime_type: string }).mime_type,
+    ).toBe("image/jpeg");
+
+    // blob_ref auto-stamped on each attachment.
+    expect(
+      (result.attachments[0]!.properties as { blob_ref: string }).blob_ref,
+    ).toMatch(/^sha256:[a-f0-9]+$/);
+    expect(
+      (result.attachments[1]!.properties as { blob_ref: string }).blob_ref,
+    ).toMatch(/^sha256:[a-f0-9]+$/);
+
+    // Each attachment has one `attached-to` edge pointing back at host.
+    for (const att of result.attachments) {
+      const edges = await client.items.edges(att.id, {
+        edge_type: "attached-to",
+      });
+      expect(edges.data.map((e) => e.target_id)).toEqual([result.host.id]);
+    }
+  });
+
+  it("partial-upload failure — throws and does NOT issue the bulk call", async () => {
+    const { client: instrumented, counts } = makeInstrumentedClient({
+      // Fail the second blob upload (index 1).
+      failBlobUploadAtIndex: 1,
+    });
+
+    await expect(
+      instrumented.items.createWithAttachments({
+        item: {
+          type: "core.note",
+          properties: { title: "should not be created" },
+        },
+        attachments: [
+          { type: "core.file", blob: PNG_BYTES, mimeType: "image/png" },
+          { type: "core.file", blob: JPG_BYTES, mimeType: "image/jpeg" },
+        ],
+      }),
+    ).rejects.toThrow(/attachments\[1\]/);
+
+    // The failed upload short-circuits the helper. Bulk must not be issued.
+    expect(counts.bulkPosts).toBe(0);
+  });
+
+  it("explicit host id — uses caller-provided id as host id and edge target", async () => {
+    const explicitId = "01900000-0000-7000-8000-deadbeef0100";
+    const result = await client.items.createWithAttachments({
+      item: {
+        id: explicitId,
+        type: "core.note",
+        properties: { body: "explicit-id host" },
+      },
+      attachments: [
+        { type: "core.file", blob: PNG_BYTES, mimeType: "image/png" },
+      ],
+    });
+
+    expect(result.host.id).toBe(explicitId);
+    const edges = await client.items.edges(result.attachments[0]!.id, {
+      edge_type: "attached-to",
+    });
+    expect(edges.data.map((e) => e.target_id)).toEqual([explicitId]);
+  });
+
+  it("caller-supplied host edges co-exist with helper auto-edges in the same atomic bulk call", async () => {
+    // Pre-seed an `about` target item that the host will reference. Same
+    // atomic bulk call writes (host + attachment); the host carries the
+    // caller's `about` edge to the pre-existing target, and the
+    // attachment carries the helper-added `attached-to` edge to the host.
+    const aboutTarget = await client.items.create({
+      type: "core.entity",
+      properties: { name: "about target" },
+    });
+
+    const result = await client.items.createWithAttachments({
+      item: {
+        type: "core.note",
+        properties: { body: "host with about edge" },
+        edges: { about: [aboutTarget.id] },
+      },
+      attachments: [
+        { type: "core.file", blob: PNG_BYTES, mimeType: "image/png" },
+      ],
+    });
+
+    // Host carries the caller's `about` edge — unchanged.
+    const hostAbout = await client.items.edges(result.host.id, {
+      edge_type: "about",
+    });
+    expect(hostAbout.data.map((e) => e.target_id)).toEqual([aboutTarget.id]);
+
+    // Attachment carries the helper's `attached-to` edge — co-existing,
+    // not replaced.
+    const attEdges = await client.items.edges(result.attachments[0]!.id, {
+      edge_type: "attached-to",
+    });
+    expect(attEdges.data.map((e) => e.target_id)).toEqual([result.host.id]);
+  });
+
+  it("caller-supplied edges on the same edgeType key are additively merged — never replaced", async () => {
+    // Pre-seed an extra `attached-to` target the caller wants to keep.
+    // The helper must append the host id to the caller's array, not
+    // overwrite it.
+    const extraTarget = await client.items.create({
+      type: "core.note",
+      properties: { body: "pre-existing attachment target" },
+    });
+
+    const result = await client.items.createWithAttachments({
+      item: {
+        type: "core.note",
+        properties: { body: "host" },
+      },
+      attachments: [
+        {
+          type: "core.file",
+          blob: PNG_BYTES,
+          mimeType: "image/png",
+          edges: { "attached-to": [extraTarget.id] },
+        },
+      ],
+    });
+
+    const attEdges = await client.items.edges(result.attachments[0]!.id, {
+      edge_type: "attached-to",
+    });
+    const targets = attEdges.data.map((e) => e.target_id).sort();
+    expect(targets).toEqual([extraTarget.id, result.host.id].sort());
+  });
+
+  it("explicit host id collision throws — `mode: create_only` skip becomes a MymeError", async () => {
+    // Seed an item with an explicit id, then try to use the same id as
+    // the host id in createWithAttachments. The bulk call returns
+    // `outcome: "skipped"` for the host; the helper must surface that
+    // as a thrown MymeError rather than silently returning the
+    // pre-existing item.
+    const seedId = "01900000-0000-7000-8000-deadbeef0200";
+    await client.items.create({
+      id: seedId,
+      type: "core.note",
+      properties: { body: "pre-existing host" },
+    });
+
+    await expect(
+      client.items.createWithAttachments({
+        item: {
+          id: seedId,
+          type: "core.note",
+          properties: { body: "would-be fresh host" },
+        },
+        attachments: [],
+      }),
+    ).rejects.toThrow(/duplicate_id|requires fresh ids/);
+  });
+
+  it("empty attachments array — issues bulk with just the host, no blob uploads, no auto-edges", async () => {
+    const { client: instrumented, counts } = makeInstrumentedClient({});
+
+    const result = await instrumented.items.createWithAttachments({
+      item: {
+        type: "core.note",
+        properties: { body: "no attachments here" },
+      },
+      attachments: [],
+    });
+
+    expect(result.host.type).toBe("core.note");
+    expect(result.attachments).toEqual([]);
+    expect(counts.blobPosts).toBe(0);
+    expect(counts.bulkPosts).toBe(1);
+  });
+});
+
 describe("items.bulkAction", () => {
   async function seedTagged(count: number, tag: string): Promise<string[]> {
     const ids: string[] = [];
