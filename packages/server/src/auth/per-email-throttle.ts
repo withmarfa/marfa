@@ -1,31 +1,31 @@
 /**
- * In-memory per-email throttle for password-reset requests.
+ * Per-email throttle for password-reset (and similar email-keyed)
+ * requests.
  *
- * Wave C PR3 / T-033. Sits on top of the per-IP rate limit
- * (`middleware/rate-limit.ts`). Per-IP bounds noisy clients; per-email
- * bounds the address itself — so a burst from many IPs can't drown a
- * single user's inbox in reset emails.
+ * Wave C PR3 / T-033 shipped the in-memory version. T-026 moved the
+ * counter into `storage.rateLimits` (shared via Postgres in multi-
+ * instance deployments; correct in-process on SQLite single-process
+ * self-hosts) so the throttle holds cluster-wide.
  *
- * Defaults: 3 requests per email per 1-hour rolling window. Old entries
- * are evicted lazily on next access; no background timer needed.
+ * Sits on top of the per-IP rate limit (`middleware/rate-limit.ts`).
+ * Per-IP bounds noisy clients; per-email bounds the address itself —
+ * a burst from many IPs cannot drown a single user's inbox in reset
+ * emails.
  *
- * Single-process in-memory only — multi-instance deployments would
- * need a Redis-backed shared counter to enforce globally. The hosted
- * Myme today is single-instance per tenant, so this is sufficient for
- * the launch surface.
+ * Defaults: 3 requests per email per 1-hour rolling window. The
+ * counter ALWAYS increments on `attempt()` — including over-cap
+ * attempts. This differs cosmetically from the pre-T-026 shape (which
+ * froze the counter at the cap once exceeded); the user-visible
+ * behaviour is identical: once `count > limit`, requests are rejected
+ * until the window rolls over.
  */
 
-interface ThrottleEntry {
-  /** Number of requests in the current window. */
-  count: number;
-  /** Epoch-ms when the window resets. */
-  resetAt: number;
-}
+import type { Storage } from "../storage/interface.js";
 
 export interface ThrottleResult {
   /** `true` if the request is allowed. `false` if the cap has been hit. */
   allowed: boolean;
-  /** Current count after this attempt (incremented on `allowed=true`). */
+  /** Current count after this attempt — including over-cap counts. */
   count: number;
   /** Cap applied. */
   limit: number;
@@ -34,6 +34,15 @@ export interface ThrottleResult {
 }
 
 export interface PerEmailThrottleOptions {
+  /**
+   * Family discriminator on the underlying `rate_limit_windows` table.
+   * One-per-surface so windows are independent: forgot-password vs.
+   * (future) magic-link, etc. Defaults to `"throttle"`.
+   */
+  family?: string;
+  /** Key prefix prepended to the (lowercased) email. Defaults to
+   *  `"forgot-password:"`. */
+  keyPrefix?: string;
   /** Max requests per window per email. Default: 3. */
   limit?: number;
   /** Window length in ms. Default: 1 hour. */
@@ -43,79 +52,51 @@ export interface PerEmailThrottleOptions {
 /**
  * Per-email throttle that mints `ThrottleResult`s. Construct one per
  * surface (forgot-password, magic-link, etc.) so the windows are
- * independent.
- *
- * Email is normalised to lowercase before keying so casing doesn't
+ * independent. Email is lowercased before keying so casing doesn't
  * defeat the cap.
  */
 export class PerEmailThrottle {
+  private readonly family: string;
+  private readonly keyPrefix: string;
   private readonly limit: number;
   private readonly windowMs: number;
-  private readonly entries = new Map<string, ThrottleEntry>();
 
-  constructor(options: PerEmailThrottleOptions = {}) {
+  constructor(
+    private storage: Storage,
+    options: PerEmailThrottleOptions = {},
+  ) {
+    this.family = options.family ?? "throttle";
+    this.keyPrefix = options.keyPrefix ?? "forgot-password:";
     this.limit = options.limit ?? 3;
     this.windowMs = options.windowMs ?? 60 * 60 * 1000;
   }
 
   /**
    * Record an attempt against `email` and return whether it's allowed.
-   * Increments the counter only on `allowed=true`. The caller decides
-   * whether to act on a `false` result (typically: 429 + soft-fail).
+   * Increments the underlying counter on every call (the store's upsert
+   * is unconditional); the gate is `count > limit` on the caller side.
+   * The caller decides whether to act on a `false` result (typically:
+   * 429 + soft-fail redirect).
+   *
+   * `nowIso` is the per-call clock; defaults to `new Date().toISOString()`.
+   * Tests pass a deterministic value.
    */
-  attempt(email: string, now = Date.now()): ThrottleResult {
-    const key = email.toLowerCase();
-    const existing = this.entries.get(key);
-
-    // Window expired — reset.
-    if (!existing || existing.resetAt <= now) {
-      const fresh: ThrottleEntry = {
-        count: 1,
-        resetAt: now + this.windowMs,
-      };
-      this.entries.set(key, fresh);
-      return {
-        allowed: true,
-        count: fresh.count,
-        limit: this.limit,
-        resetAt: fresh.resetAt,
-      };
-    }
-
-    if (existing.count >= this.limit) {
-      return {
-        allowed: false,
-        count: existing.count,
-        limit: this.limit,
-        resetAt: existing.resetAt,
-      };
-    }
-
-    existing.count += 1;
+  async attempt(
+    email: string,
+    nowIso = new Date().toISOString(),
+  ): Promise<ThrottleResult> {
+    const key = `${this.keyPrefix}${email.toLowerCase()}`;
+    const row = await this.storage.rateLimits.incrementWindow(
+      this.family,
+      key,
+      this.windowMs,
+      nowIso,
+    );
     return {
-      allowed: true,
-      count: existing.count,
+      allowed: row.count <= this.limit,
+      count: row.count,
       limit: this.limit,
-      resetAt: existing.resetAt,
+      resetAt: new Date(row.expires_at).getTime(),
     };
-  }
-
-  /**
-   * Test-only / operator-only reset. Drops the throttle state for the
-   * given email (or all entries when omitted). Production callers
-   * have no business clearing throttles, so this isn't surfaced on
-   * the public API.
-   */
-  reset(email?: string): void {
-    if (email === undefined) {
-      this.entries.clear();
-      return;
-    }
-    this.entries.delete(email.toLowerCase());
-  }
-
-  /** Diagnostics — current entry count. */
-  size(): number {
-    return this.entries.size;
   }
 }

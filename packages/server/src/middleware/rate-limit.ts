@@ -15,18 +15,12 @@ export interface RateLimitConfig {
   /** Trusted reverse-proxy CIDRs for safe x-forwarded-for handling. */
   trustedProxyCidrs: CidrRange[];
   /**
-   * T-052 follow-on (Wave B Part 2): optional storage handle so the
-   * rate limiter can read each tenant's `rate_per_minute_limit`
-   * override on top of the per-credential window. When `undefined`,
-   * only the per-credential / per-IP gate runs (existing behaviour).
-   *
-   * The per-tenant ceiling is the second of two windows: a request
-   * is rejected if EITHER the per-credential window OR the per-tenant
-   * window is full. Per-credential keeps a single noisy key from
-   * spamming; per-tenant keeps a tenant's collective fleet from
-   * blowing through the cap.
+   * Required storage handle. T-026 promoted this to required (was
+   * optional pre-T-026) because the rate-limit counter itself now
+   * lives in the shared store (`storage.rateLimits`). The handle also
+   * carries the per-tenant rate-cap lookup (T-052 follow-on).
    */
-  storage?: Storage;
+  storage: Storage;
   /**
    * Per-tenant default ceiling, read from
    * `MYME_DEFAULT_QUOTA_RATE_PER_MINUTE`. Falls back to "no
@@ -36,26 +30,29 @@ export interface RateLimitConfig {
   tenantDefaultRatePerMinute?: number | null;
 }
 
-interface WindowEntry {
-  count: number;
-  resetAt: number;
-}
-
 /**
- * In-memory sliding window rate limiter.
- * Keys by API key ID (or IP for unauthenticated requests).
- * Path-specific limits for sensitive endpoints.
+ * Sliding-window rate limiter backed by `storage.rateLimits` (T-026).
  *
- * Configuration is required — there is no fallback that reads `process.env`.
- * `app.ts` constructs the config from `AppConfig.rateLimitDefaultLimit` and
- * `rateLimitWindowMs` (the single env-read site lives in `loadConfig`).
- */
-/**
- * Per-tenant ceiling cache entry. The cache is in-process with a
- * 60-second TTL: a tenant changing their cap waits at most 60s for
- * the new value to be honoured. Worth the staleness vs. a DB
- * roundtrip per request. Survives across requests for the lifetime
- * of the middleware instance.
+ * The counter table sits in the same database every other tenant-scoped
+ * table lives in. Two server instances pointed at the same DB share
+ * counters cluster-wide; SQLite is single-process by file lock so the
+ * same code path stays correct on single-tenant self-hosts.
+ *
+ * Hot path: one upsert round-trip per gated request. The per-tenant
+ * ceiling LOOKUP (tenant_quotas.rate_per_minute_limit) stays cached
+ * in-process for 60s — that's a CAP read, not a counter, and the cache
+ * is purely a perf optimisation under correct multi-instance semantics
+ * (cache miss → DB read; staleness is bounded by the TTL).
+ *
+ * Configuration is required — there is no fallback that reads
+ * `process.env`. `app.ts` constructs the config from `AppConfig`.
+ *
+ * **Correctness-first, not perf-first.** The per-request PG round-trip
+ * is acceptable at target scale; a write-through per-instance cache
+ * (instance-local short-circuit + the DB upsert as the authoritative
+ * floor — the T-101 `last_used_at` debounce shape) is a future
+ * optimisation if perf measurement demands it. Counter accuracy +
+ * cluster-shared correctness come first.
  */
 interface TenantLimitCacheEntry {
   /** `null` means "no per-tenant cap" (env default also unset). */
@@ -65,20 +62,18 @@ interface TenantLimitCacheEntry {
 
 const TENANT_LIMIT_CACHE_TTL_MS = 60_000;
 
+const RATE_FAMILY = "rate";
+
 export function rateLimitMiddleware(
   config: RateLimitConfig,
 ): MiddlewareHandler<AppEnv> {
-  const windows = new Map<string, WindowEntry>();
   const tenantLimits = new Map<string, TenantLimitCacheEntry>();
 
-  // Periodic cleanup of expired entries — single interval per middleware instance
+  // Periodic cleanup of the in-process tenant-limit cache. The shared
+  // `rate_limit_windows` rows have their own retention sweep
+  // (`RateLimitWindowCleaner` in storage/retention.ts).
   const cleanupInterval = setInterval(() => {
     const now = Date.now();
-    for (const [key, entry] of windows) {
-      if (entry.resetAt <= now) {
-        windows.delete(key);
-      }
-    }
     for (const [key, entry] of tenantLimits) {
       if (entry.expiresAt <= now) {
         tenantLimits.delete(key);
@@ -106,11 +101,9 @@ export function rateLimitMiddleware(
     }
 
     let limit: number | null = null;
-    if (config.storage) {
-      const quota = await config.storage.tenantQuotas.get(tenantId);
-      if (quota?.rate_per_minute_limit != null) {
-        limit = quota.rate_per_minute_limit;
-      }
+    const quota = await config.storage.tenantQuotas.get(tenantId);
+    if (quota?.rate_per_minute_limit != null) {
+      limit = quota.rate_per_minute_limit;
     }
     // Fall back to env default if no per-tenant override.
     if (limit === null && config.tenantDefaultRatePerMinute != null) {
@@ -147,23 +140,31 @@ export function rateLimitMiddleware(
     const pathPrefix = path.split("/").slice(0, 2).join("/");
     const credentialWindowKey = `${identifier}:${pathPrefix}`;
     const now = Date.now();
+    const nowIso = new Date(now).toISOString();
 
-    let entry = windows.get(credentialWindowKey);
-    if (!entry || entry.resetAt <= now) {
-      entry = { count: 0, resetAt: now + config.windowMs };
-      windows.set(credentialWindowKey, entry);
-    }
-
-    entry.count++;
+    const credentialResult = await config.storage.rateLimits.incrementWindow(
+      RATE_FAMILY,
+      credentialWindowKey,
+      config.windowMs,
+      nowIso,
+    );
 
     // Set rate limit headers (per-credential window — the most
     // immediate cap most callers will hit).
     c.header("X-RateLimit-Limit", String(limit));
-    c.header("X-RateLimit-Remaining", String(Math.max(0, limit - entry.count)));
-    c.header("X-RateLimit-Reset", String(Math.ceil(entry.resetAt / 1000)));
+    c.header(
+      "X-RateLimit-Remaining",
+      String(Math.max(0, limit - credentialResult.count)),
+    );
+    c.header(
+      "X-RateLimit-Reset",
+      String(Math.ceil(new Date(credentialResult.expires_at).getTime() / 1000)),
+    );
 
-    if (entry.count > limit) {
-      const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+    if (credentialResult.count > limit) {
+      const retryAfter = Math.ceil(
+        (new Date(credentialResult.expires_at).getTime() - now) / 1000,
+      );
       c.header("Retry-After", String(retryAfter));
       throw new MymeError(
         ErrorCode.RATE_LIMITED,
@@ -177,17 +178,19 @@ export function rateLimitMiddleware(
     // tenant-less keys (single-tenant self-hosts, platform admin).
     const tenantId = apiKey?.tenant_id;
     if (tenantId) {
-      const tenantLimit = await tenantRateLimit(tenantId, now);
-      if (tenantLimit !== null) {
+      const tenantLimitValue = await tenantRateLimit(tenantId, now);
+      if (tenantLimitValue !== null) {
         const tenantWindowKey = `tenant:${tenantId}`;
-        let tenantEntry = windows.get(tenantWindowKey);
-        if (!tenantEntry || tenantEntry.resetAt <= now) {
-          tenantEntry = { count: 0, resetAt: now + config.windowMs };
-          windows.set(tenantWindowKey, tenantEntry);
-        }
-        tenantEntry.count++;
-        if (tenantEntry.count > tenantLimit) {
-          const retryAfter = Math.ceil((tenantEntry.resetAt - now) / 1000);
+        const tenantResult = await config.storage.rateLimits.incrementWindow(
+          RATE_FAMILY,
+          tenantWindowKey,
+          config.windowMs,
+          nowIso,
+        );
+        if (tenantResult.count > tenantLimitValue) {
+          const retryAfter = Math.ceil(
+            (new Date(tenantResult.expires_at).getTime() - now) / 1000,
+          );
           c.header("Retry-After", String(retryAfter));
           throw new MymeError(
             ErrorCode.RATE_LIMITED,

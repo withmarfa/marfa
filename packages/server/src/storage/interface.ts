@@ -1284,6 +1284,62 @@ export interface EmailSuppressionsStore {
 }
 
 /**
+ * T-026: cluster-shared rate-limit + per-email throttle counters.
+ *
+ * Backing table `rate_limit_windows` keyed on (family, window_key). Two
+ * production consumers ride the same store:
+ *
+ *   - `rate-limit middleware` (family = "rate") — per-credential and
+ *     per-tenant request windows. Window keys take the shape
+ *     "<credential-id-or-ip>:<path-prefix>" and "tenant:<tenant-id>";
+ *     window size from `AppConfig.rateLimitWindowMs` (default 60s).
+ *   - `forgot-password per-email throttle` (family = "throttle") —
+ *     window key "forgot-password:<lowercased-email>"; window size 1h.
+ *
+ * The single primitive — atomic increment-counter-bounded-by-window —
+ * services both. Production storage (PG + SQLite) implements via
+ * `INSERT ... ON CONFLICT DO UPDATE` so two server instances pointed at
+ * the same DB share counters cluster-wide. SQLite is single-process by
+ * file lock so "shared" collapses to "still correct in-process" — same
+ * code path, same semantics.
+ *
+ * Hot path: one DB round-trip per gated request. Acceptable at target
+ * scale (low-thousands of req/s peak); PG handles tens of thousands of
+ * single-row upserts per second on commodity hardware. A write-through
+ * per-instance cache (mirror of the T-101 `last_used_at` shape — local
+ * short-circuit + DB conditional as the authoritative floor) is a
+ * future optimisation if perf measurement justifies it.
+ */
+export interface RateLimitStore {
+  /**
+   * Atomic upsert that increments the counter for `(family, key)` by 1.
+   * If the existing row's `expires_at` has already passed, the row is
+   * reset (count → 1, expires_at → nowIso + windowMs) before the
+   * increment is applied; otherwise the increment lands on the
+   * existing row and `expires_at` is left unchanged. Returns the
+   * post-increment count and the row's current `expires_at`.
+   *
+   * Callers compare `count` against their cap and reject when over.
+   * The single-row UPDATE serialises concurrent writers via Postgres
+   * row-level locking (and via SQLite's BEGIN IMMEDIATE on libsql), so
+   * two instances racing the same key cannot both observe `count == 1`
+   * inside one window.
+   */
+  incrementWindow(
+    family: string,
+    key: string,
+    windowMs: number,
+    nowIso: string,
+  ): Promise<{ count: number; expires_at: string }>;
+  /**
+   * Drop every row whose `expires_at` is strictly older than `nowIso`.
+   * Called from the `RateLimitWindowCleaner` retention sweep. Returns
+   * the number of rows deleted.
+   */
+  cleanup(nowIso: string): Promise<number>;
+}
+
+/**
  * Typed handle that storage implementations expose for the better-auth
  * integration (§3.13). The two dialect-specific Drizzle handles diverge
  * structurally; the public Storage contract carries them as `unknown`
@@ -1351,6 +1407,15 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    * wires it.
    */
   emailSuppressions?: EmailSuppressionsStore;
+  /**
+   * T-026: cluster-shared rate-limit + per-email throttle counters.
+   * Always wired by both dialect factories; the middleware + the
+   * forgot-password route consult it. Required (not optional) because
+   * the rate-limit middleware can't degrade gracefully without it —
+   * a missing store would silently degrade to "no rate limit", which
+   * is the wrong default.
+   */
+  rateLimits: RateLimitStore;
   /**
    * T-025 part 2: optional reference to the wrapped Postgres Drizzle
    * instance, exposed so the RLS middleware can drive

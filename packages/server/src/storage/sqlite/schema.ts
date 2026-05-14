@@ -578,6 +578,24 @@ export const auditLog = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// rate_limit_windows (T-026 — see pg/schema.ts for design notes)
+// ---------------------------------------------------------------------------
+
+export const rateLimitWindows = sqliteTable(
+  "rate_limit_windows",
+  {
+    family: text("family").notNull(),
+    window_key: text("window_key").notNull(),
+    count: integer("count").notNull(),
+    expires_at: text("expires_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.family, table.window_key] }),
+    index("idx_rate_limit_windows_expires_at").on(table.expires_at),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // settings (generic single-row-per-key KV for workspace-wide flags)
 // ---------------------------------------------------------------------------
 

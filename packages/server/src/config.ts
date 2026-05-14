@@ -92,6 +92,11 @@ export interface AppConfig {
   /** T-116: cadence (ms) for the pending-delete purger sweep. Env
    *  override `MYME_ACCOUNT_DELETION_PURGE_INTERVAL_MS`. Default 1h. */
   accountDeletionPurgeIntervalMs?: number;
+  /** T-026: cadence (ms) for the `rate_limit_windows` GC sweep that drops
+   *  rows past their `expires_at`. Default 3_600_000 (1h); env override
+   *  `MYME_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
+   *  applies the 1h fallback when unset. */
+  rateLimitCleanupIntervalMs?: number;
   errorWebhookUrl: string;
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
@@ -309,6 +314,10 @@ export function loadConfig(): AppConfig {
     ),
     accountDeletionPurgeIntervalMs: envNumber(
       process.env.MYME_ACCOUNT_DELETION_PURGE_INTERVAL_MS,
+      3_600_000,
+    ),
+    rateLimitCleanupIntervalMs: envNumber(
+      process.env.MYME_RATE_LIMIT_CLEANUP_INTERVAL_MS,
       3_600_000,
     ),
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",

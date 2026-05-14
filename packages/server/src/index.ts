@@ -14,6 +14,7 @@ import {
   TrashPurger,
   AuthSessionCleaner,
   PendingDeletePurger,
+  RateLimitWindowCleaner,
   runTenantCleanup,
 } from "./storage/retention.js";
 import type { TenantFanout } from "./storage/retention.js";
@@ -228,6 +229,19 @@ async function main() {
     : undefined;
   pendingDeletePurger?.start();
 
+  // T-026: drop expired `rate_limit_windows` rows on a periodic tick.
+  // Expired rows aren't a correctness risk (the upsert path overwrites
+  // them transparently); the GC just keeps the table bounded across the
+  // long tail of one-shot windows. Cluster-coordinated via the named
+  // lock so multi-instance deployments don't double-process.
+  const rateLimitCleaner = new RateLimitWindowCleaner(
+    storage,
+    config.rateLimitCleanupIntervalMs ?? 3_600_000,
+    undefined,
+    storage.coordination,
+  );
+  rateLimitCleaner.start();
+
   // Wave C PR1: construct the email transport once at boot and thread
   // it into createApp. The factory's sender-domain check fails loud
   // here if MYME_EMAIL_FROM doesn't end @mail.myme.so on the Resend
@@ -290,6 +304,7 @@ async function main() {
     trashPurger.stop();
     authSessionCleaner?.stop();
     pendingDeletePurger?.stop();
+    rateLimitCleaner.stop();
     if (reactiveRunBridge) {
       void reactiveRunBridge.stop().catch(() => {
         // Bridge cleanup errors during shutdown are swallowed; the

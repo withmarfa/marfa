@@ -369,6 +369,20 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
+-- T-026: cluster-shared rate-limit + per-email throttle counters.
+-- One physical table; the family column discriminates the two consumer
+-- surfaces. Atomic upsert via INSERT ON CONFLICT DO UPDATE keeps
+-- multi-instance deployments honest. See pg/schema.ts for design notes.
+CREATE TABLE IF NOT EXISTS rate_limit_windows (
+  family TEXT NOT NULL,
+  window_key TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY (family, window_key)
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_windows_expires_at
+  ON rate_limit_windows(expires_at);
+
 -- Better Auth tables (auth_* prefix, isolated from myme's own users table).
 -- Timestamps stored as TIMESTAMP to match Drizzle timestamp(mode:date)
 -- Date round-trip; the better-auth adapter forwards JS Date objects directly.
@@ -473,7 +487,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   "inbound_webhooks", "inbound_webhook_events",
   "connection_oauth_tokens", "connection_leased_tokens",
   "oauth_clients", "oauth_codes", "oauth_tokens", "oauth_device_codes",
-  "users", "tenant_quotas", "email_suppressions"
+  "users", "tenant_quotas", "email_suppressions",
+  "rate_limit_windows"
 TO "myme_app";
 -- Sequence usage so myme_app can insert into identity columns
 -- (event_log.id BIGINT GENERATED ALWAYS AS IDENTITY).
