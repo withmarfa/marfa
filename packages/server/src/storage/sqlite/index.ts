@@ -26,6 +26,8 @@ import { SqliteSettingsStore } from "./settings-store.js";
 import { SqliteCoordinationStore } from "./coordination-store.js";
 import { SqliteTenantQuotaStore } from "./tenant-quota-store.js";
 import { SqliteEmailSuppressionsStore } from "./email-suppressions-store.js";
+import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
+import { sqliteDeleteAccountCascade } from "./account-cascade.js";
 import {
   registerEdgeTypeSchema,
   isCoreEdgeType,
@@ -103,7 +105,7 @@ export async function createSqliteStorage(
     }
   });
 
-  return {
+  const storage = {
     items: itemStore,
     metadata: metadataStore,
     versions: versionStore,
@@ -123,6 +125,11 @@ export async function createSqliteStorage(
     audit: auditStore,
     eventLog: eventLogStore,
     authSessions: authSessionStore,
+    // T-116: account-lifecycle store reads/writes auth_user's deletion
+    // columns. SQLite has no RLS so we use the wrapped instance like
+    // the other auth-* stores; transactional consistency is preserved
+    // via Drizzle's ALS routing.
+    accountLifecycle: new SqliteAccountLifecycleStore(db),
     settings: new SqliteSettingsStore(db),
     coordination: new SqliteCoordinationStore(),
     tenantQuotas: new SqliteTenantQuotaStore(db),
@@ -151,6 +158,13 @@ export async function createSqliteStorage(
         return await withSqliteTx(tx, async () => fn());
       });
     },
+    deleteAccountCascade: (authUserId: string): Promise<void> => {
+      return sqliteDeleteAccountCascade(
+        db,
+        storage as unknown as Storage,
+        authUserId,
+      );
+    },
     betterAuthDb: baseDb,
     betterAuthDialect: "sqlite" as const,
     /** Raw query escape hatch — used by retention tests. */
@@ -174,4 +188,6 @@ export async function createSqliteStorage(
       await close();
     },
   };
+
+  return storage;
 }

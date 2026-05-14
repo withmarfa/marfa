@@ -351,6 +351,13 @@
       "when": 1778941600000,
       "tag": "0049_tenants_status",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1778941700000,
+      "tag": "0050_auth_user_deletion_state",
+      "breakpoints": true
     }
   ]
 }

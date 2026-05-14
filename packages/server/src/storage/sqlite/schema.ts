@@ -683,6 +683,12 @@ export const auth_user = sqliteTable(
     image: text("image"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+    // T-116: account-lifecycle state. See the PG sibling schema for the
+    // full design note. `pending_deletion_at` stays TEXT/ISO to match
+    // the rest of myme's timestamp convention; the purger compares
+    // strings without round-tripping through Date.
+    deletion_state: text("deletion_state").notNull().default("active"),
+    pending_deletion_at: text("pending_deletion_at"),
   },
   (table) => [uniqueIndex("idx_auth_user_email").on(table.email)],
 );

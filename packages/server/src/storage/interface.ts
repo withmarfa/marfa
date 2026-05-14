@@ -925,6 +925,21 @@ export interface AuditStore {
    * Returns the number of rows actually deleted.
    */
   cleanup(retentionDays: number, tenantId?: string | null): Promise<number>;
+  /**
+   * T-116: redact rows that identify a specific `auth_user.id` ahead of
+   * a hard-delete of the account. Rewrites `audit_log.details` to
+   * `{ redacted: true, user_id_sha256: <hex> }` for every row whose
+   * `resource_id === authUserId` OR whose `details` JSON object
+   * contains any field whose value equals `authUserId` (exact-equality
+   * match — substring matches are ignored to avoid false positives).
+   *
+   * The row's `action`, `resource_type`, `timestamp`, and `id` are
+   * preserved — the audit chain remains intact; only personally
+   * identifying payload is scrubbed.
+   *
+   * Returns the number of rows rewritten.
+   */
+  redactForUser(authUserId: string): Promise<number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1149,6 +1164,48 @@ export interface AuthSessionStore {
   deleteExpired(now: Date): Promise<number>;
 }
 
+/**
+ * T-116: account-lifecycle store. Surfaces the `auth_user.deletion_state`
+ * + `pending_deletion_at` columns added to better-auth's `auth_user`
+ * table for the GDPR account-deletion lifecycle. Grouped under a single
+ * sub-interface (rather than scattered as top-level methods on
+ * `Storage`) so the route layer reads as
+ * `storage.accountLifecycle.markPendingDeletion(...)` and the surface
+ * is greppable as a unit.
+ *
+ * The hard-delete cascade itself is a top-level `Storage` method
+ * (`deleteAccountCascade`) because it spans every per-tenant table
+ * plus the auth island — it doesn't sit cleanly inside one sub-store.
+ */
+export interface AccountLifecycleStore {
+  /** Flip `auth_user.deletion_state` → `'pending_deletion'`, stamp
+   *  `pending_deletion_at = nowIso`, AND inside the same transaction:
+   *  revoke every `api_keys` row for the user's tenant + delete every
+   *  `auth_session` for the user. Idempotent — re-running on a
+   *  pending row just re-stamps `pending_deletion_at`. */
+  markPendingDeletion(authUserId: string, nowIso: string): Promise<void>;
+  /** Flip the state back to `'active'` and clear `pending_deletion_at`.
+   *  No-op when the row is already active. */
+  cancelPendingDeletion(authUserId: string): Promise<void>;
+  /** Read the lifecycle row by `auth_user.id`. Returns null when no
+   *  matching row exists. */
+  getAccountLifecycle(authUserId: string): Promise<{
+    deletion_state: "active" | "pending_deletion";
+    pending_deletion_at: string | null;
+  } | null>;
+  /** Pre-sign-in middleware lookup keyed by lower-cased email. */
+  getAccountLifecycleByEmail(email: string): Promise<{
+    auth_user_id: string;
+    deletion_state: "active" | "pending_deletion";
+    pending_deletion_at: string | null;
+  } | null>;
+  /** Purger fan-out — every account whose `pending_deletion_at` is
+   *  strictly older than `cutoffIso` and still in `pending_deletion`. */
+  listPendingDeletionDue(
+    cutoffIso: string,
+  ): Promise<{ auth_user_id: string }[]>;
+}
+
 export interface CoordinationStore {
   /**
    * Attempt to acquire a named coordination lock, run `fn`, release the
@@ -1269,6 +1326,12 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  Absent on test contexts that don't wire better-auth (the cleanup
    *  job in `index.ts` is gated on this being present). */
   authSessions?: AuthSessionStore;
+  /** T-116: account-lifecycle store (delete state + pending stamp).
+   *  Always wired by both dialect factories; the route layer + the
+   *  purger consult it. Marked optional only because in-tree test
+   *  stubs that pre-date T-116 may not implement it; production
+   *  Storage always exposes it. */
+  accountLifecycle?: AccountLifecycleStore;
   settings: SettingsStore;
   coordination: CoordinationStore;
 
@@ -1301,5 +1364,25 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    */
   pgDb?: unknown;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
+  /**
+   * T-116: hard-delete every artefact tied to the given `auth_user.id`.
+   * Single transaction; rollback on any failure. Order:
+   *
+   *   1. Resolve `tenant_id` via `users.auth_user_id`.
+   *   2. Revoke OAuth tokens / leased tokens / inbound webhooks for the
+   *      tenant.
+   *   3. Bulk-purge items (FK-cascades metadata + versions), preceded
+   *      by edge teardown per item.
+   *   4. Sweep tenant-scoped blobs.
+   *   5. Delete `api_keys`, `outbound_webhooks`, `inbound_webhooks`,
+   *      `tenant_quotas`, `auth_verification` rows, the `users` row,
+   *      the `tenants` row.
+   *   6. Emit `auth.account.hard_deleted` audit BEFORE redactForUser.
+   *   7. `audit.redactForUser(authUserId)` to scrub PII from the
+   *      remaining audit trail.
+   *   8. Delete the `auth_user` row — FK cascades drop sessions,
+   *      accounts, passkeys.
+   */
+  deleteAccountCascade(authUserId: string): Promise<void>;
   close(): Promise<void>;
 }

@@ -302,6 +302,13 @@
       "when": 1778941600000,
       "tag": "0042_tenants_status",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1778941700000,
+      "tag": "0043_auth_user_deletion_state",
+      "breakpoints": true
     }
   ]
 }
