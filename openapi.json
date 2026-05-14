@@ -1583,7 +1583,7 @@
           "Items"
         ],
         "summary": "Update an item",
-        "description": "Updates an item's properties, tier, or timestamp. Properties shallow-merge into the existing row (unmentioned keys keep their values). The optional `version` field enables optimistic concurrency — pass the version the caller is editing from; a mismatch returns `409 version_conflict` with the three-way context (current, ancestor, conflicting fields, resolved merge policy) the client needs to resolve. See [Conflicts](/concepts/conflicts) and [Errors — version_conflict](/api/errors#version-conflict).\n\nThe `edges` block has replace-all-for-specified-types semantics: any edge_type listed wipes existing outbound edges of that type from this item, then creates new edges to each listed target. Empty array for an edge_type deletes all edges of that type. Unmentioned edge types are untouched.\n\nTier and timestamp updates are last-writer-wins and never produce a version conflict.",
+        "description": "Updates an item's properties, tier, timestamp, or natural-key `source_id`. Properties shallow-merge into the existing row (unmentioned keys keep their values). The optional `version` field enables optimistic concurrency — pass the version the caller is editing from; a mismatch returns `409 version_conflict` with the three-way context (current, ancestor, conflicting fields, resolved merge policy) the client needs to resolve. See [Conflicts](/concepts/conflicts) and [Errors — version_conflict](/api/errors#version-conflict).\n\nThe `edges` block has replace-all-for-specified-types semantics: any edge_type listed wipes existing outbound edges of that type from this item, then creates new edges to each listed target. Empty array for an edge_type deletes all edges of that type. Unmentioned edge types are untouched.\n\nTier and timestamp updates are last-writer-wins and never produce a version conflict.\n\nThe `source_id` field repoints the item at a new natural key under the item's `source`. The `(source, source_id)` tuple is unique per tenant — collisions with a different existing item return `409 source_id_conflict`. PATCHing the value the item already carries is a no-op success. Used by the sync-agent to preserve item identity through file renames.",
         "security": [
           {
             "bearerAuth": []
@@ -1626,6 +1626,9 @@
                     ]
                   },
                   "timestamp": {
+                    "type": "string"
+                  },
+                  "source_id": {
                     "type": "string"
                   },
                   "edges": {
@@ -1959,104 +1962,140 @@
             }
           },
           "409": {
-            "description": "Version conflict",
+            "description": "Version conflict (optimistic-concurrency mismatch on `properties`) or `source_id_conflict` (target natural key already in use by another item under the item's `source`).",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
+                  "anyOf": [
+                    {
                       "type": "object",
                       "properties": {
-                        "code": {
-                          "type": "string",
-                          "enum": [
-                            "version_conflict"
-                          ]
-                        },
-                        "status": {
-                          "type": "number",
-                          "enum": [
-                            409
-                          ]
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "status"
-                      ]
-                    },
-                    "current": {
-                      "type": "object",
-                      "properties": {
-                        "version": {
-                          "type": "number"
-                        },
-                        "properties": {
+                        "error": {
                           "type": "object",
-                          "additionalProperties": {
-                            "nullable": true
+                          "properties": {
+                            "code": {
+                              "type": "string",
+                              "enum": [
+                                "version_conflict"
+                              ]
+                            },
+                            "status": {
+                              "type": "number",
+                              "enum": [
+                                409
+                              ]
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "status"
+                          ]
+                        },
+                        "current": {
+                          "type": "object",
+                          "properties": {
+                            "version": {
+                              "type": "number"
+                            },
+                            "properties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "nullable": true
+                              }
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "properties"
+                          ]
+                        },
+                        "ancestor": {
+                          "type": "object",
+                          "properties": {
+                            "version": {
+                              "type": "number"
+                            },
+                            "properties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "nullable": true
+                              }
+                            }
+                          },
+                          "required": [
+                            "version",
+                            "properties"
+                          ]
+                        },
+                        "conflicting_fields": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "merge_policy": {
+                          "type": "object",
+                          "properties": {
+                            "fields": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "string",
+                                "enum": [
+                                  "last_writer_wins",
+                                  "keep_both_copies"
+                                ]
+                              }
+                            },
+                            "default": {
+                              "type": "string",
+                              "enum": [
+                                "last_writer_wins",
+                                "keep_both_copies"
+                              ]
+                            }
                           }
                         }
                       },
                       "required": [
-                        "version",
-                        "properties"
+                        "error",
+                        "current",
+                        "ancestor",
+                        "conflicting_fields",
+                        "merge_policy"
                       ]
                     },
-                    "ancestor": {
+                    {
                       "type": "object",
                       "properties": {
-                        "version": {
-                          "type": "number"
-                        },
-                        "properties": {
+                        "error": {
                           "type": "object",
-                          "additionalProperties": {
-                            "nullable": true
-                          }
+                          "properties": {
+                            "code": {
+                              "type": "string",
+                              "enum": [
+                                "source_id_conflict"
+                              ]
+                            },
+                            "message": {
+                              "type": "string"
+                            },
+                            "details": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "nullable": true
+                              }
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "message"
+                          ]
                         }
                       },
                       "required": [
-                        "version",
-                        "properties"
+                        "error"
                       ]
-                    },
-                    "conflicting_fields": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "merge_policy": {
-                      "type": "object",
-                      "properties": {
-                        "fields": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "type": "string",
-                            "enum": [
-                              "last_writer_wins",
-                              "keep_both_copies"
-                            ]
-                          }
-                        },
-                        "default": {
-                          "type": "string",
-                          "enum": [
-                            "last_writer_wins",
-                            "keep_both_copies"
-                          ]
-                        }
-                      }
                     }
-                  },
-                  "required": [
-                    "error",
-                    "current",
-                    "ancestor",
-                    "conflicting_fields",
-                    "merge_policy"
                   ]
                 }
               }

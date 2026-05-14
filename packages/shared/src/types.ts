@@ -119,6 +119,17 @@ export interface UpdateItemInput {
    *  field lets importers fix dates retroactively without rewriting
    *  properties. Independent of the version-merge path. */
   timestamp?: string;
+  /**
+   * Repoint the item at a new natural-key identifier under the caller's
+   * stamped `source`. The `(source, source_id)` tuple is unique per tenant
+   * — the same constraint enforced at create time — so the server rejects
+   * the update with HTTP 409 `source_id_conflict` if the target value is
+   * already taken by a different item. PATCHing the same value the item
+   * already carries is a no-op success. Used by the sync-agent (T-118) to
+   * preserve item identity through file renames without losing the
+   * path-derived natural key.
+   */
+  source_id?: string;
 }
 
 /** An item paired with its metadata sidecar. */

@@ -45,6 +45,26 @@ import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
 import { rowToItem } from "./helpers.js";
 
+/**
+ * Detect a SQLite unique-constraint violation on `idx_items_source_dedup`.
+ * Mirrors the PG-side trap (see `pg/item-store.ts`). The route-layer
+ * pre-check catches the common case; this covers the narrow race window.
+ */
+function isSourceDedupViolation(err: unknown): boolean {
+  if (err == null || typeof err !== "object") return false;
+  const e = err as { code?: unknown; message?: unknown };
+  const code = typeof e.code === "string" ? e.code : "";
+  const message = typeof e.message === "string" ? e.message : "";
+  if (
+    code.includes("SQLITE_CONSTRAINT") &&
+    message.includes("idx_items_source_dedup")
+  ) {
+    return true;
+  }
+  if (message.includes("idx_items_source_dedup")) return true;
+  return false;
+}
+
 export class SqliteItemStore implements ItemStore {
   constructor(
     private db: DrizzleDb,
@@ -473,9 +493,23 @@ export class SqliteItemStore implements ItemStore {
           updated_at: now,
           ...(input.tier !== undefined && { tier: input.tier }),
           ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
+          ...(input.source_id !== undefined && {
+            source_id: input.source_id,
+          }),
         };
 
-        await tx.update(items).set(setClause).where(whereClause).run();
+        try {
+          await tx.update(items).set(setClause).where(whereClause).run();
+        } catch (err) {
+          if (isSourceDedupViolation(err)) {
+            throw new MymeError(
+              ErrorCode.SOURCE_ID_CONFLICT,
+              `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? "unknown"}"`,
+              { source: row.source, source_id: input.source_id },
+            );
+          }
+          throw err;
+        }
 
         await this.searchStore.remove(id);
         await this.searchStore.index(id, merged, row.type);
@@ -486,6 +520,9 @@ export class SqliteItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
           tier: newTier,
+          ...(input.source_id !== undefined && {
+            source_id: input.source_id,
+          }),
         });
       }
 
@@ -538,9 +575,23 @@ export class SqliteItemStore implements ItemStore {
         updated_at: now,
         ...(input.tier !== undefined && { tier: input.tier }),
         ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
+        ...(input.source_id !== undefined && {
+          source_id: input.source_id,
+        }),
       };
 
-      await tx.update(items).set(mergeSet).where(whereClause).run();
+      try {
+        await tx.update(items).set(mergeSet).where(whereClause).run();
+      } catch (err) {
+        if (isSourceDedupViolation(err)) {
+          throw new MymeError(
+            ErrorCode.SOURCE_ID_CONFLICT,
+            `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? "unknown"}"`,
+            { source: row.source, source_id: input.source_id },
+          );
+        }
+        throw err;
+      }
 
       await this.searchStore.remove(id);
       await this.searchStore.index(id, result.merged, row.type);
@@ -551,6 +602,9 @@ export class SqliteItemStore implements ItemStore {
         version: newVersion,
         updated_at: now,
         tier: newTier,
+        ...(input.source_id !== undefined && {
+          source_id: input.source_id,
+        }),
       });
     });
   }
