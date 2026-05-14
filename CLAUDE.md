@@ -12,7 +12,7 @@ Typed data layer. This monorepo contains seven active workspace packages plus si
 - **@mymehq/runtime-sdk** — In-Worker SDK consumed by Integration Workers. Queue consumer, echo-suppression DO, manifest-typed handler scaffolding.
 - **@mymehq/runtime-test** — In-Worker test harness mirroring the runtime-sdk surface so Integrations can run unit tests in a `miniflare`-style fixture without booting a real Cloudflare Workers runtime.
 
-**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copy-pastes), `rss-watcher`, `github-webhooks`, `google-calendar`, `sync-agent` (the file-to-Myme bridge re-presented as a Connection), `task-auto-archive`. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`.
+**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copy-pastes), `rss-watcher`, `github-webhooks`, `google-calendar`, `sync` (the file-to-Myme bridge re-presented as a Connection — the agent itself lives in `mymehq/sync`), `task-auto-archive`. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`.
 
 **Infra (`infra/`):** `cloudflare` — `wrangler.jsonc` + deploy script for the runtime-control Worker, the per-Integration Workers, and the shared Queues / KV / Containers bindings.
 

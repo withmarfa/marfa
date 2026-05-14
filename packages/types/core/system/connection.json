@@ -59,7 +59,7 @@
     },
     "attached_device": {
       "type": "string",
-      "description": "For kind: integration — id of a system.device item; set when the integration runs on a specific local device (e.g. a sync-agent host)"
+      "description": "For kind: integration — id of a system.device item; set when the integration runs on a specific local device (e.g. a sync agent host)"
     },
     "runtime_status": {
       "type": "enum",

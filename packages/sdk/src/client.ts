@@ -124,7 +124,7 @@ export interface UpdateOptions {
    * stamped `source`. The server enforces `(source, source_id)` uniqueness
    * per tenant — a collision returns HTTP 409 `source_id_conflict`. PATCHing
    * the value the item already carries is a no-op success. Used by the
-   * sync-agent (T-118) to preserve item identity through file renames.
+   * sync agent (T-118) to preserve item identity through file renames.
    */
   source_id?: string;
   /**

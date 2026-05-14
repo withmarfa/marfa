@@ -311,7 +311,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, timestamp, or natural-key `source_id`. Properties shallow-merge into the existing row (unmentioned keys keep their values). The optional `version` field enables optimistic concurrency — pass the version the caller is editing from; a mismatch returns `409 version_conflict` with the three-way context (current, ancestor, conflicting fields, resolved merge policy) the client needs to resolve. See [Conflicts](/concepts/conflicts) and [Errors — version_conflict](/api/errors#version-conflict).\n\nThe `edges` block has replace-all-for-specified-types semantics: any edge_type listed wipes existing outbound edges of that type from this item, then creates new edges to each listed target. Empty array for an edge_type deletes all edges of that type. Unmentioned edge types are untouched.\n\nTier and timestamp updates are last-writer-wins and never produce a version conflict.\n\nThe `source_id` field repoints the item at a new natural key under the item's `source`. The `(source, source_id)` tuple is unique per tenant — collisions with a different existing item return `409 source_id_conflict`. PATCHing the value the item already carries is a no-op success. Used by the sync-agent to preserve item identity through file renames.",
+    "Updates an item's properties, tier, timestamp, or natural-key `source_id`. Properties shallow-merge into the existing row (unmentioned keys keep their values). The optional `version` field enables optimistic concurrency — pass the version the caller is editing from; a mismatch returns `409 version_conflict` with the three-way context (current, ancestor, conflicting fields, resolved merge policy) the client needs to resolve. See [Conflicts](/concepts/conflicts) and [Errors — version_conflict](/api/errors#version-conflict).\n\nThe `edges` block has replace-all-for-specified-types semantics: any edge_type listed wipes existing outbound edges of that type from this item, then creates new edges to each listed target. Empty array for an edge_type deletes all edges of that type. Unmentioned edge types are untouched.\n\nTier and timestamp updates are last-writer-wins and never produce a version conflict.\n\nThe `source_id` field repoints the item at a new natural key under the item's `source`. The `(source, source_id)` tuple is unique per tenant — collisions with a different existing item return `409 source_id_conflict`. PATCHing the value the item already carries is a no-op success. Used by the sync agent to preserve item identity through file renames.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -334,7 +334,7 @@ const updateItemRoute = createRoute({
              *  unique per tenant — server returns 409 `source_id_conflict`
              *  if another item already holds the target value. Idempotent
              *  no-op when the value matches the row's current source_id.
-             *  (T-118 — sync-agent rename preserves item id by repointing
+             *  (T-118 — sync agent rename preserves item id by repointing
              *  the path-derived natural key.) */
             source_id: z.string().optional(),
             // Replace-all-for-specified-types semantics: any edge_type

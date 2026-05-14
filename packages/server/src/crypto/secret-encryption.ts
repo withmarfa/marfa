@@ -146,7 +146,7 @@ export const SECRET_INFO = {
    * API-key credentials carried by `system.credential` rows of
    * `kind: api_key`. Used by Layer-3 connectors that re-present an
    * existing long-lived API key as a Connection's credential — the
-   * sync-agent re-presentation is the first consumer.
+   * sync agent re-presentation is the first consumer.
    *
    * The plaintext key continues to live on the local machine that
    * uses it (e.g. `~/.myme/sync.connection.json` for the sync agent);
