@@ -643,6 +643,18 @@ export const auth_user = pgTable(
     image: text("image"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull(),
     updatedAt: timestamp("updated_at", { mode: "date" }).notNull(),
+    // T-116: account-lifecycle state. `'active'` (default) is the normal
+    // state; `'pending_deletion'` is set on confirm of a delete-account
+    // request and triggers the `PendingDeletePurger` hard-delete sweep
+    // after the grace window elapses. `pending_deletion_at` is the ISO
+    // timestamp stamped on confirm (NULL while active); the purger
+    // compares `pending_deletion_at + grace_days < now()` to gate the
+    // cascade. The TEXT/ISO shape on `pending_deletion_at` deviates
+    // from the auth_* island's timestamp(mode:date) convention because
+    // the column is read by the purger (`storage/retention.ts`) and the
+    // route layer, both of which work in ISO strings throughout.
+    deletion_state: text("deletion_state").notNull().default("active"),
+    pending_deletion_at: text("pending_deletion_at"),
   },
   (table) => [uniqueIndex("idx_auth_user_email").on(table.email)],
 );

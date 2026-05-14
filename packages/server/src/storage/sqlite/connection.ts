@@ -445,7 +445,10 @@ export async function createConnection(sqlitePath: string): Promise<{
       email_verified INTEGER NOT NULL DEFAULT 0,
       image TEXT,
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      -- T-116: account-lifecycle state. See sqlite/schema.ts for the design note.
+      deletion_state TEXT NOT NULL DEFAULT 'active',
+      pending_deletion_at TEXT
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_user_email ON auth_user(email);
 

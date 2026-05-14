@@ -379,7 +379,10 @@ CREATE TABLE IF NOT EXISTS auth_user (
   email_verified BOOLEAN NOT NULL DEFAULT FALSE,
   image TEXT,
   created_at TIMESTAMP NOT NULL,
-  updated_at TIMESTAMP NOT NULL
+  updated_at TIMESTAMP NOT NULL,
+  -- T-116: account-lifecycle state. See pg/schema.ts for the design note.
+  deletion_state TEXT NOT NULL DEFAULT 'active',
+  pending_deletion_at TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_user_email ON auth_user(email);
 
