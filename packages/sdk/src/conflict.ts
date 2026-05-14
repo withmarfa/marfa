@@ -175,6 +175,7 @@ export async function handleConflictUpdate(
   resolver?: ConflictResolver,
   tier?: Tier,
   onAutoMerge?: ConflictAutoMergeListener,
+  sourceId?: string,
 ): Promise<Item> {
   let properties = clientPatch;
   let currentVersion = version;
@@ -189,6 +190,7 @@ export async function handleConflictUpdate(
         properties,
         version: currentVersion,
         ...(tier !== undefined && { tier }),
+        ...(sourceId !== undefined && { source_id: sourceId }),
       },
     });
 

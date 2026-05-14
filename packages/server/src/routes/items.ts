@@ -311,7 +311,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, or timestamp. Properties shallow-merge into the existing row (unmentioned keys keep their values). The optional `version` field enables optimistic concurrency — pass the version the caller is editing from; a mismatch returns `409 version_conflict` with the three-way context (current, ancestor, conflicting fields, resolved merge policy) the client needs to resolve. See [Conflicts](/concepts/conflicts) and [Errors — version_conflict](/api/errors#version-conflict).\n\nThe `edges` block has replace-all-for-specified-types semantics: any edge_type listed wipes existing outbound edges of that type from this item, then creates new edges to each listed target. Empty array for an edge_type deletes all edges of that type. Unmentioned edge types are untouched.\n\nTier and timestamp updates are last-writer-wins and never produce a version conflict.",
+    "Updates an item's properties, tier, timestamp, or natural-key `source_id`. Properties shallow-merge into the existing row (unmentioned keys keep their values). The optional `version` field enables optimistic concurrency — pass the version the caller is editing from; a mismatch returns `409 version_conflict` with the three-way context (current, ancestor, conflicting fields, resolved merge policy) the client needs to resolve. See [Conflicts](/concepts/conflicts) and [Errors — version_conflict](/api/errors#version-conflict).\n\nThe `edges` block has replace-all-for-specified-types semantics: any edge_type listed wipes existing outbound edges of that type from this item, then creates new edges to each listed target. Empty array for an edge_type deletes all edges of that type. Unmentioned edge types are untouched.\n\nTier and timestamp updates are last-writer-wins and never produce a version conflict.\n\nThe `source_id` field repoints the item at a new natural key under the item's `source`. The `(source, source_id)` tuple is unique per tenant — collisions with a different existing item return `409 source_id_conflict`. PATCHing the value the item already carries is a no-op success. Used by the sync-agent to preserve item identity through file renames.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -328,6 +328,15 @@ const updateItemRoute = createRoute({
             /** Override the user-meaningful timestamp (ISO 8601).
              *  Last-writer-wins like `tier`. */
             timestamp: z.string().optional(),
+            /** Repoint at a new natural-key identifier under the item's
+             *  `source` (the server-stamped value, not the caller's). The
+             *  `(source, source_id)` tuple is
+             *  unique per tenant — server returns 409 `source_id_conflict`
+             *  if another item already holds the target value. Idempotent
+             *  no-op when the value matches the row's current source_id.
+             *  (T-118 — sync-agent rename preserves item id by repointing
+             *  the path-derived natural key.) */
+            source_id: z.string().optional(),
             // Replace-all-for-specified-types semantics: any edge_type
             // listed wipes existing outbound edges of that type from
             // this item, then creates new edges to each listed target.
@@ -381,8 +390,16 @@ const updateItemRoute = createRoute({
       description: "Item not found",
     },
     409: {
-      content: { "application/json": { schema: ConflictResponseSchema } },
-      description: "Version conflict",
+      content: {
+        "application/json": {
+          schema: z.union([
+            ConflictResponseSchema,
+            makeErrorResponseSchema(["source_id_conflict"]),
+          ]),
+        },
+      },
+      description:
+        "Version conflict (optimistic-concurrency mismatch on `properties`) or `source_id_conflict` (target natural key already in use by another item under the item's `source`).",
     },
   },
 });
@@ -1329,11 +1346,18 @@ export function itemRoutes(storage: Storage) {
       Object.keys(body.edges).length > 0;
     const hasTier = body.tier !== undefined;
     const hasTimestamp = body.timestamp !== undefined;
+    const hasSourceId = body.source_id !== undefined;
 
-    if (!hasProperties && !hasEdges && !hasTier && !hasTimestamp) {
+    if (
+      !hasProperties &&
+      !hasEdges &&
+      !hasTier &&
+      !hasTimestamp &&
+      !hasSourceId
+    ) {
       throw new MymeError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of `properties`, `edges`, `tier`, or `timestamp` is required.",
+        "At least one of `properties`, `edges`, `tier`, `timestamp`, or `source_id` is required.",
       );
     }
     if (body.timestamp !== undefined && !isValidTimestamp(body.timestamp)) {
@@ -1363,6 +1387,33 @@ export function itemRoutes(storage: Storage) {
     }
 
     requireTypeAccess(c, item.type, "write");
+
+    // Natural-key uniqueness check (T-118 precursor). The `(source, source_id)`
+    // tuple is unique per tenant — the same constraint enforced at create time.
+    // Reject before the write so no partial state lands. PATCHing the value the
+    // item already carries is a no-op success (the lookup returns this item;
+    // we fall through). Cross-source isolation is automatic: `findBySourceId`
+    // scopes by `item.source`, so the same source_id literal coexisting under
+    // a different `source` never collides here.
+    if (
+      hasSourceId &&
+      body.source_id !== undefined &&
+      body.source_id !== item.source_id
+    ) {
+      const newSourceId = body.source_id;
+      const existing = await storage.items.findBySourceId(
+        item.source,
+        newSourceId,
+        tid,
+      );
+      if (existing && existing.id !== id) {
+        throw new MymeError(
+          ErrorCode.SOURCE_ID_CONFLICT,
+          `source_id "${newSourceId}" is already in use under source "${item.source}"`,
+          { source: item.source, source_id: newSourceId },
+        );
+      }
+    }
 
     // Shape-validate the edges payload up-front so the transaction path
     // doesn't have to double-check. Permission gating also runs here
@@ -1454,7 +1505,7 @@ export function itemRoutes(storage: Storage) {
 
     const txResult = await storage.runInTransaction(async () => {
       const updated =
-        hasProperties || hasTier || hasTimestamp
+        hasProperties || hasTier || hasTimestamp || hasSourceId
           ? await storage.items.update(
               id,
               {
@@ -1463,11 +1514,15 @@ export function itemRoutes(storage: Storage) {
                 snapshot: body.snapshot === true ? true : undefined,
                 tier: hasTier ? body.tier : undefined,
                 timestamp: hasTimestamp ? body.timestamp : undefined,
+                source_id: hasSourceId ? body.source_id : undefined,
               },
               tid,
             )
           : item;
-      if ((hasProperties || hasTier || hasTimestamp) && "error" in updated) {
+      if (
+        (hasProperties || hasTier || hasTimestamp || hasSourceId) &&
+        "error" in updated
+      ) {
         return updated;
       }
 

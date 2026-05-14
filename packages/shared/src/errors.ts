@@ -222,6 +222,18 @@ export enum ErrorCode {
    * into a domain-verification flow if they own the matching domain.
    */
   HANDLE_RESERVED = "handle_reserved",
+  /**
+   * T-118 precursor: `PATCH /items/:id` was called with a `source_id` that
+   * already belongs to a different item under the caller's stamped `source`.
+   * The natural-key uniqueness invariant `(source, source_id)` matches the
+   * create-time constraint enforced by `ItemStore.create` — re-pointing an
+   * item at an in-use natural key would create two rows with the same
+   * lookup tuple, breaking the create-or-update contract that downstream
+   * importers and the sync-agent rely on. Rejected pre-write so no partial
+   * state lands. PATCHing the SAME source_id the item already carries is a
+   * no-op success, not a conflict.
+   */
+  SOURCE_ID_CONFLICT = "source_id_conflict",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -292,6 +304,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.EMAIL_SUPPRESSED]: 422,
   [ErrorCode.EMAIL_SEND_FAILED]: 502,
   [ErrorCode.HANDLE_RESERVED]: 400,
+  [ErrorCode.SOURCE_ID_CONFLICT]: 409,
 };
 
 /** Returns the HTTP status code for a given error code. */

@@ -38,6 +38,33 @@ import type {
 } from "@mymehq/shared";
 import type { ItemStore, ItemFilters } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
+
+/**
+ * Detect a Postgres / SQLite unique-constraint violation on the
+ * `idx_items_source_dedup` index. The application-layer pre-check in the
+ * route catches the common case; this trap covers the narrow race window
+ * between the check and the write, surfacing the DB-level violation as a
+ * clean `SOURCE_ID_CONFLICT` instead of a generic 500. Same index name
+ * across both dialects (defined in `pg/schema.ts` + `sqlite/schema.ts`).
+ */
+function isSourceDedupViolation(err: unknown): boolean {
+  if (err == null || typeof err !== "object") return false;
+  const e = err as {
+    code?: unknown;
+    constraint_name?: unknown;
+    message?: unknown;
+  };
+  const code = typeof e.code === "string" ? e.code : "";
+  const constraint =
+    typeof e.constraint_name === "string" ? e.constraint_name : "";
+  const message = typeof e.message === "string" ? e.message : "";
+  // PG: code === '23505' (unique_violation) + constraint_name; libsql
+  // surfaces SQLITE_CONSTRAINT_UNIQUE and embeds the index name in the
+  // message.
+  if (code === "23505" && constraint === "idx_items_source_dedup") return true;
+  if (message.includes("idx_items_source_dedup")) return true;
+  return false;
+}
 import { detectConflict } from "../conflict.js";
 // T-015: when an items.* method opens a transaction and subsequently
 // calls searchStore.{index,remove}, the searchStore writes need to
@@ -449,12 +476,26 @@ export class PgItemStore implements ItemStore {
             ...(input.timestamp !== undefined && {
               timestamp: input.timestamp,
             }),
+            ...(input.source_id !== undefined && {
+              source_id: input.source_id,
+            }),
           };
 
-          await tx
-            .update(items)
-            .set(setClause)
-            .where(this.tenantWhere(id, tenantId));
+          try {
+            await tx
+              .update(items)
+              .set(setClause)
+              .where(this.tenantWhere(id, tenantId));
+          } catch (err) {
+            if (isSourceDedupViolation(err)) {
+              throw new MymeError(
+                ErrorCode.SOURCE_ID_CONFLICT,
+                `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? "unknown"}"`,
+                { source: row.source, source_id: input.source_id },
+              );
+            }
+            throw err;
+          }
 
           await this.searchStore.remove(id);
           await this.searchStore.index(id, merged, row.type);
@@ -465,6 +506,9 @@ export class PgItemStore implements ItemStore {
             version: newVersion,
             updated_at: now,
             tier: newTier,
+            ...(input.source_id !== undefined && {
+              source_id: input.source_id,
+            }),
           });
         }
 
@@ -534,12 +578,26 @@ export class PgItemStore implements ItemStore {
           updated_at: now,
           ...(input.tier !== undefined && { tier: input.tier }),
           ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
+          ...(input.source_id !== undefined && {
+            source_id: input.source_id,
+          }),
         };
 
-        await tx
-          .update(items)
-          .set(mergeSet)
-          .where(this.tenantWhere(id, tenantId));
+        try {
+          await tx
+            .update(items)
+            .set(mergeSet)
+            .where(this.tenantWhere(id, tenantId));
+        } catch (err) {
+          if (isSourceDedupViolation(err)) {
+            throw new MymeError(
+              ErrorCode.SOURCE_ID_CONFLICT,
+              `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? "unknown"}"`,
+              { source: row.source, source_id: input.source_id },
+            );
+          }
+          throw err;
+        }
 
         await this.searchStore.remove(id);
         await this.searchStore.index(id, result.merged, row.type);
@@ -550,6 +608,9 @@ export class PgItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
           tier: newTier,
+          ...(input.source_id !== undefined && {
+            source_id: input.source_id,
+          }),
         });
       });
     });

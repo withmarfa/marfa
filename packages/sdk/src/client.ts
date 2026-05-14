@@ -120,6 +120,14 @@ export interface UpdateOptions {
    *  path for `properties`; a tier-only update never conflicts. */
   tier?: Tier;
   /**
+   * Repoint the item at a new natural-key identifier under the caller's
+   * stamped `source`. The server enforces `(source, source_id)` uniqueness
+   * per tenant — a collision returns HTTP 409 `source_id_conflict`. PATCHing
+   * the value the item already carries is a no-op success. Used by the
+   * sync-agent (T-118) to preserve item identity through file renames.
+   */
+  source_id?: string;
+  /**
    * Item type. Required by the `auto` strategy when a `keep_both_copies`
    * conflict spawns a sibling item. Omit to let the SDK pre-fetch it —
    * when `expectedVersion` is also omitted the pre-fetch happens upfront;
@@ -589,6 +597,7 @@ export class MymeClient {
         options?.resolve,
         options?.tier,
         onAutoMerge,
+        options?.source_id,
       );
     },
 

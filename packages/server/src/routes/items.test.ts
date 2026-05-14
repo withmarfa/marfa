@@ -670,6 +670,202 @@ describe("PATCH /items/:id", () => {
   });
 });
 
+describe("PATCH /items/:id — source_id mutation (T-118 precursor)", () => {
+  it("happy path: PATCH source_id updates the natural key + findBySourceId returns it", async () => {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "rename me" },
+        source_id: "path/to/old-name.md",
+      },
+    });
+    const created = (await createRes.json()) as { item: { id: string } };
+
+    const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+      body: { source_id: "path/to/new-name.md" },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { item: { source_id?: string } };
+    expect(data.item.source_id).toBe("path/to/new-name.md");
+
+    // findBySourceId now returns this item under the new key. The lookup is
+    // tenant + source scoped — read it back via the GET-by-source path.
+    const reread = await request(ctx.app, "GET", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+    });
+    const rereadData = (await reread.json()) as {
+      item: { id: string; source_id?: string };
+    };
+    expect(rereadData.item.source_id).toBe("path/to/new-name.md");
+  });
+
+  it("collision: PATCH source_id to a value already used by another item under the same source → 409 source_id_conflict", async () => {
+    // Two items under the same admin credential (same stamped source).
+    const occupant = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "occupant" },
+        source_id: "occupied-key",
+      },
+    });
+    const mover = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "mover" },
+        source_id: "mover-key",
+      },
+    });
+    expect(occupant.status).toBe(201);
+    expect(mover.status).toBe(201);
+    const moverData = (await mover.json()) as { item: { id: string } };
+
+    const res = await request(ctx.app, "PATCH", `/items/${moverData.item.id}`, {
+      key: ctx.adminKey,
+      body: { source_id: "occupied-key" },
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(body.error.code).toBe("source_id_conflict");
+    expect(body.error.details?.source_id).toBe("occupied-key");
+  });
+
+  it("idempotent no-op: PATCH source_id to the value already held → 200, value unchanged", async () => {
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "idempotent" },
+        source_id: "stable-key",
+      },
+    });
+    const created = (await createRes.json()) as {
+      item: { id: string; version: number };
+    };
+
+    const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+      body: { source_id: "stable-key" },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      item: { source_id?: string; version: number };
+    };
+    expect(data.item.source_id).toBe("stable-key");
+    // Update path still bumps version (a source_id PATCH is a column-set
+    // change like tier/timestamp). The route doesn't short-circuit on
+    // "same value" — only the conflict check is suppressed. Behaviour
+    // matches `tier`-only PATCH above.
+    expect(data.item.version).toBe(created.item.version + 1);
+  });
+
+  it("source_id PATCH alongside properties + stale version: route still rejects on natural-key conflict (collision check runs before storage)", async () => {
+    // Set up: an occupant under `occupied-key-v2`, and a mover currently at
+    // mover-key-v2 with an explicit version pin that won't match after a
+    // subsequent server-side update. We're asserting that the natural-key
+    // gate runs before the version-merge path — collision is the failure
+    // mode the caller sees, not version_conflict, even when the body
+    // carries a stale version.
+    const occupant = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "occupant v2" },
+        source_id: "occupied-key-v2",
+      },
+    });
+    const mover = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "mover v2" },
+        source_id: "mover-key-v2",
+      },
+    });
+    expect(occupant.status).toBe(201);
+    expect(mover.status).toBe(201);
+    const moverData = (await mover.json()) as {
+      item: { id: string; version: number };
+    };
+
+    // Bump the mover so its current version is 2; the PATCH below will
+    // carry stale version 1, which would normally enter the conflict path.
+    await request(ctx.app, "PATCH", `/items/${moverData.item.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { body: "mover v2 bump" }, version: 1 },
+    });
+
+    // PATCH carries stale version + properties + colliding source_id.
+    // The natural-key check runs first; the request fails with 409
+    // source_id_conflict, NOT version_conflict.
+    const res = await request(ctx.app, "PATCH", `/items/${moverData.item.id}`, {
+      key: ctx.adminKey,
+      body: {
+        properties: { body: "client try" },
+        version: 1,
+        source_id: "occupied-key-v2",
+      },
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("source_id_conflict");
+  });
+
+  it("cross-source isolation: same source_id under two different stamped sources coexists with no false collision", async () => {
+    // Mint a key with a distinct stamped `source` (same pattern as the
+    // existing natural-key-upsert cross-source test above).
+    const altKeyRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "alt-source-rename",
+        source: "alt-source-rename",
+        role: "admin",
+        type_permissions: {},
+      },
+    });
+    const altKey = (await altKeyRes.json()) as { key: string };
+
+    // Item A under admin's source, with the target natural-key occupied.
+    const occupant = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: "admin occupies cross-source-key" },
+        source_id: "cross-source-key",
+      },
+    });
+    expect(occupant.status).toBe(201);
+
+    // Item B under altSource, currently holding a different source_id.
+    const mover = await request(ctx.app, "POST", "/items", {
+      key: altKey.key,
+      body: {
+        type: "core.note",
+        properties: { body: "alt mover" },
+        source_id: "alt-original-key",
+      },
+    });
+    expect(mover.status).toBe(201);
+    const moverData = (await mover.json()) as { item: { id: string } };
+
+    // PATCH altSource's item to take on `cross-source-key`. Admin holds
+    // the same source_id literal but under a DIFFERENT source — the
+    // uniqueness scope is `(source, source_id)`, so this must succeed.
+    const res = await request(ctx.app, "PATCH", `/items/${moverData.item.id}`, {
+      key: altKey.key,
+      body: { source_id: "cross-source-key" },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { item: { source_id?: string } };
+    expect(data.item.source_id).toBe("cross-source-key");
+  });
+});
+
 describe("DELETE /items/:id", () => {
   it("soft-deletes item and returns { ok: true }", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
