@@ -84,9 +84,7 @@ async function probe(app: Hono<AppEnv>): Promise<Response> {
   // or trusted-XFF source — both apps share that identifier, so they
   // also share the `(family, window_key) = ("rate", "anon:/probe")`
   // row. That's exactly what we want for the assertion.
-  return await app.fetch(
-    new Request("http://test/probe", { method: "GET" }),
-  );
+  return await app.fetch(new Request("http://test/probe", { method: "GET" }));
 }
 
 describe("rate-limit middleware — cluster-shared cap (T-026)", () => {
