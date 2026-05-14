@@ -85,6 +85,13 @@ export interface AppConfig {
    *  literals don't have to supply it; `index.ts` applies the 1h
    *  fallback. */
   authSessionCleanupIntervalMs?: number;
+  /** T-116: grace window between `auth.account.delete_confirmed` and the
+   *  hard-delete cascade. `0` disables the purger entirely. Env override
+   *  `MYME_ACCOUNT_DELETION_GRACE_DAYS`. Default 30. */
+  accountDeletionGraceDays?: number;
+  /** T-116: cadence (ms) for the pending-delete purger sweep. Env
+   *  override `MYME_ACCOUNT_DELETION_PURGE_INTERVAL_MS`. Default 1h. */
+  accountDeletionPurgeIntervalMs?: number;
   errorWebhookUrl: string;
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
@@ -294,6 +301,14 @@ export function loadConfig(): AppConfig {
     ),
     authSessionCleanupIntervalMs: envNumber(
       process.env.AUTH_SESSION_CLEANUP_INTERVAL_MS,
+      3_600_000,
+    ),
+    accountDeletionGraceDays: envNumber(
+      process.env.MYME_ACCOUNT_DELETION_GRACE_DAYS,
+      30,
+    ),
+    accountDeletionPurgeIntervalMs: envNumber(
+      process.env.MYME_ACCOUNT_DELETION_PURGE_INTERVAL_MS,
       3_600_000,
     ),
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",

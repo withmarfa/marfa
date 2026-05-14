@@ -1544,6 +1544,56 @@ export class MymeClient {
     },
   };
 
+  // ---- Auth (T-116) ----
+
+  /**
+   * Account-lifecycle surface (T-116).
+   *
+   * The data plane (every other namespace on the client) authenticates
+   * with a bearer token; these account-management endpoints accept
+   * EITHER a bearer (workspace_admin / admin in the user's tenant)
+   * OR a better-auth session cookie. The CLI flow uses a bearer (the
+   * user's own key); web flows use the cookie. The transport sends
+   * the bearer header by default, so SDK callers operating with a
+   * bearer just work.
+   */
+  readonly auth = {
+    account: {
+      /** Initiate deletion. Mints a confirm token and dispatches the
+       *  confirmation email. Returns when the request is accepted
+       *  (HTTP 202). Idempotent within the token TTL. */
+      requestDelete: async (): Promise<void> => {
+        await this.transport.request<{ ok: true }>(
+          "POST",
+          "/auth/account/delete",
+        );
+      },
+      /** Consume a confirmation token. The server's GET response is an
+       *  HTML page intended for the email recipient's browser; this
+       *  helper exposes the same effect to programmatic callers (CLI
+       *  / integration tests). Throws on bad / expired tokens. */
+      confirmDelete: async (token: string): Promise<void> => {
+        const res = await this.transport.rawRequest(
+          "GET",
+          `/auth/account/delete/confirm?token=${encodeURIComponent(token)}`,
+        );
+        if (!res.ok) {
+          throw new Error(
+            `Account-delete confirm failed (${String(res.status)})`,
+          );
+        }
+      },
+      /** Cancel an in-flight deletion (session-cookie or bearer path).
+       *  Throws if the account is not in pending-deletion. */
+      cancel: async (): Promise<void> => {
+        await this.transport.request<{ ok: true }>(
+          "POST",
+          "/auth/account/delete/cancel",
+        );
+      },
+    },
+  };
+
   // ---- Profile (T-074) ----
 
   /**

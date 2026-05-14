@@ -2,6 +2,7 @@ import type {
   AuthSessionStore,
   CoordinationStore,
   ItemStore,
+  Storage,
   TenantStore,
 } from "./interface.js";
 import type { TenantConfig } from "@mymehq/shared";
@@ -207,6 +208,101 @@ export class AuthSessionCleaner {
       }
     } catch (err) {
       log("error", "Auth session cleanup error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
+/**
+ * T-116: hard-delete accounts that have sat in `pending_deletion` past
+ * the grace window. Pattern mirrors `AuthSessionCleaner` (instance-wide
+ * sweep, cluster-wide coordination lock). Two-layer locking:
+ *
+ *   - Outer lock `account-deletion-purge` gates the whole tick so
+ *     multi-instance deployments don't double-list the due set.
+ *   - Per-account inner lock (`account-delete:<auth_user_id>`) inside
+ *     the loop so a `cancelPendingDeletion` racing the cascade can't
+ *     leave the row half-deleted. The cascade transaction would also
+ *     catch the race (`auth_user.deletion_state` would no longer be
+ *     `'pending_deletion'` and the cascade would silently delete a
+ *     now-active account), so the lock is belt + braces.
+ *
+ * `graceDays <= 0` disables the job — operator override for self-hosts
+ * that don't want a grace window.
+ */
+export class PendingDeletePurger {
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(
+    private storage: Storage,
+    private graceDays: number,
+    private intervalMs: number,
+    private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
+  ) {}
+
+  start(): void {
+    this.startupTimeout = setTimeout(() => void this.poll(), 15_000);
+    this.interval = setInterval(() => void this.poll(), this.intervalMs);
+  }
+
+  stop(): void {
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+
+  /** Test-driven entry point. Returns the number of accounts purged
+   *  this tick. */
+  async runOnce(): Promise<number> {
+    if (this.graceDays <= 0) return 0;
+    const accountLifecycle = this.storage.accountLifecycle;
+    if (!accountLifecycle) return 0;
+    const cutoff = new Date(
+      this.nowFn().getTime() - this.graceDays * MS_PER_DAY,
+    ).toISOString();
+    const due = await accountLifecycle.listPendingDeletionDue(cutoff);
+    let purged = 0;
+    for (const row of due) {
+      const locked = this.coordination
+        ? await this.coordination.withJobLock(
+            `account-delete:${row.auth_user_id}`,
+            async () => {
+              await this.storage.deleteAccountCascade(row.auth_user_id);
+              return true;
+            },
+          )
+        : await (async () => {
+            await this.storage.deleteAccountCascade(row.auth_user_id);
+            return true;
+          })();
+      if (locked) purged += 1;
+    }
+    return purged;
+  }
+
+  private async poll(): Promise<void> {
+    try {
+      const purged = this.coordination
+        ? await this.coordination.withJobLock("account-deletion-purge", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (purged !== undefined && purged > 0) {
+        log("info", "Pending-delete purge", {
+          purged,
+          graceDays: this.graceDays,
+        });
+      }
+    } catch (err) {
+      log("error", "Pending-delete purge error", {
         error: err instanceof Error ? err.message : String(err),
       });
     }

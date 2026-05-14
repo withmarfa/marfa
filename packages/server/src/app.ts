@@ -55,6 +55,8 @@ import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { cycleMiddleware } from "./middleware/cycle.js";
 import { tenantSuspensionMiddleware } from "./middleware/tenant-suspension.js";
+import { accountDeletionGuardMiddleware } from "./middleware/account-deletion-guard.js";
+import { authAccountRoutes } from "./routes/auth-account.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { rlsTenantContextMiddleware } from "./middleware/rls-tenant-context.js";
 import type { PgDb } from "./storage/pg/connection.js";
@@ -206,6 +208,15 @@ export function createApp(
   // admin keys bypass so operators can manage a suspended tenant.
   app.use("*", tenantSuspensionMiddleware(storage));
 
+  // T-116: block sign-ins on accounts in `pending_deletion`. Mounted
+  // AFTER the tenant suspension guard so suspended-tenant rejection
+  // still wins. Only triggers on the better-auth sign-in paths —
+  // every other path is a pass-through.
+  app.use(
+    "*",
+    accountDeletionGuardMiddleware(storage, emailTransport, config.authBaseUrl),
+  );
+
   // Cycle metadata resolution (T-039). Reads X-Myme-Cycle-Origin /
   // X-Myme-Cycle-Hop headers (a connector continuing a chain) or falls
   // back to the api key's connection binding (a connector kicking off a
@@ -354,6 +365,13 @@ export function createApp(
   if (config.authMode === "hosted" && storage.users && storage.tenants) {
     app.route("/auth", userAuthRoutes(storage, config.apiKeySalt));
   }
+  // T-116: account-lifecycle routes — initiate / confirm / cancel.
+  // Mounted BEFORE the better-auth catch-all so the explicit handlers
+  // win for `/auth/account/*`.
+  app.route(
+    "/auth",
+    authAccountRoutes(storage, auth, emailTransport, config.authBaseUrl),
+  );
 
   // Better-auth catch-all for unmatched /auth/* paths (sign-in, sign-up,
   // magic-link, passkey, federated OIDC, session). Hono dispatches in

@@ -1,4 +1,5 @@
-import { eq, and, desc, lt, or, gte, lte, isNull } from "drizzle-orm";
+import { eq, and, desc, lt, or, gte, lte, isNull, like } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { generateId } from "@mymehq/shared";
 import type { PaginatedResult } from "@mymehq/shared";
 import type { AuditStore, AuditEntry } from "../interface.js";
@@ -156,4 +157,63 @@ export class SqliteAuditStore implements AuditStore {
     const result = await this.db.delete(auditLog).where(where).run();
     return result.rowsAffected;
   }
+
+  async redactForUser(authUserId: string): Promise<number> {
+    // T-116: see pg/audit-store.ts for the full design note. LIKE-prefilter
+    // narrows the scan; in-memory parse + exact-equality recursion is the
+    // truth.
+    const sentinel = JSON.stringify({
+      redacted: true,
+      user_id_sha256: createHash("sha256").update(authUserId).digest("hex"),
+    });
+    const candidates = await this.db
+      .select({
+        id: auditLog.id,
+        details: auditLog.details,
+        resource_id: auditLog.resource_id,
+      })
+      .from(auditLog)
+      .where(
+        or(
+          eq(auditLog.resource_id, authUserId),
+          like(auditLog.details, `%${authUserId}%`),
+        ),
+      )
+      .all();
+    let rewritten = 0;
+    for (const row of candidates) {
+      if (!shouldRedact(row.details, row.resource_id, authUserId)) continue;
+      await this.db
+        .update(auditLog)
+        .set({ details: sentinel })
+        .where(eq(auditLog.id, row.id))
+        .run();
+      rewritten += 1;
+    }
+    return rewritten;
+  }
+}
+
+function shouldRedact(
+  detailsRaw: string,
+  resourceId: string | null,
+  authUserId: string,
+): boolean {
+  if (resourceId === authUserId) return true;
+  const parsed = safeJsonParse<unknown>(detailsRaw, null, "audit_log.details");
+  return containsExactValue(parsed, authUserId);
+}
+
+function containsExactValue(node: unknown, needle: string): boolean {
+  if (typeof node === "string") return node === needle;
+  if (Array.isArray(node)) {
+    for (const v of node) if (containsExactValue(v, needle)) return true;
+    return false;
+  }
+  if (node && typeof node === "object") {
+    for (const v of Object.values(node)) {
+      if (containsExactValue(v, needle)) return true;
+    }
+  }
+  return false;
 }

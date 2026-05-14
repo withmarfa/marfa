@@ -13,6 +13,7 @@ import { VersionThinner } from "./storage/version-thinner.js";
 import {
   TrashPurger,
   AuthSessionCleaner,
+  PendingDeletePurger,
   runTenantCleanup,
 } from "./storage/retention.js";
 import type { TenantFanout } from "./storage/retention.js";
@@ -213,6 +214,20 @@ async function main() {
     : undefined;
   authSessionCleaner?.start();
 
+  // T-116: pending-delete purger. Gated on `accountLifecycle` being
+  // wired (production storage always wires it; bare test stubs that
+  // omit it skip the job).
+  const pendingDeletePurger = storage.accountLifecycle
+    ? new PendingDeletePurger(
+        storage,
+        config.accountDeletionGraceDays ?? 30,
+        config.accountDeletionPurgeIntervalMs ?? 3_600_000,
+        undefined,
+        storage.coordination,
+      )
+    : undefined;
+  pendingDeletePurger?.start();
+
   // Wave C PR1: construct the email transport once at boot and thread
   // it into createApp. The factory's sender-domain check fails loud
   // here if MYME_EMAIL_FROM doesn't end @mail.myme.so on the Resend
@@ -274,6 +289,7 @@ async function main() {
     versionThinner.stop();
     trashPurger.stop();
     authSessionCleaner?.stop();
+    pendingDeletePurger?.stop();
     if (reactiveRunBridge) {
       void reactiveRunBridge.stop().catch(() => {
         // Bridge cleanup errors during shutdown are swallowed; the

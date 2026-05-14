@@ -31,6 +31,8 @@ import { PgSettingsStore } from "./settings-store.js";
 import { PgCoordinationStore } from "./coordination-store.js";
 import { PgTenantQuotaStore } from "./tenant-quota-store.js";
 import { PgEmailSuppressionsStore } from "./email-suppressions-store.js";
+import { PgAccountLifecycleStore } from "./account-lifecycle-store.js";
+import { pgDeleteAccountCascade } from "./account-cascade.js";
 
 export async function createPgStorage(
   connectionString: string,
@@ -108,6 +110,10 @@ export async function createPgStorage(
     audit: auditStore,
     eventLog: eventLogStore,
     authSessions: authSessionStore,
+    // T-116: account-lifecycle store reads/writes auth_user's deletion
+    // columns. Lives on the unwrapped base instance because the auth_*
+    // tables are RLS-bypassed (better-auth manages its own context).
+    accountLifecycle: new PgAccountLifecycleStore(baseDb),
     settings: new PgSettingsStore(db),
     coordination: new PgCoordinationStore(client),
     tenantQuotas: new PgTenantQuotaStore(db),
@@ -125,6 +131,12 @@ export async function createPgStorage(
         result = await fn();
       });
       return result as T;
+    },
+    deleteAccountCascade: (authUserId: string): Promise<void> => {
+      // The cascade runs on the unwrapped base instance: see the note
+      // on `accountLifecycle` above — auth_* are RLS-bypassed and this
+      // operation crosses tenant/auth boundaries by design.
+      return pgDeleteAccountCascade(baseDb, storage as Storage, authUserId);
     },
     close,
     /** Truncate all tables — used by tests for isolation. */
