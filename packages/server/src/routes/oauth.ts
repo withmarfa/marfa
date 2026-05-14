@@ -152,9 +152,10 @@ export function authRoutes(
   // 3 requests per email per hour. Sits on top of the per-IP rate
   // limit configured in `middleware/rate-limit.ts` — per-IP bounds a
   // noisy client; per-email bounds the address itself so a burst from
-  // many IPs can't drown one user's inbox. In-memory only; multi-
-  // instance deployments would need a shared counter (deferred).
-  const forgotPasswordThrottle = new PerEmailThrottle({
+  // many IPs can't drown one user's inbox. T-026 moved the counter
+  // into `storage.rateLimits`; cluster-shared on Postgres, in-process
+  // on SQLite single-process self-hosts.
+  const forgotPasswordThrottle = new PerEmailThrottle(storage, {
     limit: 3,
     windowMs: 60 * 60 * 1000,
   });
@@ -1432,7 +1433,7 @@ export function authRoutes(
 
     // Per-email throttle. The rate-limit middleware also caps per-IP;
     // this is the parallel cap for the email itself.
-    const throttle = forgotPasswordThrottle.attempt(emailStr);
+    const throttle = await forgotPasswordThrottle.attempt(emailStr);
     if (!throttle.allowed) {
       const params = new URLSearchParams({
         email: emailStr,

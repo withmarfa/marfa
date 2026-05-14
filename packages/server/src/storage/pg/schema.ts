@@ -535,6 +535,40 @@ export const auditLog = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// rate_limit_windows (T-026: cluster-shared rate-limit + throttle counters)
+// ---------------------------------------------------------------------------
+
+// Single table backing two consumers:
+//   - `rate-limit middleware` (family = "rate") — per-credential and
+//     per-tenant request windows. Window keys are
+//     "<credential-id-or-ip>:<path-prefix>" and "tenant:<tenant-id>".
+//   - `forgot-password per-email throttle` (family = "throttle") —
+//     window key "forgot-password:<lowercased-email>", window 1h.
+//
+// Each row is upserted atomically (`INSERT ... ON CONFLICT DO UPDATE`)
+// so two server instances pointed at the same DB share counters
+// cluster-wide. Expired rows (`expires_at < now()`) are GC'd by the
+// `RateLimitWindowCleaner` retention sweep.
+//
+// Composite PK on (family, window_key) keeps the two consumer surfaces
+// in one physical table without risk of key collisions across families.
+// `expires_at` is TEXT/ISO to stay consistent with the rest of myme's
+// timestamp convention; lexicographic comparison works for cutoff sweeps.
+export const rateLimitWindows = pgTable(
+  "rate_limit_windows",
+  {
+    family: text("family").notNull(),
+    window_key: text("window_key").notNull(),
+    count: integer("count").notNull(),
+    expires_at: text("expires_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.family, table.window_key] }),
+    index("idx_rate_limit_windows_expires_at").on(table.expires_at),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // settings (generic single-row-per-key KV for workspace-wide flags)
 // ---------------------------------------------------------------------------
 

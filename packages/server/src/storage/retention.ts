@@ -309,6 +309,67 @@ export class PendingDeletePurger {
   }
 }
 
+/**
+ * T-026: drops expired `rate_limit_windows` rows on a periodic tick.
+ * Expired rows aren't a correctness risk (the upsert path overwrites
+ * them transparently inside the next request); the GC just keeps the
+ * table from growing unboundedly across the long tail of one-shot
+ * windows (e.g. a single IP that hit `/auth/sign-up` once).
+ *
+ * Instance-wide, not tenant-scoped — the table has no `tenant_id`
+ * column. Cluster-wide coordination lock keyed `"rate-limit-cleanup"`
+ * keeps multi-instance deployments running once per tick.
+ */
+export class RateLimitWindowCleaner {
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(
+    private storage: Storage,
+    private intervalMs: number,
+    private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
+  ) {}
+
+  start(): void {
+    this.startupTimeout = setTimeout(() => void this.poll(), 20_000);
+    this.interval = setInterval(() => void this.poll(), this.intervalMs);
+  }
+
+  stop(): void {
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+
+  /** Test entry point — drops every expired window row. */
+  async runOnce(): Promise<number> {
+    return this.storage.rateLimits.cleanup(this.nowFn().toISOString());
+  }
+
+  private async poll(): Promise<void> {
+    try {
+      const deleted = this.coordination
+        ? await this.coordination.withJobLock("rate-limit-cleanup", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (deleted !== undefined && deleted > 0) {
+        log("info", "Rate-limit window cleanup", { deleted });
+      }
+    } catch (err) {
+      log("error", "Rate-limit window cleanup error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Per-tenant fan-out helper
 // ---------------------------------------------------------------------------

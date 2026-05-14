@@ -434,6 +434,19 @@ export async function createConnection(sqlitePath: string): Promise<{
       value TEXT NOT NULL
     );
 
+    -- T-026: cluster-shared rate-limit + per-email throttle counters.
+    -- One physical table; family discriminates the two consumer surfaces.
+    -- See pg/schema.ts for the full design note.
+    CREATE TABLE IF NOT EXISTS rate_limit_windows (
+      family TEXT NOT NULL,
+      window_key TEXT NOT NULL,
+      count INTEGER NOT NULL,
+      expires_at TEXT NOT NULL,
+      PRIMARY KEY (family, window_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_rate_limit_windows_expires_at
+      ON rate_limit_windows(expires_at);
+
     -- Better Auth tables (auth_* prefix, isolated from myme's own users table).
     -- Timestamps stored as INTEGER (Unix seconds) to match Drizzle
     -- integer(mode:timestamp) Date round-trip; the better-auth adapter

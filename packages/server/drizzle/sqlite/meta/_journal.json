@@ -309,6 +309,13 @@
       "when": 1778941700000,
       "tag": "0043_auth_user_deletion_state",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1778941800000,
+      "tag": "0044_rate_limit_windows",
+      "breakpoints": true
     }
   ]
 }

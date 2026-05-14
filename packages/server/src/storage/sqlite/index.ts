@@ -25,6 +25,7 @@ import { SqliteEdgeTypeStore } from "./edge-type-store.js";
 import { SqliteSettingsStore } from "./settings-store.js";
 import { SqliteCoordinationStore } from "./coordination-store.js";
 import { SqliteTenantQuotaStore } from "./tenant-quota-store.js";
+import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteEmailSuppressionsStore } from "./email-suppressions-store.js";
 import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { sqliteDeleteAccountCascade } from "./account-cascade.js";
@@ -133,6 +134,10 @@ export async function createSqliteStorage(
     settings: new SqliteSettingsStore(db),
     coordination: new SqliteCoordinationStore(),
     tenantQuotas: new SqliteTenantQuotaStore(db),
+    // T-026: cluster-shared rate-limit + per-email throttle counters.
+    // Same shape as the PG wiring; SQLite is single-process by file
+    // lock so "shared" collapses to "still correct in-process".
+    rateLimits: new SqliteRateLimitStore(db),
     emailSuppressions: new SqliteEmailSuppressionsStore(db),
     // T-050: tenant store is wired unconditionally so the per-tenant
     // cleanup fan-out works on any deployment, including keys-mode
