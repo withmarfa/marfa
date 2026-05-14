@@ -1,5 +1,5 @@
 /**
- * One-shot data migration — Layer 3 PR 4 (sync-agent re-presentation).
+ * One-shot data migration — Layer 3 PR 4 (sync re-presentation).
  *
  * Re-presents an existing `~/.myme/sync.json` configuration as a
  * `system.connection` (kind: integration,
@@ -40,7 +40,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { encryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
-import { SYNC_AGENT_MANIFEST } from "@mymehq/integration-sync-agent";
+import { SYNC_MANIFEST } from "@mymehq/integration-sync";
 import type { Storage } from "../storage/interface.js";
 
 interface SyncJsonShape {
@@ -134,7 +134,7 @@ export async function migrateSyncJsonToConnection(
     {
       type: "system.credential",
       properties: {
-        label: "sync-agent (migrated from sync.json)",
+        label: "sync (migrated from sync.json)",
         kind: "api_key",
         secret_encrypted,
       },
@@ -189,7 +189,7 @@ async function ensureIntegrationItem(
   tenantId: string | undefined,
 ): Promise<string> {
   // Check existence by manifest_name + manifest_version.
-  const filter = `properties.manifest_name eq "${SYNC_AGENT_MANIFEST.name}" AND properties.manifest_version eq "${SYNC_AGENT_MANIFEST.version}"`;
+  const filter = `properties.manifest_name eq "${SYNC_MANIFEST.name}" AND properties.manifest_version eq "${SYNC_MANIFEST.version}"`;
   const page = await storage.items.list({
     type: "system.integration",
     limit: 1,
@@ -203,13 +203,13 @@ async function ensureIntegrationItem(
     {
       type: "system.integration",
       properties: {
-        manifest_name: SYNC_AGENT_MANIFEST.name,
-        manifest_version: SYNC_AGENT_MANIFEST.version,
-        publisher: SYNC_AGENT_MANIFEST.publisher,
-        summary: SYNC_AGENT_MANIFEST.description,
-        direction: SYNC_AGENT_MANIFEST.direction,
-        runtime_compatibility: SYNC_AGENT_MANIFEST.runtime_compatibility,
-        manifest: SYNC_AGENT_MANIFEST as unknown as Record<string, unknown>,
+        manifest_name: SYNC_MANIFEST.name,
+        manifest_version: SYNC_MANIFEST.version,
+        publisher: SYNC_MANIFEST.publisher,
+        summary: SYNC_MANIFEST.description,
+        direction: SYNC_MANIFEST.direction,
+        runtime_compatibility: SYNC_MANIFEST.runtime_compatibility,
+        manifest: SYNC_MANIFEST as unknown as Record<string, unknown>,
         registered_at: new Date().toISOString(),
       },
     },

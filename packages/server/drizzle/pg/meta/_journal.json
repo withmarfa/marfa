@@ -365,6 +365,13 @@
       "when": 1778941800000,
       "tag": "0051_rate_limit_windows",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1778941900000,
+      "tag": "0052_rename_sync_manifest",
+      "breakpoints": true
     }
   ]
 }

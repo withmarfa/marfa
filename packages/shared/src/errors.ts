@@ -229,7 +229,7 @@ export enum ErrorCode {
    * create-time constraint enforced by `ItemStore.create` — re-pointing an
    * item at an in-use natural key would create two rows with the same
    * lookup tuple, breaking the create-or-update contract that downstream
-   * importers and the sync-agent rely on. Rejected pre-write so no partial
+   * importers and the sync agent rely on. Rejected pre-write so no partial
    * state lands. PATCHing the SAME source_id the item already carries is a
    * no-op success, not a conflict.
    */

@@ -101,7 +101,7 @@ id = "REPLACE_WITH_PROD_KV_ID"
 # `resolveServiceBinding` switch (`arm-schedule.ts`, `verify.ts`).
 #
 # In-tree integrations without a deployed Worker today
-# (`_template`, `mymehq.google-calendar`, `mymehq.sync-agent`) intentionally
+# (`_template`, `mymehq.google-calendar`, `mymehq.sync`) intentionally
 # have NO service binding. The verify route surfaces `no_service_binding`
 # (503) for those — wiring them up requires the integration to first
 # ship its own `wrangler.toml` and pass `wrangler deploy`.

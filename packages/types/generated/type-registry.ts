@@ -589,7 +589,7 @@ const systemConnection: TypeSchema = {
     configuration: { type: "object", description: "For kind: integration — per-Integration JSON config payload (shape determined by the Integration manifest)" },
     direction: { type: "enum", description: "For kind: integration — does this integration read from, write to, or both", enum_values: ["read", "write", "both"] },
     triggers: { type: "array", description: "For kind: integration — array of trigger declarations. Each entry shape: { type: 'schedule' | 'webhook' | 'item-event' | 'manual', ...per-type config }. The Integration manifest constrains which trigger types are valid.", items_type: "object" },
-    attached_device: { type: "string", description: "For kind: integration — id of a system.device item; set when the integration runs on a specific local device (e.g. a sync-agent host)" },
+    attached_device: { type: "string", description: "For kind: integration — id of a system.device item; set when the integration runs on a specific local device (e.g. a sync agent host)" },
     runtime_status: { type: "enum", description: "For kind: integration — operational health, distinct from the universal lifecycle `status`. Server-stamped only in WS2 (no client write surface; runtime executor in WS3 is the legitimate writer).", enum_values: ["healthy", "degraded", "failing", "paused", "reauth_required"] },
     last_sync_at: { type: "datetime", description: "For kind: integration — last successful sync run timestamp" },
     next_run_at: { type: "datetime", description: "For kind: integration — next scheduled run, when applicable" },
