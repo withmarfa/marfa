@@ -400,10 +400,10 @@ describe("T-136 — cascade race-safety", () => {
     expect(after?.pending_deletion_at).toBeTruthy();
   });
 
-  it("purger.runOnce returns 0 when every due row was cancelled before cascade", async () => {
+  it("purger.runOnce drives the cascade, which short-circuits when a cancel races between list-due and cascade", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
-    await signUpAndVerify(ctx, "purger-cancel@example.com");
-    const { cookie } = await signIn(ctx, "purger-cancel@example.com");
+    await signUpAndVerify(ctx, "purger-race@example.com");
+    const { cookie } = await signIn(ctx, "purger-race@example.com");
     await request(ctx.app, "POST", "/auth/account/delete", {
       headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
     });
@@ -416,27 +416,70 @@ describe("T-136 — cascade race-safety", () => {
     );
 
     const lifecycle = ctx.storage.accountLifecycle;
+    expect(lifecycle).toBeTruthy();
     const before = await lifecycle?.getAccountLifecycleByEmail(
-      "purger-cancel@example.com",
+      "purger-race@example.com",
     );
     const authUserId = before?.auth_user_id ?? "";
 
-    // User cancels during the purger's window.
-    await lifecycle?.cancelPendingDeletion(authUserId);
+    // **Race-simulating proxy.** The default `cancelPendingDeletion`
+    // before `runOnce` would short-circuit the test before the purger
+    // ever sees the row — `listPendingDeletionDue` filters on
+    // `deletion_state = 'pending_deletion'` and would skip the row
+    // entirely. We need the purger to see the row as pending, THEN
+    // have the cancel land between list-due and the per-account
+    // cascade — that's the actual T-136 race window.
+    //
+    // We achieve this by wrapping `storage` in a proxy that intercepts
+    // `listPendingDeletionDue` to fire `cancelPendingDeletion` as a
+    // side effect immediately before returning the (still-pending) row
+    // ids. The cascade then runs against a row that was pending at
+    // list-time but is `active` by re-check time.
+    const racingStorage = new Proxy(ctx.storage, {
+      get(target, prop, receiver) {
+        if (prop === "accountLifecycle") {
+          const wrapped = target.accountLifecycle;
+          if (!wrapped) return wrapped;
+          return new Proxy(wrapped, {
+            get(t, p, r): unknown {
+              if (p === "listPendingDeletionDue") {
+                return async (cutoffIso: string) => {
+                  const due = await t.listPendingDeletionDue(cutoffIso);
+                  // Cancel between list-due and cascade. This is the
+                  // race window the production code closes via the
+                  // in-transaction re-check.
+                  await t.cancelPendingDeletion(authUserId);
+                  return due;
+                };
+              }
+              return Reflect.get(t, p, r) as unknown;
+            },
+          });
+        }
+        return Reflect.get(target, prop, receiver) as unknown;
+      },
+    });
 
     // Purger runs with the future clock that would normally hard-delete.
     const purger = new PendingDeletePurger(
-      ctx.storage,
+      racingStorage,
       30,
       3_600_000,
       () => new Date(Date.now() + 31 * 86_400_000),
-      ctx.storage.coordination,
+      racingStorage.coordination,
     );
     const purged = await purger.runOnce();
+    // The cascade must have short-circuited via its in-transaction
+    // re-check — the row was pending at list-time, active by cascade
+    // time. Without the re-check, the cascade would have hard-deleted
+    // the now-active account. With it, the cascade returns false and
+    // the purger's counter stays at zero.
     expect(purged).toBe(0);
 
-    // Account intact.
+    // Account intact and back to active.
     const after = await lifecycle?.getAccountLifecycle(authUserId);
+    expect(after).not.toBeNull();
     expect(after?.deletion_state).toBe("active");
+    expect(after?.pending_deletion_at).toBeNull();
   });
 });
