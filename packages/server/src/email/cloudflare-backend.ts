@@ -55,12 +55,19 @@
  * so server logs MUST NOT introduce a parallel PII trail through the
  * back door.
  *
- * # Response shape
+ * # Response shape (verified live against the open-beta API)
  *
- * Success (2xx): `{ success: true, result: { delivered: [...], permanent_bounces: [...], queued: [...] } }`.
- * CF does not return a native message id, so we synthesise one for
+ * Success (2xx): `{ success: true, result: { delivered: [addr...],
+ * queued: [addr...], permanent_bounces: [addr...] } }`. CF does not
+ * return a native per-send message id, so we synthesise one for
  * `EmailSendResult.messageId` by hashing the idempotency key — gives
  * log-correlation continuity even without a CF-side identifier.
+ *
+ * `permanent_bounces` is non-empty when CF rejected the recipient
+ * upstream (CF's internal suppression list, invalid mailbox, etc.) —
+ * the HTTP status is still 200, but we surface as
+ * `{ ok: false, retryable: false, error: "permanent_bounce" }` so the
+ * caller doesn't treat it as a successful send.
  *
  * Error (4xx/5xx): `{ success: false, errors: [{ code, message }] }`.
  * 5xx / 429 / fetch-network errors map to `retryable: true`; 4xx maps
@@ -189,11 +196,36 @@ export class CloudflareTransport implements EmailTransport {
       };
     }
 
+    // 2xx + success: true. Inspect the result envelope —
+    // CF returns `delivered`, `queued`, `permanent_bounces` arrays.
+    // A non-empty `permanent_bounces` means the recipient was rejected
+    // upstream (CF's own suppression list, invalid mailbox, etc.) —
+    // surface as a non-retryable failure even though the HTTP status
+    // is 200.
+    const result = payload.result ?? {};
+    const permanentBounces = result.permanent_bounces ?? [];
+    if (permanentBounces.length > 0) {
+      log("warn", "Email send rejected (Cloudflare permanent bounce)", {
+        backend: "cloudflare",
+        recipient_domain: domainOf(message.to),
+        bounce_count: permanentBounces.length,
+        tags: message.tags,
+        retryable: false,
+      });
+      return {
+        ok: false,
+        error: "permanent_bounce",
+        retryable: false,
+      };
+    }
+
     const messageId = synthesiseMessageId(message.idempotencyKey);
     log("info", "Email sent", {
       backend: "cloudflare",
       recipient_domain: domainOf(message.to),
       message_id: messageId,
+      delivered_count: (result.delivered ?? []).length,
+      queued_count: (result.queued ?? []).length,
       tags: message.tags,
     });
     return { ok: true, messageId };

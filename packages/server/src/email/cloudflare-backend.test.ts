@@ -123,6 +123,32 @@ describe("CloudflareTransport", () => {
     expect(body.reply_to).toBe("override@mail.myme.so");
   });
 
+  it("returns retryable: false on 200 with non-empty permanent_bounces", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({
+        success: true,
+        result: {
+          delivered: [],
+          queued: [],
+          permanent_bounces: ["alice@gmail.com"],
+        },
+      }),
+    );
+    const transport = new CloudflareTransport({
+      accountId: "acct",
+      apiToken: "tok",
+      from: "hello@mail.myme.so",
+      fetchImpl,
+    });
+
+    const result = await transport.send(makeMessage());
+    expect(result).toEqual({
+      ok: false,
+      error: "permanent_bounce",
+      retryable: false,
+    });
+  });
+
   it("returns retryable: false on 4xx", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(
