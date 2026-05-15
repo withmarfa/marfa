@@ -18,7 +18,7 @@
 import { randomBytes } from "node:crypto";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, like } from "drizzle-orm";
 import { MymeError, ErrorCode } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -150,12 +150,15 @@ export function authAccountRoutes(
       });
     }
 
+    // T-139: no plaintext email in audit details. The auth_user_id in
+    // resource_id correlates back to the email via the auth_user row when
+    // operators need it; logging the email here would re-introduce the
+    // PII trail T-107 deliberately removed from email-transport logs.
     void storage.audit.log({
       action: "auth.account.delete_requested",
       resource_type: "auth_account",
       resource_id: authUserId,
       client_ip: c.var.clientIp ?? null,
-      details: { email },
     });
 
     return c.json({ ok: true }, 202);
@@ -220,12 +223,12 @@ export function authAccountRoutes(
       });
     }
 
+    // T-139: see the delete_requested site above for the rationale.
     void storage.audit.log({
       action: "auth.account.delete_confirmed",
       resource_type: "auth_account",
       resource_id: authUserId,
       client_ip: c.var.clientIp ?? null,
-      details: { email },
     });
 
     return c.html(renderConfirmedPage());
@@ -432,43 +435,82 @@ async function findVerificationByValue(
 ): Promise<VerificationRow | null> {
   const db = storage.betterAuthDb;
   if (!db) return null;
-  // Use raw SQL with parameterised LIKE; lifts the dialect branching
-  // burden compared to per-dialect Drizzle calls and the auth_*
-  // schemas line up at the row level.
-  // Note: rows may not exist; this is a best-effort idempotency probe.
+  // Drizzle query builder on both dialects (T-138 — replaces a raw-SQL
+  // path that string-interpolated the SQLite branch). `like` + `eq`
+  // parameterise everything; both schemas expose the same column shape
+  // so the only dialect difference is `.get()` (sqlite) vs result-array
+  // destructure (pg) and the dynamic schema import.
   if (storage.betterAuthDialect === "pg") {
-    const pgStorage = storage as unknown as {
-      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    if (!pgStorage.__pgClient) return null;
-    const rows = (await pgStorage.__pgClient(
-      `SELECT identifier, value, expires_at FROM auth_verification
-        WHERE value = $1 AND identifier LIKE $2
-        ORDER BY created_at DESC LIMIT 1`,
-      [value, `${identifierPrefix}%`],
-    )) as { identifier: string; value: string; expires_at: Date | string }[];
+    const { auth_verification } = await import("../storage/pg/schema.js");
+    const rows = await (
+      db as {
+        select: () => {
+          from: (t: typeof auth_verification) => {
+            where: (c: unknown) => {
+              orderBy: (c: unknown) => {
+                limit: (n: number) => Promise<
+                  {
+                    identifier: string;
+                    value: string;
+                    expiresAt: Date;
+                  }[]
+                >;
+              };
+            };
+          };
+        };
+      }
+    )
+      .select()
+      .from(auth_verification)
+      .where(
+        and(
+          eq(auth_verification.value, value),
+          like(auth_verification.identifier, `${identifierPrefix}%`),
+        ),
+      )
+      .orderBy(desc(auth_verification.createdAt))
+      .limit(1);
     const r = rows[0];
     if (!r) return null;
-    const exp =
-      r.expires_at instanceof Date ? r.expires_at : new Date(r.expires_at);
-    return { identifier: r.identifier, value: r.value, expiresAt: exp };
+    return { identifier: r.identifier, value: r.value, expiresAt: r.expiresAt };
   } else {
-    const sqliteStorage = storage as unknown as {
-      __sqliteAll?: (q: string) => Promise<unknown[]>;
+    const { auth_verification } = await import("../storage/sqlite/schema.js");
+    const row = await (
+      db as {
+        select: () => {
+          from: (t: typeof auth_verification) => {
+            where: (c: unknown) => {
+              orderBy: (c: unknown) => {
+                limit: (n: number) => {
+                  get: () => Promise<
+                    | { identifier: string; value: string; expiresAt: Date }
+                    | undefined
+                  >;
+                };
+              };
+            };
+          };
+        };
+      }
+    )
+      .select()
+      .from(auth_verification)
+      .where(
+        and(
+          eq(auth_verification.value, value),
+          like(auth_verification.identifier, `${identifierPrefix}%`),
+        ),
+      )
+      .orderBy(desc(auth_verification.createdAt))
+      .limit(1)
+      .get();
+    if (!row) return null;
+    return {
+      identifier: row.identifier,
+      value: row.value,
+      expiresAt: row.expiresAt,
     };
-    if (!sqliteStorage.__sqliteAll) return null;
-    // SQLite stores expires_at as INTEGER unix seconds (Drizzle timestamp mode).
-    const rows = (await sqliteStorage.__sqliteAll(
-      `SELECT identifier, value, expires_at FROM auth_verification
-        WHERE value = '${value.replace(/'/g, "''")}'
-          AND identifier LIKE '${identifierPrefix.replace(/'/g, "''")}%'
-        ORDER BY created_at DESC LIMIT 1`,
-    )) as { identifier: string; value: string; expires_at: number }[];
-    const r = rows[0];
-    if (!r) return null;
-    // SQLite stores timestamps as unix seconds — multiply for Date.
-    const exp = new Date(r.expires_at * 1000);
-    return { identifier: r.identifier, value: r.value, expiresAt: exp };
   }
 }
 

@@ -3,6 +3,7 @@ import {
   createTestContext,
   markEmailVerified,
   request,
+  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { PendingDeletePurger } from "../storage/retention.js";
@@ -296,5 +297,126 @@ describe("T-116 — account deletion routes", () => {
     expect(requestedRow).toBeTruthy();
     expect(requestedRow?.details.redacted).toBe(true);
     expect(typeof requestedRow?.details.user_id_sha256).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-137 — sign-in guard token reuse + audit-row hygiene.
+// ---------------------------------------------------------------------------
+
+async function countCancelTokens(
+  storage: TestContext["storage"],
+  authUserId: string,
+): Promise<number> {
+  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  if (dialect === "pg") {
+    const pg = storage as unknown as {
+      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
+    };
+    if (!pg.__pgClient) return 0;
+    const rows = (await pg.__pgClient(
+      `SELECT COUNT(*)::int AS c FROM auth_verification
+        WHERE value = $1 AND identifier LIKE 'account-cancel:%'`,
+      [authUserId],
+    )) as { c: number }[];
+    return rows[0]?.c ?? 0;
+  }
+  const sqlite = storage as unknown as {
+    __sqliteAll?: (q: string) => Promise<unknown[]>;
+  };
+  if (!sqlite.__sqliteAll) return 0;
+  // Plain string substitution against a UUID is safe enough for a test
+  // helper; the production code path is parameterised.
+  const rows = (await sqlite.__sqliteAll(
+    `SELECT COUNT(*) AS c FROM auth_verification
+      WHERE value = '${authUserId.replace(/'/g, "''")}'
+        AND identifier LIKE 'account-cancel:%'`,
+  )) as { c: number }[];
+  return rows[0]?.c ?? 0;
+}
+
+describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
+  it("repeated sign-in attempts on a pending-deletion account reuse the same cancel token", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "guard-reuse@example.com");
+    const { cookie } = await signIn(ctx, "guard-reuse@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const confirmToken = await readLatestVerification(
+      ctx.storage,
+      "account-delete:",
+    );
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(confirmToken ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "guard-reuse@example.com",
+    );
+    const authUserId = before?.auth_user_id ?? "";
+
+    // Three sign-in attempts in a row. Each one hits the guard.
+    for (let i = 0; i < 3; i++) {
+      const r = await signIn(ctx, "guard-reuse@example.com");
+      expect(r.status).toBe(403);
+    }
+
+    // Should still be exactly ONE cancel token in auth_verification —
+    // the first attempt minted, the next two reused.
+    const count = await countCancelTokens(ctx.storage, authUserId);
+    expect(count).toBe(1);
+  });
+
+  it("audit row for sign_in_blocked carries no plaintext email (T-139)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "guard-pii@example.com");
+    const { cookie } = await signIn(ctx, "guard-pii@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const confirmToken = await readLatestVerification(
+      ctx.storage,
+      "account-delete:",
+    );
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(confirmToken ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "guard-pii@example.com",
+    );
+    const authUserId = before?.auth_user_id ?? "";
+
+    const blocked = await signIn(ctx, "guard-pii@example.com");
+    expect(blocked.status).toBe(403);
+
+    // The audit row's `details` must NOT carry the plaintext email.
+    // T-139 dropped `details: { email }` from this site. The audit
+    // write is fire-and-forget, so poll until the row appears.
+    const guardRow = await waitForAudit(
+      () => ctx!.storage.audit.list({ resource_id: authUserId }),
+      (page) =>
+        page.data.some(
+          (r) => r.action === "auth.account.sign_in_blocked_pending_deletion",
+        ),
+    ).then((page) =>
+      page.data.find(
+        (r) => r.action === "auth.account.sign_in_blocked_pending_deletion",
+      ),
+    );
+    expect(guardRow).toBeTruthy();
+    // Either no `details` at all, or `details` exists but with no email key.
+    const details = guardRow?.details ?? {};
+    expect(Object.prototype.hasOwnProperty.call(details, "email")).toBe(false);
+    expect(JSON.stringify(details)).not.toContain("guard-pii@example.com");
   });
 });

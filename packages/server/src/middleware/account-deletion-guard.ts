@@ -12,8 +12,12 @@
  *   1. Clone the request body, extract `email`.
  *   2. Look up `accountLifecycle.getAccountLifecycleByEmail(email)`.
  *   3. If the account is `'pending_deletion'`:
- *      a. Mint a cancel-by-link token (30d TTL).
- *      b. Dispatch the `account-delete-cancel` email.
+ *      a. Reuse an existing valid cancel token if one is present (T-137);
+ *         otherwise mint a fresh one (30d TTL) and insert it.
+ *      b. Dispatch the `account-delete-cancel` email — gated by a
+ *         per-account cooldown (T-137) so repeated sign-in attempts
+ *         can't flood the targeted user's inbox or burn CF Email
+ *         quota.
  *      c. Audit `auth.account.sign_in_blocked_pending_deletion`.
  *      d. Return a themed HTML page; do NOT call `next()` — the user
  *         must restore the account before signing in.
@@ -21,10 +25,21 @@
  *
  * `next()` is also called when the lookup returns null (unknown
  * email) — no-enumeration invariant. The middleware never branches on
- * "account exists vs not".
+ * "account exists vs not" beyond the response shape (the themed page
+ * does leak pending-deletion state to anyone who can submit a POST;
+ * accepted tradeoff for clear UX, captured in T-137 — closing the leak
+ * entirely would mean replacing the themed page with a generic 401 and
+ * relying on the email channel for the user-facing signal).
+ *
+ * **Token reuse + cooldown.** Reusing the existing valid token bounds
+ * the worst-case to one fresh email per account per cooldown window
+ * (default 1h, env override `MYME_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS`).
+ * The cooldown map is in-memory; multi-instance deployments get at
+ * most N × one-email-per-cooldown-window globally.
  */
 import { createMiddleware } from "hono/factory";
 import { randomBytes } from "node:crypto";
+import { and, desc, eq, gt, like } from "drizzle-orm";
 import type { AppEnv } from "./auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { EmailTransport as MymeEmailTransport } from "../email/transport.js";
@@ -40,11 +55,31 @@ const TARGET_PATHS = new Set([
 const CANCEL_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const CANCEL_IDENTIFIER_PREFIX = "account-cancel:";
 
+/** Default per-account cooldown on the cancel-email send (1h). */
+const DEFAULT_CANCEL_EMAIL_COOLDOWN_MS = 60 * 60 * 1000;
+
+function resolveCooldownMs(): number {
+  const raw = process.env.MYME_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS;
+  if (!raw) return DEFAULT_CANCEL_EMAIL_COOLDOWN_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_CANCEL_EMAIL_COOLDOWN_MS;
+}
+
 export function accountDeletionGuardMiddleware(
   storage: Storage,
   emailTransport: MymeEmailTransport | undefined,
   baseURL: string,
 ) {
+  // In-memory per-account cooldown on cancel-email sends. Closed-over
+  // by the middleware closure so it persists across requests inside
+  // one server process. Multi-instance deployments are not coordinated
+  // — each instance enforces independently. Acceptable for a worst-case
+  // bound of N × one-email-per-cooldown.
+  const lastSendMs = new Map<string, number>();
+  const cooldownMs = resolveCooldownMs();
+
   return createMiddleware<AppEnv>(async (c, next) => {
     if (c.req.method !== "POST") return next();
     const path = new URL(c.req.url).pathname;
@@ -61,18 +96,37 @@ export function accountDeletionGuardMiddleware(
       return next();
     }
 
-    // Mint a single-use cancel token (we always mint a fresh one — the
-    // user may have lost the original email).
-    const token = randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + CANCEL_TTL_MS);
-    await insertCancelToken(
+    // T-137 token reuse: look for an existing valid cancel token bound
+    // to this auth_user_id; reuse if present. The user may have lost
+    // the original email, but issuing a brand-new token on every attempt
+    // is what enables the spam vector — token reuse caps the
+    // auth_verification table growth at one row per (account, TTL).
+    const nowMs = Date.now();
+    let token = await findExistingValidCancelToken(
       storage,
-      `${CANCEL_IDENTIFIER_PREFIX}${token}`,
       lifecycle.auth_user_id,
-      expiresAt,
+      nowMs,
     );
+    if (!token) {
+      token = randomBytes(32).toString("hex");
+      const expiresAt = new Date(nowMs + CANCEL_TTL_MS);
+      await insertCancelToken(
+        storage,
+        `${CANCEL_IDENTIFIER_PREFIX}${token}`,
+        lifecycle.auth_user_id,
+        expiresAt,
+      );
+    }
 
-    if (emailTransport) {
+    // T-137 cooldown: skip the email send when we're inside the
+    // per-account cooldown window. The themed page still renders + the
+    // audit row still writes, so the user-facing signal arrives via the
+    // page; the email channel is rate-limited to one per cooldown
+    // window per account.
+    const lastSent = lastSendMs.get(lifecycle.auth_user_id);
+    const cooldownActive =
+      lastSent !== undefined && nowMs - lastSent < cooldownMs;
+    if (emailTransport && !cooldownActive) {
       const url = `${baseURL.replace(/\/$/, "")}/auth/account/cancel?token=${encodeURIComponent(token)}`;
       const rendered = renderAccountDeleteCancelEmail({
         url,
@@ -89,14 +143,16 @@ export function accountDeletionGuardMiddleware(
         idempotencyKey: `account-delete-cancel/${lifecycle.auth_user_id}/${token}`,
         tags: { template: "account-delete-cancel" },
       });
+      lastSendMs.set(lifecycle.auth_user_id, nowMs);
     }
 
+    // T-139: no plaintext email in audit details — the auth_user_id in
+    // resource_id correlates back via the auth_user row when needed.
     void storage.audit.log({
       action: "auth.account.sign_in_blocked_pending_deletion",
       resource_type: "auth_account",
       resource_id: lifecycle.auth_user_id,
       client_ip: c.var.clientIp ?? null,
-      details: { email },
     });
 
     setNoStore(c);
@@ -145,6 +201,87 @@ async function extractEmail(rawReq: Request): Promise<string | null> {
     // Malformed body — let downstream surface the error normally.
   }
   return null;
+}
+
+/**
+ * T-137: probe `auth_verification` for an existing valid cancel token
+ * bound to this `auth_user_id`. Returns the token suffix (without the
+ * `account-cancel:` prefix) when found, else null. Uses Drizzle's
+ * query builder on both dialects — fully parameterised, mirrors the
+ * T-138 fix to the analogous helper in `routes/auth-account.ts`.
+ */
+async function findExistingValidCancelToken(
+  storage: Storage,
+  authUserId: string,
+  nowMs: number,
+): Promise<string | null> {
+  const db = storage.betterAuthDb;
+  if (!db) return null;
+  if (storage.betterAuthDialect === "pg") {
+    const { auth_verification } = await import("../storage/pg/schema.js");
+    const rows = await (
+      db as {
+        select: () => {
+          from: (t: typeof auth_verification) => {
+            where: (c: unknown) => {
+              orderBy: (c: unknown) => {
+                limit: (
+                  n: number,
+                ) => Promise<{ identifier: string; expiresAt: Date }[]>;
+              };
+            };
+          };
+        };
+      }
+    )
+      .select()
+      .from(auth_verification)
+      .where(
+        and(
+          eq(auth_verification.value, authUserId),
+          like(auth_verification.identifier, `${CANCEL_IDENTIFIER_PREFIX}%`),
+          gt(auth_verification.expiresAt, new Date(nowMs)),
+        ),
+      )
+      .orderBy(desc(auth_verification.createdAt))
+      .limit(1);
+    const r = rows[0];
+    if (!r) return null;
+    return r.identifier.slice(CANCEL_IDENTIFIER_PREFIX.length);
+  } else {
+    const { auth_verification } = await import("../storage/sqlite/schema.js");
+    const row = await (
+      db as {
+        select: () => {
+          from: (t: typeof auth_verification) => {
+            where: (c: unknown) => {
+              orderBy: (c: unknown) => {
+                limit: (n: number) => {
+                  get: () => Promise<
+                    { identifier: string; expiresAt: Date } | undefined
+                  >;
+                };
+              };
+            };
+          };
+        };
+      }
+    )
+      .select()
+      .from(auth_verification)
+      .where(
+        and(
+          eq(auth_verification.value, authUserId),
+          like(auth_verification.identifier, `${CANCEL_IDENTIFIER_PREFIX}%`),
+          gt(auth_verification.expiresAt, new Date(nowMs)),
+        ),
+      )
+      .orderBy(desc(auth_verification.createdAt))
+      .limit(1)
+      .get();
+    if (!row) return null;
+    return row.identifier.slice(CANCEL_IDENTIFIER_PREFIX.length);
+  }
 }
 
 async function insertCancelToken(
