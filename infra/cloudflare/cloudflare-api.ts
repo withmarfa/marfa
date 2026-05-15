@@ -112,4 +112,48 @@ export class CloudflareClient {
       body: JSON.stringify({ name }),
     });
   }
+
+  // ---- Queue HTTP-pull consumers ----------------------------------------
+  // The runtime-control DLQ peek/replay routes use Cloudflare Queues'
+  // HTTP-pull API. That requires an `http_pull` consumer registered on
+  // each pull-target queue — without it the pull endpoint returns a
+  // misleading "messages cannot be pulled unless http_pull mode is
+  // enabled" 405 (the queue's own `type` field stays null; the consumer
+  // registration is what flips the queue into pull mode).
+  async listQueueHttpConsumers(
+    queueId: string,
+  ): Promise<{ consumer_id: string; type: string }[]> {
+    const r = await this.request<{ consumer_id: string; type: string }[]>(
+      `/accounts/${this.opts.accountId}/queues/${queueId}/consumers`,
+    );
+    return (r ?? []).filter((c) => c.type === "http_pull");
+  }
+
+  async addQueueHttpConsumer(
+    queueId: string,
+  ): Promise<{ consumer_id: string }> {
+    // Mirrors `wrangler queues consumer http add` defaults — batch_size
+    // 10, max_retries 3, visibility_timeout_ms 30000, retry_delay 0.
+    // The runtime-control pull route's request defaults stay within
+    // these bounds.
+    const r = await this.request<{ consumer_id: string }>(
+      `/accounts/${this.opts.accountId}/queues/${queueId}/consumers`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          type: "http_pull",
+          settings: {
+            batch_size: 10,
+            max_retries: 3,
+            visibility_timeout_ms: 30000,
+            retry_delay: 0,
+          },
+        }),
+      },
+    );
+    if (!r) {
+      throw new Error(`addQueueHttpConsumer(${queueId}) returned no result`);
+    }
+    return r;
+  }
 }

@@ -69,6 +69,42 @@ async function provisionQueues(
   }
 }
 
+async function provisionDlqHttpPull(
+  client: CloudflareClient,
+  env: Env,
+  out: ResourceIds,
+): Promise<void> {
+  // Only the 3 central per-kind DLQs that the runtime-control DLQ peek
+  // route addresses (packages/runtime-control/src/routes/dlq.ts).
+  // Integration-specific DLQs aren't reachable via /dlq/peek and don't
+  // need http_pull. Idempotent — list existing consumers first; only add
+  // when none of type http_pull is registered.
+  const wantedDlqs = [
+    `myme-webhook-receipt-${env}-dlq`,
+    `myme-scheduled-poll-${env}-dlq`,
+    `myme-reactive-run-${env}-dlq`,
+  ];
+  for (const name of wantedDlqs) {
+    const queueId = out.queues[name];
+    if (!queueId) {
+      console.warn(`[http-pull] ! ${name} (skipped — queue not provisioned)`);
+      continue;
+    }
+    const existing = await client.listQueueHttpConsumers(queueId);
+    const first = existing[0];
+    if (first) {
+      console.log(
+        `[http-pull] ✓ ${name} (existing consumer ${first.consumer_id})`,
+      );
+      continue;
+    }
+    const created = await client.addQueueHttpConsumer(queueId);
+    console.log(
+      `[http-pull] + ${name} (created consumer ${created.consumer_id})`,
+    );
+  }
+}
+
 async function provisionKv(
   client: CloudflareClient,
   env: Env,
@@ -166,6 +202,8 @@ async function main(): Promise<void> {
   console.log("");
 
   await provisionQueues(client, env, out);
+  console.log("");
+  await provisionDlqHttpPull(client, env, out);
   console.log("");
   await provisionKv(client, env, out);
   console.log("");
