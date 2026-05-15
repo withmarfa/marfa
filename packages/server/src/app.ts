@@ -401,8 +401,13 @@ export function createApp(
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
-  // T-117: operator surface — `my admin` CLI calls into these.
-  app.route("/admin", adminRoutes(storage));
+  // T-117: operator surface — `my platform` CLI calls into these.
+  app.route(
+    "/admin",
+    adminRoutes(storage, {
+      graceDays: config.accountDeletionGraceDays ?? 30,
+    }),
+  );
 
   // OpenAPI spec — generated from route definitions
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {

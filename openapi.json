@@ -19206,6 +19206,123 @@
           }
         }
       }
+    },
+    "/admin/account-deletion/purge-now": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Force a one-shot run of the pending-delete purger",
+        "description": "T-124 — Calls `PendingDeletePurger.runOnce()` directly and returns the count of accounts purged. Useful when an account has just passed its grace window and the operator doesn't want to wait for the next scheduled sweep (default cadence: 1 hour). Idempotent: re-running with no eligible rows returns 0. Only sweeps accounts already past `pending_deletion_at + grace_days` — does not bypass the grace window. Emits an `admin.account_deletion.purge_now` audit row.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Purge sweep completed; returns count + timestamp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "purged_count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "run_at": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "purged_count",
+                    "run_at"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

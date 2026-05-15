@@ -1,8 +1,9 @@
 /**
- * T-117 — `/admin/*` operator surface. Every route in this file is
- * platform-admin only (`requireAdmin` enforces). The CLI's `my admin`
- * command tree is the canonical consumer; the routes are also reachable
- * directly via the SDK's `client.admin` namespace.
+ * `/admin/*` operator surface. Every route in this file is platform-
+ * admin only (`requireAdmin` enforces). The CLI's `my platform` command
+ * tree is the canonical consumer (renamed from `my admin` post-T-117);
+ * the routes are also reachable directly via the SDK's `client.admin`
+ * namespace.
  *
  * Routes:
  *
@@ -12,6 +13,7 @@
  *   - POST   /admin/tenants/:id/unsuspend         — flip status to 'active'
  *   - GET    /admin/tenants/:id/metrics           — usage snapshot
  *   - GET    /admin/tenants/:id/keys              — a tenant's API keys
+ *   - POST   /admin/account-deletion/purge-now    — force a one-shot pending-delete sweep (T-124)
  *
  * Quotas READ/WRITE for a specific tenant reuses the existing
  * `/tenants/:id/quotas` GET + PUT (already platform-admin-gated). No
@@ -20,7 +22,9 @@
  *
  * Suspend / unsuspend each emit a `tenant.suspend` / `tenant.unsuspend`
  * audit row with the actor key id, target tenant id, and timestamp.
- * Suspended tenants reject writes at the auth middleware layer
+ * `account-deletion/purge-now` emits an `admin.account_deletion.purge_now`
+ * audit row with `tenant_id: null` (instance-wide sweep). Suspended
+ * tenants reject writes at the auth middleware layer
  * (`middleware/tenant-suspension.ts`); platform admins bypass.
  */
 import { createRoute, z } from "@hono/zod-openapi";
@@ -31,6 +35,7 @@ import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { evictTenantStatus } from "../middleware/tenant-suspension.js";
+import { PendingDeletePurger } from "../storage/retention.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -333,6 +338,43 @@ const listTenantKeysRoute = createRoute({
   },
 });
 
+const PurgeNowResponseSchema = z.object({
+  purged_count: z.number().int().nonnegative(),
+  run_at: z.string(),
+});
+
+const accountDeletionPurgeNowRoute = createRoute({
+  method: "post",
+  path: "/account-deletion/purge-now",
+  tags: ["Admin"],
+  summary: "Force a one-shot run of the pending-delete purger",
+  description:
+    "T-124 — Calls `PendingDeletePurger.runOnce()` directly and returns the count of accounts purged. Useful when an account has just passed its grace window and the operator doesn't want to wait for the next scheduled sweep (default cadence: 1 hour). Idempotent: re-running with no eligible rows returns 0. Only sweeps accounts already past `pending_deletion_at + grace_days` — does not bypass the grace window. Emits an `admin.account_deletion.purge_now` audit row.",
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: { "application/json": { schema: PurgeNowResponseSchema } },
+      description: "Purge sweep completed; returns count + timestamp",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Forbidden",
+    },
+  },
+});
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -381,7 +423,15 @@ function apiKeySummary(key: ApiKey): z.infer<typeof ApiKeySummarySchema> {
   };
 }
 
-export function adminRoutes(storage: Storage) {
+/** Options threaded into `adminRoutes()` for routes that need
+ *  config-derived knobs. `graceDays` is the same value the long-lived
+ *  `PendingDeletePurger` singleton uses; the purge-now route constructs
+ *  an ad-hoc purger with this value to keep the same eligibility math. */
+export interface AdminRoutesOptions {
+  graceDays: number;
+}
+
+export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listTenantsRoute, async (c) => {
@@ -531,6 +581,38 @@ export function adminRoutes(storage: Storage) {
     }
     const keys = await storage.keys.listForTenant(id);
     return c.json({ data: keys.map(apiKeySummary) }, 200);
+  });
+
+  router.openapi(accountDeletionPurgeNowRoute, async (c) => {
+    const actor = requireAdmin(c);
+    // Construct an ad-hoc purger — the long-lived singleton in
+    // `index.ts` carries its own timer + coordination lock; this
+    // one-shot doesn't need either of those wired in (intervalMs is
+    // unused by `runOnce()`). Coordination is still passed through so
+    // the per-account inner lock prevents racing the cascade against
+    // the periodic sweeper.
+    const purger = new PendingDeletePurger(
+      storage,
+      opts.graceDays,
+      0,
+      undefined,
+      storage.coordination,
+    );
+    const runAt = new Date().toISOString();
+    const purgedCount = await purger.runOnce();
+    void storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      // Instance-wide sweep — no target tenant. NULL tenant_id keeps
+      // the row out of any specific tenant's `GET /audit` scope; only
+      // a platform-admin reading the raw audit_log surfaces it.
+      tenant_id: null,
+      key_id: actor.id,
+      action: "admin.account_deletion.purge_now",
+      resource_type: "system",
+      resource_id: "account-deletion-purger",
+      details: { purged_count: purgedCount, run_at: runAt },
+    });
+    return c.json({ purged_count: purgedCount, run_at: runAt }, 200);
   });
 
   return router;

@@ -320,3 +320,235 @@ describe("tenant suspension", () => {
     expect(quotaRes.status).toBe(200);
   });
 });
+
+// ===========================================================================
+// T-124 — POST /admin/account-deletion/purge-now
+// ===========================================================================
+
+/**
+ * Helper: seed an `auth_user` row with `pending_deletion_at` set to `iso`.
+ * Bypasses the full account-deletion flow (sign-up + verify + initiate +
+ * confirm) and writes the lifecycle state directly. Returns the new
+ * `auth_user_id`. Tests that need the cascade exercised through the route
+ * use this to set up the eligible-for-purge precondition.
+ */
+async function seedPendingDeletionUser(
+  c: TestContext,
+  email: string,
+  pendingDeletionAtIso: string,
+): Promise<string> {
+  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const userId = `test-pd-user-${Math.random().toString(36).slice(2, 12)}`;
+  // PG `auth_user.created_at`/`updated_at` are TIMESTAMP — accept ISO
+  // strings via the driver. SQLite same columns are integer({mode:
+  // "timestamp"}) so Drizzle stores unix-epoch *seconds* as INTEGER —
+  // the raw __sqliteRun bypass needs the numeric form, otherwise SQLite's
+  // loose typing accepts the string but downstream Drizzle reads parse
+  // it as an invalid Date. `pending_deletion_at` stays text/ISO in both
+  // dialects per the schema note in sqlite/schema.ts.
+  const nowIso = new Date().toISOString();
+  const nowEpochSeconds = Math.floor(Date.now() / 1000);
+  if (dialect === "pg") {
+    const pg = c.storage as unknown as {
+      __pgClient: (q: string, p?: unknown[]) => Promise<unknown[]>;
+    };
+    await pg.__pgClient(
+      `INSERT INTO auth_user (id, email, name, email_verified, created_at,
+                              updated_at, deletion_state, pending_deletion_at)
+       VALUES ($1, $2, $3, TRUE, $4, $4, 'pending_deletion', $5)`,
+      [userId, email, email.split("@")[0], nowIso, pendingDeletionAtIso],
+    );
+  } else {
+    const sqlite = c.storage as unknown as {
+      __sqliteRun: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+    };
+    await sqlite.__sqliteRun(
+      `INSERT INTO auth_user (id, email, name, email_verified, created_at,
+                              updated_at, deletion_state, pending_deletion_at)
+       VALUES (?, ?, ?, 1, ?, ?, 'pending_deletion', ?)`,
+      [
+        userId,
+        email,
+        email.split("@")[0],
+        nowEpochSeconds,
+        nowEpochSeconds,
+        pendingDeletionAtIso,
+      ],
+    );
+  }
+  return userId;
+}
+
+describe("POST /admin/account-deletion/purge-now (T-124)", () => {
+  it("401 without credentials", async () => {
+    const res = await request(
+      ctx.app,
+      "POST",
+      "/admin/account-deletion/purge-now",
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("403 with a non-platform key", async () => {
+    if (!ctx.storage.tenants) return;
+    const t = await ctx.storage.tenants.create("purge-now-403");
+    const memberKey = await mintTenantKey(t.id);
+    const res = await request(
+      ctx.app,
+      "POST",
+      "/admin/account-deletion/purge-now",
+      { key: memberKey },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("happy path with no pending rows returns purged_count: 0 + audit row", async () => {
+    const res = await request(
+      ctx.app,
+      "POST",
+      "/admin/account-deletion/purge-now",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { purged_count: number; run_at: string };
+    expect(body.purged_count).toBe(0);
+    expect(typeof body.run_at).toBe("string");
+    expect(new Date(body.run_at).toString()).not.toBe("Invalid Date");
+
+    const audit = await waitForAudit(
+      () =>
+        ctx.storage.audit.list({
+          action: "admin.account_deletion.purge_now",
+          limit: 50,
+        }),
+      (page) =>
+        page.data.some(
+          (row) =>
+            row.resource_id === "account-deletion-purger" &&
+            row.tenant_id === null,
+        ),
+    );
+    const row = audit.data.find(
+      (r) => r.resource_id === "account-deletion-purger",
+    );
+    expect(row).toBeDefined();
+    expect(row?.tenant_id).toBeNull();
+    const details = row?.details as { purged_count: number; run_at: string };
+    expect(details.purged_count).toBe(0);
+  });
+
+  it("purges a row whose pending_deletion_at is past the grace window", async () => {
+    if (!ctx.storage.accountLifecycle) return;
+    // Seed an auth_user with pending_deletion_at set 31 days ago — past
+    // the default 30-day grace window. Route should sweep it on the
+    // next call.
+    const cutoffPast = new Date(Date.now() - 31 * 86_400_000).toISOString();
+    const seededId = await seedPendingDeletionUser(
+      ctx,
+      `purge-eligible-${Math.random().toString(36).slice(2, 8)}@example.com`,
+      cutoffPast,
+    );
+    const before =
+      await ctx.storage.accountLifecycle.getAccountLifecycle(seededId);
+    expect(before?.deletion_state).toBe("pending_deletion");
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      "/admin/account-deletion/purge-now",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { purged_count: number };
+    expect(body.purged_count).toBeGreaterThanOrEqual(1);
+
+    // Row is gone.
+    const after =
+      await ctx.storage.accountLifecycle.getAccountLifecycle(seededId);
+    expect(after).toBeNull();
+  });
+
+  it("does NOT purge a row inside the grace window (pending_deletion_at is yesterday)", async () => {
+    if (!ctx.storage.accountLifecycle) return;
+    const cutoffRecent = new Date(Date.now() - 86_400_000).toISOString();
+    const seededId = await seedPendingDeletionUser(
+      ctx,
+      `purge-too-recent-${Math.random().toString(36).slice(2, 8)}@example.com`,
+      cutoffRecent,
+    );
+    const res = await request(
+      ctx.app,
+      "POST",
+      "/admin/account-deletion/purge-now",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { purged_count: number };
+    // The route may sweep other test-residue rows alongside ours; the
+    // contract here is that OUR row is still present (the test-residue
+    // rows should also be gone if any were past-grace, which is fine).
+    const after =
+      await ctx.storage.accountLifecycle.getAccountLifecycle(seededId);
+    expect(after?.deletion_state).toBe("pending_deletion");
+    expect(body.purged_count).toBeGreaterThanOrEqual(0);
+  });
+
+  it("idempotent — calling twice with no pending rows returns 0 both times", async () => {
+    // Drain anything residual from prior tests first.
+    await request(ctx.app, "POST", "/admin/account-deletion/purge-now", {
+      key: ctx.adminKey,
+    });
+    const r1 = await request(
+      ctx.app,
+      "POST",
+      "/admin/account-deletion/purge-now",
+      { key: ctx.adminKey },
+    );
+    const r2 = await request(
+      ctx.app,
+      "POST",
+      "/admin/account-deletion/purge-now",
+      { key: ctx.adminKey },
+    );
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    expect(((await r1.json()) as { purged_count: number }).purged_count).toBe(
+      0,
+    );
+    expect(((await r2.json()) as { purged_count: number }).purged_count).toBe(
+      0,
+    );
+  });
+});
+
+// ===========================================================================
+// T-124 — graceDays: 0 short-circuit (separate test context)
+// ===========================================================================
+
+describe("POST /admin/account-deletion/purge-now — graceDays=0 short-circuit", () => {
+  it("returns 0 cleanly when accountDeletionGraceDays is 0 (purger disabled)", async () => {
+    const ctx0 = await createTestContext({ accountDeletionGraceDays: 0 });
+    try {
+      // Seed a row that would be eligible under any positive grace
+      // window — purger early-returns 0 because graceDays is disabled.
+      if (ctx0.storage.accountLifecycle) {
+        await seedPendingDeletionUser(
+          ctx0,
+          "would-be-eligible@example.com",
+          new Date(Date.now() - 365 * 86_400_000).toISOString(),
+        );
+      }
+      const res = await request(
+        ctx0.app,
+        "POST",
+        "/admin/account-deletion/purge-now",
+        { key: ctx0.adminKey },
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { purged_count: number };
+      expect(body.purged_count).toBe(0);
+    } finally {
+      ctx0.cleanup();
+    }
+  });
+});
