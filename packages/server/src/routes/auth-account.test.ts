@@ -298,3 +298,145 @@ describe("T-116 — account deletion routes", () => {
     expect(typeof requestedRow?.details.user_id_sha256).toBe("string");
   });
 });
+
+// ---------------------------------------------------------------------------
+// T-136 — cascade race-safety re-check.
+// ---------------------------------------------------------------------------
+//
+// The cascade re-reads `auth_user.deletion_state` + `pending_deletion_at`
+// inside its transaction (with `FOR UPDATE` on PG) and short-circuits if
+// either is no longer compatible. These tests cover the two cases:
+//
+//   (a) Cancel landing between `listPendingDeletionDue` and the cascade:
+//       account is `pending_deletion` past grace; we cancel manually,
+//       then call the cascade — it must return `false` and leave the
+//       account alone.
+//   (b) Fresh requestDelete that hasn't aged into grace:
+//       `pending_deletion_at` is recent (within grace window); we call
+//       the cascade with a cutoff that wouldn't have admitted the row.
+//       It must return `false` and leave the account alone.
+
+describe("T-136 — cascade race-safety", () => {
+  it("cancel landing between list-due and cascade leaves the account intact", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "race-cancel@example.com");
+    const { cookie } = await signIn(ctx, "race-cancel@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const token = await readLatestVerification(ctx.storage, "account-delete:");
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(token ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    expect(lifecycle).toBeTruthy();
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "race-cancel@example.com",
+    );
+    expect(before?.deletion_state).toBe("pending_deletion");
+    const authUserId = before?.auth_user_id ?? "";
+
+    // Simulate the race: the user clicks cancel between the purger's
+    // listPendingDeletionDue and its cascade call. We cancel directly
+    // before invoking the cascade.
+    await lifecycle?.cancelPendingDeletion(authUserId);
+
+    // Now invoke the cascade with a cutoff that WOULD have admitted
+    // the row originally (31 days in the future).
+    const fakeNow = new Date(Date.now() + 31 * 86_400_000);
+    const cutoff = new Date(fakeNow.getTime() - 30 * 86_400_000).toISOString();
+    const cascadeRan = await ctx.storage.deleteAccountCascade(
+      authUserId,
+      cutoff,
+    );
+    expect(cascadeRan).toBe(false);
+
+    // Account must still be present and now `active`.
+    const after = await lifecycle?.getAccountLifecycle(authUserId);
+    expect(after).not.toBeNull();
+    expect(after?.deletion_state).toBe("active");
+    expect(after?.pending_deletion_at).toBeNull();
+  });
+
+  it("fresh requestDelete inside grace window cannot be hard-deleted by an old cutoff", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "race-fresh@example.com");
+    const { cookie } = await signIn(ctx, "race-fresh@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const token = await readLatestVerification(ctx.storage, "account-delete:");
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(token ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "race-fresh@example.com",
+    );
+    expect(before?.deletion_state).toBe("pending_deletion");
+    const authUserId = before?.auth_user_id ?? "";
+
+    // Cutoff = now - 1 day. The row's pending_deletion_at is brand-new
+    // (today), so pending_deletion_at >= cutoff. Cascade should
+    // short-circuit.
+    const cutoff = new Date(Date.now() - 86_400_000).toISOString();
+    const cascadeRan = await ctx.storage.deleteAccountCascade(
+      authUserId,
+      cutoff,
+    );
+    expect(cascadeRan).toBe(false);
+
+    // Account row still present, still pending_deletion.
+    const after = await lifecycle?.getAccountLifecycle(authUserId);
+    expect(after?.deletion_state).toBe("pending_deletion");
+    expect(after?.pending_deletion_at).toBeTruthy();
+  });
+
+  it("purger.runOnce returns 0 when every due row was cancelled before cascade", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "purger-cancel@example.com");
+    const { cookie } = await signIn(ctx, "purger-cancel@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const token = await readLatestVerification(ctx.storage, "account-delete:");
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(token ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "purger-cancel@example.com",
+    );
+    const authUserId = before?.auth_user_id ?? "";
+
+    // User cancels during the purger's window.
+    await lifecycle?.cancelPendingDeletion(authUserId);
+
+    // Purger runs with the future clock that would normally hard-delete.
+    const purger = new PendingDeletePurger(
+      ctx.storage,
+      30,
+      3_600_000,
+      () => new Date(Date.now() + 31 * 86_400_000),
+      ctx.storage.coordination,
+    );
+    const purged = await purger.runOnce();
+    expect(purged).toBe(0);
+
+    // Account intact.
+    const after = await lifecycle?.getAccountLifecycle(authUserId);
+    expect(after?.deletion_state).toBe("active");
+  });
+});

@@ -222,11 +222,24 @@ export class AuthSessionCleaner {
  *   - Outer lock `account-deletion-purge` gates the whole tick so
  *     multi-instance deployments don't double-list the due set.
  *   - Per-account inner lock (`account-delete:<auth_user_id>`) inside
- *     the loop so a `cancelPendingDeletion` racing the cascade can't
- *     leave the row half-deleted. The cascade transaction would also
- *     catch the race (`auth_user.deletion_state` would no longer be
- *     `'pending_deletion'` and the cascade would silently delete a
- *     now-active account), so the lock is belt + braces.
+ *     the loop. Coordinates between purger ticks across instances; on
+ *     its own this lock does NOT block a cancel route (the cancel
+ *     never takes it).
+ *
+ * **T-136 race-safety.** The cancel route does not acquire the
+ * per-account lock — so the lock alone cannot prevent a cancel landing
+ * between `listPendingDeletionDue` and `deleteAccountCascade`. The
+ * actual mitigation lives inside the cascade itself: `SELECT ... FOR
+ * UPDATE` on the `auth_user` row at step 0 + a re-check that
+ * `deletion_state === 'pending_deletion'` AND `pending_deletion_at <
+ * cutoffIso` before any writes. A concurrent cancel either commits
+ * before the cascade acquires the row lock (cascade re-reads the
+ * fresh `active` state and short-circuits) or blocks behind the
+ * cascade's row lock until the cascade commits. We pass `cutoffIso`
+ * into the cascade so it knows what window to validate against, and
+ * use the `boolean` return to count actually-purged accounts (a
+ * cascade that short-circuited returns `false` and does not increment
+ * `purged`).
  *
  * `graceDays <= 0` disables the job — operator override for self-hosts
  * that don't want a grace window.
@@ -271,19 +284,19 @@ export class PendingDeletePurger {
     const due = await accountLifecycle.listPendingDeletionDue(cutoff);
     let purged = 0;
     for (const row of due) {
-      const locked = this.coordination
+      // The per-account lock keeps two purger instances from racing
+      // on the same row. The cascade's in-transaction re-check
+      // (T-136) is what guards against a concurrent cancel. Use the
+      // cascade's boolean return to track whether the row was
+      // actually purged (vs. short-circuited because the user
+      // cancelled between list + cascade).
+      const cascadeRan = this.coordination
         ? await this.coordination.withJobLock(
             `account-delete:${row.auth_user_id}`,
-            async () => {
-              await this.storage.deleteAccountCascade(row.auth_user_id);
-              return true;
-            },
+            () => this.storage.deleteAccountCascade(row.auth_user_id, cutoff),
           )
-        : await (async () => {
-            await this.storage.deleteAccountCascade(row.auth_user_id);
-            return true;
-          })();
-      if (locked) purged += 1;
+        : await this.storage.deleteAccountCascade(row.auth_user_id, cutoff);
+      if (cascadeRan === true) purged += 1;
     }
     return purged;
   }
