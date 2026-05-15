@@ -180,8 +180,17 @@ describe("admin happy paths", () => {
     const metrics = (await metricsRes.json()) as {
       tenant_id: string;
       items: { total: number };
+      blobs: { count: number; total_size: number };
     };
     expect(metrics.tenant_id).toBe(tenantB.id);
+    // Type-parity check. Both dialects must return a JS number for
+    // blobs.total_size, not a JSON string. Pre-fix the PG path
+    // returned the raw bigint as a string and the `??` operator
+    // passed it through unchanged — `typeof` here would have been
+    // "string". Non-zero arithmetic coverage lives in
+    // middleware/quota.test.ts (storage_bytes regression).
+    expect(typeof metrics.blobs.total_size).toBe("number");
+    expect(metrics.blobs.total_size).toBe(0);
 
     const keysRes = await request(
       ctx.app,

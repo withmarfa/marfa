@@ -69,6 +69,12 @@
  * `{ ok: false, retryable: false, error: "permanent_bounce" }` so the
  * caller doesn't treat it as a successful send.
  *
+ * The `delivered` and `queued` arrays are not consumed beyond the
+ * permanent-bounce check — CF returns 2xx on async acceptance and in
+ * practice both arrays arrive empty on the success path. The success
+ * log emits `accepted_for_delivery: true` rather than zero-valued
+ * counts so log greps surface the actual signal textually.
+ *
  * Error (4xx/5xx): `{ success: false, errors: [{ code, message }] }`.
  * 5xx / 429 / fetch-network errors map to `retryable: true`; 4xx maps
  * to `retryable: false`.
@@ -224,8 +230,7 @@ export class CloudflareTransport implements EmailTransport {
       backend: "cloudflare",
       recipient_domain: domainOf(message.to),
       message_id: messageId,
-      delivered_count: (result.delivered ?? []).length,
-      queued_count: (result.queued ?? []).length,
+      accepted_for_delivery: true,
       tags: message.tags,
     });
     return { ok: true, messageId };
