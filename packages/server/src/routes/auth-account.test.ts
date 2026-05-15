@@ -417,10 +417,15 @@ describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
       ),
     );
     expect(guardRow).toBeTruthy();
-    // Either no `details` at all, or `details` exists but with no email key.
+    // Load-bearing assertion first: the email substring is present
+    // nowhere in the audit row's details. A future regression that
+    // moved the email under a different key (e.g., `details: { actor:
+    // email }`) would still fail this check, while passing a narrower
+    // `hasOwnProperty('email')` check.
     const details = guardRow?.details ?? {};
-    expect(Object.prototype.hasOwnProperty.call(details, "email")).toBe(false);
     expect(JSON.stringify(details)).not.toContain("guard-pii@example.com");
+    // Belt-and-braces: the literal `email` key isn't present either.
+    expect(Object.prototype.hasOwnProperty.call(details, "email")).toBe(false);
   });
 
   it("guard 401 response is byte-indistinguishable from better-auth's wrong-password 401 (T-137 Option 2)", async () => {
@@ -463,6 +468,15 @@ describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
     expect(wrongPwResp.status).toBe(401);
     expect(guardResp.status).toBe(401);
     expect(unknownResp.status).toBe(401);
+
+    // statusText matches across the three. The guard intentionally
+    // constructs `new Response(..., { statusText: "UNAUTHORIZED" })`
+    // to match better-auth's `APIError.from("UNAUTHORIZED", ...)`
+    // serialisation; without that, Hono's default `c.json` would
+    // surface `"Unauthorized"` (Node http default) and leak the
+    // branch.
+    expect(guardResp.statusText).toBe(wrongPwResp.statusText);
+    expect(guardResp.statusText).toBe(unknownResp.statusText);
 
     // Content-type matches across the three.
     const wrongPwCt = wrongPwResp.headers.get("content-type") ?? "";

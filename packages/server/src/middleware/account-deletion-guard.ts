@@ -59,7 +59,16 @@ const TARGET_PATHS = new Set([
 const CANCEL_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const CANCEL_IDENTIFIER_PREFIX = "account-cancel:";
 
-/** Default per-account cooldown on the cancel-email send (1h). */
+/**
+ * Default per-account cooldown on the cancel-email send (1h).
+ *
+ * Override via env: `MYME_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS`. Accepts
+ * any non-negative integer milliseconds. **`0` means "no cooldown"** —
+ * every sign-in attempt fires a fresh email send. Useful for tests +
+ * rare operator-debug scenarios; in production this restores the
+ * spam vector T-137 closes, so don't set it to 0 outside of tests.
+ * Negative or malformed values fall back to the default.
+ */
 const DEFAULT_CANCEL_EMAIL_COOLDOWN_MS = 60 * 60 * 1000;
 
 function resolveCooldownMs(): number {
@@ -161,15 +170,32 @@ export function accountDeletionGuardMiddleware(
 
     // Generic 401 matching better-auth's wrong-credentials response
     // shape (T-137). Indistinguishable from the unknown-email and
-    // active-wrong-password paths, so a network observer cannot
-    // enumerate pending-deletion accounts. The user-facing signal
-    // lives entirely in the cancel email above.
-    return c.json(
-      {
+    // active-wrong-password paths in body shape, status, statusText,
+    // and content-type — so a network observer comparing responses
+    // cannot enumerate pending-deletion accounts. The user-facing
+    // signal lives entirely in the cancel email above.
+    //
+    // Constructed via `new Response(...)` rather than `c.json(...)`
+    // because Hono defers `statusText` to the runtime default
+    // (`"Unauthorized"` in Node), while better-auth's
+    // `APIError.from("UNAUTHORIZED", ...)` serialises to
+    // `statusText: "UNAUTHORIZED"`. Matching upstream verbatim.
+    //
+    // Known residual leak: response timing differs (the guard does a
+    // DB lookup + token mint while better-auth's wrong-password does
+    // a bcrypt compare). Acceptable for the threat model — closing
+    // the timing leak would require constant-time padding or
+    // post-response async work, both of which add complexity.
+    return new Response(
+      JSON.stringify({
         message: "Invalid email or password",
         code: "INVALID_EMAIL_OR_PASSWORD",
+      }),
+      {
+        status: 401,
+        statusText: "UNAUTHORIZED",
+        headers: { "content-type": "application/json" },
       },
-      401,
     );
   });
 }
