@@ -31,7 +31,6 @@ import { PgSettingsStore } from "./settings-store.js";
 import { PgCoordinationStore } from "./coordination-store.js";
 import { PgTenantQuotaStore } from "./tenant-quota-store.js";
 import { PgRateLimitStore } from "./rate-limit-store.js";
-import { PgEmailSuppressionsStore } from "./email-suppressions-store.js";
 import { PgAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { pgDeleteAccountCascade } from "./account-cascade.js";
 
@@ -124,7 +123,6 @@ export async function createPgStorage(
     // (no tenant_id column, no RLS policy) and the queries target
     // global counters by design.
     rateLimits: new PgRateLimitStore(db),
-    emailSuppressions: new PgEmailSuppressionsStore(db),
     // T-050: tenant store wired unconditionally — see sqlite index.ts
     // for rationale. The fan-out on tenant cleanup needs `tenants.list`
     // available regardless of authMode.
@@ -148,7 +146,7 @@ export async function createPgStorage(
     close,
     /** Truncate all tables — used by tests for isolation. */
     async _pgTruncate(): Promise<void> {
-      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_tokens, oauth_codes, oauth_device_codes, outbound_webhooks, outbound_webhook_deliveries, inbound_webhooks, inbound_webhook_events, connection_oauth_tokens, connection_leased_tokens, audit_log, event_log, tenants, tenant_quotas, email_suppressions, rate_limit_windows, users, auth_user, auth_session, auth_account, auth_verification, auth_passkey CASCADE`;
+      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_tokens, oauth_codes, oauth_device_codes, outbound_webhooks, outbound_webhook_deliveries, inbound_webhooks, inbound_webhook_events, connection_oauth_tokens, connection_leased_tokens, audit_log, event_log, tenants, tenant_quotas, rate_limit_windows, users, auth_user, auth_session, auth_account, auth_verification, auth_passkey CASCADE`;
     },
     /** Raw query escape hatch — used by retention tests for parameterised mutations. */
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]> {

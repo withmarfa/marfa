@@ -19,7 +19,7 @@ describe("createEmailTransport", () => {
       from: "Myme <hello@mail.myme.so>",
     });
     const result = await transport.send({
-      to: "delivered@resend.dev",
+      to: "test@example.com",
       subject: "Hello",
       html: "<p>Hi</p>",
       idempotencyKey: "test/1",
@@ -31,13 +31,33 @@ describe("createEmailTransport", () => {
     });
   });
 
-  it("throws when backend=resend but apiKey missing", async () => {
+  it("throws when backend=cloudflare but accountId missing", async () => {
     await expect(
       createEmailTransport({
-        backend: "resend",
+        backend: "cloudflare",
         from: "Myme <hello@mail.myme.so>",
+        cloudflare: { accountId: "", apiToken: "tok" },
       }),
-    ).rejects.toThrow("RESEND_API_KEY_MYME");
+    ).rejects.toThrow("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN");
+  });
+
+  it("throws when backend=cloudflare but apiToken missing", async () => {
+    await expect(
+      createEmailTransport({
+        backend: "cloudflare",
+        from: "Myme <hello@mail.myme.so>",
+        cloudflare: { accountId: "acct", apiToken: "" },
+      }),
+    ).rejects.toThrow("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN");
+  });
+
+  it("builds a CloudflareTransport when both creds present", async () => {
+    const transport = await createEmailTransport({
+      backend: "cloudflare",
+      from: "Myme <hello@mail.myme.so>",
+      cloudflare: { accountId: "acct_123", apiToken: "tok_456" },
+    });
+    expect(transport.backend).toBe("cloudflare");
   });
 
   it("throws when backend=smtp but host missing", async () => {
@@ -54,16 +74,16 @@ describe("createEmailTransport", () => {
   // sender-domain-check.test.ts directly.
   it("skips sender-domain check in NODE_ENV=test", async () => {
     expect(process.env.NODE_ENV).toBe("test");
-    // Resend backend with a non-mail.myme.so from would otherwise
+    // Cloudflare backend with a non-mail.myme.so from would otherwise
     // throw SenderDomainMismatchError. In test env it just throws on
-    // the missing apiKey, not on the domain.
+    // the missing creds, not on the domain.
     await expect(
       createEmailTransport({
-        backend: "resend",
+        backend: "cloudflare",
         from: "test@example.com",
-        resend: { apiKey: "" },
+        cloudflare: { accountId: "", apiToken: "" },
       }),
-    ).rejects.toThrow("RESEND_API_KEY_MYME");
+    ).rejects.toThrow("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN");
   });
 
   // Sanity check: SenderDomainMismatchError is exported for callers

@@ -242,12 +242,12 @@ async function main() {
   );
   rateLimitCleaner.start();
 
-  // Wave C PR1: construct the email transport once at boot and thread
-  // it into createApp. The factory's sender-domain check fails loud
-  // here if MYME_EMAIL_FROM doesn't end @mail.myme.so on the Resend
-  // backend (production/staging), preventing bad config reaching the
-  // request loop. The `none` default returns the explicit-failure
-  // transport so email-dependent flows surface a clean
+  // Construct the email transport once at boot and thread it into
+  // createApp. The factory's sender-domain check fails loud here if
+  // MYME_EMAIL_FROM doesn't end @mail.myme.so on the Cloudflare
+  // backend, preventing bad config reaching the request loop. The
+  // `none` default returns the explicit-failure transport so
+  // email-dependent flows surface a clean
   // `email_transport_not_configured` error instead of silently
   // dead-lettering.
   // Treat empty strings from `config` as "unset" — env vars come back
@@ -259,10 +259,14 @@ async function main() {
     backend: config.emailBackend ?? "none",
     from: emptyToUndef(config.emailFrom) ?? "Myme <hello@mail.myme.so>",
     replyTo: emptyToUndef(config.emailReplyTo),
-    storage,
-    resend: emptyToUndef(config.resendApiKey)
-      ? { apiKey: config.resendApiKey ?? "" }
-      : undefined,
+    cloudflare:
+      emptyToUndef(config.cloudflareAccountId) &&
+      emptyToUndef(config.cloudflareEmailApiToken)
+        ? {
+            accountId: config.cloudflareAccountId ?? "",
+            apiToken: config.cloudflareEmailApiToken ?? "",
+          }
+        : undefined,
     smtp: emptyToUndef(config.smtpHost)
       ? {
           host: config.smtpHost ?? "",

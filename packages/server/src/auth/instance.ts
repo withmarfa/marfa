@@ -71,14 +71,14 @@ export interface MymeAuthOptions {
   /** Sink for magic-link emails. Defaults to a `log` transport that
    *  writes the link to stdout — fine for dev. Tests pass an inline
    *  callable. Production wires `mymeEmailTransport` instead, which
-   *  goes through the rich email module (suppression check, idempotency,
-   *  audit). */
+   *  goes through the rich email module (HTML template, idempotency
+   *  key for log correlation). */
   emailTransport?: EmailTransport;
-  /** Wave C PR1: rich email transport. When present, magic-link sends
-   *  go through this (HTML template, idempotency key, suppression
-   *  check). When absent, falls back to `emailTransport` (or the
-   *  log default). Production paths set this; tests typically don't.
-   *  See `src/email/index.ts` for construction. */
+  /** Rich email transport. When present, magic-link sends go through
+   *  this (HTML template, idempotency key for log correlation). When
+   *  absent, falls back to `emailTransport` (or the log default).
+   *  Production paths set this; tests typically don't. See
+   *  `src/email/index.ts` for construction. */
   mymeEmailTransport?: MymeEmailTransport;
   /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
    *  into the generic-oauth plugin. Each entry surfaces a sign-in button
@@ -92,7 +92,7 @@ export interface MymeAuthOptions {
   }[];
   /** Wave C PR2: turn on `requireEmailVerification` + `sendOnSignUp`.
    *  Default: auto-detect from `mymeEmailTransport` — on when a real
-   *  backend (`resend` / `smtp`) is wired, off when the transport is
+   *  backend (`cloudflare` / `smtp`) is wired, off when the transport is
    *  `none` or missing. Tests pass `true` explicitly to exercise the
    *  verify flow without booting a real transport; production
    *  deployments rely on the auto-detect. */
@@ -176,7 +176,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
   // flag on would 500 every sign-up. Graceful degradation: pre-PR1
   // (no transport) and unconfigured-PR1 (`none`) deployments keep the
   // pre-PR2 auto-sign-in behaviour. As soon as the operator wires
-  // `MYME_EMAIL_BACKEND=resend` (or `smtp`) and restarts, verification
+  // `MYME_EMAIL_BACKEND=cloudflare` (or `smtp`) and restarts, verification
   // turns on automatically. Callers (e.g. tests) can override the
   // auto-detect via `options.requireEmailVerification`.
   const emailVerificationEnabled =
@@ -276,9 +276,11 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
             subject,
             html,
             text,
-            // Idempotency on the token (single-use, rotates on
-            // each request) so duplicate sends within Resend's 24h
-            // dedupe window collapse.
+            // Idempotency on the token (single-use, rotates on each
+            // request). Threaded through to audit + log correlation;
+            // not honoured by the Cloudflare backend for send-time
+            // dedup. Token is single-use server-side, so a duplicate
+            // send is harmless (first click wins).
             idempotencyKey: `reset-password/${user.id}/${token}`,
             tags: { template: "reset-password" },
           });
@@ -341,9 +343,10 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
           subject,
           html,
           text,
-          // Idempotency key is per-user-per-rotation: the token
-          // changes on each resend so duplicate sends within the
-          // 24h Resend window get deduped on (user, token) tuple.
+          // Idempotency key per (user, token). Threaded through to
+          // audit + log correlation; not honoured by the Cloudflare
+          // backend for send-time dedup. Token is single-use
+          // server-side, so a duplicate send is harmless.
           idempotencyKey: `verify-email/${user.id}/${url.split("token=")[1]?.split("&")[0] ?? "no-token"}`,
           tags: { template: "verify-email" },
         });
@@ -370,10 +373,10 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
       }),
       magicLink({
         sendMagicLink: async ({ email, url, token }) => {
-          // Wave C PR1: rich transport gets the HTML template + the
-          // pre-send suppression check + idempotency key. Falls back
-          // to the legacy callable transport for tests and the
-          // log-default for unconfigured deployments.
+          // Rich transport gets the HTML template + idempotency key
+          // for log correlation. Falls back to the legacy callable
+          // transport for tests and the log-default for unconfigured
+          // deployments.
           if (richTransport) {
             const { html, text, subject } = renderMagicLinkEmail({ url });
             const result = await richTransport.send({
@@ -392,7 +395,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
               });
               // Surface the failure to better-auth — the plugin
               // throws on caller side, which is what we want for
-              // the suppressed / unconfigured paths.
+              // a permanent CF rejection or unconfigured backend.
               throw new Error(`magic_link_send_failed:${result.error}`);
             }
             return;

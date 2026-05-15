@@ -1,11 +1,12 @@
 /**
  * SMTP backend — universal fallback for self-hosters who don't want
- * to depend on Resend. Uses `nodemailer`. Same contract as the Resend
- * backend (pre-send suppression check, no exceptions, retryable flag).
+ * to depend on a hosted email provider. Uses `nodemailer`. Same
+ * contract as the Cloudflare backend (idempotency-key validation, no
+ * exceptions, retryable flag).
  *
- * Transient failures: SMTP connection errors, 4xx temp / 5xx codes
- * surface as `retryable: true`. Permanent rejections (550 / 553)
- * surface as `retryable: false`.
+ * Transient failures: SMTP connection errors and 4xx temp codes
+ * surface as `retryable: true`. Permanent rejections (5xx) surface
+ * as `retryable: false`.
  *
  * Idempotency is a fiction at the SMTP layer (no API-level dedupe
  * window). The key still flows through to the audit row + a custom
@@ -18,12 +19,11 @@ import type {
   EmailTransport,
   EmailTransportConfig,
 } from "./transport.js";
-import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
 
 /**
- * Minimal nodemailer transporter shape. Like the Resend backend,
- * defining locally keeps the import dynamic and the dep optional.
+ * Minimal nodemailer transporter shape. Defining locally keeps the
+ * import dynamic and the dep optional for non-SMTP deployments.
  */
 interface NodemailerTransporter {
   sendMail(opts: {
@@ -43,43 +43,20 @@ export class SmtpTransport implements EmailTransport {
   private readonly transporter: NodemailerTransporter;
   private readonly from: string;
   private readonly defaultReplyTo?: string;
-  private readonly storage?: Storage;
 
   constructor(opts: {
     transporter: NodemailerTransporter;
     from: string;
     replyTo?: string;
-    storage?: Storage;
   }) {
     this.transporter = opts.transporter;
     this.from = opts.from;
     this.defaultReplyTo = opts.replyTo;
-    this.storage = opts.storage;
   }
 
   async send(message: EmailMessage): Promise<EmailSendResult> {
     if (!message.idempotencyKey) {
       throw new Error("EmailMessage.idempotencyKey is required");
-    }
-
-    if (this.storage?.emailSuppressions) {
-      const tenantId = message.tenantId ?? "";
-      const suppressed = await this.storage.emailSuppressions.isSuppressed(
-        tenantId,
-        message.to,
-      );
-      if (suppressed) {
-        log("info", "Email send blocked by suppression", {
-          to: message.to,
-          tenant_id: tenantId,
-          reason: suppressed.reason,
-        });
-        return {
-          ok: false,
-          error: "email_suppressed",
-          retryable: false,
-        };
-      }
     }
 
     try {
@@ -129,8 +106,8 @@ function isSmtpRetryable(err: unknown): boolean {
 }
 
 /**
- * Constructs an SmtpTransport. Dynamic import of `nodemailer`
- * matches the Resend pattern.
+ * Constructs an SmtpTransport. Dynamic import of `nodemailer` keeps
+ * the dep optional for non-SMTP deployments.
  */
 export async function createSmtpTransport(
   config: EmailTransportConfig,
@@ -159,6 +136,5 @@ export async function createSmtpTransport(
     transporter,
     from: config.from,
     replyTo: config.replyTo,
-    storage: config.storage,
   });
 }
