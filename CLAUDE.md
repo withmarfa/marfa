@@ -207,6 +207,12 @@ Two local-validation paths exist, in increasing thoroughness:
 
 Both invoke `test:pg`, which boots a throw-away `postgres:17` container on port `55432` and runs the server suite against it. Requires Docker (OrbStack / Docker Desktop / compatible daemon); if the daemon isn't reachable, the script skips gracefully with a `⊘` message — GitHub Actions runs the Postgres matrix on every PR, so local Docker is belt-and-braces, not a blocker.
 
+## Deploy and log rotation
+
+`deploy.sh` at the repo root SSHs to the staging host and runs git pull + build + migrate + restart on both `myme-staging` and `myme-conformance`. SSH options (`ConnectTimeout=10`, `ServerAliveInterval=15`, `ServerAliveCountMax=3`) cap any transient hang at ~45s. Restarts use `launchctl kickstart -k gui/$(id -u)/<label>` — atomic kill-and-relaunch, no race on port handoff.
+
+Service logs (`stdout.log` + `stderr.log` on both services) are rotated by `scripts/atlas-log-rotate.sh`, invoked hourly by a separate launchd job (`so.myme.log-rotator`) on the staging host. Rotation is **inode-preserving** (`gzip -c file > archive && : > file`) — launchd's StandardOut/Err fd is opened with `O_APPEND`, so writes resume cleanly at byte 0 after truncation; no service restart needed. Threshold: 10 MB. Keeps 7 most-recent gzipped archives per log. The launchd plist lives only on the staging host (`~/Library/LaunchAgents/so.myme.log-rotator.plist`) and isn't checked in — content captured in the corresponding vault ticket for reproducibility.
+
 ## Error handling
 
 The base error class is `MymeError` (in `@mymehq/shared`). All structured errors use this class with an `ErrorCode` enum and corresponding HTTP status.
