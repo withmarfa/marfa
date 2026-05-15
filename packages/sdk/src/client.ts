@@ -1551,6 +1551,30 @@ export class MymeClient {
         return res.data;
       },
     },
+
+    accountDeletion: {
+      /**
+       * Force a one-shot run of the pending-delete purger (T-124).
+       * Returns the number of accounts purged this tick. Useful when
+       * an account has just passed its grace window and the operator
+       * doesn't want to wait for the next scheduled sweep (default
+       * cadence: 1 hour).
+       *
+       * Idempotent: re-running with no eligible rows returns 0. Only
+       * sweeps accounts already past `pending_deletion_at + grace_days`
+       * — does not bypass the grace window. The `run_at` timestamp is
+       * server-stamped at the moment `runOnce()` begins.
+       */
+      purgeNow: async (): Promise<{
+        purged_count: number;
+        run_at: string;
+      }> => {
+        return this.transport.request<{
+          purged_count: number;
+          run_at: string;
+        }>("POST", "/admin/account-deletion/purge-now");
+      },
+    },
   };
 
   // ---- Auth (T-116) ----
