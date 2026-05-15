@@ -34,6 +34,7 @@
  * existing pubsub publishes these for every `items.create` /
  * `items.update` / `items.delete` so no new emission is needed.
  */
+import { Pool } from "undici";
 import { publish, subscribe, type ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import {
@@ -147,6 +148,21 @@ async function loadSubscriptions(
 
 function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   const fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
+  // T-135: bounded keep-alive Pool to the queue origin. Caps concurrent
+  // TCP connections at 10 regardless of subscriber fanout count, which
+  // prevents the connection storm that exhausted Atlas's ephemeral port
+  // range under sustained load (see T-133 root cause). When config.fetch
+  // is injected (test path), bypass Pool entirely so existing tests keep
+  // working with their mocked fetch. Pool lifetime = bridge lifetime;
+  // closed in stop() below.
+  const pool: Pool | null = config.fetch
+    ? null
+    : new Pool(new URL(config.queueUrl).origin, {
+        connections: 10,
+        keepAliveTimeout: 30_000,
+        keepAliveMaxTimeout: 600_000,
+        pipelining: 1,
+      });
   const subscriptions = new Map<string, SubscriptionEntry>();
   let running = false;
   let stopRequested = false;
@@ -254,6 +270,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
                 subscriptions,
                 config,
                 fetchImpl,
+                pool,
                 storage,
               );
             }
@@ -318,6 +335,10 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       const exit = drainerExit;
       drainerExit = null;
       if (exit) await exit;
+      // Close the Pool last — after the drainer has stopped issuing
+      // new requests. close() awaits in-flight, then destroys all
+      // connections. Tests injecting config.fetch won't have a Pool.
+      if (pool) await pool.close();
     },
   };
 }
@@ -354,6 +375,7 @@ async function fanoutEvent(
   subscriptions: Map<string, SubscriptionEntry>,
   config: BridgeConfig,
   fetchImpl: typeof fetch,
+  pool: Pool | null,
   storage: Storage,
 ): Promise<void> {
   const tasks: Promise<unknown>[] = [];
@@ -368,7 +390,7 @@ async function fanoutEvent(
     // endpoint for one subscriber doesn't break the rest. T-036:
     // each task is launched immediately so subscribers fan out in
     // parallel; allSettled below waits for every one.
-    const task = sendOne(body, config, fetchImpl).catch(
+    const task = sendOne(body, config, fetchImpl, pool).catch(
       async (err: unknown) => {
         const reason = err instanceof Error ? err.message : String(err);
         console.error(
@@ -413,31 +435,61 @@ async function sendOne(
   body: QueueMessageBody,
   config: BridgeConfig,
   fetchImpl: typeof fetch,
+  pool: Pool | null,
 ): Promise<void> {
   const maxAttempts = config.maxAttempts ?? 5;
   const timeoutMs = config.sendTimeoutMs ?? 5000;
+  const url = new URL(config.queueUrl);
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       controller.abort();
     }, timeoutMs);
     try {
-      const res = await fetchImpl(config.queueUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.apiToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ body, contentType: "json" }),
-        signal: controller.signal,
-      });
-      if (res.ok) return;
-      // Retry on 5xx, give up on 4xx.
-      if (res.status < 500) {
-        console.error(
-          `[reactive-run-bridge] non-retryable ${String(res.status)} from queue`,
-        );
-        return;
+      if (pool) {
+        // Production path — bounded keep-alive Pool. Connections reused
+        // across fanouts; subscriber concurrency capped at the Pool's
+        // `connections` value regardless of fanout breadth.
+        const res = await pool.request({
+          path: url.pathname + url.search,
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${config.apiToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ body, contentType: "json" }),
+          signal: controller.signal,
+        });
+        // Drain the body so the connection returns to the pool cleanly.
+        // Without this, connections leak and the Pool eventually wedges.
+        await res.body.dump();
+        if (res.statusCode >= 200 && res.statusCode < 300) return;
+        // Retry on 5xx, give up on 4xx.
+        if (res.statusCode < 500) {
+          console.error(
+            `[reactive-run-bridge] non-retryable ${String(res.statusCode)} from queue`,
+          );
+          return;
+        }
+      } else {
+        // Test path — config.fetch injected. Pool bypassed.
+        const res = await fetchImpl(config.queueUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${config.apiToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ body, contentType: "json" }),
+          signal: controller.signal,
+        });
+        if (res.ok) return;
+        // Retry on 5xx, give up on 4xx.
+        if (res.status < 500) {
+          console.error(
+            `[reactive-run-bridge] non-retryable ${String(res.status)} from queue`,
+          );
+          return;
+        }
       }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
