@@ -74,4 +74,27 @@ describe("T-140 — legacy sync-agent extension boot probe", () => {
     const count = await checkLegacySyncAgentExtensions(ctx.storage);
     expect(count).toBe(1);
   });
+
+  it("returns 0 (best-effort) when the storage escape-hatch is missing", async () => {
+    // Stub storage that resembles the real shape but omits the
+    // dialect-specific raw-query escape hatch the probe relies on.
+    // Probe must NOT throw — boot-time it would crash the server.
+    const stubStorage = {
+      betterAuthDialect: "pg" as const,
+      // No __pgClient property.
+    } as unknown as Parameters<typeof checkLegacySyncAgentExtensions>[0];
+    const count = await checkLegacySyncAgentExtensions(stubStorage);
+    expect(count).toBe(0);
+  });
+
+  it("returns 0 (best-effort) when the underlying query throws", async () => {
+    const stubStorage = {
+      betterAuthDialect: "sqlite" as const,
+      __sqliteAll: () => {
+        throw new Error("simulated db failure");
+      },
+    } as unknown as Parameters<typeof checkLegacySyncAgentExtensions>[0];
+    const count = await checkLegacySyncAgentExtensions(stubStorage);
+    expect(count).toBe(0);
+  });
 });
