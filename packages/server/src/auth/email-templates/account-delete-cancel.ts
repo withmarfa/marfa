@@ -1,10 +1,15 @@
 /**
  * Cancel-link email for a sign-in attempt on a pending-delete account
- * (T-116).
+ * (T-116, copy revised under T-137 Option 2).
  *
- * The middleware blocks the sign-in and dispatches this email. The
- * cancel link is valid for the full grace window — clicking it
- * restores the account.
+ * The middleware blocks the sign-in with a generic 401 — this email
+ * is now the **sole** user-facing signal that something happened. Copy
+ * is framed accordingly: "someone attempted sign-in" rather than "you
+ * got blocked." The cancel link is valid for the full grace window;
+ * clicking it restores the account so the user can sign in normally
+ * on the next attempt. If the recipient didn't try to sign in, the
+ * email frames "ignore this" as a first-class option — the deletion
+ * proceeds on schedule.
  */
 const ACCENT = "#1f6feb";
 const TEXT = "#1f2328";
@@ -32,21 +37,22 @@ export function renderAccountDeleteCancelEmail(
   input: AccountDeleteCancelRenderInput,
 ): RenderedEmail {
   const greeting = input.name?.trim() ? `Hi ${input.name.trim()}` : "Hi there";
-  const subject = "Cancellation link for your Myme account deletion";
+  const subject = "Sign-in attempt on your Myme account scheduled for deletion";
   const deadline = input.deletionDate ?? "";
   const text = [
-    "Cancellation link for your Myme account deletion",
+    "Sign-in attempt on your Myme account",
     "",
     `${greeting},`,
     "",
-    "We received a sign-in attempt on an account scheduled for deletion.",
-    deadline ? `Deletion is currently scheduled for ${deadline}.` : "",
+    "Someone tried to sign in to your Myme account just now. Your account is currently scheduled for deletion, so the sign-in did not go through.",
     "",
-    "To restore your account and sign in normally, click the link below — valid until the deletion date.",
+    deadline
+      ? `If you'd like to keep your account, restore it before ${deadline} — clicking the link below cancels the deletion and you'll be able to sign in normally on the next attempt:`
+      : "If you'd like to keep your account, restore it before the scheduled deletion date — clicking the link below cancels the deletion and you'll be able to sign in normally on the next attempt:",
     "",
     input.url,
     "",
-    "If you didn't try to sign in, you can safely ignore this email.",
+    "If that wasn't you, you can ignore this email — your account will be deleted on schedule and the sign-in attempt did not succeed.",
     "",
     "— Myme",
   ]
@@ -64,9 +70,10 @@ export function renderAccountDeleteCancelEmail(
 <tr><td align="center">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;width:100%;background:#ffffff;border:1px solid ${BORDER};border-radius:8px;">
 <tr><td style="padding:32px;">
-<h1 style="margin:0 0 16px 0;font-size:20px;font-weight:600;color:${TEXT};">Restore your account</h1>
+<h1 style="margin:0 0 16px 0;font-size:20px;font-weight:600;color:${TEXT};">Sign-in attempt on your Myme account</h1>
 <p style="margin:0 0 12px 0;color:${TEXT};">${escapeHtml(greeting)},</p>
-<p style="margin:0 0 24px 0;color:${MUTED};">We received a sign-in attempt on an account scheduled for deletion${deadline ? ` on ${escapeHtml(deadline)}` : ""}. Click below to restore the account — valid until the deletion date.</p>
+<p style="margin:0 0 16px 0;color:${MUTED};">Someone tried to sign in to your Myme account just now. Your account is currently scheduled for deletion${deadline ? ` on ${escapeHtml(deadline)}` : ""}, so the sign-in did not go through.</p>
+<p style="margin:0 0 24px 0;color:${MUTED};">If you'd like to keep your account, restore it below. The deletion will be cancelled and you'll be able to sign in normally on the next attempt.</p>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0">
 <tr><td style="border-radius:6px;background:${ACCENT};">
 <a href="${escapeAttr(input.url)}" style="display:inline-block;padding:12px 24px;color:#ffffff;text-decoration:none;font-weight:600;font-size:16px;line-height:20px;border-radius:6px;min-height:44px;box-sizing:border-box;">Restore account</a>
@@ -75,7 +82,7 @@ export function renderAccountDeleteCancelEmail(
 <p style="margin:24px 0 0 0;color:${MUTED};font-size:14px;">Or paste this URL into your browser:</p>
 <p style="margin:8px 0 0 0;word-break:break-all;font-size:13px;color:${MUTED};">${escapeHtml(input.url)}</p>
 <hr style="margin:32px 0;border:0;border-top:1px solid ${BORDER};">
-<p style="margin:0;color:${MUTED};font-size:13px;">If you didn't try to sign in, you can safely ignore this email.</p>
+<p style="margin:0;color:${MUTED};font-size:13px;">If that wasn't you, you can ignore this email — your account will be deleted on schedule and the sign-in attempt did not succeed.</p>
 </td></tr>
 </table>
 <p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Myme</p>

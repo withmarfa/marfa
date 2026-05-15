@@ -18,18 +18,24 @@
  *         per-account cooldown (T-137) so repeated sign-in attempts
  *         can't flood the targeted user's inbox or burn CF Email
  *         quota.
- *      c. Audit `auth.account.sign_in_blocked_pending_deletion`.
- *      d. Return a themed HTML page; do NOT call `next()` — the user
- *         must restore the account before signing in.
+ *      c. Audit `auth.account.sign_in_blocked_pending_deletion` (operator-visible
+ *         only — no PII in details, T-139).
+ *      d. Return a generic 401 with better-auth's wrong-credentials
+ *         shape; do NOT call `next()` — better-auth has no
+ *         `deletion_state` awareness and would mint a session on
+ *         correct password, defeating the gate.
  *   4. Otherwise call `next()` and let better-auth handle sign-in.
  *
- * `next()` is also called when the lookup returns null (unknown
- * email) — no-enumeration invariant. The middleware never branches on
- * "account exists vs not" beyond the response shape (the themed page
- * does leak pending-deletion state to anyone who can submit a POST;
- * accepted tradeoff for clear UX, captured in T-137 — closing the leak
- * entirely would mean replacing the themed page with a generic 401 and
- * relying on the email channel for the user-facing signal).
+ * **No-enumeration invariant.** The response shape is byte-identical
+ * across three cases — unknown email (better-auth's 401), active
+ * account with wrong password (better-auth's 401), and pending-deletion
+ * account (this middleware's 401). The user-facing signal for the
+ * pending-deletion case lives entirely in the email channel: the
+ * targeted user receives a "someone tried to sign in to your
+ * scheduled-for-deletion account" notice with a restore link, while
+ * an attacker observing the HTTP response cannot distinguish between
+ * the three branches. Operators still get full visibility via the
+ * audit row.
  *
  * **Token reuse + cooldown.** Reusing the existing valid token bounds
  * the worst-case to one fresh email per account per cooldown window
@@ -44,8 +50,6 @@ import type { AppEnv } from "./auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { EmailTransport as MymeEmailTransport } from "../email/transport.js";
 import { renderAccountDeleteCancelEmail } from "../auth/email-templates/account-delete-cancel.js";
-import { renderAuthLayout } from "../routes/auth-layout.js";
-import { setNoStore } from "../routes/no-store.js";
 
 const TARGET_PATHS = new Set([
   "/auth/sign-in/email",
@@ -155,17 +159,17 @@ export function accountDeletionGuardMiddleware(
       client_ip: c.var.clientIp ?? null,
     });
 
-    setNoStore(c);
-    return c.html(
-      renderAuthLayout({
-        title: "Account scheduled for deletion",
-        bodyHtml: `
-          <h1>Account scheduled for deletion</h1>
-          <div class="banner banner--success" role="status">This account is scheduled for deletion. We've sent a cancellation link to your email — click it to restore the account, then sign in.</div>
-          <p class="aux"><a href="/auth/sign-in">Back to sign-in</a></p>
-        `,
-      }),
-      403,
+    // Generic 401 matching better-auth's wrong-credentials response
+    // shape (T-137). Indistinguishable from the unknown-email and
+    // active-wrong-password paths, so a network observer cannot
+    // enumerate pending-deletion accounts. The user-facing signal
+    // lives entirely in the cancel email above.
+    return c.json(
+      {
+        message: "Invalid email or password",
+        code: "INVALID_EMAIL_OR_PASSWORD",
+      },
+      401,
     );
   });
 }
