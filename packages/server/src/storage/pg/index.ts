@@ -156,7 +156,13 @@ export async function createPgStorage(
     async _pgTruncate(): Promise<void> {
       await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_tokens, oauth_codes, oauth_device_codes, outbound_webhooks, outbound_webhook_deliveries, inbound_webhooks, inbound_webhook_events, connection_oauth_tokens, connection_leased_tokens, audit_log, event_log, tenants, tenant_quotas, rate_limit_windows, users, auth_user, auth_session, auth_account, auth_verification, auth_passkey CASCADE`;
     },
-    /** Raw query escape hatch — used by retention tests for parameterised mutations. */
+    /** Raw query escape hatch. Originally added for parameterised
+     *  mutations in retention tests; now also consumed by
+     *  `routes/auth-account.ts` (auth_verification probes via the
+     *  better-auth-managed table) and `legacy-extension-check.ts`
+     *  (T-140 boot probe — JSON operators not naturally expressible
+     *  in Drizzle). Production callers exist; rename is a real
+     *  blast-radius change. */
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]> {
       return params
         ? client.unsafe(query, params as (string | number | boolean)[])
