@@ -32,10 +32,28 @@ pnpm --filter @mymehq/infra-cloudflare provision prod
 Each run creates (idempotent — checks existence first):
 
 - 6 Queues per env: `myme-{webhook-receipt,scheduled-poll,reactive-run}-<env>` plus `-dlq` siblings.
+- 1 HTTP-pull consumer on each of the 3 central DLQs (required by the runtime-control DLQ peek/replay routes — see "DLQ peek operator surface" below).
 - 1 KV namespace per env: `myme-control-idempotency-<env>` for the control plane's short-lived idempotency cache.
 - 1 R2 bucket per env: `myme-runtime-payloads-<env>` for inbound webhook bodies > 256KB.
 
 The script prints resource IDs at the end — paste these into the relevant `wrangler.*.toml` bindings (PR 3 wires the Queues + KV bindings; Layer 2 wires R2).
+
+## Required secrets
+
+After provisioning resources, set the per-environment secrets the Workers consume. Secrets are write-only via Wrangler and persist across redeploys; you do not need to re-run these unless rotating.
+
+### Control-plane Worker (`@mymehq/runtime-control`)
+
+```sh
+# Per env: dev | staging | prod. Replace <env> below.
+wrangler secret put MYME_API_URL --env <env>
+wrangler secret put MYME_RUNTIME_BROKER_KEY --env <env>
+wrangler secret put CLOUDFLARE_QUEUES_API_TOKEN --env <env>
+```
+
+`CLOUDFLARE_QUEUES_API_TOKEN` is an account-scoped CF API token with `queues_read` + `queues_write` scopes — the runtime-control DLQ peek/replay routes use it to call Cloudflare Queues' HTTP-pull API. The same token can be reused across envs (the wrangler-secret bind is per-env).
+
+The control plane logs a structured WARN at fetch-handler boot (cold start) if `CLOUDFLARE_QUEUES_API_TOKEN` is unset; the DLQ peek/replay routes then return 503 `cf_queues_not_configured` until the secret is set. Webhook-receipt and reactive-run routes don't need the secret and continue to work.
 
 ## Local-dev loop
 
@@ -59,3 +77,20 @@ pnpm --filter @mymehq/integration-<name> deploy --env staging
 ```
 
 Production deploys are gated on the orchestrator. Do not push to prod from a feature branch.
+
+## DLQ peek operator surface
+
+The runtime-control Worker exposes `/dlq/peek` and `/dlq/replay` for operator inspection of DLQ messages (consumed via `my connections logs --dlq <id>` and `my connections replay-dlq <id>`). Two requirements beyond the routine deploy:
+
+1. **`CLOUDFLARE_QUEUES_API_TOKEN` set on the Worker** — see "Required secrets" above. The Worker logs a WARN at boot when this is missing.
+2. **HTTP-pull consumers registered on each central DLQ.** The 3 per-kind DLQs (`myme-{webhook-receipt,scheduled-poll,reactive-run}-<env>-dlq`) need an `http_pull` consumer for the CF Queues HTTP-pull API to work. `provision.ts` enables this idempotently — re-running provision is the cleanest path. Manual fallback (when re-running provision isn't appropriate):
+
+   ```sh
+   for q in myme-webhook-receipt-<env>-dlq myme-scheduled-poll-<env>-dlq myme-reactive-run-<env>-dlq; do
+     wrangler queues consumer http add "$q"
+   done
+   ```
+
+   The CF API returns a misleading 405 `messages cannot be pulled unless http_pull mode is enabled` when the consumer is missing — the actual fix is registering the consumer (the queue's own `type` field stays `null`; consumer registration flips the queue into pull mode at the routing layer).
+
+If `dlq peek` returns errors, check both: (1) `wrangler secret list --env <env>` shows `CLOUDFLARE_QUEUES_API_TOKEN`, (2) `wrangler queues consumer http list <dlq-name>` shows one HTTP pull consumer per central DLQ.
