@@ -138,6 +138,80 @@ describe("T-052 quota enforcement", () => {
     }
   });
 
+  /**
+   * Regression for the PG bigint string-concat bug. Before the fix,
+   * `tenant-quota-store.count(tenantId, "storage_bytes")` returned the
+   * raw node-postgres bigint as a JS string under PG. The arithmetic
+   * `current + increment > limit` then did string concatenation —
+   * `"50000" + 1024` became `"500001024"`, which numeric-coerced past
+   * any plausible limit and produced a false-positive 429.
+   *
+   * The test sets a cap, uploads a blob well under it, then uploads a
+   * second small blob that should still fit. Pre-fix this 429s under
+   * PG; post-fix it succeeds. SQLite path always succeeded (native
+   * numbers).
+   */
+  it("storage_bytes quota arithmetic — second small upload under cap succeeds (PG bigint regression)", async () => {
+    ctx = await createTestContext();
+    const tenantId = `tenant-${Math.random().toString(36).slice(2, 10)}`;
+    const adminKey = await mintTenantAdmin(
+      ctx,
+      tenantId,
+      "storage-bytes-admin",
+    );
+
+    // Cap = 100_000 bytes (100 KB). First upload ~50 KB; second upload
+    // ~1 KB. Sum is ~51 KB, well under the cap. Pre-fix the second
+    // upload 429s under PG because "50000" + 1024 = "500001024".
+    await ctx.storage.tenantQuotas.set(tenantId, {
+      storage_bytes_limit: 100_000,
+    });
+
+    const first = new Uint8Array(50_000);
+    first.fill(0x41); // distinct content; deduplicates would skew counts
+    const firstRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: first,
+    });
+    expect(firstRes.status).toBe(201);
+
+    const second = new Uint8Array(1_024);
+    second.fill(0x42); // different bytes so it doesn't dedupe with the first
+    const secondRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: second,
+    });
+    expect(secondRes.status).toBe(201);
+
+    // Now genuinely overshoot to confirm enforcement still fires when
+    // the cap is actually exceeded.
+    const overshoot = new Uint8Array(60_000);
+    overshoot.fill(0x43);
+    const overshootRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: overshoot,
+    });
+    expect(overshootRes.status).toBe(429);
+    const body = (await overshootRes.json()) as {
+      error: { code: string; details: { resource: string; current: number } };
+    };
+    expect(body.error.code).toBe("quota_exceeded");
+    expect(body.error.details.resource).toBe("storage_bytes");
+    expect(typeof body.error.details.current).toBe("number");
+  });
+
   it("GET / PUT /tenants/:id/quotas — admin round-trip", async () => {
     ctx = await createTestContext();
 
