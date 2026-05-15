@@ -25,6 +25,12 @@ ATLAS_HOST="${ATLAS_HOST:-aic-atlas}"
 SERVICE_DIR="${SERVICE_DIR:-\$HOME/Services/myme-staging}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 
+# SSH hardening — cap any single ssh invocation at ~45s instead of waiting
+# indefinitely. ConnectTimeout fails fast if Atlas is unreachable;
+# ServerAliveInterval + ServerAliveCountMax detect a stalled mid-session
+# tunnel (3 × 15s = ~45s before the client gives up).
+SSH_OPTS=(-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
+
 # Services managed by this script. Paired arrays: label / port / database URL.
 SERVICE_LABELS=("so.myme.staging" "so.myme.conformance")
 SERVICE_NAMES=("staging" "conformance")
@@ -77,11 +83,11 @@ done
 # --- Helpers ---
 remote() {
   # shellcheck disable=SC2029
-  ssh "$ATLAS_HOST" "cd $SERVICE_DIR && $1"
+  ssh "${SSH_OPTS[@]}" "$ATLAS_HOST" "cd $SERVICE_DIR && $1"
 }
 
 remote_raw() {
-  ssh "$ATLAS_HOST" "$1"
+  ssh "${SSH_OPTS[@]}" "$ATLAS_HOST" "$1"
 }
 
 timestamp() {
@@ -93,7 +99,9 @@ restart_services() {
     local label="${SERVICE_LABELS[$i]}"
     local name="${SERVICE_NAMES[$i]}"
     echo "  Restarting $name ($label)..."
-    remote_raw "launchctl unload ~/Library/LaunchAgents/$label.plist 2>/dev/null; sleep 1; launchctl load ~/Library/LaunchAgents/$label.plist"
+    # kickstart -k atomically kills + relaunches; eliminates the racy gap
+    # between `unload` (port-free not guaranteed) and `load`.
+    remote_raw "launchctl kickstart -k gui/\$(id -u)/$label"
   done
 }
 
@@ -129,7 +137,7 @@ echo ""
 
 # --- Step 1: Pre-flight checks ---
 echo "1/6 Pre-flight checks..."
-if ! ssh -o ConnectTimeout=5 "$ATLAS_HOST" "echo ok" > /dev/null 2>&1; then
+if ! ssh "${SSH_OPTS[@]}" "$ATLAS_HOST" "echo ok" > /dev/null 2>&1; then
   echo -e "${RED}Cannot connect to $ATLAS_HOST via SSH.${NC}"
   echo "  Configure SSH access in ~/.ssh/config:"
   echo "    Host aic-atlas"
@@ -184,7 +192,7 @@ fi
 
 # --- Step 2: Git pull ---
 echo "2/6 Pulling latest from $REPO_BRANCH..."
-remote "git fetch origin && git checkout $REPO_BRANCH && git pull origin $REPO_BRANCH"
+remote "git fetch origin && git checkout $REPO_BRANCH && git pull --ff-only origin $REPO_BRANCH"
 NEW_SHA=$(remote "git rev-parse HEAD")
 echo "  SHA: $NEW_SHA"
 
