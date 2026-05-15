@@ -6,7 +6,19 @@
  * satisfied by the previous step's writes; rollback on any failure
  * leaves the account in `pending_deletion` for the next purger tick.
  *
- * Step ordering:
+ * **T-136 race-safety re-check (step 0).** Before any writes, the
+ * cascade does `SELECT ... FOR UPDATE` on the `auth_user` row and
+ * verifies `deletion_state === 'pending_deletion'` AND
+ * `pending_deletion_at < cutoffIso`. If either predicate fails — the
+ * user cancelled between the purger's `listPendingDeletionDue` and
+ * this transaction acquiring the row lock, or a fresh requestDelete
+ * landed but hasn't yet aged into the grace cutoff — the cascade
+ * returns `false` without touching anything. The `FOR UPDATE` lock
+ * blocks any concurrent `cancelPendingDeletion` UPDATE on the same
+ * row until this transaction either commits the cascade or rolls
+ * back. Returns `true` when the cascade actually ran.
+ *
+ * Step ordering (after the step-0 re-check):
  *   1. Resolve `users.tenant_id`. If no row, only the auth_user
  *      cleanup runs (the user never had a tenant — pre-T-074 legacy
  *      shape, or a sign-up that bailed before tenant provisioning).
@@ -64,7 +76,8 @@ export async function pgDeleteAccountCascade(
   db: PgDb,
   storage: Storage,
   authUserId: string,
-): Promise<void> {
+  cutoffIso: string,
+): Promise<boolean> {
   // The cascade is conceptually one transaction. PG's runInTransaction
   // wraps the outer `postgres-js` BEGIN; we drive it via `db.transaction`
   // here so every Drizzle call in this block uses the same `tx`. (The
@@ -80,7 +93,29 @@ export async function pgDeleteAccountCascade(
   // when no ALS context is installed; the purger doesn't install
   // one, so the cascade runs as the connection owner and is not
   // policy-gated. Documented.
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
+    // ---- 0. T-136 race-safety re-check. ----------------------------------
+    // SELECT ... FOR UPDATE on the auth_user row. The lock blocks any
+    // concurrent cancelPendingDeletion UPDATE until this transaction
+    // commits or rolls back. If state is no longer pending_deletion OR
+    // pending_deletion_at >= cutoffIso (cancelled, or a fresh
+    // requestDelete that hasn't aged into grace), short-circuit.
+    const [lifecycleRow] = await tx
+      .select({
+        deletion_state: auth_user.deletion_state,
+        pending_deletion_at: auth_user.pending_deletion_at,
+      })
+      .from(auth_user)
+      .where(eq(auth_user.id, authUserId))
+      .for("update");
+    if (
+      lifecycleRow?.deletion_state !== "pending_deletion" ||
+      !lifecycleRow.pending_deletion_at ||
+      lifecycleRow.pending_deletion_at >= cutoffIso
+    ) {
+      return false;
+    }
+
     // ---- 1. Tenant resolution. -------------------------------------------
     const [userRow] = await tx
       .select({ tenant_id: users.tenant_id })
@@ -176,5 +211,7 @@ export async function pgDeleteAccountCascade(
 
     // ---- 11. Delete auth_user (cascades sessions / accounts / passkeys). -
     await tx.delete(auth_user).where(eq(auth_user.id, authUserId));
+
+    return true;
   });
 }

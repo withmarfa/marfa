@@ -1176,6 +1176,11 @@ export interface AuthSessionStore {
  * The hard-delete cascade itself is a top-level `Storage` method
  * (`deleteAccountCascade`) because it spans every per-tenant table
  * plus the auth island — it doesn't sit cleanly inside one sub-store.
+ * The cascade re-checks `deletion_state === 'pending_deletion'` and
+ * `pending_deletion_at < cutoffIso` inside its transaction (with
+ * `FOR UPDATE` on PG to serialise against the cancel route's
+ * `cancelPendingDeletion` UPDATE), and short-circuits if either
+ * predicate is no longer true (T-136 race fix).
  */
 export interface AccountLifecycleStore {
   /** Flip `auth_user.deletion_state` → `'pending_deletion'`, stamp
@@ -1370,6 +1375,17 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *   8. Delete the `auth_user` row — FK cascades drop sessions,
    *      accounts, passkeys.
    */
-  deleteAccountCascade(authUserId: string): Promise<void>;
+  /**
+   * T-116 + T-136: hard-delete cascade for an `auth_user`. Re-checks
+   * inside its own transaction that the account is still
+   * `pending_deletion` and `pending_deletion_at < cutoffIso` before
+   * proceeding — short-circuits and returns `false` if either is no
+   * longer true (e.g., the user clicked cancel between
+   * `listPendingDeletionDue` and the cascade). On a clean run returns
+   * `true`. The PG impl uses `SELECT ... FOR UPDATE` so a concurrent
+   * `cancelPendingDeletion` blocks until the cascade either commits or
+   * the re-check skips.
+   */
+  deleteAccountCascade(authUserId: string, cutoffIso: string): Promise<boolean>;
   close(): Promise<void>;
 }

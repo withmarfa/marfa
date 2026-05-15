@@ -161,11 +161,15 @@ export async function createSqliteStorage(
         return await withSqliteTx(tx, async () => fn());
       });
     },
-    deleteAccountCascade: (authUserId: string): Promise<void> => {
+    deleteAccountCascade: (
+      authUserId: string,
+      cutoffIso: string,
+    ): Promise<boolean> => {
       return sqliteDeleteAccountCascade(
         db,
         storage as unknown as Storage,
         authUserId,
+        cutoffIso,
       );
     },
     betterAuthDb: baseDb,

@@ -137,11 +137,19 @@ export async function createPgStorage(
       });
       return result as T;
     },
-    deleteAccountCascade: (authUserId: string): Promise<void> => {
+    deleteAccountCascade: (
+      authUserId: string,
+      cutoffIso: string,
+    ): Promise<boolean> => {
       // The cascade runs on the unwrapped base instance: see the note
       // on `accountLifecycle` above — auth_* are RLS-bypassed and this
       // operation crosses tenant/auth boundaries by design.
-      return pgDeleteAccountCascade(baseDb, storage as Storage, authUserId);
+      return pgDeleteAccountCascade(
+        baseDb,
+        storage as Storage,
+        authUserId,
+        cutoffIso,
+      );
     },
     close,
     /** Truncate all tables — used by tests for isolation. */
