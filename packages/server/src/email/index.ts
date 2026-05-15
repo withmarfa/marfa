@@ -1,7 +1,7 @@
 /**
  * Email transport factory. Constructs the right backend per
- * `MYME_EMAIL_BACKEND` config, applies the sender-domain check
- * for the Resend backend, and returns the transport ready to use.
+ * `MYME_EMAIL_BACKEND` config, applies the sender-domain check for
+ * the Cloudflare backend, and returns the transport ready to use.
  *
  * Called once at boot in `index.ts` and threaded into auth + any
  * future email-sending route. Never returns null — when the backend
@@ -23,7 +23,7 @@ export type {
   EmailSendResult,
 } from "./transport.js";
 export { NoneTransport } from "./none-backend.js";
-export { ResendTransport } from "./resend-backend.js";
+export { CloudflareTransport } from "./cloudflare-backend.js";
 export { SmtpTransport } from "./smtp-backend.js";
 export { SenderDomainMismatchError } from "./sender-domain-check.js";
 
@@ -40,15 +40,16 @@ export async function createEmailTransport(
       log("info", "Email transport: none (email-dependent flows will 503)");
       return new NoneTransport();
     }
-    case "resend": {
-      if (!config.resend?.apiKey) {
+    case "cloudflare": {
+      if (!config.cloudflare?.accountId || !config.cloudflare.apiToken) {
         throw new Error(
-          "MYME_EMAIL_BACKEND=resend requires RESEND_API_KEY_MYME to be set",
+          "MYME_EMAIL_BACKEND=cloudflare requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN to be set",
         );
       }
-      const { createResendTransport } = await import("./resend-backend.js");
-      const transport = await createResendTransport(config);
-      log("info", "Email transport: resend", { from: config.from });
+      const { createCloudflareTransport } =
+        await import("./cloudflare-backend.js");
+      const transport = createCloudflareTransport(config);
+      log("info", "Email transport: cloudflare", { from: config.from });
       return transport;
     }
     case "smtp": {

@@ -52,8 +52,8 @@ export enum ErrorCode {
   CORE_TYPE_IMMUTABLE = "core_type_immutable",
   WEBHOOK_NOT_FOUND = "webhook_not_found",
   /**
-   * T-111: signed-webhook receiver (e.g. `POST /webhooks/resend`) rejected
-   * a request that omitted the verification headers required to compute
+   * T-111: a signed-webhook receiver rejected a request that omitted the
+   * verification headers required to compute
    * the signature. Distinct from `INBOUND_WEBHOOK_VERIFICATION_FAILED`
    * (which means headers were present but the signature didn't validate).
    */
@@ -66,8 +66,8 @@ export enum ErrorCode {
   WEBHOOK_SIGNATURE_INVALID = "webhook_signature_invalid",
   /**
    * T-111: signed-webhook receiver has no shared secret configured.
-   * Returned as HTTP 503 so the upstream (e.g. Resend, Svix) retries
-   * after the operator wires the secret.
+   * Returned as HTTP 503 so the upstream retries after the operator
+   * wires the secret.
    */
   WEBHOOK_SECRET_NOT_CONFIGURED = "webhook_secret_not_configured",
   /**
@@ -201,16 +201,10 @@ export enum ErrorCode {
    */
   EMAIL_TRANSPORT_NOT_CONFIGURED = "email_transport_not_configured",
   /**
-   * The recipient address is on the suppression list (hard-bounced,
-   * complained, or manually suppressed) and was rejected pre-send.
-   * Returned as an explicit signal so callers know why an email
-   * didn't go — surfaced on forgot-password / magic-link routes.
-   */
-  EMAIL_SUPPRESSED = "email_suppressed",
-  /**
-   * The transport returned a non-retryable failure (4xx from Resend,
-   * permanent SMTP rejection). Distinct from a transient failure
-   * (5xx / 429 / network) which the route handler may retry.
+   * The transport returned a non-retryable failure (4xx from
+   * Cloudflare Email, permanent SMTP rejection). Distinct from a
+   * transient failure (5xx / 429 / network) which the route handler
+   * may retry.
    */
   EMAIL_SEND_FAILED = "email_send_failed",
   /**
@@ -301,7 +295,6 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_CAP_EXCEEDED]: 400,
   [ErrorCode.BULK_ATOMIC_ROLLBACK]: 400,
   [ErrorCode.EMAIL_TRANSPORT_NOT_CONFIGURED]: 503,
-  [ErrorCode.EMAIL_SUPPRESSED]: 422,
   [ErrorCode.EMAIL_SEND_FAILED]: 502,
   [ErrorCode.HANDLE_RESERVED]: 400,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,

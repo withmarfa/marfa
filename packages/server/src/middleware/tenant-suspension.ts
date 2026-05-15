@@ -18,9 +18,8 @@
  *
  *   - GET / HEAD / OPTIONS — reads + preflight always pass through.
  *   - Anonymous requests (`c.var.apiKey === undefined`) — covers
- *     bootstrap (`POST /keys` when not yet bootstrapped), the
- *     unauthenticated auth surfaces (`/auth/sign-in`, etc.), and
- *     signed-webhook receivers (`POST /webhooks/resend`). These don't
+ *     bootstrap (`POST /keys` when not yet bootstrapped) and the
+ *     unauthenticated auth surfaces (`/auth/sign-in`, etc.). These don't
  *     carry a tenant in the credential — there's nothing to gate.
  *   - Tenant-less credentials (`apiKey.tenant_id === undefined`) —
  *     single-tenant self-hosts and the platform-admin bootstrap. No

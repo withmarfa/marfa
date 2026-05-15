@@ -42,8 +42,6 @@
     "jose": "^6.2.3",
     "nodemailer": "^7.0.3",
     "postgres": "^3.4.8",
-    "resend": "^6.9.2",
-    "svix": "^1.45.0",
     "tar-stream": "^3.1.8",
     "tslib": "^2.8.1"
   },

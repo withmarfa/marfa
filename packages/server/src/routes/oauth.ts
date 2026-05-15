@@ -1225,7 +1225,7 @@ export function authRoutes(
   //     swaps to the success-banner variant for resend confirmations.
   //   - POST /auth/verify-email/resend — calls better-auth's
   //     send-verification-email endpoint. Idempotent at the user level
-  //     (Resend dedupe via per-token idempotency key set on the
+  //     (idempotency key per-token threaded through to audit on the
   //     transport hook). Redirects back with `?sent=1` regardless of
   //     whether the address actually exists, to avoid email enumeration.
 

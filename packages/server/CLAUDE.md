@@ -156,31 +156,29 @@ The `blobs` metadata table has a composite PK on `(tenant_id, hash)`. Different 
 
 The storage interface's `listAll` / `count` are unscoped by design — admin reconcile + metrics surfaces only.
 
-## Email transport (Wave C PR1)
+## Email transport
 
 Pluggable transport for transactional email. Three backends in-tree, picked by `MYME_EMAIL_BACKEND`:
 
-- **`resend`** — Resend API. Idempotency key on every send (24h dedupe). Pre-send suppression check via `storage.emailSuppressions`. Returns `{ ok: false, error: "email_suppressed" }` for already-suppressed addresses, `{ retryable: true }` on 5xx/429/network so the caller can retry.
-- **`smtp`** — `nodemailer`-backed self-host fallback. Same suppression-check + retryable shape. Idempotency key flows through as `X-Idempotency-Key` header (no API-level dedupe — only the audit row + log correlation gain it).
+- **`cloudflare`** — Cloudflare Email Service REST API. POSTs `{ from, to, subject, html, text, reply_to }` to `https://api.cloudflare.com/client/v4/accounts/{account_id}/email/sending/send` with `Authorization: Bearer <token>`. Returns `{ ok: true, messageId }` on 2xx (messageId synthesised from the idempotency key — CF doesn't return a native id); `{ ok: false, retryable: false }` on 4xx; `{ ok: false, retryable: true }` on 5xx / 429 / network errors.
+- **`smtp`** — `nodemailer`-backed self-host fallback. Idempotency key flows through as an `X-Idempotency-Key` header for MTA-side log correlation (no API-level dedupe). 4xx SMTP codes flag retryable; 5xx don't.
 - **`none`** — explicit "unconfigured" backend. Always returns `{ ok: false, error: "email_transport_not_configured", retryable: false }`. Default if `MYME_EMAIL_BACKEND` unset. Surfaces a clean 503 instead of silent dead-lettering.
 
-**Sender-domain guard.** `senderDomainCheck` runs at boot when `MYME_EMAIL_BACKEND=resend`. If `MYME_EMAIL_FROM` doesn't end in `@mail.myme.so` (the Resend-verified subdomain), the server fails loud at startup. Skipped under `NODE_ENV=test`.
+**Sender-domain guard.** `senderDomainCheck` runs at boot when `MYME_EMAIL_BACKEND=cloudflare`. If `MYME_EMAIL_FROM` doesn't end in `@mail.myme.so` (the verified Cloudflare send domain), the server fails loud at startup. Skipped under `NODE_ENV=test`.
 
-**Suppression list.** `email_suppressions (tenant_id, email, reason, created_at, source_email_id)`, composite PK on `(tenant_id, email)`. Empty-string sentinel for platform-level / pre-sign-in flows (matches blob T-049 convention). RLS policy on PG mirrors the same equality-on-`current_setting` shape as the other tenant tables.
+**Idempotency caveat.** Cloudflare Email Service does NOT honour any documented send-time idempotency header. The `idempotencyKey` field on `EmailMessage` flows through to internal audit + log correlation but does not influence the CF send path. A transient retry of the same send can produce duplicate deliveries — acceptable for the three transactional flows wired today (each ships a single-use token; second send is semantically harmless).
 
-**Resend webhook receiver.** `POST /webhooks/resend` is public (no bearer) and signature-verified via `svix`. Mounted BEFORE `authMiddleware` in `app.ts`. Acts on:
+**Suppression handling.** Cloudflare maintains its own internal hard-bounce suppression list across the account. Sends to a suppressed address return a 4xx from CF; the server surfaces it through structured logs and returns `{ ok: false, retryable: false }` to the caller. **No server-side `email_suppressions` table.** The prior backend's webhook → table → pre-send-check chain was removed in T-107; CF's internal list replaces it.
 
-- `email.bounced` (with `bounce.type === "Permanent"`) → upsert with `reason: hard_bounce`.
-- `email.complained` → upsert with `reason: complaint`.
-- Soft bounces / delivered / opened / clicked / sent — ack only.
+**Privacy posture for send-time logs.** On non-2xx the transport logs HTTP status, CF error code + message, recipient _domain_ only (e.g. `gmail.com`), backend identifier, and the message's `tags`. It never logs: full recipient address, email body (html / text), subject line, or idempotency-key contents. The prior backend kept structured per-recipient suppression records server-side; with that surface removed, server logs must not introduce a parallel PII trail through the back door.
 
-Each suppression upsert writes an `email.suppressed` audit row with the source Resend message id so an operator can correlate. The handler currently writes to the empty-string tenant; per-tenant routing via Resend tags is a future widening point when hosted multi-tenant lights up.
+**Historical audit data.** The `email.suppressed` audit action existed under the prior backend and may appear in historical audit data; not emitted by the current backend.
 
 ## Email verification on sign-up (Wave C PR2)
 
 Every new sign-up gets `auth_user.email_verified = false` and the better-auth instance carries `emailAndPassword.requireEmailVerification: true`, so password sign-in is blocked until the user clicks the verification link.
 
-- **Hook.** `emailVerification.sendOnSignUp: true` + the `sendVerificationEmail` callback wired to the Wave C PR1 transport (HTML template at `auth/email-templates/verify-email.ts`, idempotency key per `(user_id, token)`, suppression check, audit). Token TTL: 3600s (1h, set via `emailVerification.expiresIn`).
+- **Hook.** `emailVerification.sendOnSignUp: true` + the `sendVerificationEmail` callback wired to the rich transport (HTML template at `auth/email-templates/verify-email.ts`, idempotency key per `(user_id, token)` for log correlation). Token TTL: 3600s (1h, set via `emailVerification.expiresIn`).
 - **Sign-up wrapper.** `POST /auth/sign-up` detects the verification-required path by the absence of a Set-Cookie on better-auth's response (which `shouldSkipAutoSignIn` produces when `requireEmailVerification` is on) and 302s to `/auth/verify-email?email=…&return_to=…` instead of `return_to`.
 - **Verify-email page.** `GET /auth/verify-email` renders one of four states: `pending` (no token, just-redirected after sign-up), `success` (token validated), `failure` (expired / invalid / unknown — falls back to a resend form), `resent` (after a successful resend). Uses the shared auth-page layout from PR4.
 - **Resend.** `POST /auth/verify-email/resend` calls better-auth's `POST /auth/send-verification-email` and redirects back with `?sent=1` regardless of whether the address actually exists, to avoid email enumeration.
@@ -192,7 +190,7 @@ Every new sign-up gets `auth_user.email_verified = false` and the better-auth in
 End-user surface for resetting a forgotten password. Sits on top of better-auth's `request-password-reset` + `reset-password` endpoints, but the email URL bypasses better-auth's intermediate validate-and-redirect GET — our hook constructs a URL pointing at our themed `/auth/reset-password` page directly. Token validation happens on POST.
 
 - **Routes.** `GET /auth/forgot-password` (email form), `POST /auth/forgot-password` (soft-fail dispatch), `GET /auth/reset-password?token=…` (renders the new-password form), `POST /auth/reset-password` (validates fields, dispatches to better-auth, renders success/failure).
-- **Hook.** `emailAndPassword.sendResetPassword` builds an in-house URL (`${baseURL}/auth/reset-password?token=…`) and routes the email through the rich Myme transport (idempotency key per `(user_id, token)`, suppression check, audit). Conditional on a real backend — same gate pattern as PR2's verification flow.
+- **Hook.** `emailAndPassword.sendResetPassword` builds an in-house URL (`${baseURL}/auth/reset-password?token=…`) and routes the email through the rich Myme transport (idempotency key per `(user_id, token)` for log correlation). Conditional on a real backend — same gate pattern as PR2's verification flow.
 - **Token TTL.** `resetPasswordTokenExpiresIn: 3600` (1 hour). Single-use — better-auth deletes the verification row on successful reset.
 - **Session revocation.** `revokeSessionsOnPasswordReset: true` — every other session for the user is dropped on a successful reset. The user must re-sign-in everywhere.
 - **Per-email throttle.** `auth/per-email-throttle.ts` mints `PerEmailThrottle` instances. The forgot-password router holds one (3/hour per email, in-memory). Layered on top of the per-IP `pathLimits` cap (`/auth/forgot-password: 30`) in `middleware/rate-limit.ts`.
@@ -214,7 +212,6 @@ Actions emitted today:
 | `auth.password_reset.requested` | `POST /auth/forgot-password` (always — captures attempts) | email        | `{ email }`                                |
 | `auth.password_reset.completed` | `POST /auth/reset-password` success                       | token-prefix | `{ token_prefix }`                         |
 | `auth.email.verified`           | `GET /auth/verify-email?token=…` success                  | token-prefix | `{ token_prefix }`                         |
-| `email.suppressed`              | `POST /webhooks/resend` bounce/complaint                  | email        | `{ reason, source_email_id }`              |
 
 Calls are fire-and-forget (`void storage.audit.log(...)`) — audit failures must never block the user-facing flow. `client_ip` threads through `c.var.clientIp` (T-027 client-ip middleware).
 

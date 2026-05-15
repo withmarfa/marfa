@@ -592,29 +592,6 @@ export const tenantQuotas = pgTable("tenant_quotas", {
 });
 
 // ---------------------------------------------------------------------------
-// email_suppressions (Wave C PR1: per-tenant suppression list)
-// ---------------------------------------------------------------------------
-//
-// Composite PK on (tenant_id, email). Empty-string sentinel for
-// platform-level / pre-sign-in flows (forgot-password, magic-link).
-// Mirrored from Resend webhooks; transport's `send()` consults this
-// pre-send.
-export const emailSuppressions = pgTable(
-  "email_suppressions",
-  {
-    tenant_id: text("tenant_id").notNull().default(""),
-    email: text("email").notNull(),
-    reason: text("reason").notNull(),
-    created_at: text("created_at").notNull(),
-    source_email_id: text("source_email_id"),
-  },
-  (table) => [
-    primaryKey({ columns: [table.tenant_id, table.email] }),
-    index("idx_email_suppressions_email").on(table.email),
-  ],
-);
-
-// ---------------------------------------------------------------------------
 // event_log (SSE event persistence for replay)
 // ---------------------------------------------------------------------------
 

@@ -372,6 +372,13 @@
       "when": 1778941900000,
       "tag": "0052_rename_sync_manifest",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1779379200000,
+      "tag": "0053_drop_email_suppressions",
+      "breakpoints": true
     }
   ]
 }

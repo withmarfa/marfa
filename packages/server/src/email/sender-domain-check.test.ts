@@ -5,10 +5,10 @@ import {
 } from "./sender-domain-check.js";
 
 describe("checkSenderDomain", () => {
-  it("passes when Resend backend uses a verified mail.myme.so address", () => {
+  it("passes when Cloudflare backend uses a verified mail.myme.so address", () => {
     expect(() => {
       checkSenderDomain({
-        backend: "resend",
+        backend: "cloudflare",
         from: "Myme <hello@mail.myme.so>",
         skip: false,
       });
@@ -18,27 +18,27 @@ describe("checkSenderDomain", () => {
   it("passes for a bare-address form ending in mail.myme.so", () => {
     expect(() => {
       checkSenderDomain({
-        backend: "resend",
+        backend: "cloudflare",
         from: "noreply@mail.myme.so",
         skip: false,
       });
     }).not.toThrow();
   });
 
-  it("throws SenderDomainMismatchError on apex myme.so for Resend", () => {
+  it("throws SenderDomainMismatchError on apex myme.so for Cloudflare", () => {
     expect(() => {
       checkSenderDomain({
-        backend: "resend",
+        backend: "cloudflare",
         from: "Myme <hello@myme.so>",
         skip: false,
       });
     }).toThrow(SenderDomainMismatchError);
   });
 
-  it("throws on an unrelated domain for Resend", () => {
+  it("throws on an unrelated domain for Cloudflare", () => {
     expect(() => {
       checkSenderDomain({
-        backend: "resend",
+        backend: "cloudflare",
         from: "test@example.com",
         skip: false,
       });
@@ -68,7 +68,7 @@ describe("checkSenderDomain", () => {
   it("respects skip=true", () => {
     expect(() => {
       checkSenderDomain({
-        backend: "resend",
+        backend: "cloudflare",
         from: "test@bad-domain.com",
         skip: true,
       });

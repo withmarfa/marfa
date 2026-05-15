@@ -27,7 +27,6 @@ import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
 import { authRoutes, discoveryRoutes } from "./routes/oauth.js";
 import { authStaticRoutes } from "./routes/auth-static.js";
-import { resendWebhookRoutes } from "./routes/webhooks-resend.js";
 import type { EmailTransport as MymeEmailTransport } from "./email/transport.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
@@ -167,18 +166,6 @@ export function createApp(
     }),
   );
   app.route("/health", healthRoutes(storage, blobBackend, config));
-
-  // Wave C PR1: Resend webhook receiver. Public route — Resend's
-  // signed webhook is the gate (svix-style HMAC verified inside the
-  // handler). Mounted BEFORE authMiddleware so the unauthenticated
-  // path resolves cleanly. `RESEND_WEBHOOK_SECRET_MYME` must be
-  // configured for verification to succeed; absent secret returns
-  // 503 from inside the handler so Resend retries when the
-  // operator wires it.
-  app.route(
-    "/webhooks/resend",
-    resendWebhookRoutes(storage, config.resendWebhookSecret ?? ""),
-  );
 
   // OAuth 2.1 discovery doc — public, unauthenticated.
   app.route("/.well-known", discoveryRoutes(config.authBaseUrl, oidcSigner));
@@ -322,14 +309,13 @@ export function createApp(
       secret: config.authSecret || undefined,
       trustedOrigins,
       oidcProviders: config.oidcProviders,
-      // Wave C PR1: rich transport carries the HTML template +
-      // suppression check + idempotency + audit row. Falls back to
-      // the legacy callable for tests that don't construct a full
-      // transport.
+      // Rich transport carries the HTML template + idempotency key
+      // for log correlation. Falls back to the legacy callable for
+      // tests that don't construct a full transport.
       mymeEmailTransport: emailTransport,
       // Wave C PR2: opt-in override for `requireEmailVerification`.
       // When unset, the auth layer auto-detects from the transport
-      // (on for `resend`/`smtp`, off for `none`/missing).
+      // (on for `cloudflare`/`smtp`, off for `none`/missing).
       ...(config.authRequireEmailVerification !== undefined && {
         requireEmailVerification: config.authRequireEmailVerification,
       }),

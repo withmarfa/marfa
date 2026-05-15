@@ -120,7 +120,7 @@ export interface AppConfig {
   authSecret: string;
   /** Wave C PR2: explicit override for `requireEmailVerification`. When
    *  `undefined`, the auth layer auto-detects from the configured email
-   *  transport (on for `resend`/`smtp`, off for `none`/missing). When
+   *  transport (on for `cloudflare`/`smtp`, off for `none`/missing). When
    *  set, takes precedence over the auto-detect — primarily a test
    *  hook (env-driven config never sets it). */
   authRequireEmailVerification?: boolean;
@@ -156,28 +156,30 @@ export interface AppConfig {
   defaultQuotaStorageBytes?: number | null;
   defaultQuotaRatePerMinute?: number | null;
   /**
-   * Wave C PR1: email transport configuration.
+   * Email transport configuration.
    *
-   * - `emailBackend` — `resend | smtp | none`. Default `none` —
-   *   email-dependent flows (forgot-password, magic-link) return
-   *   `email_transport_not_configured` until an operator picks a
-   *   backend. The factory + boot guard at `src/email/index.ts`
+   * - `emailBackend` — `cloudflare | smtp | none`. Default `none` —
+   *   email-dependent flows (forgot-password, magic-link, email-verify)
+   *   return `email_transport_not_configured` until an operator picks
+   *   a backend. The factory + boot guard at `src/email/index.ts`
    *   constructs the right transport at startup.
    * - `emailFrom` — visible sender, e.g. `Myme <hello@mail.myme.so>`.
-   *   For the Resend backend the domain MUST end in `@mail.myme.so`
-   *   (the verified Resend domain) — `senderDomainCheck` enforces
-   *   this at boot. Apex `myme.so` has no DKIM and would fail SPF.
+   *   For the Cloudflare backend the domain MUST end in `@mail.myme.so`
+   *   (the verified Cloudflare Email sending domain) —
+   *   `senderDomainCheck` enforces this at boot. Apex `myme.so` has
+   *   no DKIM and would fail SPF.
    * - `emailReplyTo` — monitored Reply-To. Optional; recommend a
    *   real inbox so user replies don't bounce silently.
-   * - `resendApiKey` / `resendWebhookSecret` — Resend backend creds.
+   * - `cloudflareAccountId` / `cloudflareEmailApiToken` — Cloudflare
+   *   Email backend creds.
    * - `smtpHost` / `smtpPort` / `smtpUser` / `smtpPass` /
    *   `smtpSecure` — SMTP backend creds (self-host fallback).
    */
-  emailBackend?: "resend" | "smtp" | "none";
+  emailBackend?: "cloudflare" | "smtp" | "none";
   emailFrom?: string;
   emailReplyTo?: string;
-  resendApiKey?: string;
-  resendWebhookSecret?: string;
+  cloudflareAccountId?: string;
+  cloudflareEmailApiToken?: string;
   smtpHost?: string;
   smtpPort?: number;
   smtpUser?: string;
@@ -348,8 +350,8 @@ export function loadConfig(): AppConfig {
     emailBackend: parseEmailBackend(process.env.MYME_EMAIL_BACKEND),
     emailFrom: process.env.MYME_EMAIL_FROM ?? "",
     emailReplyTo: process.env.MYME_EMAIL_REPLY_TO ?? "",
-    resendApiKey: process.env.RESEND_API_KEY_MYME ?? "",
-    resendWebhookSecret: process.env.RESEND_WEBHOOK_SECRET_MYME ?? "",
+    cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+    cloudflareEmailApiToken: process.env.CLOUDFLARE_EMAIL_API_TOKEN ?? "",
     smtpHost: process.env.MYME_SMTP_HOST ?? "",
     smtpPort: envNumber(process.env.MYME_SMTP_PORT, 587),
     smtpUser: process.env.MYME_SMTP_USER ?? "",
@@ -360,16 +362,16 @@ export function loadConfig(): AppConfig {
 
 /**
  * Parses `MYME_EMAIL_BACKEND`. Unset / unknown → `none` (the
- * fail-loud-on-send default). Legal values: `resend | smtp | none`.
+ * fail-loud-on-send default). Legal values: `cloudflare | smtp | none`.
  */
 function parseEmailBackend(
   raw: string | undefined,
-): "resend" | "smtp" | "none" {
-  if (raw === "resend" || raw === "smtp" || raw === "none") return raw;
+): "cloudflare" | "smtp" | "none" {
+  if (raw === "cloudflare" || raw === "smtp" || raw === "none") return raw;
   if (raw && raw.length > 0) {
     console.warn(
       `Unknown MYME_EMAIL_BACKEND=${raw}; falling back to "none". ` +
-        `Legal values: resend | smtp | none.`,
+        `Legal values: cloudflare | smtp | none.`,
     );
   }
   return "none";
