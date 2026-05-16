@@ -203,3 +203,33 @@ describe("renderConsentScreen — re-consent diff (Wave C PR5 / T-032)", () => {
     expect(html).toMatch(/section--removed[\s\S]*?Tasks and todos/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T-131 fix-up: F2 error banner + F11 description coverage for OIDC + edge
+// ---------------------------------------------------------------------------
+
+describe("renderConsentScreen — error banner (T-131 F2)", () => {
+  it("omits the alert div when errorMessage is undefined", () => {
+    const html = renderConsentScreen(PARAMS);
+    expect(html).not.toContain("alert--error");
+  });
+
+  it("renders an alert div when errorMessage is set", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      errorMessage: "Approve needs at least one permission ticked.",
+    });
+    expect(html).toContain('class="alert alert--error"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("Approve needs at least one permission ticked.");
+  });
+
+  it("escapes HTML in errorMessage (XSS guard)", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      errorMessage: "<img src=x onerror=alert(1)>",
+    });
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;img");
+  });
+});

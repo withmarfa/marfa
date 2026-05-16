@@ -39,11 +39,17 @@
 
 import { Hono } from "hono";
 import type { ParsedScope } from "@mymehq/shared";
-import { parseScope, isValidScope, TYPE_REGISTRY } from "@mymehq/shared";
+import {
+  parseScope,
+  isValidScope,
+  TYPE_REGISTRY,
+  EDGE_TYPE_REGISTRY,
+} from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MymeAuth } from "../auth/instance.js";
 import { renderConsentScreen } from "./consent.js";
+import { setNoStore } from "./no-store.js";
 import { log } from "../middleware/logger.js";
 
 interface ConsentRouteDeps {
@@ -108,12 +114,16 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       parsed.push(p);
     }
 
-    // Resolve the client name from the plugin's `auth_oauth_client` table.
-    // The Drizzle adapter is on storage.betterAuthDb (unwrapped, bypasses RLS).
-    const clientName = await resolveClientName(deps.storage, clientId);
-    if (!clientName) {
+    // F12: resolve the client row (full row, not just the name). 404 only
+    // when the row doesn't exist (genuinely unknown client). When the row
+    // exists but `name` is null (DCR clients without `client_name` per
+    // RFC 7591 §2 — `client_name` is OPTIONAL), fall back to displaying
+    // the `clientId` itself rather than 404'ing a legitimate client.
+    const client = await resolveClient(deps.storage, clientId);
+    if (!client) {
       return c.text(`Unknown client: ${clientId}`, 404);
     }
+    const clientName = client.name ?? clientId;
 
     // Wave C PR5 re-consent diff: look up the user's prior consent for
     // (client_id, user_id) in auth_oauth_consent. If present, the renderer
@@ -124,9 +134,16 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       session.user.id,
     );
 
-    // Build the type-pattern → plain-English description map from the
-    // type registry; falls back to the literal scope when missing.
+    // Build the type-pattern → plain-English description map.
+    // F11: covers item types (TYPE_REGISTRY), edge types (EDGE_TYPE_REGISTRY),
+    // and the standard OIDC literals (built-in copy). Metadata scopes are
+    // skipped — they're operator-tooling scopes that don't need UI copy.
     const descriptions = buildScopeDescriptions(parsed);
+
+    // Optional error banner (e.g. when redirected back from a zero-scopes
+    // accept). Renderer ignores undefined.
+    const error = url.searchParams.get("error");
+    const errorMessage = error ? translateConsentError(error) : undefined;
 
     const html = renderConsentScreen({
       clientName,
@@ -135,8 +152,14 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       oauthQuery,
       descriptions,
       priorScopes,
+      errorMessage,
     });
 
+    // F9: every consent-page render carries `Cache-Control: no-store` etc.
+    // (Wave C PR8 / §3.18 regression — the homegrown surface had this set
+    // explicitly; the T-131 rewrite dropped it.) See `routes/no-store.ts`
+    // for the helper used across every auth HTML surface.
+    setNoStore(c);
     return c.html(html);
   });
 
@@ -170,38 +193,86 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     if (!deps.auth) {
       return c.text("Auth not configured on this instance", 503);
     }
+
+    // Parse form FIRST (before the session check) so we can preserve
+    // `oauth_query` on a session-expired bounce to sign-in (F10). Without
+    // it the user signs back in and lands on /auth/sign-in's default
+    // post-auth target instead of the consent page they were on.
+    const form = await c.req.formData();
+    const accept = form.get("accept") === "true";
+    const oauthQueryRaw = form.get("oauth_query");
+    const oauthQuery =
+      typeof oauthQueryRaw === "string" ? oauthQueryRaw : undefined;
+
     const session = await deps.auth.getSession(c.req.raw.headers);
     if (!session) {
+      // F10: preserve oauth_query → user returns to consent after sign-in.
+      // If the form was malformed (no oauth_query), fall back to bare /sign-in.
+      if (oauthQuery) {
+        const returnTo = encodeURIComponent(`/auth/authorize?${oauthQuery}`);
+        return c.redirect(`/auth/sign-in?return_to=${returnTo}`, 302);
+      }
       return c.redirect("/auth/sign-in", 302);
     }
 
-    const form = await c.req.formData();
-    const accept = form.get("accept") === "true";
-    const clientId = form.get("client_id");
-    const oauthQuery = form.get("oauth_query");
-    if (typeof clientId !== "string" || typeof oauthQuery !== "string") {
-      return c.text(
-        "Missing required form fields: client_id, oauth_query",
-        400,
+    if (!oauthQuery) {
+      return c.text("Missing required form field: oauth_query", 400);
+    }
+
+    // F1: parse `client_id` + `scope` from the verified `oauth_query`,
+    // NOT from form fields. The plugin signed the oauth_query — those
+    // values are tamper-evident. The form's `client_id` hidden field is
+    // for display only; the form's `scopes` checkboxes are the user's
+    // per-row selection (a subset of the signed scope set). Trusting the
+    // form would let a hostile POST write a projection for a different
+    // client than the one the user is actually approving.
+    const signedParams = new URLSearchParams(oauthQuery);
+    const clientId = signedParams.get("client_id");
+    const signedScopeStr = signedParams.get("scope") ?? "";
+    const signedScopes = new Set(signedScopeStr.split(/\s+/).filter(Boolean));
+    if (!clientId) {
+      return c.text("oauth_query missing client_id", 400);
+    }
+
+    // Form-supplied scopes are the user's per-row checkbox state.
+    // Validate they're a subset of the signed scopes (the consent UI
+    // can only narrow, not widen). Anything outside the signed set is
+    // a hostile or buggy form — drop and continue with the signed set.
+    const formScopes = form
+      .getAll("scopes")
+      .filter((v): v is string => typeof v === "string")
+      .filter((s) => signedScopes.has(s));
+
+    // F2/F14: zero-scopes accept = deny. If the user submits with
+    // `accept=true` but no scope checkboxes ticked, the plugin would
+    // default to the originally-requested scope set (full grant) AND
+    // the Myme projection would skip (so /security shows no grant
+    // while tokens are valid). Both outcomes are wrong. Treat as a
+    // deny + redirect back to consent with an error banner.
+    if (accept && formScopes.length === 0) {
+      return c.redirect(
+        `/auth/authorize?${oauthQuery}&error=no_scopes_selected`,
+        302,
       );
     }
-    // The form posts each selected scope as a separate `scopes` field; collect.
-    const scopes = form
-      .getAll("scopes")
-      .filter((v): v is string => typeof v === "string");
-    const scopeStr = scopes.join(" ");
+
+    const scopeStr = formScopes.join(" ");
 
     // Project system.connection + emit audit BEFORE proxying to the
     // plugin. Best-effort — a projection failure must NOT block the
     // user-facing consent flow (the OAuth token issuance will still
     // succeed via the plugin; only the user-visible /security grant
     // listing would be missing).
-    if (accept && scopes.length > 0) {
+    //
+    // F7: thread `client_ip` so the audit row carries it per CLAUDE.md
+    // T-027 convention.
+    if (accept) {
       try {
         await projectGrantOnConsent(deps.storage, {
           authUserId: session.user.id,
           clientId,
-          scopes,
+          scopes: formScopes,
+          clientIp: c.var.clientIp ?? null,
         });
       } catch (err) {
         log("warn", "consent decision: projection failed", {
@@ -225,8 +296,9 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       oauth_query: oauthQuery,
     };
     if (accept && scopeStr) {
-      // Only forward the scope filter when the user actually picked a
-      // subset (or the full set). On deny, the plugin doesn't read scope.
+      // Forward the user's narrowed scope set so the plugin issues a
+      // token matching what they actually approved (not the full
+      // originally-requested set).
       proxyBody.scope = scopeStr;
     }
 
@@ -253,7 +325,16 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           url?: string;
         };
         if (body.redirect && typeof body.url === "string") {
-          return c.redirect(body.url, 302);
+          // F13: preserve plugin response headers on the 302
+          // normalisation. The plugin may set `Set-Cookie` (e.g. to
+          // refresh the session cookie) or other security headers; a
+          // bare `c.redirect(url)` constructs a fresh response and
+          // discards them.
+          const headers = new Headers(proxyResp.headers);
+          headers.delete("content-type");
+          headers.delete("content-length");
+          headers.set("location", body.url);
+          return new Response(null, { status: 302, headers });
         }
       } catch {
         // Fall through — return the plugin response verbatim.
@@ -280,7 +361,12 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
  */
 async function projectGrantOnConsent(
   storage: Storage,
-  opts: { authUserId: string; clientId: string; scopes: string[] },
+  opts: {
+    authUserId: string;
+    clientId: string;
+    scopes: string[];
+    clientIp: string | null;
+  },
 ): Promise<void> {
   let tenantId: string | undefined;
   if (storage.users) {
@@ -332,11 +418,15 @@ async function projectGrantOnConsent(
     grantItemId = item.id;
   }
 
+  // F7: thread `client_ip` per CLAUDE.md T-027 convention. Every audit
+  // row carries the resolved client IP so operators can correlate
+  // grants with the source request.
   void storage.audit.log({
     tenant_id: tenantId ?? null,
     action: "auth.grant.created",
     resource_type: "oauth_grant",
     resource_id: opts.clientId,
+    client_ip: opts.clientIp,
     details: {
       client_id: opts.clientId,
       user_id: opts.authUserId,
@@ -351,30 +441,29 @@ async function projectGrantOnConsent(
 // ---------------------------------------------------------------------------
 
 /**
- * Look up the friendly client name from the plugin's `auth_oauth_client`
- * table. The plugin's adapter writes there with `client_id` as the
- * unique business key.
+ * F12: look up the full client row from the plugin's `auth_oauth_client`
+ * table. Returns null when the row genuinely doesn't exist (unknown
+ * `client_id` → callers 404). When the row exists but `name` is null
+ * (a DCR client registered without `client_name`, which RFC 7591 §2
+ * allows), the caller falls back to displaying the `client_id` itself
+ * — we don't 404 a legitimate but unnamed client.
  */
-async function resolveClientName(
+async function resolveClient(
   storage: Storage,
   clientId: string,
-): Promise<string | undefined> {
+): Promise<{ name: string | null } | null> {
   try {
-    // The Better Auth adapter is on storage.betterAuthDb. For a direct
-    // Drizzle read we use the unwrapped handle + the schema reference
-    // from the appropriate dialect package. To keep this routing module
-    // dialect-agnostic, we call through a small helper on the Storage
-    // interface that picks the right schema at runtime.
-    if (typeof storage.oauthProvider?.getClientName === "function") {
-      return await storage.oauthProvider.getClientName(clientId);
+    if (typeof storage.oauthProvider?.getClient === "function") {
+      const row = await storage.oauthProvider.getClient(clientId);
+      return row ? { name: row.name } : null;
     }
-    return undefined;
+    return null;
   } catch (err) {
-    log("warn", "consent: resolveClientName failed", {
+    log("warn", "consent: resolveClient failed", {
       client_id: clientId,
       error: err instanceof Error ? err.message : String(err),
     });
-    return undefined;
+    return null;
   }
 }
 
@@ -403,20 +492,71 @@ async function resolvePriorScopes(
 }
 
 /**
+ * Built-in copy for the standard OIDC literals — the OIDC spec doesn't
+ * carry plain-English descriptions, but the user needs to know what
+ * they're approving. These strings are user-facing and intentionally
+ * plain; mirror the language convention of the type-registry
+ * descriptions.
+ */
+const OIDC_SCOPE_DESCRIPTIONS: Record<string, string> = {
+  openid: "Confirm your identity.",
+  profile: "See your name and profile picture.",
+  email: "See your email address.",
+  offline_access: "Stay signed in even when you're not using the app.",
+};
+
+/**
  * Build the `{ typePattern: description }` map the renderer uses for
- * the plain-English hint per scope row. Pulls `description` from the
- * type registry; missing entries are simply omitted (renderer shows
- * just the literal).
+ * the plain-English hint per scope row. Three sources by kind (F11):
+ *
+ *  - **Type** scopes → `TYPE_REGISTRY.get(typeId)?.description`
+ *  - **Edge** scopes → `EDGE_TYPE_REGISTRY.get(edgeType)?.description`
+ *  - **OIDC** scopes → `OIDC_SCOPE_DESCRIPTIONS` built-in map
+ *  - **Metadata** scopes → skipped (operator-tooling scopes that don't
+ *    need a UI description; the literal `metadata:read` etc. is
+ *    self-explanatory to the audience that requests them)
+ *
+ * Missing entries fall through to the renderer rendering just the
+ * literal — never an error.
  */
 function buildScopeDescriptions(scopes: ParsedScope[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const s of scopes) {
-    if (s.kind === "oidc") continue;
-    if (s.kind === "edge" || s.kind === "metadata") continue;
+    if (s.kind === "oidc") {
+      const literal = s.oidcScope ?? s.typePattern;
+      const copy = OIDC_SCOPE_DESCRIPTIONS[literal];
+      if (copy) out[s.typePattern] = copy;
+      continue;
+    }
+    if (s.kind === "edge") {
+      // `edgeType` is optional on ParsedScope but always present when
+      // kind === "edge"; guard for the type-checker.
+      const edgeType = s.edgeType;
+      if (edgeType) {
+        const edgeSchema = EDGE_TYPE_REGISTRY.get(edgeType);
+        if (edgeSchema?.description) {
+          out[s.typePattern] = edgeSchema.description;
+        }
+      }
+      continue;
+    }
+    if (s.kind === "metadata") continue;
     const schema = TYPE_REGISTRY.get(s.typePattern);
     if (schema?.description) {
       out[s.typePattern] = schema.description;
     }
   }
   return out;
+}
+
+/**
+ * Map the `?error=...` query param (set when GET /authorize is reached
+ * via a redirect from a failed decision attempt) to a user-facing
+ * sentence. Unknown error codes return undefined → no banner shown.
+ */
+function translateConsentError(code: string): string | undefined {
+  if (code === "no_scopes_selected") {
+    return "Approve needs at least one permission ticked. Tick what you'd like to grant, or click Deny to cancel.";
+  }
+  return undefined;
 }

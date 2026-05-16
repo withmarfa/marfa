@@ -1,21 +1,28 @@
 /**
- * T-131: smoke tests for the /auth/authorize consent route + the
+ * T-131: tests for the /auth/authorize consent route + the
  * /auth/authorize/decision proxy handler.
  *
- * Coverage:
+ * Original coverage (T-131 hand-back):
  *   - GET /auth/authorize without a session redirects to /auth/sign-in
  *   - GET /auth/authorize 4xxs when the plugin's signed query (`sig`)
  *     or `client_id` is missing
  *   - POST /auth/authorize/decision without a session redirects to /auth/sign-in
  *
- * The end-to-end happy-path (full /oauth2/authorize → consent →
- * /oauth2/token → bearer-validate) is exercised by the curl-driven
- * sandbox smoke and the conformance suite. These tests pin the
- * Myme-owned auth-gate shape so a future refactor of the consent route
- * can't silently break unauthenticated callers.
+ * Fix-up additions (post-review sweep):
+ *   - F1: POST decision projection reads client_id from oauth_query, not the form
+ *   - F2: POST decision accept=true with zero scopes → 302 to consent w/ error
+ *   - F7: auth.grant.created audit row carries client_ip
+ *   - F9: GET /authorize render carries Cache-Control: no-store
+ *   - F10: POST decision without session preserves oauth_query in return_to
+ *   - F12: GET /authorize renders 200 for clients with null `client_name`
+ *     (DCR registration without `client_name` is RFC 7591-compliant)
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  markEmailVerified,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext | undefined;
@@ -24,6 +31,117 @@ afterEach(() => {
   ctx?.cleanup();
   ctx = undefined;
 });
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const ORIGIN = "http://localhost:0";
+
+/**
+ * Seed an `auth_oauth_client` row directly (the plugin's DCR endpoint
+ * would write the same row). Optionally with `name: null` to exercise
+ * the F12 fallback path.
+ */
+async function seedClient(
+  c: TestContext,
+  opts: { name?: string | null } = {},
+): Promise<string> {
+  const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
+  const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
+  if (!c.storage.betterAuthDb) {
+    throw new Error("seedClient: storage.betterAuthDb missing");
+  }
+  const schemaModule =
+    c.storage.betterAuthDialect === "pg"
+      ? await import("../storage/pg/schema.js")
+      : await import("../storage/sqlite/schema.js");
+  const db = c.storage.betterAuthDb as unknown as {
+    insert: (table: unknown) => {
+      values: (v: Record<string, unknown>) => {
+        run?: () => Promise<unknown>;
+        execute?: () => Promise<unknown>;
+      };
+    };
+  };
+  const now = new Date();
+  const op = db.insert(schemaModule.auth_oauth_client).values({
+    id: clientPk,
+    clientId,
+    name: opts.name === undefined ? "Test Client" : opts.name,
+    redirectUris: JSON.stringify(["http://localhost:0/callback"]),
+    disabled: false,
+    createdAt: now,
+    updatedAt: now,
+  } as Record<string, unknown>);
+  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+  return clientId;
+}
+
+/**
+ * Sign up + verify + sign in. Returns the better-auth session cookie
+ * value (already in `name=value` form, ready to thread into a `Cookie`
+ * header on subsequent requests).
+ */
+async function signInUser(c: TestContext, email: string): Promise<string> {
+  const password = "correct horse battery";
+  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
+    body: { email, password, name: "Test User" },
+    headers: { origin: ORIGIN },
+  });
+  if (signUpRes.status !== 200) {
+    const text = await signUpRes.text();
+    throw new Error(
+      `sign-up failed (${String(signUpRes.status)}): ${text.slice(0, 300)}`,
+    );
+  }
+  await markEmailVerified(c.storage, email);
+  const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
+    body: { email, password },
+    headers: { origin: ORIGIN },
+  });
+  if (signInRes.status !== 200) {
+    const text = await signInRes.text();
+    throw new Error(
+      `sign-in failed (${String(signInRes.status)}): ${text.slice(0, 300)}`,
+    );
+  }
+  const setCookie = signInRes.headers.get("set-cookie");
+  if (!setCookie) throw new Error("sign-in: no Set-Cookie header");
+  // set-cookie can be multi-valued; the session cookie is the one whose
+  // name contains `session_token` (better-auth convention).
+  const cookies = setCookie.split(/,\s*(?=[a-zA-Z0-9_-]+=)/);
+  for (const c of cookies) {
+    const head = c.split(";")[0];
+    if (head?.includes("session_token")) return head;
+  }
+  throw new Error("sign-in: session_token cookie not found in Set-Cookie");
+}
+
+/**
+ * Build a plausible-looking oauth_query string. The plugin's sig won't
+ * validate (we use "fake" as sig), so anything that proxies to
+ * /auth/oauth2/consent will get a 4xx — that's fine for tests asserting
+ * on the projection/audit side-effects, which run BEFORE the proxy.
+ */
+function buildOauthQuery(clientId: string, scope: string): string {
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: "http://localhost:0/callback",
+    scope,
+    state: "test-state",
+    code_challenge: "test-challenge",
+    code_challenge_method: "S256",
+    exp: String(Math.floor(Date.now() / 1000) + 600),
+    sig: "fake",
+  });
+  return params.toString();
+}
+
+// ---------------------------------------------------------------------------
+// GET /auth/authorize
+// ---------------------------------------------------------------------------
 
 describe("GET /auth/authorize (consent page)", () => {
   it("redirects to /auth/sign-in when no session is present", async () => {
@@ -55,30 +173,255 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(r2.status).toBe(400);
   });
+
+  it("F9: sets Cache-Control: no-store on the rendered consent page", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "f9@example.com");
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${buildOauthQuery(clientId, "openid")}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const cc = res.headers.get("cache-control") ?? "";
+    expect(cc).toContain("no-store");
+    expect(cc).toContain("no-cache");
+    expect(cc).toContain("private");
+    expect(res.headers.get("pragma")).toBe("no-cache");
+  });
+
+  it("F12: renders 200 for clients with null client_name (uses clientId as display)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx, { name: null });
+    const cookie = await signInUser(ctx, "f12@example.com");
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${buildOauthQuery(clientId, "openid")}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // The page renders with clientId as the displayed name when name is null.
+    expect(html).toContain(clientId);
+  });
+
+  it("404s when client genuinely does not exist", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    // Don't seed the client.
+    const cookie = await signInUser(ctx, "missing-client@example.com");
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${buildOauthQuery("client_nonexistent_xxx", "openid")}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("F11: renders plain-English description for OIDC scopes (openid/profile/email/offline_access)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "f11-oidc@example.com");
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${buildOauthQuery(clientId, "openid profile email offline_access")}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // Built-in OIDC copy from OIDC_SCOPE_DESCRIPTIONS:
+    expect(html).toContain("Confirm your identity.");
+    expect(html).toContain("See your name and profile picture.");
+    expect(html).toContain("See your email address.");
+    expect(html).toContain(
+      "Stay signed in even when you&#39;re not using the app.",
+    );
+  });
+
+  it("F11: renders plain-English description for edge scopes via EDGE_TYPE_REGISTRY", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "f11-edge@example.com");
+
+    // edge.parent-of:read is a core edge type with a description.
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${buildOauthQuery(clientId, "edge.parent-of:read")}`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // The edge type's description should appear inline. We don't pin
+    // the exact wording (the registry's description could be edited);
+    // just verify some plain text is included beyond the bare literal.
+    expect(html).toContain("edge.parent-of:read");
+    expect(html).toMatch(/<span class="scope-human">[^<]+<\/span>/);
+  });
 });
+
+// ---------------------------------------------------------------------------
+// POST /auth/authorize/decision
+// ---------------------------------------------------------------------------
 
 describe("POST /auth/authorize/decision (consent decision proxy)", () => {
   it("redirects to /auth/sign-in when no session is present", async () => {
     ctx = await createTestContext();
-    const body = new URLSearchParams({
-      accept: "true",
-      oauth_query: "response_type=code&client_id=client_x&sig=fake",
-      client_id: "client_x",
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: "response_type=code&client_id=client_x&sig=fake",
+        client_id: "client_x",
+      },
     });
-    const res = await ctx.app.fetch(
-      new Request("http://test/auth/authorize/decision", {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: body.toString(),
-      }),
-    );
     expect(res.status).toBe(302);
     const location = res.headers.get("location") ?? "";
     expect(location).toContain("/auth/sign-in");
   });
 
-  // Full session-driven projection coverage lives in the curl-driven
-  // sandbox smoke (T-131 hand-back). The above two assertions pin the
-  // auth-gate shape; once a session is in place the handler delegates to
-  // the plugin's /oauth2/consent which has its own test surface upstream.
+  it("F10: session-expired redirect preserves oauth_query as return_to", async () => {
+    ctx = await createTestContext();
+    const oauthQuery =
+      "response_type=code&client_id=client_x&scope=openid&sig=fake";
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: "client_x",
+      },
+    });
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("/auth/sign-in?return_to=");
+    // The return_to is URL-encoded; decode and check it points back at
+    // /auth/authorize with the same oauth_query.
+    const returnTo = decodeURIComponent(location.split("return_to=")[1] ?? "");
+    expect(returnTo).toContain("/auth/authorize?");
+    expect(returnTo).toContain("client_id=client_x");
+    expect(returnTo).toContain("sig=fake");
+  });
+
+  it("F10: session-expired redirect falls back to bare /sign-in when oauth_query is missing", async () => {
+    ctx = await createTestContext();
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: { accept: "true", client_id: "client_x" },
+    });
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toBe("/auth/sign-in");
+  });
+
+  it("F2: accept=true with zero selected scopes redirects to consent with error (no projection)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "f2@example.com");
+    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: { accept: "true", oauth_query: oauthQuery, client_id: clientId },
+      headers: { cookie },
+    });
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("/auth/authorize?");
+    expect(location).toContain("error=no_scopes_selected");
+
+    // No projection should have been written — confirm via items list.
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(0);
+
+    // No audit row either.
+    const audits = await ctx.storage.audit.list({
+      action: "auth.grant.created",
+      limit: 10,
+    });
+    expect(audits.data.length).toBe(0);
+  });
+
+  it("F1+F7: projection uses client_id from oauth_query (NOT the form's client_id) + audit row carries client_ip", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const realClientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "f1@example.com");
+
+    // Hostile form: oauth_query (the signed source-of-truth) names the
+    // REAL client, but the form's client_id field claims a different one.
+    // The projection MUST follow oauth_query, not the form.
+    const oauthQuery = buildOauthQuery(realClientId, "openid core.note:read");
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: "ATTACKER_CONTROLLED_VALUE",
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie },
+      peer: "203.0.113.42",
+    });
+    // The proxy to /auth/oauth2/consent fails (bogus sig) — but the
+    // projection runs BEFORE the proxy. Expect a non-2xx but verify
+    // the projection landed correctly.
+    expect(res.status).toBeGreaterThanOrEqual(400);
+
+    // Projection should exist for the REAL client_id (from oauth_query),
+    // not "ATTACKER_CONTROLLED_VALUE".
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    const grant = items.data[0];
+    expect(grant?.properties.client_id).toBe(realClientId);
+    expect(grant?.properties.client_id).not.toBe("ATTACKER_CONTROLLED_VALUE");
+
+    // Audit row exists with the real client_id + the resolved client_ip.
+    const audits = await ctx.storage.audit.list({
+      action: "auth.grant.created",
+      limit: 10,
+    });
+    expect(audits.data.length).toBe(1);
+    const audit = audits.data[0];
+    expect(audit?.resource_id).toBe(realClientId);
+    expect(audit?.client_ip).toBe("203.0.113.42");
+  });
+
+  it("F1: scopes outside the signed set are filtered (form can only narrow, not widen)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "f1-scope@example.com");
+    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+
+    // Form claims to approve a scope NOT in the signed set. It must
+    // be dropped before projection.
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read", "core.note:write"], // last one is unsigned
+      },
+      headers: { cookie },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    const projectedScopes = items.data[0]?.properties.scopes as
+      | string[]
+      | undefined;
+    expect(projectedScopes).toEqual(["openid", "core.note:read"]);
+    expect(projectedScopes).not.toContain("core.note:write");
+  });
 });

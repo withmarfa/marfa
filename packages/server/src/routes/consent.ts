@@ -63,6 +63,14 @@ interface ConsentParams {
    * no prior grant), renders flat.
    */
   priorScopes?: readonly string[];
+  /**
+   * T-131 fix-up F2: when set, renders an inline error banner above
+   * the form. Used when the page is reached via a redirect from a
+   * failed consent submission (e.g. zero-scopes accept → "approve
+   * needs at least one permission ticked"). When undefined, no banner
+   * renders.
+   */
+  errorMessage?: string;
 }
 
 function escapeHtml(str: string): string {
@@ -221,12 +229,21 @@ export function renderConsentScreen(params: ConsentParams): string {
   // the original request parameters into `oAuthState` before the consent
   // endpoint runs.
   //
-  // We also carry `client_id` as a separate hidden field so the
-  // projection handler can read it directly without parsing oauth_query.
-  // The plugin tolerates both fields on its endpoint and reads client_id
-  // from the signed oauth_query exclusively.
+  // We also carry `client_id` as a separate hidden field for display
+  // / UI purposes. The decision handler reads `client_id` (+ scopes)
+  // from the verified `oauth_query` instead — the form fields are NOT
+  // trusted for projection writes (F1).
+  //
+  // F2 fix-up: optional error banner above the form, used when the
+  // page is reached via a redirect from a failed consent submission
+  // (e.g. zero-scopes accept). Renders nothing when errorMessage is
+  // undefined.
+  const errorBanner = params.errorMessage
+    ? `<div class="alert alert--error" role="alert">${escapeHtml(params.errorMessage)}</div>`
+    : "";
   const bodyHtml = `
     <h1>${leadeText}</h1>
+    ${errorBanner}
     <form method="POST" action="/auth/authorize/decision">
       <input type="hidden" name="client_id" value="${safeClientId}">
       <input type="hidden" name="oauth_query" value="${safeOauthQuery}">
