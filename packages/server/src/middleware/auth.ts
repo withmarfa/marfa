@@ -172,6 +172,57 @@ export async function stampOAuthGrantLastUsed(
   }
 }
 
+/**
+ * T-131 follow-on: stamp `last_used_at` keyed by (tenantId, clientId,
+ * authUserId) instead of a pre-resolved `connection_item_id`.
+ *
+ * The bearer middleware (and any future caller without an item id in
+ * hand) needs this because the plugin's `auth_oauth_access_token` row
+ * doesn't carry a FK to the projected `system.connection`. We resolve
+ * the item id on first call inside the debounce window, then call the
+ * existing `stampOAuthGrantLastUsed`. Both lookups + stamp share the
+ * same `oauthLastUsedCache`, so per-request cost is one cheap Map
+ * lookup once the cache is warm.
+ *
+ * Cache key shape differs from `stampOAuthGrantLastUsed`'s `oauth:<id>`
+ * (`oauth-grantkey:<client>:<user>`), so the two keyspaces don't collide
+ * but a write through either path correctly skips a second write within
+ * the same window.
+ *
+ * Fire-and-forget; failures swallowed.
+ */
+export async function stampOAuthGrantLastUsedByGrantKey(
+  storage: Storage,
+  opts: {
+    tenantId: string | undefined;
+    clientId: string;
+    authUserId: string;
+  },
+): Promise<void> {
+  const cacheKey = `oauth-grantkey:${opts.clientId}:${opts.authUserId}`;
+  const now = Date.now();
+  const lastTracked = oauthLastUsedCache.get(cacheKey) ?? 0;
+  if (now - lastTracked <= DEBOUNCE_MS) return;
+  // Mark BEFORE the lookup — if the lookup misses (no projection yet),
+  // we still want to skip retrying for the rest of the window.
+  touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
+  try {
+    const itemId = await storage.oauthProvider?.findGrantItemId({
+      tenantId: opts.tenantId ?? null,
+      clientId: opts.clientId,
+      authUserId: opts.authUserId,
+    });
+    if (!itemId) return;
+    await storage.oauth.updateLastUsedAt(
+      itemId,
+      opts.tenantId ?? null,
+      DEBOUNCE_MS,
+    );
+  } catch {
+    // Best-effort; the cache mark above prevents a stampede.
+  }
+}
+
 /** Test helper: drops every entry from the OAuth grant debounce cache.
  *  Tests calling `stampOAuthGrantLastUsed` directly or exercising the
  *  refresh / userinfo paths use this between cases to avoid carryover. */
@@ -290,16 +341,26 @@ export function authMiddleware(storage: Storage, salt: string) {
       });
       c.set("authType", "oauth");
 
-      // T-098 last-used stamping previously hung off a connection_item_id
-      // tied to the soon-to-be-dropped oauth_tokens table. Under the new
-      // surface this becomes a no-op until the grant-projection after-hooks
-      // (auth/oauth-provider.ts) finish wiring the consent → system.connection
-      // path, at which point we can resolve the projected item by
-      // (tenant_id, clientId, userId) and stamp it. The user-facing
-      // `/security` page reads from the projection, so the visible delay
-      // before that lands is a stale `last_used_at` on the apps list —
-      // not a security or data-correctness issue. Tracked as a follow-on
-      // inside T-131.
+      // T-131 follow-on: stamp `last_used_at` on the projected
+      // `system.connection { kind: app }` row. Resolved on first call
+      // inside the debounce window via `storage.oauthProvider.findGrantItemId`,
+      // then cached by `(clientId, authUserId)` key in
+      // `oauthLastUsedCache` for the rest of the window. Fire-and-forget;
+      // failures are swallowed so stamping never blocks the request.
+      //
+      // The `system.connection` projection lands at consent time (POST
+      // /auth/authorize/decision in routes/auth-consent.ts) and for the
+      // device-flow at /auth/device/consent — every issued token has a
+      // matching projection by the time it's used. If lookup misses
+      // (race or pre-T-131 token surviving a migration window), we
+      // skip silently.
+      if (oauthToken.userId) {
+        void stampOAuthGrantLastUsedByGrantKey(storage, {
+          tenantId: oauthTenantId,
+          clientId: oauthToken.clientId,
+          authUserId: oauthToken.userId,
+        });
+      }
 
       return next();
     }

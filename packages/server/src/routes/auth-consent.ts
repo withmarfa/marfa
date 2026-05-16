@@ -207,19 +207,17 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
 }
 
 /**
- * Write the `system.connection { kind: "app" }` projection for an
- * accepted code-flow consent. Mirrors what `createUserAppGrant` in
+ * Write or refresh the `system.connection { kind: "app" }` projection for
+ * an accepted code-flow consent. Mirrors what `createUserAppGrant` in
  * `routes/oauth.ts` does for the device-flow path. Emits
- * `auth.grant.created` audit row.
+ * `auth.grant.created` audit row in both branches (creation + re-consent).
  *
- * Best-effort idempotency: if a row already exists for (tenant, client,
- * user) in the active state, we don't add a second one — but we also
- * don't update the existing scopes here (the plugin's authoritative
- * `auth_oauth_consent` row already has the new scope set). The
- * /security page reads system.connection.properties.scopes — a future
- * follow-on should update it on re-consent. For now: first-time consent
- * creates the row; re-consent leaves the existing row's stale scopes
- * visible until the user revokes + re-grants.
+ * Re-consent behaviour: if a projection already exists for (tenant,
+ * client, user), we update its `scopes` + `granted_at` in place rather
+ * than creating a second row. The `audit.grant.created` row still emits
+ * (a re-consent IS a grant event), with the existing `grant_item_id`
+ * in details — operators auditing grant history see one row per consent
+ * action, projection stays single-row per (tenant, client, user).
  */
 async function projectGrantOnConsent(
   storage: Storage,
@@ -230,24 +228,51 @@ async function projectGrantOnConsent(
     const userRow = await storage.users.getByAuthUserId(opts.authUserId);
     tenantId = userRow?.tenant_id ?? undefined;
   }
-  const now = new Date().toISOString();
-  const item = await storage.items.create(
-    {
-      type: "system.connection",
-      tier: "library",
-      state: "active",
-      properties: {
-        kind: "app",
-        client_id: opts.clientId,
-        user_id: opts.authUserId,
+
+  // Look up existing projection. If present, this is a re-consent and we
+  // update the scopes in place. If absent, this is a first-time consent
+  // and we insert. Either way the audit row emits.
+  let grantItemId: string | null = null;
+  if (typeof storage.oauthProvider?.findGrantItemId === "function") {
+    grantItemId = await storage.oauthProvider.findGrantItemId({
+      tenantId: tenantId ?? null,
+      clientId: opts.clientId,
+      authUserId: opts.authUserId,
+    });
+  }
+
+  if (grantItemId) {
+    // Re-consent: update scopes + granted_at on the existing row.
+    if (typeof storage.oauthProvider?.updateGrantScopes === "function") {
+      await storage.oauthProvider.updateGrantScopes({
+        itemId: grantItemId,
+        tenantId: tenantId ?? null,
         scopes: opts.scopes,
-        status: "active",
-        granted_at: now,
+      });
+    }
+  } else {
+    // First-time consent: insert a fresh row.
+    const now = new Date().toISOString();
+    const item = await storage.items.create(
+      {
+        type: "system.connection",
+        tier: "library",
+        state: "active",
+        properties: {
+          kind: "app",
+          client_id: opts.clientId,
+          user_id: opts.authUserId,
+          scopes: opts.scopes,
+          status: "active",
+          granted_at: now,
+        },
+        source: "myme/oauth2/consent",
       },
-      source: "myme/oauth2/consent",
-    },
-    tenantId,
-  );
+      tenantId,
+    );
+    grantItemId = item.id;
+  }
+
   void storage.audit.log({
     tenant_id: tenantId ?? null,
     action: "auth.grant.created",
@@ -257,7 +282,7 @@ async function projectGrantOnConsent(
       client_id: opts.clientId,
       user_id: opts.authUserId,
       scopes: opts.scopes,
-      grant_item_id: item.id,
+      grant_item_id: grantItemId,
     },
   });
 }

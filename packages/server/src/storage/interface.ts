@@ -902,11 +902,78 @@ export interface OauthProviderStore {
     clientId: string,
     authUserId: string,
   ): Promise<void>;
+  /**
+   * T-131 follow-on (refresh-replay): delete ONLY access tokens for a
+   * grant — leaves refresh tokens + consent intact. Used by the
+   * `/oauth2/token` before-hook on refresh-token replay detection: the
+   * plugin's own logic deletes the refresh chain on stale-refresh
+   * detection but leaves access tokens valid until their TTL (default
+   * 1h). This narrows that window to zero by zapping access tokens
+   * pre-emptively when we detect a revoked refresh in the request.
+   *
+   * Idempotent — re-calling on an already-cleaned grant is a no-op.
+   * Best-effort; callers swallow errors.
+   */
+  revokeAccessTokensForGrant(
+    clientId: string,
+    authUserId: string,
+  ): Promise<void>;
+  /**
+   * T-131 follow-on (refresh-replay): look up a refresh-token row by its
+   * hashed `token` column value. Returns the (clientId, userId, revoked)
+   * tuple needed to decide whether the request is a replay attempt and
+   * whose access tokens to nuke. Returns null if the token doesn't
+   * exist (e.g. already deleted by a prior chain-revocation pass).
+   */
+  findRefreshTokenGrantKey(
+    tokenHash: string,
+  ): Promise<{
+    clientId: string;
+    userId: string;
+    revoked: boolean;
+  } | null>;
   /** Insert an access + refresh token pair from the device-flow terminal
    *  step. Writes into `auth_oauth_access_token` + `auth_oauth_refresh_token`
    *  with the same shape the plugin's `/oauth2/token` path would produce,
    *  so the bearer middleware resolves them uniformly. */
   mintTokenPair(input: MintTokenPairInput): Promise<void>;
+  /**
+   * T-131 follow-on: resolve the projected `system.connection { kind: "app" }`
+   * item id for a (tenantId, clientId, authUserId) tuple. Returns the
+   * `items.id` value or `null` if no projection exists (consent never ran,
+   * or the row was hard-deleted).
+   *
+   * Used by the bearer middleware to find the `system.connection` row it
+   * needs to stamp `last_used_at` on, and by the re-consent path to update
+   * the row's `scopes` property when the user grants a different scope set.
+   *
+   * Single-row indexed query: matches on `(type, tenant_id)` and predicates
+   * on `properties.kind / .client_id / .user_id` via the dialect's JSON
+   * extractor. Sub-ms in PG, sub-ms in SQLite.
+   *
+   * Tenant-scoped: pass `null` for the unscoped (single-tenant self-host)
+   * case so the row's `tenant_id IS NULL` predicate is used. A hosted-mode
+   * caller passing a real tenant cannot cross-tenant-match.
+   */
+  findGrantItemId(opts: {
+    tenantId: string | null;
+    clientId: string;
+    authUserId: string;
+  }): Promise<string | null>;
+  /**
+   * T-131 follow-on: update the `properties.scopes` and (refreshed)
+   * `granted_at` on a projected `system.connection { kind: "app" }` row.
+   * Called by the re-consent path when the user approves a different
+   * scope set than the one currently visible on the existing projection.
+   *
+   * Tenant-scoped per `findGrantItemId`. Best-effort — projection
+   * failures must NOT block the auth flow; callers swallow errors.
+   */
+  updateGrantScopes(opts: {
+    itemId: string;
+    tenantId: string | null;
+    scopes: string[];
+  }): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

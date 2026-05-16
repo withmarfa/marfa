@@ -421,7 +421,10 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
             // items + emit auth.grant.created / auth.grant.revoked audit
             // rows. Best-effort — projection failures must NEVER break
             // the auth flow.
-            buildOauthProjectionPlugin({ storage: options.storage }),
+            buildOauthProjectionPlugin({
+              storage: options.storage,
+              apiKeySalt: options.apiKeySalt,
+            }),
           ]
         : []),
       magicLink({

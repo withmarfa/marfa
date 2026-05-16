@@ -298,17 +298,65 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
  * the auth flow itself. We log + continue.
  */
 /**
- * Wrap the four matcher/handler pairs in a tiny BetterAuthPlugin shell —
+ * Wrap the matcher/handler pairs in a tiny BetterAuthPlugin shell —
  * top-level `hooks` on the betterAuth instance only accepts a single
  * before/after callable, but PLUGIN-level hooks accept the array+matcher
  * shape we need. The shell carries no endpoints/schema/init of its own;
- * it exists purely to host the after-hooks.
+ * it exists purely to host the projection hooks.
+ *
+ * `apiKeySalt` is threaded in so the refresh-replay before-hook can
+ * compute the same hash format the plugin uses (`hashApiKey(token, salt)`
+ * via the custom `storeTokens.hash`). Without it, the before-hook is
+ * skipped — the projection hooks still wire.
  */
-export function buildOauthProjectionPlugin(opts: { storage: Storage }) {
-  const { storage } = opts;
+export function buildOauthProjectionPlugin(opts: {
+  storage: Storage;
+  apiKeySalt?: string;
+}) {
+  const { storage, apiKeySalt } = opts;
+  const refreshHasher = apiKeySalt ? makeTokenHasher(apiKeySalt) : undefined;
   return {
     id: "myme-oauth-projection" as const,
     hooks: {
+      before: [
+        ...(refreshHasher
+          ? [
+              {
+                // T-131 follow-on (refresh-replay): the plugin detects stale
+                // refresh tokens (rotation: old marked `revoked: true`,
+                // new issued; replay finds old → plugin deletes refresh
+                // chain + throws invalid_grant). The plugin does NOT
+                // delete access tokens issued from the same chain, leaving
+                // them valid until TTL (default 1h). We close that gap:
+                // on every /oauth2/token request with grant_type=
+                // refresh_token, we hash the request's refresh_token and
+                // peek at the row — if it exists AND revoked, this is a
+                // replay attempt and we pre-emptively delete access tokens
+                // for (clientId, userId). The plugin's own logic then
+                // runs (returning invalid_grant); access tokens are gone.
+                //
+                // Best-effort — if the hash lookup misses or the cleanup
+                // fails, the request continues unmolested and the existing
+                // 1h TTL still bounds exposure. Idempotent on repeat calls.
+                matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
+                handler: createAuthMiddleware(async (ctx: HookCtxLite) => {
+                  try {
+                    await detectAndZapReplayedAccessTokens(
+                      ctx,
+                      storage,
+                      refreshHasher,
+                    );
+                  } catch (err) {
+                    log("warn", "oauth refresh-replay check failed", {
+                      error:
+                        err instanceof Error ? err.message : String(err),
+                    });
+                  }
+                }),
+              },
+            ]
+          : []),
+      ],
       after: [
         {
           // /oauth2/consent (success) → upsert system.connection app-grant +
@@ -452,26 +500,72 @@ async function projectConsentToSystemConnection(
 /**
  * Debounced last_used_at stamp on the grant's `system.connection` row
  * when a token is issued (authorization_code or refresh_token path).
- * Mirrors what the bearer middleware already does on every authenticated
- * request — the two paths share the same throttle.
  *
- * Pending: needs the connection_item_id resolution path which lands with
- * the bearer-middleware update. For now this is a no-op stub that logs
- * the event for visibility.
+ * T-131 follow-on: this hook is intentionally a no-op — the bearer
+ * middleware already stamps `last_used_at` on every authenticated
+ * request via `stampOAuthGrantLastUsedByGrantKey`, and the typical
+ * client uses an issued token immediately. Stamping at issuance time
+ * would be a redundant DB roundtrip in 99% of cases. If a token is
+ * issued and never used, `granted_at` on the projection covers the
+ * "newly approved app" surface — `last_used_at` correctly stays null.
  */
 function stampLastUsedFromTokenIssuance(
   _ctx: HookCtxLite,
   _storage: Storage,
 ): Promise<void> {
-  // TODO(T-131 follow-on): once the projection plumbing resolves the
-  // (clientId, userId) → system.connection item id link, this hook can
-  // call stampOAuthGrantLastUsed with the resolved item id. Currently
-  // a no-op — `last_used_at` on the /security page will show null for
-  // OAuth-code-flow grants until the wiring lands. Device-flow grants
-  // are correctly stamped via the explicit /auth/device/token handler.
   void _ctx;
   void _storage;
   return Promise.resolve();
+}
+
+/**
+ * T-131 follow-on (refresh-replay): runs before the plugin handles a
+ * `/oauth2/token` request. If the request body is a `grant_type=
+ * refresh_token` request AND the supplied refresh token corresponds to
+ * a row marked `revoked: true`, this is a replay attempt — the plugin
+ * about to delete the refresh chain + throw invalid_grant. We
+ * pre-emptively delete access tokens for the same (clientId, userId)
+ * so a parallel request can't slip through with one of them.
+ *
+ * Best-effort throughout: if the hash lookup misses (refresh row
+ * already cleaned up), we skip silently. If access-token deletion
+ * fails, we log and continue. The 1h TTL on access tokens always
+ * bounds exposure regardless.
+ */
+async function detectAndZapReplayedAccessTokens(
+  ctx: HookCtxLite,
+  storage: Storage,
+  hasher: (token: string) => string,
+): Promise<void> {
+  const body = ctx.body;
+  if (!body || typeof body !== "object") return;
+  const grantType = body.grant_type;
+  if (grantType !== "refresh_token") return;
+  const refreshTokenRaw = body.refresh_token;
+  if (typeof refreshTokenRaw !== "string" || refreshTokenRaw.length === 0)
+    return;
+
+  const tokenHash = hasher(refreshTokenRaw);
+  if (typeof storage.oauthProvider?.findRefreshTokenGrantKey !== "function") {
+    return;
+  }
+  const row = await storage.oauthProvider.findRefreshTokenGrantKey(tokenHash);
+  if (!row) return;
+  if (!row.revoked) return;
+
+  // Confirmed replay. Zap access tokens for this grant chain so they
+  // can't outlive the now-poisoned refresh chain. Idempotent — re-runs
+  // on burst replays harmlessly hit zero rows.
+  if (typeof storage.oauthProvider.revokeAccessTokensForGrant === "function") {
+    await storage.oauthProvider.revokeAccessTokensForGrant(
+      row.clientId,
+      row.userId,
+    );
+  }
+  log("info", "oauth refresh-replay: revoked access tokens for grant", {
+    client_id: row.clientId,
+    user_id: row.userId,
+  });
 }
 
 /**

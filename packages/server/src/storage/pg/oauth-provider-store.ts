@@ -7,7 +7,7 @@
  * after-hooks.
  */
 
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type {
@@ -21,6 +21,7 @@ import {
   auth_oauth_client,
   auth_oauth_consent,
   auth_oauth_refresh_token,
+  items,
 } from "./schema.js";
 import type { PgDb } from "./connection.js";
 
@@ -138,6 +139,55 @@ export class PgOauthProviderStore implements OauthProviderStore {
       );
   }
 
+  /**
+   * T-131 follow-on (refresh-replay): delete ONLY access tokens for a
+   * grant; leaves refresh tokens + consent intact. The plugin's own
+   * deleteMany on stale-refresh deals with refresh-token cleanup —
+   * this complements by nuking access tokens issued from the same
+   * (now-poisoned) chain.
+   */
+  async revokeAccessTokensForGrant(
+    clientId: string,
+    authUserId: string,
+  ): Promise<void> {
+    await this.db
+      .delete(auth_oauth_access_token)
+      .where(
+        and(
+          eq(auth_oauth_access_token.clientId, clientId),
+          eq(auth_oauth_access_token.userId, authUserId),
+        ),
+      );
+  }
+
+  /**
+   * T-131 follow-on (refresh-replay): look up a refresh row by hashed
+   * token. The plugin's `storeTokens.hash` matches the bearer middleware's
+   * `hashApiKey(token, salt)` so callers compute the same hash to find
+   * the row. Returns null if the token doesn't exist (e.g. cleaned up
+   * by a prior pass).
+   */
+  async findRefreshTokenGrantKey(
+    tokenHash: string,
+  ): Promise<{ clientId: string; userId: string; revoked: boolean } | null> {
+    const rows = await this.db
+      .select({
+        clientId: auth_oauth_refresh_token.clientId,
+        userId: auth_oauth_refresh_token.userId,
+        revoked: auth_oauth_refresh_token.revoked,
+      })
+      .from(auth_oauth_refresh_token)
+      .where(eq(auth_oauth_refresh_token.token, tokenHash))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      clientId: row.clientId,
+      userId: row.userId,
+      revoked: Boolean(row.revoked),
+    };
+  }
+
   async mintTokenPair(input: MintTokenPairInput): Promise<void> {
     const refreshId = generateId();
     const now = new Date();
@@ -165,6 +215,61 @@ export class PgOauthProviderStore implements OauthProviderStore {
       createdAt: now,
       scopes: scopesJson,
     });
+  }
+
+  /**
+   * T-131 follow-on: resolve the projected `system.connection { kind: "app" }`
+   * item id for (tenantId, clientId, authUserId). Single-row lookup via
+   * jsonb `->>` predicates on properties. Returns null if no projection
+   * row exists.
+   */
+  async findGrantItemId(opts: {
+    tenantId: string | null;
+    clientId: string;
+    authUserId: string;
+  }): Promise<string | null> {
+    const tenantPredicate =
+      opts.tenantId === null
+        ? sql`${items.tenant_id} IS NULL`
+        : sql`${items.tenant_id} = ${opts.tenantId}`;
+    const rows = await this.db
+      .select({ id: items.id })
+      .from(items)
+      .where(
+        and(
+          eq(items.type, "system.connection"),
+          tenantPredicate,
+          sql`${items.properties}::jsonb->>'kind' = 'app'`,
+          sql`${items.properties}::jsonb->>'client_id' = ${opts.clientId}`,
+          sql`${items.properties}::jsonb->>'user_id' = ${opts.authUserId}`,
+        ),
+      )
+      .limit(1);
+    return rows[0]?.id ?? null;
+  }
+
+  /**
+   * T-131 follow-on: merge a fresh `scopes` array (and refreshed `granted_at`)
+   * into the projection's `properties`. Uses jsonb_set to preserve every
+   * other property verbatim. Tenant-scoped — pass `null` for unscoped.
+   */
+  async updateGrantScopes(opts: {
+    itemId: string;
+    tenantId: string | null;
+    scopes: string[];
+  }): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const scopesJson = JSON.stringify(opts.scopes);
+    const tenantPredicate =
+      opts.tenantId === null
+        ? sql`${items.tenant_id} IS NULL`
+        : sql`${items.tenant_id} = ${opts.tenantId}`;
+    await this.db
+      .update(items)
+      .set({
+        properties: sql`(jsonb_set(jsonb_set(${items.properties}::jsonb, '{scopes}', ${scopesJson}::jsonb), '{granted_at}', to_jsonb(${nowIso}::text)))::text`,
+      })
+      .where(and(eq(items.id, opts.itemId), tenantPredicate));
   }
 
   async getPriorConsent(
