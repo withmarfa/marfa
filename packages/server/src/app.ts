@@ -265,7 +265,28 @@ export function createApp(
           "/auth/forgot-password": 15,
           "/auth/reset-password": 30,
           "/auth/verify-email/resend": 15,
-          "/auth/token": 60,
+          // F8 (T-131 review-sweep): cap the plugin's `/auth/oauth2/*`
+          // endpoints. Pre-fix, every plugin endpoint inherited the
+          // global default (1000/min) — particularly bad for DCR
+          // (`/auth/oauth2/register`) which is unauthenticated and
+          // could be used to spam-fill `auth_oauth_client`. Specific
+          // prefixes appear BEFORE broader siblings per the
+          // insertion-order match rule.
+          //
+          // `/auth/authorize/decision` (Myme proxy) precedes
+          // `/auth/authorize` (Myme consent render).
+          "/auth/oauth2/register": 10,
+          "/auth/oauth2/token": 60,
+          "/auth/oauth2/introspect": 60,
+          "/auth/oauth2/revoke": 30,
+          "/auth/oauth2/consent": 30,
+          "/auth/oauth2/authorize": 30,
+          "/auth/authorize/decision": 30,
+          "/auth/authorize": 60,
+          // s1 (T-131 review-sweep): `"/auth/token": 60` was the
+          // homegrown OAuth surface's token endpoint; T-131 deleted
+          // that route and the plugin lives at `/auth/oauth2/token`.
+          // The dead prefix never matched but cluttered the table.
         },
         trustedProxyCidrs: config.trustedProxyCidrs,
         // T-052 follow-on (Wave B Part 2): per-tenant rate ceiling on

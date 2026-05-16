@@ -159,3 +159,70 @@ describe("rate-limit keying", () => {
     expect(bFirst.status).toBe(200);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T-131 review-sweep F8: per-path caps for the plugin's /auth/oauth2/*
+// endpoints
+// ---------------------------------------------------------------------------
+
+describe("rate-limit per-path caps for /auth/oauth2/* (T-131 F8)", () => {
+  // The default cap on this test context is 2 (rateLimitDefaultLimit). The
+  // F8 pathLimits map sets per-path caps for /auth/oauth2/* paths so they
+  // get their own (larger) budget independent of the global default. We
+  // verify the override by hitting an OAuth2 path more times than the
+  // default cap would allow.
+  //
+  // We hit unauthenticated paths so we don't have to spin up a separate
+  // credential — rate-limit middleware keys by IP for unauthenticated
+  // requests.
+
+  it("F8: /auth/oauth2/register has its own cap (does NOT inherit default cap of 2)", async () => {
+    // /auth/oauth2/register cap is 10/min — much higher than the test
+    // default of 2. Hitting it 5 times should NEVER hit the default
+    // ceiling. We don't care if the requests succeed at the application
+    // layer (they may 400 on malformed body); we care that NONE return
+    // 429 inside the cap window.
+    let observed429 = false;
+    for (let i = 0; i < 5; i++) {
+      const res = await ctx.app.request("/auth/oauth2/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}), // bad body — plugin will 400 on validation
+      });
+      if (res.status === 429) observed429 = true;
+    }
+    expect(observed429).toBe(false);
+  });
+
+  it("F8: /auth/oauth2/token has its own cap (does NOT inherit default cap of 2)", async () => {
+    let observed429 = false;
+    for (let i = 0; i < 5; i++) {
+      const res = await ctx.app.request("/auth/oauth2/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "grant_type=authorization_code&code=bogus",
+      });
+      if (res.status === 429) observed429 = true;
+    }
+    expect(observed429).toBe(false);
+  });
+
+  it("F8: /auth/authorize/decision (Myme proxy) has its own cap (cap=30)", async () => {
+    let observed429 = false;
+    for (let i = 0; i < 5; i++) {
+      const res = await ctx.app.request("/auth/authorize/decision", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: "accept=true",
+      });
+      if (res.status === 429) observed429 = true;
+    }
+    expect(observed429).toBe(false);
+  });
+
+  // s1 (dead /auth/token entry removed): verified by visual inspection
+  // of `app.ts` pathLimits — no behavioral test, since the path doesn't
+  // exist post-T-131 and the rate-limit middleware runs before route
+  // matching (a "no such route" test would 429 first under the test
+  // ctx's tiny default cap).
+});
