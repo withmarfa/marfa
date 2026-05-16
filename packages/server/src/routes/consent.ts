@@ -15,11 +15,19 @@
  *
  * T-131 rewrite: the homegrown surface used to POST the consent form
  * to `/auth/authorize` to mint the authorization code AT consent time.
- * The @better-auth/oauth-provider plugin inverts this — it mints the
- * `code` BEFORE redirecting to the consent page and expects the form to
- * POST back to `/auth/oauth2/consent` with `code` + `accept` + `scope`.
- * PKCE / state / redirect_uri / response_type are bound to the code
- * server-side; the form no longer carries them.
+ * The @better-auth/oauth-provider plugin inverts this — it signs the
+ * full authorize-request query string (response_type + client_id +
+ * redirect_uri + scope + state + code_challenge + code_challenge_method
+ * + exp + sig) and redirects to the consent page carrying that signed
+ * blob. The consent form POSTs back to `/auth/oauth2/consent` with
+ * `{ accept, scope?, oauth_query }` — the plugin verifies the sig,
+ * re-hydrates the original params from `oauth_query`, mints the code,
+ * and redirects to the RP's `redirect_uri?code=...`.
+ *
+ * So: the form carries the entire signed query string as a single
+ * hidden field `oauth_query`. `client_id` is rendered for the projection
+ * handler's use (it reads the form's `client_id` directly to write the
+ * `system.connection { kind: "app" }` row + audit emit).
  */
 
 import type { ParsedScope } from "@mymehq/shared";
@@ -31,11 +39,14 @@ interface ConsentParams {
   scopes: ParsedScope[];
   clientId: string;
   /**
-   * The authorization code the plugin pre-minted before redirecting
-   * here. Threaded back into `/auth/oauth2/consent` as the binding
-   * handle for accept/deny.
+   * The full signed query string forwarded by the plugin's authorize
+   * endpoint (response_type, client_id, redirect_uri, scope, state,
+   * code_challenge, code_challenge_method, exp, sig — everything).
+   * Threaded into a hidden field and POSTed back to
+   * `/auth/oauth2/consent` so the plugin can verify the signature and
+   * re-hydrate the original request parameters.
    */
-  code: string;
+  oauthQuery: string;
   /**
    * Plain-English description per scope, keyed by `typePattern` (e.g.
    * `core.note` → "Text content you created."). Pulled from the type
@@ -106,7 +117,7 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   const safeClient = escapeHtml(params.clientName);
   const safeClientId = escapeHtml(params.clientId);
-  const safeCode = escapeHtml(params.code);
+  const safeOauthQuery = escapeHtml(params.oauthQuery);
 
   // Decide diff-vs-flat rendering. Diff path triggers when caller
   // passed `priorScopes` and there's at least one scope on either
@@ -201,14 +212,24 @@ export function renderConsentScreen(params: ConsentParams): string {
   // /auth/oauth2/consent) so the consent-side `system.connection`
   // projection + `auth.grant.created` audit row land deterministically.
   // The Myme handler then proxies to the plugin to complete the flow.
-  // PKCE / state / redirect_uri are bound to the code server-side; the
-  // form carries only the binding handle (`code`) + decision + client_id +
-  // scope selection.
+  //
+  // The plugin's /oauth2/consent endpoint takes `{ accept, scope?,
+  // oauth_query }` — the `oauth_query` is the full signed query string
+  // the plugin redirected here with (carries response_type, client_id,
+  // redirect_uri, scope, state, code_challenge, code_challenge_method,
+  // exp, sig). The plugin's before-hook verifies the sig and re-hydrates
+  // the original request parameters into `oAuthState` before the consent
+  // endpoint runs.
+  //
+  // We also carry `client_id` as a separate hidden field so the
+  // projection handler can read it directly without parsing oauth_query.
+  // The plugin tolerates both fields on its endpoint and reads client_id
+  // from the signed oauth_query exclusively.
   const bodyHtml = `
     <h1>${leadeText}</h1>
     <form method="POST" action="/auth/authorize/decision">
       <input type="hidden" name="client_id" value="${safeClientId}">
-      <input type="hidden" name="code" value="${safeCode}">
+      <input type="hidden" name="oauth_query" value="${safeOauthQuery}">
 
       ${scopesHtml}
 

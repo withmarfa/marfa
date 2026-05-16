@@ -6,10 +6,11 @@ import { renderConsentScreen } from "./consent.js";
  * Wave C PR4 — behaviour-preserving smoke for `renderConsentScreen`
  * after the layout extraction. T-131 rewrote the form shape to match
  * the @better-auth/oauth-provider plugin: the form now POSTs back to
- * `/auth/oauth2/consent` with a pre-minted `code` (no PKCE/state in
- * hidden fields). This test file asserts the HTML shape directly so
- * a future tweak to the layout helper can't silently break the
- * consent surface.
+ * `/auth/authorize/decision` (Myme handler, which proxies to
+ * `/auth/oauth2/consent`) with a single `oauth_query` hidden field
+ * carrying the plugin's full signed authorize-request query string.
+ * This test file asserts the HTML shape directly so a future tweak
+ * to the layout helper can't silently break the consent surface.
  */
 
 const SCOPES: ParsedScope[] = [
@@ -18,11 +19,14 @@ const SCOPES: ParsedScope[] = [
   { typePattern: "core.task", operation: "read" },
 ];
 
+const SIGNED_OAUTH_QUERY =
+  "response_type=code&client_id=client-abc&redirect_uri=http%3A%2F%2Flocalhost%2Fcallback&scope=core.note%3Aread&state=abc&code_challenge=def&code_challenge_method=S256&exp=1778957000&sig=somesignaturehash";
+
 const PARAMS = {
   clientName: "Test CLI",
   scopes: SCOPES,
   clientId: "client-abc",
-  code: "preminted-auth-code-xyz",
+  oauthQuery: SIGNED_OAUTH_QUERY,
   descriptions: {
     "core.note": "Text content you created.",
     "core.task": "Tasks and todos.",
@@ -62,15 +66,24 @@ describe("renderConsentScreen (Wave C PR4)", () => {
     expect(html).toContain("Tasks and todos.");
   });
 
-  it("POSTs to the Myme decision handler with code + client_id hidden", () => {
+  it("POSTs to the Myme decision handler with oauth_query + client_id hidden", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain(
       '<form method="POST" action="/auth/authorize/decision"',
     );
     expect(html).toContain('name="client_id" value="client-abc"');
-    expect(html).toContain('name="code" value="preminted-auth-code-xyz"');
-    // PKCE / state / redirect_uri are bound to the code server-side; they
-    // must NOT appear in the form (the plugin rejects redundant params).
+    // oauth_query carries the plugin's signed authorize-request params
+    // verbatim. The form must round-trip the full signed string —
+    // re-hashing or partial copying would break the plugin's
+    // signature check. We assert the field exists with the leading
+    // `response_type=` segment (HTML-escaping of `=` is a no-op).
+    expect(html).toContain('name="oauth_query"');
+    expect(html).toContain("response_type=code");
+    expect(html).toContain("sig=somesignaturehash");
+    // No pre-minted code: the plugin doesn't mint one until /oauth2/consent.
+    expect(html).not.toContain('name="code"');
+    // No raw PKCE / state / redirect_uri hidden fields — they live
+    // INSIDE oauth_query, not as separate form fields.
     expect(html).not.toContain('name="redirect_uri"');
     expect(html).not.toContain('name="code_challenge"');
     expect(html).not.toContain('name="state"');

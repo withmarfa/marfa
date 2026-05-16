@@ -278,13 +278,15 @@ export interface ApiKey {
   metadata_permissions?: Record<string, MetadataPermission>;
   /**
    * **T-074: standard OIDC scopes** (`openid` / `profile` / `email`)
-   * granted to this credential. Only ever populated on the synthetic
+   * granted to this credential, plus T-131's `offline_access` which
+   * signals refresh-token issuance. Only ever populated on the synthetic
    * `ApiKey` records derived from an OAuth access token; raw API keys
    * leave it absent. Consumed by `/oauth/userinfo` to gate field
    * visibility — never projected into the type / edge / metadata
-   * permission maps.
+   * permission maps. `offline_access` is informational here (it doesn't
+   * widen userinfo claims) but kept for surface consistency.
    */
-  oidc_scopes?: readonly ("openid" | "profile" | "email")[];
+  oidc_scopes?: readonly ("openid" | "profile" | "email" | "offline_access")[];
   created_at: string;
   last_used_at: string | null;
 }

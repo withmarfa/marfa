@@ -408,7 +408,14 @@ async function detectAndZapReplayedAccessTokens(
   if (typeof refreshTokenRaw !== "string" || refreshTokenRaw.length === 0)
     return;
 
-  const tokenHash = hasher(refreshTokenRaw);
+  // The plugin strips the `prefix.refreshToken` (`myme_rt_`) BEFORE
+  // calling our hasher (verified `index.mjs:394`) — same shape as the
+  // access-token side. To match the stored hash, strip here too.
+  const REFRESH_PREFIX = "myme_rt_";
+  const bare = refreshTokenRaw.startsWith(REFRESH_PREFIX)
+    ? refreshTokenRaw.slice(REFRESH_PREFIX.length)
+    : refreshTokenRaw;
+  const tokenHash = hasher(bare);
   if (typeof storage.oauthProvider?.findRefreshTokenGrantKey !== "function") {
     return;
   }

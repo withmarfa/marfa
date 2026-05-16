@@ -22,7 +22,7 @@ import type { MetadataPermission, TypePermission } from "./types.js";
  * `/oauth/userinfo` endpoint to gate field visibility, and never project
  * into `type_permissions` / `edge_permissions` / `metadata_permissions`.
  */
-export type OidcScope = "openid" | "profile" | "email";
+export type OidcScope = "openid" | "profile" | "email" | "offline_access";
 
 export interface ParsedScope {
   typePattern: string;
@@ -50,11 +50,19 @@ const METADATA_SUB_SCOPE_RE = /^metadata\.([a-z][a-z0-9_-]*):(read|write)$/;
 
 /** T-074: standard OIDC literals. Recognised by `parseScope` ahead of the
  *  `<type>:<verb>` matchers so they can't collide with future type names
- *  (which require a colon-separated verb). */
+ *  (which require a colon-separated verb).
+ *
+ *  T-131: `offline_access` added — RFC 6749 / OIDC standard literal that
+ *  signals the RP wants a refresh token. The @better-auth/oauth-provider
+ *  plugin requires it to be in the requested scope set before issuing a
+ *  refresh token alongside the access token. Without recognition here,
+ *  the consent route 400s on this scope and the consent decision never
+ *  reaches the plugin's `/oauth2/consent` endpoint. */
 const OIDC_LITERALS: ReadonlySet<OidcScope> = new Set([
   "openid",
   "profile",
   "email",
+  "offline_access",
 ]);
 
 /** Parses a scope string into its type pattern and operation. Returns null if invalid. */

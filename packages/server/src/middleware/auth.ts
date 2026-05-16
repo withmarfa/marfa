@@ -293,7 +293,16 @@ export function authMiddleware(storage: Storage, salt: string) {
     // from `${clientId}:${userId}` so audit rows attribute correctly
     // without an extra DB roundtrip.
     if (token.startsWith(ACCESS_TOKEN_PREFIX)) {
-      const hash = hashApiKey(token, salt);
+      // The plugin's `storeTokens.hash` strips the `prefix.opaqueAccessToken`
+      // before calling our hasher (verified in
+      // @better-auth/oauth-provider@1.6.9 `index.mjs:858` and `:2266` —
+      // `tokenValue.replace(opts.prefix.opaqueAccessToken, "")` runs before
+      // `getStoredToken` invokes our hash function). To stay symmetric with
+      // the plugin's stored hash, we ALSO strip the prefix before hashing
+      // for lookup. Device-flow's `mintTokenPair` callers (in `routes/oauth.ts`
+      // + `test-utils.ts`) match the same convention.
+      const bare = token.slice(ACCESS_TOKEN_PREFIX.length);
+      const hash = hashApiKey(bare, salt);
       const oauthToken = await storage.oauthProvider?.validateAccessToken(
         hash,
       );

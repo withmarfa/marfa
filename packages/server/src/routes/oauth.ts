@@ -1825,10 +1825,21 @@ export function authRoutes(
     // bearer middleware resolves device-flow tokens identically to
     // authorization-code-flow tokens. The hash function (`hashApiKey`)
     // is the same one the plugin's `storeTokens.hash` is wired to.
+    //
+    // **Prefix-stripped hash, matching the plugin convention.** The
+    // plugin strips `prefix.opaqueAccessToken` / `prefix.refreshToken`
+    // BEFORE calling its hasher (`index.mjs:419` for issuance,
+    // `:858`/`:2266` for lookup). To stay symmetric — so the bearer
+    // middleware finds device-flow tokens by computing the same hash
+    // — we strip here too. Without this, device-flow access tokens
+    // would 401 on every request because the middleware's lookup hash
+    // wouldn't match the stored one.
     const accessRaw = generateToken(ACCESS_TOKEN_PREFIX);
     const refreshRaw = generateToken(REFRESH_TOKEN_PREFIX);
-    const accessHash = hashApiKey(accessRaw, salt);
-    const refreshHash = hashApiKey(refreshRaw, salt);
+    const accessBare = accessRaw.slice(ACCESS_TOKEN_PREFIX.length);
+    const refreshBare = refreshRaw.slice(REFRESH_TOKEN_PREFIX.length);
+    const accessHash = hashApiKey(accessBare, salt);
+    const refreshHash = hashApiKey(refreshBare, salt);
 
     // Resolve the underlying system.connection (grant) so we can pull
     // tenant_id + the scopes the user actually approved. The grant

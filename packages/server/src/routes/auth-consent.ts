@@ -4,16 +4,32 @@
  * Replaces the homegrown GET/POST `/auth/authorize` handlers that lived
  * in `routes/oauth.ts`. The @better-auth/oauth-provider plugin's
  * `consentPage: "/auth/authorize"` config redirects unauthenticated /
- * unaccepted authorization requests here with three query params:
+ * unaccepted authorization requests here with the **full signed
+ * authorize-request query string** as the URL's search part:
  *
- *   - `client_id` — the OAuth client requesting access
- *   - `scope`     — space-separated scope literals (Myme grammar)
- *   - `code`      — the pre-minted authorization code (binding handle)
+ *   `/auth/authorize?response_type=code&client_id=...&redirect_uri=...
+ *   &scope=...&state=...&code_challenge=...&code_challenge_method=S256
+ *   &exp=<ts>&sig=<hmac>`
  *
- * This route reads those, resolves the client name + the user's prior
- * consent for the re-consent diff, and renders via the existing
- * `renderConsentScreen`. The form POSTs back to `/auth/oauth2/consent`
- * (owned by the plugin) with `code` + `accept` + `scope`.
+ * (No pre-minted code — the plugin signs the params and forwards.
+ * Verified in @better-auth/oauth-provider@1.6.9 `index.mjs:3909-3925`
+ * `redirectWithPromptCode` + `signParams`.)
+ *
+ * This route:
+ *   - extracts `client_id` + `scope` from the query for rendering
+ *   - keeps the full URL search string verbatim as `oauthQuery` so the
+ *     consent form can POST it back to `/auth/oauth2/consent` unchanged
+ *     (the plugin's before-hook re-verifies the sig)
+ *   - looks up the user's prior consent for the re-consent diff
+ *   - renders via the existing `renderConsentScreen`
+ *
+ * The decision handler (`POST /auth/authorize/decision`) projects the
+ * `system.connection { kind: "app" }` row + emits `auth.grant.created`,
+ * then proxies to `/auth/oauth2/consent` with `{ accept, scope?,
+ * oauth_query }`. The plugin verifies the sig, upserts its own
+ * `oauthConsent` row, mints the code, and returns a JSON redirect
+ * body `{ redirect: true, url: "<redirect_uri>?code=..." }` which we
+ * forward to the browser as a 302.
  *
  * Auth gating: the plugin only redirects here when the user is already
  * signed in (it redirects to `loginPage: "/auth/sign-in"` first). If
@@ -51,10 +67,22 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const url = new URL(c.req.url);
     const clientId = url.searchParams.get("client_id") ?? "";
     const scopeParam = url.searchParams.get("scope") ?? "";
-    const code = url.searchParams.get("code") ?? "";
+    // The plugin signs the entire query string and expects it returned
+    // verbatim. We preserve the original `search` (minus leading `?`)
+    // and round-trip it through the form's `oauth_query` hidden field.
+    // `sig` is the canary — without it the plugin won't accept the
+    // consent POST, which lets us 400 early rather than render a
+    // consent screen that will fail on submit.
+    const oauthQuery = url.search.startsWith("?")
+      ? url.search.slice(1)
+      : url.search;
+    const sig = url.searchParams.get("sig");
 
-    if (!clientId || !code) {
-      return c.text("Missing client_id or code", 400);
+    if (!clientId || !sig) {
+      return c.text(
+        "Missing required query params: client_id and sig (the plugin's signed redirect to /auth/authorize must carry both)",
+        400,
+      );
     }
 
     // Auth gate: the plugin's loginPage handles unsigned users normally,
@@ -108,7 +136,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       clientName,
       scopes: parsed,
       clientId,
-      code,
+      oauthQuery,
       descriptions,
       priorScopes,
     });
@@ -122,13 +150,25 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
   // system.connection projection + audit row deterministically BEFORE
   // the plugin handles the rest of the flow.
   //
-  // The plugin's /oauth2/consent body doesn't carry client_id (it links
-  // via the pre-minted `code`), and its `hooks.after` matchers fire
-  // after the redirect, making it hard to write the projection reliably.
-  // This explicit handler reads `client_id` from the form (which our
-  // renderConsentScreen includes as a hidden field), looks up the
-  // session for `user_id`, writes the projection, then forwards the
-  // request to /auth/oauth2/consent.
+  // The plugin's /oauth2/consent body shape (verified in source
+  // @better-auth/oauth-provider@1.6.9 `index.mjs:2958-2982`):
+  //   { accept: boolean, scope?: string, oauth_query: string }
+  // where `oauth_query` is the full signed query string the plugin
+  // redirected us here with. Plugin's before-hook verifies the sig
+  // against `oauth_query`, re-hydrates the original authorize-request
+  // params into `oAuthState`, then `consentEndpoint` mints the code
+  // and returns `{ redirect: true, url: "<redirect_uri>?code=..." }`.
+  //
+  // This explicit handler:
+  //   1. reads `accept` + `client_id` + `oauth_query` + selected
+  //      `scopes` from the form
+  //   2. projects `system.connection { kind: "app" }` (insert OR update
+  //      on re-consent) + emits `auth.grant.created` audit row
+  //   3. POSTs `{ accept, scope, oauth_query }` to /auth/oauth2/consent
+  //      (JSON body — the plugin's `allowedMediaTypes` defaults to JSON
+  //      for this endpoint)
+  //   4. forwards the resulting redirect (302 OR JSON
+  //      `{redirect, url}`) to the browser as a real 302
   // ---------------------------------------------------------------------
   app.post("/authorize/decision", async (c) => {
     if (!deps.auth) {
@@ -141,20 +181,19 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
 
     const form = await c.req.formData();
     const accept = form.get("accept") === "true";
-    const code = form.get("code");
     const clientId = form.get("client_id");
-    const scopesField = form.get("scope") ?? form.get("scopes");
-    if (typeof code !== "string" || typeof clientId !== "string") {
-      return c.text("Missing required form fields: code, client_id", 400);
+    const oauthQuery = form.get("oauth_query");
+    if (typeof clientId !== "string" || typeof oauthQuery !== "string") {
+      return c.text(
+        "Missing required form fields: client_id, oauth_query",
+        400,
+      );
     }
-    // The form posts each scope as a separate `scopes` field; collect.
+    // The form posts each selected scope as a separate `scopes` field; collect.
     const scopes = form
       .getAll("scopes")
       .filter((v): v is string => typeof v === "string");
-    const scopeStr =
-      typeof scopesField === "string" && scopesField.length > 0
-        ? scopesField
-        : scopes.join(" ");
+    const scopeStr = scopes.join(" ");
 
     // Project system.connection + emit audit BEFORE proxying to the
     // plugin. Best-effort — a projection failure must NOT block the
@@ -176,31 +215,55 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       }
     }
 
-    // Forward to the plugin's /oauth2/consent endpoint. We re-craft the
-    // Request with form-encoded body (the plugin reads body parameters
-    // from JSON or form, depending on content-type). Cookies pass
+    // Forward to the plugin's /oauth2/consent endpoint. JSON body
+    // (plugin's default media type for this endpoint). Cookies pass
     // through via the original headers — the session cookie is what
     // the plugin uses to authenticate the consent decision.
-    const proxyBody = new URLSearchParams();
-    proxyBody.set("accept", String(accept));
-    proxyBody.set("code", code);
-    if (scopeStr) proxyBody.set("scope", scopeStr);
-
     const proxyUrl = new URL("/auth/oauth2/consent", c.req.url);
     const proxyHeaders = new Headers(c.req.raw.headers);
-    proxyHeaders.set("content-type", "application/x-www-form-urlencoded");
-    // Drop content-length; the body is being replaced.
+    proxyHeaders.set("content-type", "application/json");
     proxyHeaders.delete("content-length");
+
+    const proxyBody: Record<string, unknown> = {
+      accept,
+      oauth_query: oauthQuery,
+    };
+    if (accept && scopeStr) {
+      // Only forward the scope filter when the user actually picked a
+      // subset (or the full set). On deny, the plugin doesn't read scope.
+      proxyBody.scope = scopeStr;
+    }
 
     const proxyReq = new Request(proxyUrl.toString(), {
       method: "POST",
       headers: proxyHeaders,
-      body: proxyBody.toString(),
-      // Preserve redirect-following behaviour at the browser level.
+      body: JSON.stringify(proxyBody),
       redirect: "manual",
     });
 
-    return deps.auth.handler(proxyReq);
+    const proxyResp = await deps.auth.handler(proxyReq);
+    // The plugin returns either a 302 (browser-native redirect) OR a 200
+    // with JSON body `{ redirect: true, url: "..." }`. The latter is the
+    // default when better-auth doesn't see Accept: text/html. Normalise
+    // to a 302 either way so the browser navigates correctly.
+    if (proxyResp.status === 302) {
+      return proxyResp;
+    }
+    if (proxyResp.status === 200) {
+      try {
+        const cloned = proxyResp.clone();
+        const body = (await cloned.json()) as {
+          redirect?: boolean;
+          url?: string;
+        };
+        if (body.redirect && typeof body.url === "string") {
+          return c.redirect(body.url, 302);
+        }
+      } catch {
+        // Fall through — return the plugin response verbatim.
+      }
+    }
+    return proxyResp;
   });
 
   return app;
