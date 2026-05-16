@@ -257,12 +257,28 @@ export function authAccountRoutes(
         400,
       );
     }
-    await accountLifecycle.cancelPendingDeletion(authUserId);
+    // T-141: branch on whether the UPDATE actually flipped a row. The
+    // `getAccountLifecycle` pre-check above has a TOCTOU window with the
+    // purger's cascade — `getAccountLifecycle` can read pending, the
+    // cascade can commit (hard-deleting the auth_user), then this
+    // UPDATE no-ops. Without this branch the audit row + JSON response
+    // would lie about a cancel that never happened.
+    const cancelled = await accountLifecycle.cancelPendingDeletion(authUserId);
     await deleteVerificationsByValueAndPrefix(
       storage,
       authUserId,
       CANCEL_IDENTIFIER_PREFIX,
     );
+    if (!cancelled) {
+      void storage.audit.log({
+        action: "auth.account.cancel_attempted_but_already_purged",
+        resource_type: "auth_account",
+        resource_id: authUserId,
+        client_ip: c.var.clientIp ?? null,
+        details: { source: "session" },
+      });
+      return c.json({ ok: false, code: "already_purged" });
+    }
     void storage.audit.log({
       action: "auth.account.delete_cancelled",
       resource_type: "auth_account",
@@ -289,7 +305,23 @@ export function authAccountRoutes(
     }
     const authUserId = row.value;
     await deleteVerificationByIdentifier(storage, identifier);
-    await accountLifecycle.cancelPendingDeletion(authUserId);
+    // T-141: branch on whether the UPDATE actually flipped a row. The
+    // verification row above can resolve before the cascade commits,
+    // but by the time `cancelPendingDeletion` runs the auth_user row
+    // may be gone — at which point the UPDATE matches zero rows. The
+    // "Account restored" page would be a lie; render the honest one
+    // instead and write a distinct audit action.
+    const cancelled = await accountLifecycle.cancelPendingDeletion(authUserId);
+    if (!cancelled) {
+      void storage.audit.log({
+        action: "auth.account.cancel_attempted_but_already_purged",
+        resource_type: "auth_account",
+        resource_id: authUserId,
+        client_ip: c.var.clientIp ?? null,
+        details: { source: "link" },
+      });
+      return c.html(renderAlreadyDeletedPage());
+    }
     void storage.audit.log({
       action: "auth.account.delete_cancelled",
       resource_type: "auth_account",
@@ -605,6 +637,21 @@ function renderCancelledPage(): string {
       <h1>Account restored</h1>
       <div class="banner banner--success" role="status">Your account is no longer scheduled for deletion.</div>
       <p class="aux"><a href="/auth/sign-in">Sign in</a></p>
+    `,
+  });
+}
+
+// T-141: rendered when the cancel UPDATE matched zero rows because the
+// account-deletion cascade had already committed. The user clicked the
+// cancel link in time — the system just couldn't honour it. Don't imply
+// they missed a deadline.
+function renderAlreadyDeletedPage(): string {
+  return renderAuthLayout({
+    title: "Account permanently deleted",
+    bodyHtml: `
+      <h1>Account permanently deleted</h1>
+      <div class="banner banner--error" role="alert">Your account has already been permanently deleted, and we couldn't cancel the deletion.</div>
+      <p class="aux">If you'd like to use Myme again, you can <a href="/auth/sign-up">create a new account</a>.</p>
     `,
   });
 }

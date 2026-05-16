@@ -44,12 +44,18 @@ export class SqliteAccountLifecycleStore implements AccountLifecycleStore {
     });
   }
 
-  async cancelPendingDeletion(authUserId: string): Promise<void> {
-    await this.db
+  async cancelPendingDeletion(authUserId: string): Promise<boolean> {
+    // T-141: surface rows-affected to the route layer so the
+    // "Account restored" confirmation only renders when the UPDATE
+    // actually flipped a row. The libsql `ResultSet` exposes
+    // `rowsAffected` — same property `event-log-store` / `audit-store`
+    // already read on cleanup deletes.
+    const result = await this.db
       .update(auth_user)
       .set({ deletion_state: "active", pending_deletion_at: null })
       .where(eq(auth_user.id, authUserId))
       .run();
+    return result.rowsAffected > 0;
   }
 
   async getAccountLifecycle(authUserId: string): Promise<{
