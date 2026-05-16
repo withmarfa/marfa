@@ -2,9 +2,17 @@
  * T-116: SQLite account hard-delete cascade.
  *
  * Mirrors pg/account-cascade.ts step-for-step. See that file for the
- * full design notes. The libsql adapter exposes the same Drizzle
+ * full design notes including the T-136 race-safety re-check at step 0.
+ * The libsql adapter exposes the same Drizzle
  * `db.transaction(async tx => …)` shape as postgres-js, so the
  * end-to-end transactional guarantee is real.
+ *
+ * **T-136 note for SQLite:** there is no `FOR UPDATE` — better-sqlite3
+ * serialises all writes via the database file lock, so any concurrent
+ * `cancelPendingDeletion` UPDATE on `auth_user` waits behind the
+ * cascade transaction (or vice versa). The in-transaction re-check
+ * still gates: if the cancel commits first, the cascade reads the
+ * fresh `deletion_state = 'active'` row and short-circuits cleanly.
  */
 import { eq, sql } from "drizzle-orm";
 import type { Storage } from "../interface.js";
@@ -30,8 +38,26 @@ export async function sqliteDeleteAccountCascade(
   db: DrizzleDb,
   storage: Storage,
   authUserId: string,
-): Promise<void> {
-  await db.transaction(async (tx) => {
+  cutoffIso: string,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    // ---- 0. T-136 race-safety re-check. ----------------------------------
+    const lifecycleRow = await tx
+      .select({
+        deletion_state: auth_user.deletion_state,
+        pending_deletion_at: auth_user.pending_deletion_at,
+      })
+      .from(auth_user)
+      .where(eq(auth_user.id, authUserId))
+      .get();
+    if (
+      lifecycleRow?.deletion_state !== "pending_deletion" ||
+      !lifecycleRow.pending_deletion_at ||
+      lifecycleRow.pending_deletion_at >= cutoffIso
+    ) {
+      return false;
+    }
+
     const userRow = await tx
       .select({ tenant_id: users.tenant_id })
       .from(users)
@@ -115,5 +141,7 @@ export async function sqliteDeleteAccountCascade(
     await storage.audit.redactForUser(authUserId);
 
     await tx.delete(auth_user).where(eq(auth_user.id, authUserId)).run();
+
+    return true;
   });
 }

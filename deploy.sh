@@ -136,7 +136,7 @@ echo -e "${GREEN}Deploying Myme to $ATLAS_HOST${NC}"
 echo ""
 
 # --- Step 1: Pre-flight checks ---
-echo "1/6 Pre-flight checks..."
+echo "1/7 Pre-flight checks..."
 if ! ssh "${SSH_OPTS[@]}" "$ATLAS_HOST" "echo ok" > /dev/null 2>&1; then
   echo -e "${RED}Cannot connect to $ATLAS_HOST via SSH.${NC}"
   echo "  Configure SSH access in ~/.ssh/config:"
@@ -163,16 +163,16 @@ if [ "$ROLLBACK" = true ]; then
   echo -e "${YELLOW}Rolling back to $ROLLBACK_SHA${NC}"
   remote "git fetch origin && git checkout $ROLLBACK_SHA"
 
-  echo "3/6 Building..."
+  echo "1/4 Building..."
   remote "pnpm install --frozen-lockfile && pnpm build"
 
-  echo "4/6 Writing version file..."
+  echo "2/4 Writing version file..."
   remote "echo '{\"sha\": \"$ROLLBACK_SHA\", \"previous_sha\": \"$PREVIOUS_SHA\", \"deployed_at\": \"$(timestamp)\", \"rollback\": true}' > version.json"
 
-  echo "5/6 Restarting services..."
+  echo "3/4 Restarting services..."
   restart_services
 
-  echo "6/6 Health checks..."
+  echo "4/4 Health checks..."
   FAILED=false
   for i in "${!SERVICE_NAMES[@]}"; do
     health_check "${SERVICE_NAMES[$i]}" "${SERVICE_PORTS[$i]}" || FAILED=true
@@ -191,7 +191,7 @@ fi
 # --- Normal deploy flow ---
 
 # --- Step 2: Git pull ---
-echo "2/6 Pulling latest from $REPO_BRANCH..."
+echo "2/7 Pulling latest from $REPO_BRANCH..."
 remote "git fetch origin && git checkout $REPO_BRANCH && git pull --ff-only origin $REPO_BRANCH"
 NEW_SHA=$(remote "git rev-parse HEAD")
 echo "  SHA: $NEW_SHA"

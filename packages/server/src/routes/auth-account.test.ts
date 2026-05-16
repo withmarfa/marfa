@@ -303,6 +303,190 @@ describe("T-116 — account deletion routes", () => {
 });
 
 // ---------------------------------------------------------------------------
+// T-136 — cascade race-safety re-check.
+// ---------------------------------------------------------------------------
+//
+// The cascade re-reads `auth_user.deletion_state` + `pending_deletion_at`
+// inside its transaction (with `FOR UPDATE` on PG) and short-circuits if
+// either is no longer compatible. These tests cover the two cases:
+//
+//   (a) Cancel landing between `listPendingDeletionDue` and the cascade:
+//       account is `pending_deletion` past grace; we cancel manually,
+//       then call the cascade — it must return `false` and leave the
+//       account alone.
+//   (b) Fresh requestDelete that hasn't aged into grace:
+//       `pending_deletion_at` is recent (within grace window); we call
+//       the cascade with a cutoff that wouldn't have admitted the row.
+//       It must return `false` and leave the account alone.
+
+describe("T-136 — cascade race-safety", () => {
+  it("cancel landing between list-due and cascade leaves the account intact", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "race-cancel@example.com");
+    const { cookie } = await signIn(ctx, "race-cancel@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const token = await readLatestVerification(ctx.storage, "account-delete:");
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(token ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    expect(lifecycle).toBeTruthy();
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "race-cancel@example.com",
+    );
+    expect(before?.deletion_state).toBe("pending_deletion");
+    const authUserId = before?.auth_user_id ?? "";
+
+    // Simulate the race: the user clicks cancel between the purger's
+    // listPendingDeletionDue and its cascade call. We cancel directly
+    // before invoking the cascade.
+    await lifecycle?.cancelPendingDeletion(authUserId);
+
+    // Now invoke the cascade with a cutoff that WOULD have admitted
+    // the row originally (31 days in the future).
+    const fakeNow = new Date(Date.now() + 31 * 86_400_000);
+    const cutoff = new Date(fakeNow.getTime() - 30 * 86_400_000).toISOString();
+    const cascadeRan = await ctx.storage.deleteAccountCascade(
+      authUserId,
+      cutoff,
+    );
+    expect(cascadeRan).toBe(false);
+
+    // Account must still be present and now `active`.
+    const after = await lifecycle?.getAccountLifecycle(authUserId);
+    expect(after).not.toBeNull();
+    expect(after?.deletion_state).toBe("active");
+    expect(after?.pending_deletion_at).toBeNull();
+  });
+
+  it("fresh requestDelete inside grace window cannot be hard-deleted by an old cutoff", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "race-fresh@example.com");
+    const { cookie } = await signIn(ctx, "race-fresh@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const token = await readLatestVerification(ctx.storage, "account-delete:");
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(token ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "race-fresh@example.com",
+    );
+    expect(before?.deletion_state).toBe("pending_deletion");
+    const authUserId = before?.auth_user_id ?? "";
+
+    // Cutoff = now - 1 day. The row's pending_deletion_at is brand-new
+    // (today), so pending_deletion_at >= cutoff. Cascade should
+    // short-circuit.
+    const cutoff = new Date(Date.now() - 86_400_000).toISOString();
+    const cascadeRan = await ctx.storage.deleteAccountCascade(
+      authUserId,
+      cutoff,
+    );
+    expect(cascadeRan).toBe(false);
+
+    // Account row still present, still pending_deletion.
+    const after = await lifecycle?.getAccountLifecycle(authUserId);
+    expect(after?.deletion_state).toBe("pending_deletion");
+    expect(after?.pending_deletion_at).toBeTruthy();
+  });
+
+  it("purger.runOnce drives the cascade, which short-circuits when a cancel races between list-due and cascade", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "purger-race@example.com");
+    const { cookie } = await signIn(ctx, "purger-race@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const token = await readLatestVerification(ctx.storage, "account-delete:");
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(token ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    expect(lifecycle).toBeTruthy();
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "purger-race@example.com",
+    );
+    const authUserId = before?.auth_user_id ?? "";
+
+    // **Race-simulating proxy.** The default `cancelPendingDeletion`
+    // before `runOnce` would short-circuit the test before the purger
+    // ever sees the row — `listPendingDeletionDue` filters on
+    // `deletion_state = 'pending_deletion'` and would skip the row
+    // entirely. We need the purger to see the row as pending, THEN
+    // have the cancel land between list-due and the per-account
+    // cascade — that's the actual T-136 race window.
+    //
+    // We achieve this by wrapping `storage` in a proxy that intercepts
+    // `listPendingDeletionDue` to fire `cancelPendingDeletion` as a
+    // side effect immediately before returning the (still-pending) row
+    // ids. The cascade then runs against a row that was pending at
+    // list-time but is `active` by re-check time.
+    const racingStorage = new Proxy(ctx.storage, {
+      get(target, prop, receiver) {
+        if (prop === "accountLifecycle") {
+          const wrapped = target.accountLifecycle;
+          if (!wrapped) return wrapped;
+          return new Proxy(wrapped, {
+            get(t, p, r): unknown {
+              if (p === "listPendingDeletionDue") {
+                return async (cutoffIso: string) => {
+                  const due = await t.listPendingDeletionDue(cutoffIso);
+                  // Cancel between list-due and cascade. This is the
+                  // race window the production code closes via the
+                  // in-transaction re-check.
+                  await t.cancelPendingDeletion(authUserId);
+                  return due;
+                };
+              }
+              return Reflect.get(t, p, r) as unknown;
+            },
+          });
+        }
+        return Reflect.get(target, prop, receiver) as unknown;
+      },
+    });
+
+    // Purger runs with the future clock that would normally hard-delete.
+    const purger = new PendingDeletePurger(
+      racingStorage,
+      30,
+      3_600_000,
+      () => new Date(Date.now() + 31 * 86_400_000),
+      racingStorage.coordination,
+    );
+    const purged = await purger.runOnce();
+    // The cascade must have short-circuited via its in-transaction
+    // re-check — the row was pending at list-time, active by cascade
+    // time. Without the re-check, the cascade would have hard-deleted
+    // the now-active account. With it, the cascade returns false and
+    // the purger's counter stays at zero.
+    expect(purged).toBe(0);
+
+    // Account intact and back to active.
+    const after = await lifecycle?.getAccountLifecycle(authUserId);
+    expect(after).not.toBeNull();
+    expect(after?.deletion_state).toBe("active");
+    expect(after?.pending_deletion_at).toBeNull();
+  });
+});
+// ---------------------------------------------------------------------------
 // T-137 — sign-in guard token reuse + audit-row hygiene.
 // ---------------------------------------------------------------------------
 
