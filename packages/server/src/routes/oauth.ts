@@ -80,11 +80,21 @@ function sha256(input: string): string {
 }
 
 /**
- * Persist a `kind: app` connection through `ItemStore.create` so the
- * row gets full ItemStore treatment: `tenant_id` stamping (T-004), search
- * indexing, metadata-row insertion (so subsequent setTags / setExtension
- * actually write), the `created` event emission, and `source` / `origin`
- * stamping (T-005). Returns the new connection-item id.
+ * Persist (or refresh) a `kind: app` connection through `ItemStore`. Routes
+ * through `ItemStore.create` on first consent and `ItemStore.update` on
+ * re-consent so the row gets full ItemStore treatment: `tenant_id`
+ * stamping (T-004), search indexing, metadata-row insertion (so subsequent
+ * setTags / setExtension actually write), versions snapshot on re-consent,
+ * the `created`/`updated` event emission, and `source` / `origin`
+ * stamping (T-005). Returns the connection-item id + whether the call
+ * created vs updated the projection.
+ *
+ * F15 (T-131 review-sweep): pre-fix, this function ALWAYS inserted —
+ * device-flow re-approval of the same client created duplicate
+ * `system.connection` rows. Now uses `findGrantItemId` to detect the
+ * re-consent case and routes through `items.update` (same shape as the
+ * code-flow consent's `projectGrantOnConsent`). F3-equivalent treatment:
+ * status flips to "active" + `revoked_at` is cleared on re-consent.
  *
  * `tenantId` resolves from the consenting Better Auth user's myme `users`
  * row in hosted mode; in single-tenant mode (no `users` store) the grant
@@ -99,7 +109,7 @@ async function createUserAppGrant(
   scopes: string[],
   source: "myme/oauth/authorize" | "myme/oauth/device",
   cycle: AppEnv["Variables"]["cycle"],
-): Promise<{ id: string }> {
+): Promise<{ id: string; created: boolean }> {
   let tenantId: string | undefined;
   if (storage.users) {
     // T-074: lookup by Better Auth user id (the canonical bridge);
@@ -114,6 +124,54 @@ async function createUserAppGrant(
     }
   }
   const now = new Date().toISOString();
+
+  // F15: detect re-consent. Existing projection → update in place; else
+  // insert. Mirrors `projectGrantOnConsent` from `routes/auth-consent.ts`.
+  let existingItemId: string | null = null;
+  if (typeof storage.oauthProvider?.findGrantItemId === "function") {
+    existingItemId = await storage.oauthProvider.findGrantItemId({
+      tenantId: tenantId ?? null,
+      clientId,
+      authUserId: consentingUser.id,
+    });
+  }
+
+  if (existingItemId) {
+    // Re-consent: items.update writes a versions snapshot + bumps
+    // version. Flip status back to "active" + clear revoked_at (F3
+    // equivalent for device-flow).
+    const existing = await storage.items.get(existingItemId, tenantId);
+    if (!existing) {
+      // Race — findGrantItemId saw a row but a concurrent delete
+      // raced. Fall through to insert.
+    } else {
+      const updated = await storage.items.update(
+        existingItemId,
+        {
+          properties: {
+            scopes,
+            status: "active",
+            granted_at: now,
+            revoked_at: undefined,
+          },
+        },
+        tenantId,
+      );
+      if (!("error" in updated)) {
+        const metadata = await storage.metadata.get(updated.id);
+        await publish({
+          type: "updated",
+          item: updated,
+          metadata,
+          tenantId,
+          ...cycle,
+        });
+        return { id: updated.id, created: false };
+      }
+    }
+  }
+
+  // First-time consent: insert a fresh row.
   const item = await storage.items.create(
     {
       type: "system.connection",
@@ -137,7 +195,7 @@ async function createUserAppGrant(
   );
   const metadata = await storage.metadata.get(item.id);
   await publish({ type: "created", item, metadata, tenantId, ...cycle });
-  return { id: item.id };
+  return { id: item.id, created: true };
 }
 
 /**
@@ -1714,9 +1772,9 @@ export function authRoutes(
       return c.html(renderDeviceDecisionPage({ approved: false }));
     }
 
-    // Approve: create a system.connection (kind: app) routed
-    // through ItemStore.create (T-005) and flip the device-code row to
-    // approved.
+    // Approve: create (or update) the system.connection (kind: app)
+    // projection through ItemStore (F15 upsert) and flip the
+    // device-code row to approved.
     const grant = await createUserAppGrant(
       storage,
       sessionResult.session.user,
@@ -1733,6 +1791,38 @@ export function authRoutes(
         302,
       );
     }
+    // F16: emit `auth.grant.created` audit row for the device-flow
+    // consent approval (CLAUDE.md's audit-row table claims this fires;
+    // pre-fix it didn't). `source: "device"` distinguishes from the
+    // code-flow path which uses the implicit default (source absent).
+    // Resolve tenant_id for the audit row from the same users-table
+    // lookup createUserAppGrant did — duplicated cheaply here to avoid
+    // changing the helper's signature.
+    let auditTenantId: string | null = null;
+    if (storage.users) {
+      const userRow = await storage.users.getByAuthUserId(
+        sessionResult.session.user.id,
+      );
+      auditTenantId = userRow?.tenant_id ?? null;
+    }
+    void storage.audit.log({
+      tenant_id: auditTenantId,
+      action: "auth.grant.created",
+      resource_type: "oauth_grant",
+      resource_id: row.client_id,
+      client_ip: c.var.clientIp ?? null,
+      details: {
+        client_id: row.client_id,
+        user_id: sessionResult.session.user.id,
+        scopes: row.scopes,
+        grant_item_id: grant.id,
+        source: "device",
+        // `created: false` means re-consent (item already existed) —
+        // useful for the operator trail to distinguish first-time
+        // approvals from re-approvals of an existing grant.
+        created: grant.created,
+      },
+    });
     setNoStore(c);
     return c.html(renderDeviceDecisionPage({ approved: true }));
   });
