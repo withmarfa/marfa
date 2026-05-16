@@ -296,8 +296,12 @@ describe("better-auth /auth/* surface", () => {
       code_challenge_methods_supported?: string[];
     };
     expect(body.issuer).toBeTruthy();
-    expect(body.authorization_endpoint).toMatch(/\/auth\/authorize$/);
-    expect(body.token_endpoint).toMatch(/\/auth\/token$/);
+    // T-131: endpoints moved under the @better-auth/oauth-provider plugin's
+    // basePath. The legacy /auth/authorize + /auth/token paths are gone;
+    // RPs reading the discovery doc follow the issued URLs (which include
+    // the /auth/oauth2/* path) — no client-side flow break.
+    expect(body.authorization_endpoint).toMatch(/\/auth\/oauth2\/authorize$/);
+    expect(body.token_endpoint).toMatch(/\/auth\/oauth2\/token$/);
     expect(body.code_challenge_methods_supported).toEqual(["S256"]);
   });
 
@@ -315,8 +319,16 @@ describe("better-auth /auth/* surface", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
 
-    // issuer is the bare base URL.
-    expect(body.issuer).toBe(base);
+    // T-131: the @better-auth/oauth-provider plugin sets the issuer to
+    // `${authBaseUrl}/auth` (basePath included) per its in-basePath
+    // serving model. The bare-root /.well-known endpoint we mount via
+    // the plugin's `oauthProviderAuthServerMetadata` helper re-publishes
+    // the same payload; RFC 8414 strict reading would prefer the issuer
+    // match the retrieval prefix, but most RPs only require consistency
+    // across token + id_token claims (which IS preserved — they all use
+    // the plugin's issuer string). Tracked as a follow-on if a strict
+    // RP surfaces the mismatch.
+    expect(body.issuer).toBe(`${base}/auth`);
 
     // Every absolute-URL field starts with the configured base. If
     // staging's plist is missing MYME_AUTH_BASE_URL the server falls
@@ -339,19 +351,19 @@ describe("better-auth /auth/* surface", () => {
   it("/auth/grants returns app connections, /auth/grants/{id} revokes", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
 
-    // Create an OAuth client and a grant via the storage layer (the public
-    // surface for client registration is admin-only and exercised elsewhere).
-    const client = await ctx.storage.oauth.createClient({
-      name: "Test App",
-      redirect_uris: ["http://localhost:5173/callback"],
-    });
+    // T-131: under the new surface, OAuth clients live in `auth_oauth_client`
+    // (owned by the @better-auth/oauth-provider plugin). The /auth/grants
+    // endpoint reads system.connection items directly — for this test we
+    // create the projection row with a fake client_id string. The /grants
+    // listing doesn't validate against the client table.
+    const fakeClientId = `client_${Math.random().toString(36).slice(2, 8)}`;
     const grant = await ctx.storage.items.create({
       type: "system.connection",
       state: "active",
       tier: "library",
       properties: {
         kind: "app",
-        client_id: client.id,
+        client_id: fakeClientId,
         scopes: ["core.note:read"],
         status: "active",
         granted_at: new Date().toISOString(),
@@ -371,11 +383,12 @@ describe("better-auth /auth/* surface", () => {
     }[];
     expect(list.some((g) => g.id === grant.id)).toBe(true);
     const found = list.find((g) => g.id === grant.id);
-    expect(found?.client_id).toBe(client.id);
+    expect(found?.client_id).toBe(fakeClientId);
     expect(found?.scopes).toEqual(["core.note:read"]);
     expect(found?.status).toBe("active");
 
-    // Revoke
+    // Revoke (cascade-revoke through plugin tables is a no-op here since
+    // we never minted a real token for the fake client).
     const revokeRes = await request(
       ctx.app,
       "DELETE",
@@ -392,15 +405,6 @@ describe("better-auth /auth/* surface", () => {
     expect(list2.some((g) => g.id === grant.id)).toBe(false);
   });
 
-  it("does NOT shadow the existing /auth/clients route", async () => {
-    // Existing oauth client management lives at /auth/clients (admin-only).
-    // The better-auth catch-all is registered AFTER it, so explicit routes
-    // win — confirm we still get the legacy 401 (no auth) shape, not a
-    // better-auth 404 / generic body.
-    ctx = await createTestContext({ authAllowSignup: false });
-    const res = await request(ctx.app, "GET", "/auth/clients");
-    expect(res.status).toBe(401);
-    const body = (await res.json()) as { error?: { code?: string } };
-    expect(body.error?.code).toBe("unauthorized");
-  });
+  // T-131: removed test for "/auth/clients" — that route is gone (the
+  // plugin owns client registration at /auth/oauth2/register).
 });

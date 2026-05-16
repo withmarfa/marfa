@@ -12,6 +12,22 @@
  * New permissions (added), and No longer requested (removed) —
  * instead of the flat read / write split. First-time consent (no
  * prior grant) keeps the flat shape.
+ *
+ * T-131 rewrite: the homegrown surface used to POST the consent form
+ * to `/auth/authorize` to mint the authorization code AT consent time.
+ * The @better-auth/oauth-provider plugin inverts this — it signs the
+ * full authorize-request query string (response_type + client_id +
+ * redirect_uri + scope + state + code_challenge + code_challenge_method
+ * + exp + sig) and redirects to the consent page carrying that signed
+ * blob. The consent form POSTs back to `/auth/oauth2/consent` with
+ * `{ accept, scope?, oauth_query }` — the plugin verifies the sig,
+ * re-hydrates the original params from `oauth_query`, mints the code,
+ * and redirects to the RP's `redirect_uri?code=...`.
+ *
+ * So: the form carries the entire signed query string as a single
+ * hidden field `oauth_query`. `client_id` is rendered for the projection
+ * handler's use (it reads the form's `client_id` directly to write the
+ * `system.connection { kind: "app" }` row + audit emit).
  */
 
 import type { ParsedScope } from "@mymehq/shared";
@@ -22,11 +38,15 @@ interface ConsentParams {
   clientName: string;
   scopes: ParsedScope[];
   clientId: string;
-  redirectUri: string;
-  codeChallenge: string;
-  codeChallengeMethod: string;
-  state: string;
-  responseType: string;
+  /**
+   * The full signed query string forwarded by the plugin's authorize
+   * endpoint (response_type, client_id, redirect_uri, scope, state,
+   * code_challenge, code_challenge_method, exp, sig — everything).
+   * Threaded into a hidden field and POSTed back to
+   * `/auth/oauth2/consent` so the plugin can verify the signature and
+   * re-hydrate the original request parameters.
+   */
+  oauthQuery: string;
   /**
    * Plain-English description per scope, keyed by `typePattern` (e.g.
    * `core.note` → "Text content you created."). Pulled from the type
@@ -43,6 +63,14 @@ interface ConsentParams {
    * no prior grant), renders flat.
    */
   priorScopes?: readonly string[];
+  /**
+   * T-131 fix-up F2: when set, renders an inline error banner above
+   * the form. Used when the page is reached via a redirect from a
+   * failed consent submission (e.g. zero-scopes accept → "approve
+   * needs at least one permission ticked"). When undefined, no banner
+   * renders.
+   */
+  errorMessage?: string;
 }
 
 function escapeHtml(str: string): string {
@@ -97,11 +125,7 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   const safeClient = escapeHtml(params.clientName);
   const safeClientId = escapeHtml(params.clientId);
-  const safeRedirectUri = escapeHtml(params.redirectUri);
-  const safeCodeChallenge = escapeHtml(params.codeChallenge);
-  const safeCodeChallengeMethod = escapeHtml(params.codeChallengeMethod);
-  const safeState = escapeHtml(params.state);
-  const safeResponseType = escapeHtml(params.responseType);
+  const safeOauthQuery = escapeHtml(params.oauthQuery);
 
   // Decide diff-vs-flat rendering. Diff path triggers when caller
   // passed `priorScopes` and there's at least one scope on either
@@ -191,21 +215,44 @@ export function renderConsentScreen(params: ConsentParams): string {
     ? `<span class="client-name">${safeClient}</span> is requesting updated access to your data`
     : `<span class="client-name">${safeClient}</span> wants to access your data`;
 
+  // T-131: form POSTs to the Myme decision handler at
+  // /auth/authorize/decision (not directly to the plugin's
+  // /auth/oauth2/consent) so the consent-side `system.connection`
+  // projection + `auth.grant.created` audit row land deterministically.
+  // The Myme handler then proxies to the plugin to complete the flow.
+  //
+  // The plugin's /oauth2/consent endpoint takes `{ accept, scope?,
+  // oauth_query }` — the `oauth_query` is the full signed query string
+  // the plugin redirected here with (carries response_type, client_id,
+  // redirect_uri, scope, state, code_challenge, code_challenge_method,
+  // exp, sig). The plugin's before-hook verifies the sig and re-hydrates
+  // the original request parameters into `oAuthState` before the consent
+  // endpoint runs.
+  //
+  // We also carry `client_id` as a separate hidden field for display
+  // / UI purposes. The decision handler reads `client_id` (+ scopes)
+  // from the verified `oauth_query` instead — the form fields are NOT
+  // trusted for projection writes (F1).
+  //
+  // F2 fix-up: optional error banner above the form, used when the
+  // page is reached via a redirect from a failed consent submission
+  // (e.g. zero-scopes accept). Renders nothing when errorMessage is
+  // undefined.
+  const errorBanner = params.errorMessage
+    ? `<div class="alert alert--error" role="alert">${escapeHtml(params.errorMessage)}</div>`
+    : "";
   const bodyHtml = `
     <h1>${leadeText}</h1>
-    <form method="POST" action="/auth/authorize">
+    ${errorBanner}
+    <form method="POST" action="/auth/authorize/decision">
       <input type="hidden" name="client_id" value="${safeClientId}">
-      <input type="hidden" name="redirect_uri" value="${safeRedirectUri}">
-      <input type="hidden" name="code_challenge" value="${safeCodeChallenge}">
-      <input type="hidden" name="code_challenge_method" value="${safeCodeChallengeMethod}">
-      <input type="hidden" name="state" value="${safeState}">
-      <input type="hidden" name="response_type" value="${safeResponseType}">
+      <input type="hidden" name="oauth_query" value="${safeOauthQuery}">
 
       ${scopesHtml}
 
       <div class="actions">
-        <button type="submit" name="action" value="approve" class="btn btn--primary">Approve</button>
-        <button type="submit" name="action" value="deny" class="btn">Deny</button>
+        <button type="submit" name="accept" value="true" class="btn btn--primary">Approve</button>
+        <button type="submit" name="accept" value="false" class="btn">Deny</button>
       </div>
     </form>
   `;

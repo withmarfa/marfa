@@ -1,14 +1,19 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { genericOAuth, magicLink } from "better-auth/plugins";
+import { genericOAuth, jwt, magicLink } from "better-auth/plugins";
 import { passkey } from "@better-auth/passkey";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import * as pgSchema from "../storage/pg/schema.js";
 import { log } from "../middleware/logger.js";
 import type { EmailTransport as MymeEmailTransport } from "../email/transport.js";
+import type { Storage } from "../storage/interface.js";
 import { renderMagicLinkEmail } from "./email-templates/magic-link.js";
 import { renderResetPasswordEmail } from "./email-templates/reset-password.js";
 import { renderVerifyEmailEmail } from "./email-templates/verify-email.js";
+import {
+  buildOauthProviderPlugin,
+  buildOauthProjectionPlugin,
+} from "./oauth-provider.js";
 
 /**
  * The first parameter type of better-auth's drizzleAdapter — used to type
@@ -97,6 +102,16 @@ export interface MymeAuthOptions {
    *  verify flow without booting a real transport; production
    *  deployments rely on the auto-detect. */
   requireEmailVerification?: boolean;
+  /** T-131: Storage handle threaded into the OAuth Provider plugin's
+   *  `clientReference`, `customAccessTokenClaims`, and `hooks.after`
+   *  matchers. Needed for the `system.connection` projection of the
+   *  plugin's grant lifecycle and the tenant_id binding on issued tokens. */
+  storage?: Storage;
+  /** T-131: per-process API key salt — shared with the bearer middleware
+   *  so the plugin's `storeTokens.hash` and the middleware's hash output
+   *  match, letting the middleware look up `auth_oauth_access_token.token`
+   *  directly by computing the same hash. */
+  apiKeySalt?: string;
 }
 
 const defaultLogTransport: EmailTransport = ({ email, url }) => {
@@ -158,6 +173,16 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
           account: pgSchema.auth_account,
           verification: pgSchema.auth_verification,
           passkey: pgSchema.auth_passkey,
+          // T-131: OAuth Provider plugin tables (mapped via Better Auth
+          // model names → our auth_oauth_* Drizzle tables). The plugin
+          // queries through these names; the snake_case DB columns are
+          // resolved by the adapter automatically.
+          oauthClient: pgSchema.auth_oauth_client,
+          oauthAccessToken: pgSchema.auth_oauth_access_token,
+          oauthRefreshToken: pgSchema.auth_oauth_refresh_token,
+          oauthConsent: pgSchema.auth_oauth_consent,
+          // JWT signing keys for the jwt plugin (id_token issuance).
+          jwks: pgSchema.auth_jwks,
         }
       : {
           user: sqliteSchema.auth_user,
@@ -165,6 +190,11 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
           account: sqliteSchema.auth_account,
           verification: sqliteSchema.auth_verification,
           passkey: sqliteSchema.auth_passkey,
+          oauthClient: sqliteSchema.auth_oauth_client,
+          oauthAccessToken: sqliteSchema.auth_oauth_access_token,
+          oauthRefreshToken: sqliteSchema.auth_oauth_refresh_token,
+          oauthConsent: sqliteSchema.auth_oauth_consent,
+          jwks: sqliteSchema.auth_jwks,
         };
 
   const transport = options.emailTransport ?? defaultLogTransport;
@@ -371,6 +401,32 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
         // Trust the same origins as cookie-credentialed requests.
         origin: options.baseURL,
       }),
+      // T-131: JWT plugin for id_token signing. The oauth-provider
+      // plugin requires it (id_tokens are always JWT) unless
+      // `disableJwtPlugin: true` is set on oauth-provider — which
+      // forces id_tokens to HS256 with the client_secret, breaking
+      // public PKCE clients that have no secret. The jwt plugin
+      // auto-generates an RSA key pair on first use and stores it in
+      // its own `auth_jwks` table.
+      jwt(),
+      ...(options.storage && options.apiKeySalt
+        ? [
+            buildOauthProviderPlugin({
+              storage: options.storage,
+              apiKeySalt: options.apiKeySalt,
+              baseURL: options.baseURL,
+            }),
+            // Sibling shell plugin hosting the four `hooks.after` matchers
+            // that project plugin grant lifecycle into `system.connection`
+            // items + emit auth.grant.created / auth.grant.revoked audit
+            // rows. Best-effort — projection failures must NEVER break
+            // the auth flow.
+            buildOauthProjectionPlugin({
+              storage: options.storage,
+              apiKeySalt: options.apiKeySalt,
+            }),
+          ]
+        : []),
       magicLink({
         sendMagicLink: async ({ email, url, token }) => {
           // Rich transport gets the HTML template + idempotency key

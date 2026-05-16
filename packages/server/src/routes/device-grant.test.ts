@@ -32,15 +32,41 @@ afterEach(() => {
 const ORIGIN = "http://localhost:0";
 
 async function createClient(c: TestContext): Promise<string> {
-  const res = await request(c.app, "POST", "/auth/clients", {
-    body: { name: "Test CLI", redirect_uris: ["http://localhost:0/callback"] },
-    headers: { origin: ORIGIN },
-    key: c.adminKey,
-  });
-  expect(res.status).toBe(201);
-  const body = (await res.json()) as { id: string };
-  return body.id;
+  // T-131: POST /auth/clients is gone — the @better-auth/oauth-provider
+  // plugin owns DCR at /auth/oauth2/register. For the device-flow tests
+  // we shortcut by writing the auth_oauth_client row directly; the
+  // device-flow handlers only need a valid client_id business key.
+  const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
+  const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
+  if (!c.storage.betterAuthDb) {
+    throw new Error("createClient (T-131): storage.betterAuthDb missing");
+  }
+  const schemaModule =
+    c.storage.betterAuthDialect === "pg"
+      ? await import("../storage/pg/schema.js")
+      : await import("../storage/sqlite/schema.js");
+  const db = c.storage.betterAuthDb as unknown as {
+    insert: (table: unknown) => {
+      values: (v: Record<string, unknown>) => {
+        run?: () => Promise<unknown>;
+        execute?: () => Promise<unknown>;
+      };
+    };
+  };
+  const now = new Date();
+  const op = db.insert(schemaModule.auth_oauth_client).values({
+    id: clientPk,
+    clientId,
+    name: "Test CLI",
+    redirectUris: JSON.stringify(["http://localhost:0/callback"]),
+    disabled: false,
+    createdAt: now,
+    updatedAt: now,
+  } as Record<string, unknown>);
+  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+  return clientId;
 }
+void ORIGIN;
 
 async function initiate(
   c: TestContext,
@@ -380,6 +406,120 @@ describe("POST /auth/device/consent — approve / deny", () => {
     expect(poll.status).toBe(200);
     expect(poll.body.access_token).toMatch(/^myme_at_/);
     expect(poll.body.refresh_token).toMatch(/^myme_rt_/);
+  });
+
+  it("F16: approve emits auth.grant.created audit row with source='device'", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const initResult = await initiate(ctx, clientId);
+    const cookie = await signInAndCookie(
+      ctx,
+      "f16@example.com",
+      "correct horse",
+    );
+
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+          cookie,
+        },
+        body: new URLSearchParams({
+          user_code: initResult.user_code,
+          decision: "approve",
+        }).toString(),
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    // Tiny wait — audit.log is fire-and-forget.
+    await new Promise((r) => setTimeout(r, 50));
+
+    const audits = await ctx.storage.audit.list({
+      action: "auth.grant.created",
+      limit: 10,
+    });
+    expect(audits.data.length).toBe(1);
+    const row = audits.data[0];
+    expect(row?.resource_id).toBe(clientId);
+    expect(row?.details.source).toBe("device");
+    expect(row?.details.created).toBe(true);
+    expect(row?.details.client_id).toBe(clientId);
+    expect(row?.details.grant_item_id).toBeDefined();
+  });
+
+  it("F15: re-approving the same client doesn't duplicate the system.connection row", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "f15@example.com",
+      "correct horse",
+    );
+
+    // First device-flow approval.
+    const first = await initiate(ctx, clientId);
+    const res1 = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+          cookie,
+        },
+        body: new URLSearchParams({
+          user_code: first.user_code,
+          decision: "approve",
+        }).toString(),
+      }),
+    );
+    expect(res1.status).toBe(200);
+    let items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    const grantId = items.data[0]!.id;
+
+    // Second device-flow approval for the SAME client (e.g. user re-
+    // authorises after a tokens flush).
+    const second = await initiate(ctx, clientId);
+    const res2 = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+          cookie,
+        },
+        body: new URLSearchParams({
+          user_code: second.user_code,
+          decision: "approve",
+        }).toString(),
+      }),
+    );
+    expect(res2.status).toBe(200);
+
+    // Still one row.
+    items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    expect(items.data[0]!.id).toBe(grantId);
+
+    // Audit reflects re-consent: 2 rows, second has `created: false`.
+    await new Promise((r) => setTimeout(r, 50));
+    const audits = await ctx.storage.audit.list({
+      action: "auth.grant.created",
+      limit: 10,
+    });
+    expect(audits.data.length).toBe(2);
+    // Audit rows are list in descending order — first entry is the most recent.
+    expect(audits.data[0]?.details.created).toBe(false);
+    expect(audits.data[1]?.details.created).toBe(true);
   });
 
   it("deny flips device_code to denied; polling returns access_denied", async () => {

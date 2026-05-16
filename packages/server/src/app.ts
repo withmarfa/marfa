@@ -25,7 +25,11 @@ import { runtimeCredentialRoutes } from "./routes/runtime-credentials.js";
 import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
-import { authRoutes, discoveryRoutes } from "./routes/oauth.js";
+import { authRoutes } from "./routes/oauth.js";
+import {
+  oauthProviderAuthServerMetadata,
+  oauthProviderOpenIdConfigMetadata,
+} from "@better-auth/oauth-provider";
 import { authStaticRoutes } from "./routes/auth-static.js";
 import type { EmailTransport as MymeEmailTransport } from "./email/transport.js";
 import { extensionRoutes } from "./routes/extensions.js";
@@ -56,6 +60,7 @@ import { cycleMiddleware } from "./middleware/cycle.js";
 import { tenantSuspensionMiddleware } from "./middleware/tenant-suspension.js";
 import { accountDeletionGuardMiddleware } from "./middleware/account-deletion-guard.js";
 import { authAccountRoutes } from "./routes/auth-account.js";
+import { authConsentRoutes } from "./routes/auth-consent.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { rlsTenantContextMiddleware } from "./middleware/rls-tenant-context.js";
 import type { PgDb } from "./storage/pg/connection.js";
@@ -167,8 +172,12 @@ export function createApp(
   );
   app.route("/health", healthRoutes(storage, blobBackend, config));
 
-  // OAuth 2.1 discovery doc — public, unauthenticated.
-  app.route("/.well-known", discoveryRoutes(config.authBaseUrl, oidcSigner));
+  // T-131: OAuth 2.1 / OIDC discovery — owned by the @better-auth/oauth-provider
+  // plugin. The plugin auto-mounts the docs under its basePath (`/auth`)
+  // but per RFC 8414 / OIDC Discovery, RPs probe the bare-root paths.
+  // The plugin ships exportable helpers that re-publish the same metadata
+  // at the root. JWKS stays at the plugin's `/auth/jwks` — the discovery
+  // doc points there, so RPs that read the doc will follow correctly.
 
   // Wave C PR4: shared auth-page stylesheet. Public — anyone landing
   // on `/auth/sign-in` must be able to fetch the CSS without a
@@ -256,7 +265,28 @@ export function createApp(
           "/auth/forgot-password": 15,
           "/auth/reset-password": 30,
           "/auth/verify-email/resend": 15,
-          "/auth/token": 60,
+          // F8 (T-131 review-sweep): cap the plugin's `/auth/oauth2/*`
+          // endpoints. Pre-fix, every plugin endpoint inherited the
+          // global default (1000/min) — particularly bad for DCR
+          // (`/auth/oauth2/register`) which is unauthenticated and
+          // could be used to spam-fill `auth_oauth_client`. Specific
+          // prefixes appear BEFORE broader siblings per the
+          // insertion-order match rule.
+          //
+          // `/auth/authorize/decision` (Myme proxy) precedes
+          // `/auth/authorize` (Myme consent render).
+          "/auth/oauth2/register": 10,
+          "/auth/oauth2/token": 60,
+          "/auth/oauth2/introspect": 60,
+          "/auth/oauth2/revoke": 30,
+          "/auth/oauth2/consent": 30,
+          "/auth/oauth2/authorize": 30,
+          "/auth/authorize/decision": 30,
+          "/auth/authorize": 60,
+          // s1 (T-131 review-sweep): `"/auth/token": 60` was the
+          // homegrown OAuth surface's token endpoint; T-131 deleted
+          // that route and the plugin lives at `/auth/oauth2/token`.
+          // The dead prefix never matched but cluttered the table.
         },
         trustedProxyCidrs: config.trustedProxyCidrs,
         // T-052 follow-on (Wave B Part 2): per-tenant rate ceiling on
@@ -313,6 +343,11 @@ export function createApp(
       // for log correlation. Falls back to the legacy callable for
       // tests that don't construct a full transport.
       mymeEmailTransport: emailTransport,
+      // T-131: storage + salt are needed by the @better-auth/oauth-provider
+      // plugin (storeTokens.hash matches Myme's hashApiKey, clientReference
+      // resolves tenant_id, hooks.after projects grants into system.connection).
+      storage,
+      apiKeySalt: config.apiKeySalt,
       // Wave C PR2: opt-in override for `requireEmailVerification`.
       // When unset, the auth layer auto-detects from the transport
       // (on for `cloudflare`/`smtp`, off for `none`/missing).
@@ -320,6 +355,31 @@ export function createApp(
         requireEmailVerification: config.authRequireEmailVerification,
       }),
     });
+  }
+
+  // T-131: bare-root discovery (RFC 8414 + OIDC Discovery). The plugin
+  // auto-publishes the same metadata at `/auth/.well-known/*` via its
+  // basePath, but most RPs only probe the bare-root paths. These two
+  // helpers re-publish the same response payload. The discovery doc
+  // points RPs at the actual endpoint paths (e.g. `/auth/oauth2/token`,
+  // `/auth/jwks`) — no further root aliasing is needed.
+  if (auth) {
+    // Cast once into the shape both helpers want — they each declare a
+    // narrow `api` requirement (`getOAuthServerConfig` vs `getOpenIdConfig`).
+    // The runtime `auth.api` carries both, but the type system can't see
+    // through the plugin's union-of-api shapes without an explicit hint.
+    const authForHelpers = auth as unknown as Parameters<
+      typeof oauthProviderAuthServerMetadata
+    >[0] &
+      Parameters<typeof oauthProviderOpenIdConfigMetadata>[0];
+    const authServerMeta = oauthProviderAuthServerMetadata(authForHelpers);
+    const openidConfigMeta = oauthProviderOpenIdConfigMetadata(authForHelpers);
+    app.get("/.well-known/oauth-authorization-server", (c) =>
+      authServerMeta(c.req.raw),
+    );
+    app.get("/.well-known/openid-configuration", (c) =>
+      openidConfigMeta(c.req.raw),
+    );
   }
 
   // Protected routes
@@ -358,10 +418,16 @@ export function createApp(
     "/auth",
     authAccountRoutes(storage, auth, emailTransport, config.authBaseUrl),
   );
+  // T-131: `/auth/authorize` consent page (the @better-auth/oauth-provider
+  // plugin's `consentPage` redirect target). Mounted BEFORE the better-auth
+  // catch-all so this explicit GET handler wins over the plugin's own
+  // mounted endpoints under /auth/oauth2/*.
+  app.route("/auth", authConsentRoutes({ storage, auth }));
 
   // Better-auth catch-all for unmatched /auth/* paths (sign-in, sign-up,
-  // magic-link, passkey, federated OIDC, session). Hono dispatches in
-  // registration order — the explicit routes above win.
+  // magic-link, passkey, federated OIDC, session, plus the oauth-provider
+  // plugin's /auth/oauth2/* endpoints). Hono dispatches in registration
+  // order — the explicit routes above win.
   if (auth) {
     const authInstance = auth;
     app.on(["POST", "GET"], "/auth/*", (c) => authInstance.handler(c.req.raw));

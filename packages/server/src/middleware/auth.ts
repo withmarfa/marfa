@@ -172,6 +172,57 @@ export async function stampOAuthGrantLastUsed(
   }
 }
 
+/**
+ * T-131 follow-on: stamp `last_used_at` keyed by (tenantId, clientId,
+ * authUserId) instead of a pre-resolved `connection_item_id`.
+ *
+ * The bearer middleware (and any future caller without an item id in
+ * hand) needs this because the plugin's `auth_oauth_access_token` row
+ * doesn't carry a FK to the projected `system.connection`. We resolve
+ * the item id on first call inside the debounce window, then call the
+ * existing `stampOAuthGrantLastUsed`. Both lookups + stamp share the
+ * same `oauthLastUsedCache`, so per-request cost is one cheap Map
+ * lookup once the cache is warm.
+ *
+ * Cache key shape differs from `stampOAuthGrantLastUsed`'s `oauth:<id>`
+ * (`oauth-grantkey:<client>:<user>`), so the two keyspaces don't collide
+ * but a write through either path correctly skips a second write within
+ * the same window.
+ *
+ * Fire-and-forget; failures swallowed.
+ */
+export async function stampOAuthGrantLastUsedByGrantKey(
+  storage: Storage,
+  opts: {
+    tenantId: string | undefined;
+    clientId: string;
+    authUserId: string;
+  },
+): Promise<void> {
+  const cacheKey = `oauth-grantkey:${opts.clientId}:${opts.authUserId}`;
+  const now = Date.now();
+  const lastTracked = oauthLastUsedCache.get(cacheKey) ?? 0;
+  if (now - lastTracked <= DEBOUNCE_MS) return;
+  // Mark BEFORE the lookup — if the lookup misses (no projection yet),
+  // we still want to skip retrying for the rest of the window.
+  touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
+  try {
+    const itemId = await storage.oauthProvider?.findGrantItemId({
+      tenantId: opts.tenantId ?? null,
+      clientId: opts.clientId,
+      authUserId: opts.authUserId,
+    });
+    if (!itemId) return;
+    await storage.oauth.updateLastUsedAt(
+      itemId,
+      opts.tenantId ?? null,
+      DEBOUNCE_MS,
+    );
+  } catch {
+    // Best-effort; the cache mark above prevents a stampede.
+  }
+}
+
 /** Test helper: drops every entry from the OAuth grant debounce cache.
  *  Tests calling `stampOAuthGrantLastUsed` directly or exercising the
  *  refresh / userinfo paths use this between cases to avoid carryover. */
@@ -216,10 +267,43 @@ export function authMiddleware(storage: Storage, salt: string) {
 
     const token = authHeader.slice(7);
 
-    // OAuth access token
+    // OAuth access token (myme_at_* prefix).
+    //
+    // T-131: this used to call `storage.oauth.validateToken(hash)` against
+    // the homegrown `oauth_tokens` table. We now look up the
+    // @better-auth/oauth-provider plugin's `auth_oauth_access_token`
+    // directly — both paths compute the same hash (the plugin's
+    // `storeTokens.hash` is wired to `hashApiKey(token, salt)` in
+    // `auth/oauth-provider.ts`), so a token in hand resolves to its row
+    // by exact-match on the hashed `token` column.
+    //
+    // **Side-channel join, NOT custom claims.** The plan's contingency
+    // applies here (§Caveats §3 in the plan file): the plugin's
+    // `customAccessTokenClaims` only embeds in JWT tokens, and Myme
+    // keeps opaque tokens (correct for our profile — DB lookup is
+    // sub-ms, revocation stays clean). The row itself carries
+    // `referenceId` (= tenant_id, populated by `clientReference` at
+    // issuance), `userId`, `clientId`, and `scopes`. Everything the
+    // synthetic ApiKey needs comes from the single row.
+    //
+    // **`connection_item_id` derivation.** The user-facing `system.connection`
+    // projection (`{ kind: "app" }` items) is maintained by the
+    // grant-projection after-hooks for the `/security` page surface,
+    // not consulted here. We synthesise a stable label/source string
+    // from `${clientId}:${userId}` so audit rows attribute correctly
+    // without an extra DB roundtrip.
     if (token.startsWith(ACCESS_TOKEN_PREFIX)) {
-      const hash = hashApiKey(token, salt);
-      const oauthToken = await storage.oauth.validateToken(hash);
+      // The plugin's `storeTokens.hash` strips the `prefix.opaqueAccessToken`
+      // before calling our hasher (verified in
+      // @better-auth/oauth-provider@1.6.9 `index.mjs:858` and `:2266` —
+      // `tokenValue.replace(opts.prefix.opaqueAccessToken, "")` runs before
+      // `getStoredToken` invokes our hash function). To stay symmetric with
+      // the plugin's stored hash, we ALSO strip the prefix before hashing
+      // for lookup. Device-flow's `mintTokenPair` callers (in `routes/oauth.ts`
+      // + `test-utils.ts`) match the same convention.
+      const bare = token.slice(ACCESS_TOKEN_PREFIX.length);
+      const hash = hashApiKey(bare, salt);
+      const oauthToken = await storage.oauthProvider?.validateAccessToken(hash);
 
       if (!oauthToken) {
         c.set("apiKey", undefined);
@@ -227,15 +311,6 @@ export function authMiddleware(storage: Storage, salt: string) {
         return next();
       }
 
-      // Build a synthetic ApiKey from the OAuth token's scopes.
-      // Credential-default fields (source, default_tier) are synthesised
-      // here; full parity with stored API keys remains outstanding.
-      //
-      // `tenant_id` projects from the app's `system.connection`
-      // item. Storage call sites (`items.get(id, tenantId)`, etc.) treat
-      // `undefined` tenantId as cross-tenant (admin-style) — without this
-      // projection an OAuth bearer would read items across all tenants in
-      // hosted mode (T-004).
       const typePermissions = scopesToTypePermissions(oauthToken.scopes);
       const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
       const metadataPermissions = scopesToMetadataPermissions(
@@ -245,12 +320,21 @@ export function authMiddleware(storage: Storage, salt: string) {
       // separate field consumed only by /oauth/userinfo. They never
       // bleed into type / edge / metadata permission maps.
       const oidcScopes = Array.from(scopesToOidcScopes(oauthToken.scopes));
-      const oauthTenantId = oauthToken.tenant_id ?? undefined;
+      // Tenant id from the plugin's referenceId column (= our clientReference
+      // output, which returns the user's tenant_id at consent time).
+      const oauthTenantId = oauthToken.referenceId ?? undefined;
+      // Stable composite label/source. Used in audit rows; doesn't need
+      // to be a real foreign-key handle — system.connection projection
+      // is maintained separately.
+      const grantHandle = `${oauthToken.clientId}:${oauthToken.userId ?? "anon"}`;
+      const createdAtIso = oauthToken.createdAtMs
+        ? new Date(oauthToken.createdAtMs).toISOString()
+        : new Date().toISOString();
       c.set("apiKey", {
         id: oauthToken.id,
         tenant_id: oauthTenantId,
-        label: `oauth:${oauthToken.connection_item_id}`,
-        source: `oauth:${oauthToken.connection_item_id}`,
+        label: `oauth:${grantHandle}`,
+        source: `oauth:${grantHandle}`,
         role: "member",
         default_tier: "library",
         is_platform: false,
@@ -259,25 +343,31 @@ export function authMiddleware(storage: Storage, salt: string) {
         edge_permissions: edgePermissions,
         metadata_permissions: metadataPermissions,
         oidc_scopes: oidcScopes,
-        created_at: oauthToken.created_at,
+        created_at: createdAtIso,
         last_used_at: null,
       });
       c.set("authType", "oauth");
 
-      // Debounced last_used_at update on the underlying app connection
-      // (T-098). The /auth/security surface reads this to show
-      // "active-but-rarely-used" grants accurately. The cache is module-
-      // scoped so the token-issuance / refresh paths in `routes/oauth.ts`
-      // (which don't carry a bearer through this middleware) share the
-      // same throttle. Awaited (not fire-and-forget) so a write that
-      // happens during a request flow finishes before the next request
-      // races it — matters for the SQLite test path where concurrent
-      // writes against the same row trip SQLITE_BUSY.
-      await stampOAuthGrantLastUsed(
-        storage,
-        oauthToken.connection_item_id,
-        oauthTenantId,
-      );
+      // T-131 follow-on: stamp `last_used_at` on the projected
+      // `system.connection { kind: app }` row. Resolved on first call
+      // inside the debounce window via `storage.oauthProvider.findGrantItemId`,
+      // then cached by `(clientId, authUserId)` key in
+      // `oauthLastUsedCache` for the rest of the window. Fire-and-forget;
+      // failures are swallowed so stamping never blocks the request.
+      //
+      // The `system.connection` projection lands at consent time (POST
+      // /auth/authorize/decision in routes/auth-consent.ts) and for the
+      // device-flow at /auth/device/consent — every issued token has a
+      // matching projection by the time it's used. If lookup misses
+      // (race or pre-T-131 token surviving a migration window), we
+      // skip silently.
+      if (oauthToken.userId) {
+        void stampOAuthGrantLastUsedByGrantKey(storage, {
+          tenantId: oauthTenantId,
+          clientId: oauthToken.clientId,
+          authUserId: oauthToken.userId,
+        });
+      }
 
       return next();
     }

@@ -737,56 +737,14 @@ export interface TenantQuotaStore {
 
 // ---------------------------------------------------------------------------
 // OAuth store
+//
+// T-131 narrowed this store to device-flow state machine + last_used
+// stamping. The OAuth-protocol surfaces (clients / codes / tokens) moved
+// to the @better-auth/oauth-provider plugin tables (`auth_oauth_*`); read
+// helpers live on `OauthProviderStore` below.
 // ---------------------------------------------------------------------------
 
 export interface OAuthStore {
-  createClient(input: {
-    name: string;
-    redirect_uris: string[];
-  }): Promise<import("@mymehq/shared").OAuthClient>;
-  getClient(id: string): Promise<import("@mymehq/shared").OAuthClient | null>;
-  listClients(): Promise<import("@mymehq/shared").OAuthClient[]>;
-
-  createCode(
-    connectionItemId: string,
-    codeHash: string,
-    challenge: string,
-    method: string,
-    redirectUri: string,
-    expiresAt: string,
-  ): Promise<import("@mymehq/shared").OAuthCode>;
-  /** Atomically marks a code as used. Returns null if already consumed or expired. */
-  consumeCode(
-    codeHash: string,
-  ): Promise<
-    (import("@mymehq/shared").OAuthCode & { scopes: string[] }) | null
-  >;
-
-  createToken(
-    connectionItemId: string,
-    tokenHash: string,
-    type: import("@mymehq/shared").OAuthTokenType,
-    expiresAt: string,
-  ): Promise<import("@mymehq/shared").OAuthToken>;
-  /** Validates a token hash. Returns null if not found, expired, or revoked.
-   *  `tenant_id` is read off the underlying `system.connection` app
-   *  item; null when the grant predates tenant scoping (single-tenant). */
-  validateToken(tokenHash: string): Promise<
-    | (import("@mymehq/shared").OAuthToken & {
-        scopes: string[];
-        tenant_id: string | null;
-      })
-    | null
-  >;
-  listTokens(): Promise<import("@mymehq/shared").OAuthToken[]>;
-  revokeToken(id: string): Promise<void>;
-  reduceTokenScope(id: string, scopes: string[]): Promise<void>;
-
-  /** Marks a refresh token as used. Returns false if already used (replay). */
-  markRefreshUsed(id: string): Promise<boolean>;
-  /** Revokes all tokens for a grant (used after replay detection). */
-  revokeGrantTokens(connectionItemId: string): Promise<void>;
-
   // ----- Device Authorization Grant (RFC 8628) -----
 
   /** Insert a new device-code row. Caller hashes `device_code` and supplies
@@ -852,6 +810,157 @@ export interface OAuthStore {
     thresholdMs: number,
   ): Promise<void>;
 }
+
+// ---------------------------------------------------------------------------
+// @better-auth/oauth-provider read helpers (T-131)
+// ---------------------------------------------------------------------------
+
+/**
+ * Thin read helpers over the @better-auth/oauth-provider plugin's tables
+ * (`auth_oauth_client`, `auth_oauth_consent`). Used by:
+ *
+ *   - the `/auth/authorize` consent route, which needs the client's
+ *     friendly name and the user's prior consent (for the re-consent
+ *     diff render)
+ *   - the grant-projection after-hooks in `auth/oauth-provider.ts`,
+ *     which need to resolve the client_id ↔ system.connection link
+ *
+ * Direct Drizzle reads against the plugin's tables; the plugin itself
+ * is the authoritative writer. Kept as a separate store so the consent
+ * route doesn't have to peek into dialect-specific Drizzle internals.
+ */
+export interface OauthAccessTokenRow {
+  id: string;
+  userId: string | null;
+  clientId: string;
+  /** Tenant id resolved via the plugin's `clientReference` callback at
+   *  token-issuance time (mirrors `auth_oauth_access_token.reference_id`).
+   *  Null in keys-mode self-hosts where no per-user tenant exists. */
+  referenceId: string | null;
+  scopes: string[];
+  expiresAtMs: number | null;
+  createdAtMs: number | null;
+}
+
+export interface OauthClientRow {
+  /** Internal PK on `auth_oauth_client.id`. */
+  id: string;
+  /** The unique business key — what RPs identify themselves with. */
+  clientId: string;
+  name: string | null;
+  redirectUris: string[];
+  /** Tenant binding from `clientReference` (Myme: tenant_id). */
+  referenceId: string | null;
+}
+
+export interface MintTokenPairInput {
+  /** The pre-computed hash of the access-token string (output of
+   *  `storeTokens.hash` = `hashApiKey(token, salt)`). The plugin's
+   *  bearer middleware looks this up by exact match. */
+  accessTokenHash: string;
+  /** Pre-computed hash of the refresh-token string. */
+  refreshTokenHash: string;
+  clientId: string;
+  authUserId: string;
+  referenceId: string | null;
+  scopes: string[];
+  /** TTL milliseconds for the access token. The refresh token gets
+   *  a longer TTL set inside the implementation (mirrors the plugin's
+   *  default 30d). */
+  accessTtlMs: number;
+}
+
+export interface OauthProviderStore {
+  /** Look up a registered client's friendly name by its `client_id`.
+   *  Returns `undefined` if the client doesn't exist. */
+  getClientName(clientId: string): Promise<string | undefined>;
+  /** Full client row by business key. Used by the device-flow initiation
+   *  path to validate `redirect_uri` and resolve a display name. */
+  getClient(clientId: string): Promise<OauthClientRow | null>;
+  /** Look up the user's most recent prior consent scopes for
+   *  (clientId, authUserId). Returns the scope literals from the
+   *  `auth_oauth_consent` row, or `undefined` if no prior grant. */
+  getPriorConsent(
+    clientId: string,
+    authUserId: string,
+  ): Promise<readonly string[] | undefined>;
+  /** T-131: bearer-middleware lookup over `auth_oauth_access_token`.
+   *  Returns the row keyed by the hashed token output of `storeTokens.hash`
+   *  (which is `hashApiKey(token, salt)`), or null if the token isn't
+   *  recognised or has expired. Powers the bearer-middleware side-channel
+   *  join — see plan §Caveats §3 (opaque tokens carry no embedded claims,
+   *  so we read the row directly). */
+  validateAccessToken(tokenHash: string): Promise<OauthAccessTokenRow | null>;
+  /** Cascade revocation for a grant: delete every access + refresh token
+   *  for (clientId, authUserId). Used by the `/auth/grants/:id/revoke`
+   *  handler when the user revokes an app's access. The grant's
+   *  `auth_oauth_consent` row is also deleted (the plugin will require
+   *  re-consent on the next authorize attempt). */
+  revokeTokensForGrant(clientId: string, authUserId: string): Promise<void>;
+  /**
+   * T-131 follow-on (refresh-replay): delete ONLY access tokens for a
+   * grant — leaves refresh tokens + consent intact. Used by the
+   * `/oauth2/token` before-hook on refresh-token replay detection: the
+   * plugin's own logic deletes the refresh chain on stale-refresh
+   * detection but leaves access tokens valid until their TTL (default
+   * 1h). This narrows that window to zero by zapping access tokens
+   * pre-emptively when we detect a revoked refresh in the request.
+   *
+   * Idempotent — re-calling on an already-cleaned grant is a no-op.
+   * Best-effort; callers swallow errors.
+   */
+  revokeAccessTokensForGrant(
+    clientId: string,
+    authUserId: string,
+  ): Promise<void>;
+  /**
+   * T-131 follow-on (refresh-replay): look up a refresh-token row by its
+   * hashed `token` column value. Returns the (clientId, userId, revoked)
+   * tuple needed to decide whether the request is a replay attempt and
+   * whose access tokens to nuke. Returns null if the token doesn't
+   * exist (e.g. already deleted by a prior chain-revocation pass).
+   */
+  findRefreshTokenGrantKey(tokenHash: string): Promise<{
+    clientId: string;
+    userId: string;
+    revoked: boolean;
+  } | null>;
+  /** Insert an access + refresh token pair from the device-flow terminal
+   *  step. Writes into `auth_oauth_access_token` + `auth_oauth_refresh_token`
+   *  with the same shape the plugin's `/oauth2/token` path would produce,
+   *  so the bearer middleware resolves them uniformly. */
+  mintTokenPair(input: MintTokenPairInput): Promise<void>;
+  /**
+   * T-131 follow-on: resolve the projected `system.connection { kind: "app" }`
+   * item id for a (tenantId, clientId, authUserId) tuple. Returns the
+   * `items.id` value or `null` if no projection exists (consent never ran,
+   * or the row was hard-deleted).
+   *
+   * Used by the bearer middleware to find the `system.connection` row it
+   * needs to stamp `last_used_at` on, and by the re-consent path to update
+   * the row's `scopes` property when the user grants a different scope set.
+   *
+   * Single-row indexed query: matches on `(type, tenant_id)` and predicates
+   * on `properties.kind / .client_id / .user_id` via the dialect's JSON
+   * extractor. Sub-ms in PG, sub-ms in SQLite.
+   *
+   * Tenant-scoped: pass `null` for the unscoped (single-tenant self-host)
+   * case so the row's `tenant_id IS NULL` predicate is used. A hosted-mode
+   * caller passing a real tenant cannot cross-tenant-match.
+   */
+  findGrantItemId(opts: {
+    tenantId: string | null;
+    clientId: string;
+    authUserId: string;
+  }): Promise<string | null>;
+}
+
+// T-131 review-sweep Commit 2 / F6: `OauthProviderStore.updateGrantScopes`
+// was dropped. The re-consent path now updates the projection via the
+// standard `storage.items.update` route (writes a `versions` snapshot,
+// bumps `updated_at` + `version`, lets the projection participate in
+// `/items?sort=updated_at` correctly). See `projectGrantOnConsent` in
+// `routes/auth-consent.ts`.
 
 // ---------------------------------------------------------------------------
 // Audit store
@@ -1314,6 +1423,11 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   edges: EdgeStore;
   edgeTypes: EdgeTypeStore;
   oauth: OAuthStore;
+  /** T-131: thin lookup helpers over the @better-auth/oauth-provider
+   *  plugin's tables (`auth_oauth_client`, `auth_oauth_consent`).
+   *  Used by the consent route + grant-projection after-hooks.
+   *  Optional — test contexts that skip the OAuth surface can omit. */
+  oauthProvider?: OauthProviderStore;
   outboundWebhooks: WebhookStore;
   outboundWebhookDeliveries: WebhookDeliveryStore;
   inboundWebhooks: InboundWebhookStore;

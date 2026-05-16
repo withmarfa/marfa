@@ -35,6 +35,171 @@ async function truncatePg(storage: Storage): Promise<void> {
 }
 
 /**
+ * T-131: seed an OAuth-bearer token end-to-end for tests that need
+ * the bearer middleware to resolve an OAuth-issued token. Mirrors what
+ * the old `storage.oauth.createClient` + `items.create` + `createToken`
+ * three-step setup produced, but writes into the @better-auth/oauth-provider
+ * plugin's tables (`auth_oauth_client`, `auth_oauth_access_token`).
+ *
+ * Returns the raw access token (with `myme_at_` prefix) and the
+ * system.connection item id. The bearer middleware looks the token up
+ * by `hashApiKey(token, TEST_API_KEY_SALT)` and resolves to the right
+ * scope projection.
+ *
+ * @param scopes literal scope strings (e.g. `["core.note:read"]`)
+ * @param opts.clientName    visible client name (defaults to "Test App")
+ * @param opts.tenantId      tenant for the system.connection item
+ *                           (defaults to undefined — keys-mode self-host)
+ * @param opts.authUserId    Better Auth user id; if absent a synthetic
+ *                           one is seeded into `auth_user`.
+ */
+export async function seedOauthBearer(
+  storage: Storage,
+  scopes: string[],
+  opts: {
+    clientName?: string;
+    tenantId?: string;
+    authUserId?: string;
+  } = {},
+): Promise<{ token: string; grantId: string; clientId: string }> {
+  if (
+    typeof storage.oauthProvider?.mintTokenPair !== "function" ||
+    !storage.betterAuthDb
+  ) {
+    throw new Error(
+      "seedOauthBearer requires storage.oauthProvider + betterAuthDb",
+    );
+  }
+
+  const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
+  const clientPk = `client_pk_${Math.random().toString(36).slice(2, 10)}`;
+  const clientName = opts.clientName ?? "Test App";
+  const now = new Date();
+
+  // Seed the OAuth client row directly (the plugin's own DCR endpoint
+  // would create the same row — we shortcut for test setup speed).
+  const dialect = storage.betterAuthDialect;
+  const db = storage.betterAuthDb as unknown as {
+    insert: (table: unknown) => {
+      values: (v: Record<string, unknown>) => {
+        run?: () => Promise<unknown>;
+        execute?: () => Promise<unknown>;
+      };
+    };
+  };
+
+  // Seed a synthetic auth_user if the caller didn't provide one. The
+  // bearer middleware doesn't actually need this row to exist (it reads
+  // from `auth_oauth_access_token`), but the FK on user_id requires
+  // it. Use a fixed-id row so re-seeds in the same test stay idempotent.
+  const authUserId =
+    opts.authUserId ?? `auth_user_${Math.random().toString(36).slice(2, 10)}`;
+  if (!opts.authUserId) {
+    // Use raw SQL via the storage escape hatches — auth_user.id is text
+    // and we want a deterministic synthetic id. Skip if a row already
+    // exists (unique email index would trip on a second test re-run
+    // otherwise).
+    if (dialect === "sqlite") {
+      const sqlite = storage as unknown as {
+        __sqliteRun?: (sql: string, params: unknown[]) => Promise<unknown>;
+      };
+      await sqlite.__sqliteRun?.(
+        "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES (?, ?, ?, 1, ?, ?, 'active')",
+        [
+          authUserId,
+          "Test User",
+          `${authUserId}@test.local`,
+          Math.floor(now.getTime() / 1000),
+          Math.floor(now.getTime() / 1000),
+        ],
+      );
+    } else {
+      const pg = storage as unknown as {
+        __pgClient?: (sql: string, params?: unknown[]) => Promise<unknown>;
+      };
+      // postgres-js's parameterized API expects primitives; convert Date
+      // → ISO string explicitly. The column is a TIMESTAMP and PG will
+      // coerce the string transparently.
+      await pg.__pgClient?.(
+        "INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES ($1, $2, $3, true, $4, $4, 'active') ON CONFLICT (id) DO NOTHING",
+        [
+          authUserId,
+          "Test User",
+          `${authUserId}@test.local`,
+          now.toISOString(),
+        ],
+      );
+    }
+  }
+
+  // Seed the client row. We rely on the schema export for typing.
+  // Both dialect tables have identical column names (mapped via the
+  // Drizzle adapter); the runtime values differ (boolean vs integer
+  // for `disabled` etc.). For simplicity we just write the minimum
+  // required fields.
+  const schemaModule =
+    dialect === "pg"
+      ? await import("./storage/pg/schema.js")
+      : await import("./storage/sqlite/schema.js");
+  const insertOp = db.insert(schemaModule.auth_oauth_client).values({
+    id: clientPk,
+    clientId,
+    name: clientName,
+    redirectUris: JSON.stringify(["http://localhost:5173/callback"]),
+    disabled: false,
+    createdAt: now,
+    updatedAt: now,
+  } as Record<string, unknown>);
+  await (insertOp.execute?.() ?? insertOp.run?.() ?? Promise.resolve());
+
+  // Project the system.connection app-grant. The /security page reads
+  // these directly; tests asserting on grant projection look for the
+  // resulting item id.
+  const grant = await storage.items.create(
+    {
+      type: "system.connection",
+      tier: "library",
+      state: "active",
+      properties: {
+        kind: "app",
+        client_id: clientId,
+        user_id: authUserId,
+        scopes,
+        status: "active",
+        granted_at: now.toISOString(),
+      },
+      source: "test/oauth-bearer",
+    },
+    opts.tenantId,
+  );
+
+  // Mint the token pair via the plugin's storage helper. Hash the BARE
+  // (prefix-stripped) token to match what the plugin's `storeTokens.hash`
+  // does — see middleware/auth.ts bearer path + the device-flow terminal
+  // in routes/oauth.ts for the canonical convention.
+  const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
+  const rawRefresh = `myme_rt_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
+  const { hashApiKey } = await import("./middleware/auth.js");
+  await storage.oauthProvider.mintTokenPair({
+    accessTokenHash: hashApiKey(
+      rawToken.slice("myme_at_".length),
+      TEST_API_KEY_SALT,
+    ),
+    refreshTokenHash: hashApiKey(
+      rawRefresh.slice("myme_rt_".length),
+      TEST_API_KEY_SALT,
+    ),
+    clientId,
+    authUserId,
+    referenceId: opts.tenantId ?? null,
+    scopes,
+    accessTtlMs: 3600_000,
+  });
+
+  return { token: rawToken, grantId: grant.id, clientId };
+}
+
+/**
  * Wave C PR2 helper. With `requireEmailVerification: true` the auth
  * instance blocks sign-in until `auth_user.email_verified` is `true`.
  * Tests that exercise the post-sign-in flow (consent, OAuth, etc.)

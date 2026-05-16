@@ -14,6 +14,7 @@ import { PgSearchStore } from "./search-store.js";
 import { PgKeyStore } from "./key-store.js";
 import { PgBlobStore } from "./blob-store.js";
 import { PgOAuthStore } from "./oauth-store.js";
+import { PgOauthProviderStore } from "./oauth-provider-store.js";
 import { PgWebhookStore } from "./webhook-store.js";
 import { PgWebhookDeliveryStore } from "./webhook-delivery-store.js";
 import { PgInboundWebhookStore } from "./inbound-webhook-store.js";
@@ -101,6 +102,9 @@ export async function createPgStorage(
     edges: edgeStore,
     edgeTypes: edgeTypeStore,
     oauth: oauthStore,
+    // T-131: thin reader over the plugin's tables for the consent route
+    // + projection after-hooks. The plugin itself owns writes.
+    oauthProvider: new PgOauthProviderStore(db),
     outboundWebhooks: webhookStore,
     outboundWebhookDeliveries: deliveryStore,
     inboundWebhooks: inboundWebhookStore,
@@ -154,7 +158,7 @@ export async function createPgStorage(
     close,
     /** Truncate all tables — used by tests for isolation. */
     async _pgTruncate(): Promise<void> {
-      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_clients, oauth_tokens, oauth_codes, oauth_device_codes, outbound_webhooks, outbound_webhook_deliveries, inbound_webhooks, inbound_webhook_events, connection_oauth_tokens, connection_leased_tokens, audit_log, event_log, tenants, tenant_quotas, rate_limit_windows, users, auth_user, auth_session, auth_account, auth_verification, auth_passkey CASCADE`;
+      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_device_codes, outbound_webhooks, outbound_webhook_deliveries, inbound_webhooks, inbound_webhook_events, connection_oauth_tokens, connection_leased_tokens, audit_log, event_log, tenants, tenant_quotas, rate_limit_windows, users, auth_user, auth_session, auth_account, auth_verification, auth_passkey, auth_oauth_client, auth_oauth_access_token, auth_oauth_refresh_token, auth_oauth_consent, auth_jwks CASCADE`;
     },
     /** Raw query escape hatch. Originally added for parameterised
      *  mutations in retention tests; now also consumed by

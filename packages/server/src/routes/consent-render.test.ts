@@ -4,10 +4,13 @@ import { renderConsentScreen } from "./consent.js";
 
 /**
  * Wave C PR4 — behaviour-preserving smoke for `renderConsentScreen`
- * after the layout extraction. The handler-side smoke (POST /authorize
- * round-trip) lives in oauth.test.ts; this file asserts the HTML shape
- * directly so a future tweak to the layout helper can't silently
- * break the consent surface.
+ * after the layout extraction. T-131 rewrote the form shape to match
+ * the @better-auth/oauth-provider plugin: the form now POSTs back to
+ * `/auth/authorize/decision` (Myme handler, which proxies to
+ * `/auth/oauth2/consent`) with a single `oauth_query` hidden field
+ * carrying the plugin's full signed authorize-request query string.
+ * This test file asserts the HTML shape directly so a future tweak
+ * to the layout helper can't silently break the consent surface.
  */
 
 const SCOPES: ParsedScope[] = [
@@ -16,15 +19,14 @@ const SCOPES: ParsedScope[] = [
   { typePattern: "core.task", operation: "read" },
 ];
 
+const SIGNED_OAUTH_QUERY =
+  "response_type=code&client_id=client-abc&redirect_uri=http%3A%2F%2Flocalhost%2Fcallback&scope=core.note%3Aread&state=abc&code_challenge=def&code_challenge_method=S256&exp=1778957000&sig=somesignaturehash";
+
 const PARAMS = {
   clientName: "Test CLI",
   scopes: SCOPES,
   clientId: "client-abc",
-  redirectUri: "http://localhost:9999/cb",
-  codeChallenge: "challenge",
-  codeChallengeMethod: "S256",
-  state: "xyz",
-  responseType: "code",
+  oauthQuery: SIGNED_OAUTH_QUERY,
   descriptions: {
     "core.note": "Text content you created.",
     "core.task": "Tasks and todos.",
@@ -64,21 +66,38 @@ describe("renderConsentScreen (Wave C PR4)", () => {
     expect(html).toContain("Tasks and todos.");
   });
 
-  it("preserves the POST target + hidden OAuth round-trip fields", () => {
+  it("POSTs to the Myme decision handler with oauth_query + client_id hidden", () => {
     const html = renderConsentScreen(PARAMS);
-    expect(html).toContain('<form method="POST" action="/auth/authorize"');
+    expect(html).toContain(
+      '<form method="POST" action="/auth/authorize/decision"',
+    );
     expect(html).toContain('name="client_id" value="client-abc"');
-    expect(html).toContain('name="redirect_uri"');
-    expect(html).toContain('name="code_challenge"');
-    expect(html).toContain('name="code_challenge_method"');
-    expect(html).toContain('name="state"');
-    expect(html).toContain('name="response_type"');
+    // oauth_query carries the plugin's signed authorize-request params
+    // verbatim. The form must round-trip the full signed string —
+    // re-hashing or partial copying would break the plugin's
+    // signature check. We assert the field exists with the leading
+    // `response_type=` segment (HTML-escaping of `=` is a no-op).
+    expect(html).toContain('name="oauth_query"');
+    expect(html).toContain("response_type=code");
+    expect(html).toContain("sig=somesignaturehash");
+    // No pre-minted code: the plugin doesn't mint one until /oauth2/consent.
+    expect(html).not.toContain('name="code"');
+    // No raw PKCE / state / redirect_uri hidden fields — they live
+    // INSIDE oauth_query, not as separate form fields.
+    expect(html).not.toContain('name="redirect_uri"');
+    expect(html).not.toContain('name="code_challenge"');
+    expect(html).not.toContain('name="state"');
+    expect(html).not.toContain('name="response_type"');
   });
 
-  it("renders Approve + Deny buttons", () => {
+  it("renders Approve + Deny buttons with accept=true|false (plugin contract)", () => {
     const html = renderConsentScreen(PARAMS);
-    expect(html).toMatch(/<button[^>]*value="approve"[^>]*>Approve<\/button>/);
-    expect(html).toMatch(/<button[^>]*value="deny"[^>]*>Deny<\/button>/);
+    expect(html).toMatch(
+      /<button[^>]*name="accept"[^>]*value="true"[^>]*>Approve<\/button>/,
+    );
+    expect(html).toMatch(
+      /<button[^>]*name="accept"[^>]*value="false"[^>]*>Deny<\/button>/,
+    );
   });
 
   it("uses the wide card variant", () => {
@@ -182,5 +201,35 @@ describe("renderConsentScreen — re-consent diff (Wave C PR5 / T-032)", () => {
     });
     // Removed: core.task:write → "Tasks and todos." description
     expect(html).toMatch(/section--removed[\s\S]*?Tasks and todos/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-131 fix-up: F2 error banner + F11 description coverage for OIDC + edge
+// ---------------------------------------------------------------------------
+
+describe("renderConsentScreen — error banner (T-131 F2)", () => {
+  it("omits the alert div when errorMessage is undefined", () => {
+    const html = renderConsentScreen(PARAMS);
+    expect(html).not.toContain("alert--error");
+  });
+
+  it("renders an alert div when errorMessage is set", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      errorMessage: "Approve needs at least one permission ticked.",
+    });
+    expect(html).toContain('class="alert alert--error"');
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("Approve needs at least one permission ticked.");
+  });
+
+  it("escapes HTML in errorMessage (XSS guard)", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      errorMessage: "<img src=x onerror=alert(1)>",
+    });
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;img");
   });
 });
