@@ -121,7 +121,40 @@ OAuth tokens are issued with scopes parsed by `parseScope` in `@mymehq/shared`. 
 - **Empty `allowed_types` filters to zero rows.** The storage layer treats `allowed_types: []` as "no readable types" (forces `1=0` in SQL); previously it silently passed through and returned every row, a real security gap a no-scope token could exploit. Fixed in T-045 alongside the projection wiring.
 - **More-restrictive-wins is automatic.** OAuth tokens are synthetic `ApiKey` records built only from the granted scopes — there's no underlying API key whose permissions might be wider. Scope and credential are the same map.
 
-**Force re-consent on T-045 deploy.** The pre-T-045 regime had most scopes parsed-but-not-gated; tokens issued under that regime carry consent-screen wording the system didn't honour. Forward-compat would mask the new enforcement against existing tokens. The honest path is `pnpm --filter @mymehq/server tsx src/scripts/revoke-oauth-grants-t045.ts --dialect=<sqlite|pg>` — flips every active `app`-kind connection to revoked, cascades through `oauth.revokeGrantTokens`, and writes a per-revocation audit row stamped `{ action: "key.revoke", details: { reason: "scope_grammar_enforcement", ticket: "T-045" } }` so operators have an attributable trail. Idempotent — re-running over already-revoked grants is a no-op. Users re-grant via the existing consent screen.
+**Force re-consent on T-045 deploy.** [Historical — script removed in T-131. T-131's deploy is itself a hard reset of OAuth state: the legacy `oauth_clients` / `oauth_tokens` / `oauth_codes` tables are dropped; every grant must be re-created via the new flow.]
+
+## OAuth Provider plugin (T-131)
+
+The OAuth-protocol surface is owned by [@better-auth/oauth-provider](https://www.better-auth.com/docs/plugins/oauth-provider) plugin mounted on the better-auth instance. Endpoints land under `/auth/oauth2/*` via the basePath catch-all. The plugin's own tables (`auth_oauth_client`, `auth_oauth_access_token`, `auth_oauth_refresh_token`, `auth_oauth_consent`) replace the dropped `oauth_clients` / `oauth_tokens` / `oauth_codes`.
+
+**Plugin endpoints (via Better Auth basePath `/auth`):**
+
+| Endpoint | RFC / spec |
+|---|---|
+| `POST /auth/oauth2/authorize` + `POST /auth/oauth2/consent` | Authorization Code + PKCE S256, public clients (no secret) |
+| `POST /auth/oauth2/token` | `authorization_code`, `refresh_token`, `client_credentials` — refresh rotation built in |
+| `POST /auth/oauth2/userinfo` | OIDC userinfo |
+| `POST /auth/oauth2/revoke` | RFC 7009 |
+| `POST /auth/oauth2/introspect` | RFC 7662 — new for Myme |
+| `POST /auth/oauth2/register` | RFC 7591 DCR (public — `allowUnauthenticatedClientRegistration: true`) |
+| `GET /.well-known/oauth-authorization-server` | RFC 8414 (re-published at root via plugin's exportable helper) |
+| `GET /.well-known/openid-configuration` | OIDC discovery (re-published at root via plugin's exportable helper) |
+| `GET /auth/jwks` | JWKS for id_token verification |
+
+**Myme-owned surfaces (kept):**
+- `GET /auth/authorize` — Hono consent route in `routes/auth-consent.ts`. The plugin's `consentPage` config redirects here; the route reads `client_id` + `scope` + `code` from query, fetches prior consent for the re-consent diff, renders via the existing `renderConsentScreen`. Form POSTs back to the plugin's `/auth/oauth2/consent`.
+- `/auth/device*` — device-flow state machine over the kept `oauth_device_codes` table. Terminal token-issuance step (`POST /auth/device/token`) writes into the plugin's `auth_oauth_access_token` + `auth_oauth_refresh_token` so the bearer middleware resolves device-flow tokens uniformly with code-flow tokens. See `routes/oauth.ts` (kept) for the wiring.
+- `/auth/security` + `/auth/grants/*` + `/auth/sessions/*` — user-facing operational surfaces, re-pointed to read from the plugin's tables via `storage.oauthProvider`.
+
+**Bearer middleware (`middleware/auth.ts`):** OAuth-prefix tokens (`myme_at_*`) resolve via `storage.oauthProvider.validateAccessToken(hashApiKey(token, salt))`. The plugin's `storeTokens.hash` is wired to the same HMAC-SHA256 hash function, so the middleware looks up `auth_oauth_access_token.token` directly by hash. Per-request scopes project through the unchanged `scopesToTypePermissions` / `scopesToEdgePermissions` / `scopesToMetadataPermissions` / `scopesToOidcScopes` from `@mymehq/shared`. Opaque tokens carry no embedded claims (claims only ride JWT access tokens, which Myme doesn't issue); the side-channel join (`auth_oauth_access_token.referenceId` → tenant_id, `clientId`+`userId` → `system.connection`) is the correct path for our profile.
+
+**Grant projection.** A sibling shell plugin (`buildOauthProjectionPlugin` in `auth/oauth-provider.ts`) hosts four `hooks.after` matchers for `/oauth2/consent`, `/oauth2/token`, `/oauth2/revoke`, `/oauth2/end-session`. Consent-side projection writes the `system.connection { kind: "app" }` item with `user_id` property in the explicit `/auth/authorize` route. Revoke-side projection currently log-and-no-ops; the user-facing `/auth/grants/:id/revoke` handler is the actual cascade path (calls `storage.oauthProvider.revokeTokensForGrant(clientId, userId)`).
+
+**Refresh-token replay.** Plugin behaviour verified in source (`index.mjs:747-761`): stale-refresh replay deletes the entire refresh chain for `(clientId, userId)` and returns `invalid_grant`. Access tokens from the same chain remain valid until TTL (1h default) — known gap, mitigation filed as a T-131 follow-on.
+
+**JWT plugin (`auth_jwks` table).** Mounted alongside oauth-provider for id_token signing. Auto-generates an RSA key pair on first use; rotates by inserting new rows.
+
+**Scope grammar.** Plugin's `scopes` allowlist is enumerated from `TYPE_REGISTRY.keys()` + `EDGE_TYPE_REGISTRY.keys()` at instance construction (`auth/oauth-provider.ts` → `buildAllowedScopes`). Custom types registered at runtime via `POST /types` are NOT picked up until server restart — acceptable tradeoff; the plugin's scope-allowlist is static.
 
 ## FTS dialect parity (T-015)
 
@@ -219,6 +252,8 @@ Actions emitted today:
 | `auth.account.cancel_attempted_but_already_purged` | Cancel route reached but `cancelPendingDeletion` matched zero rows (T-141 — cascade won the race)                                                               | `auth_user_id`                                 | `{ source: "session" \| "link" }`          |
 | `auth.account.sign_in_blocked_pending_deletion`    | Deletion-guard middleware (T-137) intercepts a sign-in attempt against a pending-deletion account                                                               | `auth_user_id`                                 | (none — T-139)                             |
 | `auth.account.hard_deleted`                        | `deleteAccountCascade` transaction commits hard-delete (emitted from `storage/{pg,sqlite}/account-cascade.ts`; survives the post-cascade `redactForUser` sweep) | `auth_user_id`                                 | `{ tenant_id, redacted: false }`           |
+| `auth.grant.created`                               | `POST /auth/authorize/decision` accept (T-131 — projection handler before plugin proxy)                                                                         | client_id                                      | `{ client_id, scopes, user_id }`           |
+| `auth.grant.revoked`                               | `DELETE /auth/grants/:id` and `POST /auth/grants/:id/revoke` (T-131)                                                                                            | client_id                                      | `{ client_id, user_id }`                   |
 
 **Emission sources.** Most rows are written by route wrappers (`routes/auth-account.ts`, `routes/oauth.ts`). Two come from elsewhere by design: `auth.account.sign_in_blocked_pending_deletion` from `middleware/account-deletion-guard.ts` (the sign-in interception sits in middleware to be path-agnostic across better-auth's various sign-in endpoints), and `auth.account.hard_deleted` from `storage/{pg,sqlite}/account-cascade.ts` (must be inside the cascade transaction so the row is committed atomically with the deletion and survives the same-transaction `redactForUser` sweep that nukes every other audit row referencing the user).
 
@@ -226,7 +261,7 @@ The `auth.account.cancel_attempted_but_already_purged` row exists for honesty in
 
 Calls are fire-and-forget (`void storage.audit.log(...)`) — audit failures must never block the user-facing flow. `client_ip` threads through `c.var.clientIp` (T-027 client-ip middleware). The one exception is `auth.account.hard_deleted`, which is `await`-ed inside the cascade transaction so the row commits atomically.
 
-Out-of-scope today (filed as follow-on if needed): per-passkey-registration, per-grant-creation, per-session-revocation. Better-auth handles those endpoints inside its catch-all and we don't have a clean wrapper seam without `before`/`after` plugin hooks.
+**T-131:** `auth.grant.created` and `auth.grant.revoked` are emitted via the @better-auth/oauth-provider plugin's `hooks.after` matchers (`auth/oauth-provider.ts` → `buildOauthProjectionPlugin`). Pre-T-131 the homegrown OAuth surface offered no clean wrapper seam; the plugin's hook surface gives us one. The consent-side projection (writing the `system.connection` user-app-grant item) lands inside the explicit `/auth/authorize` route handler in `routes/auth-consent.ts`; the revoke-side projection currently falls back to the explicit `/auth/grants/:id/revoke` handler (which goes through `storage.oauthProvider.revokeTokensForGrant`) — the after-hook matcher logs the event but defers the projection because resolving `(client_id, user_id)` from a token-in-hand revoke request needs a before-hook read of the token row. Filed as a T-131 follow-on.
 
 ## Per-IP rate limits on auth surfaces (Wave C PR8)
 
