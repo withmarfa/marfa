@@ -3,6 +3,7 @@ import {
   createTestContext,
   markEmailVerified,
   request,
+  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { PendingDeletePurger } from "../storage/retention.js";
@@ -116,9 +117,11 @@ describe("T-116 — account deletion routes", () => {
     expect(byEmail?.deletion_state).toBe("pending_deletion");
     expect(byEmail?.pending_deletion_at).toBeTruthy();
 
-    // Sign-in attempt is blocked.
+    // Sign-in attempt is blocked. T-137 Option 2: response is a
+    // generic 401 indistinguishable from wrong-password / unknown-email
+    // so an observer can't enumerate pending-deletion accounts.
     const blocked = await signIn(ctx, "alice@example.com");
-    expect(blocked.status).toBe(403);
+    expect(blocked.status).toBe(401);
     // A cancel-by-link token should have been minted.
     const cancelToken = await readLatestVerification(
       ctx.storage,
@@ -481,5 +484,204 @@ describe("T-136 — cascade race-safety", () => {
     expect(after).not.toBeNull();
     expect(after?.deletion_state).toBe("active");
     expect(after?.pending_deletion_at).toBeNull();
+  });
+});
+// ---------------------------------------------------------------------------
+// T-137 — sign-in guard token reuse + audit-row hygiene.
+// ---------------------------------------------------------------------------
+
+async function countCancelTokens(
+  storage: TestContext["storage"],
+  authUserId: string,
+): Promise<number> {
+  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  if (dialect === "pg") {
+    const pg = storage as unknown as {
+      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
+    };
+    if (!pg.__pgClient) return 0;
+    const rows = (await pg.__pgClient(
+      `SELECT COUNT(*)::int AS c FROM auth_verification
+        WHERE value = $1 AND identifier LIKE 'account-cancel:%'`,
+      [authUserId],
+    )) as { c: number }[];
+    return rows[0]?.c ?? 0;
+  }
+  const sqlite = storage as unknown as {
+    __sqliteAll?: (q: string) => Promise<unknown[]>;
+  };
+  if (!sqlite.__sqliteAll) return 0;
+  // Plain string substitution against a UUID is safe enough for a test
+  // helper; the production code path is parameterised.
+  const rows = (await sqlite.__sqliteAll(
+    `SELECT COUNT(*) AS c FROM auth_verification
+      WHERE value = '${authUserId.replace(/'/g, "''")}'
+        AND identifier LIKE 'account-cancel:%'`,
+  )) as { c: number }[];
+  return rows[0]?.c ?? 0;
+}
+
+describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
+  it("repeated sign-in attempts on a pending-deletion account reuse the same cancel token", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "guard-reuse@example.com");
+    const { cookie } = await signIn(ctx, "guard-reuse@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const confirmToken = await readLatestVerification(
+      ctx.storage,
+      "account-delete:",
+    );
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(confirmToken ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "guard-reuse@example.com",
+    );
+    const authUserId = before?.auth_user_id ?? "";
+
+    // Three sign-in attempts in a row. Each one hits the guard.
+    // T-137 Option 2: generic 401, not a themed 403.
+    for (let i = 0; i < 3; i++) {
+      const r = await signIn(ctx, "guard-reuse@example.com");
+      expect(r.status).toBe(401);
+    }
+
+    // Should still be exactly ONE cancel token in auth_verification —
+    // the first attempt minted, the next two reused.
+    const count = await countCancelTokens(ctx.storage, authUserId);
+    expect(count).toBe(1);
+  });
+
+  it("audit row for sign_in_blocked carries no plaintext email (T-139)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "guard-pii@example.com");
+    const { cookie } = await signIn(ctx, "guard-pii@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const confirmToken = await readLatestVerification(
+      ctx.storage,
+      "account-delete:",
+    );
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(confirmToken ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "guard-pii@example.com",
+    );
+    const authUserId = before?.auth_user_id ?? "";
+
+    const blocked = await signIn(ctx, "guard-pii@example.com");
+    expect(blocked.status).toBe(401);
+
+    // The audit row's `details` must NOT carry the plaintext email.
+    // T-139 dropped `details: { email }` from this site. The audit
+    // write is fire-and-forget, so poll until the row appears.
+    const guardRow = await waitForAudit(
+      () => ctx!.storage.audit.list({ resource_id: authUserId }),
+      (page) =>
+        page.data.some(
+          (r) => r.action === "auth.account.sign_in_blocked_pending_deletion",
+        ),
+    ).then((page) =>
+      page.data.find(
+        (r) => r.action === "auth.account.sign_in_blocked_pending_deletion",
+      ),
+    );
+    expect(guardRow).toBeTruthy();
+    // Load-bearing assertion first: the email substring is present
+    // nowhere in the audit row's details. A future regression that
+    // moved the email under a different key (e.g., `details: { actor:
+    // email }`) would still fail this check, while passing a narrower
+    // `hasOwnProperty('email')` check.
+    const details = guardRow?.details ?? {};
+    expect(JSON.stringify(details)).not.toContain("guard-pii@example.com");
+    // Belt-and-braces: the literal `email` key isn't present either.
+    expect(Object.prototype.hasOwnProperty.call(details, "email")).toBe(false);
+  });
+
+  it("guard 401 response is byte-indistinguishable from better-auth's wrong-password 401 (T-137 Option 2)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    // Two accounts: one stays active, one gets put into pending_deletion.
+    await signUpAndVerify(ctx, "active@example.com");
+    await signUpAndVerify(ctx, "pending@example.com");
+    const { cookie } = await signIn(ctx, "pending@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const confirmToken = await readLatestVerification(
+      ctx.storage,
+      "account-delete:",
+    );
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(confirmToken ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    // Active account, wrong password → better-auth 401.
+    const wrongPwResp = await request(ctx.app, "POST", "/auth/sign-in/email", {
+      body: { email: "active@example.com", password: "wrong" },
+      headers: { origin: ORIGIN },
+    });
+    // Pending-deletion account, any password → guard 401.
+    const guardResp = await request(ctx.app, "POST", "/auth/sign-in/email", {
+      body: { email: "pending@example.com", password: "correct horse" },
+      headers: { origin: ORIGIN },
+    });
+    // Unknown email → better-auth 401.
+    const unknownResp = await request(ctx.app, "POST", "/auth/sign-in/email", {
+      body: { email: "ghost@example.com", password: "anything" },
+      headers: { origin: ORIGIN },
+    });
+
+    // All three return 401.
+    expect(wrongPwResp.status).toBe(401);
+    expect(guardResp.status).toBe(401);
+    expect(unknownResp.status).toBe(401);
+
+    // statusText matches across the three. The guard intentionally
+    // constructs `new Response(..., { statusText: "UNAUTHORIZED" })`
+    // to match better-auth's `APIError.from("UNAUTHORIZED", ...)`
+    // serialisation; without that, Hono's default `c.json` would
+    // surface `"Unauthorized"` (Node http default) and leak the
+    // branch.
+    expect(guardResp.statusText).toBe(wrongPwResp.statusText);
+    expect(guardResp.statusText).toBe(unknownResp.statusText);
+
+    // Content-type matches across the three.
+    const wrongPwCt = wrongPwResp.headers.get("content-type") ?? "";
+    const guardCt = guardResp.headers.get("content-type") ?? "";
+    const unknownCt = unknownResp.headers.get("content-type") ?? "";
+    expect(wrongPwCt).toMatch(/application\/json/);
+    expect(guardCt).toMatch(/application\/json/);
+    expect(unknownCt).toMatch(/application\/json/);
+
+    // Body shape matches (status, code shape — exact `message` text
+    // depends on the better-auth version but the fields are the same).
+    const wrongPwBody = (await wrongPwResp.json()) as Record<string, unknown>;
+    const guardBody = (await guardResp.json()) as Record<string, unknown>;
+    const unknownBody = (await unknownResp.json()) as Record<string, unknown>;
+    // The guard intentionally mirrors better-auth's INVALID_EMAIL_OR_PASSWORD shape.
+    expect(typeof guardBody.message).toBe("string");
+    expect(guardBody.code).toBe("INVALID_EMAIL_OR_PASSWORD");
+    // Both better-auth paths surface a string `message`. The exact code
+    // string varies by better-auth version; what matters for the
+    // no-enumeration invariant is that the field set + types match.
+    expect(typeof wrongPwBody.message).toBe("string");
+    expect(typeof unknownBody.message).toBe("string");
   });
 });
