@@ -953,21 +953,14 @@ export interface OauthProviderStore {
     clientId: string;
     authUserId: string;
   }): Promise<string | null>;
-  /**
-   * T-131 follow-on: update the `properties.scopes` and (refreshed)
-   * `granted_at` on a projected `system.connection { kind: "app" }` row.
-   * Called by the re-consent path when the user approves a different
-   * scope set than the one currently visible on the existing projection.
-   *
-   * Tenant-scoped per `findGrantItemId`. Best-effort — projection
-   * failures must NOT block the auth flow; callers swallow errors.
-   */
-  updateGrantScopes(opts: {
-    itemId: string;
-    tenantId: string | null;
-    scopes: string[];
-  }): Promise<void>;
 }
+
+// T-131 review-sweep Commit 2 / F6: `OauthProviderStore.updateGrantScopes`
+// was dropped. The re-consent path now updates the projection via the
+// standard `storage.items.update` route (writes a `versions` snapshot,
+// bumps `updated_at` + `version`, lets the projection participate in
+// `/items?sort=updated_at` correctly). See `projectGrantOnConsent` in
+// `routes/auth-consent.ts`.
 
 // ---------------------------------------------------------------------------
 // Audit store

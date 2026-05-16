@@ -394,6 +394,235 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(audit?.client_ip).toBe("203.0.113.42");
   });
 
+  it("F3+F6: re-consent updates projection in place (no duplicate) + flips status to active + clears revoked_at + bumps version", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "f3@example.com");
+    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+
+    // First consent — projection gets created in active state.
+    const r1 = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie },
+    });
+    // Proxy 400 expected (bogus sig); projection runs before proxy.
+    expect(r1.status).toBeGreaterThanOrEqual(400);
+    let items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    const grantId = items.data[0]!.id;
+    const v1 = items.data[0]!.version;
+
+    // Simulate the user revoking the grant via /security (sets status=revoked).
+    const revokedUpdate = await ctx.storage.items.update(
+      grantId,
+      {
+        properties: {
+          ...items.data[0]!.properties,
+          status: "revoked",
+          revoked_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    expect("error" in revokedUpdate).toBe(false);
+    const revoked = await ctx.storage.items.get(grantId);
+    expect(revoked!.properties.status).toBe("revoked");
+    expect(revoked!.properties.revoked_at).toBeDefined();
+
+    // Re-consent — F3 should flip status back to "active" + drop revoked_at.
+    const r2 = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie },
+    });
+    expect(r2.status).toBeGreaterThanOrEqual(400);
+
+    const after = await ctx.storage.items.get(grantId);
+    expect(after).not.toBeNull();
+    expect(after!.properties.status).toBe("active");
+    expect(after!.properties.revoked_at).toBeUndefined();
+    // F6 — items.update bumps version on each call.
+    expect(after!.version).toBeGreaterThan(v1);
+
+    // Single projection row — re-consent updated in place, didn't insert.
+    items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+  });
+
+  it("F4: re-consent with narrowed scopes revokes the grant's existing access tokens", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "f4@example.com");
+
+    const oauthQuery = buildOauthQuery(
+      clientId,
+      "openid core.note:read core.note:write core.task:read",
+    );
+    // First consent with wide scopes.
+    const r1 = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: [
+          "openid",
+          "core.note:read",
+          "core.note:write",
+          "core.task:read",
+        ],
+      },
+      headers: { cookie },
+    });
+    expect(r1.status).toBeGreaterThanOrEqual(400);
+
+    // Look up authUserId from the projection.
+    const items1 = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items1.data.length).toBe(1);
+    const authUserId = items1.data[0]!.properties.user_id as string;
+
+    // Seed an access token row directly (simulates the token a real
+    // /oauth2/token call would have minted at the wide scope).
+    if (!ctx.storage.betterAuthDb) throw new Error("no betterAuthDb");
+    const schemaModule =
+      ctx.storage.betterAuthDialect === "pg"
+        ? await import("../storage/pg/schema.js")
+        : await import("../storage/sqlite/schema.js");
+    const db = ctx.storage.betterAuthDb as unknown as {
+      insert: (table: unknown) => {
+        values: (v: Record<string, unknown>) => {
+          run?: () => Promise<unknown>;
+          execute?: () => Promise<unknown>;
+        };
+      };
+    };
+    const now = new Date();
+    const tokenId = `at_${Math.random().toString(36).slice(2)}`;
+    const tokenHash = `hash_${Math.random().toString(36).slice(2)}`;
+    const op = db.insert(schemaModule.auth_oauth_access_token).values({
+      id: tokenId,
+      token: tokenHash,
+      clientId,
+      userId: authUserId,
+      referenceId: null,
+      expiresAt: new Date(now.getTime() + 3600_000),
+      createdAt: now,
+      scopes: JSON.stringify([
+        "openid",
+        "core.note:read",
+        "core.note:write",
+        "core.task:read",
+      ]),
+    } as Record<string, unknown>);
+    await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+
+    // Verify the token exists (sanity).
+    const beforeRow =
+      await ctx.storage.oauthProvider?.validateAccessToken(tokenHash);
+    expect(beforeRow).not.toBeNull();
+
+    // Re-consent with narrowed scopes.
+    const r2 = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"], // narrowed
+      },
+      headers: { cookie },
+    });
+    expect(r2.status).toBeGreaterThanOrEqual(400);
+
+    // F4 — the wider-scope access token must be revoked.
+    const afterRow =
+      await ctx.storage.oauthProvider?.validateAccessToken(tokenHash);
+    expect(afterRow).toBeNull();
+  });
+
+  it("F4: re-consent with SAME scopes leaves access tokens alone (no narrowing → no revoke)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "f4-same@example.com");
+
+    const oauthQuery = buildOauthQuery(clientId, "openid core.note:read");
+    const r1 = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie },
+    });
+    expect(r1.status).toBeGreaterThanOrEqual(400);
+
+    const items1 = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    const authUserId = items1.data[0]!.properties.user_id as string;
+
+    if (!ctx.storage.betterAuthDb) throw new Error("no betterAuthDb");
+    const schemaModule =
+      ctx.storage.betterAuthDialect === "pg"
+        ? await import("../storage/pg/schema.js")
+        : await import("../storage/sqlite/schema.js");
+    const db = ctx.storage.betterAuthDb as unknown as {
+      insert: (table: unknown) => {
+        values: (v: Record<string, unknown>) => {
+          run?: () => Promise<unknown>;
+          execute?: () => Promise<unknown>;
+        };
+      };
+    };
+    const tokenHash = `hash_${Math.random().toString(36).slice(2)}`;
+    const op = db.insert(schemaModule.auth_oauth_access_token).values({
+      id: `at_${Math.random().toString(36).slice(2)}`,
+      token: tokenHash,
+      clientId,
+      userId: authUserId,
+      referenceId: null,
+      expiresAt: new Date(Date.now() + 3600_000),
+      createdAt: new Date(),
+      scopes: JSON.stringify(["openid", "core.note:read"]),
+    } as Record<string, unknown>);
+    await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+
+    // Re-consent with the SAME scope set.
+    const r2 = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie },
+    });
+    expect(r2.status).toBeGreaterThanOrEqual(400);
+
+    // Token should survive — no narrowing happened.
+    const after =
+      await ctx.storage.oauthProvider?.validateAccessToken(tokenHash);
+    expect(after).not.toBeNull();
+  });
+
   it("F1: scopes outside the signed set are filtered (form can only narrow, not widen)", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);

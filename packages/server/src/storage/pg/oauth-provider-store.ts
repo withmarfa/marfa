@@ -248,34 +248,11 @@ export class PgOauthProviderStore implements OauthProviderStore {
     return rows[0]?.id ?? null;
   }
 
-  /**
-   * T-131 follow-on: merge a fresh `scopes` array (and refreshed `granted_at`)
-   * into the projection's `properties`. Uses jsonb_set to preserve every
-   * other property verbatim. Also bumps `updated_at` and increments
-   * `version` so the row behaves like every other item under `/items?sort=
-   * updated_at` and version-history listings. Tenant-scoped — pass `null`
-   * for unscoped.
-   */
-  async updateGrantScopes(opts: {
-    itemId: string;
-    tenantId: string | null;
-    scopes: string[];
-  }): Promise<void> {
-    const nowIso = new Date().toISOString();
-    const scopesJson = JSON.stringify(opts.scopes);
-    const tenantPredicate =
-      opts.tenantId === null
-        ? sql`${items.tenant_id} IS NULL`
-        : sql`${items.tenant_id} = ${opts.tenantId}`;
-    await this.db
-      .update(items)
-      .set({
-        properties: sql`(jsonb_set(jsonb_set(${items.properties}::jsonb, '{scopes}', ${scopesJson}::jsonb), '{granted_at}', to_jsonb(${nowIso}::text)))::text`,
-        updated_at: nowIso,
-        version: sql`${items.version} + 1`,
-      })
-      .where(and(eq(items.id, opts.itemId), tenantPredicate));
-  }
+  // T-131 review-sweep Commit 2 / F6: `updateGrantScopes` was dropped.
+  // The re-consent path now routes through `storage.items.update` so
+  // the projection participates in versions snapshots + publish events
+  // like every other item. See `projectGrantOnConsent` in
+  // `routes/auth-consent.ts`.
 
   async getPriorConsent(
     clientId: string,

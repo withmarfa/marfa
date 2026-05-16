@@ -50,6 +50,7 @@ import type { Storage } from "../storage/interface.js";
 import type { MymeAuth } from "../auth/instance.js";
 import { renderConsentScreen } from "./consent.js";
 import { setNoStore } from "./no-store.js";
+import { publish } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
 
 interface ConsentRouteDeps {
@@ -273,6 +274,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           clientId,
           scopes: formScopes,
           clientIp: c.var.clientIp ?? null,
+          cycle: c.var.cycle,
         });
       } catch (err) {
         log("warn", "consent decision: projection failed", {
@@ -366,6 +368,10 @@ async function projectGrantOnConsent(
     clientId: string;
     scopes: string[];
     clientIp: string | null;
+    cycle: {
+      originatingConnectionId: string | null;
+      hopCount: number;
+    };
   },
 ): Promise<void> {
   let tenantId: string | undefined;
@@ -376,7 +382,7 @@ async function projectGrantOnConsent(
 
   // Look up existing projection. If present, this is a re-consent and we
   // update the scopes in place. If absent, this is a first-time consent
-  // and we insert. Either way the audit row emits.
+  // and we insert. Either way the audit row emits + publish event fires.
   let grantItemId: string | null = null;
   if (typeof storage.oauthProvider?.findGrantItemId === "function") {
     grantItemId = await storage.oauthProvider.findGrantItemId({
@@ -386,18 +392,77 @@ async function projectGrantOnConsent(
     });
   }
 
+  const now = new Date().toISOString();
+  let projectedItem: import("@mymehq/shared").Item;
+  let eventType: "created" | "updated";
+  let priorScopes: string[] = [];
+
   if (grantItemId) {
-    // Re-consent: update scopes + granted_at on the existing row.
-    if (typeof storage.oauthProvider?.updateGrantScopes === "function") {
-      await storage.oauthProvider.updateGrantScopes({
-        itemId: grantItemId,
-        tenantId: tenantId ?? null,
-        scopes: opts.scopes,
-      });
+    // F6: route the update through `storage.items.update` instead of a
+    // raw SQL patch. items.update writes a `versions` snapshot (so
+    // re-consent appears in the row's version history), bumps
+    // `updated_at` + `version`, and lets the projection row behave like
+    // every other item under `/items?sort=updated_at`. Pre-fix, the
+    // `updateGrantScopes` storage helper bypassed all of that.
+    //
+    // Pre-fetch the existing row to (a) compute prior scopes for the
+    // F4 narrowing check and (b) make sure we PATCH (merge) rather than
+    // OVERWRITE properties — items.update does a properties merge, so
+    // unrelated extension data (if any) survives.
+    const existing = await storage.items.get(grantItemId, tenantId);
+    if (existing) {
+      priorScopes = Array.isArray(existing.properties.scopes)
+        ? (existing.properties.scopes as string[])
+        : [];
+    }
+
+    // F3: re-consent resets `status` to "active" + clears `revoked_at`.
+    // Pre-fix, a previously-revoked row had its scopes updated but
+    // `status="revoked"` stuck → /security hid the grant while the
+    // plugin issued tokens against it. Setting `revoked_at: undefined`
+    // makes JSON.stringify drop the key from the stored properties.
+    const updated = await storage.items.update(
+      grantItemId,
+      {
+        properties: {
+          scopes: opts.scopes,
+          status: "active",
+          granted_at: now,
+          revoked_at: undefined,
+        },
+      },
+      tenantId,
+    );
+    if ("error" in updated) {
+      // Unreachable: we don't pass `version`, so the merge path bypasses
+      // conflict detection. Defensive.
+      throw new Error(
+        "projectGrantOnConsent: unexpected version conflict on re-consent",
+      );
+    }
+    projectedItem = updated;
+    eventType = "updated";
+
+    // F4: if the new scope set is a strict subset of the prior set
+    // (any prior scope is missing from new), the user has narrowed
+    // their consent. Existing access tokens were issued under the
+    // wider scope and should be revoked so RPs can't continue calling
+    // narrowed-away APIs. Refresh tokens are left intact — the next
+    // refresh will mint at the narrower scope.
+    if (
+      typeof storage.oauthProvider?.revokeAccessTokensForGrant === "function"
+    ) {
+      const newSet = new Set(opts.scopes);
+      const narrowed = priorScopes.some((s) => !newSet.has(s));
+      if (narrowed) {
+        await storage.oauthProvider.revokeAccessTokensForGrant(
+          opts.clientId,
+          opts.authUserId,
+        );
+      }
     }
   } else {
     // First-time consent: insert a fresh row.
-    const now = new Date().toISOString();
     const item = await storage.items.create(
       {
         type: "system.connection",
@@ -416,7 +481,23 @@ async function projectGrantOnConsent(
       tenantId,
     );
     grantItemId = item.id;
+    projectedItem = item;
+    eventType = "created";
   }
+
+  // F17: emit a pubsub event so webhook subscribers + SSE clients see
+  // the new / updated grant. Mirrors the canonical pattern in
+  // `routes/items.ts`. Device-flow's `createUserAppGrant` already does
+  // this for its insert path; code-flow consent was the missing site.
+  // Fire-and-forget — a publish failure (e.g. cycle-budget overflow)
+  // must NOT block the user-facing consent flow.
+  void publish({
+    type: eventType,
+    item: projectedItem,
+    tenantId,
+    originatingConnectionId: opts.cycle.originatingConnectionId,
+    hopCount: opts.cycle.hopCount,
+  });
 
   // F7: thread `client_ip` per CLAUDE.md T-027 convention. Every audit
   // row carries the resolved client IP so operators can correlate

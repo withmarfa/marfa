@@ -90,62 +90,11 @@ describe("OauthProviderStore.findGrantItemId (T-131 follow-on)", () => {
   });
 });
 
-describe("OauthProviderStore.updateGrantScopes (T-131 follow-on)", () => {
-  it("replaces scopes + bumps granted_at + bumps updated_at + increments version", async () => {
-    ctx = await createTestContext();
-    const seeded = await seedOauthBearer(ctx.storage, ["core.note:read"]);
-    const before = await ctx.storage.items.get(seeded.grantId);
-    expect(before).not.toBeNull();
-    const beforeVersion = before!.version;
-    const beforeUpdatedAt = before!.updated_at;
-
-    // Ensure subsequent updated_at is strictly greater (millisecond
-    // resolution + at least 1ms wait so the ISO comparison is safe).
-    await new Promise((r) => setTimeout(r, 5));
-
-    await ctx.storage.oauthProvider?.updateGrantScopes({
-      itemId: seeded.grantId,
-      tenantId: null,
-      scopes: ["core.note:read", "core.note:write", "core.task:read"],
-    });
-
-    const after = await ctx.storage.items.get(seeded.grantId);
-    expect(after).not.toBeNull();
-    expect(after!.properties.scopes).toEqual([
-      "core.note:read",
-      "core.note:write",
-      "core.task:read",
-    ]);
-    // Granted_at refreshed (ISO string, strictly increasing).
-    expect(after!.properties.granted_at).not.toBe(
-      before!.properties.granted_at,
-    );
-    // Sibling properties preserved.
-    expect(after!.properties.kind).toBe("app");
-    expect(after!.properties.client_id).toBe(seeded.clientId);
-    expect(after!.properties.status).toBe("active");
-    // updated_at + version bumped — fixes the gap flagged in review:
-    // a generic /items?sort=updated_at listing would otherwise show
-    // a stale row.
-    expect(after!.updated_at > beforeUpdatedAt).toBe(true);
-    expect(after!.version).toBe(beforeVersion + 1);
-  });
-
-  it("is a tenant-scoped UPDATE — passing the wrong tenant matches zero rows", async () => {
-    ctx = await createTestContext();
-    const seeded = await seedOauthBearer(ctx.storage, ["core.note:read"]);
-    // The seeded row is tenant=null (no tenant passed). An UPDATE with
-    // tenantId="other-tenant" should fail to match (the storage helper
-    // is a fire-and-forget UPDATE — observable via the unchanged row).
-    await ctx.storage.oauthProvider?.updateGrantScopes({
-      itemId: seeded.grantId,
-      tenantId: "other-tenant",
-      scopes: ["core.note:write"],
-    });
-    const after = await ctx.storage.items.get(seeded.grantId);
-    expect(after!.properties.scopes).toEqual(["core.note:read"]);
-  });
-});
+// T-131 review-sweep Commit 2 / F6: `OauthProviderStore.updateGrantScopes`
+// was dropped. Re-consent now routes through `storage.items.update`. The
+// re-consent lifecycle assertions (status reset, scope-narrowing → access
+// token revocation, publish event firing, versions snapshot) live in
+// `routes/auth-consent.test.ts` as integration tests against the route.
 
 describe("OauthProviderStore.findRefreshTokenGrantKey (T-131 follow-on)", () => {
   it("returns the (clientId, userId, revoked=false) tuple for an active refresh row", async () => {
