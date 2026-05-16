@@ -186,13 +186,47 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     allowUnauthenticatedClientRegistration: true,
 
     // ----- Tenant binding -----
-    // Every client registered while a session is active gets bound to
-    // the calling user's tenant (hosted mode). Single-tenant self-hosts
-    // return `undefined` here; the plugin stores `reference_id` as NULL.
-    // Binding is immutable — clients carry their tenant for life.
+    // `clientReference` is invoked at CLIENT-REGISTRATION time. The
+    // returned value is written to `auth_oauth_client.reference_id`
+    // and is immutable for the life of the client. Used for things
+    // like "list all clients a tenant has registered."
     clientReference: async ({ user }) => {
       if (!user) return undefined;
       return resolveTenantIdForAuthUser(opts.storage, user.id);
+    },
+
+    // F5 — `postLogin.consentReferenceId` is invoked at TOKEN-ISSUANCE
+    // time (verified in @better-auth/oauth-provider@1.6.9 `index.mjs:43,
+    // :3829`). The return value is written to
+    // `auth_oauth_access_token.reference_id` for every minted token.
+    //
+    // The bearer middleware reads that column as the per-token
+    // `tenant_id`:
+    //
+    //   middleware/auth.ts:325:
+    //     const oauthTenantId = oauthToken.referenceId ?? undefined;
+    //
+    // Without this callback, `reference_id` is NULL on every issued
+    // token → the bearer middleware sees `tenant_id=undefined` →
+    // keys-mode behavior → multi-tenant scoping breaks. With it, each
+    // token is bound to the consenting user's tenant at issuance, so
+    // the same client can serve users from different tenants without
+    // cross-tenant leakage.
+    //
+    // The plugin's `postLogin` config wraps an OPTIONAL account-
+    // selection flow (multi-account UX); Myme has single-account-per-
+    // session, so `shouldRedirect` always returns false and the
+    // `/auth/post-login` page is never hit. We only wire this block
+    // for the `consentReferenceId` field.
+    //
+    // Single-tenant self-hosts return `undefined` here (no `users`
+    // store, so no tenant to resolve); their tokens land with
+    // `reference_id=NULL` which is correct for keys-mode.
+    postLogin: {
+      page: "/auth/post-login",
+      shouldRedirect: () => false,
+      consentReferenceId: async ({ user }) =>
+        resolveTenantIdForAuthUser(opts.storage, user.id),
     },
 
     // ----- Scope grammar -----
@@ -237,7 +271,7 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     },
 
     // id_token claims (OIDC). Reproduces the profile + email gate from
-    // the homegrown /auth/userinfo at routes/oauth.ts:2475-2540.
+    // the (now-deleted) homegrown /auth/userinfo handler.
     customIdTokenClaims: ({ user, scopes }) => {
       const claims: Record<string, unknown> = {};
       if (scopes.includes("profile")) {
