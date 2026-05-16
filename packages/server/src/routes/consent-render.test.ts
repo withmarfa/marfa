@@ -62,10 +62,10 @@ describe("renderConsentScreen (Wave C PR4)", () => {
     expect(html).toContain("Tasks and todos.");
   });
 
-  it("POSTs to the plugin's consent endpoint with code + client_id hidden", () => {
+  it("POSTs to the Myme decision handler with code + client_id hidden", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain(
-      '<form method="POST" action="/auth/oauth2/consent"',
+      '<form method="POST" action="/auth/authorize/decision"',
     );
     expect(html).toContain('name="client_id" value="client-abc"');
     expect(html).toContain('name="code" value="preminted-auth-code-xyz"');

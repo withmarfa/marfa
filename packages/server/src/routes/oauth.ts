@@ -318,6 +318,23 @@ export function authRoutes(
     ) {
       await storage.oauthProvider.revokeTokensForGrant(clientId, authUserId);
     }
+    // T-131: emit the audit row. Fire-and-forget (audit failures must
+    // never break the user-facing revoke flow). Pre-T-131 this row was
+    // listed in CLAUDE.md as "out-of-scope today" — T-131 is what gave us
+    // a clean emission seam (the explicit Myme handler, not the plugin
+    // hook which fires from a token-in-hand context without client_id).
+    void storage.audit.log({
+      tenant_id: tenantId ?? null,
+      action: "auth.grant.revoked",
+      resource_type: "oauth_grant",
+      resource_id: clientId ?? id,
+      client_ip: c.var.clientIp ?? null,
+      details: {
+        client_id: clientId,
+        user_id: authUserId,
+        grant_item_id: id,
+      },
+    });
     return c.body(null, 204);
   });
 
@@ -1346,6 +1363,19 @@ export function authRoutes(
     ) {
       await storage.oauthProvider.revokeTokensForGrant(clientId, authUserId);
     }
+    // T-131: audit emission (see DELETE /grants/:id for rationale).
+    void storage.audit.log({
+      tenant_id: tenantId ?? null,
+      action: "auth.grant.revoked",
+      resource_type: "oauth_grant",
+      resource_id: clientId ?? id,
+      client_ip: c.var.clientIp ?? null,
+      details: {
+        client_id: clientId,
+        user_id: authUserId,
+        grant_item_id: id,
+      },
+    });
     return c.redirect("/auth/security?notice=grant_revoked", 302);
   });
 

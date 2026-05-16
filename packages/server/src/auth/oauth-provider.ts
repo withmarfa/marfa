@@ -460,18 +460,16 @@ async function projectConsentToSystemConnection(
  * the event for visibility.
  */
 function stampLastUsedFromTokenIssuance(
-  ctx: HookCtxLite,
+  _ctx: HookCtxLite,
   _storage: Storage,
 ): Promise<void> {
   // TODO(T-131 follow-on): once the projection plumbing resolves the
   // (clientId, userId) → system.connection item id link, this hook can
-  // call stampOAuthGrantLastUsed with the resolved item id. For now
-  // log so operator visibility is preserved.
-  const grantType =
-    typeof ctx.body?.grant_type === "string" ? ctx.body.grant_type : "unknown";
-  log("info", "oauth token issued (last_used_at stamp deferred)", {
-    grant_type: grantType,
-  });
+  // call stampOAuthGrantLastUsed with the resolved item id. Currently
+  // a no-op — `last_used_at` on the /security page will show null for
+  // OAuth-code-flow grants until the wiring lands. Device-flow grants
+  // are correctly stamped via the explicit /auth/device/token handler.
+  void _ctx;
   void _storage;
   return Promise.resolve();
 }
@@ -497,9 +495,9 @@ function projectRevokeToSystemConnection(
   // backwards from the response body. Filed as a follow-on; the
   // user-facing /security page revoke path (which DOES have
   // client_id + user_id) goes through the explicit handler that
-  // already cascades correctly via storage.oauthProvider.revokeTokensForGrant.
+  // already cascades correctly via storage.oauthProvider.revokeTokensForGrant
+  // AND emits auth.grant.revoked.
   void _ctx;
   void _storage;
-  log("info", "oauth grant revoked (system.connection projection deferred)");
   return Promise.resolve();
 }

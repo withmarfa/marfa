@@ -22,7 +22,6 @@
  */
 
 import { Hono } from "hono";
-import { eq, and } from "drizzle-orm";
 import type { ParsedScope } from "@mymehq/shared";
 import {
   parseScope,
@@ -117,7 +116,150 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     return c.html(html);
   });
 
+  // ---------------------------------------------------------------------
+  // POST /auth/authorize/decision — Myme-owned decision handler that
+  // proxies to the plugin's /oauth2/consent endpoint, writing the
+  // system.connection projection + audit row deterministically BEFORE
+  // the plugin handles the rest of the flow.
+  //
+  // The plugin's /oauth2/consent body doesn't carry client_id (it links
+  // via the pre-minted `code`), and its `hooks.after` matchers fire
+  // after the redirect, making it hard to write the projection reliably.
+  // This explicit handler reads `client_id` from the form (which our
+  // renderConsentScreen includes as a hidden field), looks up the
+  // session for `user_id`, writes the projection, then forwards the
+  // request to /auth/oauth2/consent.
+  // ---------------------------------------------------------------------
+  app.post("/authorize/decision", async (c) => {
+    if (!deps.auth) {
+      return c.text("Auth not configured on this instance", 503);
+    }
+    const session = await deps.auth.getSession(c.req.raw.headers);
+    if (!session) {
+      return c.redirect("/auth/sign-in", 302);
+    }
+
+    const form = await c.req.formData();
+    const accept = form.get("accept") === "true";
+    const code = form.get("code");
+    const clientId = form.get("client_id");
+    const scopesField = form.get("scope") ?? form.get("scopes");
+    if (typeof code !== "string" || typeof clientId !== "string") {
+      return c.text("Missing required form fields: code, client_id", 400);
+    }
+    // The form posts each scope as a separate `scopes` field; collect.
+    const scopes = form
+      .getAll("scopes")
+      .filter((v): v is string => typeof v === "string");
+    const scopeStr =
+      typeof scopesField === "string" && scopesField.length > 0
+        ? scopesField
+        : scopes.join(" ");
+
+    // Project system.connection + emit audit BEFORE proxying to the
+    // plugin. Best-effort — a projection failure must NOT block the
+    // user-facing consent flow (the OAuth token issuance will still
+    // succeed via the plugin; only the user-visible /security grant
+    // listing would be missing).
+    if (accept && scopes.length > 0) {
+      try {
+        await projectGrantOnConsent(deps.storage, {
+          authUserId: session.user.id,
+          clientId,
+          scopes,
+        });
+      } catch (err) {
+        log("warn", "consent decision: projection failed", {
+          client_id: clientId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Forward to the plugin's /oauth2/consent endpoint. We re-craft the
+    // Request with form-encoded body (the plugin reads body parameters
+    // from JSON or form, depending on content-type). Cookies pass
+    // through via the original headers — the session cookie is what
+    // the plugin uses to authenticate the consent decision.
+    const proxyBody = new URLSearchParams();
+    proxyBody.set("accept", String(accept));
+    proxyBody.set("code", code);
+    if (scopeStr) proxyBody.set("scope", scopeStr);
+
+    const proxyUrl = new URL("/auth/oauth2/consent", c.req.url);
+    const proxyHeaders = new Headers(c.req.raw.headers);
+    proxyHeaders.set("content-type", "application/x-www-form-urlencoded");
+    // Drop content-length; the body is being replaced.
+    proxyHeaders.delete("content-length");
+
+    const proxyReq = new Request(proxyUrl.toString(), {
+      method: "POST",
+      headers: proxyHeaders,
+      body: proxyBody.toString(),
+      // Preserve redirect-following behaviour at the browser level.
+      redirect: "manual",
+    });
+
+    return deps.auth.handler(proxyReq);
+  });
+
   return app;
+}
+
+/**
+ * Write the `system.connection { kind: "app" }` projection for an
+ * accepted code-flow consent. Mirrors what `createUserAppGrant` in
+ * `routes/oauth.ts` does for the device-flow path. Emits
+ * `auth.grant.created` audit row.
+ *
+ * Best-effort idempotency: if a row already exists for (tenant, client,
+ * user) in the active state, we don't add a second one — but we also
+ * don't update the existing scopes here (the plugin's authoritative
+ * `auth_oauth_consent` row already has the new scope set). The
+ * /security page reads system.connection.properties.scopes — a future
+ * follow-on should update it on re-consent. For now: first-time consent
+ * creates the row; re-consent leaves the existing row's stale scopes
+ * visible until the user revokes + re-grants.
+ */
+async function projectGrantOnConsent(
+  storage: Storage,
+  opts: { authUserId: string; clientId: string; scopes: string[] },
+): Promise<void> {
+  let tenantId: string | undefined;
+  if (storage.users) {
+    const userRow = await storage.users.getByAuthUserId(opts.authUserId);
+    tenantId = userRow?.tenant_id ?? undefined;
+  }
+  const now = new Date().toISOString();
+  const item = await storage.items.create(
+    {
+      type: "system.connection",
+      tier: "library",
+      state: "active",
+      properties: {
+        kind: "app",
+        client_id: opts.clientId,
+        user_id: opts.authUserId,
+        scopes: opts.scopes,
+        status: "active",
+        granted_at: now,
+      },
+      source: "myme/oauth2/consent",
+    },
+    tenantId,
+  );
+  void storage.audit.log({
+    tenant_id: tenantId ?? null,
+    action: "auth.grant.created",
+    resource_type: "oauth_grant",
+    resource_id: opts.clientId,
+    details: {
+      client_id: opts.clientId,
+      user_id: opts.authUserId,
+      scopes: opts.scopes,
+      grant_item_id: item.id,
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +339,3 @@ function buildScopeDescriptions(
   return out;
 }
 
-// Avoid unused-import warning until eq/and are wired into the storage layer.
-void eq;
-void and;

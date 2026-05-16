@@ -196,14 +196,17 @@ export function renderConsentScreen(params: ConsentParams): string {
     ? `<span class="client-name">${safeClient}</span> is requesting updated access to your data`
     : `<span class="client-name">${safeClient}</span> wants to access your data`;
 
-  // Form action POSTs back to the plugin's consent endpoint. The plugin
-  // handles redirecting the browser to the client's redirect_uri with
-  // the code on accept (or with `?error=access_denied` on deny). PKCE /
-  // state / redirect_uri are all bound to the code server-side; the
-  // form carries only the binding handle (`code`) + decision + scope.
+  // T-131: form POSTs to the Myme decision handler at
+  // /auth/authorize/decision (not directly to the plugin's
+  // /auth/oauth2/consent) so the consent-side `system.connection`
+  // projection + `auth.grant.created` audit row land deterministically.
+  // The Myme handler then proxies to the plugin to complete the flow.
+  // PKCE / state / redirect_uri are bound to the code server-side; the
+  // form carries only the binding handle (`code`) + decision + client_id +
+  // scope selection.
   const bodyHtml = `
     <h1>${leadeText}</h1>
-    <form method="POST" action="/auth/oauth2/consent">
+    <form method="POST" action="/auth/authorize/decision">
       <input type="hidden" name="client_id" value="${safeClientId}">
       <input type="hidden" name="code" value="${safeCode}">
 
