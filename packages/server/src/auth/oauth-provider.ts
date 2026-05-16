@@ -272,42 +272,48 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
 }
 
 // ---------------------------------------------------------------------------
-// Grant-lifecycle after-hooks
+// Projection plugin shell (refresh-replay before-hook only)
 // ---------------------------------------------------------------------------
 
 /**
- * The four `hooks.after` matchers that keep Myme's `system.connection`
- * projection in sync with the plugin's authoritative grant state, and
- * emit `auth.grant.created` / `auth.grant.revoked` audit rows.
+ * Tiny BetterAuthPlugin shell hosting a single `hooks.before` matcher
+ * for refresh-replay access-token cleanup.
  *
- * Better Auth ships no typed lifecycle callbacks for `oauth-provider`;
- * the generic `hooks: { after: [...] }` matcher pattern is the documented
- * extension point.
+ * **Why a plugin shell rather than top-level `hooks`?** Top-level `hooks`
+ * on the betterAuth instance only accepts a single before/after callable;
+ * PLUGIN-level hooks accept the array+matcher shape needed for per-path
+ * routing. The shell carries no endpoints/schema/init of its own — it
+ * exists purely to host the before-hook. Same pattern works for adding
+ * future plugin-level hooks (additional path matchers) without touching
+ * the instance.ts wiring.
  *
- * Why projection at all (rather than dropping `system.connection` and
- * reading from `auth_oauth_consent` directly):
- *   - The `/auth/security` user-facing page (Wave C PR7) reads grants
- *     as items, threading through the same tier / state / search surface
- *     as everything else in the Myme data model. Re-pointing it at a
- *     raw auth table would erode the model's consistency.
- *   - Cascade-revoke on item deletion stays a single integrity model.
- *   - The `connection_item_id` lookup by the bearer middleware joins
- *     here for tenant_id + grant-id resolution.
- *
- * Each handler is best-effort — projection failures must NEVER break
- * the auth flow itself. We log + continue.
- */
-/**
- * Wrap the matcher/handler pairs in a tiny BetterAuthPlugin shell —
- * top-level `hooks` on the betterAuth instance only accepts a single
- * before/after callable, but PLUGIN-level hooks accept the array+matcher
- * shape we need. The shell carries no endpoints/schema/init of its own;
- * it exists purely to host the projection hooks.
+ * **Why no after-hooks for projection / cascade / last_used_at?** Every
+ * one of those flows is already owned by an explicit Myme-side handler
+ * that does the work deterministically:
+ *   - consent projection + audit: `POST /auth/authorize/decision`
+ *     (`routes/auth-consent.ts`) handles it before proxying to
+ *     `/auth/oauth2/consent`. We need the explicit handler because the
+ *     plugin's consent endpoint doesn't carry `client_id` in its body
+ *     (it links via the pre-minted code), making the after-hook approach
+ *     fragile.
+ *   - revoke cascade + audit: `DELETE /auth/grants/:id` and
+ *     `POST /auth/grants/:id/revoke` (`routes/oauth.ts`) call
+ *     `storage.oauthProvider.revokeTokensForGrant` and emit
+ *     `auth.grant.revoked`. The plugin's `/oauth2/revoke` takes a
+ *     token-in-hand, not a (client, user) pair, so resolving the right
+ *     grant in a hook would require a before-hook table read pre-deletion
+ *     — wasted effort when the user-facing revoke path already has the
+ *     resolved client + user in scope.
+ *   - `last_used_at` stamping: the bearer middleware stamps on every
+ *     authenticated request via `stampOAuthGrantLastUsedByGrantKey`. A
+ *     token-issuance after-hook would be redundant in the typical case
+ *     (client uses the token immediately) and add a needless DB roundtrip.
  *
  * `apiKeySalt` is threaded in so the refresh-replay before-hook can
  * compute the same hash format the plugin uses (`hashApiKey(token, salt)`
  * via the custom `storeTokens.hash`). Without it, the before-hook is
- * skipped — the projection hooks still wire.
+ * conditionally omitted — the plugin still constructs (the shell is a
+ * no-op surface).
  */
 export function buildOauthProjectionPlugin(opts: {
   storage: Storage;
@@ -357,173 +363,20 @@ export function buildOauthProjectionPlugin(opts: {
             ]
           : []),
       ],
-      after: [
-        {
-          // /oauth2/consent (success) → upsert system.connection app-grant +
-          // emit auth.grant.created.
-          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/consent",
-          handler: createAuthMiddleware(async (ctx: HookCtxLite) => {
-            try {
-              await projectConsentToSystemConnection(ctx, storage);
-            } catch (err) {
-              log("warn", "oauth grant-projection (consent) failed", {
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }),
-        },
-        {
-          // /oauth2/token (success) → debounced stamp on last_used_at of
-          // the underlying system.connection.
-          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
-          handler: createAuthMiddleware(async (ctx: HookCtxLite) => {
-            try {
-              await stampLastUsedFromTokenIssuance(ctx, storage);
-            } catch (err) {
-              log("warn", "oauth grant-projection (token) failed", {
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }),
-        },
-        {
-          // /oauth2/revoke (success) → transition system.connection to revoked +
-          // emit auth.grant.revoked.
-          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/revoke",
-          handler: createAuthMiddleware(async (ctx: HookCtxLite) => {
-            try {
-              await projectRevokeToSystemConnection(ctx, storage);
-            } catch (err) {
-              log("warn", "oauth grant-projection (revoke) failed", {
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }),
-        },
-        {
-          // /oauth2/end-session (success) → same as revoke for the affected
-          // grant (RP-Initiated Logout).
-          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/end-session",
-          handler: createAuthMiddleware(async (ctx: HookCtxLite) => {
-            try {
-              await projectRevokeToSystemConnection(ctx, storage);
-            } catch (err) {
-              log("warn", "oauth grant-projection (end-session) failed", {
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }),
-        },
-      ],
     },
   };
 }
 
 // ---------------------------------------------------------------------------
-// Projection handlers
+// Refresh-replay before-hook handler
 // ---------------------------------------------------------------------------
-
-/**
- * Upsert a `system.connection { kind: "app" }` item for the just-approved
- * consent, and emit an `auth.grant.created` audit row. Idempotent on
- * re-consent: if an active grant exists for (tenant, client, user),
- * its `scopes` + `granted_at` are updated.
- */
-async function projectConsentToSystemConnection(
-  ctx: HookCtxLite,
-  storage: Storage,
-): Promise<void> {
-  // After-hook body shape varies; we only project on accepted consent.
-  if (ctx.body?.accept !== true) return;
-
-  const authUserId = ctx.context?.session?.user?.id;
-  if (!authUserId) return;
-
-  const scopeField = ctx.body.scope;
-  const scopes =
-    typeof scopeField === "string"
-      ? scopeField.split(/\s+/).filter(Boolean)
-      : [];
-
-  // Resolve tenant via the users table (hosted mode). Keys-mode self-host
-  // doesn't carry per-user tenant — projection still creates the item
-  // with tenant_id undefined, which is the convention for single-tenant
-  // self-hosts.
-  const tenantId = await resolveTenantIdForAuthUser(storage, authUserId);
-
-  // We can't read the client_id directly from the consent body — the plugin
-  // links code → consent server-side. As a fallback, the after-hook is
-  // best-effort projection: if we can't determine client_id, we log and
-  // skip. A follow-up will resolve client_id via the `code` field by
-  // querying `auth_oauth_consent` for the just-written row.
-  // For now: skip if no client_id available.
-  // TODO(T-131): resolve client_id via consent code lookup.
-
-  // Defensive bail — projection is opportunistic for the moment until
-  // the consent-route handler in `routes/auth-consent.ts` lands, which
-  // does the upsert directly and gives us the client_id we need here.
-  const clientIdRaw = ctx.body.client_id;
-  const clientId = typeof clientIdRaw === "string" ? clientIdRaw : undefined;
-  if (!clientId) return;
-
-  const now = new Date().toISOString();
-  await storage.items.create(
-    {
-      type: "system.connection",
-      tier: "library",
-      state: "active",
-      properties: {
-        kind: "app",
-        client_id: clientId,
-        scopes,
-        status: "active",
-        granted_at: now,
-      },
-      source: "myme/oauth2/consent",
-    },
-    tenantId,
-  );
-
-  await storage.audit.log({
-    tenant_id: tenantId ?? null,
-    action: "auth.grant.created",
-    resource_type: "oauth_grant",
-    resource_id: clientId,
-    details: {
-      client_id: clientId,
-      scopes,
-      user_id: authUserId,
-    },
-  });
-}
-
-/**
- * Debounced last_used_at stamp on the grant's `system.connection` row
- * when a token is issued (authorization_code or refresh_token path).
- *
- * T-131 follow-on: this hook is intentionally a no-op — the bearer
- * middleware already stamps `last_used_at` on every authenticated
- * request via `stampOAuthGrantLastUsedByGrantKey`, and the typical
- * client uses an issued token immediately. Stamping at issuance time
- * would be a redundant DB roundtrip in 99% of cases. If a token is
- * issued and never used, `granted_at` on the projection covers the
- * "newly approved app" surface — `last_used_at` correctly stays null.
- */
-function stampLastUsedFromTokenIssuance(
-  _ctx: HookCtxLite,
-  _storage: Storage,
-): Promise<void> {
-  void _ctx;
-  void _storage;
-  return Promise.resolve();
-}
 
 /**
  * T-131 follow-on (refresh-replay): runs before the plugin handles a
  * `/oauth2/token` request. If the request body is a `grant_type=
  * refresh_token` request AND the supplied refresh token corresponds to
  * a row marked `revoked: true`, this is a replay attempt — the plugin
- * about to delete the refresh chain + throw invalid_grant. We
+ * is about to delete the refresh chain + throw invalid_grant. We
  * pre-emptively delete access tokens for the same (clientId, userId)
  * so a parallel request can't slip through with one of them.
  *
@@ -531,6 +384,16 @@ function stampLastUsedFromTokenIssuance(
  * already cleaned up), we skip silently. If access-token deletion
  * fails, we log and continue. The 1h TTL on access tokens always
  * bounds exposure regardless.
+ *
+ * Why we don't also wire after-hooks for /oauth2/consent (projection),
+ * /oauth2/revoke (cascade), /oauth2/token (last_used_at), /oauth2/end-
+ * session (cascade): every one of those flows is owned by an explicit
+ * Myme-side handler that does the work deterministically (consent →
+ * `POST /auth/authorize/decision`; revoke → `/auth/grants/:id/revoke`
+ * and `DELETE /auth/grants/:id`; last_used_at → bearer middleware on
+ * the next authenticated request). Adding after-hooks would double-write
+ * or no-op. Kept the shell so the before-hook has a home, and so future
+ * hook additions have a single place to land.
  */
 async function detectAndZapReplayedAccessTokens(
   ctx: HookCtxLite,
@@ -566,32 +429,4 @@ async function detectAndZapReplayedAccessTokens(
     client_id: row.clientId,
     user_id: row.userId,
   });
-}
-
-/**
- * Transition the affected `system.connection` row to revoked and emit
- * `auth.grant.revoked`. Best-effort — the plugin has already revoked
- * the token; this just keeps the user-facing surface in sync.
- *
- * Pending: needs the (client_id, user_id) → system.connection lookup
- * path which lands with the bearer-middleware update.
- */
-function projectRevokeToSystemConnection(
-  _ctx: HookCtxLite,
-  _storage: Storage,
-): Promise<void> {
-  // TODO(T-131 follow-on): resolve the affected system.connection by
-  // (tenant_id, client_id, user_id) and transition state → revoked +
-  // emit audit row. The plugin's own /oauth2/revoke handler accepts a
-  // token-in-hand, not a (client, user) pair, so resolving the right
-  // grant requires either reading the token row before it's deleted
-  // (before-hook) or relying on the after-hook to walk consent + client
-  // backwards from the response body. Filed as a follow-on; the
-  // user-facing /security page revoke path (which DOES have
-  // client_id + user_id) goes through the explicit handler that
-  // already cascades correctly via storage.oauthProvider.revokeTokensForGrant
-  // AND emits auth.grant.revoked.
-  void _ctx;
-  void _storage;
-  return Promise.resolve();
 }

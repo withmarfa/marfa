@@ -251,7 +251,10 @@ export class PgOauthProviderStore implements OauthProviderStore {
   /**
    * T-131 follow-on: merge a fresh `scopes` array (and refreshed `granted_at`)
    * into the projection's `properties`. Uses jsonb_set to preserve every
-   * other property verbatim. Tenant-scoped — pass `null` for unscoped.
+   * other property verbatim. Also bumps `updated_at` and increments
+   * `version` so the row behaves like every other item under `/items?sort=
+   * updated_at` and version-history listings. Tenant-scoped — pass `null`
+   * for unscoped.
    */
   async updateGrantScopes(opts: {
     itemId: string;
@@ -268,6 +271,8 @@ export class PgOauthProviderStore implements OauthProviderStore {
       .update(items)
       .set({
         properties: sql`(jsonb_set(jsonb_set(${items.properties}::jsonb, '{scopes}', ${scopesJson}::jsonb), '{granted_at}', to_jsonb(${nowIso}::text)))::text`,
+        updated_at: nowIso,
+        version: sql`${items.version} + 1`,
       })
       .where(and(eq(items.id, opts.itemId), tenantPredicate));
   }
