@@ -8,6 +8,7 @@ import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { createPgStorage } from "../storage/pg/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { seedOauthBearer } from "../test-utils.js";
 import { request } from "../test-utils.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -302,35 +303,17 @@ describe("Profile routes (T-074)", () => {
         email: "olive@example.com",
       });
 
-      // Create a `system.connection` grant of kind: app for olive's tenant
-      // and mint an access token against it. Mirrors what /auth/authorize
-      // → /auth/token would produce; bypasses the consent UI for unit-test
-      // determinism.
-      const grant = await hosted.storage.items.create(
+      // T-131: mint an OAuth bearer through the new plugin-tables setup
+      // helper. Same end-to-end behaviour the old createClient + items.create
+      // + createToken three-step produced — but writes into auth_oauth_*.
+      const { token: rawToken } = await seedOauthBearer(
+        hosted.storage,
+        ["openid", "profile", "email"],
         {
-          type: "system.connection",
-          state: "active",
-          tier: "library",
-          properties: {
-            kind: "app",
-            client_id: "olive-test-client",
-            scopes: ["openid", "profile", "email"],
-            oidc_scopes: ["openid", "profile", "email"],
-            status: "active",
-            granted_at: new Date().toISOString(),
-          },
-          source: "test/oauth-bearer-profile",
+          clientName: "olive-test-client",
+          tenantId: u.tenantId,
+          authUserId: u.authUserId,
         },
-        u.tenantId,
-      );
-
-      const rawToken = `myme_at_test_${Math.random().toString(36).slice(2, 18)}`;
-      const tokenHash = hashApiKey(rawToken, SALT);
-      await hosted.storage.oauth.createToken(
-        grant.id,
-        tokenHash,
-        "access",
-        new Date(Date.now() + 3600_000).toISOString(),
       );
 
       const res = await request(hosted.app, "GET", "/profile/me", {

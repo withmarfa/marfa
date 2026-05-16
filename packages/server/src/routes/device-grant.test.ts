@@ -32,15 +32,41 @@ afterEach(() => {
 const ORIGIN = "http://localhost:0";
 
 async function createClient(c: TestContext): Promise<string> {
-  const res = await request(c.app, "POST", "/auth/clients", {
-    body: { name: "Test CLI", redirect_uris: ["http://localhost:0/callback"] },
-    headers: { origin: ORIGIN },
-    key: c.adminKey,
-  });
-  expect(res.status).toBe(201);
-  const body = (await res.json()) as { id: string };
-  return body.id;
+  // T-131: POST /auth/clients is gone — the @better-auth/oauth-provider
+  // plugin owns DCR at /auth/oauth2/register. For the device-flow tests
+  // we shortcut by writing the auth_oauth_client row directly; the
+  // device-flow handlers only need a valid client_id business key.
+  const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
+  const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
+  if (!c.storage.betterAuthDb) {
+    throw new Error("createClient (T-131): storage.betterAuthDb missing");
+  }
+  const schemaModule =
+    c.storage.betterAuthDialect === "pg"
+      ? await import("../storage/pg/schema.js")
+      : await import("../storage/sqlite/schema.js");
+  const db = c.storage.betterAuthDb as unknown as {
+    insert: (table: unknown) => {
+      values: (v: Record<string, unknown>) => {
+        run?: () => Promise<unknown>;
+        execute?: () => Promise<unknown>;
+      };
+    };
+  };
+  const now = new Date();
+  const op = db.insert(schemaModule.auth_oauth_client).values({
+    id: clientPk,
+    clientId,
+    name: "Test CLI",
+    redirectUris: JSON.stringify(["http://localhost:0/callback"]),
+    disabled: false,
+    createdAt: now,
+    updatedAt: now,
+  } as Record<string, unknown>);
+  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+  return clientId;
 }
+void ORIGIN;
 
 async function initiate(
   c: TestContext,

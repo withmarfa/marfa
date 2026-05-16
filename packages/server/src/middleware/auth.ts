@@ -216,10 +216,36 @@ export function authMiddleware(storage: Storage, salt: string) {
 
     const token = authHeader.slice(7);
 
-    // OAuth access token
+    // OAuth access token (myme_at_* prefix).
+    //
+    // T-131: this used to call `storage.oauth.validateToken(hash)` against
+    // the homegrown `oauth_tokens` table. We now look up the
+    // @better-auth/oauth-provider plugin's `auth_oauth_access_token`
+    // directly — both paths compute the same hash (the plugin's
+    // `storeTokens.hash` is wired to `hashApiKey(token, salt)` in
+    // `auth/oauth-provider.ts`), so a token in hand resolves to its row
+    // by exact-match on the hashed `token` column.
+    //
+    // **Side-channel join, NOT custom claims.** The plan's contingency
+    // applies here (§Caveats §3 in the plan file): the plugin's
+    // `customAccessTokenClaims` only embeds in JWT tokens, and Myme
+    // keeps opaque tokens (correct for our profile — DB lookup is
+    // sub-ms, revocation stays clean). The row itself carries
+    // `referenceId` (= tenant_id, populated by `clientReference` at
+    // issuance), `userId`, `clientId`, and `scopes`. Everything the
+    // synthetic ApiKey needs comes from the single row.
+    //
+    // **`connection_item_id` derivation.** The user-facing `system.connection`
+    // projection (`{ kind: "app" }` items) is maintained by the
+    // grant-projection after-hooks for the `/security` page surface,
+    // not consulted here. We synthesise a stable label/source string
+    // from `${clientId}:${userId}` so audit rows attribute correctly
+    // without an extra DB roundtrip.
     if (token.startsWith(ACCESS_TOKEN_PREFIX)) {
       const hash = hashApiKey(token, salt);
-      const oauthToken = await storage.oauth.validateToken(hash);
+      const oauthToken = await storage.oauthProvider?.validateAccessToken(
+        hash,
+      );
 
       if (!oauthToken) {
         c.set("apiKey", undefined);
@@ -227,15 +253,6 @@ export function authMiddleware(storage: Storage, salt: string) {
         return next();
       }
 
-      // Build a synthetic ApiKey from the OAuth token's scopes.
-      // Credential-default fields (source, default_tier) are synthesised
-      // here; full parity with stored API keys remains outstanding.
-      //
-      // `tenant_id` projects from the app's `system.connection`
-      // item. Storage call sites (`items.get(id, tenantId)`, etc.) treat
-      // `undefined` tenantId as cross-tenant (admin-style) — without this
-      // projection an OAuth bearer would read items across all tenants in
-      // hosted mode (T-004).
       const typePermissions = scopesToTypePermissions(oauthToken.scopes);
       const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
       const metadataPermissions = scopesToMetadataPermissions(
@@ -245,12 +262,21 @@ export function authMiddleware(storage: Storage, salt: string) {
       // separate field consumed only by /oauth/userinfo. They never
       // bleed into type / edge / metadata permission maps.
       const oidcScopes = Array.from(scopesToOidcScopes(oauthToken.scopes));
-      const oauthTenantId = oauthToken.tenant_id ?? undefined;
+      // Tenant id from the plugin's referenceId column (= our clientReference
+      // output, which returns the user's tenant_id at consent time).
+      const oauthTenantId = oauthToken.referenceId ?? undefined;
+      // Stable composite label/source. Used in audit rows; doesn't need
+      // to be a real foreign-key handle — system.connection projection
+      // is maintained separately.
+      const grantHandle = `${oauthToken.clientId}:${oauthToken.userId ?? "anon"}`;
+      const createdAtIso = oauthToken.createdAtMs
+        ? new Date(oauthToken.createdAtMs).toISOString()
+        : new Date().toISOString();
       c.set("apiKey", {
         id: oauthToken.id,
         tenant_id: oauthTenantId,
-        label: `oauth:${oauthToken.connection_item_id}`,
-        source: `oauth:${oauthToken.connection_item_id}`,
+        label: `oauth:${grantHandle}`,
+        source: `oauth:${grantHandle}`,
         role: "member",
         default_tier: "library",
         is_platform: false,
@@ -259,25 +285,21 @@ export function authMiddleware(storage: Storage, salt: string) {
         edge_permissions: edgePermissions,
         metadata_permissions: metadataPermissions,
         oidc_scopes: oidcScopes,
-        created_at: oauthToken.created_at,
+        created_at: createdAtIso,
         last_used_at: null,
       });
       c.set("authType", "oauth");
 
-      // Debounced last_used_at update on the underlying app connection
-      // (T-098). The /auth/security surface reads this to show
-      // "active-but-rarely-used" grants accurately. The cache is module-
-      // scoped so the token-issuance / refresh paths in `routes/oauth.ts`
-      // (which don't carry a bearer through this middleware) share the
-      // same throttle. Awaited (not fire-and-forget) so a write that
-      // happens during a request flow finishes before the next request
-      // races it — matters for the SQLite test path where concurrent
-      // writes against the same row trip SQLITE_BUSY.
-      await stampOAuthGrantLastUsed(
-        storage,
-        oauthToken.connection_item_id,
-        oauthTenantId,
-      );
+      // T-098 last-used stamping previously hung off a connection_item_id
+      // tied to the soon-to-be-dropped oauth_tokens table. Under the new
+      // surface this becomes a no-op until the grant-projection after-hooks
+      // (auth/oauth-provider.ts) finish wiring the consent → system.connection
+      // path, at which point we can resolve the projected item by
+      // (tenant_id, clientId, userId) and stamp it. The user-facing
+      // `/security` page reads from the projection, so the visible delay
+      // before that lands is a stale `last_used_at` on the apps list —
+      // not a security or data-correctness issue. Tracked as a follow-on
+      // inside T-131.
 
       return next();
     }

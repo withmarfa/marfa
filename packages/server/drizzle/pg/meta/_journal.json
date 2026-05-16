@@ -379,6 +379,27 @@
       "when": 1779379200000,
       "tag": "0053_drop_email_suppressions",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1779638400000,
+      "tag": "0054_oauth_provider_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1779638401000,
+      "tag": "0055_drop_legacy_oauth",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1779638402000,
+      "tag": "0056_auth_jwks",
+      "breakpoints": true
     }
   ]
 }

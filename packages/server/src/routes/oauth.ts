@@ -12,7 +12,6 @@ import {
 } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
-  requireAdmin,
   requireAuth,
   hashApiKey,
   stampOAuthGrantLastUsed,
@@ -23,7 +22,6 @@ import type {
   MymeAuthSession,
   MymeAuthSessionUser,
 } from "../auth/instance.js";
-import { renderConsentScreen } from "./consent.js";
 import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
@@ -42,14 +40,12 @@ import {
   renderDeviceDecisionPage,
 } from "./device-pages.js";
 import { setNoStore } from "./no-store.js";
-import { constantTimeEqual } from "../utils/crypto.js";
 import { publish } from "../pubsub.js";
 import type { OidcSigner } from "../auth/oidc-signing.js";
 
 const ACCESS_TOKEN_PREFIX = "myme_at_";
 const REFRESH_TOKEN_PREFIX = "myme_rt_";
 const ACCESS_TOKEN_TTL_MS = 3600_000; // 1 hour
-const CODE_TTL_MS = 600_000; // 10 minutes
 
 /**
  * Plain-English descriptions for the metadata-layer sub-resource scopes.
@@ -126,6 +122,11 @@ async function createUserAppGrant(
       properties: {
         kind: "app",
         client_id: clientId,
+        // T-131: store the consenting auth_user id so cascade revoke
+        // (/auth/grants/:id/revoke → revokeTokensForGrant(clientId, userId))
+        // and the device-flow terminal step (which needs (clientId, userId)
+        // to mint tokens against the plugin's tables) can find the user.
+        user_id: consentingUser.id,
         scopes,
         status: "active",
         granted_at: now,
@@ -139,12 +140,27 @@ async function createUserAppGrant(
   return { id: item.id };
 }
 
+/**
+ * T-131 note on the signature: `salt` + `oidcSigner` used to be consumed
+ * by the OAuth-protocol handlers that lived in this file (token issuance,
+ * id_token signing). The @better-auth/oauth-provider plugin owns those
+ * surfaces now and gets its own salt + signer wiring through `instance.ts`.
+ * The two arguments are kept on `authRoutes` for caller compatibility
+ * (app.ts still threads them through); they're consumed inside the kept
+ * surfaces (device flow uses `salt` for hashing, future expansions may
+ * need `oidcSigner` for ID-token-related claims).
+ */
 export function authRoutes(
   storage: Storage,
   salt: string,
   auth?: MymeAuth,
   oidcSigner?: OidcSigner,
 ): Hono<AppEnv> {
+  // `salt` is consumed by the device-flow terminal step (hashes
+  // minted tokens with the same `hashApiKey(token, salt)` as the
+  // bearer middleware). `oidcSigner` is currently unused after the
+  // OAuth-protocol delete; kept on the signature for caller stability.
+  void oidcSigner;
   const router = new Hono<AppEnv>();
   const knownTypes = Array.from(TYPE_REGISTRY.keys());
 
@@ -194,461 +210,16 @@ export function authRoutes(
   }
 
   // -----------------------------------------------------------------------
-  // Client registration
-  // -----------------------------------------------------------------------
-
-  router.post("/clients", async (c) => {
-    requireAdmin(c);
-    const body = await c.req.json();
-    if (!body.name || !body.redirect_uris?.length) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "name and redirect_uris are required",
-      );
-    }
-    const client = await storage.oauth.createClient({
-      name: body.name,
-      redirect_uris: body.redirect_uris,
-    });
-    return c.json(client, 201);
-  });
-
-  router.get("/clients", async (c) => {
-    requireAdmin(c);
-    const clients = await storage.oauth.listClients();
-    return c.json(clients);
-  });
-
-  // -----------------------------------------------------------------------
-  // Authorization flow
-  // -----------------------------------------------------------------------
-
-  router.get("/authorize", async (c) => {
-    const gated = await requireConsentSession(c);
-    if (gated instanceof Response) return gated;
-
-    const clientId = c.req.query("client_id");
-    const responseType = c.req.query("response_type");
-    const scope = c.req.query("scope");
-    const redirectUri = c.req.query("redirect_uri");
-    const codeChallenge = c.req.query("code_challenge");
-    const codeChallengeMethod = c.req.query("code_challenge_method");
-    const state = c.req.query("state") ?? "";
-
-    if (
-      !clientId ||
-      responseType !== "code" ||
-      !scope ||
-      !redirectUri ||
-      !codeChallenge
-    ) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Missing required parameters: client_id, response_type=code, scope, redirect_uri, code_challenge",
-      );
-    }
-    if (codeChallengeMethod && codeChallengeMethod !== "S256") {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Only S256 code_challenge_method is supported",
-      );
-    }
-
-    const client = await storage.oauth.getClient(clientId);
-    if (!client) {
-      throw new MymeError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
-    }
-    if (!client.redirect_uris.includes(redirectUri)) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "redirect_uri not registered for this client",
-      );
-    }
-
-    // Parse and expand scopes
-    const requestedScopes = scope.split(" ");
-    const expanded = expandWildcardScopes(requestedScopes, knownTypes);
-    const parsed = expanded.map(parseScope).filter((s) => s !== null);
-
-    if (parsed.length === 0) {
-      throw new MymeError(
-        ErrorCode.INVALID_SCOPE,
-        "No valid scopes in request",
-      );
-    }
-
-    // Build the plain-English description map. Type scopes look up
-    // the type registry's `description` field; metadata sub-resources
-    // (`metadata.types`, future entries) carry their own canonical
-    // strings — they're not items in TYPE_REGISTRY. Missing entries
-    // fall back to the literal scope at render time.
-    const descriptions: Record<string, string> = {};
-    for (const scope of parsed) {
-      if (descriptions[scope.typePattern] !== undefined) continue;
-      if (scope.kind === "metadata") {
-        const desc = METADATA_SCOPE_DESCRIPTIONS[scope.typePattern];
-        if (desc) descriptions[scope.typePattern] = desc;
-        continue;
-      }
-      // T-074: standard OIDC literals carry their own descriptions.
-      if (scope.kind === "oidc") {
-        const desc = OIDC_SCOPE_DESCRIPTIONS[scope.typePattern];
-        if (desc) descriptions[scope.typePattern] = desc;
-        continue;
-      }
-      const schema = TYPE_REGISTRY.get(scope.typePattern);
-      if (schema?.description) {
-        descriptions[scope.typePattern] = schema.description;
-      }
-    }
-
-    // Wave C PR5 / T-032: re-consent diff. Look for an existing
-    // `system.connection` of kind `app` for `(user, client_id)`.
-    // The grant carries a literal scope set; we hand it to
-    // `renderConsentScreen` as `priorScopes` and the renderer
-    // switches to the diff variant. When there's no prior grant
-    // (first-time consent) `priorScopes` stays undefined and the
-    // renderer falls through to the flat read/write split.
-    //
-    // User → tenant binding only works in hosted mode (when
-    // storage.users is wired). In keys mode there's no per-user
-    // tenant — we'd potentially leak across users on a multi-user
-    // self-host. Limit reconsent diff to hosted mode for now; keys
-    // mode keeps the flat shape.
-    const consentingUser = gated.session.user;
-    let priorScopes: string[] | undefined;
-    if (storage.users) {
-      // T-074: lookup by Better Auth user id (the canonical bridge).
-      const userRow = await storage.users.getByAuthUserId(consentingUser.id);
-      if (userRow?.tenant_id) {
-        const items = await storage.items.list({
-          type: "system.connection",
-          state: "active",
-          tenantId: userRow.tenant_id,
-        });
-        // Multiple grants for the same client are unusual but possible
-        // (legacy revoke + re-grant cycles). Pick the most-recently
-        // granted active one — items.list returns by created_at desc by
-        // default, so the first match wins.
-        for (const item of items.data) {
-          const props = item.properties;
-          if (props.kind !== "app") continue;
-          if (props.status !== "active") continue;
-          if (props.client_id !== clientId) continue;
-          if (Array.isArray(props.scopes)) {
-            priorScopes = (props.scopes as string[]).slice();
-            break;
-          }
-        }
-      }
-    }
-
-    // Render consent screen
-    const html = renderConsentScreen({
-      clientName: client.name,
-      scopes: parsed,
-      clientId,
-      redirectUri,
-      codeChallenge,
-      codeChallengeMethod: codeChallengeMethod ?? "S256",
-      state,
-      responseType,
-      descriptions,
-      priorScopes,
-    });
-
-    setNoStore(c);
-    return c.html(html);
-  });
-
-  router.post("/authorize", async (c) => {
-    const gated = await requireConsentSession(c);
-    if (gated instanceof Response) return gated;
-
-    const formData = await c.req.parseBody({ all: true });
-    const action = formData.action as string;
-    const clientId = formData.client_id as string;
-    const redirectUri = formData.redirect_uri as string;
-    const codeChallenge = formData.code_challenge as string;
-    const codeChallengeMethod =
-      (formData.code_challenge_method as string) || "S256";
-    const state = (formData.state as string) || "";
-
-    if (!clientId || !redirectUri || !codeChallenge) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Missing form parameters",
-      );
-    }
-
-    // Denial
-    if (action === "deny") {
-      const url = new URL(redirectUri);
-      url.searchParams.set("error", "access_denied");
-      if (state) url.searchParams.set("state", state);
-      return c.redirect(url.toString());
-    }
-
-    // Approval — collect granted scopes
-    const rawScopes = formData.scopes;
-    const grantedScopes: string[] = Array.isArray(rawScopes)
-      ? (rawScopes as string[])
-      : rawScopes
-        ? [rawScopes as string]
-        : [];
-
-    if (grantedScopes.length === 0) {
-      throw new MymeError(
-        ErrorCode.INVALID_SCOPE,
-        "At least one scope must be granted",
-      );
-    }
-
-    // Create grant (routed through ItemStore.create — T-005) and authorization code.
-    const grant = await createUserAppGrant(
-      storage,
-      gated.session.user,
-      clientId,
-      grantedScopes,
-      "myme/oauth/authorize",
-      c.var.cycle,
-    );
-    const rawCode = randomBytes(32).toString("hex");
-    const codeHash = hashApiKey(rawCode, salt);
-    const expiresAt = new Date(Date.now() + CODE_TTL_MS).toISOString();
-
-    await storage.oauth.createCode(
-      grant.id,
-      codeHash,
-      codeChallenge,
-      codeChallengeMethod,
-      redirectUri,
-      expiresAt,
-    );
-
-    const url = new URL(redirectUri);
-    url.searchParams.set("code", rawCode);
-    if (state) url.searchParams.set("state", state);
-    return c.redirect(url.toString());
-  });
-
-  // -----------------------------------------------------------------------
-  // Token endpoint (public — no auth required for token exchange)
-  // -----------------------------------------------------------------------
-
-  router.post("/token", async (c) => {
-    // OAuth 2.0 §3.2 mandates `application/x-www-form-urlencoded` on the
-    // token endpoint. We accept that exclusively — no JSON path. RFC 6749
-    // §B.1 also requires UTF-8; URL-decoding gets us there.
-    const contentType = c.req.header("content-type") ?? "";
-    if (!contentType.includes("application/x-www-form-urlencoded")) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Token endpoint requires application/x-www-form-urlencoded body per OAuth 2.0 §3.2",
-      );
-    }
-    const formData = await c.req.parseBody();
-    const body: Record<string, string> = {};
-    for (const [k, v] of Object.entries(formData)) {
-      if (typeof v === "string") body[k] = v;
-    }
-    const grantType = body.grant_type;
-
-    const issuer = auth?.baseURL ?? new URL(c.req.url).origin;
-    const idTokenCtx: IdTokenContext = { storage, signer: oidcSigner, issuer };
-
-    if (grantType === "authorization_code") {
-      return handleCodeExchange(c, body, storage, salt, idTokenCtx);
-    }
-    if (grantType === "refresh_token") {
-      return handleRefresh(c, body, storage, salt, idTokenCtx);
-    }
-
-    throw new MymeError(ErrorCode.VALIDATION_ERROR, "Unsupported grant_type");
-  });
-
-  // -----------------------------------------------------------------------
-  // RFC 7009 token revocation endpoint
+  // T-131: /auth/tokens (GET / DELETE / PATCH) handlers removed.
   //
-  // Public endpoint — no caller auth beyond the token itself, matching the
-  // OAuth public-client posture of the rest of the auth surface. The
-  // endpoint accepts `application/x-www-form-urlencoded` (RFC 7009 §2.1),
-  // mirroring `/auth/token`.
-  //
-  // Behaviour: revoke every token on the same grant (so passing either
-  // the access OR refresh token kills both — matches OIDC client
-  // expectations and avoids leaving an orphaned partner) AND flip the
-  // `system.connection` grant item to `status: revoked` so the user's
-  // Connected Apps list reflects the change. Per RFC 7009 §2.2 the
-  // endpoint MUST respond 200 to all valid requests, including those
-  // referring to unknown / already-revoked tokens, to prevent
-  // token-existence probing.
+  // The homegrown surface exposed individual-access-token management
+  // — list, revoke-by-id, reduce-scope. Under @better-auth/oauth-provider
+  // tokens are short-lived (1h default), rotate on every refresh, and
+  // are revoked at the grant level (`/oauth2/revoke` for a single
+  // token-in-hand; `/auth/grants/:id/revoke` for the whole grant).
+  // Individual-token management was admin/debug-only surface with no
+  // CLI / SDK / sandbox consumers — dropped outright.
   // -----------------------------------------------------------------------
-
-  router.post("/revoke", async (c) => {
-    const contentType = c.req.header("content-type") ?? "";
-    if (!contentType.includes("application/x-www-form-urlencoded")) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "Revoke endpoint requires application/x-www-form-urlencoded body per RFC 7009 §2.1",
-      );
-    }
-    const formData = await c.req.parseBody();
-    const tokenStr = typeof formData.token === "string" ? formData.token : "";
-    if (!tokenStr) {
-      throw new MymeError(
-        ErrorCode.VALIDATION_ERROR,
-        "token parameter is required",
-      );
-    }
-
-    // Look up the token. Unknown / already-revoked / expired tokens are
-    // a no-op per RFC 7009 §2.2 — return 200 silently.
-    const tokenHash = hashApiKey(tokenStr, salt);
-    const record = await storage.oauth.validateToken(tokenHash);
-    if (!record) {
-      return c.body(null, 200);
-    }
-
-    // Revoke every token on the grant — single call covers both access
-    // and refresh — and flip the grant status so the security page
-    // reflects the disconnection.
-    await storage.oauth.revokeGrantTokens(record.connection_item_id);
-    const grant = await storage.items.get(record.connection_item_id);
-    if (
-      grant?.type === "system.connection" &&
-      grant.properties.kind === "app"
-    ) {
-      const now = new Date().toISOString();
-      await storage.items.update(
-        record.connection_item_id,
-        {
-          properties: {
-            ...grant.properties,
-            status: "revoked",
-            revoked_at: now,
-          },
-        },
-        record.tenant_id ?? undefined,
-      );
-    }
-
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      tenant_id: record.tenant_id,
-      key_id: undefined,
-      action: "oauth.token.revoke",
-      resource_type: "oauth_grant",
-      resource_id: record.connection_item_id,
-      details: {
-        token_type_hint:
-          typeof formData.token_type_hint === "string"
-            ? formData.token_type_hint
-            : undefined,
-      },
-    });
-
-    return c.body(null, 200);
-  });
-
-  // -----------------------------------------------------------------------
-  // T-074: OIDC userinfo endpoint
-  //
-  // Standard OIDC userinfo. Bearer auth (OAuth access token only — raw
-  // API keys are rejected since userinfo is OAuth-flow-bound).
-  // Resolves the consenting user via the access token's tenant binding,
-  // joins `auth_user` for the canonical email, and gates field
-  // visibility on the granted OIDC scopes (`openid` / `profile` /
-  // `email`). `sub` is always present.
-  // -----------------------------------------------------------------------
-
-  router.get("/userinfo", async (c) => {
-    const apiKey = requireAuth(c);
-    if (c.get("authType") !== "oauth") {
-      throw new MymeError(
-        ErrorCode.FORBIDDEN,
-        "userinfo is only available to OAuth access tokens",
-      );
-    }
-    if (!storage.users) {
-      // Keys-mode self-host has no per-user binding — userinfo would be
-      // meaningless. Match the profile-route shape.
-      throw new MymeError(
-        ErrorCode.NOT_FOUND,
-        "userinfo is unavailable on instances running in keys mode",
-      );
-    }
-    const tenantId = apiKey.tenant_id;
-    if (!tenantId) {
-      throw new MymeError(
-        ErrorCode.NOT_FOUND,
-        "OAuth token has no tenant binding",
-      );
-    }
-    const user = await storage.users.getByTenantId(tenantId);
-    if (!user) {
-      throw new MymeError(
-        ErrorCode.NOT_FOUND,
-        "No profile bound to this OAuth grant",
-      );
-    }
-    const grantedOidc = new Set(apiKey.oidc_scopes ?? []);
-    const wantsProfile = grantedOidc.has("profile");
-    const wantsEmail = grantedOidc.has("email");
-
-    // sub is the immutable Myme user id — stable across handle changes
-    // and email rotations.
-    const out: Record<string, unknown> = { sub: user.id };
-
-    if (wantsProfile) {
-      const username = user.handle;
-      const avatarUrl = user.avatar_blob_hash
-        ? `/blobs/${user.avatar_blob_hash}`
-        : `/profile/placeholder/${encodeURIComponent(username ?? "user")}.svg`;
-      out.username = username;
-      out.preferred_username = username;
-      out.given_name = user.first_name;
-      out.family_name = user.last_name;
-      out.bio = user.bio;
-      out.picture = avatarUrl;
-    }
-
-    if (wantsEmail) {
-      const authEmail = user.auth_user_id
-        ? await storage.users.getAuthUserEmail(user.auth_user_id)
-        : null;
-      out.email = authEmail?.email ?? "";
-      out.email_verified = authEmail?.email_verified ?? false;
-    }
-
-    return c.json(out, 200);
-  });
-
-  // -----------------------------------------------------------------------
-  // Token management (authenticated)
-  // -----------------------------------------------------------------------
-
-  router.get("/tokens", async (c) => {
-    requireAuth(c);
-    const tokens = await storage.oauth.listTokens();
-    return c.json(tokens);
-  });
-
-  router.delete("/tokens/:id", async (c) => {
-    requireAuth(c);
-    await storage.oauth.revokeToken(c.req.param("id"));
-    return c.body(null, 204);
-  });
-
-  router.patch("/tokens/:id", async (c) => {
-    requireAuth(c);
-    const body = await c.req.json();
-    if (!body.scopes) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "scopes is required");
-    }
-    await storage.oauth.reduceTokenScope(c.req.param("id"), body.scopes);
-    return c.json({ status: "ok" });
-  });
 
   // -----------------------------------------------------------------------
   // /auth/grants — typed query into system.connection items
@@ -732,8 +303,21 @@ export function authRoutes(
       },
       tenantId,
     );
-    // Cascade-revoke every token + code issued under this connection.
-    await storage.oauth.revokeGrantTokens(id);
+    // T-131: cascade-revoke through the plugin's tables. The system.connection
+    // properties carry `client_id` + (after projection lands) `user_id` —
+    // we use those to delete every access + refresh token for this grant
+    // and drop the consent row so the next /authorize prompt re-consents.
+    const clientId =
+      typeof props.client_id === "string" ? props.client_id : undefined;
+    const authUserId =
+      typeof props.user_id === "string" ? props.user_id : undefined;
+    if (
+      clientId &&
+      authUserId &&
+      typeof storage.oauthProvider?.revokeTokensForGrant === "function"
+    ) {
+      await storage.oauthProvider.revokeTokensForGrant(clientId, authUserId);
+    }
     return c.body(null, 204);
   });
 
@@ -1676,13 +1260,11 @@ export function authRoutes(
       state: "active",
       tenantId,
     });
-    // Resolve client names in one batch — list every oauth client and
-    // map by id. The list is small (typically tens) so the batch
-    // fetch is cheaper than per-grant lookups.
-    const clients = await storage.oauth.listClients();
-    const clientById = new Map<string, string>();
-    for (const cli of clients) clientById.set(cli.id, cli.name);
-
+    // T-131: per-grant client-name lookup from the plugin's
+    // auth_oauth_client table. Worst-case N small queries; for the
+    // page-load scale this is fine and avoids the prior batch-list
+    // pattern which reads every client across every tenant. If the
+    // page grows hot, swap for a single IN-clause batch read.
     const grants: SecurityPageGrant[] = [];
     for (const item of grantItems.data) {
       const props = item.properties;
@@ -1690,9 +1272,13 @@ export function authRoutes(
       if (props.status !== "active") continue;
       const clientId =
         typeof props.client_id === "string" ? props.client_id : "";
+      const clientName =
+        clientId && typeof storage.oauthProvider?.getClientName === "function"
+          ? ((await storage.oauthProvider.getClientName(clientId)) ?? clientId)
+          : clientId;
       grants.push({
         id: item.id,
-        client_name: clientById.get(clientId) ?? clientId,
+        client_name: clientName,
         client_id: clientId,
         scopes: Array.isArray(props.scopes) ? (props.scopes as string[]) : [],
         granted_at:
@@ -1745,7 +1331,21 @@ export function authRoutes(
       { properties: { ...props, status: "revoked", revoked_at: now } },
       tenantId,
     );
-    await storage.oauth.revokeGrantTokens(id);
+    // T-131: cascade-revoke via plugin tables (see DELETE /grants/:id for
+    // the rationale). Falls through silently if the grant predates the
+    // projection wiring — the system.connection state flip is still the
+    // authoritative user-facing signal.
+    const clientId =
+      typeof props.client_id === "string" ? props.client_id : undefined;
+    const authUserId =
+      typeof props.user_id === "string" ? props.user_id : undefined;
+    if (
+      clientId &&
+      authUserId &&
+      typeof storage.oauthProvider?.revokeTokensForGrant === "function"
+    ) {
+      await storage.oauthProvider.revokeTokensForGrant(clientId, authUserId);
+    }
     return c.redirect("/auth/security?notice=grant_revoked", 302);
   });
 
@@ -1877,7 +1477,9 @@ export function authRoutes(
           "client_id and scope are required",
         );
       }
-      const client = await storage.oauth.getClient(clientId);
+      // T-131: client lookup migrated from the dropped `oauth_clients`
+      // table to the plugin's `auth_oauth_client` table.
+      const client = await storage.oauthProvider?.getClient(clientId);
       if (!client) {
         throw new MymeError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
       }
@@ -2004,7 +1606,8 @@ export function authRoutes(
     if (new Date(row.expires_at).getTime() < Date.now()) {
       return c.redirect(`/auth/device?error=expired_code`, 302);
     }
-    const client = await storage.oauth.getClient(row.client_id);
+    // T-131: client lookup migrated to plugin tables.
+    const client = await storage.oauthProvider?.getClient(row.client_id);
     if (!client) {
       throw new MymeError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
     }
@@ -2036,7 +1639,7 @@ export function authRoutes(
     setNoStore(c);
     return c.html(
       renderDeviceConsentScreen({
-        clientName: client.name,
+        clientName: client.name ?? client.clientId,
         scopes: parsedScopes,
         userCode,
         descriptions,
@@ -2186,35 +1789,55 @@ export function authRoutes(
       );
     }
 
+    // T-131: terminal token issuance. The plugin owns the canonical
+    // token storage tables (`auth_oauth_access_token`,
+    // `auth_oauth_refresh_token`); we mint into them directly so the
+    // bearer middleware resolves device-flow tokens identically to
+    // authorization-code-flow tokens. The hash function (`hashApiKey`)
+    // is the same one the plugin's `storeTokens.hash` is wired to.
     const accessRaw = generateToken(ACCESS_TOKEN_PREFIX);
     const refreshRaw = generateToken(REFRESH_TOKEN_PREFIX);
-    const accessHash = sha256(accessRaw);
-    const refreshHash = sha256(refreshRaw);
-    const accessExpiresAt = new Date(
-      Date.now() + ACCESS_TOKEN_TTL_MS,
-    ).toISOString();
-    const refreshExpiresAt = new Date(
-      Date.now() + 30 * 24 * 3600_000,
-    ).toISOString();
+    const accessHash = hashApiKey(accessRaw, salt);
+    const refreshHash = hashApiKey(refreshRaw, salt);
 
-    const accessToken = await storage.oauth.createToken(
-      row.connection_item_id,
-      accessHash,
-      "access",
-      accessExpiresAt,
-    );
-    await storage.oauth.createToken(
-      row.connection_item_id,
-      refreshHash,
-      "refresh",
-      refreshExpiresAt,
-    );
-
-    // T-098: device-flow token issuance — same rationale as the
-    // authorization_code path. No bearer in headers, so the middleware
-    // doesn't fire; stamp explicitly. Tenant comes off the underlying
-    // grant item.
+    // Resolve the underlying system.connection (grant) so we can pull
+    // tenant_id + the scopes the user actually approved. The grant
+    // properties already carry the scope set; we read them as the
+    // authoritative input to the token-mint.
     const deviceGrant = await storage.items.get(row.connection_item_id);
+    const grantProps = deviceGrant?.properties ?? {};
+    const grantScopes = Array.isArray(grantProps.scopes)
+      ? (grantProps.scopes as string[])
+      : [];
+    const grantClientId =
+      typeof grantProps.client_id === "string"
+        ? grantProps.client_id
+        : row.client_id;
+    const grantUserId =
+      typeof grantProps.user_id === "string"
+        ? grantProps.user_id
+        : undefined;
+    if (!grantUserId) {
+      // System.connection projection lands the user_id property; if it
+      // hasn't yet, fail loud rather than silently issue an orphan token.
+      throw new Error(
+        "Device-flow grant missing user_id property (projection not run?)",
+      );
+    }
+    if (typeof storage.oauthProvider?.mintTokenPair !== "function") {
+      throw new Error("oauthProvider store not wired");
+    }
+    await storage.oauthProvider.mintTokenPair({
+      accessTokenHash: accessHash,
+      refreshTokenHash: refreshHash,
+      clientId: grantClientId,
+      authUserId: grantUserId,
+      referenceId: deviceGrant?.tenant_id ?? null,
+      scopes: grantScopes,
+      accessTtlMs: ACCESS_TOKEN_TTL_MS,
+    });
+
+    // T-098: stamp last_used_at on the underlying grant — best-effort.
     await stampOAuthGrantLastUsed(
       storage,
       row.connection_item_id,
@@ -2226,7 +1849,7 @@ export function authRoutes(
       refresh_token: refreshRaw,
       token_type: "bearer",
       expires_in: ACCESS_TOKEN_TTL_MS / 1000,
-      scope: accessToken.scopes.join(" "),
+      scope: grantScopes.join(" "),
     });
   });
 
@@ -2369,357 +1992,3 @@ function forwardHeaders(
 // /.well-known/oauth-authorization-server — discovery doc
 // ---------------------------------------------------------------------------
 
-export function discoveryRoutes(
-  baseUrl: string,
-  oidcSigner?: OidcSigner,
-): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
-
-  // T-090: shared shape for both /oauth-authorization-server and
-  // /openid-configuration. Strict OIDC RPs prefer the latter; OAuth 2.0
-  // metadata consumers read the former. Same payload (with OIDC-specific
-  // additions) keeps both honest.
-  const baseMetadata = {
-    issuer: baseUrl,
-    authorization_endpoint: `${baseUrl}/auth/authorize`,
-    token_endpoint: `${baseUrl}/auth/token`,
-    registration_endpoint: `${baseUrl}/auth/clients`,
-    // T-074: standard OIDC userinfo endpoint. Returns `{ sub }` plus
-    // a field set gated by the granted `profile` / `email` scopes.
-    userinfo_endpoint: `${baseUrl}/auth/userinfo`,
-    jwks_uri: `${baseUrl}/.well-known/jwks.json`,
-    // RFC 8414 §2 — token revocation endpoint. Public-client posture
-    // matches /auth/token: no client credentials, the token itself is
-    // the auth.
-    revocation_endpoint: `${baseUrl}/auth/revoke`,
-    revocation_endpoint_auth_methods_supported: ["none"],
-    // RFC 8628 §4 — device authorization endpoint. The polling endpoint
-    // (/auth/device/token) is implicit per RFC 8628 §3.4.
-    device_authorization_endpoint: `${baseUrl}/auth/device`,
-    grant_types_supported: [
-      "authorization_code",
-      "refresh_token",
-      "urn:ietf:params:oauth:grant-type:device_code",
-    ],
-    response_types_supported: ["code"],
-    code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none"],
-    scopes_supported: ["openid", "profile", "email"],
-    id_token_signing_alg_values_supported: oidcSigner
-      ? [oidcSigner.algorithm]
-      : ["RS256"],
-    subject_types_supported: ["public"],
-  };
-
-  router.get("/oauth-authorization-server", (c) => c.json(baseMetadata));
-
-  // T-090: OIDC discovery endpoint. Strict OIDC consumers (federated
-  // identity bridges, third-party Sign-in-with-Myme RPs) discover the
-  // surface here rather than the OAuth-2.0 metadata sibling.
-  router.get("/openid-configuration", (c) =>
-    c.json({
-      ...baseMetadata,
-      claims_supported: [
-        "sub",
-        "iss",
-        "aud",
-        "exp",
-        "iat",
-        "preferred_username",
-        "name",
-        "given_name",
-        "family_name",
-        "picture",
-        "email",
-        "email_verified",
-      ],
-    }),
-  );
-
-  // T-090: JWKS endpoint. Public-half RSA JWK that signs id_tokens.
-  // Cache headers bias toward freshness over cacheability — a tested
-  // RP can re-fetch every minute without measurable load and key
-  // rotation propagates promptly.
-  router.get("/jwks.json", (c) => {
-    if (!oidcSigner) {
-      throw new MymeError(
-        ErrorCode.NOT_FOUND,
-        "OIDC signing keypair not initialised on this instance",
-      );
-    }
-    c.header("Cache-Control", "public, max-age=60, must-revalidate");
-    return c.json(oidcSigner.jwks());
-  });
-
-  return router;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** T-090: dependencies for OIDC `id_token` issuance from the token endpoint.
- *  Threaded through both `handleCodeExchange` and `handleRefresh` so a token
- *  rotation also rotates the id_token (per the OIDC spec). When `signer` is
- *  undefined, id_token issuance is silently skipped — keeps existing
- *  non-OIDC tests untouched. */
-interface IdTokenContext {
-  storage: Storage;
-  signer: OidcSigner | undefined;
-  issuer: string;
-}
-
-/** Builds the OIDC `id_token` claims for a given grant + scope set, or
- *  `null` if the grant doesn't include `openid` (or no signer / no
- *  hosted-mode user binding). */
-async function buildIdTokenClaims(
-  ctx: IdTokenContext,
-  connectionItemId: string,
-  clientId: string,
-  scopes: string[],
-): Promise<import("../auth/oidc-signing.js").IdTokenClaims | null> {
-  if (!ctx.signer) return null;
-  const oidcScopes = scopes.filter(
-    (s) => s === "openid" || s === "profile" || s === "email",
-  );
-  if (!oidcScopes.includes("openid")) return null;
-  if (!ctx.storage.users) return null;
-
-  const grant = await ctx.storage.items.get(connectionItemId);
-  if (!grant?.tenant_id) return null;
-  const user = await ctx.storage.users.getByTenantId(grant.tenant_id);
-  if (!user) return null;
-
-  const claims: import("../auth/oidc-signing.js").IdTokenClaims = {
-    iss: ctx.issuer,
-    sub: user.id,
-    aud: clientId,
-  };
-
-  if (oidcScopes.includes("profile")) {
-    claims.preferred_username = user.handle;
-    claims.given_name = user.first_name;
-    claims.family_name = user.last_name;
-    if (user.first_name || user.last_name) {
-      claims.name = [user.first_name, user.last_name].filter(Boolean).join(" ");
-    }
-    claims.picture = user.avatar_blob_hash
-      ? `/blobs/${user.avatar_blob_hash}`
-      : `/profile/placeholder/${encodeURIComponent(user.handle ?? "user")}.svg`;
-  }
-
-  if (oidcScopes.includes("email")) {
-    const authEmail = user.auth_user_id
-      ? await ctx.storage.users.getAuthUserEmail(user.auth_user_id)
-      : null;
-    claims.email = authEmail?.email ?? null;
-    claims.email_verified = authEmail?.email_verified ?? false;
-  }
-
-  return claims;
-}
-
-async function handleCodeExchange(
-  c: { json: (data: unknown, status?: number) => Response },
-  body: Record<string, string>,
-  storage: Storage,
-  salt: string,
-  idTokenCtx: IdTokenContext,
-): Promise<Response> {
-  const { code, code_verifier, redirect_uri } = body;
-
-  if (!code || !code_verifier || !redirect_uri) {
-    throw new MymeError(
-      ErrorCode.VALIDATION_ERROR,
-      "code, code_verifier, and redirect_uri are required",
-    );
-  }
-
-  const codeHash = hashApiKey(code, salt);
-  const codeRecord = await storage.oauth.consumeCode(codeHash);
-
-  if (!codeRecord) {
-    throw new MymeError(
-      ErrorCode.INVALID_GRANT,
-      "Invalid, expired, or already-used authorization code",
-    );
-  }
-
-  // Verify redirect_uri matches
-  if (codeRecord.redirect_uri !== redirect_uri) {
-    throw new MymeError(
-      ErrorCode.VALIDATION_ERROR,
-      "redirect_uri does not match",
-    );
-  }
-
-  // PKCE verification: SHA256(code_verifier) must equal code_challenge.
-  // Compared with timing-safe equality — the attacker controls one side
-  // (code_verifier) and the challenge is derived deterministically from
-  // a server-issued secret, so any byte-level timing leak is exploitable.
-  const computedChallenge = sha256(code_verifier);
-  if (!constantTimeEqual(computedChallenge, codeRecord.code_challenge)) {
-    throw new MymeError(ErrorCode.INVALID_GRANT, "PKCE verification failed");
-  }
-
-  // Issue tokens
-  const accessRaw = generateToken(ACCESS_TOKEN_PREFIX);
-  const refreshRaw = generateToken(REFRESH_TOKEN_PREFIX);
-  const accessHash = hashApiKey(accessRaw, salt);
-  const refreshHash = hashApiKey(refreshRaw, salt);
-  const accessExpiresAt = new Date(
-    Date.now() + ACCESS_TOKEN_TTL_MS,
-  ).toISOString();
-  const refreshExpiresAt = new Date(
-    Date.now() + 90 * 24 * 3600_000,
-  ).toISOString(); // 90 days
-
-  const accessToken = await storage.oauth.createToken(
-    codeRecord.connection_item_id,
-    accessHash,
-    "access",
-    accessExpiresAt,
-  );
-  await storage.oauth.createToken(
-    codeRecord.connection_item_id,
-    refreshHash,
-    "refresh",
-    refreshExpiresAt,
-  );
-
-  // T-090: mint id_token when openid scope was granted. The grant carries
-  // the client_id we need for the `aud` claim.
-  const grant = await storage.items.get(codeRecord.connection_item_id);
-  const clientId =
-    typeof grant?.properties.client_id === "string"
-      ? grant.properties.client_id
-      : "";
-  const claims = await buildIdTokenClaims(
-    idTokenCtx,
-    codeRecord.connection_item_id,
-    clientId,
-    accessToken.scopes,
-  );
-  const idToken =
-    claims && idTokenCtx.signer
-      ? await idTokenCtx.signer.signIdToken(claims)
-      : undefined;
-
-  // T-098: stamp last_used_at on the underlying app connection at
-  // initial token issuance so the /auth/security page doesn't show
-  // a freshly-granted client as "never used". Awaited so the write
-  // finishes inside the request flow rather than racing the next test
-  // (SQLite SQLITE_BUSY otherwise) and so the security page reads
-  // a consistent state immediately after token issuance.
-  await stampOAuthGrantLastUsed(
-    storage,
-    codeRecord.connection_item_id,
-    grant?.tenant_id ?? undefined,
-  );
-
-  return c.json({
-    access_token: accessRaw,
-    refresh_token: refreshRaw,
-    token_type: "bearer",
-    expires_in: 3600,
-    scope: accessToken.scopes.join(" "),
-    ...(idToken !== undefined && { id_token: idToken }),
-  });
-}
-
-async function handleRefresh(
-  c: { json: (data: unknown, status?: number) => Response },
-  body: Record<string, string>,
-  storage: Storage,
-  salt: string,
-  idTokenCtx: IdTokenContext,
-): Promise<Response> {
-  const { refresh_token } = body;
-
-  if (!refresh_token) {
-    throw new MymeError(
-      ErrorCode.VALIDATION_ERROR,
-      "refresh_token is required",
-    );
-  }
-
-  const refreshHash = hashApiKey(refresh_token, salt);
-  const refreshRecord = await storage.oauth.validateToken(refreshHash);
-
-  if (refreshRecord?.token_type !== "refresh") {
-    throw new MymeError(ErrorCode.INVALID_GRANT, "Invalid refresh token");
-  }
-
-  // Mark refresh token as used (single-use rotation)
-  const wasUnused = await storage.oauth.markRefreshUsed(refreshRecord.id);
-  if (!wasUnused) {
-    // Replay detected — revoke all tokens for this grant
-    await storage.oauth.revokeGrantTokens(refreshRecord.connection_item_id);
-    throw new MymeError(
-      ErrorCode.TOKEN_REUSE_DETECTED,
-      "Refresh token reuse detected, all tokens revoked",
-    );
-  }
-
-  // Issue new token pair
-  const accessRaw = generateToken(ACCESS_TOKEN_PREFIX);
-  const newRefreshRaw = generateToken(REFRESH_TOKEN_PREFIX);
-  const accessHash = hashApiKey(accessRaw, salt);
-  const newRefreshHash = hashApiKey(newRefreshRaw, salt);
-  const accessExpiresAt = new Date(
-    Date.now() + ACCESS_TOKEN_TTL_MS,
-  ).toISOString();
-  const refreshExpiresAt = new Date(
-    Date.now() + 90 * 24 * 3600_000,
-  ).toISOString();
-
-  const accessToken = await storage.oauth.createToken(
-    refreshRecord.connection_item_id,
-    accessHash,
-    "access",
-    accessExpiresAt,
-  );
-  await storage.oauth.createToken(
-    refreshRecord.connection_item_id,
-    newRefreshHash,
-    "refresh",
-    refreshExpiresAt,
-  );
-
-  // T-090: rotate id_token alongside the access token so a fresh JWT is
-  // issued with each refresh (per OIDC Core §12.1).
-  const grant = await storage.items.get(refreshRecord.connection_item_id);
-  const clientId =
-    typeof grant?.properties.client_id === "string"
-      ? grant.properties.client_id
-      : "";
-  const claims = await buildIdTokenClaims(
-    idTokenCtx,
-    refreshRecord.connection_item_id,
-    clientId,
-    accessToken.scopes,
-  );
-  const idToken =
-    claims && idTokenCtx.signer
-      ? await idTokenCtx.signer.signIdToken(claims)
-      : undefined;
-
-  // T-098: refresh-rotation is itself a "use" of the grant, but the
-  // request carries no bearer (the refresh_token is in the body), so
-  // the auth middleware never fires the stamp. Do it explicitly here,
-  // awaited (see handleCodeExchange for the rationale).
-  await stampOAuthGrantLastUsed(
-    storage,
-    refreshRecord.connection_item_id,
-    refreshRecord.tenant_id ?? undefined,
-  );
-
-  return c.json({
-    access_token: accessRaw,
-    refresh_token: newRefreshRaw,
-    token_type: "bearer",
-    expires_in: 3600,
-    scope: accessToken.scopes.join(" "),
-    ...(idToken !== undefined && { id_token: idToken }),
-  });
-}

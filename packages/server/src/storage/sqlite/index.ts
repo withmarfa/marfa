@@ -9,6 +9,7 @@ import { SqliteSearchStore } from "./search-store.js";
 import { SqliteKeyStore } from "./key-store.js";
 import { SqliteBlobStore } from "./blob-store.js";
 import { SqliteOAuthStore } from "./oauth-store.js";
+import { SqliteOauthProviderStore } from "./oauth-provider-store.js";
 import { SqliteWebhookStore } from "./webhook-store.js";
 import { SqliteWebhookDeliveryStore } from "./webhook-delivery-store.js";
 import { SqliteInboundWebhookStore } from "./inbound-webhook-store.js";
@@ -116,6 +117,9 @@ export async function createSqliteStorage(
     edges: edgeStore,
     edgeTypes: edgeTypeStore,
     oauth: oauthStore,
+    // T-131: thin reader over the plugin's tables for the consent route
+    // + projection after-hooks. The plugin itself owns writes.
+    oauthProvider: new SqliteOauthProviderStore(db),
     outboundWebhooks: webhookStore,
     outboundWebhookDeliveries: deliveryStore,
     inboundWebhooks: inboundWebhookStore,

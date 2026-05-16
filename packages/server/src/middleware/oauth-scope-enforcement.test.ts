@@ -16,10 +16,9 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import {
   request,
   createTestContext,
-  TEST_API_KEY_SALT,
+  seedOauthBearer,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "./auth.js";
 
 let ctx: TestContext;
 
@@ -37,43 +36,25 @@ interface MintedToken {
 }
 
 /**
- * Mints an OAuth token bound to a fresh app `system.connection`
- * stamped with the requested scopes. Returns both the bearer token and
- * the grant's item id (for revocation tests).
+ * T-131: setup migrated to `seedOauthBearer` which writes into the
+ * @better-auth/oauth-provider plugin's `auth_oauth_*` tables (the new
+ * authoritative storage). Bearer middleware resolves the resulting
+ * tokens identically to the old `oauth_tokens` path; the scope
+ * projection it tests is unchanged.
  */
 async function mintOAuthToken(opts: {
   scopes: string[];
   tenantId?: string;
 }): Promise<MintedToken> {
-  const client = await ctx.storage.oauth.createClient({
-    name: "Scope Enforcement Test App",
-    redirect_uris: ["http://localhost/cb"],
-  });
-  const grant = await ctx.storage.items.create(
+  const { token, grantId } = await seedOauthBearer(
+    ctx.storage,
+    opts.scopes,
     {
-      type: "system.connection",
-      state: "active",
-      tier: "library",
-      properties: {
-        kind: "app",
-        client_id: client.id,
-        scopes: opts.scopes,
-        status: "active",
-        granted_at: new Date().toISOString(),
-      },
-      source: "test/oauth-scope",
+      clientName: "Scope Enforcement Test App",
+      tenantId: opts.tenantId,
     },
-    opts.tenantId,
   );
-  const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
-  const tokenHash = hashApiKey(rawToken, TEST_API_KEY_SALT);
-  await ctx.storage.oauth.createToken(
-    grant.id,
-    tokenHash,
-    "access",
-    new Date(Date.now() + 3600_000).toISOString(),
-  );
-  return { rawToken, grantId: grant.id };
+  return { rawToken: token, grantId };
 }
 
 describe("T-045 — OAuth scope grammar enforcement on the data plane", () => {

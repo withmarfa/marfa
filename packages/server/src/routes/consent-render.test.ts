@@ -4,10 +4,12 @@ import { renderConsentScreen } from "./consent.js";
 
 /**
  * Wave C PR4 — behaviour-preserving smoke for `renderConsentScreen`
- * after the layout extraction. The handler-side smoke (POST /authorize
- * round-trip) lives in oauth.test.ts; this file asserts the HTML shape
- * directly so a future tweak to the layout helper can't silently
- * break the consent surface.
+ * after the layout extraction. T-131 rewrote the form shape to match
+ * the @better-auth/oauth-provider plugin: the form now POSTs back to
+ * `/auth/oauth2/consent` with a pre-minted `code` (no PKCE/state in
+ * hidden fields). This test file asserts the HTML shape directly so
+ * a future tweak to the layout helper can't silently break the
+ * consent surface.
  */
 
 const SCOPES: ParsedScope[] = [
@@ -20,11 +22,7 @@ const PARAMS = {
   clientName: "Test CLI",
   scopes: SCOPES,
   clientId: "client-abc",
-  redirectUri: "http://localhost:9999/cb",
-  codeChallenge: "challenge",
-  codeChallengeMethod: "S256",
-  state: "xyz",
-  responseType: "code",
+  code: "preminted-auth-code-xyz",
   descriptions: {
     "core.note": "Text content you created.",
     "core.task": "Tasks and todos.",
@@ -64,21 +62,29 @@ describe("renderConsentScreen (Wave C PR4)", () => {
     expect(html).toContain("Tasks and todos.");
   });
 
-  it("preserves the POST target + hidden OAuth round-trip fields", () => {
+  it("POSTs to the plugin's consent endpoint with code + client_id hidden", () => {
     const html = renderConsentScreen(PARAMS);
-    expect(html).toContain('<form method="POST" action="/auth/authorize"');
+    expect(html).toContain(
+      '<form method="POST" action="/auth/oauth2/consent"',
+    );
     expect(html).toContain('name="client_id" value="client-abc"');
-    expect(html).toContain('name="redirect_uri"');
-    expect(html).toContain('name="code_challenge"');
-    expect(html).toContain('name="code_challenge_method"');
-    expect(html).toContain('name="state"');
-    expect(html).toContain('name="response_type"');
+    expect(html).toContain('name="code" value="preminted-auth-code-xyz"');
+    // PKCE / state / redirect_uri are bound to the code server-side; they
+    // must NOT appear in the form (the plugin rejects redundant params).
+    expect(html).not.toContain('name="redirect_uri"');
+    expect(html).not.toContain('name="code_challenge"');
+    expect(html).not.toContain('name="state"');
+    expect(html).not.toContain('name="response_type"');
   });
 
-  it("renders Approve + Deny buttons", () => {
+  it("renders Approve + Deny buttons with accept=true|false (plugin contract)", () => {
     const html = renderConsentScreen(PARAMS);
-    expect(html).toMatch(/<button[^>]*value="approve"[^>]*>Approve<\/button>/);
-    expect(html).toMatch(/<button[^>]*value="deny"[^>]*>Deny<\/button>/);
+    expect(html).toMatch(
+      /<button[^>]*name="accept"[^>]*value="true"[^>]*>Approve<\/button>/,
+    );
+    expect(html).toMatch(
+      /<button[^>]*name="accept"[^>]*value="false"[^>]*>Deny<\/button>/,
+    );
   });
 
   it("uses the wide card variant", () => {

@@ -235,46 +235,20 @@ export async function createConnection(sqlitePath: string): Promise<{
       updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS oauth_clients (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      redirect_uris TEXT NOT NULL DEFAULT '[]',
-      created_at TEXT NOT NULL
-    );
-
-    -- PR 4 of workstream 1: oauth_grants dropped. Grants now live as
-    -- system.connection items (kind: app) referenced via
-    -- connection_item_id (FK to items.id).
-    CREATE TABLE IF NOT EXISTS oauth_tokens (
-      id TEXT PRIMARY KEY,
-      connection_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-      token_hash TEXT NOT NULL UNIQUE,
-      token_type TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      revoked_at TEXT,
-      used_at TEXT,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_connection_item_id ON oauth_tokens(connection_item_id);
-    CREATE INDEX IF NOT EXISTS idx_oauth_tokens_token_hash ON oauth_tokens(token_hash);
-
-    CREATE TABLE IF NOT EXISTS oauth_codes (
-      id TEXT PRIMARY KEY,
-      connection_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-      code_hash TEXT NOT NULL UNIQUE,
-      code_challenge TEXT NOT NULL,
-      code_challenge_method TEXT NOT NULL,
-      redirect_uri TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      used_at TEXT,
-      created_at TEXT NOT NULL
-    );
-
+    -- T-131: oauth_clients + oauth_tokens + oauth_codes dropped.
+    -- Their replacements are owned by the @better-auth/oauth-provider
+    -- plugin and created later in this script (auth_oauth_*).
+    --
+    -- oauth_device_codes stays — Myme-owned device-flow state machine.
+    -- Its client_id column is now a plain string (no FK to the dropped
+    -- oauth_clients table); application-enforced reference to
+    -- auth_oauth_client.client_id, consistent with the plugin's own
+    -- cross-table integrity model.
     CREATE TABLE IF NOT EXISTS oauth_device_codes (
       id TEXT PRIMARY KEY,
       device_code_hash TEXT NOT NULL UNIQUE,
       user_code TEXT NOT NULL UNIQUE,
-      client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+      client_id TEXT NOT NULL,
       scope TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
       connection_item_id TEXT REFERENCES items(id) ON DELETE SET NULL,
@@ -492,6 +466,16 @@ export async function createConnection(sqlitePath: string): Promise<{
     );
     CREATE INDEX IF NOT EXISTS idx_auth_verification_identifier ON auth_verification(identifier);
 
+    -- JWT signing keys (T-131). Owned by the better-auth jwt plugin,
+    -- which the oauth-provider needs for id_token issuance.
+    CREATE TABLE IF NOT EXISTS auth_jwks (
+      id TEXT PRIMARY KEY,
+      public_key TEXT NOT NULL,
+      private_key TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER
+    );
+
     CREATE TABLE IF NOT EXISTS auth_passkey (
       id TEXT PRIMARY KEY,
       name TEXT,
@@ -507,6 +491,92 @@ export async function createConnection(sqlitePath: string): Promise<{
     );
     CREATE INDEX IF NOT EXISTS idx_auth_passkey_user_id ON auth_passkey(user_id);
     CREATE INDEX IF NOT EXISTS idx_auth_passkey_credential_id ON auth_passkey(credential_id);
+
+    -- @better-auth/oauth-provider plugin tables (T-131). FK constraints
+    -- on client_id are application-enforced (kept loose for dialect-parity
+    -- with PG and so the plugin can manage integrity itself).
+    CREATE TABLE IF NOT EXISTS auth_oauth_client (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      client_secret TEXT,
+      disabled INTEGER NOT NULL DEFAULT 0,
+      skip_consent INTEGER,
+      enable_end_session INTEGER,
+      subject_type TEXT,
+      scopes TEXT,
+      user_id TEXT REFERENCES auth_user(id) ON DELETE CASCADE,
+      created_at INTEGER,
+      updated_at INTEGER,
+      name TEXT,
+      uri TEXT,
+      icon TEXT,
+      contacts TEXT,
+      tos TEXT,
+      policy TEXT,
+      software_id TEXT,
+      software_version TEXT,
+      software_statement TEXT,
+      redirect_uris TEXT NOT NULL,
+      post_logout_redirect_uris TEXT,
+      token_endpoint_auth_method TEXT,
+      grant_types TEXT,
+      response_types TEXT,
+      public INTEGER,
+      type TEXT,
+      require_pkce INTEGER,
+      reference_id TEXT,
+      metadata TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS auth_oauth_client_client_id_unique ON auth_oauth_client(client_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_oauth_client_client_id ON auth_oauth_client(client_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_oauth_client_user_id ON auth_oauth_client(user_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_oauth_client_reference_id ON auth_oauth_client(reference_id);
+
+    CREATE TABLE IF NOT EXISTS auth_oauth_refresh_token (
+      id TEXT PRIMARY KEY,
+      token TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      session_id TEXT REFERENCES auth_session(id) ON DELETE SET NULL,
+      user_id TEXT NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
+      reference_id TEXT,
+      expires_at INTEGER,
+      created_at INTEGER,
+      revoked INTEGER,
+      auth_time INTEGER,
+      scopes TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_token ON auth_oauth_refresh_token(token);
+    CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_client_id ON auth_oauth_refresh_token(client_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_user_id ON auth_oauth_refresh_token(user_id);
+
+    CREATE TABLE IF NOT EXISTS auth_oauth_access_token (
+      id TEXT PRIMARY KEY,
+      token TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      session_id TEXT REFERENCES auth_session(id) ON DELETE SET NULL,
+      user_id TEXT REFERENCES auth_user(id) ON DELETE CASCADE,
+      reference_id TEXT,
+      refresh_id TEXT REFERENCES auth_oauth_refresh_token(id) ON DELETE CASCADE,
+      expires_at INTEGER,
+      created_at INTEGER,
+      scopes TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS auth_oauth_access_token_token_unique ON auth_oauth_access_token(token);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_oauth_access_token_token ON auth_oauth_access_token(token);
+    CREATE INDEX IF NOT EXISTS idx_auth_oauth_access_token_client_id ON auth_oauth_access_token(client_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_oauth_access_token_user_id ON auth_oauth_access_token(user_id);
+
+    CREATE TABLE IF NOT EXISTS auth_oauth_consent (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      user_id TEXT REFERENCES auth_user(id) ON DELETE CASCADE,
+      reference_id TEXT,
+      scopes TEXT NOT NULL,
+      created_at INTEGER,
+      updated_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_oauth_consent_user_client ON auth_oauth_consent(user_id, client_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_oauth_consent_reference_id ON auth_oauth_consent(reference_id);
   `);
 
   // Schema source of truth is the Drizzle migrations under drizzle/sqlite/.

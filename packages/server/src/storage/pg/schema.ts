@@ -235,37 +235,10 @@ export const blobs = pgTable(
 // OAuth tables
 // ---------------------------------------------------------------------------
 
-export const oauthClients = pgTable("oauth_clients", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  redirect_uris: text("redirect_uris").notNull().default("[]"),
-  created_at: text("created_at").notNull(),
-});
-
-// PR 4 of workstream 1: oauth_grants table dropped. The user-facing
-// concept "user X approved client Y with scopes Z" now lives as a
-// `system.connection` item with `kind: app`. The token
-// tables FK directly to items.id via connection_item_id.
-
-export const oauthTokens = pgTable(
-  "oauth_tokens",
-  {
-    id: text("id").primaryKey(),
-    connection_item_id: text("connection_item_id")
-      .notNull()
-      .references(() => items.id, { onDelete: "cascade" }),
-    token_hash: text("token_hash").notNull().unique(),
-    token_type: text("token_type").notNull(),
-    expires_at: text("expires_at").notNull(),
-    revoked_at: text("revoked_at"),
-    used_at: text("used_at"),
-    created_at: text("created_at").notNull(),
-  },
-  (table) => [
-    index("idx_oauth_tokens_connection_item_id").on(table.connection_item_id),
-    index("idx_oauth_tokens_token_hash").on(table.token_hash),
-  ],
-);
+// T-131: oauth_clients + oauth_tokens dropped — replaced by
+// auth_oauth_client + auth_oauth_access_token + auth_oauth_refresh_token
+// owned by the @better-auth/oauth-provider plugin. See migration
+// 0055_drop_legacy_oauth.sql for the drop DDL.
 
 // ---------------------------------------------------------------------------
 // oauth_device_codes — Device Authorization Grant (RFC 8628)
@@ -279,9 +252,9 @@ export const oauthDeviceCodes = pgTable(
     device_code_hash: text("device_code_hash").notNull().unique(),
     /** Short, low-entropy code displayed to the human (XXXX-XXXX shape). */
     user_code: text("user_code").notNull().unique(),
-    client_id: text("client_id")
-      .notNull()
-      .references(() => oauthClients.id, { onDelete: "cascade" }),
+    /** T-131: FK previously pointed at the dropped `oauth_clients` table.
+     *  Now stores the plugin's business `client_id` as a plain string. */
+    client_id: text("client_id").notNull(),
     scope: text("scope").notNull(),
     status: text("status").notNull().default("pending"),
     connection_item_id: text("connection_item_id").references(() => items.id, {
@@ -489,19 +462,8 @@ export const connectionLeasedTokens = pgTable(
   ],
 );
 
-export const oauthCodes = pgTable("oauth_codes", {
-  id: text("id").primaryKey(),
-  connection_item_id: text("connection_item_id")
-    .notNull()
-    .references(() => items.id, { onDelete: "cascade" }),
-  code_hash: text("code_hash").notNull().unique(),
-  code_challenge: text("code_challenge").notNull(),
-  code_challenge_method: text("code_challenge_method").notNull(),
-  redirect_uri: text("redirect_uri").notNull(),
-  expires_at: text("expires_at").notNull(),
-  used_at: text("used_at"),
-  created_at: text("created_at").notNull(),
-});
+// T-131: oauth_codes dropped — replaced by the
+// @better-auth/oauth-provider plugin's authorization code state machine.
 
 // ---------------------------------------------------------------------------
 // audit_log (append-only audit trail)
@@ -734,6 +696,163 @@ export const auth_verification = pgTable(
   },
   (table) => [index("idx_auth_verification_identifier").on(table.identifier)],
 );
+
+// ---------------------------------------------------------------------------
+// @better-auth/oauth-provider plugin tables (T-131)
+//
+// Four tables owned by the OAuth Provider plugin: client registrations,
+// consent grants, opaque access tokens, opaque refresh tokens.
+// Naming matches the auth_* convention; the plugin's model→table mapping
+// is wired explicitly in `auth/instance.ts` via the `schema` override.
+//
+// Cross-table foreign keys on `clientId` (the unique business key, not
+// the PK `id`) are NOT enforced at the DB level for dialect-parity with
+// SQLite — the plugin's own queries maintain integrity. FKs on user_id /
+// session_id reference PKs and work in both dialects.
+//
+// Token columns store the OUTPUT of `storeTokens.hash` — wired in
+// `auth/instance.ts` to `hashApiKey(token, salt)` so bearer middleware
+// can compute the same value at lookup time.
+// ---------------------------------------------------------------------------
+
+export const auth_oauth_client = pgTable(
+  "auth_oauth_client",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id").notNull().unique(),
+    clientSecret: text("client_secret"),
+    disabled: boolean("disabled").notNull().default(false),
+    skipConsent: boolean("skip_consent"),
+    enableEndSession: boolean("enable_end_session"),
+    subjectType: text("subject_type"),
+    /** JSON-encoded string[] — Better Auth adapter serialises */
+    scopes: text("scopes"),
+    userId: text("user_id").references(() => auth_user.id, {
+      onDelete: "cascade",
+    }),
+    createdAt: timestamp("created_at", { mode: "date" }),
+    updatedAt: timestamp("updated_at", { mode: "date" }),
+    name: text("name"),
+    uri: text("uri"),
+    icon: text("icon"),
+    contacts: text("contacts"),
+    tos: text("tos"),
+    policy: text("policy"),
+    softwareId: text("software_id"),
+    softwareVersion: text("software_version"),
+    softwareStatement: text("software_statement"),
+    redirectUris: text("redirect_uris").notNull(),
+    postLogoutRedirectUris: text("post_logout_redirect_uris"),
+    tokenEndpointAuthMethod: text("token_endpoint_auth_method"),
+    grantTypes: text("grant_types"),
+    responseTypes: text("response_types"),
+    public: boolean("public"),
+    type: text("type"),
+    requirePKCE: boolean("require_pkce"),
+    /** Tenant binding from `clientReference` (Myme: tenant_id). */
+    referenceId: text("reference_id"),
+    /** JSON object — additional client metadata */
+    metadata: jsonb("metadata"),
+  },
+  (table) => [
+    uniqueIndex("idx_auth_oauth_client_client_id").on(table.clientId),
+    index("idx_auth_oauth_client_user_id").on(table.userId),
+    index("idx_auth_oauth_client_reference_id").on(table.referenceId),
+  ],
+);
+
+export const auth_oauth_refresh_token = pgTable(
+  "auth_oauth_refresh_token",
+  {
+    id: text("id").primaryKey(),
+    /** Hashed via `storeTokens.hash` — shares `hashApiKey(token, salt)`
+     *  with the bearer middleware so lookup paths are symmetric. */
+    token: text("token").notNull(),
+    clientId: text("client_id").notNull(),
+    sessionId: text("session_id").references(() => auth_session.id, {
+      onDelete: "set null",
+    }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => auth_user.id, { onDelete: "cascade" }),
+    referenceId: text("reference_id"),
+    expiresAt: timestamp("expires_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }),
+    /** Single-use marker; plugin rotates on every refresh. Non-null = used. */
+    revoked: timestamp("revoked", { mode: "date" }),
+    authTime: timestamp("auth_time", { mode: "date" }),
+    scopes: text("scopes").notNull(),
+  },
+  (table) => [
+    index("idx_auth_oauth_refresh_token_token").on(table.token),
+    index("idx_auth_oauth_refresh_token_client_id").on(table.clientId),
+    index("idx_auth_oauth_refresh_token_user_id").on(table.userId),
+  ],
+);
+
+export const auth_oauth_access_token = pgTable(
+  "auth_oauth_access_token",
+  {
+    id: text("id").primaryKey(),
+    /** Hashed via `storeTokens.hash`. Unique so bearer middleware
+     *  can WHERE on it directly. */
+    token: text("token").notNull().unique(),
+    clientId: text("client_id").notNull(),
+    sessionId: text("session_id").references(() => auth_session.id, {
+      onDelete: "set null",
+    }),
+    userId: text("user_id").references(() => auth_user.id, {
+      onDelete: "cascade",
+    }),
+    referenceId: text("reference_id"),
+    /** FK to refresh_token.id; cascades so token rotation cleans up. */
+    refreshId: text("refresh_id").references(
+      () => auth_oauth_refresh_token.id,
+      { onDelete: "cascade" },
+    ),
+    expiresAt: timestamp("expires_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }),
+    scopes: text("scopes").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_auth_oauth_access_token_token").on(table.token),
+    index("idx_auth_oauth_access_token_client_id").on(table.clientId),
+    index("idx_auth_oauth_access_token_user_id").on(table.userId),
+  ],
+);
+
+export const auth_oauth_consent = pgTable(
+  "auth_oauth_consent",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id").notNull(),
+    userId: text("user_id").references(() => auth_user.id, {
+      onDelete: "cascade",
+    }),
+    referenceId: text("reference_id"),
+    scopes: text("scopes").notNull(),
+    createdAt: timestamp("created_at", { mode: "date" }),
+    updatedAt: timestamp("updated_at", { mode: "date" }),
+  },
+  (table) => [
+    // Compound index for the re-consent diff lookup
+    // (`/auth/authorize` reads prior consent for this user+client).
+    index("idx_auth_oauth_consent_user_client").on(
+      table.userId,
+      table.clientId,
+    ),
+    index("idx_auth_oauth_consent_reference_id").on(table.referenceId),
+  ],
+);
+
+// JWT signing keys (T-131). See sqlite/schema.ts for the rationale.
+export const auth_jwks = pgTable("auth_jwks", {
+  id: text("id").primaryKey(),
+  publicKey: text("public_key").notNull(),
+  privateKey: text("private_key").notNull(),
+  createdAt: timestamp("created_at", { mode: "date" }).notNull(),
+  expiresAt: timestamp("expires_at", { mode: "date" }),
+});
 
 // Passkey credentials (one per registered authenticator).
 export const auth_passkey = pgTable(

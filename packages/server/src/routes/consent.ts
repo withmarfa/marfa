@@ -12,6 +12,14 @@
  * New permissions (added), and No longer requested (removed) —
  * instead of the flat read / write split. First-time consent (no
  * prior grant) keeps the flat shape.
+ *
+ * T-131 rewrite: the homegrown surface used to POST the consent form
+ * to `/auth/authorize` to mint the authorization code AT consent time.
+ * The @better-auth/oauth-provider plugin inverts this — it mints the
+ * `code` BEFORE redirecting to the consent page and expects the form to
+ * POST back to `/auth/oauth2/consent` with `code` + `accept` + `scope`.
+ * PKCE / state / redirect_uri / response_type are bound to the code
+ * server-side; the form no longer carries them.
  */
 
 import type { ParsedScope } from "@mymehq/shared";
@@ -22,11 +30,12 @@ interface ConsentParams {
   clientName: string;
   scopes: ParsedScope[];
   clientId: string;
-  redirectUri: string;
-  codeChallenge: string;
-  codeChallengeMethod: string;
-  state: string;
-  responseType: string;
+  /**
+   * The authorization code the plugin pre-minted before redirecting
+   * here. Threaded back into `/auth/oauth2/consent` as the binding
+   * handle for accept/deny.
+   */
+  code: string;
   /**
    * Plain-English description per scope, keyed by `typePattern` (e.g.
    * `core.note` → "Text content you created."). Pulled from the type
@@ -97,11 +106,7 @@ export function renderConsentScreen(params: ConsentParams): string {
 
   const safeClient = escapeHtml(params.clientName);
   const safeClientId = escapeHtml(params.clientId);
-  const safeRedirectUri = escapeHtml(params.redirectUri);
-  const safeCodeChallenge = escapeHtml(params.codeChallenge);
-  const safeCodeChallengeMethod = escapeHtml(params.codeChallengeMethod);
-  const safeState = escapeHtml(params.state);
-  const safeResponseType = escapeHtml(params.responseType);
+  const safeCode = escapeHtml(params.code);
 
   // Decide diff-vs-flat rendering. Diff path triggers when caller
   // passed `priorScopes` and there's at least one scope on either
@@ -191,21 +196,22 @@ export function renderConsentScreen(params: ConsentParams): string {
     ? `<span class="client-name">${safeClient}</span> is requesting updated access to your data`
     : `<span class="client-name">${safeClient}</span> wants to access your data`;
 
+  // Form action POSTs back to the plugin's consent endpoint. The plugin
+  // handles redirecting the browser to the client's redirect_uri with
+  // the code on accept (or with `?error=access_denied` on deny). PKCE /
+  // state / redirect_uri are all bound to the code server-side; the
+  // form carries only the binding handle (`code`) + decision + scope.
   const bodyHtml = `
     <h1>${leadeText}</h1>
-    <form method="POST" action="/auth/authorize">
+    <form method="POST" action="/auth/oauth2/consent">
       <input type="hidden" name="client_id" value="${safeClientId}">
-      <input type="hidden" name="redirect_uri" value="${safeRedirectUri}">
-      <input type="hidden" name="code_challenge" value="${safeCodeChallenge}">
-      <input type="hidden" name="code_challenge_method" value="${safeCodeChallengeMethod}">
-      <input type="hidden" name="state" value="${safeState}">
-      <input type="hidden" name="response_type" value="${safeResponseType}">
+      <input type="hidden" name="code" value="${safeCode}">
 
       ${scopesHtml}
 
       <div class="actions">
-        <button type="submit" name="action" value="approve" class="btn btn--primary">Approve</button>
-        <button type="submit" name="action" value="deny" class="btn">Deny</button>
+        <button type="submit" name="accept" value="true" class="btn btn--primary">Approve</button>
+        <button type="submit" name="accept" value="false" class="btn">Deny</button>
       </div>
     </form>
   `;
