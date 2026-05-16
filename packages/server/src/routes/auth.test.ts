@@ -290,7 +290,6 @@ describe("KeyStore.updateLastUsed — DB-side debounce", () => {
   });
 });
 
-
 describe("touchLastUsedCache — bounded LRU eviction (§3.5)", () => {
   it("evicts the oldest entry when size exceeds cap", () => {
     // Use a tiny cap by overflowing past 32_768 once via direct API; that's

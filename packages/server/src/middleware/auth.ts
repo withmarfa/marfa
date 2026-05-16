@@ -303,9 +303,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       // + `test-utils.ts`) match the same convention.
       const bare = token.slice(ACCESS_TOKEN_PREFIX.length);
       const hash = hashApiKey(bare, salt);
-      const oauthToken = await storage.oauthProvider?.validateAccessToken(
-        hash,
-      );
+      const oauthToken = await storage.oauthProvider?.validateAccessToken(hash);
 
       if (!oauthToken) {
         c.set("apiKey", undefined);

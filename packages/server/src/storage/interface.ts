@@ -890,18 +890,13 @@ export interface OauthProviderStore {
    *  recognised or has expired. Powers the bearer-middleware side-channel
    *  join — see plan §Caveats §3 (opaque tokens carry no embedded claims,
    *  so we read the row directly). */
-  validateAccessToken(
-    tokenHash: string,
-  ): Promise<OauthAccessTokenRow | null>;
+  validateAccessToken(tokenHash: string): Promise<OauthAccessTokenRow | null>;
   /** Cascade revocation for a grant: delete every access + refresh token
    *  for (clientId, authUserId). Used by the `/auth/grants/:id/revoke`
    *  handler when the user revokes an app's access. The grant's
    *  `auth_oauth_consent` row is also deleted (the plugin will require
    *  re-consent on the next authorize attempt). */
-  revokeTokensForGrant(
-    clientId: string,
-    authUserId: string,
-  ): Promise<void>;
+  revokeTokensForGrant(clientId: string, authUserId: string): Promise<void>;
   /**
    * T-131 follow-on (refresh-replay): delete ONLY access tokens for a
    * grant — leaves refresh tokens + consent intact. Used by the
@@ -925,9 +920,7 @@ export interface OauthProviderStore {
    * whose access tokens to nuke. Returns null if the token doesn't
    * exist (e.g. already deleted by a prior chain-revocation pass).
    */
-  findRefreshTokenGrantKey(
-    tokenHash: string,
-  ): Promise<{
+  findRefreshTokenGrantKey(tokenHash: string): Promise<{
     clientId: string;
     userId: string;
     revoked: boolean;

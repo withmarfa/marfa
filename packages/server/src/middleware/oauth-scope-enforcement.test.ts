@@ -13,11 +13,7 @@
  * accept/reject shape per scope kind.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import {
-  request,
-  createTestContext,
-  seedOauthBearer,
-} from "../test-utils.js";
+import { request, createTestContext, seedOauthBearer } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -46,14 +42,10 @@ async function mintOAuthToken(opts: {
   scopes: string[];
   tenantId?: string;
 }): Promise<MintedToken> {
-  const { token, grantId } = await seedOauthBearer(
-    ctx.storage,
-    opts.scopes,
-    {
-      clientName: "Scope Enforcement Test App",
-      tenantId: opts.tenantId,
-    },
-  );
+  const { token, grantId } = await seedOauthBearer(ctx.storage, opts.scopes, {
+    clientName: "Scope Enforcement Test App",
+    tenantId: opts.tenantId,
+  });
   return { rawToken: token, grantId };
 }
 

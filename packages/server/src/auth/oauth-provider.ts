@@ -354,8 +354,7 @@ export function buildOauthProjectionPlugin(opts: {
                     );
                   } catch (err) {
                     log("warn", "oauth refresh-replay check failed", {
-                      error:
-                        err instanceof Error ? err.message : String(err),
+                      error: err instanceof Error ? err.message : String(err),
                     });
                   }
                 }),

@@ -747,9 +747,7 @@ export const auth_oauth_client = sqliteTable(
     id: text("id").primaryKey(),
     clientId: text("client_id").notNull().unique(),
     clientSecret: text("client_secret"),
-    disabled: integer("disabled", { mode: "boolean" })
-      .notNull()
-      .default(false),
+    disabled: integer("disabled", { mode: "boolean" }).notNull().default(false),
     skipConsent: integer("skip_consent", { mode: "boolean" }),
     enableEndSession: integer("enable_end_session", { mode: "boolean" }),
     subjectType: text("subject_type"),

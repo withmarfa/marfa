@@ -81,7 +81,10 @@ export async function seedOauthBearer(
   const dialect = storage.betterAuthDialect;
   const db = storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
-      values: (v: Record<string, unknown>) => { run?: () => Promise<unknown>; execute?: () => Promise<unknown> };
+      values: (v: Record<string, unknown>) => {
+        run?: () => Promise<unknown>;
+        execute?: () => Promise<unknown>;
+      };
     };
   };
 
@@ -89,7 +92,8 @@ export async function seedOauthBearer(
   // bearer middleware doesn't actually need this row to exist (it reads
   // from `auth_oauth_access_token`), but the FK on user_id requires
   // it. Use a fixed-id row so re-seeds in the same test stay idempotent.
-  const authUserId = opts.authUserId ?? `auth_user_${Math.random().toString(36).slice(2, 10)}`;
+  const authUserId =
+    opts.authUserId ?? `auth_user_${Math.random().toString(36).slice(2, 10)}`;
   if (!opts.authUserId) {
     // Use raw SQL via the storage escape hatches — auth_user.id is text
     // and we want a deterministic synthetic id. Skip if a row already
@@ -118,7 +122,12 @@ export async function seedOauthBearer(
       // coerce the string transparently.
       await pg.__pgClient?.(
         "INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES ($1, $2, $3, true, $4, $4, 'active') ON CONFLICT (id) DO NOTHING",
-        [authUserId, "Test User", `${authUserId}@test.local`, now.toISOString()],
+        [
+          authUserId,
+          "Test User",
+          `${authUserId}@test.local`,
+          now.toISOString(),
+        ],
       );
     }
   }
@@ -128,9 +137,10 @@ export async function seedOauthBearer(
   // Drizzle adapter); the runtime values differ (boolean vs integer
   // for `disabled` etc.). For simplicity we just write the minimum
   // required fields.
-  const schemaModule = dialect === "pg"
-    ? await import("./storage/pg/schema.js")
-    : await import("./storage/sqlite/schema.js");
+  const schemaModule =
+    dialect === "pg"
+      ? await import("./storage/pg/schema.js")
+      : await import("./storage/sqlite/schema.js");
   const insertOp = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
@@ -171,8 +181,14 @@ export async function seedOauthBearer(
   const rawRefresh = `myme_rt_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const { hashApiKey } = await import("./middleware/auth.js");
   await storage.oauthProvider.mintTokenPair({
-    accessTokenHash: hashApiKey(rawToken.slice("myme_at_".length), TEST_API_KEY_SALT),
-    refreshTokenHash: hashApiKey(rawRefresh.slice("myme_rt_".length), TEST_API_KEY_SALT),
+    accessTokenHash: hashApiKey(
+      rawToken.slice("myme_at_".length),
+      TEST_API_KEY_SALT,
+    ),
+    refreshTokenHash: hashApiKey(
+      rawRefresh.slice("myme_rt_".length),
+      TEST_API_KEY_SALT,
+    ),
     clientId,
     authUserId,
     referenceId: opts.tenantId ?? null,

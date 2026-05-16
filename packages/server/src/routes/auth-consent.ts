@@ -39,11 +39,7 @@
 
 import { Hono } from "hono";
 import type { ParsedScope } from "@mymehq/shared";
-import {
-  parseScope,
-  isValidScope,
-  TYPE_REGISTRY,
-} from "@mymehq/shared";
+import { parseScope, isValidScope, TYPE_REGISTRY } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MymeAuth } from "../auth/instance.js";
@@ -412,9 +408,7 @@ async function resolvePriorScopes(
  * type registry; missing entries are simply omitted (renderer shows
  * just the literal).
  */
-function buildScopeDescriptions(
-  scopes: ParsedScope[],
-): Record<string, string> {
+function buildScopeDescriptions(scopes: ParsedScope[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const s of scopes) {
     if (s.kind === "oidc") continue;
@@ -426,4 +420,3 @@ function buildScopeDescriptions(
   }
   return out;
 }
-

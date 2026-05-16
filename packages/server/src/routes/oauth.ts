@@ -1855,9 +1855,7 @@ export function authRoutes(
         ? grantProps.client_id
         : row.client_id;
     const grantUserId =
-      typeof grantProps.user_id === "string"
-        ? grantProps.user_id
-        : undefined;
+      typeof grantProps.user_id === "string" ? grantProps.user_id : undefined;
     if (!grantUserId) {
       // System.connection projection lands the user_id property; if it
       // hasn't yet, fail loud rather than silently issue an orphan token.
@@ -2032,4 +2030,3 @@ function forwardHeaders(
 // ---------------------------------------------------------------------------
 // /.well-known/oauth-authorization-server — discovery doc
 // ---------------------------------------------------------------------------
-

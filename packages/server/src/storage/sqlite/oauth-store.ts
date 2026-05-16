@@ -1,9 +1,6 @@
 import { eq, and, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
-import type {
-  OAuthDeviceCode,
-  OAuthDeviceCodeStatus,
-} from "@mymehq/shared";
+import type { OAuthDeviceCode, OAuthDeviceCodeStatus } from "@mymehq/shared";
 import type { OAuthStore } from "../interface.js";
 import { items, oauthDeviceCodes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";

@@ -117,7 +117,9 @@ describe("OauthProviderStore.updateGrantScopes (T-131 follow-on)", () => {
       "core.task:read",
     ]);
     // Granted_at refreshed (ISO string, strictly increasing).
-    expect(after!.properties.granted_at).not.toBe(before!.properties.granted_at);
+    expect(after!.properties.granted_at).not.toBe(
+      before!.properties.granted_at,
+    );
     // Sibling properties preserved.
     expect(after!.properties.kind).toBe("app");
     expect(after!.properties.client_id).toBe(seeded.clientId);
@@ -159,8 +161,7 @@ describe("OauthProviderStore.findRefreshTokenGrantKey (T-131 follow-on)", () => 
     const hash = createHmac("sha256", TEST_API_KEY_SALT)
       .update("myme_rt_nonexistent")
       .digest("hex");
-    const got =
-      await ctx.storage.oauthProvider?.findRefreshTokenGrantKey(hash);
+    const got = await ctx.storage.oauthProvider?.findRefreshTokenGrantKey(hash);
     // Sanity: bogus hash returns null.
     expect(got).toBeNull();
     // We sanity-checked the negative case; the positive case (active row →
@@ -171,4 +172,3 @@ describe("OauthProviderStore.findRefreshTokenGrantKey (T-131 follow-on)", () => 
     void seeded;
   });
 });
-
