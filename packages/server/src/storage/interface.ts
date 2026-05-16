@@ -1190,8 +1190,14 @@ export interface AccountLifecycleStore {
    *  pending row just re-stamps `pending_deletion_at`. */
   markPendingDeletion(authUserId: string, nowIso: string): Promise<void>;
   /** Flip the state back to `'active'` and clear `pending_deletion_at`.
-   *  No-op when the row is already active. */
-  cancelPendingDeletion(authUserId: string): Promise<void>;
+   *  Returns `true` when a row was actually flipped; `false` when the
+   *  UPDATE matched zero rows (account already cancelled or — the case
+   *  this signal exists for, T-141 — already hard-deleted by a cascade
+   *  that won the race). The cancel routes branch on the return:
+   *  `true` → standard "Account restored" confirmation; `false` →
+   *  "already permanently deleted" themed page + distinct audit action
+   *  so the operator-facing trail is honest. */
+  cancelPendingDeletion(authUserId: string): Promise<boolean>;
   /** Read the lifecycle row by `auth_user.id`. Returns null when no
    *  matching row exists. */
   getAccountLifecycle(authUserId: string): Promise<{

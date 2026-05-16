@@ -55,11 +55,17 @@ export class PgAccountLifecycleStore implements AccountLifecycleStore {
     });
   }
 
-  async cancelPendingDeletion(authUserId: string): Promise<void> {
-    await this.db
+  async cancelPendingDeletion(authUserId: string): Promise<boolean> {
+    // T-141: surface rows-affected to the route layer so the
+    // "Account restored" confirmation only renders when the UPDATE
+    // actually flipped a row. `.returning()` is cheap (single PK column)
+    // and matches the Drizzle-PG pattern used elsewhere for confirm-on-write.
+    const rows = await this.db
       .update(auth_user)
       .set({ deletion_state: "active", pending_deletion_at: null })
-      .where(eq(auth_user.id, authUserId));
+      .where(eq(auth_user.id, authUserId))
+      .returning({ id: auth_user.id });
+    return rows.length > 0;
   }
 
   async getAccountLifecycle(authUserId: string): Promise<{

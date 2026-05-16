@@ -204,14 +204,17 @@ Every auth-side wrapper writes a stable-shape audit row through `storage.audit.l
 
 Actions emitted today:
 
-| Action                          | Triggered by                                              | resource_id  | details                                    |
-| ------------------------------- | --------------------------------------------------------- | ------------ | ------------------------------------------ |
-| `auth.sign_up`                  | `POST /auth/sign-up` success                              | email        | `{ email }`                                |
-| `auth.sign_in.success`          | `POST /auth/sign-in` success (password or magic)          | email        | `{ email, method: "password" \| "magic" }` |
-| `auth.sign_in.failed`           | `POST /auth/sign-in` failure                              | email        | `{ email, method, reason }`                |
-| `auth.password_reset.requested` | `POST /auth/forgot-password` (always — captures attempts) | email        | `{ email }`                                |
-| `auth.password_reset.completed` | `POST /auth/reset-password` success                       | token-prefix | `{ token_prefix }`                         |
-| `auth.email.verified`           | `GET /auth/verify-email?token=…` success                  | token-prefix | `{ token_prefix }`                         |
+| Action                                             | Triggered by                                                                                      | resource_id    | details                                    |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------- | ------------------------------------------ |
+| `auth.sign_up`                                     | `POST /auth/sign-up` success                                                                      | email          | `{ email }`                                |
+| `auth.sign_in.success`                             | `POST /auth/sign-in` success (password or magic)                                                  | email          | `{ email, method: "password" \| "magic" }` |
+| `auth.sign_in.failed`                              | `POST /auth/sign-in` failure                                                                      | email          | `{ email, method, reason }`                |
+| `auth.password_reset.requested`                    | `POST /auth/forgot-password` (always — captures attempts)                                         | email          | `{ email }`                                |
+| `auth.password_reset.completed`                    | `POST /auth/reset-password` success                                                               | token-prefix   | `{ token_prefix }`                         |
+| `auth.email.verified`                              | `GET /auth/verify-email?token=…` success                                                          | token-prefix   | `{ token_prefix }`                         |
+| `auth.account.cancel_attempted_but_already_purged` | Cancel route reached but `cancelPendingDeletion` matched zero rows (T-141 — cascade won the race) | `auth_user_id` | `{ source: "session" \| "link" }`          |
+
+The `auth.account.cancel_attempted_but_already_purged` row exists for honesty in the operator trail. The POST cancel pre-checks `getAccountLifecycle` and short-circuits to 400 `not_pending_deletion` on the normal "already active" / "already gone" case, but a TOCTOU window remains between that read and the `cancelPendingDeletion` UPDATE. When the cascade commits inside that window (or — for the GET-by-link path, which has no pre-check — at any point before the UPDATE), the UPDATE matches zero rows. The route renders the honest page / response and writes this audit action instead of the standard `auth.account.delete_cancelled` row that would lie about a cancel that never happened.
 
 Calls are fire-and-forget (`void storage.audit.log(...)`) — audit failures must never block the user-facing flow. `client_ip` threads through `c.var.clientIp` (T-027 client-ip middleware).
 

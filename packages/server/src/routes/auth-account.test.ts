@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { randomBytes } from "node:crypto";
 import {
   createTestContext,
   markEmailVerified,
@@ -683,5 +684,246 @@ describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
     // no-enumeration invariant is that the field set + types match.
     expect(typeof wrongPwBody.message).toBe("string");
     expect(typeof unknownBody.message).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-141 — cancel-route honesty when cascade wins the race
+// ---------------------------------------------------------------------------
+//
+// T-136 closed the data-loss race in the cascade. T-141 closes the
+// user-facing-confirmation race: when the cascade commits between the
+// cancel route's pre-checks and its `cancelPendingDeletion` UPDATE, the
+// UPDATE matches zero rows. The route now branches on the boolean
+// return, rendering "already permanently deleted" / `{ok:false, code:
+// "already_purged"}` and writing a distinct audit action instead of
+// claiming the cancel succeeded.
+
+async function reinsertCancelToken(
+  storage: TestContext["storage"],
+  token: string,
+  authUserId: string,
+): Promise<void> {
+  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const id = randomBytes(16).toString("hex");
+  const identifier = `account-cancel:${token}`;
+  const expiresAt = new Date(Date.now() + 30 * 86_400_000);
+  const now = new Date();
+  if (dialect === "pg") {
+    const pg = storage as unknown as {
+      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
+    };
+    if (!pg.__pgClient) throw new Error("pg client unavailable in test");
+    await pg.__pgClient(
+      `INSERT INTO auth_verification
+         (id, identifier, value, expires_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        id,
+        identifier,
+        authUserId,
+        expiresAt.toISOString(),
+        now.toISOString(),
+        now.toISOString(),
+      ],
+    );
+    return;
+  }
+  const sqlite = storage as unknown as {
+    __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+  };
+  if (!sqlite.__sqliteRun) throw new Error("sqlite runner unavailable in test");
+  await sqlite.__sqliteRun(
+    `INSERT INTO auth_verification
+       (id, identifier, value, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      identifier,
+      authUserId,
+      Math.floor(expiresAt.getTime() / 1000),
+      Math.floor(now.getTime() / 1000),
+      Math.floor(now.getTime() / 1000),
+    ],
+  );
+}
+
+describe("T-141 — cancel route honesty when cascade wins the race", () => {
+  it("GET cancel renders 'already deleted' page and writes the distinct audit action", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "cascade-wins-link@example.com");
+    const { cookie } = await signIn(ctx, "cascade-wins-link@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const confirmToken = await readLatestVerification(
+      ctx.storage,
+      "account-delete:",
+    );
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(confirmToken ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const lifecycle = ctx.storage.accountLifecycle;
+    const before = await lifecycle?.getAccountLifecycleByEmail(
+      "cascade-wins-link@example.com",
+    );
+    const authUserId = before?.auth_user_id ?? "";
+    const cancelToken = await readLatestVerification(
+      ctx.storage,
+      "account-cancel:",
+    );
+    expect(cancelToken).toBeTruthy();
+
+    // Cascade wins: hard-delete the account with a future cutoff. The
+    // cascade also nukes the cancel-token verification row, so we
+    // re-insert it after — modelling the narrow window where the route
+    // loaded the token (and captured authUserId from it) just before
+    // the cascade committed, but the cancel UPDATE only runs after.
+    const futureCutoff = new Date(Date.now() + 31 * 86_400_000).toISOString();
+    const cascadeRan = await ctx.storage.deleteAccountCascade(
+      authUserId,
+      futureCutoff,
+    );
+    expect(cascadeRan).toBe(true);
+    await reinsertCancelToken(ctx.storage, cancelToken!, authUserId);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/account/cancel?token=${encodeURIComponent(cancelToken!)}`,
+      { headers: { origin: ORIGIN } },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Account permanently deleted");
+    expect(body).toContain("we couldn't cancel");
+    // Crucially, NOT the restored copy.
+    expect(body).not.toContain("Account restored");
+    expect(body).not.toContain("no longer scheduled for deletion");
+
+    // Audit: new action, source=link.
+    const audit = await waitForAudit(
+      () =>
+        ctx!.storage.audit.list({
+          action: "auth.account.cancel_attempted_but_already_purged",
+        }),
+      (r) => r.data.length > 0,
+    );
+    const row = audit.data.find((r) => r.resource_id === authUserId);
+    expect(row).toBeTruthy();
+    expect((row?.details as { source?: string }).source).toBe("link");
+    expect(row?.resource_type).toBe("auth_account");
+
+    // No fresh delete_cancelled row for this user post-cascade.
+    const cancelled = await ctx.storage.audit.list({
+      action: "auth.account.delete_cancelled",
+      resource_id: authUserId,
+    });
+    expect(cancelled.data.length).toBe(0);
+  });
+
+  it("POST cancel returns ok:false/already_purged and writes the distinct audit action", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "cascade-wins-post@example.com");
+    const { cookie } = await signIn(ctx, "cascade-wins-post@example.com");
+    expect(cookie).toBeTruthy();
+
+    // Get authUserId without going through the confirm endpoint —
+    // confirm calls `markPendingDeletion`, which drops every
+    // auth_session for the user (T-116) and would invalidate our
+    // cookie. Flip the deletion columns directly via SQL so the
+    // session survives. The cancel route's pre-check still sees
+    // `pending_deletion`; the rest of the flow is identical.
+    const lifecycle = ctx.storage.accountLifecycle;
+    if (!lifecycle) throw new Error("accountLifecycle unwired");
+    const byEmail = await lifecycle.getAccountLifecycleByEmail(
+      "cascade-wins-post@example.com",
+    );
+    const authUserId = byEmail?.auth_user_id ?? "";
+    expect(authUserId).toBeTruthy();
+    const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+    const nowIso = new Date().toISOString();
+    if (dialect === "pg") {
+      const pg = ctx.storage as unknown as {
+        __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
+      };
+      await pg.__pgClient?.(
+        `UPDATE auth_user SET deletion_state = 'pending_deletion', pending_deletion_at = $1 WHERE id = $2`,
+        [nowIso, authUserId],
+      );
+    } else {
+      const sqlite = ctx.storage as unknown as {
+        __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+      };
+      await sqlite.__sqliteRun?.(
+        `UPDATE auth_user SET deletion_state = 'pending_deletion', pending_deletion_at = ? WHERE id = ?`,
+        [nowIso, authUserId],
+      );
+    }
+    const afterFlip = await lifecycle.getAccountLifecycle(authUserId);
+    expect(afterFlip?.deletion_state).toBe("pending_deletion");
+
+    // Splice a side-effect cascade into cancelPendingDeletion so the
+    // route's UPDATE lands on a now-deleted row. The route captures
+    // `accountLifecycle` once at registration but invokes methods on
+    // it per-request, so a method-level patch takes effect for the
+    // next request. The cascade with a future cutoff models a purger
+    // tick that committed between the route's pre-check
+    // (`getAccountLifecycle`) and its `cancelPendingDeletion` call —
+    // the exact TOCTOU window.
+    const originalCancel = lifecycle.cancelPendingDeletion.bind(lifecycle);
+    const futureCutoff = new Date(Date.now() + 31 * 86_400_000).toISOString();
+    lifecycle.cancelPendingDeletion = async (id: string) => {
+      await ctx!.storage.deleteAccountCascade(id, futureCutoff);
+      return originalCancel(id);
+    };
+
+    try {
+      const res = await request(
+        ctx.app,
+        "POST",
+        "/auth/account/delete/cancel",
+        { headers: { origin: ORIGIN, cookie: cookie ?? "" } },
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.ok).toBe(false);
+      expect(body.code).toBe("already_purged");
+
+      // Audit: new action, source=session.
+      const audit = await waitForAudit(
+        () =>
+          ctx!.storage.audit.list({
+            action: "auth.account.cancel_attempted_but_already_purged",
+          }),
+        (r) =>
+          r.data.some(
+            (entry) =>
+              entry.resource_id === authUserId &&
+              (entry.details as { source?: string }).source === "session",
+          ),
+      );
+      const row = audit.data.find(
+        (r) =>
+          r.resource_id === authUserId &&
+          (r.details as { source?: string }).source === "session",
+      );
+      expect(row).toBeTruthy();
+      expect(row?.resource_type).toBe("auth_account");
+
+      // No delete_cancelled row for this user — the cancel didn't
+      // actually happen, and we don't want to lie about it in audit.
+      const cancelled = await ctx.storage.audit.list({
+        action: "auth.account.delete_cancelled",
+        resource_id: authUserId,
+      });
+      expect(cancelled.data.length).toBe(0);
+    } finally {
+      lifecycle.cancelPendingDeletion = originalCancel;
+    }
   });
 });
