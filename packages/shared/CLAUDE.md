@@ -4,7 +4,7 @@ Wire types, runtime validation, error codes, ID utilities, and the type registry
 
 Contents (`src/`):
 
-- `types.ts` — every wire type that crosses the network. `Item`, `CreateItemInput`, `UpdateItemInput`, `ApiKey`, `TenantConfig`, `User`, `Edge`, `EnforcementSettings`, `Tier`, `Origin`, `ItemState`. Source of truth — server schemas and SDK signatures derive from these. Wire-shape changes start here.
+- `types.ts` — every wire type that crosses the network. `Item`, `CreateItemInput`, `UpdateItemInput`, `ApiKey`, `TenantConfig`, `User`, `Edge`, `EnforcementSettings`, `Tier`, `ItemState`. Source of truth — server schemas and SDK signatures derive from these. Wire-shape changes start here.
 - `errors.ts` — `MymeError` + the `ErrorCode` enum. Add new codes here; the HTTP status map at the bottom keeps the wire shape stable.
 - `validation.ts` — pure shape validators that don't need the registry: `isValidId`, `isValidTimestamp`, `isValidTypeIdentifier` (TSC42 §3 namespace grammar), `isValidHandle` (TSC42 §8), `isValidEmail`, `isValidUrl`. Synchronous and side-effect-free.
 - `ids.ts` — `generateId` (UUIDv7) and helpers.
