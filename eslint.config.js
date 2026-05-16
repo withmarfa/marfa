@@ -68,6 +68,11 @@ export default [
       "**/node_modules/",
       "**/seed/",
       "packages/*/scripts/*.mjs",
+      // Git worktrees created under .claude/worktrees/<name>/ are
+      // separate checkouts with their own lint runs; the main
+      // checkout's lint must not descend into them or it'll surface
+      // work-in-progress code from other agents/branches.
+      ".claude/worktrees/",
     ],
   },
 ];
