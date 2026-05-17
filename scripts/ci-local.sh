@@ -43,4 +43,8 @@ echo "→ pnpm test:pg"
 pnpm test:pg
 
 echo
+echo "→ pnpm --filter @mymehq/server run smoke:worker-entry"
+pnpm --filter @mymehq/server run smoke:worker-entry
+
+echo
 echo "═══ ✓ ci-local passed — safe to open a PR ═══"

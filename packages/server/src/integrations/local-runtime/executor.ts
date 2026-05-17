@@ -76,6 +76,17 @@ class WorkerSlot {
       resolveReady = res;
       rejectReady = rej;
     });
+    // The pool eager-spawns slots at construction (see WorkerPool ctor)
+    // and only awaits `ready` on the first dispatch. If a worker dies
+    // before that — module-load error in the integration's local.js,
+    // missing handler module path, runtime-sdk import failure, etc. —
+    // the `error` listener below rejects `ready` with no awaiter, which
+    // Node 15+ treats as an unhandled rejection and (by default) kills
+    // the process. Attach a no-op catch here so the eager-spawn never
+    // crashes the server; the legitimate consumer in dispatch() still
+    // sees the rejection (multiple .then/.catch on one promise observe
+    // independently).
+    this.ready.catch(() => undefined);
     let resolveExited!: () => void;
     this.exited = new Promise<void>((res) => {
       resolveExited = res;
