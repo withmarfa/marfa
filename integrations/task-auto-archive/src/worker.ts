@@ -1,7 +1,7 @@
 /**
  * Cloudflare Worker entrypoint for the Task Auto-Archive integration.
  */
-import { createIntegrationWorker } from "@mymehq/runtime-sdk";
+import { createIntegrationWorker } from "@mymehq/runtime-sdk/cloudflare";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
 import { TASK_AUTO_ARCHIVE_MANIFEST } from "./manifest.js";
 

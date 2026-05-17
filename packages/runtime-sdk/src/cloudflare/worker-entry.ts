@@ -17,10 +17,10 @@ import {
   consumeBatch,
   type ConsumerEnvironment,
   type DlqProducer,
-} from "./queue-consumer.js";
+} from "../queue-consumer.js";
 import type { PerConnectionAlarmEnv } from "./per-connection-state.js";
-import type { QueueMessage, RuntimeCredential } from "./types.js";
-import { verifyHandler } from "./verify-handler.js";
+import type { QueueMessage, RuntimeCredential } from "../types.js";
+import { verifyHandler } from "../verify-handler.js";
 
 /**
  * Worker `env` shape this helper expects. Integrations may extend it
