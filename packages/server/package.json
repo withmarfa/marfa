@@ -27,6 +27,7 @@
     "schema-sql:generate": "pnpm run schema-sql:generate:sqlite && pnpm run schema-sql:generate:pg",
     "schema-sql:generate:sqlite": "tsx scripts/generate-schema-sql.ts --dialect=sqlite",
     "schema-sql:generate:pg": "bash scripts/with-temp-pg.sh tsx scripts/generate-schema-sql.ts --dialect=pg",
+    "lint:sqlite-migrations": "tsx scripts/lint-sqlite-migrations.ts",
     "generate:openapi": "tsx scripts/generate-openapi.ts"
   },
   "dependencies": {

@@ -175,6 +175,35 @@ jobs:
             exit 1
           fi
 
+  # Lints SQLite migrations for the `--> statement-breakpoint` marker
+  # between `;`-terminated statements. Drizzle's libsql migrator splits
+  # each `.sql` file on the literal marker and runs each chunk through
+  # libsql's single-statement `execute()` — multiple statements in one
+  # chunk silently drop all but the first. T-145 surfaced three pre-
+  # existing instances of this class of bug (0043 / 0044 / 0046); this
+  # gate prevents the next one from landing.
+  sqlite-migrations-lint:
+    name: SQLite migrations — statement-breakpoint lint
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    env:
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @mymehq/server run lint:sqlite-migrations
+
   # Test jobs — run on every PR and on main pushes. These are the fast
   # pre-merge signal and are considered load-bearing for merge decisions.
   ci-sqlite:
