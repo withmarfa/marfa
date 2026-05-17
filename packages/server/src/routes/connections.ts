@@ -515,6 +515,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
       }
       const entry = await buildEntryForConnection(storage, {
         id: conn.id,
+        state: conn.state,
         properties: conn.properties,
         tenant_id: conn.tenant_id ?? null,
       });
@@ -532,6 +533,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
         for (const conn of page.data) {
           const entry = await buildEntryForConnection(storage, {
             id: conn.id,
+            state: conn.state,
             properties: conn.properties,
             tenant_id: conn.tenant_id ?? null,
           });

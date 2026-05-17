@@ -81,18 +81,27 @@ async function mintRuntimeCredential(connectionId: string): Promise<MintResp> {
   return (await res.json()) as MintResp;
 }
 
+// T-175: mint endpoint requires a real, active system.connection — the
+// pre-T-175 core.note placeholder no longer passes the gate.
+async function createActiveConnection(): Promise<string> {
+  const item = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+    },
+    undefined,
+  );
+  return item.id;
+}
+
 describe("Layer 1 acceptance", () => {
   it("end-to-end: handler reads cursor → writes cursor → emits activity", async () => {
-    // 1. Create the Connection placeholder item.
-    const itemRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: {
-        type: "core.note",
-        properties: { body: "acceptance connection placeholder" },
-      },
-    });
-    const { item } = (await itemRes.json()) as { item: { id: string } };
-    const connectionId = item.id;
+    // 1. Create the Connection (T-175: must be a real system.connection).
+    const connectionId = await createActiveConnection();
 
     // 2. Mint a runtime credential for this Connection.
     const minted = await mintRuntimeCredential(connectionId);
@@ -171,17 +180,9 @@ describe("Layer 1 acceptance", () => {
   });
 
   it("step 5 — cross-connection runtime credential is denied", async () => {
-    // Create two distinct Connection placeholders.
-    const itemA = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "tenant A connection" } },
-    });
-    const itemB = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: "tenant B connection" } },
-    });
-    const connA = ((await itemA.json()) as { item: { id: string } }).item.id;
-    const connB = ((await itemB.json()) as { item: { id: string } }).item.id;
+    // Create two distinct active Connections (T-175).
+    const connA = await createActiveConnection();
+    const connB = await createActiveConnection();
 
     // Mint a runtime credential bound to A.
     const credA = await mintRuntimeCredential(connA);

@@ -128,6 +128,7 @@ async function loadSubscriptions(
     for (const connection of page.data) {
       const entry = await buildEntryForConnection(storage, {
         id: connection.id,
+        state: connection.state,
         properties: connection.properties,
         tenant_id: connection.tenant_id ?? null,
       });
@@ -193,6 +194,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
     }
     const entry = await buildEntryForConnection(storage, {
       id: item.id,
+      state: item.state,
       properties: item.properties,
       tenant_id: item.tenant_id ?? null,
     });

@@ -30,13 +30,34 @@ interface ErrorResponse {
   };
 }
 
+/**
+ * Create a real `system.connection` item the mint endpoint can resolve.
+ * Post-T-175 the mint endpoint requires the Connection to exist and be
+ * `state: active`; pre-T-175 tests passed arbitrary connection_id strings.
+ */
+async function createActiveConnection(): Promise<string> {
+  const item = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+    },
+    undefined,
+  );
+  return item.id;
+}
+
 describe("POST /system/runtime-credentials", () => {
   it("admin (which is a platform credential at bootstrap) can mint a runtime credential", async () => {
+    const connectionId = await createActiveConnection();
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
       key: ctx.adminKey,
       body: {
-        connection_id: "conn_test_admin_mint",
+        connection_id: connectionId,
         label: `runtime ${suffix}`,
         source: `runtime-${suffix}`,
       },
@@ -44,13 +65,46 @@ describe("POST /system/runtime-credentials", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as RuntimeCredentialResponse;
     expect(body.api_key).toMatch(/^myme_k1_/);
-    expect(body.connection_id).toBe("conn_test_admin_mint");
+    expect(body.connection_id).toBe(connectionId);
     expect(body.id).toBeDefined();
     expect(body.expires_at).toBeDefined();
   });
 
+  it("T-175: refuses to mint for a non-existent connection_id", async () => {
+    const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
+      key: ctx.adminKey,
+      body: {
+        connection_id: "019e0000-0000-7000-0000-000000000000",
+        label: "should-not-mint",
+        source: "should-not-mint",
+      },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("T-175: refuses to mint for a revoked connection", async () => {
+    const connectionId = await createActiveConnection();
+    // Transition the connection to revoked — system.connection lifecycle
+    // is active|revoked only; the standard transition path is the
+    // uninstall pipeline (steps 1-5) culminating in `items.transition`.
+    await ctx.storage.items.transition(connectionId, "revoked", undefined);
+
+    const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
+      key: ctx.adminKey,
+      body: {
+        connection_id: connectionId,
+        label: "revoked-should-not-mint",
+        source: "revoked-should-not-mint",
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as ErrorResponse;
+    expect(body.error.message).toMatch(/revoked/i);
+  });
+
   it("rejects callers without is_platform: true", async () => {
-    // Mint a non-platform admin key first.
+    // Mint a non-platform admin key first. The connection_id is irrelevant —
+    // the is_platform gate runs before any connection lookup.
     const suffix = Math.random().toString(36).slice(2, 10);
     const memberRaw = `myme_k1_runtime_member_${suffix}`;
     await ctx.storage.keys.create(
@@ -66,7 +120,7 @@ describe("POST /system/runtime-credentials", () => {
     const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
       key: memberRaw,
       body: {
-        connection_id: "conn_test_member_denied",
+        connection_id: "019e0000-0000-7000-0000-000000000001",
         label: "should fail",
         source: `should-fail-${suffix}`,
       },
@@ -77,9 +131,10 @@ describe("POST /system/runtime-credentials", () => {
   });
 
   it("rejects unauthenticated callers", async () => {
+    // Auth gate runs before any connection lookup; connection_id irrelevant.
     const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
       body: {
-        connection_id: "conn_test_unauth",
+        connection_id: "019e0000-0000-7000-0000-000000000002",
         label: "x",
         source: `x-${Math.random().toString(36).slice(2, 8)}`,
       },
@@ -100,11 +155,12 @@ describe("POST /system/runtime-credentials", () => {
   });
 
   it("stamps is_runtime_credential + connection_id on the row", async () => {
+    const connectionId = await createActiveConnection();
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
       key: ctx.adminKey,
       body: {
-        connection_id: `conn_stamp_${suffix}`,
+        connection_id: connectionId,
         label: `stamp ${suffix}`,
         source: `stamp-${suffix}`,
       },
@@ -114,7 +170,7 @@ describe("POST /system/runtime-credentials", () => {
     const stored = await ctx.storage.keys.get(body.id);
     expect(stored).not.toBeNull();
     expect(stored?.is_runtime_credential).toBe(true);
-    expect(stored?.connection_id).toBe(`conn_stamp_${suffix}`);
+    expect(stored?.connection_id).toBe(connectionId);
     expect(stored?.is_platform).toBe(false);
     expect(stored?.role).toBe("member");
   });
@@ -126,19 +182,11 @@ describe("connection.runtime extension gate", () => {
   let runtimeKeyId: string;
 
   beforeAll(async () => {
-    // Create an item that represents the Connection. Use core.note as a
-    // placeholder — the actual system.connection type doesn't change the
-    // gate behavior since the gate keys off the credential's
-    // connection_id stamp matching the URL :id.
-    const itemRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: {
-        type: "core.note",
-        properties: { body: "connection placeholder" },
-      },
-    });
-    const itemBody = (await itemRes.json()) as { item: { id: string } };
-    connectionId = itemBody.item.id;
+    // Create a real system.connection — T-175 added an item-level
+    // active-state gate to the mint endpoint, so this can no longer be
+    // a placeholder core.note. (Pre-T-175 the gate keyed only off the
+    // credential's connection_id stamp matching the URL :id.)
+    connectionId = await createActiveConnection();
 
     const suffix = Math.random().toString(36).slice(2, 10);
     const mintRes = await request(

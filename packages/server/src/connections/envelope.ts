@@ -52,17 +52,33 @@ interface ManifestTrigger {
 /**
  * Inspect a connection's manifest and return a SubscriptionEntry when
  * the connection should receive item-event fanout. Returns null when:
+ *   - The connection's item-level `state` isn't `active` (T-175 — gate
+ *     on the canonical lifecycle field, not just `properties.status`)
  *   - The connection isn't of kind `integration`
  *   - The connection has no integration_ref
  *   - The integration_ref doesn't resolve to a system.integration
  *   - The manifest is invalid (validateManifest rejects it)
  *   - The manifest declares no `item-event` trigger
- *   - The connection is revoked (properties.status !== "active")
+ *   - The connection's `properties.status` is set and not `active`
  */
 export async function buildEntryForConnection(
   storage: Storage,
-  connection: { id: string; properties: unknown; tenant_id?: string | null },
+  connection: {
+    id: string;
+    state?: string;
+    properties: unknown;
+    tenant_id?: string | null;
+  },
 ): Promise<SubscriptionEntry | null> {
+  // T-175: item-level state gate. Both layers must hold —
+  // `state === "active"` (canonical lifecycle) AND `properties.status`
+  // either unset or `active` (application-layer runtime status). The
+  // pre-T-175 code only checked the latter, so a Connection transitioned
+  // to `state: revoked` (via the uninstall pipeline) but retaining
+  // `properties.status: active` continued firing reactive runs.
+  if (connection.state !== undefined && connection.state !== "active") {
+    return null;
+  }
   const props = connection.properties as ConnectionProperties;
   if (props.kind !== "integration") return null;
   if (props.status && props.status !== "active") return null;
