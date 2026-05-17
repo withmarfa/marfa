@@ -213,13 +213,16 @@ export function createApp(
     accountDeletionGuardMiddleware(storage, emailTransport, config.authBaseUrl),
   );
 
-  // Cycle metadata resolution (T-039). Reads X-Myme-Cycle-Origin /
+  // Cycle metadata resolution (T-039, T-144). Reads X-Myme-Cycle-Origin /
   // X-Myme-Cycle-Hop headers (a connector continuing a chain) or falls
   // back to the api key's connection binding (a connector kicking off a
   // chain). Mounted AFTER auth because the fallback path reads
-  // `c.var.apiKey`. Routes thread `c.var.cycle` into every `publish(...)`
-  // call so the reactive-run bridge can self-suppress and the hop budget
-  // gate can attribute by origin.
+  // `c.var.apiKey`. T-144: the resolved cycle is written to BOTH
+  // `c.var.cycle` (diagnostic) AND `cycleRequestContext` (AsyncLocalStorage)
+  // so `publish()` in `pubsub.ts` reads it automatically — routes no
+  // longer thread `...c.var.cycle` into every publish call. The reactive-
+  // run bridge self-suppresses and `passesHopBudget` attributes by origin
+  // off the ALS-resolved value.
   app.use("*", cycleMiddleware());
 
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS

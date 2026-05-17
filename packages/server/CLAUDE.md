@@ -65,9 +65,19 @@ Middleware composes shared per-request state on `c.var`. Routes read these direc
 - **`authType: "api_key" | "oauth" | undefined`** — distinguishes how the bearer was resolved.
 - **`clientIp: string | null`** — resolved by `clientIpMiddleware` against `TRUSTED_PROXY_CIDRS`. Threaded into every `audit.log` call (T-027).
 - **`requestId: string`** — per-request UUID for log correlation.
-- **`cycle: { originatingConnectionId: string | null; hopCount: number }`** — cycle metadata (T-039), resolved by `cycleMiddleware` after auth. Reads `X-Myme-Cycle-Origin` / `X-Myme-Cycle-Hop` (a connector continuing a chain), or falls back to the api key's connection binding (a connector kicking off a chain), or stamps the human sentinel `{ null, 0 }` for ordinary user requests. Routes spread `...c.var.cycle` into every `publish(...)` so the reactive-run bridge can self-suppress and `passesHopBudget` can attribute by origin. **Never `null`** — the sentinel is always present.
+- **`cycle: { originatingConnectionId: string | null; hopCount: number }`** — cycle metadata (T-039), resolved by `cycleMiddleware` after auth. Reads `X-Myme-Cycle-Origin` / `X-Myme-Cycle-Hop` (a connector continuing a chain), or falls back to the api key's connection binding (a connector kicking off a chain), or stamps the human sentinel `{ null, 0 }` for ordinary user requests. **T-144 — routes do NOT spread `...c.var.cycle` into `publish(...)` anymore.** The resolved cycle is written to `cycleRequestContext` (AsyncLocalStorage at `src/cycle-context.ts`) alongside `c.var.cycle`; `pubsub.publish` and `pubsub.publishEdge` read it automatically. `c.var.cycle` stays exposed for diagnostic reads only. **Never `null`** — the sentinel is always present.
 
 Middleware order in `app.ts`: logger → CORS → client-ip → auth → cycle → rate-limit → routes. The cycle resolver depends on auth's `c.var.apiKey`, so it must run after auth.
+
+## Cycle metadata propagation (T-144)
+
+Same shape as Postgres RLS (T-025): state that must stay coherent across a request flows through one mechanism (middleware + AsyncLocalStorage), not by every caller spreading the value. `cycleMiddleware` resolves the per-request cycle and writes it to both `c.var.cycle` (diagnostic) and `cycleRequestContext` (the ALS at `src/cycle-context.ts`). `pubsub.publish` and `pubsub.publishEdge` consult the ALS automatically; route handlers no longer carry `...c.var.cycle` on every publish call.
+
+**Explicit override path.** Server-internal callers that need to synthesise a cycle (rather than propagate the request's) can pass `originatingConnectionId` and/or `hopCount` explicitly on the `publish` event argument — the resolver short-circuits to the explicit values when either field is present. No internal caller exercises this today; the `POST /connections/preview-event` route runs its own duplicate of `passesHopBudget`'s effective-hop logic against `body.cycle` for hypothetical-event reasoning (it never calls `publish`).
+
+**Outside-request fallback.** When the ALS is empty AND no explicit override is supplied (e.g. the reactive-run bridge's `stop()` sentinel publish), the resolver falls through to `{ originatingConnectionId: null, hopCount: 0 }` — the human-sentinel shape that bypasses the budget.
+
+**Wire-tampering defence preserved.** The `Math.max(hopCount, 1)` floor inside `passesHopBudget` (and the duplicate in `POST /connections/preview-event`) is kept. It defends against malformed inbound `X-Myme-Cycle-Hop` headers (origin set but `hopCount: 0`) — the ALS refactor removes the contributor-discipline failure mode but does not subsume the wire-tampering one.
 
 ## Postgres RLS (T-025)
 

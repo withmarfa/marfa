@@ -46,10 +46,16 @@ export interface AppEnv extends Record<string, unknown> {
      * `X-Myme-Cycle-Origin` / `X-Myme-Cycle-Hop` headers (a connector
      * reacting to a parent event — the SDK threads them via
      * `ConnectionClient.request()`) or from the caller's api key when
-     * the headers are absent (the chain head). Routes thread this into
-     * `publish({ originatingConnectionId, hopCount })` so the reactive-
-     * run bridge can suppress self-fanout and `passesHopBudget` can
-     * apply attribution by origin (T-008).
+     * the headers are absent (the chain head).
+     *
+     * **T-144 — diagnostic exposure only.** `publish()` and
+     * `publishEdge()` in `pubsub.ts` read the resolved cycle from
+     * `cycleRequestContext` (AsyncLocalStorage) automatically; routes
+     * do NOT thread this through. The `c.var.cycle` binding remains
+     * available for diagnostic reads (preview surfaces, audit
+     * enrichment, the existing `cycle.test.ts` assertion path) and
+     * stays in lockstep with the ALS — `cycleMiddleware` writes both
+     * from the same resolved value.
      *
      * **Never `null`.** A human-issued chain head is `{
      * originatingConnectionId: null, hopCount: 0 }` (the explicit

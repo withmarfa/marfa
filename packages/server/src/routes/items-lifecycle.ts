@@ -149,7 +149,6 @@ export function itemsLifecycleRoutes(storage: Storage) {
       item: restored,
       metadata,
       tenantId,
-      ...c.var.cycle,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -194,7 +193,6 @@ export function itemsLifecycleRoutes(storage: Storage) {
       item: updated,
       metadata,
       tenantId,
-      ...c.var.cycle,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

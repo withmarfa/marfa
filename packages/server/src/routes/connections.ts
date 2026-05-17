@@ -400,7 +400,6 @@ export function connectionRoutes(storage: Storage, salt: string) {
         item: connection,
         metadata,
         tenantId,
-        ...c.var.cycle,
       });
     }
 

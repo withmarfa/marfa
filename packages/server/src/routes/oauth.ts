@@ -108,8 +108,10 @@ async function createUserAppGrant(
   clientId: string,
   scopes: string[],
   source: "myme/oauth/authorize" | "myme/oauth/device",
-  cycle: AppEnv["Variables"]["cycle"],
 ): Promise<{ id: string; created: boolean }> {
+  // T-144: cycle metadata flows through `cycleRequestContext` (set by
+  // `cycleMiddleware`) — `publish()` reads it automatically. The
+  // explicit `cycle` parameter was dead weight under the new shape.
   let tenantId: string | undefined;
   if (storage.users) {
     // T-074: lookup by Better Auth user id (the canonical bridge);
@@ -164,7 +166,6 @@ async function createUserAppGrant(
           item: updated,
           metadata,
           tenantId,
-          ...cycle,
         });
         return { id: updated.id, created: false };
       }
@@ -194,7 +195,7 @@ async function createUserAppGrant(
     tenantId,
   );
   const metadata = await storage.metadata.get(item.id);
-  await publish({ type: "created", item, metadata, tenantId, ...cycle });
+  await publish({ type: "created", item, metadata, tenantId });
   return { id: item.id, created: true };
 }
 
@@ -1781,7 +1782,6 @@ export function authRoutes(
       row.client_id,
       row.scopes,
       "myme/oauth/device",
-      c.var.cycle,
     );
     const ok = await storage.oauth.approveDeviceCode(row.id, grant.id);
     if (!ok) {
