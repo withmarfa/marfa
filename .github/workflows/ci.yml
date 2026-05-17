@@ -133,11 +133,25 @@ jobs:
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      # Install pg_dump 17 — the runner's preinstalled client tools are older
+      # than the postgres:17 service container, and pg_dump refuses to dump a
+      # newer-version server. Pulling from the official PG apt repo gives us
+      # a version-matched binary on PATH.
+      - name: Install postgresql-client-17
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg lsb-release
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
       - name: Regenerate SQLite SCHEMA_SQL
         run: pnpm --filter @mymehq/server run schema-sql:generate:sqlite
       - name: Regenerate Postgres SCHEMA_SQL
         # Bypass the with-temp-pg.sh wrapper — runner reaches services
-        # container directly on localhost:5432.
+        # container directly on localhost:5432, and uses the host pg_dump 17
+        # installed above (PG_CONTAINER_NAME stays unset so the generator
+        # falls back to the host binary path).
         run: pnpm --filter @mymehq/server exec tsx scripts/generate-schema-sql.ts --dialect=pg
       - name: Check for drift
         run: |
