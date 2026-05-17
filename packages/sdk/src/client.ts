@@ -1196,9 +1196,12 @@ export class MymeClient {
     },
 
     register: async (schema: TypeSchema): Promise<TypeSchema> => {
-      return this.transport.request<TypeSchema>("POST", "/types", {
-        body: schema,
-      });
+      const res = await this.transport.request<{ type: TypeSchema }>(
+        "POST",
+        "/types",
+        { body: schema },
+      );
+      return res.type;
     },
 
     update: async (
