@@ -91,13 +91,39 @@ Two coordinated PRs land RLS as defence-in-depth beneath the application-layer t
 
 The Drizzle PG instance is wrapped in a per-request context proxy (`storage/pg/request-context.ts`) that consults an `AsyncLocalStorage` on every method access. The RLS middleware (`middleware/rls-tenant-context.ts`) wraps each tenant-bounded request in `db.transaction(async tx => { SELECT set_config('myme.tenant_id', $1, true); SET LOCAL ROLE myme_app; ... })` and stores `tx` on the ALS. Storage calls during the request flow through `tx`'s reserved connection and are subject to the policies.
 
-**Activation.** Gated by `MYME_RLS_ENFORCE=true`. With the flag unset (the default), the proxy still exists but the middleware never installs an ALS context, so all queries fall through to the unwrapped base instance and run as the connection owner (RLS bypassed by virtue of ownership). Single-tenant self-hosts continue unchanged.
+**Activation.** Gated by `MYME_RLS_ENFORCE` (**default `true` from T-146**; was `false` pre-T-146). Explicit opt-out is `MYME_RLS_ENFORCE=false` — convenient for diagnosis but should not run in production. With the flag off, the proxy still exists but the middleware never installs an ALS context, so all queries fall through to the unwrapped base instance and run as the connection owner (RLS bypassed by virtue of ownership). SQLite is unaffected — the middleware skips when `storage.pgDb` is undefined.
 
-**Bypass paths.** Three intentional carve-outs from the role-switch:
+**Bypass paths.** Two intentional carve-outs from the role-switch wrapper:
 
 - **Platform-admin / anonymous / bootstrap** — requests with no `apiKey.tenant_id` skip the wrapper and run as the owner. `requireAdmin` is still load-bearing for cross-tenant authority.
 - **Better Auth** — `storage.betterAuthDb` is the unwrapped base instance. The auth library manages its own connection context outside the data-plane request middleware; auth tables (`auth_*`) carry no RLS.
-- **Streaming responses** — `/events` (SSE) and `/export` (NDJSON archive) hold the response open for arbitrary durations; wrapping them in a transaction would hold a pool connection for the same duration. Bypassed by URL prefix. Both are reads with application-layer tenant scoping; RLS depth-of-defence on those endpoints is a deliberate follow-on.
+
+Streaming responses (`/events` SSE + `/export` NDJSON / archive) used to be a third bypass — wrapping them in a transaction would pin a pool connection for the response's full duration. T-146 closes that gap via a different mechanism (see next section). They remain exempt from the transaction wrapper but apply session-level RLS internally.
+
+## Streaming RLS (T-146)
+
+`/events` and `/export` apply RLS at the database layer through a different mechanism than the request middleware. They cannot wrap themselves in a transaction (long-lived txns wedge pool slots, accumulate locks, risk deadlocks), so each stream reserves a dedicated pool connection and applies **session-level** `SET ROLE myme_app` + `set_config('myme.tenant_id', $1, false)` (third arg `false` = NOT `SET LOCAL`). Storage reads inside the stream flow through that connection via the existing `pgRequestContext` ALS proxy — Drizzle bound to the reserved connection becomes the `tx` substitute.
+
+The helper lives at `storage/pg/streaming-rls.ts`. Public surface: `acquireStreamRls(client, tenantId) -> StreamRlsContext` and `withStreamRls(client, tenantId, fn)`. The context carries `release()` — idempotent cleanup that runs `DISCARD ALL` on the connection (canonical reset: drops role, every SET, prepared statements, sequences) then returns the connection to the pool. If `DISCARD ALL` fails the connection is destroyed via `reserved.end()` instead — a reset failure means the connection is in an unknown state, and a connection returned to the pool with `myme_app` role + a leaked `myme.tenant_id` would be served to a future request as that tenant. The destroy fallback is the load-bearing safety property.
+
+**Cleanup invariants:**
+
+- `release()` is idempotent — safe to call from multiple exit paths.
+- `/export` wires cleanup in a `try/finally` around the start callback's body (single linear path).
+- `/events` wires cleanup into the existing `cleanup()` closure, which fires from (a) pump completion, (b) replay errors, (c) the `catchup_too_old` terminal path, (d) the `c.req.raw.signal` abort listener on client disconnect. Acquisition failure aborts the stream cleanly via `controller.error` — no rows ever sent.
+- If `DISCARD ALL` fails the connection is destroyed via `reserved.end()` rather than returned poisoned.
+
+**Pool-slot consumption.** Each active stream consumes one pool slot for its lifetime. Today's pool size is 10 (`pg/connection.ts`); the bottleneck only bites at 10+ concurrent streams per server instance. Watch in staging; if it bites, partition into a dedicated streaming sub-pool.
+
+**Activation conditions.** All three must hold for the stream to acquire an RLS context:
+
+- `options.rlsEnforce === true` (env-driven; default on for T-146).
+- `options.pgClient !== null` (PG dialect; SQLite passes `null`).
+- Caller has a tenant_id (workspace_admin / member — not platform-admin / anonymous / single-tenant self-host).
+
+If any condition is false the route runs on the owner connection, matching the per-request middleware's bypass semantics.
+
+**Pre-T-146 historical note.** The original RLS PR (T-025) left `/events` + `/export` as a deliberate gap — `STREAMING_PATH_PREFIXES` in `middleware/rls-tenant-context.ts` exempted them from the transaction wrapper and the docstring acknowledged the depth-of-defence hole. T-146 closes it.
 
 ## Per-tenant background cleanup (T-050)
 

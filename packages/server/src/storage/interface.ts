@@ -1475,6 +1475,16 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    * middleware casts via the PgDb type at consumer-site.
    */
   pgDb?: unknown;
+  /**
+   * T-146: optional reference to the underlying postgres-js client.
+   * Exposed so streaming routes can `client.reserve()` a dedicated
+   * pool connection for session-level RLS (the per-request middleware
+   * uses a transaction; streams can't hold one open). Set only on
+   * the PG storage; left `undefined` on SQLite. Typed `unknown` for
+   * the same portability reason as `pgDb`; consumer-site casts to
+   * `PgClient`.
+   */
+  pgClient?: unknown;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   /**
    * T-116: hard-delete every artefact tied to the given `auth_user.id`.

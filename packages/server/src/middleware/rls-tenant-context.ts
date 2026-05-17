@@ -46,10 +46,13 @@ import type { AppEnv } from "./auth.js";
  * archive export (`/export`) hold the response open for an arbitrary
  * duration — wrapping them in a transaction would hold a pool
  * connection open for the same duration. They're exempted by URL
- * pattern. Both are reads with application-layer tenant scoping
- * already; until those streams move to a different transaction
- * pattern, RLS depth-of-defence on those endpoints is a deliberate
- * gap. Captured as a follow-on.
+ * pattern HERE, but they are NOT bypass paths for RLS overall: T-146
+ * closes the gap by applying session-level (`SET`, not `SET LOCAL`)
+ * `myme.tenant_id` + `SET ROLE myme_app` on a dedicated pool
+ * connection inside the route itself (see
+ * `storage/pg/streaming-rls.ts`). The exemption keeps the long-lived
+ * transaction model away from streams; it does not skip the DB-level
+ * fence.
  *
  * **`SET LOCAL` correctness.** `set_config(name, value, true)` is
  * the parameterised form of `SET LOCAL` — safe under

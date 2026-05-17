@@ -5,11 +5,32 @@ import { requireAuth, computeTypeFilter } from "../middleware/auth.js";
 import { subscribe, subscribeEdges, wireEventName } from "../pubsub.js";
 import type { EdgeEventWithId, ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
+import type { PgClient } from "../storage/pg/connection.js";
+import {
+  acquireStreamRls,
+  type StreamRlsContext,
+} from "../storage/pg/streaming-rls.js";
 
 const KEEPALIVE_INTERVAL_MS = 30_000;
 const REPLAY_BATCH_SIZE = 500;
 
-export function eventRoutes(storage: Storage): Hono<AppEnv> {
+/**
+ * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable T-146
+ * session-level RLS on a dedicated pool connection for the lifetime
+ * of the SSE stream. Without both set the route runs on the owner
+ * connection (unchanged pre-T-146 behaviour) — used for SQLite, for
+ * tenant-less callers (platform admin / single-tenant self-host),
+ * and when RLS enforcement is disabled instance-wide.
+ */
+export interface EventRoutesOptions {
+  rlsEnforce: boolean;
+  pgClient: PgClient | null;
+}
+
+export function eventRoutes(
+  storage: Storage,
+  options: EventRoutesOptions = { rlsEnforce: false, pgClient: null },
+): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
   // GET /events — Server-Sent Events stream with replay support
@@ -20,9 +41,49 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
     const lastEventId = c.req.header("Last-Event-ID");
     const allowedTypes = computeTypeFilter(apiKey);
 
+    // T-146: dedicated-connection session-level RLS for the stream's
+    // lifetime. Acquired lazily inside `start` so a setup failure
+    // surfaces through the stream (the route still returns 200; the
+    // failure aborts the stream cleanly). Tenant-less callers, SQLite,
+    // and the RLS-disabled instance fall back to the owner connection.
     const stream = new ReadableStream({
-      start(controller) {
+      async start(controller) {
         const encoder = new TextEncoder();
+        // RLS context for this stream. Acquired up front; cleanup
+        // runs exactly once via `releaseRls()` which is hooked into
+        // every termination path (normal close, error, abort, catchup
+        // terminal). Acquisition failure aborts the stream and the
+        // client sees a closed connection (no rows leaked).
+        let rlsCtx: StreamRlsContext | null = null;
+        if (options.rlsEnforce && options.pgClient !== null && tenantId) {
+          try {
+            rlsCtx = await acquireStreamRls(options.pgClient, tenantId);
+          } catch (err) {
+            // Setup failed before any data was sent. Close the stream;
+            // node-server propagates as an empty SSE response. No
+            // tenant context was set — connection has already been
+            // returned to or destroyed from the pool.
+            try {
+              controller.error(err);
+            } catch {
+              /* already closed */
+            }
+            return;
+          }
+        }
+        let rlsReleased = false;
+        const releaseRls = (): void => {
+          if (rlsReleased || !rlsCtx) return;
+          rlsReleased = true;
+          // Fire-and-forget — cleanup must not block the abort /
+          // controller-close hot path. Release is idempotent and
+          // self-contained; failures destroy the connection rather
+          // than risk a poisoned return to the pool.
+          const ctx = rlsCtx;
+          void ctx.release().catch(() => {
+            /* logged inside disposeReserved; swallow here */
+          });
+        };
         // Mutable flag used across async callbacks. Wrapped in an object
         // so TypeScript's narrowing doesn't assume the value is `false`
         // at the callsite when mutations happen inside async closures.
@@ -33,7 +94,12 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
           try {
             controller.enqueue(encoder.encode(data));
           } catch {
-            state.closed = true;
+            // T-146: enqueue failed → controller is gone. Drive
+            // cleanup() immediately so the reserved RLS connection
+            // is released rather than waiting for the next pump
+            // tick (which on an idle stream could be indefinite).
+            // `cleanup()` is itself idempotent.
+            cleanup();
           }
         };
 
@@ -45,6 +111,13 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
         const cleanup = () => {
           state.closed = true;
           clearInterval(keepAlive);
+          // T-146: release the RLS-pinned connection on every
+          // termination path. Idempotent — safe to call from multiple
+          // exit points (pump completion, error, abort, terminal
+          // catchup event, server shutdown). The cleanup closure is
+          // the single chokepoint; everything that closes the stream
+          // calls it.
+          releaseRls();
         };
 
         // Buffer live events while replaying
@@ -157,7 +230,14 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
           }
           if (afterId !== null) {
             const afterIdResolved = afterId;
-            void (async () => {
+            // T-146: replay reads `storage.eventLog` — RLS-policy-
+            // guarded tables. Install the ALS context so reads flow
+            // through the reserved connection that carries
+            // `myme.tenant_id` + `myme_app` role. The live pumps
+            // (`pump` / `pumpEdges`) below don't touch storage —
+            // they read from in-memory pubsub iterators — and so
+            // don't need the ALS scope.
+            const replay = async () => {
               try {
                 // Detect stale cursors — clients whose `Last-Event-ID`
                 // predates the retention window can't be faithfully caught
@@ -287,6 +367,13 @@ export function eventRoutes(storage: Storage): Hono<AppEnv> {
                 replaying = false;
                 liveBuffer.length = 0;
                 liveEdgeBuffer.length = 0;
+              }
+            };
+            void (async () => {
+              if (rlsCtx) {
+                await rlsCtx.withInstalledContext(replay);
+              } else {
+                await replay();
               }
             })();
           } else {

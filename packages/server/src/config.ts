@@ -278,7 +278,11 @@ export function loadConfig(): AppConfig {
     ),
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
-    rlsEnforce: process.env.MYME_RLS_ENFORCE === "true",
+    // T-146: default flipped from `false` to `true`. RLS now enforces
+    // by default; explicit opt-out is `MYME_RLS_ENFORCE=false`. The
+    // SQLite dialect is unaffected — the middleware skips when
+    // `storage.pgDb` is undefined regardless of this flag.
+    rlsEnforce: process.env.MYME_RLS_ENFORCE !== "false",
     auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
     auditCleanupIntervalMs: envNumber(
       process.env.AUDIT_CLEANUP_INTERVAL_MS,
