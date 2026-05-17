@@ -92,6 +92,60 @@ jobs:
             exit 1
           fi
 
+  # T-145: detect drift between Drizzle migrations and the auto-generated
+  # SCHEMA_SQL bootstrap. Same trigger pattern as the other freshness jobs:
+  # main + manual dispatch. Hardcoded ubuntu-latest because the PG generator
+  # needs a services: container (Linux-only — same constraint as ci-pg).
+  schema-sql-freshness:
+    name: SCHEMA_SQL generator freshness
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DATABASE_URL: postgresql://myme:myme@localhost:5432/myme_schema_dump
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: myme
+          POSTGRES_PASSWORD: myme
+          POSTGRES_DB: myme_schema_dump
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U myme"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Regenerate SQLite SCHEMA_SQL
+        run: pnpm --filter @mymehq/server run schema-sql:generate:sqlite
+      - name: Regenerate Postgres SCHEMA_SQL
+        # Bypass the with-temp-pg.sh wrapper — runner reaches services
+        # container directly on localhost:5432.
+        run: pnpm --filter @mymehq/server exec tsx scripts/generate-schema-sql.ts --dialect=pg
+      - name: Check for drift
+        run: |
+          if ! git diff --exit-code packages/server/src/storage/{pg,sqlite}/schema-sql.generated.ts; then
+            echo "SCHEMA_SQL is out of date. Run 'pnpm --filter @mymehq/server schema-sql:generate' and commit."
+            exit 1
+          fi
+
   # Test jobs — run on every PR and on main pushes. These are the fast
   # pre-merge signal and are considered load-bearing for merge decisions.
   ci-sqlite:

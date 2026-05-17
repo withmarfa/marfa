@@ -22,8 +22,11 @@
     "migrate": "tsx src/storage/migrate.ts",
     "migrate:oauth-to-credential": "tsx src/scripts/migrate-oauth-to-credential.ts",
     "migrate:sync-json-to-connection": "tsx src/scripts/migrate-sync-json-to-connection.ts",
-    "migrate:pg:generate": "drizzle-kit generate --config=drizzle.pg.config.ts",
-    "migrate:sqlite:generate": "drizzle-kit generate --config=drizzle.sqlite.config.ts",
+    "migrate:pg:generate": "drizzle-kit generate --config=drizzle.pg.config.ts && pnpm run schema-sql:generate:pg",
+    "migrate:sqlite:generate": "drizzle-kit generate --config=drizzle.sqlite.config.ts && pnpm run schema-sql:generate:sqlite",
+    "schema-sql:generate": "pnpm run schema-sql:generate:sqlite && pnpm run schema-sql:generate:pg",
+    "schema-sql:generate:sqlite": "tsx scripts/generate-schema-sql.ts --dialect=sqlite",
+    "schema-sql:generate:pg": "bash scripts/with-temp-pg.sh tsx scripts/generate-schema-sql.ts --dialect=pg",
     "generate:openapi": "tsx scripts/generate-openapi.ts"
   },
   "dependencies": {
