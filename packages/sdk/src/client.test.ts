@@ -806,6 +806,34 @@ describe("types", () => {
       await client.types.delete(id, { force: true });
     }
   });
+
+  it("update returns the persisted schema with id and version populated", async () => {
+    const id = `demo.t167_${Date.now().toString()}`;
+    await client.types.register({
+      id,
+      version: 1,
+      label: "T-167 update-unwrap test",
+      description: "Ephemeral type for the update-unwrap assertion",
+      fields: {
+        name: { type: "string", required: true },
+      },
+    });
+    try {
+      const updated = await client.types.update(id, {
+        version: 2,
+        label: "T-167 update-unwrap test (v2)",
+        description: "Updated description on v2",
+        fields: {
+          name: { type: "string", required: true },
+          extra: { type: "string" },
+        },
+      });
+      expect(updated.id).toBe(id);
+      expect(updated.version).toBe(2);
+    } finally {
+      await client.types.delete(id, { force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
