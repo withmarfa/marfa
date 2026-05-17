@@ -1,9 +1,14 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/lib.ts"],
+  entry: {
+    index: "src/index.ts",
+    lib: "src/lib.ts",
+    "worker-entry": "src/integrations/local-runtime/worker-entry.ts",
+  },
   format: ["esm"],
   dts: true,
   clean: true,
   target: "node20",
+  external: ["@mymehq/runtime-sdk", "@mymehq/shared"],
 });
