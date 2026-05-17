@@ -6,7 +6,7 @@ import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, waitForAudit } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Storage } from "../storage/interface.js";
 
@@ -244,12 +244,93 @@ describe("bootstrap sentinel", () => {
         },
       });
       expect(res.status).toBe(201);
-      const body = (await res.json()) as { role: string };
+      const body = (await res.json()) as { role: string; id: string };
       // Bootstrap key is coerced to admin regardless of requested role.
       expect(body.role).toBe("admin");
       // Sentinel must now be stamped.
       const stamped = await storage.settings.get("bootstrapped");
       expect(stamped).toBe("true");
+
+      // T-150: bootstrap mint emits the distinct `key.bootstrap` action,
+      // not `key.create`, so post-incident forensics can grep for the
+      // first-mint event directly.
+      const audits = await waitForAudit(
+        () => storage.audit.list({ action: "key.bootstrap" }),
+        (r) => r.data.some((row) => row.resource_id === body.id),
+      );
+      const row = audits.data.find((r) => r.resource_id === body.id);
+      expect(row).toBeTruthy();
+      expect(row?.action).toBe("key.bootstrap");
+      expect(row?.resource_type).toBe("key");
+      // Bootstrap mint has no calling credential — `key_id` is null.
+      expect(row?.key_id).toBeNull();
+
+      // Negative: no `key.create` row for this id.
+      const createRows = await storage.audit.list({ action: "key.create" });
+      expect(createRows.data.some((r) => r.resource_id === body.id)).toBe(
+        false,
+      );
+    } finally {
+      await storage.close();
+    }
+  });
+
+  it("admin-issued POST /keys emits `key.create`, not `key.bootstrap` (T-150)", async () => {
+    // Self-contained — bootstrap a fresh app, then use the bootstrap
+    // admin to mint a second key on the now-closed (non-bootstrap)
+    // branch. Avoids depending on the shared `ctx` because freshApp()
+    // tests under PG truncate the shared container, which would wipe
+    // the ctx's admin key and sentinel between tests.
+    const { app, storage } = await freshApp();
+    try {
+      const bootstrapRes = await request(app, "POST", "/keys", {
+        body: {
+          label: "bootstrap-admin",
+          source: "bootstrap-admin",
+          type_permissions: { "*": "write" },
+        },
+      });
+      expect(bootstrapRes.status).toBe(201);
+      const bootstrap = (await bootstrapRes.json()) as {
+        id: string;
+        key: string;
+      };
+
+      // Second POST authenticated as the bootstrap admin — this is the
+      // non-bootstrap branch (sentinel is now stamped).
+      const followUpRes = await request(app, "POST", "/keys", {
+        key: bootstrap.key,
+        body: {
+          label: "routine-admin-mint",
+          source: "routine-admin-mint",
+          role: "member",
+          default_tier: "feed",
+          type_permissions: { "core.note": "read" },
+          extension_permissions: {},
+          edge_permissions: {},
+        },
+      });
+      expect(followUpRes.status).toBe(201);
+      const followUp = (await followUpRes.json()) as { id: string };
+
+      const audits = await waitForAudit(
+        () => storage.audit.list({ action: "key.create" }),
+        (r) => r.data.some((row) => row.resource_id === followUp.id),
+      );
+      const row = audits.data.find((r) => r.resource_id === followUp.id);
+      expect(row).toBeTruthy();
+      expect(row?.action).toBe("key.create");
+      expect(row?.resource_type).toBe("key");
+      // Caller is the bootstrap admin — `key_id` is its id.
+      expect(row?.key_id).toBe(bootstrap.id);
+
+      // Negative: no `key.bootstrap` row for the second-mint id.
+      const bootstrapRows = await storage.audit.list({
+        action: "key.bootstrap",
+      });
+      expect(
+        bootstrapRows.data.some((r) => r.resource_id === followUp.id),
+      ).toBe(false);
     } finally {
       await storage.close();
     }
