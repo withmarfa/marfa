@@ -1,6 +1,6 @@
 # Myme
 
-Typed data layer. This monorepo contains seven active workspace packages plus six in-tree Integrations and the Cloudflare infra package:
+Typed data layer. This monorepo contains eight active workspace packages plus six in-tree Integrations and the Cloudflare infra package:
 
 **Core packages (`packages/`):**
 
@@ -8,6 +8,7 @@ Typed data layer. This monorepo contains seven active workspace packages plus si
 - **@mymehq/shared** — Wire types, Zod validation schemas, error codes, type registry consumer, ID utilities, the OAuth scope grammar parser, the `IntegrationManifestSchema`. The foundation imported by every other package.
 - **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published). Carries the data plane plus the Connections / OAuth / Better Auth surfaces.
 - **@mymehq/sdk** — TypeScript HTTP client (`@mymehq/sdk` and the `@mymehq/sdk/auth` subpath for the OAuth helpers — `MymeAuth`, PKCE helpers, token storages, `startDeviceFlow`).
+- **@mymehq/webhooks** — Cross-runtime inbound-webhook signature verification (HMAC-SHA256, Slack, Stripe, GitHub). Web Crypto only, so `runtime-control` (Workers) and `server` (Node) consume the same code.
 - **@mymehq/runtime-control** — Cloudflare Worker control plane. Verifies inbound webhook receipts, enqueues per-Integration messages, mediates the runtime-credential broker. Web-Crypto only; no Node APIs.
 - **@mymehq/runtime-sdk** — In-Worker SDK consumed by Integration Workers. Queue consumer, echo-suppression DO, manifest-typed handler scaffolding.
 - **@mymehq/runtime-test** — In-Worker test harness mirroring the runtime-sdk surface so Integrations can run unit tests in a `miniflare`-style fixture without booting a real Cloudflare Workers runtime.
@@ -66,6 +67,7 @@ The reserved `system.*` namespace carries platform-internal items. All `system.*
 - `system.device` — connected devices (name, kind, last-active timestamp).
 - `system.credential` — API keys and OAuth tokens (encrypted at rest under per-domain HKDF tags).
 - `system.app` — registered app identities. Required before any `app.<app-name>.<type>` references resolve.
+- `system.webhook` — outbound webhook subscriptions (URL, secret, event filters, delivery state).
 - `system.connection` — approved relationships (the three kinds described under Authentication).
 - `system.integration` — published Integration manifests. One row per `(name, version)` pair; the install pipeline persists the manifest onto the `system.connection` it produces.
 - `system.activity` — operator-visible state: sync progress, errors, reauth prompts. Severity-tagged. The `severity: action_required` slice surfaces as a Repairs-style inbox.
