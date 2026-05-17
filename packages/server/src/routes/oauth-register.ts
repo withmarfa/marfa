@@ -1,0 +1,453 @@
+/**
+ * T-158: Myme-owned Dynamic Client Registration endpoint.
+ *
+ * Fronts the @better-auth/oauth-provider plugin's `/auth/oauth2/register`
+ * endpoint with our own handler. The Myme handler is mounted BEFORE the
+ * better-auth catch-all (in `app.ts`), so Hono's registration-order
+ * dispatch hands DCR requests to us; the plugin's own DCR endpoint
+ * never runs.
+ *
+ * **Why we override.** Two upstream constraints in
+ * `@better-auth/oauth-provider@1.6.9` make the plugin's DCR unfit for
+ * Myme's device-flow surface:
+ *
+ *   1. The plugin's DCR body schema hardcodes a Zod enum that accepts
+ *      only `authorization_code`, `client_credentials`, `refresh_token`
+ *      (verified in `node_modules/.../dist/index.mjs:3462-3466`). The
+ *      device-code URN — `urn:ietf:params:oauth:grant-type:device_code`
+ *      per RFC 8628 §3.4 — is rejected at request validation with a
+ *      400. There is no config knob to widen the enum.
+ *   2. The plugin's write path goes through Better Auth's Drizzle
+ *      adapter, which (at `@better-auth/drizzle-adapter@1.6.9`
+ *      `dist/index.mjs:434`) sets `supportsArrays: true` when the
+ *      provider is `"pg"`. The adapter then passes JS arrays
+ *      (`scopes`, `redirect_uris`, `grant_types`, `response_types`,
+ *      `contacts`) straight into the `text` columns Myme's PG schema
+ *      declares. Postgres coerces the arrays to comma-joined strings
+ *      on write; on read, the plugin's `schemaToOAuth` calls
+ *      `scopes?.join(" ")` on a string and surfaces a `TypeError` as
+ *      HTTP 500 to the DCR caller. The Myme schema is intentionally
+ *      `text` (JSON-encoded string) — Myme's own writes (`mintTokenPair`
+ *      in the OauthProvider stores) JSON-stringify on the way in and
+ *      `safeJsonParse` on the way out. The plugin's DCR was the only
+ *      Better-Auth-internal writer to `auth_oauth_client`, so routing
+ *      around it is sufficient.
+ *
+ * The handler mirrors the plugin's DCR response shape (RFC 7591 §3.2.1)
+ * and stores the row via `storage.oauthProvider.createClient` — same
+ * JSON-encoding convention as the rest of Myme's auth writes. Down-
+ * stream consumers (`/auth/authorize`, the device-flow handlers,
+ * `getClient` reads) are unchanged: they only need the JSON-encoded
+ * column shape we now write consistently.
+ *
+ * **Acceptance criteria covered (T-158):**
+ *   - 201 with credentials for `grant_types: ["authorization_code"]`
+ *     (gap 3 — no plugin path → no 500).
+ *   - 201 with credentials for `grant_types: ["urn:...device_code"]`
+ *     (gap 2 — Myme's Zod accepts the URN).
+ *
+ * (Gap 1 — `device_code` in `grant_types_supported` and the
+ * `device_authorization_endpoint` field — is handled separately by the
+ * augmented bare-root `/.well-known/oauth-authorization-server` and
+ * `/.well-known/openid-configuration` handlers in `app.ts`.)
+ */
+
+import { randomBytes } from "node:crypto";
+import { Hono } from "hono";
+import { z } from "@hono/zod-openapi";
+import type { AppEnv } from "../middleware/auth.js";
+import type { MymeAuth } from "../auth/instance.js";
+import type { OauthProviderStore, Storage } from "../storage/interface.js";
+import {
+  buildAllowedScopes,
+  resolveTenantIdForAuthUser,
+} from "../auth/oauth-provider.js";
+import { log } from "../middleware/logger.js";
+
+/** RFC 8628 device-code grant type literal. */
+const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+
+/**
+ * Grants the Myme route accepts at request-validation time.
+ *
+ * The plugin's own three (`authorization_code`, `client_credentials`,
+ * `refresh_token`) plus the device-code URN. Refresh-token grants are
+ * still valid alongside any of the others — the OAuth2 spec treats
+ * `refresh_token` as a refinement on grants that issue refresh tokens.
+ *
+ * Note that the @better-auth/oauth-provider plugin's
+ * `/auth/oauth2/token` endpoint still only knows how to dispatch the
+ * first three (verified at `dist/index.mjs:300-318`). Device-code
+ * exchange targets the Myme-owned `POST /auth/device/token` route in
+ * `routes/oauth.ts:1549-1750`, not the plugin's `/oauth2/token`. The
+ * discovery doc advertises both endpoints accordingly.
+ */
+const ACCEPTED_GRANT_TYPES = [
+  "authorization_code",
+  "client_credentials",
+  "refresh_token",
+  DEVICE_CODE_GRANT,
+] as const;
+
+const RegisterBodySchema = z.object({
+  // RFC 7591 §2: `redirect_uris` MUST be present for grants that
+  // perform a browser redirect (`authorization_code`, etc). Pure
+  // device-flow clients have no redirect, so we keep it optional and
+  // enforce a presence-check inside the handler (after `grant_types`
+  // resolution).
+  redirect_uris: z.array(z.string().min(1)).optional(),
+  grant_types: z.array(z.enum(ACCEPTED_GRANT_TYPES)).optional(),
+  response_types: z.array(z.enum(["code"])).optional(),
+  scope: z.string().optional(),
+  client_name: z.string().min(1).max(200).optional(),
+  client_uri: z.string().optional(),
+  logo_uri: z.string().optional(),
+  tos_uri: z.string().optional(),
+  policy_uri: z.string().optional(),
+  contacts: z.array(z.string().min(1)).optional(),
+  software_id: z.string().optional(),
+  software_version: z.string().optional(),
+  software_statement: z.string().optional(),
+  token_endpoint_auth_method: z
+    .enum(["none", "client_secret_basic", "client_secret_post"])
+    .optional(),
+  type: z.enum(["web", "native", "user-agent-based"]).optional(),
+});
+
+type RegisterBody = z.infer<typeof RegisterBodySchema>;
+
+interface DcrError {
+  error: string;
+  error_description: string;
+}
+
+function dcrError(error: string, description: string): DcrError {
+  return { error, error_description: description };
+}
+
+/**
+ * Validates `redirect_uris` per the plugin's `SafeUrlSchema` semantics
+ * (`@better-auth/oauth-provider@1.6.9` `dist/index.mjs:200-225`):
+ *
+ *   - rejects `javascript:`, `data:`, `vbscript:`
+ *   - allows http:// only for loopback hosts (127.0.0.1, ::1, *.localhost)
+ *   - allows custom schemes (mobile apps, `myapp://...`)
+ *   - requires https:// otherwise
+ *
+ * Mirrored here so a third-party SDK that previously hit the plugin's
+ * DCR sees identical 400-error rejection messages.
+ */
+function validateRedirectUri(uri: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(uri);
+  } catch {
+    return "URL must be parseable";
+  }
+  const DANGEROUS = ["javascript:", "data:", "vbscript:"];
+  if (DANGEROUS.includes(u.protocol)) {
+    return "URL cannot use javascript:, data:, or vbscript: scheme";
+  }
+  if (u.protocol === "http:" && !isLoopbackHost(u.host)) {
+    return "Redirect URI must use HTTPS (HTTP allowed only for loopback hosts)";
+  }
+  return null;
+}
+
+function isLoopbackHost(host: string): boolean {
+  // host may include ":port"
+  const hostname = host.replace(/:\d+$/, "");
+  if (hostname === "127.0.0.1") return true;
+  if (hostname === "[::1]" || hostname === "::1") return true;
+  if (hostname === "localhost") return true;
+  if (hostname.endsWith(".localhost")) return true;
+  // 127.0.0.0/8
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(hostname);
+  if (m?.[1] === "127") return true;
+  return false;
+}
+
+/**
+ * Mounted at `/auth/oauth2/register`. Returns 201 with the registered
+ * client record on success; otherwise an RFC 7591 §3.2.2 error JSON
+ * with the matching HTTP status.
+ */
+export function oauthRegisterRoutes(
+  storage: Storage,
+  oauthProvider: OauthProviderStore,
+  auth: MymeAuth | undefined,
+): Hono<AppEnv> {
+  const router = new Hono<AppEnv>();
+  const allowedScopes = new Set(buildAllowedScopes());
+
+  router.post("/oauth2/register", async (c) => {
+    // RFC 7591 §3.2.1 — content-type must be JSON for the request body.
+    // The plugin enforces this internally; we do the same here so the
+    // SDK behaviour stays identical across both surfaces.
+    const contentType = c.req.header("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      return c.json(
+        dcrError("invalid_client_metadata", "Content-Type must be JSON"),
+        400,
+      );
+    }
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json(
+        dcrError("invalid_client_metadata", "Invalid JSON body"),
+        400,
+      );
+    }
+
+    const parsed = RegisterBodySchema.safeParse(rawBody);
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      const path = issue ? issue.path.join(".") : "";
+      const message = issue?.message ?? "Invalid body";
+      return c.json(
+        dcrError(
+          "invalid_client_metadata",
+          path ? `[${path}] ${message}` : message,
+        ),
+        400,
+      );
+    }
+
+    const body: RegisterBody = parsed.data;
+
+    // ---- Grant types ----
+    // RFC 7591 §2: default to `authorization_code` when omitted —
+    // matches plugin behaviour.
+    const grantTypes = body.grant_types ?? ["authorization_code"];
+
+    // `refresh_token` is only valid alongside a primary grant that
+    // issues refresh tokens. The plugin guards this at config-time;
+    // we guard it per-client at registration. Matches the plugin's
+    // boot-time check (`dist/index.mjs:2747`).
+    if (
+      grantTypes.includes("refresh_token") &&
+      !grantTypes.includes("authorization_code") &&
+      !grantTypes.includes(DEVICE_CODE_GRANT)
+    ) {
+      return c.json(
+        dcrError(
+          "invalid_client_metadata",
+          "refresh_token grant requires authorization_code or device_code grant",
+        ),
+        400,
+      );
+    }
+
+    // `client_credentials` requires an authenticated registration per
+    // RFC 7591 §3.2.1. Myme's DCR is unauthenticated (single-user self-
+    // hosts + public SDK clients), so we reject `client_credentials`
+    // outright — matches the plugin's behaviour at `dist/index.mjs:1197`.
+    if (grantTypes.includes("client_credentials")) {
+      return c.json(
+        dcrError(
+          "invalid_client_metadata",
+          "client_credentials grant requires authenticated registration",
+        ),
+        400,
+      );
+    }
+
+    // ---- Response types ----
+    // RFC 7591 §2: defaults to `["code"]`. When `authorization_code`
+    // is in `grant_types`, `code` MUST be in `response_types`.
+    const responseTypes = body.response_types ?? ["code"];
+    if (
+      grantTypes.includes("authorization_code") &&
+      !responseTypes.includes("code")
+    ) {
+      return c.json(
+        dcrError(
+          "invalid_client_metadata",
+          "When 'authorization_code' grant type is used, 'code' response type must be included",
+        ),
+        400,
+      );
+    }
+
+    // ---- Redirect URIs ----
+    // Required for `authorization_code` (browser flow). Device-only
+    // clients (`grant_types: [DEVICE_CODE_GRANT]`) may omit them.
+    const needsRedirectUris = grantTypes.includes("authorization_code");
+    const redirectUris = body.redirect_uris ?? [];
+    if (needsRedirectUris && redirectUris.length === 0) {
+      return c.json(
+        dcrError(
+          "invalid_redirect_uri",
+          "Redirect URIs are required for authorization_code grant",
+        ),
+        400,
+      );
+    }
+    for (const uri of redirectUris) {
+      const err = validateRedirectUri(uri);
+      if (err) {
+        return c.json(dcrError("invalid_redirect_uri", err), 400);
+      }
+    }
+
+    // ---- Scope validation ----
+    // The body's `scope` (space-separated) MUST be a subset of the
+    // server-allowed scope set. Default — when omitted — is the full
+    // allowed set (mirrors plugin behaviour at `dist/index.mjs:1205`).
+    const requestedScopes = (body.scope?.trim() ?? "")
+      .split(/\s+/)
+      .filter((s) => s.length > 0);
+    if (requestedScopes.length === 0) {
+      // Default — use the full allowed set.
+      for (const sc of allowedScopes) requestedScopes.push(sc);
+    }
+    for (const sc of requestedScopes) {
+      if (!allowedScopes.has(sc)) {
+        return c.json(
+          dcrError("invalid_scope", `cannot request scope ${sc}`),
+          400,
+        );
+      }
+    }
+
+    // ---- Token endpoint auth method ----
+    // Unauthenticated DCR is always public per RFC 7591 §3.2.1 — the
+    // plugin enforces `auth_method=none` (and clears type=web) for
+    // unauthenticated callers (`dist/index.mjs:1175-1183`). Mirror that
+    // here so a third-party SDK previously calling the plugin sees the
+    // same response shape.
+    const tokenEndpointAuthMethod = "none";
+    const clientType =
+      body.type === "web" ? undefined : (body.type ?? undefined);
+
+    // ---- Client identity ----
+    // Business key — mirrors the plugin's 32-char alphanumeric format
+    // (`dist/index.mjs:1265`).
+    const clientId = generateClientId();
+    if (await oauthProvider.clientExists(clientId)) {
+      // Collision is astronomically unlikely (32-char a-zA-Z gives
+      // ~190 bits) but the check costs nothing.
+      return c.json(
+        dcrError("server_error", "client id collision; please retry"),
+        500,
+      );
+    }
+
+    // ---- Tenant binding ----
+    // Mirrors the plugin's `clientReference` callback semantics. For
+    // unauthenticated DCR there's no session, so the binding is null.
+    // (Hosted-mode tenant accountability happens later, at the
+    // consent-step grant projection — `routes/auth-consent.ts`.)
+    let referenceId: string | null = null;
+    if (auth) {
+      try {
+        const session = await auth.getSession(c.req.raw.headers);
+        if (session?.user.id) {
+          const tenantId = await resolveTenantIdForAuthUser(
+            storage,
+            session.user.id,
+          );
+          referenceId = tenantId ?? null;
+        }
+      } catch (err) {
+        // Failure here is non-fatal — the client still registers,
+        // just unbound. Log and continue.
+        log("warn", "oauth dcr: tenant resolution failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // ---- Persist ----
+    let created;
+    try {
+      created = await oauthProvider.createClient({
+        clientId,
+        name: body.client_name ?? null,
+        isPublic: true,
+        grantTypes,
+        responseTypes,
+        tokenEndpointAuthMethod,
+        scopes: requestedScopes,
+        redirectUris,
+        referenceId,
+        clientUri: body.client_uri ?? null,
+        logoUri: body.logo_uri ?? null,
+        tosUri: body.tos_uri ?? null,
+        policyUri: body.policy_uri ?? null,
+        contacts: body.contacts ?? null,
+        softwareId: body.software_id ?? null,
+        softwareVersion: body.software_version ?? null,
+        softwareStatement: body.software_statement ?? null,
+        type: clientType ?? null,
+      });
+    } catch (err) {
+      log("error", "oauth dcr: createClient failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return c.json(dcrError("server_error", "failed to register client"), 500);
+    }
+
+    // RFC 7591 §3.2.1 — 201 Created, no-store cache. Response shape
+    // matches the plugin's existing endpoint so a third-party SDK
+    // sees no wire-shape regression.
+    c.header("Cache-Control", "no-store");
+    c.header("Pragma", "no-cache");
+    return c.json(
+      {
+        client_id: created.clientId,
+        client_id_issued_at: created.clientIdIssuedAt,
+        client_name: body.client_name ?? undefined,
+        redirect_uris: redirectUris,
+        token_endpoint_auth_method: tokenEndpointAuthMethod,
+        grant_types: grantTypes,
+        response_types: responseTypes,
+        scope: requestedScopes.join(" "),
+        public: true,
+        disabled: false,
+        ...(clientType !== undefined && { type: clientType }),
+        ...(body.client_uri !== undefined && { client_uri: body.client_uri }),
+        ...(body.logo_uri !== undefined && { logo_uri: body.logo_uri }),
+        ...(body.tos_uri !== undefined && { tos_uri: body.tos_uri }),
+        ...(body.policy_uri !== undefined && { policy_uri: body.policy_uri }),
+        ...(body.contacts !== undefined && { contacts: body.contacts }),
+        ...(body.software_id !== undefined && {
+          software_id: body.software_id,
+        }),
+        ...(body.software_version !== undefined && {
+          software_version: body.software_version,
+        }),
+        ...(body.software_statement !== undefined && {
+          software_statement: body.software_statement,
+        }),
+      },
+      201,
+    );
+  });
+
+  return router;
+}
+
+/**
+ * 32-character a-zA-Z client id. Format-compatible with the plugin's
+ * default `generateRandomString(32, "a-z", "A-Z")` so existing tooling
+ * that does string-shape matching is unaffected. Sourced from
+ * `crypto.randomBytes` rather than `Math.random` — matches the plugin's
+ * CSPRNG-backed default and avoids the predictability code-smell on a
+ * public identifier.
+ */
+function generateClientId(): string {
+  const ALPHA = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const bytes = randomBytes(32);
+  let s = "";
+  for (let i = 0; i < 32; i += 1) {
+    // randomBytes(32) returns exactly 32 bytes; `?? 0` placates
+    // noUncheckedIndexedAccess without a non-null assertion.
+    const byte = bytes[i] ?? 0;
+    s = s + ALPHA.charAt(byte % ALPHA.length);
+  }
+  return s;
+}

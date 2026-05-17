@@ -305,6 +305,57 @@ describe("better-auth /auth/* surface", () => {
     expect(body.code_challenge_methods_supported).toEqual(["S256"]);
   });
 
+  it("T-158: discovery doc advertises the device_code grant + device_authorization_endpoint", async () => {
+    // RFC 8628 §4: clients discover the device-flow initiation endpoint
+    // via the `device_authorization_endpoint` metadata field. The grant
+    // type URN appears in `grant_types_supported` so conformant clients
+    // know they can request device-code authorization at all.
+    ctx = await createTestContext({ authAllowSignup: false });
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/.well-known/oauth-authorization-server",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      grant_types_supported?: string[];
+      device_authorization_endpoint?: string;
+    };
+    expect(body.grant_types_supported).toContain(
+      "urn:ietf:params:oauth:grant-type:device_code",
+    );
+    // Other grants the plugin natively supports stay advertised — the
+    // augmentation is strictly additive (insertion preserves the
+    // upstream order before appending the URN).
+    expect(body.grant_types_supported).toEqual(
+      expect.arrayContaining([
+        "authorization_code",
+        "client_credentials",
+        "refresh_token",
+        "urn:ietf:params:oauth:grant-type:device_code",
+      ]),
+    );
+    expect(body.device_authorization_endpoint).toMatch(/\/auth\/device$/);
+  });
+
+  it("T-158: openid-configuration also advertises the device_code grant", async () => {
+    ctx = await createTestContext({ authAllowSignup: false });
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/.well-known/openid-configuration",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      grant_types_supported?: string[];
+      device_authorization_endpoint?: string;
+    };
+    expect(body.grant_types_supported).toContain(
+      "urn:ietf:params:oauth:grant-type:device_code",
+    );
+    expect(body.device_authorization_endpoint).toMatch(/\/auth\/device$/);
+  });
+
   it("T-080: every discovery-doc URL field is prefixed with the configured authBaseUrl", async () => {
     const base = "https://example.test";
     ctx = await createTestContext({
