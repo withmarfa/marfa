@@ -4,7 +4,7 @@ import {
   type IntegrationWorkerEnv,
   type IntegrationWorkerConfig,
 } from "./worker-entry.js";
-import type { DlqProducer } from "./queue-consumer.js";
+import type { DlqProducer } from "../queue-consumer.js";
 
 /**
  * Routing tests for `buildConsumerEnv` (T-103). The wrapper's own

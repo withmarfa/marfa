@@ -1,7 +1,7 @@
 /**
  * Cloudflare Worker entrypoint for the GitHub Webhooks integration.
  */
-import { createIntegrationWorker } from "@mymehq/runtime-sdk";
+import { createIntegrationWorker } from "@mymehq/runtime-sdk/cloudflare";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
 import { GITHUB_WEBHOOKS_MANIFEST } from "./manifest.js";
 

@@ -1,19 +1,18 @@
 /**
- * @mymehq/runtime-sdk — public exports.
+ * `@mymehq/runtime-sdk` — substrate-agnostic public surface.
  *
- * Imported by per-Integration Workers under `integrations/<name>/`.
- * The Worker registers handlers via `register*Handler`, exports
- * `PerConnectionState` so Cloudflare's DO machinery can instantiate
- * it, and exposes a default `fetch` + queue handler that the runtime
- * dispatches messages to.
+ * Imported by integration handler modules (`integrations/<name>/src/handlers.ts`)
+ * and by both substrates (Cloudflare per-Integration Workers via
+ * `@mymehq/runtime-sdk/cloudflare`; the local-runtime supervisor inside
+ * `@mymehq/server`). This entry has no dependency on
+ * `@cloudflare/workers-types` runtime symbols — handler code written
+ * against it is portable across substrates.
  *
- * Layer 1 PR 2 ships the API surface; Layer 1 PR 3 wires the queue
- * consumer entrypoint that calls `dispatchMessage`.
+ * The Cloudflare-specific bootstrap (`createIntegrationWorker`,
+ * `PerConnectionState` Durable Object, the DO storage proxy) lives at
+ * `@mymehq/runtime-sdk/cloudflare`.
  */
-export {
-  PerConnectionState,
-  PerConnectionStateCore,
-} from "./per-connection-state.js";
+export { PerConnectionStateCore } from "./per-connection-state.js";
 export type { PerConnectionInternalState } from "./per-connection-state.js";
 
 export {
@@ -58,7 +57,7 @@ export type {
 export type { ConnectionContext } from "./connection-context.js";
 
 export { consumeBatch, buildConnectionContext } from "./queue-consumer.js";
-export type { ConsumerEnvironment } from "./queue-consumer.js";
+export type { ConsumerEnvironment, DlqProducer } from "./queue-consumer.js";
 
 export { verifyHandler } from "./verify-handler.js";
 export type {
@@ -84,12 +83,3 @@ export {
 } from "./types.js";
 
 export { computeNextRunAt, isValidCron } from "./cron.js";
-
-export { createIntegrationWorker } from "./worker-entry.js";
-export type {
-  IntegrationWorkerEnv,
-  IntegrationWorkerConfig,
-  IntegrationWorkerExport,
-} from "./worker-entry.js";
-
-export type { PerConnectionAlarmEnv } from "./per-connection-state.js";
