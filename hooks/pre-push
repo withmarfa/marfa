@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-push gate: build + typecheck + lint + test:fresh-sqlite + test:pg.
+# Pre-push gate (slim): build + typecheck + lint + format:check + test:changed.
 #
 # `build` runs first because cross-package typechecks resolve workspace
 # dependencies through each package's `dist/*.d.ts` — when those are stale
@@ -8,24 +8,47 @@
 # source. Building first keeps local typechecks aligned with what CI sees
 # on a fresh install.
 #
-# Skips the clean install (that's the explicit `pnpm ci-local`) so the hook
-# stays fast enough not to become the thing everyone --no-verifies past.
-# Enforces the dual-dialect check that local "pnpm test" alone cannot provide.
+# Scope: SQLite only, only tests whose files changed against `origin/main`.
+# Target runtime: sub-30s for a typical small change. The slim gate
+# trades dual-dialect coverage for speed — CI runs the full PG + SQLite
+# matrix on every PR push, and `pnpm ci-local` is the explicit full-
+# matrix gate for the pre-PR moment.
 #
-# Skippable: git push --no-verify. Do not ship that as the default flow.
+# Why slim. The prior pre-push (full ~1800-test dual-dialect suite) was
+# slow enough that contributors and agents routinely bypassed it with
+# `--no-verify`. A hook that's bypassed isn't a gate. Slim restores
+# usefulness while keeping the load-bearing coverage in CI.
+#
+# Skippable: `git push --no-verify`. Still authorised when the hook
+# hits transient infrastructure flake (Docker daemon down etc.) — but
+# the slim shape should make those cases rare.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-echo "═══ pre-push: build + typecheck + lint + test:fresh-sqlite + test:pg ═══"
-echo "(skip with --no-verify; full clean-install check is \`pnpm ci-local\`)"
+echo "═══ pre-push: build + typecheck + lint + format:check + test:changed ═══"
+echo "(slim gate; full matrix is \`pnpm ci-local\`. skip with --no-verify.)"
 echo
 
 pnpm build
 pnpm typecheck
 pnpm lint
-pnpm test:fresh-sqlite
-pnpm test:pg
+pnpm format:check
+
+# `vitest --changed` needs a git base to compare against. `origin/main`
+# matches the typical contributor workflow (branch from main, push to
+# remote). Fall back to the full SQLite suite when origin/main isn't
+# available locally (fresh clone pre-fetch, detached HEAD, etc.) — we'd
+# rather run more than risk skipping coverage of an unknown diff.
+if git rev-parse --verify --quiet origin/main >/dev/null; then
+  echo "→ test:changed (sqlite, vs origin/main)"
+  pnpm test:changed
+else
+  echo "→ origin/main not found locally; running full sqlite suite"
+  pnpm test
+fi
 
 echo
 echo "═══ ✓ pre-push passed ═══"
+echo "Full matrix: \`pnpm ci-local\` (clean install + both dialects)"
+echo "Or per-tier: \`pnpm test:full\` (skips clean install)"

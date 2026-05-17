@@ -202,12 +202,22 @@ If any of `types-freshness` / `openapi-freshness` / `schema-sql-freshness` fails
 
 ## Before pushing
 
-Two local-validation paths exist, in increasing thoroughness:
+Tiered local validation, in increasing thoroughness:
 
-- **Pre-push git hook** — automatic. Runs `build + typecheck + lint + test:fresh-sqlite + test:pg` on every `git push` (build first so cross-package type resolution sees fresh `dist/*.d.ts`). Installed via `git config --local core.hooksPath hooks` which `pnpm install`'s `prepare` step sets automatically. Skippable with `git push --no-verify` for small fixes the author is confident about; not the default flow.
-- **`pnpm ci-local`** — explicit. Clean install (`rm -rf node_modules`) + everything the pre-push hook runs + `build + format:check`. The "before opening a PR" gate; mirrors CI exactly. Takes a few minutes.
+- **Pre-push git hook (slim)** — automatic. Runs `build + typecheck + lint + format:check + test:changed` on every `git push` (build first so cross-package type resolution sees fresh `dist/*.d.ts`). `test:changed` scopes to tests whose files changed against `origin/main`; SQLite-only, target sub-30s. Installed via `git config --local core.hooksPath hooks` which `pnpm install`'s `prepare` step sets automatically. Skippable with `git push --no-verify` for transient infra flake.
+- **`pnpm test:full`** — explicit. Full dual-dialect matrix (`build + typecheck + lint + format:check + test:fresh-sqlite + test:pg`) without a clean install. Useful for confirming local dialect coverage when the slim gate's diff-scoped tests don't reach what you've touched.
+- **`pnpm ci-local`** — explicit. Clean install (`rm -rf node_modules`) + everything `test:full` runs. The "before opening a PR" gate; mirrors CI exactly. Takes a few minutes.
 
-Both invoke `test:pg`, which boots a throw-away `postgres:17` container on port `55432` and runs the server suite against it. Requires Docker (OrbStack / Docker Desktop / compatible daemon); if the daemon isn't reachable, the script skips gracefully with a `⊘` message — GitHub Actions runs the Postgres matrix on every PR, so local Docker is belt-and-braces, not a blocker.
+Per-target helpers for narrow runs:
+
+- **`pnpm test:changed`** — `vitest run --changed origin/main`. Runs tests for files changed vs main.
+- **`pnpm test:related <files…>`** — `vitest run --related …`. Runs tests that depend on the listed source files.
+- **`pnpm test`** — full SQLite suite, single run.
+- **`pnpm test:fresh-sqlite`** / **`pnpm test:pg`** — single-dialect runs.
+
+`test:pg` (and `test:full` / `ci-local` through it) boots a throw-away `postgres:17` container per invocation. Container name + port carry the invoking shell's PID so concurrent runs across worktrees don't clobber each other. Requires Docker (OrbStack / Docker Desktop / compatible daemon); if the daemon isn't reachable, the script skips gracefully with a `⊘` message — GitHub Actions runs the Postgres matrix on every PR, so local Docker is belt-and-braces, not a blocker.
+
+**Why slim by default.** The prior pre-push hook ran the full ~1800-test dual-dialect suite and routinely got bypassed via `--no-verify` — a hook that's bypassed isn't a gate. The slim gate gives fast feedback on what you actually touched; CI's full matrix is the authoritative dual-dialect check.
 
 ## Deploy
 
