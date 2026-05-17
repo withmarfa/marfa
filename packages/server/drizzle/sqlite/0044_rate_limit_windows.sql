@@ -5,6 +5,6 @@ CREATE TABLE IF NOT EXISTS `rate_limit_windows` (
   `count` integer NOT NULL,
   `expires_at` text NOT NULL,
   PRIMARY KEY(`family`, `window_key`)
-);
+);--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `idx_rate_limit_windows_expires_at`
   ON `rate_limit_windows` (`expires_at`);

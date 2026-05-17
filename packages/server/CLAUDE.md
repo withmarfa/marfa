@@ -7,7 +7,7 @@ The Hono HTTP server exposing the Myme API. Private package — never published 
 - `src/index.ts` — the entry point. Boots storage, blob backend, retention workers (`TrashPurger`, `VersionThinner`, audit cleanup, event-log cleanup, `AuthSessionCleaner`), and the Hono app.
 - `src/app.ts` — composes the router from per-route modules; sets up middleware (auth, rate limit, CORS, logging).
 - `src/routes/*.ts` — one file per route group: `items.ts`, `types.ts`, `keys.ts`, `tenants.ts`, `users.ts`, `edges.ts`, `search.ts`, `bulk.ts`, etc. Routes use `@hono/zod-openapi`'s `createRoute` so OpenAPI generation falls out for free.
-- `src/storage/` — dual-dialect Drizzle layer. `interface.ts` defines `Storage`, `ItemStore`, `KeyStore`, etc.; `pg/` and `sqlite/` are sibling implementations. `connection.ts` carries the bootstrap `SCHEMA_SQL` block (mirrors what migrations would produce on a fresh DB).
+- `src/storage/` — dual-dialect Drizzle layer. `interface.ts` defines `Storage`, `ItemStore`, `KeyStore`, etc.; `pg/` and `sqlite/` are sibling implementations. `connection.ts` imports the bootstrap `SCHEMA_SQL` from a sibling `schema-sql.generated.ts` — auto-generated from migrations by `scripts/generate-schema-sql.ts` (T-145). Never hand-edit the generated file.
 - `src/middleware/auth.ts` — bearer-token + OAuth resolution; sets `c.var.apiKey`.
 - `src/test-utils.ts` — `createTestContext()` for in-process integration tests across PG/SQLite.
 
@@ -16,11 +16,10 @@ The Hono HTTP server exposing the Myme API. Private package — never published 
 When changing a column or adding a table:
 
 1. Edit the Drizzle schema (`storage/{pg,sqlite}/schema.ts`).
-2. Generate migrations: `pnpm --filter @mymehq/server run migrate:pg:generate` and `migrate:sqlite:generate`.
-3. Hand-review the generated SQL — Drizzle Kit sometimes produces DROP+ADD when a careful ALTER+UPDATE+ALTER would be lossless. Edit the SQL by hand if needed.
-4. Mirror the change into the `SCHEMA_SQL` bootstrap block in the corresponding `connection.ts`.
-5. Update both `_journal.json` files under `drizzle/{pg,sqlite}/meta/` to add the new entry.
-6. Run `pnpm test:fresh-sqlite` and `pnpm test:pg` to verify the migration is correctly applied to existing databases AND the bootstrap path produces the same shape.
+2. Generate migrations: `pnpm --filter @mymehq/server run migrate:pg:generate` and `migrate:sqlite:generate`. Each command refreshes the corresponding `src/storage/<dialect>/schema-sql.generated.ts` automatically as a post-step (T-145) — the PG one needs Docker running so it can spin up a transient `postgres:17` to dump the schema. **Never hand-edit a `schema-sql.generated.ts` file**; the next regen overwrites it and the `schema-sql-freshness` CI job catches drift.
+3. Hand-review the generated SQL under `drizzle/{pg,sqlite}/` — Drizzle Kit sometimes produces DROP+ADD when a careful ALTER+UPDATE+ALTER would be lossless. Edit the SQL by hand if needed, then re-run the regen so `schema-sql.generated.ts` reflects the edit. For multi-statement SQLite migrations, ensure `--> statement-breakpoint` separates each `;` — libsql's migrator silently drops trailing statements without it (T-145 surfaced + fixed three pre-existing instances of this).
+4. Update both `_journal.json` files under `drizzle/{pg,sqlite}/meta/` to add the new entry (Drizzle Kit usually handles this automatically when it generates the migration).
+5. Run `pnpm test:fresh-sqlite` and `pnpm test:pg` to verify the migration is correctly applied to existing databases AND the bootstrap path produces the same shape.
 
 ## Routes
 

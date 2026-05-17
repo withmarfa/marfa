@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Boot a throw-away Postgres 17 container, run the provided command with
+# DATABASE_URL pointing at it, tear down on exit. Used by the SCHEMA_SQL
+# generator (and its dump-equality test) to apply migrations against a real
+# Postgres before introspecting the resulting schema.
+#
+# Distinct from scripts/test-pg.sh (which exists at the repo root and boots a
+# container for the server test suite). Both can run concurrently — this
+# wrapper picks a random free port and uses its own container name.
+#
+# Container: postgres:17 — matches CI service containers + the test:pg
+# container + the createTestContext() defaults.
+#
+# Usage: bash packages/server/scripts/with-temp-pg.sh <command> [args...]
+#
+# Skips gracefully (exit 0, ⊘ message) if Docker is not running, matching the
+# test:pg.sh pattern — the corresponding CI job still runs the generator
+# against the runner's services: postgres:17 container.
+set -euo pipefail
+
+if ! docker info >/dev/null 2>&1; then
+  echo "⊘ Docker is not running — skipping with-temp-pg." >&2
+  echo "  To run locally, start OrbStack / Docker Desktop and retry." >&2
+  exit 0
+fi
+
+# Pick a free random port in the high range; retry on collision.
+pick_port() {
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    local port=$(( 50000 + RANDOM % 10000 ))
+    if ! (echo > /dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1; then
+      echo "$port"
+      return 0
+    fi
+  done
+  echo "could not find a free port in 50000-60000" >&2
+  return 1
+}
+
+PG_PORT="$(pick_port)"
+PG_USER="myme"
+PG_PASSWORD="myme"
+PG_DB="myme_schema_dump"
+CONTAINER_NAME="myme-schema-dump-pg-${PG_PORT}"
+
+cleanup() {
+  docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "→ Starting ${CONTAINER_NAME} (postgres:17) on port ${PG_PORT}" >&2
+docker run -d --rm \
+  --name "${CONTAINER_NAME}" \
+  -e "POSTGRES_USER=${PG_USER}" \
+  -e "POSTGRES_PASSWORD=${PG_PASSWORD}" \
+  -e "POSTGRES_DB=${PG_DB}" \
+  -p "${PG_PORT}:5432" \
+  postgres:17 >/dev/null
+
+# Wait for ready. pg_isready inside the container is the authoritative check.
+echo -n "  waiting for postgres to be ready" >&2
+for _ in $(seq 1 60); do
+  if docker exec "${CONTAINER_NAME}" pg_isready -U "${PG_USER}" -d "${PG_DB}" >/dev/null 2>&1; then
+    echo " ✓" >&2
+    break
+  fi
+  echo -n "." >&2
+  sleep 0.5
+done
+
+export DATABASE_URL="postgresql://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/${PG_DB}"
+# Surface the container name so the generator can `docker exec` into it for
+# version-matched pg_dump (avoids a host pg_dump install requirement).
+export PG_CONTAINER_NAME="${CONTAINER_NAME}"
+
+exec "$@"

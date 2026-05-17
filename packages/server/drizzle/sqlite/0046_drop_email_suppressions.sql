@@ -6,5 +6,5 @@
 --
 -- Idempotent: IF EXISTS guards re-runs and the fresh-DB bootstrap
 -- path (which no longer creates the table).
-DROP INDEX IF EXISTS idx_email_suppressions_email;
+DROP INDEX IF EXISTS idx_email_suppressions_email;--> statement-breakpoint
 DROP TABLE IF EXISTS email_suppressions;

@@ -176,7 +176,7 @@ Every new HTTP route added under `packages/server/src/routes/` should ship with 
 
 ## Freshness checks before merging
 
-The `types-freshness` and `openapi-freshness` CI jobs do not run on pull-request events — only on merges to `main` and manual dispatch. This keeps PR CI cheap. If your PR modifies any of the source files below, you **must** fire the freshness workflow manually against the PR branch and confirm it passes before merging.
+The `types-freshness`, `openapi-freshness`, and `schema-sql-freshness` CI jobs do not run on pull-request events — only on merges to `main` and manual dispatch. This keeps PR CI cheap. If your PR modifies any of the source files below, you **must** fire the freshness workflow manually against the PR branch and confirm it passes before merging.
 
 **Trigger files** — any change under these paths means you owe a freshness run before merge:
 
@@ -185,7 +185,9 @@ The `types-freshness` and `openapi-freshness` CI jobs do not run on pull-request
 - `packages/shared/src/**` — wire schemas, error codes, ID utilities
 - `packages/server/src/routes/**` — route definitions that feed the OpenAPI spec
 - `packages/server/src/openapi/**` — OpenAPI generator
-- Any file touched by `pnpm --filter @mymehq/types generate` or `pnpm --silent --filter @mymehq/server generate:openapi`
+- `packages/server/drizzle/{pg,sqlite}/**` — Drizzle migrations (drive `SCHEMA_SQL`)
+- `packages/server/scripts/generate-schema-sql.ts` — the `SCHEMA_SQL` generator
+- Any file touched by `pnpm --filter @mymehq/types generate`, `pnpm --silent --filter @mymehq/server generate:openapi`, or `pnpm --filter @mymehq/server schema-sql:generate`
 
 **Command** — run this from inside the `myme` repo after pushing your PR branch:
 
@@ -194,7 +196,7 @@ gh workflow run ci.yml --ref <your-branch-name>
 gh run watch $(gh run list --workflow=ci.yml --branch=<your-branch-name> --limit=1 --json databaseId --jq '.[0].databaseId')
 ```
 
-If either `types-freshness` or `openapi-freshness` fails, regenerate locally (`pnpm --filter @mymehq/types generate` or `pnpm --silent --filter @mymehq/server generate:openapi > openapi.json`), commit the delta, and re-run. Only merge once both jobs are green.
+If any of `types-freshness` / `openapi-freshness` / `schema-sql-freshness` fails, regenerate locally (`pnpm --filter @mymehq/types generate`, `pnpm --silent --filter @mymehq/server generate:openapi > openapi.json`, or `pnpm --filter @mymehq/server schema-sql:generate`), commit the delta, and re-run. Only merge once the relevant jobs are green.
 
 **Why this exists.** Freshness jobs catch drift between generated artefacts and source files. They used to run on every PR push and were a major CI cost driver (~$5/month on the `myme` repo alone). Moving them to manual-trigger halves the PR-time bill; this rule is the tripwire that keeps the safety net effective.
 
