@@ -257,9 +257,7 @@ async function main(): Promise<void> {
   console.log("fanout to all subscribers is async after the publish returns.");
   console.log("");
   console.log("Inspect server logs (adapt the path/host for your deploy):");
-  console.log(
-    "  tail -200 /path/to/myme/logs/stderr.log \\",
-  );
+  console.log("  tail -200 /path/to/myme/logs/stderr.log \\");
   console.log("    | grep -E '\\[reactive-run-bridge\\]'");
   console.log("");
   console.log("Look for:");

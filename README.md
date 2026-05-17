@@ -4,16 +4,16 @@ A typed data layer for structured personal data. Store, query, and sync items wi
 
 ## Packages
 
-| Package                                                 | Description                                                             |
-| ------------------------------------------------------- | ----------------------------------------------------------------------- |
-| [`@mymehq/types`](./packages/types)                     | Core type + edge JSON schemas; emits the runtime registries             |
-| [`@mymehq/shared`](./packages/shared)                   | Wire types, Zod validation schemas, error codes                         |
-| [`@mymehq/server`](./packages/server)                   | Hono HTTP server with SQLite and Postgres support                       |
-| [`@mymehq/sdk`](./packages/sdk)                         | TypeScript HTTP client                                                  |
-| [`@mymehq/webhooks`](./packages/webhooks)               | Cross-runtime inbound-webhook signature verification (Web Crypto only)  |
-| [`@mymehq/runtime-control`](./packages/runtime-control) | Cloudflare Worker control plane for the hosted integrations substrate   |
-| [`@mymehq/runtime-sdk`](./packages/runtime-sdk)         | In-Worker SDK consumed by Integration Workers                           |
-| [`@mymehq/runtime-test`](./packages/runtime-test)       | In-Worker test harness mirroring `runtime-sdk`                          |
+| Package                                                 | Description                                                            |
+| ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [`@mymehq/types`](./packages/types)                     | Core type + edge JSON schemas; emits the runtime registries            |
+| [`@mymehq/shared`](./packages/shared)                   | Wire types, Zod validation schemas, error codes                        |
+| [`@mymehq/server`](./packages/server)                   | Hono HTTP server with SQLite and Postgres support                      |
+| [`@mymehq/sdk`](./packages/sdk)                         | TypeScript HTTP client                                                 |
+| [`@mymehq/webhooks`](./packages/webhooks)               | Cross-runtime inbound-webhook signature verification (Web Crypto only) |
+| [`@mymehq/runtime-control`](./packages/runtime-control) | Cloudflare Worker control plane for the hosted integrations substrate  |
+| [`@mymehq/runtime-sdk`](./packages/runtime-sdk)         | In-Worker SDK consumed by Integration Workers                          |
+| [`@mymehq/runtime-test`](./packages/runtime-test)       | In-Worker test harness mirroring `runtime-sdk`                         |
 
 `@mymehq/shared`, `@mymehq/sdk`, and `@mymehq/webhooks` publish to npm; the rest stay private.
 
