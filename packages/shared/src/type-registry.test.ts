@@ -709,9 +709,8 @@ describe("validateTypeSchema — display_hints", () => {
 });
 
 describe("merge_policy — per-type registry snapshot", () => {
-  // Source of truth: the per-type table in
-  // ~/aic-vault/Projects/myme-A1ZB0/Artifacts/30-swift-app-development-notes/
-  // Sync Conflict Resolution.md (lines 43–58).
+  // Snapshot of the per-type merge-policy table — keep aligned with
+  // the `merge_policy` declarations in `packages/types/core/*.json`.
   const cases: {
     typeId: string;
     expectedKeepBoth: string[];
