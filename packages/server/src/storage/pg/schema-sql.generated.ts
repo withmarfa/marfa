@@ -438,7 +438,12 @@ CREATE TABLE IF NOT EXISTS public.versions (
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_key_hash_unique' AND conrelid = 'public.api_keys'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.api_keys'::regclass AND c.contype = 'u'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['key_hash']::text[]) THEN
     ALTER TABLE ONLY public.api_keys
         ADD CONSTRAINT api_keys_key_hash_unique UNIQUE (key_hash);
   END IF;
@@ -447,7 +452,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_pkey' AND conrelid = 'public.api_keys'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.api_keys'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.api_keys
         ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
   END IF;
@@ -456,7 +466,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'audit_log_pkey' AND conrelid = 'public.audit_log'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.audit_log'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.audit_log
         ADD CONSTRAINT audit_log_pkey PRIMARY KEY (id);
   END IF;
@@ -465,7 +480,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_account_pkey' AND conrelid = 'public.auth_account'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_account'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.auth_account
         ADD CONSTRAINT auth_account_pkey PRIMARY KEY (id);
   END IF;
@@ -474,7 +494,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_jwks_pkey' AND conrelid = 'public.auth_jwks'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_jwks'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.auth_jwks
         ADD CONSTRAINT auth_jwks_pkey PRIMARY KEY (id);
   END IF;
@@ -483,7 +508,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_access_token_pkey' AND conrelid = 'public.auth_oauth_access_token'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_access_token'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_access_token
         ADD CONSTRAINT auth_oauth_access_token_pkey PRIMARY KEY (id);
   END IF;
@@ -492,7 +522,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_access_token_token_unique' AND conrelid = 'public.auth_oauth_access_token'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_access_token'::regclass AND c.contype = 'u'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['token']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_access_token
         ADD CONSTRAINT auth_oauth_access_token_token_unique UNIQUE (token);
   END IF;
@@ -501,7 +536,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_client_client_id_unique' AND conrelid = 'public.auth_oauth_client'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_client'::regclass AND c.contype = 'u'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['client_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_client
         ADD CONSTRAINT auth_oauth_client_client_id_unique UNIQUE (client_id);
   END IF;
@@ -510,7 +550,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_client_pkey' AND conrelid = 'public.auth_oauth_client'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_client'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_client
         ADD CONSTRAINT auth_oauth_client_pkey PRIMARY KEY (id);
   END IF;
@@ -519,7 +564,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_consent_pkey' AND conrelid = 'public.auth_oauth_consent'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_consent'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_consent
         ADD CONSTRAINT auth_oauth_consent_pkey PRIMARY KEY (id);
   END IF;
@@ -528,7 +578,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_refresh_token_pkey' AND conrelid = 'public.auth_oauth_refresh_token'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_refresh_token'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_refresh_token
         ADD CONSTRAINT auth_oauth_refresh_token_pkey PRIMARY KEY (id);
   END IF;
@@ -537,7 +592,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_passkey_pkey' AND conrelid = 'public.auth_passkey'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_passkey'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.auth_passkey
         ADD CONSTRAINT auth_passkey_pkey PRIMARY KEY (id);
   END IF;
@@ -546,7 +606,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_session_pkey' AND conrelid = 'public.auth_session'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_session'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.auth_session
         ADD CONSTRAINT auth_session_pkey PRIMARY KEY (id);
   END IF;
@@ -555,7 +620,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_session_token_unique' AND conrelid = 'public.auth_session'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_session'::regclass AND c.contype = 'u'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['token']::text[]) THEN
     ALTER TABLE ONLY public.auth_session
         ADD CONSTRAINT auth_session_token_unique UNIQUE (token);
   END IF;
@@ -564,7 +634,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_user_email_unique' AND conrelid = 'public.auth_user'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_user'::regclass AND c.contype = 'u'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['email']::text[]) THEN
     ALTER TABLE ONLY public.auth_user
         ADD CONSTRAINT auth_user_email_unique UNIQUE (email);
   END IF;
@@ -573,7 +648,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_user_pkey' AND conrelid = 'public.auth_user'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_user'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.auth_user
         ADD CONSTRAINT auth_user_pkey PRIMARY KEY (id);
   END IF;
@@ -582,7 +662,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_verification_pkey' AND conrelid = 'public.auth_verification'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_verification'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.auth_verification
         ADD CONSTRAINT auth_verification_pkey PRIMARY KEY (id);
   END IF;
@@ -591,7 +676,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'blobs_tenant_id_hash_pk' AND conrelid = 'public.blobs'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.blobs'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['tenant_id', 'hash']::text[]) THEN
     ALTER TABLE ONLY public.blobs
         ADD CONSTRAINT blobs_tenant_id_hash_pk PRIMARY KEY (tenant_id, hash);
   END IF;
@@ -600,7 +690,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'connection_leased_tokens_pkey' AND conrelid = 'public.connection_leased_tokens'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.connection_leased_tokens'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.connection_leased_tokens
         ADD CONSTRAINT connection_leased_tokens_pkey PRIMARY KEY (id);
   END IF;
@@ -609,7 +704,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'connection_oauth_tokens_pkey' AND conrelid = 'public.connection_oauth_tokens'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.connection_oauth_tokens'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.connection_oauth_tokens
         ADD CONSTRAINT connection_oauth_tokens_pkey PRIMARY KEY (id);
   END IF;
@@ -618,7 +718,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'custom_edge_types_pkey' AND conrelid = 'public.custom_edge_types'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.custom_edge_types'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.custom_edge_types
         ADD CONSTRAINT custom_edge_types_pkey PRIMARY KEY (id);
   END IF;
@@ -627,7 +732,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'custom_types_pkey' AND conrelid = 'public.custom_types'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.custom_types'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.custom_types
         ADD CONSTRAINT custom_types_pkey PRIMARY KEY (id);
   END IF;
@@ -636,7 +746,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'edges_pkey' AND conrelid = 'public.edges'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.edges'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.edges
         ADD CONSTRAINT edges_pkey PRIMARY KEY (id);
   END IF;
@@ -645,7 +760,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'event_log_pkey' AND conrelid = 'public.event_log'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.event_log'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.event_log
         ADD CONSTRAINT event_log_pkey PRIMARY KEY (id);
   END IF;
@@ -654,7 +774,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'inbound_webhook_events_pkey' AND conrelid = 'public.inbound_webhook_events'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.inbound_webhook_events'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.inbound_webhook_events
         ADD CONSTRAINT inbound_webhook_events_pkey PRIMARY KEY (id);
   END IF;
@@ -663,7 +788,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'inbound_webhooks_pkey' AND conrelid = 'public.inbound_webhooks'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.inbound_webhooks'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.inbound_webhooks
         ADD CONSTRAINT inbound_webhooks_pkey PRIMARY KEY (id);
   END IF;
@@ -672,7 +802,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'items_pkey' AND conrelid = 'public.items'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.items'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.items
         ADD CONSTRAINT items_pkey PRIMARY KEY (id);
   END IF;
@@ -681,7 +816,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'metadata_pkey' AND conrelid = 'public.metadata'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.metadata'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['item_id']::text[]) THEN
     ALTER TABLE ONLY public.metadata
         ADD CONSTRAINT metadata_pkey PRIMARY KEY (item_id);
   END IF;
@@ -690,7 +830,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'oauth_device_codes_device_code_hash_unique' AND conrelid = 'public.oauth_device_codes'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.oauth_device_codes'::regclass AND c.contype = 'u'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['device_code_hash']::text[]) THEN
     ALTER TABLE ONLY public.oauth_device_codes
         ADD CONSTRAINT oauth_device_codes_device_code_hash_unique UNIQUE (device_code_hash);
   END IF;
@@ -699,7 +844,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'oauth_device_codes_pkey' AND conrelid = 'public.oauth_device_codes'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.oauth_device_codes'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.oauth_device_codes
         ADD CONSTRAINT oauth_device_codes_pkey PRIMARY KEY (id);
   END IF;
@@ -708,7 +858,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'oauth_device_codes_user_code_unique' AND conrelid = 'public.oauth_device_codes'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.oauth_device_codes'::regclass AND c.contype = 'u'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['user_code']::text[]) THEN
     ALTER TABLE ONLY public.oauth_device_codes
         ADD CONSTRAINT oauth_device_codes_user_code_unique UNIQUE (user_code);
   END IF;
@@ -717,7 +872,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'rate_limit_windows_family_window_key_pk' AND conrelid = 'public.rate_limit_windows'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.rate_limit_windows'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['family', 'window_key']::text[]) THEN
     ALTER TABLE ONLY public.rate_limit_windows
         ADD CONSTRAINT rate_limit_windows_family_window_key_pk PRIMARY KEY (family, window_key);
   END IF;
@@ -726,7 +886,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'settings_pkey' AND conrelid = 'public.settings'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.settings'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['key']::text[]) THEN
     ALTER TABLE ONLY public.settings
         ADD CONSTRAINT settings_pkey PRIMARY KEY (key);
   END IF;
@@ -735,7 +900,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tenant_quotas_pkey' AND conrelid = 'public.tenant_quotas'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.tenant_quotas'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['tenant_id']::text[]) THEN
     ALTER TABLE ONLY public.tenant_quotas
         ADD CONSTRAINT tenant_quotas_pkey PRIMARY KEY (tenant_id);
   END IF;
@@ -744,7 +914,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tenants_pkey' AND conrelid = 'public.tenants'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.tenants'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.tenants
         ADD CONSTRAINT tenants_pkey PRIMARY KEY (id);
   END IF;
@@ -753,7 +928,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_pkey' AND conrelid = 'public.users'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.users'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.users
         ADD CONSTRAINT users_pkey PRIMARY KEY (id);
   END IF;
@@ -762,7 +942,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'versions_pkey' AND conrelid = 'public.versions'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.versions'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.versions
         ADD CONSTRAINT versions_pkey PRIMARY KEY (id);
   END IF;
@@ -771,7 +956,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'webhook_deliveries_pkey' AND conrelid = 'public.outbound_webhook_deliveries'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.outbound_webhook_deliveries'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.outbound_webhook_deliveries
         ADD CONSTRAINT webhook_deliveries_pkey PRIMARY KEY (id);
   END IF;
@@ -780,7 +970,12 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'webhooks_pkey' AND conrelid = 'public.outbound_webhooks'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.outbound_webhooks'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
     ALTER TABLE ONLY public.outbound_webhooks
         ADD CONSTRAINT webhooks_pkey PRIMARY KEY (id);
   END IF;
@@ -891,7 +1086,13 @@ CREATE INDEX IF NOT EXISTS idx_versions_item_id ON public.versions USING btree (
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_account_user_id_auth_user_id_fk' AND conrelid = 'public.auth_account'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_account'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.auth_user'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['user_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_account
         ADD CONSTRAINT auth_account_user_id_auth_user_id_fk FOREIGN KEY (user_id) REFERENCES public.auth_user(id) ON DELETE CASCADE;
   END IF;
@@ -900,7 +1101,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_access_token_refresh_id_auth_oauth_refresh_token_id_' AND conrelid = 'public.auth_oauth_access_token'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_access_token'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.auth_oauth_refresh_token'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['refresh_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_access_token
         ADD CONSTRAINT auth_oauth_access_token_refresh_id_auth_oauth_refresh_token_id_ FOREIGN KEY (refresh_id) REFERENCES public.auth_oauth_refresh_token(id) ON DELETE CASCADE;
   END IF;
@@ -909,7 +1116,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_access_token_session_id_auth_session_id_fk' AND conrelid = 'public.auth_oauth_access_token'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_access_token'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.auth_session'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['session_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_access_token
         ADD CONSTRAINT auth_oauth_access_token_session_id_auth_session_id_fk FOREIGN KEY (session_id) REFERENCES public.auth_session(id) ON DELETE SET NULL;
   END IF;
@@ -918,7 +1131,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_access_token_user_id_auth_user_id_fk' AND conrelid = 'public.auth_oauth_access_token'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_access_token'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.auth_user'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['user_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_access_token
         ADD CONSTRAINT auth_oauth_access_token_user_id_auth_user_id_fk FOREIGN KEY (user_id) REFERENCES public.auth_user(id) ON DELETE CASCADE;
   END IF;
@@ -927,7 +1146,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_client_user_id_auth_user_id_fk' AND conrelid = 'public.auth_oauth_client'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_client'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.auth_user'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['user_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_client
         ADD CONSTRAINT auth_oauth_client_user_id_auth_user_id_fk FOREIGN KEY (user_id) REFERENCES public.auth_user(id) ON DELETE CASCADE;
   END IF;
@@ -936,7 +1161,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_consent_user_id_auth_user_id_fk' AND conrelid = 'public.auth_oauth_consent'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_consent'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.auth_user'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['user_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_consent
         ADD CONSTRAINT auth_oauth_consent_user_id_auth_user_id_fk FOREIGN KEY (user_id) REFERENCES public.auth_user(id) ON DELETE CASCADE;
   END IF;
@@ -945,7 +1176,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_refresh_token_session_id_auth_session_id_fk' AND conrelid = 'public.auth_oauth_refresh_token'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_refresh_token'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.auth_session'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['session_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_refresh_token
         ADD CONSTRAINT auth_oauth_refresh_token_session_id_auth_session_id_fk FOREIGN KEY (session_id) REFERENCES public.auth_session(id) ON DELETE SET NULL;
   END IF;
@@ -954,7 +1191,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_oauth_refresh_token_user_id_auth_user_id_fk' AND conrelid = 'public.auth_oauth_refresh_token'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_oauth_refresh_token'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.auth_user'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['user_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_oauth_refresh_token
         ADD CONSTRAINT auth_oauth_refresh_token_user_id_auth_user_id_fk FOREIGN KEY (user_id) REFERENCES public.auth_user(id) ON DELETE CASCADE;
   END IF;
@@ -963,7 +1206,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_passkey_user_id_auth_user_id_fk' AND conrelid = 'public.auth_passkey'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_passkey'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.auth_user'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['user_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_passkey
         ADD CONSTRAINT auth_passkey_user_id_auth_user_id_fk FOREIGN KEY (user_id) REFERENCES public.auth_user(id) ON DELETE CASCADE;
   END IF;
@@ -972,7 +1221,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'auth_session_user_id_auth_user_id_fk' AND conrelid = 'public.auth_session'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.auth_session'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.auth_user'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['user_id']::text[]) THEN
     ALTER TABLE ONLY public.auth_session
         ADD CONSTRAINT auth_session_user_id_auth_user_id_fk FOREIGN KEY (user_id) REFERENCES public.auth_user(id) ON DELETE CASCADE;
   END IF;
@@ -981,7 +1236,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'metadata_item_id_items_id_fk' AND conrelid = 'public.metadata'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.metadata'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.items'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['item_id']::text[]) THEN
     ALTER TABLE ONLY public.metadata
         ADD CONSTRAINT metadata_item_id_items_id_fk FOREIGN KEY (item_id) REFERENCES public.items(id) ON DELETE CASCADE;
   END IF;
@@ -990,7 +1251,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'oauth_device_codes_connection_item_id_items_id_fk' AND conrelid = 'public.oauth_device_codes'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.oauth_device_codes'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.items'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['connection_item_id']::text[]) THEN
     ALTER TABLE ONLY public.oauth_device_codes
         ADD CONSTRAINT oauth_device_codes_connection_item_id_items_id_fk FOREIGN KEY (connection_item_id) REFERENCES public.items(id) ON DELETE SET NULL;
   END IF;
@@ -999,7 +1266,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_tenant_id_tenants_id_fk' AND conrelid = 'public.users'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.users'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.tenants'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['tenant_id']::text[]) THEN
     ALTER TABLE ONLY public.users
         ADD CONSTRAINT users_tenant_id_tenants_id_fk FOREIGN KEY (tenant_id) REFERENCES public.tenants(id);
   END IF;
@@ -1008,7 +1281,13 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'versions_item_id_items_id_fk' AND conrelid = 'public.versions'::regclass) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.versions'::regclass AND c.contype = 'f'
+  AND c.confrelid = 'public.items'::regclass
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['item_id']::text[]) THEN
     ALTER TABLE ONLY public.versions
         ADD CONSTRAINT versions_item_id_items_id_fk FOREIGN KEY (item_id) REFERENCES public.items(id) ON DELETE CASCADE;
   END IF;
