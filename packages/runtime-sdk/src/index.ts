@@ -75,6 +75,7 @@ export type {
   QueueMessage,
   HandlerResult,
   RuntimeCredential,
+  FailureReason,
 } from "./types.js";
 export {
   SDK_DEFAULT_HOP_BUDGET,

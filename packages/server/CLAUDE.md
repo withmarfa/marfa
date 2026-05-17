@@ -10,6 +10,7 @@ The Hono HTTP server exposing the Myme API. Private package — never published 
 - `src/storage/` — dual-dialect Drizzle layer. `interface.ts` defines `Storage`, `ItemStore`, `KeyStore`, etc.; `pg/` and `sqlite/` are sibling implementations. `connection.ts` imports the bootstrap `SCHEMA_SQL` from a sibling `schema-sql.generated.ts` — auto-generated from migrations by `scripts/generate-schema-sql.ts` (T-145). Never hand-edit the generated file.
 - `src/middleware/auth.ts` — bearer-token + OAuth resolution; sets `c.var.apiKey`.
 - `src/test-utils.ts` — `createTestContext()` for in-process integration tests across PG/SQLite.
+- `src/integrations/local-runtime/` (T-173) — Node-bundled integrations substrate. Conditional boot via `MYME_INTEGRATION_RUNTIME=local`; pg-boss drives cron + queue, `worker_thread` per-integration pool runs handler code, per-Connection state lives under the `connection.runtime` reserved extension namespace. See the dedicated section below.
 
 ## Schema changes
 
@@ -380,3 +381,32 @@ Reserved namespaces are documented here so accidental general-purpose use ("just
 **PG test isolation — template-database pattern.** Each PG test file gets its own freshly-cloned database via `CREATE DATABASE … TEMPLATE myme_test_template`. The template is built once at test-run start (vitest globalSetup at `src/test-global-setup.ts`) — it runs migrations into an empty DB and stays quiescent for the rest of the run. Per-file lifecycle lives in `src/storage/pg/test-template.ts`. `createPgTestStorage()` (consumed by `createTestContext` and the few test files that roll their own storage with custom `authMode`) clones the template, opens storage against the clone, returns an awaitable `cleanup()` that drops the clone with `WITH (FORCE)`. The pattern replaces the prior shared-DB + `_pgTruncate`-on-setup model; parallel-safe by construction, no truncate-race load-bearing comments. `cleanup()` is awaitable (the prior fire-and-forget shape starved afterAll hooks under heavy admin DDL traffic). `MYME_TEST_PG_ADMIN_URL` points at the cluster's `postgres` system DB so the lifecycle can issue admin operations; `scripts/test-pg.sh` exports both that and a `DATABASE_URL` for backward compat.
 
 **PG connection-cap math.** Peak in-flight connections under the test matrix: `maxForks (6) × maxPoolSize per file (3) + admin clients (≈1 per worker)` ≈ 24 connections. `scripts/test-pg.sh` bumps the container to `max_connections=500` for headroom; CI runs against the postgres image's default `max_connections=100`, which is comfortably above the 24 peak. If a future change raises `maxForks` past about 25, the CI service container's cap becomes the bottleneck — bump `max_connections` on the CI service container too (note: GHA service containers don't expose `command:` directly, so the cleanest path is a custom postgres image or a startup script).
+
+## Local integrations runtime (T-173)
+
+Node-bundled integrations substrate. Boots conditionally on `MYME_INTEGRATION_RUNTIME=local`; replaces the Cloudflare-side execution layer (Workers + Queues + Durable Objects + KV) with an in-process equivalent. The handler authoring surface (`@mymehq/runtime-sdk`) is unchanged — integrations import the same primitives and run on either substrate.
+
+**Components** (under `src/integrations/local-runtime/`):
+
+- `index.ts` — public entry. `tryStartLocalIntegrationRuntime(options)` returns a `LocalRuntimeBundle` (supervisor + bridge + Hono sub-app exposing `POST /runtime/webhook/:connection_id`) or `null` when the substrate is disabled.
+- `supervisor.ts` — central orchestrator. For each dispatch: takes `storage.coordination.withJobLock("connection-dispatch:<connection_id>", …)` for per-Connection single-writer guarantee, mints a credential, snapshots cursor state, hands off to the executor, applies the cursor delta + activity emission on completion. Mirrors the retry/dlq/hop-budget semantics of `runtime-sdk/queue-consumer.ts`.
+- `executor.ts` — `worker_thread` pool per integration with `resourceLimits` (`maxOldGenerationSizeMb: 64`, `maxYoungGenerationSizeMb: 16`, `stackSizeMb: 4`). Pool size defaults to 2 threads per integration. Crashes tear down the worker; the pool replaces it. A test-mode `directDispatch` callback bypasses the worker thread for fast unit tests against the supervisor.
+- `worker-entry.ts` — entry script the threads load. Imports the integration's `dist/local.js` once on startup, listens on `parentPort` for `WorkerDispatchRequest` payloads, runs `dispatchMessage`, posts `WorkerDispatchResponse` back. Cursor writes journal to an in-memory adapter shipped back as a delta — the main thread merges under the advisory lock that gated the dispatch.
+- `pg-cursor-store.ts` — per-Connection state plumbing. Cursors, idempotency window, recent-errors tail, and next-run-at all live under the connection's `connection.runtime` extension. Idempotency window keeps the freshest `IDEMPOTENCY_WINDOW_SIZE` (256) entries and bounds by TTL; recent_errors keeps the freshest 16.
+- `credentials.ts` — short-circuit for the SDK's `mintCredential` callback. Calls `storage.keys.createRuntimeCredential` directly with manifest-derived `extension_permissions` (always granting `connection.runtime: write` plus manifest extras), bypassing the lease-broker HTTP round-trip the Cloudflare side uses.
+- `walker.ts` — `fanOutSchedule(storage, runtime, integrationName, now)` walks active local Connections for an integration on each cron tick and enqueues a `ScheduleMessage` per Connection. Mirrors `buildEntryForConnection`'s match rules (state=active, kind=integration, manifest opts into `"local"` runtime_compatibility).
+- `webhook-receipt.ts` — `POST /runtime/webhook/:connection_id` route, mounted under the root path before any auth middleware. Verifies via `@mymehq/webhooks` (same adapters as the Cloudflare control plane), runs idempotency via the connection's `connection.runtime.idempotency` map, enqueues a `WebhookMessage`.
+- `reactive-bridge.ts` — drains the in-process pubsub and pushes envelopes onto the local queue, mirroring `connections/reactive-run-bridge.ts`'s logic (via `evaluateDispatch` + `buildQueueMessageBody` for shared per-subscriber gate). Single coordination lock per cluster.
+- `registrations.ts` — loads `integrations/<name>/dist/local.js` entries at boot. Skips integrations that haven't shipped a `local.ts` yet or declare `runtime_compatibility` without `"local"`.
+
+**Per-Connection serialisation.** Postgres advisory lock keyed `connection-dispatch:<connection_id>` via `storage.coordination.withJobLock`. Equivalent to the Durable Object single-writer guarantee on the hosted side. Two different Connections can run in parallel; the same Connection serialises.
+
+**Trust model.** Fault isolation, not adversarial isolation. Operators trust the integrations they install — same posture as installing an npm package in the host app. For untrusted code, run hosted.
+
+**Substrate requires Postgres.** `MYME_INTEGRATION_RUNTIME=local` with `STORAGE_DIALECT=sqlite` throws a clear startup error pointing at the PG requirement. SQLite self-hosts must keep `=hosted` until they migrate.
+
+**Operator footprint.** Two containers — server + Postgres. No Redis, no extra binary, no Postgres extension dependency. pg-boss creates its own `pgboss` schema inside the same Postgres instance the rest of the server already uses.
+
+**Default.** `MYME_INTEGRATION_RUNTIME` defaults to `hosted` in T-173 (this PR). T-174 flips the default to `local` once each in-tree integration ships a `local.ts` entry with a smoke test.
+
+**Public docs.** The semantic parity sheet between substrates lives in `mymehq/docs/concepts/runtime-substrates.mdx`.

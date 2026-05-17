@@ -46,6 +46,7 @@
     "ipaddr.js": "^2.3.0",
     "jose": "^6.2.3",
     "nodemailer": "^7.0.3",
+    "pg-boss": "^10.3.4",
     "postgres": "^3.4.8",
     "tar-stream": "^3.1.8",
     "tslib": "^2.8.1",
