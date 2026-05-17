@@ -63,7 +63,7 @@ import { authAccountRoutes } from "./routes/auth-account.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { rlsTenantContextMiddleware } from "./middleware/rls-tenant-context.js";
-import type { PgDb } from "./storage/pg/connection.js";
+import type { PgClient, PgDb } from "./storage/pg/connection.js";
 import { healthRoutes } from "./routes/health.js";
 export function createApp(
   storage: Storage,
@@ -409,7 +409,19 @@ export function createApp(
   app.route("/integrations", integrationRoutes(storage, config.apiKeySalt));
   app.route("/tenants", tenantRoutes(storage));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
-  app.route("/export", exportRoutes(storage, blobBackend));
+  // T-146: streaming routes receive `rlsEnforce` + `pgClient` so they
+  // can apply session-level RLS on a dedicated pool connection for
+  // the stream's lifetime — closing the bypass that the per-request
+  // transaction middleware can't cover. SQLite + tenant-less callers
+  // continue to run on the owner connection (no DB-level fence).
+  const streamingRoutesOptions = {
+    rlsEnforce: config.rlsEnforce ?? false,
+    pgClient: (storage.pgClient as PgClient | undefined) ?? null,
+  };
+  app.route(
+    "/export",
+    exportRoutes(storage, blobBackend, streamingRoutesOptions),
+  );
   app.route("/auth", authRoutes(storage, config.apiKeySalt, auth, oidcSigner));
   if (config.authMode === "hosted" && storage.users && storage.tenants) {
     app.route("/auth", userAuthRoutes(storage, config.apiKeySalt));
@@ -436,7 +448,7 @@ export function createApp(
     app.on(["POST", "GET"], "/auth/*", (c) => authInstance.handler(c.req.raw));
   }
 
-  app.route("/events", eventRoutes(storage));
+  app.route("/events", eventRoutes(storage, streamingRoutesOptions));
   // Inbound subscription management (admin/connector auth) lives under
   // /connections/:id/inbound-webhooks. Mounted before /webhooks so the
   // public receipt path /webhooks/inbound/:id resolves correctly.

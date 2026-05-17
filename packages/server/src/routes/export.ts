@@ -17,6 +17,21 @@ import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import type { PgClient } from "../storage/pg/connection.js";
+import { acquireStreamRls } from "../storage/pg/streaming-rls.js";
+
+/**
+ * Options for `exportRoutes`. `rlsEnforce` + `pgClient` enable T-146
+ * session-level RLS on a dedicated pool connection for the duration
+ * of the stream. Without both set, the route runs on the owner
+ * connection (unchanged pre-T-146 behaviour) — used for SQLite, for
+ * tenant-less callers (platform admin / single-tenant self-host),
+ * and when RLS enforcement is disabled instance-wide.
+ */
+export interface ExportRoutesOptions {
+  rlsEnforce: boolean;
+  pgClient: PgClient | null;
+}
 
 /**
  * T-053: resolve the target tenant for an export request.
@@ -125,7 +140,11 @@ const exportRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
-export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
+export function exportRoutes(
+  storage: Storage,
+  blobBackend: BlobBackend,
+  options: ExportRoutesOptions = { rlsEnforce: false, pgClient: null },
+) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(exportRoute, (c) => {
@@ -171,7 +190,7 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
     // tenant from the same param (single source of truth) but the
     // audit row is already written.
     if (query.format === "archive") {
-      return handleArchiveExport(c, storage, blobBackend);
+      return handleArchiveExport(c, storage, blobBackend, options);
     }
 
     const type = query.type;
@@ -196,37 +215,64 @@ export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
     const allowedTypes = getTypeFilter(c);
     const encoder = new TextEncoder();
 
+    // T-146: when the caller has a tenant_id and RLS enforcement is on,
+    // pin a dedicated pool connection for the stream and apply
+    // session-level `SET ROLE myme_app` + `myme.tenant_id`. Storage
+    // reads inside the stream then flow through that connection and
+    // are RLS-filtered at the DB layer. Tenant-less callers (platform
+    // admin / single-tenant self-host) and SQLite skip — same
+    // semantics as the non-streaming RLS middleware.
     const stream = new ReadableStream({
       async start(controller) {
-        let cursor: string | undefined;
+        const rlsCtx =
+          options.rlsEnforce && options.pgClient !== null && tenantId
+            ? await acquireStreamRls(options.pgClient, tenantId)
+            : null;
         try {
-          do {
-            const result = await storage.items.list({
-              tenantId,
-              type,
-              state,
-              since,
-              until,
-              allowed_types: allowedTypes,
-              limit: 200,
-              cursor,
-            });
+          const work = async () => {
+            let cursor: string | undefined;
+            do {
+              const result = await storage.items.list({
+                tenantId,
+                type,
+                state,
+                since,
+                until,
+                allowed_types: allowedTypes,
+                limit: 200,
+                cursor,
+              });
 
-            for (const item of result.data) {
-              const metadata = await storage.metadata.get(item.id);
-              controller.enqueue(
-                encoder.encode(JSON.stringify({ item, metadata }) + "\n"),
-              );
-            }
+              for (const item of result.data) {
+                const metadata = await storage.metadata.get(item.id);
+                controller.enqueue(
+                  encoder.encode(JSON.stringify({ item, metadata }) + "\n"),
+                );
+              }
 
-            cursor = result.has_more
-              ? (result.cursor as string | undefined)
-              : undefined;
-          } while (cursor);
+              cursor = result.has_more
+                ? (result.cursor as string | undefined)
+                : undefined;
+            } while (cursor);
+          };
+          if (rlsCtx) {
+            await rlsCtx.withInstalledContext(work);
+          } else {
+            await work();
+          }
         } finally {
           controller.close();
+          if (rlsCtx) {
+            await rlsCtx.release();
+          }
         }
       },
+      // Hono / node-server invokes `cancel` when the consumer detaches
+      // (client disconnect mid-stream). The `start` body's `finally`
+      // already releases the RLS context on the normal completion
+      // path; this cancel hook is the explicit disconnect path. Both
+      // converge on `controller.close` → start's finally → release().
+      // Idempotent release means a double-fire is safe.
     });
 
     return new Response(stream, {
@@ -266,6 +312,7 @@ async function handleArchiveExport(
   c: HonoContext,
   storage: Storage,
   blobBackend: BlobBackend,
+  options: ExportRoutesOptions,
 ): Promise<Response> {
   const type = c.req.query("type");
   if (type && !isValidTypeIdentifier(type)) {
@@ -287,43 +334,68 @@ async function handleArchiveExport(
   );
   const allowedTypes = getTypeFilter(c);
 
+  // T-146: dedicated-connection session-level RLS for the collect pass.
+  // Same shape as the NDJSON path above.
+  const rlsCtx =
+    options.rlsEnforce && options.pgClient !== null && tenantId
+      ? await acquireStreamRls(options.pgClient, tenantId)
+      : null;
+
   // Pass 1: Collect all items as NDJSON and gather blob hashes
   const lines: string[] = [];
   const blobHashes = new Set<string>();
-
-  let cursor: string | undefined;
-  do {
-    const result = await storage.items.list({
-      tenantId,
-      type,
-      state,
-      since,
-      until,
-      allowed_types: allowedTypes,
-      limit: 200,
-      cursor,
-    });
-    for (const item of result.data) {
-      const metadata = await storage.metadata.get(item.id);
-      lines.push(JSON.stringify({ item, metadata }));
-      collectBlobHashes(item.properties, blobHashes);
-      collectBlobHashes(metadata.extensions, blobHashes);
-    }
-    cursor = result.has_more
-      ? (result.cursor as string | undefined)
-      : undefined;
-  } while (cursor);
-
-  // Resolve blob metadata from the database. T-049: tenant-scoped lookup
-  // using the export caller's tenant_id. Platform admins on single-tenant
-  // self-hosts pass `""` (the instance-wide sentinel).
   const blobMeta: Record<string, { mime_type: string; size: number }> = {};
-  for (const hash of blobHashes) {
-    const record = await storage.blobs.get(hash, tenantId ?? "");
-    if (record) {
-      blobMeta[hash] = { mime_type: record.mime_type, size: record.size };
+
+  try {
+    const collect = async () => {
+      let cursor: string | undefined;
+      do {
+        const result = await storage.items.list({
+          tenantId,
+          type,
+          state,
+          since,
+          until,
+          allowed_types: allowedTypes,
+          limit: 200,
+          cursor,
+        });
+        for (const item of result.data) {
+          const metadata = await storage.metadata.get(item.id);
+          lines.push(JSON.stringify({ item, metadata }));
+          collectBlobHashes(item.properties, blobHashes);
+          collectBlobHashes(metadata.extensions, blobHashes);
+        }
+        cursor = result.has_more
+          ? (result.cursor as string | undefined)
+          : undefined;
+      } while (cursor);
+
+      // Resolve blob metadata from the database. T-049: tenant-scoped
+      // lookup using the export caller's tenant_id. Platform admins
+      // on single-tenant self-hosts pass `""` (the instance-wide
+      // sentinel).
+      for (const hash of blobHashes) {
+        const record = await storage.blobs.get(hash, tenantId ?? "");
+        if (record) {
+          blobMeta[hash] = { mime_type: record.mime_type, size: record.size };
+        }
+      }
+    };
+    if (rlsCtx) {
+      await rlsCtx.withInstalledContext(collect);
+    } else {
+      await collect();
+    }
+  } finally {
+    if (rlsCtx) {
+      await rlsCtx.release();
     }
   }
+
+  // Blob *bytes* fetched below come from the BlobBackend (filesystem
+  // / S3), not Postgres — so they don't need the RLS context. The
+  // session has already been released at this point.
 
   // Build manifest. T-053: tenant_id is the resolved scope of this
   // export — the calling tenant or the platform-admin's

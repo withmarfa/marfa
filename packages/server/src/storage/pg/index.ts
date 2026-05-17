@@ -182,6 +182,10 @@ export async function createPgStorage(
     // RLS middleware can drive `db.transaction(...)` directly to
     // wrap each tenant-bounded request.
     pgDb: db,
+    // T-146: the underlying postgres-js client, exposed so streaming
+    // routes (`/events`, `/export`) can `client.reserve()` a dedicated
+    // pool connection for session-level RLS.
+    pgClient: client,
   } satisfies Storage & {
     _pgTruncate(): Promise<void>;
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]>;
