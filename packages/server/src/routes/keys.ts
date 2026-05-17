@@ -375,7 +375,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,
       key_id: c.get("apiKey")?.id,
-      action: "key.create",
+      action: isBootstrap ? "key.bootstrap" : "key.create",
       resource_type: "key",
       resource_id: stored.id,
     });
