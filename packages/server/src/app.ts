@@ -72,6 +72,14 @@ export function createApp(
   config: AppConfig,
   emailTransport?: MymeEmailTransport,
   oidcSigner?: OidcSigner,
+  /**
+   * T-173 — optional Hono sub-app mounted at the root path before any
+   * auth middleware. The local-runtime substrate uses this to expose
+   * `POST /runtime/webhook/:connection_id` without going through the
+   * bearer-token gate (verification happens at the route via the
+   * subscription's HMAC secret).
+   */
+  localRuntimeApp?: import("hono").Hono,
 ) {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -172,6 +180,14 @@ export function createApp(
     }),
   );
   app.route("/health", healthRoutes(storage, blobBackend, config));
+
+  // T-173: local-runtime substrate routes (POST /runtime/webhook/:id).
+  // Mounted before any auth middleware so the public webhook receipt
+  // endpoint stays unauthenticated — verification happens inside the
+  // route via the subscription's HMAC secret.
+  if (localRuntimeApp) {
+    app.route("/", localRuntimeApp);
+  }
 
   // T-131: OAuth 2.1 / OIDC discovery — owned by the @better-auth/oauth-provider
   // plugin. The plugin auto-mounts the docs under its basePath (`/auth`)

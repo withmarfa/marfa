@@ -185,6 +185,21 @@ export interface AppConfig {
   smtpUser?: string;
   smtpPass?: string;
   smtpSecure?: boolean;
+  /**
+   * T-173 — integration runtime substrate. `"hosted"` runs against the
+   * Cloudflare control plane + per-Integration Workers (set
+   * `CLOUDFLARE_QUEUES_REACTIVE_RUN_URL` + `CLOUDFLARE_QUEUES_API_TOKEN`).
+   * `"local"` runs the in-process Node substrate (`pg-boss` for
+   * scheduling, `worker_thread` pool for handler execution); requires
+   * Postgres. Default is `"hosted"` in T-173; T-174 flips the default to
+   * `"local"` once each integration carries a local entrypoint with a
+   * smoke test.
+   *
+   * Optional on the type so test contexts constructing `AppConfig`
+   * literals don't have to supply it; `index.ts` applies the
+   * `"hosted"` fallback.
+   */
+  integrationRuntime?: "hosted" | "local";
 }
 
 export interface OidcProviderConfig {
@@ -361,7 +376,29 @@ export function loadConfig(): AppConfig {
     smtpUser: process.env.MYME_SMTP_USER ?? "",
     smtpPass: process.env.MYME_SMTP_PASS ?? "",
     smtpSecure: process.env.MYME_SMTP_SECURE === "true",
+    integrationRuntime: parseIntegrationRuntime(
+      process.env.MYME_INTEGRATION_RUNTIME,
+    ),
   };
+}
+
+/**
+ * Parse `MYME_INTEGRATION_RUNTIME` (T-173). Unset → `"hosted"` (the
+ * default until T-174 flips it to `"local"`). Unknown values warn and
+ * fall back to `"hosted"` so a typo doesn't silently start the wrong
+ * substrate; legal values: `hosted | local`.
+ */
+export function parseIntegrationRuntime(
+  raw: string | undefined,
+): "hosted" | "local" {
+  if (raw === "hosted" || raw === "local") return raw;
+  if (raw && raw.length > 0) {
+    console.warn(
+      `Unknown MYME_INTEGRATION_RUNTIME=${raw}; falling back to "hosted". ` +
+        `Legal values: hosted | local.`,
+    );
+  }
+  return "hosted";
 }
 
 /**

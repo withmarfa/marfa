@@ -20,6 +20,13 @@ import {
 import type { TenantFanout } from "./storage/retention.js";
 import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
 import { tryStartReactiveRunBridge } from "./connections/reactive-run-bridge.js";
+import {
+  tryStartLocalIntegrationRuntime,
+  loadInTreeRegistrations,
+  type LocalRuntimeBundle,
+} from "./integrations/local-runtime/index.js";
+import { resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { log } from "./middleware/logger.js";
 import { createEmailTransport } from "./email/index.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
@@ -290,12 +297,57 @@ async function main() {
   // synchronously inside request handlers.
   const oidcSigner = await OidcSigner.init(storage);
 
+  // T-173 — boot the local integrations runtime when
+  // MYME_INTEGRATION_RUNTIME=local. Returns null otherwise (hosted
+  // substrate stays in charge of the Cloudflare bridge above).
+  let localRuntime: LocalRuntimeBundle | null = null;
+  if ((config.integrationRuntime ?? "hosted") === "local") {
+    try {
+      const integrationsRoot = resolveIntegrationsRoot();
+      const registrations = integrationsRoot
+        ? await loadInTreeRegistrations({ integrationsRoot })
+        : [];
+      if (registrations.length === 0) {
+        log(
+          "warn",
+          "Local integration runtime enabled but no integrations declare `runtime_compatibility: ['local']` and ship dist/local.js. " +
+            "T-174 lands the per-integration entries.",
+        );
+      }
+      const PgBossModule = (await import("pg-boss")) as unknown as {
+        default: new (cs: string) => unknown;
+      };
+      const PgBoss = PgBossModule.default;
+      const boss = new PgBoss(config.databaseUrl);
+
+      await (boss as { start: () => Promise<unknown> }).start();
+      localRuntime = await tryStartLocalIntegrationRuntime({
+        storage,
+        config,
+        registrations,
+        boss: boss as Parameters<
+          typeof tryStartLocalIntegrationRuntime
+        >[0]["boss"],
+        apiUrl: `http://localhost:${String(config.port)}`,
+      });
+      log("info", "Local integration runtime started", {
+        registrations: registrations.length,
+      });
+    } catch (err) {
+      log("error", "Local integration runtime failed to start", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+
   const app = createApp(
     storage,
     blobBackend,
     config,
     emailTransport,
     oidcSigner,
+    localRuntime?.app,
   );
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
@@ -323,6 +375,10 @@ async function main() {
         // lock will release with the connection.
       });
     }
+    if (localRuntime) {
+      void localRuntime.bridge.stop().catch(() => undefined);
+      void localRuntime.runtime.stop().catch(() => undefined);
+    }
     server.close(() => {
       storage
         .close()
@@ -332,6 +388,25 @@ async function main() {
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
+}
+
+/**
+ * Resolve the in-tree `integrations/` directory from the running
+ * server bundle. The server compiles to `packages/server/dist/index.js`
+ * inside the repo; from there `../../integrations` is the monorepo's
+ * integration source tree. When the server runs outside the monorepo
+ * (e.g. a packaged Docker image carrying only `dist`), the operator
+ * sets `MYME_INTEGRATIONS_ROOT` explicitly.
+ */
+function resolveIntegrationsRoot(): string | null {
+  const explicit = process.env.MYME_INTEGRATIONS_ROOT;
+  if (explicit) return explicit;
+  try {
+    const here = fileURLToPath(new URL(".", import.meta.url));
+    return resolvePath(here, "..", "..", "..", "integrations");
+  } catch {
+    return null;
+  }
 }
 
 main().catch((err: unknown) => {
