@@ -45,6 +45,76 @@ describeOrSkip("SCHEMA_SQL re-run safety — Postgres (T-145)", () => {
     }
   });
 
+  it("re-applies cleanly when constraint names differ from SCHEMA_SQL's labels (T-157)", async () => {
+    // Mirrors the conformance-DB shape that surfaced T-157 during the
+    // T-146 deploy: three PKs were named differently from the labels the
+    // generator captured. Under the pre-T-157 name-based guards, applying
+    // SCHEMA_SQL crashed with "multiple primary keys for table 'blobs'
+    // are not allowed". Under T-157's semantic guards (contype + column
+    // set) the IF NOT EXISTS check matches by shape regardless of name,
+    // so the ADD CONSTRAINT is correctly skipped.
+    const sql = postgres(databaseUrl!, {
+      max: 1,
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      onnotice: () => {},
+    });
+    try {
+      // Capture the current PK constraint name on a target table so we
+      // can rename it to a distinct alias for the duration of the test
+      // and restore it cleanly afterwards.
+      const captureCurrentPk = async (
+        table: string,
+      ): Promise<string | null> => {
+        const rows = await sql<{ conname: string }[]>`
+          SELECT conname FROM pg_constraint
+          WHERE conrelid = ${`public.${table}`}::regclass AND contype = 'p'
+        `;
+        return rows[0]?.conname ?? null;
+      };
+
+      const targets = [
+        { table: "blobs", aliasTo: "blobs_test_t157_pkey" },
+        {
+          table: "outbound_webhooks",
+          aliasTo: "outbound_webhooks_test_t157_pkey",
+        },
+        {
+          table: "outbound_webhook_deliveries",
+          aliasTo: "outbound_webhook_deliveries_test_t157_pkey",
+        },
+      ];
+
+      const renames: { table: string; from: string; to: string }[] = [];
+      for (const t of targets) {
+        const from = await captureCurrentPk(t.table);
+        if (from === null || from === t.aliasTo) continue;
+        await sql.unsafe(
+          `ALTER TABLE public.${t.table} RENAME CONSTRAINT "${from}" TO "${t.aliasTo}"`,
+        );
+        renames.push({ table: t.table, from, to: t.aliasTo });
+      }
+
+      try {
+        // The expected pre-T-157 failure was: pg_constraint lookup by name
+        // returned NOT EXISTS (the constraint exists but with the new
+        // alias), so the ADD CONSTRAINT statement ran and Postgres raised
+        // "multiple primary keys for table '<table>' are not allowed". The
+        // semantic guards close this class — pass means the bug is fixed.
+        await expect(sql.unsafe(SCHEMA_SQL)).resolves.toBeDefined();
+      } finally {
+        // Restore each constraint name so subsequent tests see the
+        // original schema labels.
+        for (const r of renames) {
+          await sql.unsafe(
+            `ALTER TABLE public.${r.table} RENAME CONSTRAINT "${r.to}" TO "${r.from}"`,
+          );
+        }
+      }
+    } finally {
+      await sql.end();
+    }
+  });
+
   it("emits the expected role + grant baseline", async () => {
     // Sanity check: SCHEMA_SQL grew the myme_app role and granted CRUD on
     // the tenant-scoped tables. The freshness check covers drift; this is

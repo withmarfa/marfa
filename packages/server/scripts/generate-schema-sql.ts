@@ -434,19 +434,28 @@ function transformPgStatement(stmt: string): string {
     out = `DROP POLICY IF EXISTS ${name} ON ${table};\n${out}`;
   }
 
-  // ALTER TABLE [ONLY] <table> ... ADD CONSTRAINT <name> ...
+  // ALTER TABLE [ONLY] <table> ... ADD CONSTRAINT <name> <definition>
   // Cannot use DROP CONSTRAINT IF EXISTS + ADD here: FKs depend on PKs /
   // UNIQUEs, so dropping a PK cascades. Wrap in DO IF NOT EXISTS instead —
-  // re-runs simply skip when the constraint already exists.
+  // re-runs simply skip when an equivalent constraint already exists.
+  //
+  // T-157: the guard is SEMANTIC, not name-based. It keys on `contype` +
+  // the column set, so an existing DB whose historical constraint label
+  // differs (e.g. Postgres-default `_pkey` vs Drizzle's
+  // `_<table>_<cols>_pk`) still satisfies the guard and the ADD is
+  // correctly skipped. PK / UNIQUE / FK are detected by parsing the
+  // definition. CHECK / EXCLUDE fall through to a name-based fallback
+  // (the current schema emits neither — defensive only).
   const addConstraintMatch =
-    /^ALTER TABLE (ONLY )?("?[\w.]+"?(?:\.[\w"]+)?)\s+ADD CONSTRAINT (\w+)/im.exec(
+    /^ALTER TABLE (ONLY )?("?[\w.]+"?(?:\.[\w"]+)?)\s+ADD CONSTRAINT (\w+)\s+([\s\S]+?);?\s*$/im.exec(
       out,
     );
   if (addConstraintMatch) {
     const tableRef = addConstraintMatch[2] ?? "";
     const conName = addConstraintMatch[3] ?? "";
+    const definition = addConstraintMatch[4] ?? "";
     out = wrapInDoIfNotExists(
-      `SELECT 1 FROM pg_constraint WHERE conname = '${conName}' AND conrelid = '${tableRef}'::regclass`,
+      buildConstraintGuardSql(tableRef, conName, definition),
       out,
     );
   }
@@ -466,6 +475,105 @@ function transformPgStatement(stmt: string): string {
   }
 
   return out;
+}
+
+/**
+ * Build a semantic IF-NOT-EXISTS guard for an `ADD CONSTRAINT` statement
+ * (T-157). The guard checks for an equivalent constraint by `contype` +
+ * column set, NOT by `conname`, so an existing DB whose historical
+ * constraint has a different label still satisfies the guard.
+ *
+ * Supported constraint types: PRIMARY KEY, UNIQUE, FOREIGN KEY. Anything
+ * else (CHECK, EXCLUDE) falls back to the legacy name-based guard — the
+ * current Drizzle-generated schema emits none of those, but keep the
+ * fallback so a future addition doesn't crash the generator.
+ */
+function buildConstraintGuardSql(
+  tableRef: string,
+  conName: string,
+  definition: string,
+): string {
+  const trimmed = definition.trim().replace(/;\s*$/, "");
+
+  // PRIMARY KEY (col[, col2, ...])
+  const pkMatch = /^PRIMARY KEY\s*\(([^)]+)\)/i.exec(trimmed);
+  if (pkMatch) {
+    const cols = parseColumnList(pkMatch[1] ?? "");
+    return buildColumnSetGuard(tableRef, "p", cols);
+  }
+
+  // UNIQUE (col[, col2, ...])
+  const uniqueMatch = /^UNIQUE\s*\(([^)]+)\)/i.exec(trimmed);
+  if (uniqueMatch) {
+    const cols = parseColumnList(uniqueMatch[1] ?? "");
+    return buildColumnSetGuard(tableRef, "u", cols);
+  }
+
+  // FOREIGN KEY (col[, col2]) REFERENCES <ref-table>(<ref-cols>) [...]
+  const fkMatch =
+    /^FOREIGN KEY\s*\(([^)]+)\)\s+REFERENCES\s+((?:"?[\w]+"?\.)?"?[\w]+"?)\s*\(/i.exec(
+      trimmed,
+    );
+  if (fkMatch) {
+    const srcCols = parseColumnList(fkMatch[1] ?? "");
+    const refTable = fkMatch[2] ?? "";
+    return buildFkGuard(tableRef, srcCols, refTable);
+  }
+
+  // CHECK / EXCLUDE / anything unrecognised — keep the name-based guard
+  // as a defensive fallback. Empty schemas today; flag in PR if a future
+  // migration introduces either.
+  return `SELECT 1 FROM pg_constraint WHERE conname = '${conName}' AND conrelid = '${tableRef}'::regclass`;
+}
+
+/**
+ * Split a column-list string like `tenant_id, hash` or `"order"` into an
+ * array of bare identifiers (quotes stripped).
+ */
+function parseColumnList(raw: string): string[] {
+  return raw.split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
+}
+
+/**
+ * Guard SQL for a constraint that's uniquely identified on a table by
+ * its `contype` and column set — PRIMARY KEY or UNIQUE.
+ */
+function buildColumnSetGuard(
+  tableRef: string,
+  contype: "p" | "u",
+  cols: string[],
+): string {
+  const colArrayLiteral = cols.map((c) => `'${c}'`).join(", ");
+  return [
+    `SELECT 1 FROM pg_constraint c`,
+    `WHERE c.conrelid = '${tableRef}'::regclass AND c.contype = '${contype}'`,
+    `  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)`,
+    `            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum`,
+    `            ORDER BY k.ord)`,
+    `      = ARRAY[${colArrayLiteral}]::text[]`,
+  ].join("\n");
+}
+
+/**
+ * Guard SQL for a FOREIGN KEY — match on source-table, source-columns,
+ * and referenced table. Source-column set is sufficient in practice; we
+ * don't expect two distinct FKs from the same source columns.
+ */
+function buildFkGuard(
+  srcTableRef: string,
+  srcCols: string[],
+  refTableRef: string,
+): string {
+  const colArrayLiteral = srcCols.map((c) => `'${c}'`).join(", ");
+  return [
+    `SELECT 1 FROM pg_constraint c`,
+    `WHERE c.conrelid = '${srcTableRef}'::regclass AND c.contype = 'f'`,
+    `  AND c.confrelid = '${refTableRef}'::regclass`,
+    `  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)`,
+    `            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum`,
+    `            ORDER BY k.ord)`,
+    `      = ARRAY[${colArrayLiteral}]::text[]`,
+  ].join("\n");
 }
 
 function wrapInDoIfNotExists(existsQuery: string, stmt: string): string {
