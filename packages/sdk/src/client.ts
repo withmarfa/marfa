@@ -1208,9 +1208,12 @@ export class MymeClient {
       id: string,
       schema: Omit<TypeSchema, "id">,
     ): Promise<TypeSchema> => {
-      return this.transport.request<TypeSchema>("PUT", `/types/${id}`, {
-        body: schema,
-      });
+      const res = await this.transport.request<{ type: TypeSchema }>(
+        "PUT",
+        `/types/${id}`,
+        { body: schema },
+      );
+      return res.type;
     },
 
     delete: async (
