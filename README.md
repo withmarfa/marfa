@@ -31,46 +31,6 @@ pnpm dev    # http://localhost:8600
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full development guide and [CLAUDE.md](./CLAUDE.md) for architecture, conventions, and workflow rules.
 
-## Docker
-
-Start the server with Postgres and S3-compatible storage:
-
-```bash
-docker compose up --build
-```
-
-The server will be available at `http://localhost:8600`.
-
-### Bootstrap
-
-Create your first API key (no auth required when zero keys exist):
-
-```bash
-curl -X POST http://localhost:8600/keys \
-  -H "Content-Type: application/json" \
-  -d '{"label": "admin"}'
-```
-
-### Verify
-
-```bash
-# Create an item
-curl -X POST http://localhost:8600/items \
-  -H "Authorization: Bearer <your-key>" \
-  -H "Content-Type: application/json" \
-  -d '{"type": "core.note", "properties": {"body": "Hello Docker"}}'
-
-# List items
-curl http://localhost:8600/items -H "Authorization: Bearer <your-key>"
-```
-
-### Clean up
-
-```bash
-docker compose down      # Stop containers (data persists in volumes)
-docker compose down -v   # Stop and delete all data
-```
-
 ## Documentation
 
 - Architecture, conventions, and workflow rules: [`CLAUDE.md`](./CLAUDE.md)
