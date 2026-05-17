@@ -9,7 +9,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "build": "tsup"
   },
   "dependencies": {
     "@mymehq/runtime-sdk": "workspace:*",
@@ -19,6 +20,7 @@
     "@cloudflare/workers-types": "^4.20251201.0",
     "@mymehq/runtime-test": "workspace:*",
     "typescript": "^6.0.2",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.2",
+    "tsup": "^8.5.1"
   }
 }

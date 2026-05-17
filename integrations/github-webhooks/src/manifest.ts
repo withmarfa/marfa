@@ -24,7 +24,7 @@ export const GITHUB_WEBHOOKS_MANIFEST: IntegrationManifest = {
   description:
     "Receives GitHub webhook deliveries (issues, pull_request) and creates a core.bookmark per opened item.",
   direction: "read",
-  runtime_compatibility: ["hosted"],
+  runtime_compatibility: ["hosted", "local"],
   target_types: ["core.bookmark"],
   triggers: [{ type: "webhook" }],
   bidirectional_handling: {

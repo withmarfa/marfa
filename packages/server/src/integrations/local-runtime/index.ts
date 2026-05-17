@@ -79,9 +79,10 @@ export interface StartLocalRuntimeOptions {
  * Build and start the local runtime bundle. Returns the bundle so the
  * caller can stop it on shutdown.
  *
- * Returns `null` when `config.integrationRuntime` is `"hosted"` (the
- * default until T-174 flips it) — caller stays on the existing
- * Cloudflare-side bridge.
+ * Returns `null` when `config.integrationRuntime` is `"hosted"` —
+ * the caller stays on the existing Cloudflare-side bridge. Default
+ * from T-174 onwards is `"local"`; set the env var explicitly to
+ * `"hosted"` to opt out.
  *
  * Throws when `STORAGE_DIALECT=sqlite` is paired with
  * `MYME_INTEGRATION_RUNTIME=local`: the local substrate requires
@@ -92,7 +93,7 @@ export async function tryStartLocalIntegrationRuntime(
   options: StartLocalRuntimeOptions,
 ): Promise<LocalRuntimeBundle | null> {
   const { storage, config } = options;
-  if ((config.integrationRuntime ?? "hosted") !== "local") return null;
+  if ((config.integrationRuntime ?? "local") !== "local") return null;
   if (config.storageDialect !== "pg") {
     throw new Error(
       "MYME_INTEGRATION_RUNTIME=local requires STORAGE_DIALECT=pg. " +
