@@ -112,8 +112,15 @@ jobs:
           POSTGRES_DB: myme_schema_dump
         ports:
           - 5432:5432
+        # `pg_isready` alone returns OK before the cluster actually serves
+        # queries (well-known false positive — fast first pass that succeeds
+        # while the database is still initialising). Chaining a real
+        # `psql … SELECT 1` against the `postgres` system DB is the only
+        # fully reliable readiness signal. Mirrors the local `test-pg.sh`
+        # fix; symmetric across all three PG service containers in this
+        # workflow.
         options: >-
-          --health-cmd="pg_isready -U myme"
+          --health-cmd="pg_isready -U myme && psql -U myme -d postgres -c 'SELECT 1'"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -214,8 +221,15 @@ jobs:
           POSTGRES_DB: myme_test
         ports:
           - 5432:5432
+        # `pg_isready` alone returns OK before the cluster actually serves
+        # queries (well-known false positive — fast first pass that succeeds
+        # while the database is still initialising). Chaining a real
+        # `psql … SELECT 1` against the `postgres` system DB is the only
+        # fully reliable readiness signal. Mirrors the local `test-pg.sh`
+        # fix; symmetric across all three PG service containers in this
+        # workflow.
         options: >-
-          --health-cmd="pg_isready -U myme"
+          --health-cmd="pg_isready -U myme && psql -U myme -d postgres -c 'SELECT 1'"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -293,8 +307,15 @@ jobs:
           POSTGRES_DB: myme_migrate_test
         ports:
           - 5432:5432
+        # `pg_isready` alone returns OK before the cluster actually serves
+        # queries (well-known false positive — fast first pass that succeeds
+        # while the database is still initialising). Chaining a real
+        # `psql … SELECT 1` against the `postgres` system DB is the only
+        # fully reliable readiness signal. Mirrors the local `test-pg.sh`
+        # fix; symmetric across all three PG service containers in this
+        # workflow.
         options: >-
-          --health-cmd="pg_isready -U myme"
+          --health-cmd="pg_isready -U myme && psql -U myme -d postgres -c 'SELECT 1'"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
