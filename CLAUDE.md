@@ -121,7 +121,7 @@ Server package (not needed for shared or SDK development):
 - `TRASH_PURGE_INTERVAL_MS` — trash purge job interval in ms (default: 86400000)
 - `AUTH_SESSION_CLEANUP_INTERVAL_MS` — cadence (ms) for the better-auth session cleanup sweep that drops `auth_session` rows past their `expires_at` (default: 3600000 / 1h). Instance-wide, not tenant-scoped — Better Auth owns the TTL.
 - `ERROR_WEBHOOK_URL` — webhook URL for 500 error notifications (optional, debounced)
-- `MYME_AUTH_BASE_URL` — issuer URL the better-auth instance is reached at (e.g. `http://localhost:8602`). Drives cookie domains and the OAuth issuer field on the discovery doc. Defaults to `http://localhost:<PORT>`.
+- `MYME_AUTH_BASE_URL` — issuer URL the better-auth instance is reached at (e.g. `http://localhost:<PORT>`). Drives cookie domains and the OAuth issuer field on the discovery doc. Defaults to `http://localhost:<PORT>`.
 - `MYME_AUTH_ALLOW_SIGNUP` — when `true`, enables the email + password sign-up endpoint at `/auth/sign-up/email`. Default `false` per the workstream-1 sign-up policy. Single-user self-hosted instances flip it on for the initial admin account, then back off.
 - `MYME_AUTH_SECRET` — shared secret for cookie signing. Required in production; falls back to a per-process ephemeral secret in dev.
 - `MYME_OIDC_PROVIDERS` — JSON array configuring federated sign-in providers (Google, GitHub, Authentik, etc.). Each entry: `{ providerId, clientId, clientSecret, discoveryUrl?, scopes? }`. Surfaces `Sign in with <providerId>` buttons on the sign-in page and exposes `/auth/sign-in/oauth2` + `/auth/oauth2/callback/<providerId>`. Empty array (default) means no federated providers.
@@ -209,11 +209,9 @@ Two local-validation paths exist, in increasing thoroughness:
 
 Both invoke `test:pg`, which boots a throw-away `postgres:17` container on port `55432` and runs the server suite against it. Requires Docker (OrbStack / Docker Desktop / compatible daemon); if the daemon isn't reachable, the script skips gracefully with a `⊘` message — GitHub Actions runs the Postgres matrix on every PR, so local Docker is belt-and-braces, not a blocker.
 
-## Deploy and log rotation
+## Deploy
 
-`deploy.sh` at the repo root SSHs to the staging host and runs git pull + build + migrate + restart on both `myme-staging` and `myme-conformance`. SSH options (`ConnectTimeout=10`, `ServerAliveInterval=15`, `ServerAliveCountMax=3`) cap any transient hang at ~45s. Restarts use `launchctl kickstart -k gui/$(id -u)/<label>` — atomic kill-and-relaunch, no race on port handoff.
-
-Service logs (`stdout.log` + `stderr.log` on both services) are rotated by `scripts/atlas-log-rotate.sh`, invoked hourly by a separate launchd job (`so.myme.log-rotator`) on the staging host. Rotation is **inode-preserving** (`gzip -c file > archive && : > file`) — launchd's StandardOut/Err fd is opened with `O_APPEND`, so writes resume cleanly at byte 0 after truncation; no service restart needed. Threshold: 10 MB. Keeps 7 most-recent gzipped archives per log. The launchd plist lives only on the staging host (`~/Library/LaunchAgents/so.myme.log-rotator.plist`) and isn't checked in — content captured in the corresponding vault ticket for reproducibility.
+`deploy.sh` at the repo root drives the deployment workflow against the operator's configured hosts: git pull + build + migrate + service restart. SSH options (`ConnectTimeout=10`, `ServerAliveInterval=15`, `ServerAliveCountMax=3`) cap any transient hang at ~45s. Restarts use an atomic kill-and-relaunch so there's no port-handoff race. Service-log rotation is handled by a separate per-host scheduled job; details (hostnames, service-manager labels, log-rotator paths) are operator-specific and live outside this checked-in repo.
 
 ## Error handling
 
