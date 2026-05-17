@@ -356,6 +356,26 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     }
 
     const body = c.req.valid("json");
+
+    // T-175: refuse to mint a runtime credential for a non-active
+    // Connection. Cuts every downstream activity path (queue handler
+    // dispatch, reactive-run callback, lease refresh) when a Connection
+    // is revoked at the item layer — the lease broker hits this endpoint
+    // on every cache miss, so the gate is load-bearing.
+    const connection = await storage.items.get(body.connection_id);
+    if (connection?.type !== "system.connection") {
+      throw new MymeError(
+        ErrorCode.NOT_FOUND,
+        `Connection ${body.connection_id} not found`,
+      );
+    }
+    if (connection.state !== "active") {
+      throw new MymeError(
+        ErrorCode.FORBIDDEN,
+        `Connection ${body.connection_id} is ${connection.state}; cannot mint runtime credential`,
+      );
+    }
+
     const ttlSeconds = body.ttl_seconds ?? 600;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
 
@@ -543,23 +563,35 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
       );
     }
     const { connection_id } = c.req.valid("param");
+
+    // T-175: refuse to surface subscriptions for non-active Connections.
+    // Belt-and-braces — the uninstall pipeline disables subscriptions
+    // individually (step 5), but a Connection that landed in `revoked`
+    // through a different path (admin override, future API) would still
+    // list non-disabled rows here without this gate. Return an empty
+    // list so the control-plane receipt handler 404s upstream.
+    const connection = await storage.items.get(connection_id);
+    if (connection?.type !== "system.connection") {
+      return c.json({ subscriptions: [] }, 200);
+    }
+    if (connection.state !== "active") {
+      return c.json({ subscriptions: [] }, 200);
+    }
+
     const rows = await storage.inboundWebhooks.listByConnection(connection_id);
     // T-009: project the integration manifest's `name` so the control
     // plane can stamp `integration_name` on the queue message envelope.
     // Resolve once per connection (low cardinality) rather than per-row.
-    const connection = await storage.items.get(connection_id);
     let integrationName: string | undefined;
-    if (connection?.type === "system.connection") {
-      const integrationRef = (
-        connection.properties as { integration_ref?: string }
-      ).integration_ref;
-      if (integrationRef) {
-        const integration = await storage.items.get(integrationRef);
-        if (integration?.type === "system.integration") {
-          const name = (integration.properties as { manifest_name?: string })
-            .manifest_name;
-          if (typeof name === "string") integrationName = name;
-        }
+    const integrationRef = (
+      connection.properties as { integration_ref?: string }
+    ).integration_ref;
+    if (integrationRef) {
+      const integration = await storage.items.get(integrationRef);
+      if (integration?.type === "system.integration") {
+        const name = (integration.properties as { manifest_name?: string })
+          .manifest_name;
+        if (typeof name === "string") integrationName = name;
       }
     }
     const subscriptions = rows

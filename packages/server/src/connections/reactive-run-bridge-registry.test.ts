@@ -171,6 +171,26 @@ describe("buildEntryForConnection", () => {
     expect(entry).toBeNull();
   });
 
+  it("returns null when item-level state is revoked (T-175)", async () => {
+    // Connection was active at create time, then the uninstall pipeline
+    // transitioned its item-level `state` to `revoked` while leaving
+    // `properties.status` untouched. Pre-T-175 the bridge would still
+    // fanout to it because only the `properties.status` gate ran.
+    const intId = await createIntegration(
+      manifest({ name: "acme.state-revoked-skip" }),
+    );
+    const connId = await createConnection({ integrationRef: intId });
+    const item = await ctx.storage.items.get(connId);
+    if (!item) throw new Error("connection missing after create");
+
+    const entry = await buildEntryForConnection(ctx.storage, {
+      id: item.id,
+      state: "revoked",
+      properties: item.properties,
+    });
+    expect(entry).toBeNull();
+  });
+
   it("returns null when integration_ref is unset", async () => {
     const connId = await createConnection({ integrationRef: undefined });
     const item = await ctx.storage.items.get(connId);
