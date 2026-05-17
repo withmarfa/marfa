@@ -19,6 +19,7 @@ import {
   __resetCycleDetectionForTests,
   DEFAULT_HOP_BUDGET,
 } from "./pubsub.js";
+import { cycleRequestContext } from "./cycle-context.js";
 import type { Item, Edge } from "@mymehq/shared";
 
 let ctx: TestContext;
@@ -355,5 +356,129 @@ describe("defaultCycleDetectionWiring — per-tenant hop-budget cache (§3.9)", 
     // Undefined tenantId → constant default, no storage hit.
     expect(await getHop(undefined)).toBe(DEFAULT_HOP_BUDGET);
     expect(getConfigCalls).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-144 — ALS-driven cycle resolution
+// ---------------------------------------------------------------------------
+
+describe("publish — cycle resolution from cycleRequestContext (T-144)", () => {
+  it("reads cycle metadata from the ALS when the event arg omits it", async () => {
+    initEventLog(ctx.storage.eventLog);
+    const item = fakeItem("item-als-resolved");
+    const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+    const maxBefore = before.length
+      ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
+      : 0n;
+
+    await cycleRequestContext.run(
+      { originatingConnectionId: "conn-via-als", hopCount: 1 },
+      async () => {
+        await publish({ type: "created", item });
+      },
+    );
+
+    const after = await ctx.storage.eventLog.getAfter(maxBefore, 1000);
+    const last = after.at(-1);
+    expect(last?.originating_connection_id).toBe("conn-via-als");
+    expect(last?.hop_count).toBe(1);
+  });
+
+  it("falls back to the human sentinel when called outside any ALS context", async () => {
+    initEventLog(ctx.storage.eventLog);
+    const item = fakeItem("item-no-als");
+    const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+    const maxBefore = before.length
+      ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
+      : 0n;
+
+    await publish({ type: "created", item });
+
+    const after = await ctx.storage.eventLog.getAfter(maxBefore, 1000);
+    const last = after.at(-1);
+    expect(last?.originating_connection_id).toBeNull();
+    expect(last?.hop_count).toBe(0);
+  });
+
+  it("explicit cycle fields on the event arg override the ALS", async () => {
+    initEventLog(ctx.storage.eventLog);
+    const item = fakeItem("item-explicit-override");
+    const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+    const maxBefore = before.length
+      ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
+      : 0n;
+
+    await cycleRequestContext.run(
+      { originatingConnectionId: "conn-als-loser", hopCount: 9 },
+      async () => {
+        await publish({
+          type: "created",
+          item,
+          originatingConnectionId: "conn-explicit-winner",
+          hopCount: 2,
+        });
+      },
+    );
+
+    const after = await ctx.storage.eventLog.getAfter(maxBefore, 1000);
+    const last = after.at(-1);
+    expect(last?.originating_connection_id).toBe("conn-explicit-winner");
+    expect(last?.hop_count).toBe(2);
+  });
+
+  it("publishEdge resolves cycle from the ALS the same way publish does", async () => {
+    initEventLog(ctx.storage.eventLog);
+    const edge = fakeEdge("edge-als");
+    const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+    const maxBefore = before.length
+      ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
+      : 0n;
+
+    await cycleRequestContext.run(
+      { originatingConnectionId: "conn-edge-als", hopCount: 3 },
+      async () => {
+        await publishEdge({ type: "edge_created", edge });
+      },
+    );
+
+    const after = await ctx.storage.eventLog.getAfter(maxBefore, 1000);
+    const last = after.at(-1);
+    expect(last?.edge_id).toBe("edge-als");
+    expect(last?.originating_connection_id).toBe("conn-edge-als");
+    expect(last?.hop_count).toBe(3);
+  });
+
+  it("ALS-resolved connector-originated event with hopCount=0 still enforces the budget floor", async () => {
+    // Wire-tampering defence (`Math.max(hopCount, 1)`) survives the ALS
+    // refactor. An ALS context with origin set + hopCount=0 (the chain-
+    // head shape a runtime credential request resolves to) is fine at
+    // ordinary budgets but must overflow at budget=0.
+    const overflow = vi.fn(() => Promise.resolve());
+    initEventLog(ctx.storage.eventLog, {
+      getHopBudget: () => Promise.resolve(0),
+      onHopOverflow: overflow,
+    });
+
+    let result: bigint | undefined;
+    await cycleRequestContext.run(
+      { originatingConnectionId: "conn-floor-via-als", hopCount: 0 },
+      async () => {
+        result = await publish({
+          type: "created",
+          item: fakeItem("item-als-floor"),
+        });
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(overflow).toHaveBeenCalledTimes(1);
+    expect(overflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        originatingConnectionId: "conn-floor-via-als",
+        hopCount: 0,
+      }),
+      0,
+    );
   });
 });

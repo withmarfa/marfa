@@ -308,7 +308,7 @@ export function edgeRoutes(storage: Storage) {
         tenantId,
       );
     });
-    await publishEdge({ type: "edge_created", edge, tenantId, ...c.var.cycle });
+    await publishEdge({ type: "edge_created", edge, tenantId });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,
@@ -392,7 +392,6 @@ export function edgeRoutes(storage: Storage) {
       type: "edge_deleted",
       edge: existing,
       tenantId: c.get("apiKey")?.tenant_id,
-      ...c.var.cycle,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

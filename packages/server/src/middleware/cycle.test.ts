@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
 import { cycleMiddleware } from "./cycle.js";
+import { cycleRequestContext } from "../cycle-context.js";
 import type { AppEnv } from "./auth.js";
 import type { ApiKey } from "@mymehq/shared";
 
@@ -25,6 +26,13 @@ function buildApp(opts?: { apiKey?: ApiKey | undefined }): Hono<AppEnv> {
   });
   app.use("*", cycleMiddleware());
   app.get("/echo", (c) => c.json({ cycle: c.var.cycle }));
+  // T-144: read the ALS-stored value from inside the handler so tests
+  // can assert that `c.var.cycle` and `cycleRequestContext.getStore()`
+  // resolve to the same shape (the middleware writes both in lockstep).
+  app.get("/echo-both", (c) => {
+    const als = cycleRequestContext.getStore() ?? null;
+    return c.json({ varCycle: c.var.cycle, alsCycle: als });
+  });
   return app;
 }
 
@@ -188,6 +196,79 @@ describe("cycleMiddleware", () => {
       expect(body.cycle).toEqual({
         originatingConnectionId: null,
         hopCount: 0,
+      });
+    });
+  });
+
+  describe("cycleRequestContext — ALS lockstep (T-144)", () => {
+    it("writes the resolved cycle to BOTH c.var.cycle AND cycleRequestContext", async () => {
+      const app = buildApp({
+        apiKey: apiKey({
+          is_runtime_credential: true,
+          connection_id: "conn-lockstep",
+        }),
+      });
+      const res = await app.request("/echo-both");
+      const body = (await res.json()) as {
+        varCycle: unknown;
+        alsCycle: unknown;
+      };
+      const expected = {
+        originatingConnectionId: "conn-lockstep",
+        hopCount: 0,
+      };
+      expect(body.varCycle).toEqual(expected);
+      expect(body.alsCycle).toEqual(expected);
+    });
+
+    it("the ALS reflects header-resolved cycle, not just the fallback shape", async () => {
+      const app = buildApp();
+      const res = await app.request("/echo-both", {
+        headers: {
+          "x-myme-cycle-origin": "conn-hdr",
+          "x-myme-cycle-hop": "4",
+        },
+      });
+      const body = (await res.json()) as {
+        varCycle: unknown;
+        alsCycle: unknown;
+      };
+      const expected = {
+        originatingConnectionId: "conn-hdr",
+        hopCount: 4,
+      };
+      expect(body.varCycle).toEqual(expected);
+      expect(body.alsCycle).toEqual(expected);
+    });
+
+    it("the ALS does not leak across requests", async () => {
+      // Two independent requests on the same Hono app instance must
+      // each see their own resolved cycle; the AsyncLocalStorage's
+      // run() scope is per-request.
+      const app = buildApp();
+      const [r1, r2] = await Promise.all([
+        app.request("/echo-both", {
+          headers: {
+            "x-myme-cycle-origin": "conn-one",
+            "x-myme-cycle-hop": "1",
+          },
+        }),
+        app.request("/echo-both", {
+          headers: {
+            "x-myme-cycle-origin": "conn-two",
+            "x-myme-cycle-hop": "2",
+          },
+        }),
+      ]);
+      const b1 = (await r1.json()) as { alsCycle: unknown };
+      const b2 = (await r2.json()) as { alsCycle: unknown };
+      expect(b1.alsCycle).toEqual({
+        originatingConnectionId: "conn-one",
+        hopCount: 1,
+      });
+      expect(b2.alsCycle).toEqual({
+        originatingConnectionId: "conn-two",
+        hopCount: 2,
       });
     });
   });

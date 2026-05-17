@@ -1,5 +1,7 @@
 import { createMiddleware } from "hono/factory";
+import type { Context } from "hono";
 
+import { cycleRequestContext } from "../cycle-context.js";
 import type { AppEnv } from "./auth.js";
 
 /**
@@ -67,7 +69,7 @@ function originFromApiKey(
 }
 
 /**
- * Resolve `c.var.cycle` for the current request (T-039).
+ * Resolve cycle metadata for the current request (T-039, T-144).
  *
  * Mount AFTER `clientIpMiddleware` AND `authMiddleware`: the resolution
  * needs access to `c.var.apiKey` to compute the chain-head fallback.
@@ -87,45 +89,68 @@ function originFromApiKey(
  *   3. **Otherwise** — human chain head. Sentinel:
  *      `{ originatingConnectionId: null, hopCount: 0 }`. Bypasses the
  *      budget at `passesHopBudget`.
+ *
+ * **T-144 — request-scoped propagation.** After resolving the cycle the
+ * middleware writes it to BOTH `c.var.cycle` (kept exposed for
+ * diagnostic reads and the existing `cycle.test.ts` assertion path) AND
+ * the `cycleRequestContext` `AsyncLocalStorage` store. `publish()` and
+ * `publishEdge()` in `pubsub.ts` read the ALS automatically, so route
+ * handlers no longer thread `...c.var.cycle` into every publish call.
+ * The two writes stay in lockstep — single resolved value, written
+ * twice in the same step.
  */
 export function cycleMiddleware() {
   return createMiddleware<AppEnv>(async (c, next) => {
-    const headerOrigin = c.req.header(CYCLE_ORIGIN_HEADER);
-    const headerHop = c.req.header(CYCLE_HOP_HEADER);
-
-    if (headerOrigin !== undefined && headerHop !== undefined) {
-      const parsedHop = Number(headerHop);
-      if (
-        Number.isFinite(parsedHop) &&
-        parsedHop >= 0 &&
-        parsedHop <= MAX_PARSED_HOP_COUNT
-      ) {
-        const trimmedOrigin = headerOrigin.trim();
-        c.set("cycle", {
-          // Empty string in the origin header — treat as null.
-          // Connectors sending the chain through always populate origin
-          // with a non-empty connection_id; an empty value means
-          // "chain head, but the SDK still wanted to send the headers."
-          originatingConnectionId:
-            trimmedOrigin.length > 0 ? trimmedOrigin : null,
-          hopCount: parsedHop,
-        });
-        return next();
-      }
-      // Header pair present but malformed — fall through to the
-      // api-key-derived chain-head shape rather than rejecting the
-      // request. The budget gate still applies; a malformed cycle
-      // header doesn't get to bypass attribution.
-    }
-
-    const apiKey = c.get("apiKey");
-    const derivedOrigin = originFromApiKey(apiKey);
-    c.set("cycle", {
-      originatingConnectionId: derivedOrigin,
-      hopCount: 0,
+    const resolved = resolveCycle(c);
+    c.set("cycle", resolved);
+    await cycleRequestContext.run(resolved, async () => {
+      await next();
     });
-    return next();
   });
+}
+
+/**
+ * Compute the resolved cycle metadata for the current request without
+ * applying it. Internal helper for `cycleMiddleware`. Extracted so the
+ * conditional resolution paths read top-to-bottom rather than nested
+ * inside the wrapper.
+ */
+function resolveCycle(c: Context<AppEnv>): {
+  originatingConnectionId: string | null;
+  hopCount: number;
+} {
+  const headerOrigin = c.req.header(CYCLE_ORIGIN_HEADER);
+  const headerHop = c.req.header(CYCLE_HOP_HEADER);
+
+  if (headerOrigin !== undefined && headerHop !== undefined) {
+    const parsedHop = Number(headerHop);
+    if (
+      Number.isFinite(parsedHop) &&
+      parsedHop >= 0 &&
+      parsedHop <= MAX_PARSED_HOP_COUNT
+    ) {
+      const trimmedOrigin = headerOrigin.trim();
+      return {
+        // Empty string in the origin header — treat as null. Connectors
+        // sending the chain through always populate origin with a non-
+        // empty connection_id; an empty value means "chain head, but the
+        // SDK still wanted to send the headers."
+        originatingConnectionId:
+          trimmedOrigin.length > 0 ? trimmedOrigin : null,
+        hopCount: parsedHop,
+      };
+    }
+    // Header pair present but malformed — fall through to the api-key-
+    // derived chain-head shape rather than rejecting the request. The
+    // budget gate still applies; a malformed cycle header doesn't get
+    // to bypass attribution.
+  }
+
+  const apiKey = c.get("apiKey");
+  return {
+    originatingConnectionId: originFromApiKey(apiKey),
+    hopCount: 0,
+  };
 }
 
 /**

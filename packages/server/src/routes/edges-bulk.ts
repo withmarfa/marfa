@@ -385,7 +385,6 @@ export function edgesBulkRoutes(storage: Storage) {
           type: "edge_created",
           edge,
           tenantId,
-          ...c.var.cycle,
         });
       }
     }

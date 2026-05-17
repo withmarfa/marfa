@@ -1,14 +1,12 @@
 import { EventEmitter, on } from "node:events";
 import type { Edge, Item, Metadata } from "@mymehq/shared";
 import { envNumber } from "./config.js";
+import { cycleRequestContext } from "./cycle-context.js";
 import type { EventLogStore, Storage } from "./storage/interface.js";
 
 /**
  * Cycle-detection metadata carried on every published event (workstream
- * 2 PR 8). When a connector reaction publishes a downstream event, the
- * caller threads this through unchanged from the parent — that's how we
- * detect runaway loops where connector A reacts to event X by publishing
- * Y, connector B reacts to Y by publishing Z, and so on.
+ * 2 PR 8). The chain is detected through two fields:
  *
  *   - `originatingConnectionId` is set when the chain was kicked off by
  *     a connector (not a human). It propagates verbatim down the chain.
@@ -16,12 +14,56 @@ import type { EventLogStore, Storage } from "./storage/interface.js";
  *     drops events whose hop_count would exceed the tenant's
  *     `max_event_hop_budget` (default 5).
  *
- * Events originating from a human caller MUST omit both fields (or pass
- * `hopCount: 0` and `originatingConnectionId: null`).
+ * Events originating from a human caller MUST resolve to
+ * `{ originatingConnectionId: null, hopCount: 0 }`.
+ *
+ * **T-144 — request-scoped resolution.** Callers no longer thread cycle
+ * metadata explicitly on every `publish(...)`. `cycleMiddleware` stores
+ * the resolved cycle in `cycleRequestContext` at request entry;
+ * `publish` and `publishEdge` consult it automatically. The optional
+ * `originatingConnectionId` / `hopCount` fields on event args remain
+ * supported as an **explicit override** for the rare server-internal
+ * publish that needs to synthesise its own cycle (e.g. assigning a
+ * fresh origin to a chain that wasn't connector-driven). If either
+ * field is present, the explicit values win; otherwise the ALS is
+ * consulted; outside any request (background workers) the resolver
+ * falls through to the human sentinel.
  */
 export interface CycleMetadata {
   originatingConnectionId?: string | null;
   hopCount?: number;
+}
+
+/**
+ * Resolve the cycle metadata to stamp on an emitted event (T-144).
+ *
+ * Order:
+ *
+ *   1. **Explicit override** — caller passed `originatingConnectionId`
+ *      or `hopCount` on the event arg. The explicit values win; missing
+ *      siblings default to `null` / `0`.
+ *   2. **ALS** — `cycleRequestContext.getStore()` set by
+ *      `cycleMiddleware`. The normal path inside a request handler.
+ *   3. **Sentinel** — outside any request AND no explicit override:
+ *      `{ null, 0 }`. The human-chain-head shape; bypasses the budget.
+ *
+ * The function is purely internal; the event arg's optional fields are
+ * the public contract.
+ */
+function resolveCycleForPublish(event: CycleMetadata): {
+  originatingConnectionId: string | null;
+  hopCount: number;
+} {
+  const hasExplicit = "originatingConnectionId" in event || "hopCount" in event;
+  if (hasExplicit) {
+    return {
+      originatingConnectionId: event.originatingConnectionId ?? null,
+      hopCount: event.hopCount ?? 0,
+    };
+  }
+  const ctx = cycleRequestContext.getStore();
+  if (ctx) return ctx;
+  return { originatingConnectionId: null, hopCount: 0 };
 }
 
 export interface ItemEvent extends CycleMetadata {
@@ -243,27 +285,45 @@ export async function resolveHopBudget(
  * persistence + emission. Returns true on the happy path.
  *
  * Attribution by `originatingConnectionId !== null` (T-008) — NOT by
- * `hopCount`. A misbehaving (or hostile) connector that publishes with
+ * `hopCount`. A misbehaving (or hostile) wire-level publish that ships
  * `hopCount: 0` plus an `originatingConnectionId` set would otherwise
  * short-circuit the budget. The contract per `nextHopMetadata` is
  * `hopCount >= 1` whenever origin is set; any event that violates it
  * gets treated as `hopCount = 1` so the budget gate still applies.
+ *
+ * The `cycle` argument is the already-resolved cycle (post-ALS /
+ * explicit-override resolution from `resolveCycleForPublish`); callers
+ * must not pass the raw event's optional fields.
  */
-async function passesHopBudget(event: PubsubEvent): Promise<boolean> {
-  const hopCount = event.hopCount ?? 0;
-  const isConnectorOriginated = event.originatingConnectionId != null;
+async function passesHopBudget(
+  event: PubsubEvent,
+  cycle: { originatingConnectionId: string | null; hopCount: number },
+): Promise<boolean> {
+  const isConnectorOriginated = cycle.originatingConnectionId != null;
   // Human-originated events (no origin, no hops) bypass the budget.
-  if (!isConnectorOriginated && hopCount === 0) return true;
-  // Connector chains: enforce a floor of 1 so a malformed publish that
-  // stamps origin but leaves hopCount at 0 doesn't slip past the budget.
+  if (!isConnectorOriginated && cycle.hopCount === 0) return true;
+  // Connector chains: enforce a floor of 1 so a malformed wire publish
+  // that stamps origin but leaves hopCount at 0 doesn't slip past the
+  // budget. T-144: with ALS-driven propagation, contributor-discipline
+  // failures can no longer produce this shape — but the inbound header
+  // path can still surface it, so the guard is kept as wire-tampering
+  // defence.
   const effectiveHopCount = isConnectorOriginated
-    ? Math.max(hopCount, 1)
-    : hopCount;
+    ? Math.max(cycle.hopCount, 1)
+    : cycle.hopCount;
   const budget = await getHopBudget(event.tenantId);
   if (effectiveHopCount <= budget) return true;
   if (onHopOverflow) {
     try {
-      await onHopOverflow(event, budget);
+      // The overflow hook receives the event annotated with the
+      // resolved cycle so the system.activity row carries the right
+      // origin / hopCount even when the caller relied on ALS / sentinel.
+      const annotated: PubsubEvent = {
+        ...event,
+        originatingConnectionId: cycle.originatingConnectionId,
+        hopCount: cycle.hopCount,
+      };
+      await onHopOverflow(annotated, budget);
     } catch {
       // Swallow — overflow handler errors don't propagate.
     }
@@ -272,7 +332,8 @@ async function passesHopBudget(event: PubsubEvent): Promise<boolean> {
 }
 
 export async function publish(event: ItemEvent): Promise<bigint | undefined> {
-  if (!(await passesHopBudget(event))) return undefined;
+  const cycle = resolveCycleForPublish(event);
+  if (!(await passesHopBudget(event, cycle))) return undefined;
 
   let eventId: bigint | undefined;
 
@@ -287,12 +348,17 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
       item_id: event.item.id,
       tenant_id: event.tenantId,
       payload,
-      originating_connection_id: event.originatingConnectionId ?? null,
-      hop_count: event.hopCount ?? 0,
+      originating_connection_id: cycle.originatingConnectionId,
+      hop_count: cycle.hopCount,
     });
   }
 
-  emitter.emit("ITEM_CHANGED", { ...event, eventId } as ItemEventWithId);
+  emitter.emit("ITEM_CHANGED", {
+    ...event,
+    originatingConnectionId: cycle.originatingConnectionId,
+    hopCount: cycle.hopCount,
+    eventId,
+  } as ItemEventWithId);
   return eventId;
 }
 
@@ -305,7 +371,8 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
 export async function publishEdge(
   event: EdgeEvent,
 ): Promise<bigint | undefined> {
-  if (!(await passesHopBudget(event))) return undefined;
+  const cycle = resolveCycleForPublish(event);
+  if (!(await passesHopBudget(event, cycle))) return undefined;
 
   let eventId: bigint | undefined;
 
@@ -320,12 +387,17 @@ export async function publishEdge(
       edge_id: event.edge.id,
       tenant_id: event.tenantId,
       payload,
-      originating_connection_id: event.originatingConnectionId ?? null,
-      hop_count: event.hopCount ?? 0,
+      originating_connection_id: cycle.originatingConnectionId,
+      hop_count: cycle.hopCount,
     });
   }
 
-  emitter.emit("EDGE_CHANGED", { ...event, eventId } as EdgeEventWithId);
+  emitter.emit("EDGE_CHANGED", {
+    ...event,
+    originatingConnectionId: cycle.originatingConnectionId,
+    hopCount: cycle.hopCount,
+    eventId,
+  } as EdgeEventWithId);
   return eventId;
 }
 

@@ -564,7 +564,6 @@ export function bulkRoutes(storage: Storage) {
               item,
               metadata,
               tenantId,
-              ...c.var.cycle,
             });
           }
         }
@@ -829,7 +828,6 @@ export function bulkRoutes(storage: Storage) {
           item: fresh,
           metadata,
           tenantId,
-          ...c.var.cycle,
         });
       }
     }

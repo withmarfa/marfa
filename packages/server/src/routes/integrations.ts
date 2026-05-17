@@ -411,7 +411,6 @@ export function integrationRoutes(storage: Storage, salt: string) {
         item: connection,
         metadata,
         tenantId: apiKey.tenant_id ?? undefined,
-        ...c.var.cycle,
       });
     }
 

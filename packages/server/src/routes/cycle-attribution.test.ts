@@ -1,10 +1,15 @@
 /**
- * Route-layer integration tests for T-039 cycle metadata threading.
+ * Route-layer integration tests for T-039 cycle metadata threading
+ * (post-T-144).
  *
  * Verifies the full chain on the server side: cycle headers on the
- * inbound request → `cycleMiddleware` → `c.var.cycle` → every
- * `publish(...)` call site stamps the metadata onto the emitted event
- * → the reactive-run bridge / hop-budget gate receive the right values.
+ * inbound request → `cycleMiddleware` → `cycleRequestContext`
+ * (AsyncLocalStorage) → every `publish(...)` call resolves the metadata
+ * via ALS automatically → the emitted event carries the right
+ * originator + hop → the reactive-run bridge / hop-budget gate receive
+ * the right values. The wire-level contract these tests assert is
+ * unchanged from T-039; T-144 only changed how routes propagate the
+ * cycle internally.
  *
  * The SDK side (ConnectionClient stamping the headers in the first
  * place) is exercised in `runtime-sdk/src/connection-client.test.ts`.
@@ -107,10 +112,9 @@ describe("cycle metadata attribution (T-039)", () => {
 
     const event = await eventP;
     expect(event).not.toBeNull();
-    // Human sentinel: undefined originator (the publish passes
-    // `originatingConnectionId: null` from c.var.cycle through the
-    // CycleMetadata spread). Either undefined or null reads as
-    // "no origin" by `passesHopBudget`.
+    // Human sentinel: `passesHopBudget` recognises `originatingConnectionId
+    // === null` as the chain-head bypass. The emitted event carries the
+    // ALS-resolved value (null) verbatim post-T-144.
     expect(event?.originatingConnectionId ?? null).toBeNull();
     expect(event?.hopCount ?? 0).toBe(0);
   });

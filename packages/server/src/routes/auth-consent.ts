@@ -274,7 +274,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           clientId,
           scopes: formScopes,
           clientIp: c.var.clientIp ?? null,
-          cycle: c.var.cycle,
         });
       } catch (err) {
         log("warn", "consent decision: projection failed", {
@@ -368,12 +367,11 @@ async function projectGrantOnConsent(
     clientId: string;
     scopes: string[];
     clientIp: string | null;
-    cycle: {
-      originatingConnectionId: string | null;
-      hopCount: number;
-    };
   },
 ): Promise<void> {
+  // T-144: cycle metadata flows through `cycleRequestContext` (set by
+  // `cycleMiddleware`) — `publish()` reads it automatically. The
+  // explicit `cycle` field on `opts` was dead weight under the new shape.
   let tenantId: string | undefined;
   if (storage.users) {
     const userRow = await storage.users.getByAuthUserId(opts.authUserId);
@@ -495,8 +493,6 @@ async function projectGrantOnConsent(
     type: eventType,
     item: projectedItem,
     tenantId,
-    originatingConnectionId: opts.cycle.originatingConnectionId,
-    hopCount: opts.cycle.hopCount,
   });
 
   // F7: thread `client_ip` per CLAUDE.md T-027 convention. Every audit
