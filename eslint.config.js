@@ -14,6 +14,7 @@ export default [
             "vitest.config.ts",
             "packages/*/tsup.config.ts",
             "packages/*/vitest.config.ts",
+            "integrations/*/tsup.config.ts",
             "integrations/*/vitest.config.ts",
           ],
           // Default is 8; we have ~10 config files that fall through

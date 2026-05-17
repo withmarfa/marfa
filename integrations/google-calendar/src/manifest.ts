@@ -37,7 +37,7 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   description:
     "Bidirectional sync between Google Calendar and Myme core.event items. Inbound via 10-minute schedule polling, outbound via item-event reactive trigger.",
   direction: "both",
-  runtime_compatibility: ["hosted"],
+  runtime_compatibility: ["hosted", "local"],
   target_types: ["core.event"],
   triggers: [
     { type: "schedule", config: { cron: "*/10 * * * *" } },

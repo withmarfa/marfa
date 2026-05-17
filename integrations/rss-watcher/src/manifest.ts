@@ -16,7 +16,7 @@ export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
   description:
     "Polls an Atom or RSS feed on a schedule and creates a core.bookmark per new entry. Read-only.",
   direction: "read",
-  runtime_compatibility: ["hosted"],
+  runtime_compatibility: ["hosted", "local"],
   target_types: ["core.bookmark"],
   triggers: [
     {

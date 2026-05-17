@@ -7,7 +7,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build": "tsup"
   },
   "dependencies": {
     "@mymehq/runtime-sdk": "workspace:*",
@@ -16,6 +17,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251201.0",
     "typescript": "^6.0.2",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.2",
+    "tsup": "^8.5.1"
   }
 }
