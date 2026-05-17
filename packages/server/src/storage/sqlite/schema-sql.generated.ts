@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS \`users\` (
 	\`provider_id\` text NOT NULL,
 	\`tenant_id\` text NOT NULL,
 	\`created_at\` text NOT NULL,
-	\`updated_at\` text NOT NULL, \`handle\` text, \`first_name\` text, \`last_name\` text, \`bio\` text, \`avatar_blob_hash\` text, \`auth_user_id\` text,
+	\`updated_at\` text NOT NULL, \`handle\` text, \`first_name\` text, \`last_name\` text, \`bio\` text, \`avatar_blob_hash\` text, \`auth_user_id\` text, \`role\` text NOT NULL DEFAULT 'member',
 	FOREIGN KEY (\`tenant_id\`) REFERENCES \`tenants\`(\`id\`) ON UPDATE no action ON DELETE no action
 );
 

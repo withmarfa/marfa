@@ -12,6 +12,7 @@ import type {
   CreateWebhookInput,
   UpdateWebhookInput,
   InboundWebhookEvent,
+  MymeRole,
   PaginatedResult,
   SearchResult,
   ConflictResponse,
@@ -651,6 +652,10 @@ export interface UserStore {
      *  time; legacy `POST /auth/signup` leaves it null. T-074: this is the
      *  canonical bridge between Better Auth identity and the Myme profile. */
     auth_user_id?: string;
+    /** T-178: optional role on creation. No route surfaces this — sign-up
+     *  flows default to `member`. Tests and the operator's escape hatch
+     *  (`setRole`) use it. */
+    role?: MymeRole;
   }): Promise<User>;
   getById(id: string): Promise<User | null>;
   /** T-074: lookup by Better Auth `auth_user.id`. Replaces the previous
@@ -663,6 +668,11 @@ export interface UserStore {
   getByHandle(handle: string): Promise<User | null>;
   /** Claim or change a user's handle. Throws on collision. */
   setHandle(id: string, handle: string): Promise<User>;
+  /** T-178: operator-only role mutation. No route surfaces this — the
+   *  current operator elevates via SQL (or via this method from a script).
+   *  A real provisioning API (`my platform users set-role` etc.) lands
+   *  when a second user shows up. */
+  setRole(id: string, role: MymeRole): Promise<User>;
   /** T-074: update the editable profile fields (first/last name, bio,
    *  avatar blob hash). Stamps `updated_at`. `undefined` keys are
    *  untouched; `null` clears the column. */

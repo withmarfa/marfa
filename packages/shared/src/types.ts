@@ -23,24 +23,28 @@ export type Tier = "library" | "feed";
 export const TIERS: readonly Tier[] = ["library", "feed"] as const;
 
 /**
- * API key roles.
+ * Principal roles.
+ *
+ * Applies to both API-key principals (the historical surface) and to
+ * OAuth-bearer principals via `users.role` (T-178). The role gates
+ * admin-shaped routes via `requireWorkspaceAdmin(c)` and `requireAdmin(c)`;
+ * the bearer middleware projects this onto the synthetic principal
+ * regardless of credential type.
  *
  * - `admin` — platform admin (single-tenant compat: full instance authority).
  *   Bypasses every permission map. Used for system config, cross-tenant ops,
  *   minting platform credentials.
  * - `workspace_admin` — tenant-bounded admin (T-051). Full admin authority
- *   *within the calling key's `tenant_id`*: own keys, webhooks, types,
+ *   *within the calling principal's `tenant_id`*: own keys, webhooks, types,
  *   connections, extensions. Cannot cross-tenant read/write (RLS-enforced),
- *   cannot mint platform credentials, cannot touch system config. Routes that
- *   accept this role gate with `requireWorkspaceAdmin(c)` (admits both tiers);
- *   routes that need platform authority retain `requireAdmin(c)`.
+ *   cannot mint platform credentials, cannot touch system config.
  * - `member` — non-admin credential. Bound by `type_permissions` /
  *   `edge_permissions` / `extension_permissions` / `metadata_permissions`.
  */
-export type KeyRole = "admin" | "workspace_admin" | "member";
+export type MymeRole = "admin" | "workspace_admin" | "member";
 
 /** Valid role values as a readonly array, useful for validation. */
-export const KEY_ROLES: readonly KeyRole[] = [
+export const MYME_ROLES: readonly MymeRole[] = [
   "admin",
   "workspace_admin",
   "member",
@@ -222,7 +226,7 @@ export interface ApiKey {
   label: string;
   /** Human-readable display name stamped onto items this credential writes. */
   source: string;
-  role: KeyRole;
+  role: MymeRole;
   /**
    * Platform-credential gate (TSC42 §3/§4). When `true`, the credential may
    * register and write `core.*`, `system.*`, and `myme.*` types. The first
@@ -295,7 +299,7 @@ export interface ApiKey {
 export interface CreateKeyInput {
   label: string;
   source: string;
-  role: KeyRole;
+  role: MymeRole;
   default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
@@ -1020,6 +1024,12 @@ export interface User {
    *  the grandfather migration couldn't match (no `auth_user` row with
    *  the same email at migration time). */
   auth_user_id: string | null;
+  /** T-178: principal role projected onto the bearer principal for
+   *  OAuth-authenticated requests. Defaults to `member`; operator
+   *  elevates via SQL until a real provisioning UI lands. The role
+   *  gates admin-shaped routes (`requireWorkspaceAdmin`, `requireAdmin`)
+   *  whether the request arrives via API key or OAuth bearer. */
+  role: MymeRole;
   created_at: string;
   updated_at: string;
 }

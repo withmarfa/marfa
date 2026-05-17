@@ -336,12 +336,25 @@ export function authMiddleware(storage: Storage, salt: string) {
       const createdAtIso = oauthToken.createdAtMs
         ? new Date(oauthToken.createdAtMs).toISOString()
         : new Date().toISOString();
+      // T-178: project the underlying user's role onto the synthetic
+      // principal so admin-gated routes (`/keys`, `/admin/*`) work for
+      // OAuth-authenticated admins. `is_platform` stays hardcoded false
+      // — platform-admin is an operator-tier flag exclusive to API keys
+      // with explicit `is_platform: true`; OAuth tokens never claim it.
+      // Falls back to `member` when no Myme `users` row maps to the
+      // auth_user (legacy rows the grandfather migration missed, or a
+      // token whose user was hard-deleted mid-session).
+      let projectedRole: "admin" | "workspace_admin" | "member" = "member";
+      if (oauthToken.userId && storage.users) {
+        const user = await storage.users.getByAuthUserId(oauthToken.userId);
+        if (user) projectedRole = user.role;
+      }
       c.set("apiKey", {
         id: oauthToken.id,
         tenant_id: oauthTenantId,
         label: `oauth:${grantHandle}`,
         source: `oauth:${grantHandle}`,
-        role: "member",
+        role: projectedRole,
         default_tier: "library",
         is_platform: false,
         type_permissions: typePermissions,

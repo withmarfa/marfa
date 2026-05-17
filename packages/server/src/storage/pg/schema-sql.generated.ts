@@ -445,7 +445,8 @@ CREATE TABLE IF NOT EXISTS public.users (
     last_name text,
     bio text,
     avatar_blob_hash text,
-    auth_user_id text
+    auth_user_id text,
+    role text DEFAULT 'member'::text NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.versions (
