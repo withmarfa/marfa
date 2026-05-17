@@ -29,6 +29,7 @@ import {
   createTestContext,
   request,
   TEST_API_KEY_SALT,
+  waitForAudit,
   type TestContext,
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
@@ -68,8 +69,8 @@ async function readNdjsonItems(res: Response): Promise<string[]> {
 
 describe("T-053 tenant-scoped export — workspace_admin self-export", () => {
   let ctx: TestContext;
-  afterEach(() => {
-    ctx.cleanup();
+  afterEach(async () => {
+    await ctx.cleanup();
   });
 
   it("returns only the calling tenant's items", async () => {
@@ -133,8 +134,8 @@ describe("T-053 tenant-scoped export — workspace_admin self-export", () => {
 
 describe("T-053 tenant-scoped export — platform admin", () => {
   let ctx: TestContext;
-  afterEach(() => {
-    ctx.cleanup();
+  afterEach(async () => {
+    await ctx.cleanup();
   });
 
   it("scopes to target_tenant_id when supplied", async () => {
@@ -170,8 +171,12 @@ describe("T-053 tenant-scoped export — platform admin", () => {
     });
     expect(res.status).toBe(200);
 
-    // Audit row stamped with the warning shape.
-    const audit = await ctx.storage.audit.list({ action: "export.tenant" });
+    // Audit row stamped with the warning shape. The audit insert is
+    // fire-and-forget (T-079), so poll briefly for the row to appear.
+    const audit = await waitForAudit(
+      () => ctx.storage.audit.list({ action: "export.tenant" }),
+      (result) => result.data.length > 0,
+    );
     const row = audit.data[0];
     expect(row).toBeDefined();
     const details = row?.details as { scope: string } | undefined;
@@ -181,8 +186,8 @@ describe("T-053 tenant-scoped export — platform admin", () => {
 
 describe("T-053 archive — manifest tenant_id round-trip", () => {
   let ctx: TestContext;
-  afterEach(() => {
-    ctx.cleanup();
+  afterEach(async () => {
+    await ctx.cleanup();
   });
 
   it("stamps tenant_id on the manifest at export time", async () => {

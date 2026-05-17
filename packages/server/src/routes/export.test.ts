@@ -11,8 +11,8 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 describe("GET /export", () => {

@@ -5,8 +5,8 @@ import { checkLegacySyncAgentExtensions } from "./legacy-extension-check.js";
 
 let ctx: TestContext | undefined;
 
-afterEach(() => {
-  ctx?.cleanup();
+afterEach(async () => {
+  await ctx?.cleanup();
   ctx = undefined;
 });
 

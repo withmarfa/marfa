@@ -27,8 +27,8 @@ beforeAll(async () => {
   integrationId = regBody.id;
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 // ---------------------------------------------------------------------------

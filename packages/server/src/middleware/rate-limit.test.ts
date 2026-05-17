@@ -16,7 +16,7 @@ interface Ctx {
   app: Hono<AppEnv>;
   storage: Storage;
   adminKey: string;
-  cleanup: () => void;
+  cleanup: () => Promise<void>;
 }
 
 // Build an app with rate limiting ENABLED and an intentionally tiny
@@ -88,8 +88,12 @@ async function buildCtx(): Promise<Ctx> {
     app,
     storage,
     adminKey: rawKey,
-    cleanup: () => {
-      void storage.close();
+    cleanup: async () => {
+      try {
+        await storage.close();
+      } catch {
+        // Best-effort.
+      }
       delete process.env.RATE_LIMIT_REQUESTS;
       delete process.env.RATE_LIMIT_WINDOW_MS;
     },
@@ -124,8 +128,8 @@ beforeAll(async () => {
   ctx = await buildCtx();
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 describe("rate-limit keying", () => {

@@ -22,8 +22,8 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 /**
@@ -557,7 +557,7 @@ describe("POST /admin/account-deletion/purge-now — graceDays=0 short-circuit",
       const body = (await res.json()) as { purged_count: number };
       expect(body.purged_count).toBe(0);
     } finally {
-      ctx0.cleanup();
+      await ctx0.cleanup();
     }
   });
 });

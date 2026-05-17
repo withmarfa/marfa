@@ -18,8 +18,8 @@ beforeEach(async () => {
   ctx = await createTestContext();
 });
 
-afterEach(() => {
-  ctx.cleanup();
+afterEach(async () => {
+  await ctx.cleanup();
 });
 
 interface SeedOpts {

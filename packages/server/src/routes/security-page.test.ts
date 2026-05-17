@@ -16,8 +16,8 @@ import {
 
 let ctx: TestContext | undefined;
 
-afterEach(() => {
-  ctx?.cleanup();
+afterEach(async () => {
+  await ctx?.cleanup();
   ctx = undefined;
 });
 

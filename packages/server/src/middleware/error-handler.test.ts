@@ -8,8 +8,8 @@ describe("error handler — malformed and empty bodies (T-077)", () => {
     ctx = await createTestContext();
   });
 
-  afterAll(() => {
-    ctx.cleanup();
+  afterAll(async () => {
+    await ctx.cleanup();
   });
 
   async function postRaw(body: string): Promise<Response> {

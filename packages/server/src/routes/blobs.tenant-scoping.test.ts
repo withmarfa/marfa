@@ -41,8 +41,8 @@ async function mintTenantAdmin(
 
 describe("blobs — tenant scoping (T-049)", () => {
   let ctx: TestContext;
-  afterEach(() => {
-    ctx.cleanup();
+  afterEach(async () => {
+    await ctx.cleanup();
   });
 
   it("tenant B cannot fetch a blob uploaded by tenant A (cross-tenant probe is 404)", async () => {

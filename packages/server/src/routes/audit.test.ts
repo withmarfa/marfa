@@ -15,8 +15,8 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 interface AuditRow {
@@ -391,7 +391,7 @@ describe("GET /audit", () => {
       // (which was a trusted proxy) and NOT some other XFF entry.
       expect(body.data[0]?.client_ip).toBe("203.0.113.7");
     } finally {
-      trustedCtx.cleanup();
+      await trustedCtx.cleanup();
     }
   });
 });

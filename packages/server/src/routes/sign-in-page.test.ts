@@ -22,8 +22,8 @@ import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
 
 let ctx: TestContext | undefined;
 
-afterEach(() => {
-  ctx?.cleanup();
+afterEach(async () => {
+  await ctx?.cleanup();
   ctx = undefined;
 });
 

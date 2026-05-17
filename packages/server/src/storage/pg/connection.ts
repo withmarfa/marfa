@@ -12,7 +12,24 @@ export type PgClient = ReturnType<typeof postgres>;
 // scripts/generate-schema-sql.ts; T-145 removed the manual three-place sync
 // burden. Imported above.
 
-export async function createConnection(connectionString: string): Promise<{
+export async function createConnection(
+  connectionString: string,
+  options?: {
+    /** Override the postgres-js pool size. Defaults to 10 — the
+     *  production default. Tests pass a small value (3) so parallel
+     *  test files don't exhaust PG's cluster-wide `max_connections`
+     *  (default 100). */
+    maxPoolSize?: number;
+    /** Skip the bootstrap `SCHEMA_SQL` + migration-journal stamp.
+     *  Tests against a database cloned from a pre-built template
+     *  (`createPgTestStorage`) already have the schema applied; running
+     *  SCHEMA_SQL again is idempotent but takes hundreds of milliseconds
+     *  per storage instance and serialises across two storages on the
+     *  same DB via the advisory lock — meaningful overhead at scale.
+     *  Defaults to false (production behaviour preserved). */
+    skipBootstrap?: boolean;
+  },
+): Promise<{
   /**
    * Drizzle instance wrapped with the per-request context proxy
    * (T-025 part 2). Storage classes consume this so per-request
@@ -32,7 +49,7 @@ export async function createConnection(connectionString: string): Promise<{
   close: () => Promise<void>;
 }> {
   const client = postgres(connectionString, {
-    max: 10,
+    max: options?.maxPoolSize ?? 10,
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     onnotice: () => {},
   });
@@ -58,15 +75,17 @@ export async function createConnection(connectionString: string): Promise<{
   // the flag unset (the default) all queries fall through to the unwrapped
   // base instance and run as the connection owner — RLS bypassed by virtue
   // of ownership. Single-tenant self-hosts are unaffected.
-  await client.unsafe(`SELECT pg_advisory_lock(42)`);
-  try {
-    await client.unsafe(SCHEMA_SQL);
-    // Stamp Drizzle's `__drizzle_migrations` table so a follow-up
-    // `pnpm migrate` against this bootstrapped DB short-circuits as a no-op
-    // (T-014). Idempotent — only stamps when the table is empty.
-    await stampPgDrizzleMigrations(client);
-  } finally {
-    await client.unsafe(`SELECT pg_advisory_unlock(42)`);
+  if (!options?.skipBootstrap) {
+    await client.unsafe(`SELECT pg_advisory_lock(42)`);
+    try {
+      await client.unsafe(SCHEMA_SQL);
+      // Stamp Drizzle's `__drizzle_migrations` table so a follow-up
+      // `pnpm migrate` against this bootstrapped DB short-circuits as a no-op
+      // (T-014). Idempotent — only stamps when the table is empty.
+      await stampPgDrizzleMigrations(client);
+    } finally {
+      await client.unsafe(`SELECT pg_advisory_unlock(42)`);
+    }
   }
 
   return {

@@ -46,8 +46,8 @@ async function mintTenantAdmin(
 
 describe("T-052 quota enforcement", () => {
   let ctx: TestContext;
-  afterEach(() => {
-    ctx.cleanup();
+  afterEach(async () => {
+    await ctx.cleanup();
   });
 
   it("webhook quota = 2 → third POST returns 429 with quota_exceeded shape", async () => {

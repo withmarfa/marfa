@@ -43,8 +43,8 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
       ctx = await createTestContext({ rlsEnforce: true });
     });
 
-    afterAll(() => {
-      ctx.cleanup();
+    afterAll(async () => {
+      await ctx.cleanup();
     });
 
     it("filters cross-tenant SELECT under SET LOCAL ROLE myme_app", async () => {
@@ -153,8 +153,8 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
       tenantBKey = await mintKey(tenantB);
     });
 
-    afterAll(() => {
-      ctx.cleanup();
+    afterAll(async () => {
+      await ctx.cleanup();
     });
 
     it("denies cross-tenant GET /items/:id at the route level (404)", async () => {

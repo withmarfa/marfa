@@ -48,8 +48,8 @@ beforeAll(async () => {
   );
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 // Audit writes in the route handlers are fire-and-forget

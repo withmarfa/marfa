@@ -17,8 +17,8 @@ import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
 
 let ctx: TestContext | undefined;
 
-afterEach(() => {
-  ctx?.cleanup();
+afterEach(async () => {
+  await ctx?.cleanup();
   ctx = undefined;
 });
 

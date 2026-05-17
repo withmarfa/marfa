@@ -26,8 +26,8 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 /** Drain pubsub events into an array until `predicate` matches. Resolves

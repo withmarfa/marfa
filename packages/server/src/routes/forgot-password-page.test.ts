@@ -12,8 +12,8 @@ import { renderForgotPasswordPage } from "./forgot-password-page.js";
 
 let ctx: TestContext | undefined;
 
-afterEach(() => {
-  ctx?.cleanup();
+afterEach(async () => {
+  await ctx?.cleanup();
   ctx = undefined;
 });
 

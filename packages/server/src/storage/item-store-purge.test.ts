@@ -8,9 +8,9 @@ beforeEach(async () => {
   ctx = await createTestContext();
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
-  ctx.cleanup();
+  await ctx.cleanup();
 });
 
 const MS_PER_DAY = 86_400_000;

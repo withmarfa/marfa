@@ -205,6 +205,11 @@ jobs:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       STORAGE_DIALECT: pg
       DATABASE_URL: postgresql://myme:myme@localhost:5432/myme_test
+      # The vitest globalSetup uses MYME_TEST_PG_ADMIN_URL to CREATE / DROP
+      # the test template + per-file clones on the cluster. Points at the
+      # default `postgres` system DB so it's always reachable. See
+      # packages/server/src/storage/pg/test-template.ts.
+      MYME_TEST_PG_ADMIN_URL: postgresql://myme:myme@localhost:5432/postgres
     services:
       postgres:
         image: postgres:17
