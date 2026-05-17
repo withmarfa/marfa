@@ -43,6 +43,11 @@ export const users = sqliteTable(
     auth_user_id: text("auth_user_id").references(() => auth_user.id, {
       onDelete: "set null",
     }),
+    /** T-178: principal role projected onto OAuth bearer principals.
+     *  Defaults to `member`; operator elevates via SQL until a real
+     *  provisioning UI lands. Gates `requireWorkspaceAdmin` /
+     *  `requireAdmin` routes for OAuth-authenticated requests. */
+    role: text("role").notNull().default("member"),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },

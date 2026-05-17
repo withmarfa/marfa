@@ -1,6 +1,6 @@
 import { eq, and } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
-import type { User } from "@mymehq/shared";
+import type { MymeRole, User } from "@mymehq/shared";
 import type { UserStore, UpdateProfileInput } from "../interface.js";
 import { users, auth_user } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -18,6 +18,7 @@ function rowToUser(row: typeof users.$inferSelect): User {
     tenant_id: row.tenant_id,
     handle: row.handle,
     auth_user_id: row.auth_user_id,
+    role: row.role as User["role"],
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -33,6 +34,7 @@ export class SqliteUserStore implements UserStore {
     tenant_id: string;
     handle?: string;
     auth_user_id?: string;
+    role?: MymeRole;
   }): Promise<User> {
     const now = new Date().toISOString();
     const row = {
@@ -47,10 +49,27 @@ export class SqliteUserStore implements UserStore {
       tenant_id: input.tenant_id,
       handle: input.handle ?? null,
       auth_user_id: input.auth_user_id ?? null,
+      role: input.role ?? "member",
       created_at: now,
       updated_at: now,
     };
     await this.db.insert(users).values(row).run();
+    return rowToUser(row);
+  }
+
+  async setRole(id: string, role: MymeRole): Promise<User> {
+    const now = new Date().toISOString();
+    await this.db
+      .update(users)
+      .set({ role, updated_at: now })
+      .where(eq(users.id, id))
+      .run();
+    const row = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, id))
+      .get();
+    if (!row) throw new Error(`User ${id} not found`);
     return rowToUser(row);
   }
 

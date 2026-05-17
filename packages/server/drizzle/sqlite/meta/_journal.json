@@ -351,6 +351,13 @@
       "when": 1779638402000,
       "tag": "0049_auth_jwks",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1779638403000,
+      "tag": "0050_users_role",
+      "breakpoints": true
     }
   ]
 }

@@ -112,6 +112,12 @@ export async function createPgTestStorage(options?: {
  *                           (defaults to undefined — keys-mode self-host)
  * @param opts.authUserId    Better Auth user id; if absent a synthetic
  *                           one is seeded into `auth_user`.
+ * @param opts.userRole      T-178: optionally seed a `users` row bound
+ *                           to the `auth_user` with this role. Without
+ *                           it, no `users` row is created and the bearer
+ *                           middleware falls back to `member` projection.
+ *                           Hosted-mode storage only (no-op when the
+ *                           storage doesn't expose `users`).
  */
 export async function seedOauthBearer(
   storage: Storage,
@@ -120,6 +126,7 @@ export async function seedOauthBearer(
     clientName?: string;
     tenantId?: string;
     authUserId?: string;
+    userRole?: "admin" | "workspace_admin" | "member";
   } = {},
 ): Promise<{ token: string; grantId: string; clientId: string }> {
   if (
@@ -256,6 +263,33 @@ export async function seedOauthBearer(
     accessTtlMs: 3600_000,
   });
 
+  // T-178: optionally seed a `users` row tied to the auth_user so the
+  // bearer middleware's role projection picks it up. Requires a real
+  // tenant id (the column is NOT NULL and FK-references `tenants.id`)
+  // and a `UserStore` on the storage adapter — keys-mode self-host
+  // storage has no `users` store, so the role projection always falls
+  // back to `member` there. Tests opting in must use hosted-mode
+  // storage and create a tenant up-front.
+  if (opts.userRole) {
+    if (!storage.users) {
+      throw new Error(
+        "seedOauthBearer({ userRole }) requires hosted-mode storage with a UserStore",
+      );
+    }
+    if (!opts.tenantId) {
+      throw new Error(
+        "seedOauthBearer({ userRole }) requires opts.tenantId (users.tenant_id is FK-bound)",
+      );
+    }
+    await storage.users.create({
+      provider: "test",
+      provider_id: authUserId,
+      tenant_id: opts.tenantId,
+      auth_user_id: authUserId,
+      role: opts.userRole,
+    });
+  }
+
   return { token: rawToken, grantId: grant.id, clientId };
 }
 
@@ -388,15 +422,22 @@ export async function createTestContext(
   const tmpDir = mkdtempSync(join(tmpdir(), "myme-test-"));
   const blobPath = join(tmpDir, "blobs");
 
+  // T-178: thread `authMode` through to storage construction so tests
+  // overriding `authMode: "hosted"` get a UserStore (`storage.users`).
+  // Previously the storage was built keys-mode regardless and only the
+  // AppConfig saw the override — tests needing `storage.users` had to
+  // roll their own context (see routes/profile.test.ts for the older
+  // pattern).
+  const storageAuthMode: "keys" | "hosted" = overrides?.authMode ?? "keys";
   let storage: Storage;
   let pgCleanup: (() => Promise<void>) | undefined;
   if (dialect === "pg") {
-    const clone = await createPgTestStorage();
+    const clone = await createPgTestStorage({ authMode: storageAuthMode });
     storage = clone.storage;
     pgCleanup = clone.cleanup;
   } else {
     const dbPath = join(tmpDir, "test.db");
-    storage = await createSqliteStorage(dbPath);
+    storage = await createSqliteStorage(dbPath, { authMode: storageAuthMode });
   }
 
   const blobBackend = new FilesystemBlobBackend(blobPath);

@@ -1,0 +1,13 @@
+-- T-178: users.role column. Projects the principal role onto OAuth-bearer
+-- requests so admin-gated routes (`/keys`, `/admin/*`, etc.) work whether
+-- the request arrives via API key or OAuth user-session. Without this
+-- column, `middleware/auth.ts` had no source-of-truth for an OAuth user's
+-- role and hardcoded `"member"` on every bearer principal — locking
+-- OAuth-authenticated admins out of every admin-shaped route.
+--
+-- Additive migration. All existing users default to `'member'`; operator
+-- elevates via SQL (e.g. `UPDATE users SET role = 'admin' WHERE handle = '…'`)
+-- until a real provisioning UI lands. `is_platform` stays exclusive to
+-- API keys — OAuth tokens never claim platform-admin (intentional ceiling,
+-- enforced in the middleware projection).
+ALTER TABLE "users" ADD COLUMN "role" text NOT NULL DEFAULT 'member';
