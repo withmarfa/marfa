@@ -1,10 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as schema from "./schema.js";
 import type { PgClient, PgDb } from "./connection.js";
-import {
-  pgRequestContext,
-  type PgTxContext,
-} from "./request-context.js";
+import { pgRequestContext, type PgTxContext } from "./request-context.js";
 
 /**
  * T-146: session-level RLS for streaming routes (`/events`, `/export`).
