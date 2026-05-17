@@ -78,13 +78,13 @@ export async function pgDeleteAccountCascade(
   authUserId: string,
   cutoffIso: string,
 ): Promise<boolean> {
-  // The cascade is conceptually one transaction. PG's runInTransaction
-  // wraps the outer `postgres-js` BEGIN; we drive it via `db.transaction`
-  // here so every Drizzle call in this block uses the same `tx`. (The
-  // search-index cleanup inside `ItemStore.bulkPurge` runs on its own
-  // db handle and is best-effort with respect to this transaction; on
-  // rollback the affected items still exist so a residual FTS row is
-  // self-healing on the next purger tick.)
+  // The cascade is conceptually one transaction. We drive it via
+  // `db.transaction(...)` directly (not via `storage.runInTransaction`)
+  // so every Drizzle call in this block uses the same `tx` reserved
+  // connection. (The search-index cleanup inside `ItemStore.bulkPurge`
+  // runs on its own db handle and is best-effort with respect to this
+  // transaction; on rollback the affected items still exist so a
+  // residual FTS row is self-healing on the next purger tick.)
   //
   // T-025 RLS bypass: this is a privileged operation that crosses
   // tenant boundaries (auth_user is in the auth_* island; the user's

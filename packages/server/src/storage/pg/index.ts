@@ -34,6 +34,7 @@ import { PgTenantQuotaStore } from "./tenant-quota-store.js";
 import { PgRateLimitStore } from "./rate-limit-store.js";
 import { PgAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { pgDeleteAccountCascade } from "./account-cascade.js";
+import { pgRequestContext } from "./request-context.js";
 
 export async function createPgStorage(
   connectionString: string,
@@ -147,12 +148,37 @@ export async function createPgStorage(
     ...(options?.authMode === "hosted" && {
       users: new PgUserStore(db),
     }),
+    /**
+     * Genuinely transactional under postgres-js + ALS routing (T-160).
+     * Opens a Drizzle transaction via `db.transaction(async tx => …)`
+     * and installs `tx` on `pgRequestContext` so every store call inside
+     * `fn` resolves its executor to the transaction via the proxy in
+     * `request-context.ts`. All work inside `fn` runs on the
+     * transaction's reserved connection; rollback is real on throw.
+     *
+     * Pre-T-160 this used `client.begin(async () => fn())` and discarded
+     * the transaction-scoped query interface. Storage calls inside `fn`
+     * fell through to the unwrapped base instance via the proxy (no ALS
+     * context) and acquired SECOND pool connections per query, while the
+     * `begin` connection sat `idle in transaction` waiting for queries
+     * that never came. Under concurrent writes the pool saturated, every
+     * `runInTransaction` callback blocked acquiring an inner connection,
+     * and the server wedged for ~15 minutes until clients gave up. See
+     * vault artifact `Staging Wedge Diagnosis — 2026-05-17.md`.
+     *
+     * Goes through the wrapped `db`: when the caller is already inside
+     * the RLS middleware's transaction (a tenant-scoped request), the
+     * proxy resolves `transaction` against the existing `tx` and Drizzle
+     * issues a SAVEPOINT — staying on the middleware's connection and
+     * preserving RLS isolation. Outside a request (retention jobs,
+     * single-tenant self-host), the proxy falls through to `baseDb` and
+     * opens a fresh transaction on the owner connection. Either way the
+     * inner work shares one pool slot, not two.
+     */
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
-      let result: T | undefined;
-      await client.begin(async () => {
-        result = await fn();
+      return await db.transaction(async (tx) => {
+        return await pgRequestContext.run({ tx }, async () => fn());
       });
-      return result as T;
     },
     deleteAccountCascade: (
       authUserId: string,
