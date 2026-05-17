@@ -407,6 +407,6 @@ Node-bundled integrations substrate. Boots conditionally on `MYME_INTEGRATION_RU
 
 **Operator footprint.** Two containers — server + Postgres. No Redis, no extra binary, no Postgres extension dependency. pg-boss creates its own `pgboss` schema inside the same Postgres instance the rest of the server already uses.
 
-**Default.** `MYME_INTEGRATION_RUNTIME` defaults to `hosted` in T-173 (this PR). T-174 flips the default to `local` once each in-tree integration ships a `local.ts` entry with a smoke test.
+**Default.** `MYME_INTEGRATION_RUNTIME` defaults to `local` from T-174. Hosted Myme deployments + any operator that wants to delegate to the Cloudflare bridge sets the env var explicitly to `hosted`.
 
 **Public docs.** The semantic parity sheet between substrates lives in `mymehq/docs/concepts/runtime-substrates.mdx`.

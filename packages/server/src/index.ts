@@ -297,11 +297,12 @@ async function main() {
   // synchronously inside request handlers.
   const oidcSigner = await OidcSigner.init(storage);
 
-  // T-173 — boot the local integrations runtime when
-  // MYME_INTEGRATION_RUNTIME=local. Returns null otherwise (hosted
-  // substrate stays in charge of the Cloudflare bridge above).
+  // T-173 + T-174 — boot the local integrations runtime when
+  // MYME_INTEGRATION_RUNTIME=local (default). Set the env var to
+  // "hosted" explicitly to delegate to the Cloudflare bridge above
+  // instead.
   let localRuntime: LocalRuntimeBundle | null = null;
-  if ((config.integrationRuntime ?? "hosted") === "local") {
+  if ((config.integrationRuntime ?? "local") === "local") {
     try {
       const integrationsRoot = resolveIntegrationsRoot();
       const registrations = integrationsRoot

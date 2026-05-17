@@ -186,18 +186,21 @@ export interface AppConfig {
   smtpPass?: string;
   smtpSecure?: boolean;
   /**
-   * T-173 — integration runtime substrate. `"hosted"` runs against the
-   * Cloudflare control plane + per-Integration Workers (set
-   * `CLOUDFLARE_QUEUES_REACTIVE_RUN_URL` + `CLOUDFLARE_QUEUES_API_TOKEN`).
-   * `"local"` runs the in-process Node substrate (`pg-boss` for
-   * scheduling, `worker_thread` pool for handler execution); requires
-   * Postgres. Default is `"hosted"` in T-173; T-174 flips the default to
-   * `"local"` once each integration carries a local entrypoint with a
-   * smoke test.
+   * Integration runtime substrate (T-173 + T-174). `"hosted"` runs
+   * against the Cloudflare control plane + per-Integration Workers
+   * (set `CLOUDFLARE_QUEUES_REACTIVE_RUN_URL` +
+   * `CLOUDFLARE_QUEUES_API_TOKEN`). `"local"` runs the in-process Node
+   * substrate (`pg-boss` for scheduling, `worker_thread` pool for
+   * handler execution); requires Postgres.
+   *
+   * Default flipped to `"local"` in T-174 so fresh self-host
+   * `docker compose up` works without a Cloudflare account. Hosted
+   * Myme deployments + any operator that wants the Cloudflare path
+   * sets the env var explicitly to `"hosted"`.
    *
    * Optional on the type so test contexts constructing `AppConfig`
    * literals don't have to supply it; `index.ts` applies the
-   * `"hosted"` fallback.
+   * `"local"` fallback.
    */
   integrationRuntime?: "hosted" | "local";
 }
@@ -383,10 +386,19 @@ export function loadConfig(): AppConfig {
 }
 
 /**
- * Parse `MYME_INTEGRATION_RUNTIME` (T-173). Unset → `"hosted"` (the
- * default until T-174 flips it to `"local"`). Unknown values warn and
- * fall back to `"hosted"` so a typo doesn't silently start the wrong
- * substrate; legal values: `hosted | local`.
+ * Parse `MYME_INTEGRATION_RUNTIME` (T-173 + T-174). Unset → `"local"` —
+ * fresh self-hosters using `docker compose up` pick up the Node
+ * substrate without needing a Cloudflare account. Hosted Myme + any
+ * deployment that wants the Cloudflare path sets the env var
+ * explicitly to `"hosted"`. Unknown values warn and fall back to the
+ * default so a typo doesn't silently start the wrong substrate.
+ *
+ * Operator action when migrating from T-173 (default was `"hosted"`)
+ * to T-174 (default is `"local"`): if your deployment relied on the
+ * Cloudflare-side runtime AND your config did not set
+ * `MYME_INTEGRATION_RUNTIME` explicitly, set it to `"hosted"` before
+ * the upgrade. Existing Atlas plists / Cloudflare Containers configs
+ * that already set the var explicitly are unaffected.
  */
 export function parseIntegrationRuntime(
   raw: string | undefined,
@@ -394,11 +406,11 @@ export function parseIntegrationRuntime(
   if (raw === "hosted" || raw === "local") return raw;
   if (raw && raw.length > 0) {
     console.warn(
-      `Unknown MYME_INTEGRATION_RUNTIME=${raw}; falling back to "hosted". ` +
+      `Unknown MYME_INTEGRATION_RUNTIME=${raw}; falling back to "local". ` +
         `Legal values: hosted | local.`,
     );
   }
-  return "hosted";
+  return "local";
 }
 
 /**
