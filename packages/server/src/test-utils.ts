@@ -3,6 +3,7 @@ import { OidcSigner } from "./auth/oidc-signing.js";
 import type { AppConfig } from "./config.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
+import { cloneTemplate } from "./storage/pg/test-template.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import { hashApiKey } from "./middleware/auth.js";
@@ -24,14 +25,73 @@ export interface TestContext {
   storage: Storage;
   blobBackend: BlobBackend;
   adminKey: string;
-  cleanup: () => void;
+  /** Awaitable cleanup. Callers that don't `await` still trigger the
+   *  cleanup (the promise is created immediately), but unawaited
+   *  cleanups queue against admin-URL DROPs from other test files and
+   *  can starve afterAll hooks. Best practice: `await ctx.cleanup()`. */
+  cleanup: () => Promise<void>;
 }
 
-async function truncatePg(storage: Storage): Promise<void> {
-  const s = storage as unknown as Record<string, unknown>;
-  if (typeof s._pgTruncate === "function") {
-    await (s._pgTruncate as () => Promise<void>)();
-  }
+/**
+ * Clone the PG template database and build a Storage against it. Returns
+ * the storage plus an awaitable cleanup callback that closes the pool
+ * and drops the clone with `WITH (FORCE)` so any lingering connections
+ * are terminated.
+ *
+ * Used by `createTestContext` for the standard path and by the few test
+ * files that roll their own storage (custom `authMode`, etc.) instead
+ * of going through `createTestContext`.
+ *
+ * Cleanup is async + awaitable. With parallel test files all doing
+ * per-test clone/drop traffic against the same admin URL, an unawaited
+ * fire-and-forget drop queues against everyone else's drops; the
+ * afterAll hooks of long-running files can sit behind a multi-second
+ * queue. Awaiting cleanup bounds per-file work.
+ */
+export async function createPgTestStorage(options?: {
+  versionSnapshotIntervalMs?: number;
+  authMode?: "hosted" | "keys";
+  /** Override the default pool-size cap. Default is 3 — see comment
+   *  inside this function for the rationale. */
+  maxPoolSize?: number;
+}): Promise<{ storage: Storage; cleanup: () => Promise<void> }> {
+  const clone = await cloneTemplate();
+  // Cap the pool at 3 connections per test file. With parallel file
+  // execution + ~CPU-count workers, default max=10 exceeds Postgres's
+  // default `max_connections=100` quickly. 3 is plenty for one test
+  // file's typical concurrent query count.
+  //
+  // Skip the bootstrap SCHEMA_SQL apply — the cloned DB already has
+  // the schema baked in from the template. Saves hundreds of ms per
+  // storage creation under parallel load.
+  const storage = await createPgStorage(clone.url, {
+    ...options,
+    maxPoolSize: options?.maxPoolSize ?? 3,
+    skipBootstrap: true,
+  });
+  return {
+    storage,
+    cleanup: async () => {
+      // Kick storage.close() and clone.drop() in parallel, bounded by a
+      // 5s ceiling. The DROP uses WITH (FORCE) which terminates any
+      // lingering pool connections — so it doesn't actually depend on
+      // storage.close() succeeding cleanly. Pool-close can hang in
+      // pathological cases (in-flight SSE / export streams whose
+      // teardown the postgres-js client is awaiting), and we don't want
+      // that to block the DROP.
+      const closePromise = storage.close().catch(() => undefined);
+      const dropPromise = clone.drop().catch(() => undefined);
+      const bound = new Promise<void>((resolve) => {
+        setTimeout(() => {
+          resolve();
+        }, 5_000);
+      });
+      await Promise.race([
+        Promise.all([closePromise, dropPromise]).then(() => undefined),
+        bound,
+      ]);
+    },
+  };
 }
 
 /**
@@ -329,12 +389,11 @@ export async function createTestContext(
   const blobPath = join(tmpDir, "blobs");
 
   let storage: Storage;
+  let pgCleanup: (() => Promise<void>) | undefined;
   if (dialect === "pg") {
-    const databaseUrl =
-      process.env.DATABASE_URL ??
-      "postgres://myme:myme_dev@localhost:5434/myme";
-    storage = await createPgStorage(databaseUrl);
-    await truncatePg(storage);
+    const clone = await createPgTestStorage();
+    storage = clone.storage;
+    pgCleanup = clone.cleanup;
   } else {
     const dbPath = join(tmpDir, "test.db");
     storage = await createSqliteStorage(dbPath);
@@ -419,8 +478,18 @@ export async function createTestContext(
     storage,
     blobBackend,
     adminKey: rawKey,
-    cleanup: () => {
-      void storage.close();
+    cleanup: async () => {
+      if (pgCleanup) {
+        // PG path: closes the pool AND drops the cloned test database.
+        await pgCleanup();
+      } else {
+        // SQLite path: tmpdir DB, no DROP needed.
+        try {
+          await storage.close();
+        } catch {
+          // Best-effort.
+        }
+      }
     },
   };
 }

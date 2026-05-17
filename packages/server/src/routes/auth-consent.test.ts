@@ -22,13 +22,14 @@ import {
   createTestContext,
   markEmailVerified,
   request,
+  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext | undefined;
 
-afterEach(() => {
-  ctx?.cleanup();
+afterEach(async () => {
+  await ctx?.cleanup();
   ctx = undefined;
 });
 
@@ -384,10 +385,16 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(grant?.properties.client_id).not.toBe("ATTACKER_CONTROLLED_VALUE");
 
     // Audit row exists with the real client_id + the resolved client_ip.
-    const audits = await ctx.storage.audit.list({
-      action: "auth.grant.created",
-      limit: 10,
-    });
+    // Audit insert is fire-and-forget (T-079) — poll briefly.
+    const storage = ctx.storage;
+    const audits = await waitForAudit(
+      () =>
+        storage.audit.list({
+          action: "auth.grant.created",
+          limit: 10,
+        }),
+      (result) => result.data.length >= 1,
+    );
     expect(audits.data.length).toBe(1);
     const audit = audits.data[0];
     expect(audit?.resource_id).toBe(realClientId);

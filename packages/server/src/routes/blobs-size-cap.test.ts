@@ -13,8 +13,8 @@ beforeAll(async () => {
   ctx = await createTestContext({ maxBlobSize: CAP });
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 describe("POST /blobs — size cap", () => {

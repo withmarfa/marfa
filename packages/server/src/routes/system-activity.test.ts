@@ -8,8 +8,8 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 // PR 3 of workstream 2: adds the system.activity type and the

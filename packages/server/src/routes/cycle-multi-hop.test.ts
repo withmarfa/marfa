@@ -44,9 +44,9 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 
-afterAll(() => {
+afterAll(async () => {
   __resetCycleDetectionForTests();
-  ctx.cleanup();
+  await ctx.cleanup();
 });
 
 beforeEach(() => {

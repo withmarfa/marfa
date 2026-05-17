@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { createPgStorage } from "../storage/pg/index.js";
+import { createPgTestStorage } from "../test-utils.js";
 import type { Storage } from "../storage/interface.js";
 import { grandfatherProfilesT074 } from "./grandfather-profiles-t074.js";
 
@@ -33,15 +33,11 @@ async function makeStorage(): Promise<Ctx> {
   const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
   const tmpDir = mkdtempSync(join(tmpdir(), "myme-grandfather-test-"));
   let storage: Storage;
+  let pgCleanup: (() => Promise<void>) | undefined;
   if (dialect === "pg") {
-    const databaseUrl =
-      process.env.DATABASE_URL ??
-      "postgres://myme:myme_dev@localhost:5434/myme";
-    storage = await createPgStorage(databaseUrl, { authMode: "hosted" });
-    const s = storage as unknown as Record<string, unknown>;
-    if (typeof s._pgTruncate === "function") {
-      await (s._pgTruncate as () => Promise<void>)();
-    }
+    const pg = await createPgTestStorage({ authMode: "hosted" });
+    storage = pg.storage;
+    pgCleanup = pg.cleanup;
   } else {
     const dbPath = join(tmpDir, "test.db");
     storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
@@ -49,7 +45,11 @@ async function makeStorage(): Promise<Ctx> {
   return {
     storage,
     cleanup: async () => {
-      await storage.close();
+      if (pgCleanup) {
+        await pgCleanup();
+      } else {
+        await storage.close();
+      }
     },
   };
 }

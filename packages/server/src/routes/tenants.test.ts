@@ -3,11 +3,15 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Hono } from "hono";
-import { createTestContext, request, waitForAudit } from "../test-utils.js";
+import {
+  createPgTestStorage,
+  createTestContext,
+  request,
+  waitForAudit,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { createPgStorage } from "../storage/pg/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
@@ -33,16 +37,11 @@ async function createHostedContext(): Promise<HostedContext> {
   const blobPath = join(tmpDir, "blobs");
 
   let storage: Storage;
+  let pgCleanup: (() => Promise<void>) | undefined;
   if (dialect === "pg") {
-    const databaseUrl =
-      process.env.DATABASE_URL ??
-      "postgres://myme:myme_dev@localhost:5434/myme";
-    storage = await createPgStorage(databaseUrl, { authMode: "hosted" });
-    // Reuse the shared PG truncate hook exposed by createPgStorage.
-    const s = storage as unknown as Record<string, unknown>;
-    if (typeof s._pgTruncate === "function") {
-      await (s._pgTruncate as () => Promise<void>)();
-    }
+    const pg = await createPgTestStorage({ authMode: "hosted" });
+    storage = pg.storage;
+    pgCleanup = pg.cleanup;
   } else {
     const dbPath = join(tmpDir, "test.db");
     storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
@@ -116,7 +115,11 @@ async function createHostedContext(): Promise<HostedContext> {
     tenantAdminKey,
     tenantId,
     cleanup: async () => {
-      await storage.close();
+      if (pgCleanup) {
+        await pgCleanup();
+      } else {
+        await storage.close();
+      }
     },
   };
 }
@@ -128,8 +131,8 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 describe("GET /tenants/current/config — keys-mode fallback", () => {

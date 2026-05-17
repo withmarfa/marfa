@@ -3,6 +3,7 @@ import {
   createTestContext,
   markEmailVerified,
   request,
+  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -24,8 +25,8 @@ import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext | undefined;
 
-afterEach(() => {
-  ctx?.cleanup();
+afterEach(async () => {
+  await ctx?.cleanup();
   ctx = undefined;
 });
 
@@ -511,11 +512,18 @@ describe("POST /auth/device/consent — approve / deny", () => {
     expect(items.data[0]!.id).toBe(grantId);
 
     // Audit reflects re-consent: 2 rows, second has `created: false`.
-    await new Promise((r) => setTimeout(r, 50));
-    const audits = await ctx.storage.audit.list({
-      action: "auth.grant.created",
-      limit: 10,
-    });
+    // Audit inserts are fire-and-forget (T-079) — poll briefly until both
+    // rows land. Under parallel test execution the 50ms hard-sleep this
+    // used to rely on isn't always enough.
+    const storage = ctx.storage;
+    const audits = await waitForAudit(
+      () =>
+        storage.audit.list({
+          action: "auth.grant.created",
+          limit: 10,
+        }),
+      (result) => result.data.length >= 2,
+    );
     expect(audits.data.length).toBe(2);
     // Audit rows are list in descending order — first entry is the most recent.
     expect(audits.data[0]?.details.created).toBe(false);

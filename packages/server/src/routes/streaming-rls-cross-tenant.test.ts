@@ -162,8 +162,8 @@ describe.skipIf(!isPg)(
       itemBId = bBody.item.id;
     });
 
-    afterAll(() => {
-      ctx.cleanup();
+    afterAll(async () => {
+      await ctx.cleanup();
     });
 
     it("GET /export NDJSON: tenant A never sees tenant B items", async () => {

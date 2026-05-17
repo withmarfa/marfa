@@ -69,8 +69,8 @@ async function mintTenantAdmin(
 
 describe("T-052 quota wiring completion — POST /blobs", () => {
   let ctx: TestContext;
-  afterEach(() => {
-    ctx.cleanup();
+  afterEach(async () => {
+    await ctx.cleanup();
   });
 
   it("enforces blobs (count) quota — third upload over a cap of 2 returns 429", async () => {
@@ -134,8 +134,8 @@ describe("T-052 quota wiring completion — POST /blobs", () => {
 
 describe("T-052 quota wiring completion — per-tenant rate ceiling", () => {
   let ctx: TestContext;
-  afterEach(() => {
-    ctx.cleanup();
+  afterEach(async () => {
+    await ctx.cleanup();
   });
 
   it("enforces tenant rate_per_minute_limit on top of per-credential window", async () => {

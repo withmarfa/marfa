@@ -1,12 +1,16 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { createPgStorage } from "../storage/pg/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createTestContext, request, waitForAudit } from "../test-utils.js";
+import {
+  createPgTestStorage,
+  createTestContext,
+  request,
+  waitForAudit,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Storage } from "../storage/interface.js";
 
@@ -16,8 +20,8 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 async function createKey(overrides: Record<string, unknown> = {}): Promise<{
@@ -147,10 +151,10 @@ describe("PATCH /keys/{id}", () => {
 describe("bootstrap sentinel", () => {
   // Builds a fresh app with NO existing key and NO sentinel set —
   // mirrors a brand-new installation. Dialect-aware: under
-  // `STORAGE_DIALECT=pg` truncates the shared test container so the
-  // bootstrap path can fire; under SQLite (default) creates a fresh
-  // tmp DB. Cannot use `createTestContext` because that pre-creates an
-  // admin key and stamps the bootstrapped sentinel.
+  // PG: cloned from the test-template, so tables are empty and the
+  // `bootstrapped` sentinel isn't set — bootstrap path can fire cleanly.
+  // SQLite: fresh tmp DB. Cannot use `createTestContext` because that
+  // pre-creates an admin key and stamps the bootstrapped sentinel.
   async function freshApp(): Promise<{
     app: ReturnType<typeof createApp>;
     storage: Storage;
@@ -159,25 +163,11 @@ describe("bootstrap sentinel", () => {
     let storage: Storage;
     let blobPath: string;
     if (dialect === "pg") {
-      const databaseUrl =
-        process.env.DATABASE_URL ??
-        "postgres://myme:myme_dev@localhost:5434/myme";
-      storage = await createPgStorage(databaseUrl);
-      // Truncate the data tables AND clear the settings table so the
-      // `bootstrapped` sentinel from a prior test in this run doesn't gate
-      // us out of bootstrap mode. `_pgTruncate` only covers data tables
-      // intentionally; the bootstrap sentinel sits in `settings` and we
-      // need it gone for these tests specifically. PG file-parallelism is
-      // disabled in vitest.config.ts so the wipe is contained.
-      const s = storage as unknown as Record<string, unknown>;
-      if (typeof s._pgTruncate === "function") {
-        await (s._pgTruncate as () => Promise<void>)();
-      }
-      if (typeof s.__pgClient === "function") {
-        await (s.__pgClient as (q: string) => Promise<unknown[]>)(
-          "DELETE FROM settings",
-        );
-      }
+      const pg = await createPgTestStorage();
+      storage = pg.storage;
+      // pg.cleanup leaks here intentionally — `freshApp` doesn't have
+      // a returned-cleanup contract with its callers; the leaked clone
+      // is mopped up by the next test-run's dropStaleClones pass.
       const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-pg-"));
       blobPath = join(tmpDir, "blobs");
     } else {

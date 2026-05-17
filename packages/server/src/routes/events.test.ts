@@ -14,8 +14,8 @@ beforeAll(async () => {
   initEventLog(ctx.storage.eventLog);
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 interface CreatedItem {
@@ -198,7 +198,7 @@ describe("GET /events — catchup_too_old", () => {
       const { text } = await readSse(res, { timeoutMs: 200 });
       expect(findEvent(text, "catchup_too_old")).toBeNull();
     } finally {
-      fresh.cleanup();
+      await fresh.cleanup();
       // Restore the suite-wide event log binding so later tests keep
       // persisting through `ctx.storage.eventLog`.
       initEventLog(ctx.storage.eventLog);

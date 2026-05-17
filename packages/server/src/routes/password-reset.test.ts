@@ -19,8 +19,8 @@ import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext | undefined;
 
-afterEach(() => {
-  ctx?.cleanup();
+afterEach(async () => {
+  await ctx?.cleanup();
   ctx = undefined;
 });
 

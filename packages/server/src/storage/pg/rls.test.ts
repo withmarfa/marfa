@@ -29,8 +29,8 @@ describe.skipIf(!isPg)("Postgres RLS scaffold (T-025 part 1)", () => {
     pgClient = s.__pgClient;
   });
 
-  afterAll(() => {
-    ctx.cleanup();
+  afterAll(async () => {
+    await ctx.cleanup();
   });
 
   it("creates the myme_app role", async () => {

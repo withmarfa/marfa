@@ -3,15 +3,19 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     projects: ["packages/*"],
-    // When STORAGE_DIALECT=pg, every test file truncates a shared database
-    // at startup (see packages/server/src/test-utils.ts createTestContext).
-    // With parallel workers, worker A's bootstrap admin key gets wiped by
-    // worker B's truncate before A's first request lands, surfacing as
-    // spurious 401s. fileParallelism=false forces maxWorkers=1 for the PG
-    // run, serialising the truncate/bootstrap/exercise cycle. SQLite stays
-    // parallel (each file uses its own tmpdir DB).
+    // PG parallelism is owned by the server package's own vitest config:
+    // each test file clones a fresh PG database from the template
+    // (`packages/server/src/storage/pg/test-template.ts`), so workers
+    // don't share state and file-parallelism is safe. SQLite was always
+    // parallel-safe (each file uses its own tmpdir DB).
     //
-    // Vitest 4 removed poolOptions.forks.singleFork — this is the replacement.
-    fileParallelism: process.env.STORAGE_DIALECT !== "pg",
+    // PG-side: CREATE DATABASE TEMPLATE / DROP DATABASE WITH (FORCE)
+    // serialise briefly per template, so per-file setup + teardown can
+    // run a few seconds under heavy parallel contention. 20s default
+    // is generous enough that a real hang still surfaces fast.
+    // `hookTimeout` covers `beforeAll` / `afterAll` (the per-file
+    // template-clone lifecycle uses both).
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
 });

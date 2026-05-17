@@ -16,9 +16,9 @@ beforeAll(async () => {
   realFetch = globalThis.fetch;
 });
 
-afterAll(() => {
+afterAll(async () => {
   globalThis.fetch = realFetch;
-  ctx.cleanup();
+  await ctx.cleanup();
 });
 
 interface ItemResponse {

@@ -117,8 +117,8 @@ async function mintKey(
 describe("workspace_admin integration — widened routes", () => {
   let ctx: TestContext;
 
-  afterEach(() => {
-    ctx.cleanup();
+  afterEach(async () => {
+    await ctx.cleanup();
   });
 
   it("workspace_admin can mint an own-tenant key", async () => {

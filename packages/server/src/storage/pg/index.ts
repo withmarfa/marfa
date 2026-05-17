@@ -40,13 +40,26 @@ export async function createPgStorage(
   options?: {
     versionSnapshotIntervalMs?: number;
     authMode?: "hosted" | "keys";
+    /** Override the postgres-js pool size (default 10). Used by the
+     *  test fixture (`createPgTestStorage`) to cap each per-file pool
+     *  so parallel test files don't exhaust `max_connections`. */
+    maxPoolSize?: number;
+    /** Skip the bootstrap `SCHEMA_SQL` + migration-journal stamp. The
+     *  test fixture passes `true` because cloned-from-template databases
+     *  already have the schema. */
+    skipBootstrap?: boolean;
   },
 ): Promise<Storage> {
   // `db` is the wrapped Drizzle instance (per-request RLS context aware);
   // `baseDb` is the raw owner-connection instance reserved for Better Auth.
   // T-025 part 2: see `request-context.ts` for the substitution mechanic.
-  const { db, baseDb, client, close } =
-    await createConnection(connectionString);
+  const { db, baseDb, client, close } = await createConnection(
+    connectionString,
+    {
+      maxPoolSize: options?.maxPoolSize,
+      skipBootstrap: options?.skipBootstrap,
+    },
+  );
 
   const versionStore = new PgVersionStore(db);
   const searchStore = new PgSearchStore(db, client);
@@ -156,10 +169,6 @@ export async function createPgStorage(
       );
     },
     close,
-    /** Truncate all tables — used by tests for isolation. */
-    async _pgTruncate(): Promise<void> {
-      await client`TRUNCATE items, metadata, versions, edges, api_keys, blobs, oauth_device_codes, outbound_webhooks, outbound_webhook_deliveries, inbound_webhooks, inbound_webhook_events, connection_oauth_tokens, connection_leased_tokens, audit_log, event_log, tenants, tenant_quotas, rate_limit_windows, users, auth_user, auth_session, auth_account, auth_verification, auth_passkey, auth_oauth_client, auth_oauth_access_token, auth_oauth_refresh_token, auth_oauth_consent, auth_jwks CASCADE`;
-    },
     /** Raw query escape hatch. Originally added for parameterised
      *  mutations in retention tests; now also consumed by
      *  `routes/auth-account.ts` (auth_verification probes via the
@@ -187,7 +196,6 @@ export async function createPgStorage(
     // pool connection for session-level RLS.
     pgClient: client,
   } satisfies Storage & {
-    _pgTruncate(): Promise<void>;
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]>;
     betterAuthDb: unknown;
     betterAuthDialect: "pg";

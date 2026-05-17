@@ -14,8 +14,8 @@ beforeEach(async () => {
   ctx = await createTestContext();
 });
 
-afterEach(() => {
-  ctx.cleanup();
+afterEach(async () => {
+  await ctx.cleanup();
 });
 
 const MS_PER_DAY = 86_400_000;
@@ -46,8 +46,8 @@ async function seedItemWithUpdatedAt(opts: {
     await ctx.storage.items.transition(opts.id, opts.state, opts.tenantId);
   }
   // Force the updated_at to a contrived value via raw SQL — both dialects
-  // expose `_pgTruncate` / `__sqliteAll` escape hatches on storage; here
-  // we just write directly through the Drizzle internals.
+  // expose `__pgClient` / `__sqliteAll` / `__sqliteRun` escape hatches on
+  // storage; here we just write directly through the Drizzle internals.
   const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
   if (dialect === "pg") {
     const s = ctx.storage as unknown as {

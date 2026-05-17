@@ -132,8 +132,8 @@ describe("workspace_admin bypasses type_permissions", () => {
 describe("GET /tenants/me/quotas", () => {
   let ctx: TestContext;
 
-  afterEach(() => {
-    ctx.cleanup();
+  afterEach(async () => {
+    await ctx.cleanup();
   });
 
   it("returns the calling tenant's quota row for workspace_admin", async () => {
@@ -185,8 +185,8 @@ describe("GET /tenants/me/quotas", () => {
 describe("widened routes — keys + items.purge", () => {
   let ctx: TestContext;
 
-  afterEach(() => {
-    ctx.cleanup();
+  afterEach(async () => {
+    await ctx.cleanup();
   });
 
   it("workspace_admin GET /keys lists only own-tenant keys", async () => {

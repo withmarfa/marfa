@@ -8,8 +8,8 @@ beforeAll(async () => {
   ctx = await createTestContext();
 });
 
-afterAll(() => {
-  ctx.cleanup();
+afterAll(async () => {
+  await ctx.cleanup();
 });
 
 // PR 2 of workstream 2: extends system.connection for the
