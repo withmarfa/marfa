@@ -853,6 +853,76 @@ export interface OauthClientRow {
   referenceId: string | null;
 }
 
+/**
+ * T-158: input to `OauthProviderStore.createClient`, used by Myme's
+ * `POST /auth/oauth2/register` override (which fronts the plugin's DCR
+ * endpoint — see `routes/oauth-register.ts`).
+ *
+ * The override exists because:
+ *
+ * 1. The plugin's DCR (`POST /auth/oauth2/register`) hardcodes a Zod enum
+ *    of three grant types and rejects the device-code URN at validation
+ *    time — there's no config knob to widen it (verified in
+ *    `@better-auth/oauth-provider@1.6.9` `dist/index.mjs:3462-3466`).
+ * 2. The plugin's DCR write path goes through Better Auth's Drizzle
+ *    adapter, which sets `supportsArrays: true` for the `pg` provider
+ *    (verified in `@better-auth/drizzle-adapter@1.6.9`
+ *    `dist/index.mjs:434`). The adapter then passes JS arrays directly
+ *    into the `text` columns (`scopes`, `redirect_uris`, `grant_types`,
+ *    `response_types`, etc.). Postgres coerces those to comma-joined
+ *    strings on write; on read, the plugin's `schemaToOAuth` calls
+ *    `scopes?.join(" ")` on a string → `TypeError`, surfaced as HTTP 500.
+ *    The Myme schema is intentionally `text` (JSON-encoded string), not
+ *    `text[]` — Myme's own `mintTokenPair` write path uses
+ *    `JSON.stringify` and the read helpers (`getClient`,
+ *    `validateAccessToken`) `safeJsonParse` on the way back out. The
+ *    plugin DCR is the only Better-Auth-internal writer to
+ *    `auth_oauth_client`, so routing around it is sufficient.
+ */
+export interface CreateClientInput {
+  /** The new client's business key (returned to the caller). */
+  clientId: string;
+  /** Friendly name for the consent screen. */
+  name: string | null;
+  /** Public client (PKCE, no secret) per RFC 7591 §2.3. */
+  isPublic: boolean;
+  /** Allowed grant types, including the device-code URN. */
+  grantTypes: readonly string[];
+  /** Response types — pinned to `["code"]` for `authorization_code` */
+  responseTypes: readonly string[];
+  /** Token endpoint auth method (`none` for public, `client_secret_*`
+   *  for confidential). */
+  tokenEndpointAuthMethod: string;
+  /** Allowed scopes for this client (must be a subset of the server's
+   *  `clientRegistrationAllowedScopes`). */
+  scopes: readonly string[];
+  /** Allowed redirect URIs. May be empty for clients that only run the
+   *  device-code grant (no browser redirect). */
+  redirectUris: readonly string[];
+  /** Tenant binding from the resolver — null for unauthenticated /
+   *  keys-mode DCR. Mirrors `clientReference` in the plugin's wiring. */
+  referenceId: string | null;
+  /** Optional client metadata fields (passed through to the row). */
+  clientUri?: string | null;
+  logoUri?: string | null;
+  tosUri?: string | null;
+  policyUri?: string | null;
+  contacts?: readonly string[] | null;
+  softwareId?: string | null;
+  softwareVersion?: string | null;
+  softwareStatement?: string | null;
+  type?: string | null;
+}
+
+export interface CreateClientResult {
+  /** The internal PK on `auth_oauth_client.id`. */
+  id: string;
+  /** Echoed back from `input.clientId`. */
+  clientId: string;
+  /** Issued-at, unix seconds. */
+  clientIdIssuedAt: number;
+}
+
 export interface MintTokenPairInput {
   /** The pre-computed hash of the access-token string (output of
    *  `storeTokens.hash` = `hashApiKey(token, salt)`). The plugin's
@@ -930,6 +1000,16 @@ export interface OauthProviderStore {
    *  with the same shape the plugin's `/oauth2/token` path would produce,
    *  so the bearer middleware resolves them uniformly. */
   mintTokenPair(input: MintTokenPairInput): Promise<void>;
+  /** T-158: insert a row into `auth_oauth_client` with JSON-encoded
+   *  string[] columns matching the rest of Myme's write paths (see
+   *  `CreateClientInput` for the upstream-bug context). Used exclusively
+   *  by the Myme-owned `POST /auth/oauth2/register` route in
+   *  `routes/oauth-register.ts`; the plugin's own DCR endpoint is NOT
+   *  exercised on Myme deployments. */
+  createClient(input: CreateClientInput): Promise<CreateClientResult>;
+  /** T-158: existence check on `(clientId)` for the registration route
+   *  to surface a clean 409 instead of a Postgres unique-violation. */
+  clientExists(clientId: string): Promise<boolean>;
   /**
    * T-131 follow-on: resolve the projected `system.connection { kind: "app" }`
    * item id for a (tenantId, clientId, authUserId) tuple. Returns the

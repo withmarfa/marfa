@@ -26,6 +26,7 @@ import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
 import { authRoutes } from "./routes/oauth.js";
+import { oauthRegisterRoutes } from "./routes/oauth-register.js";
 import {
   oauthProviderAuthServerMetadata,
   oauthProviderOpenIdConfigMetadata,
@@ -366,6 +367,22 @@ export function createApp(
   // helpers re-publish the same response payload. The discovery doc
   // points RPs at the actual endpoint paths (e.g. `/auth/oauth2/token`,
   // `/auth/jwks`) — no further root aliasing is needed.
+  //
+  // T-158: the plugin's helper does NOT advertise the device-code grant
+  // type or the `device_authorization_endpoint` field (RFC 8628 §4) by
+  // default. Myme owns the device-flow surface at `/auth/device` +
+  // `/auth/device/token`, so we wrap the plugin's response and inject
+  // both before returning. The plugin DOES expose a `grantTypes` config
+  // option that flows through to `grant_types_supported`, but passing
+  // the URN there causes the plugin's `/auth/oauth2/token` dispatcher
+  // (`@better-auth/oauth-provider@1.6.9` `dist/index.mjs:300-318`) to
+  // attempt to handle the device-code grant and 400 with
+  // `unsupported_grant_type` since none of its three case branches
+  // match. The URN's correct dispatch target is the Myme-owned
+  // `/auth/device/token` endpoint, which RPs discover via the
+  // `device_authorization_endpoint` field we add here. Augmenting the
+  // metadata in app.ts — rather than passing `grantTypes` to the
+  // plugin — keeps the plugin's token endpoint behaviour intact.
   if (auth) {
     // Cast once into the shape both helpers want — they each declare a
     // narrow `api` requirement (`getOAuthServerConfig` vs `getOpenIdConfig`).
@@ -377,11 +394,48 @@ export function createApp(
       Parameters<typeof oauthProviderOpenIdConfigMetadata>[0];
     const authServerMeta = oauthProviderAuthServerMetadata(authForHelpers);
     const openidConfigMeta = oauthProviderOpenIdConfigMetadata(authForHelpers);
+    const augmentMetadata = async (
+      handler: (req: Request) => Promise<Response>,
+      baseURL: string,
+      req: Request,
+    ): Promise<Response> => {
+      const upstream = await handler(req);
+      // Bail unconditionally on non-200 — the plugin returns no body
+      // shape we can amend safely. Preserves cache headers etc.
+      if (!upstream.ok) return upstream;
+      let payload: Record<string, unknown>;
+      try {
+        payload = (await upstream.json()) as Record<string, unknown>;
+      } catch {
+        return upstream;
+      }
+      // Inject the device-code URN into `grant_types_supported`
+      // (idempotent — guards against the plugin starting to advertise
+      // it natively in a future version).
+      const URN = "urn:ietf:params:oauth:grant-type:device_code";
+      const grantsRaw = payload.grant_types_supported;
+      const grants = Array.isArray(grantsRaw)
+        ? grantsRaw.filter((g): g is string => typeof g === "string")
+        : [];
+      if (!grants.includes(URN)) grants.push(URN);
+      payload.grant_types_supported = grants;
+      // RFC 8628 §4: `device_authorization_endpoint` advertises the
+      // device-authorization request endpoint. Myme's lives at
+      // `${authBaseUrl}/auth/device` (initiation; the polled token
+      // exchange happens at `/auth/device/token`).
+      payload.device_authorization_endpoint = `${baseURL.replace(/\/+$/, "")}/auth/device`;
+      const headers = new Headers(upstream.headers);
+      headers.set("content-type", "application/json");
+      return new Response(JSON.stringify(payload), {
+        status: upstream.status,
+        headers,
+      });
+    };
     app.get("/.well-known/oauth-authorization-server", (c) =>
-      authServerMeta(c.req.raw),
+      augmentMetadata(authServerMeta, config.authBaseUrl, c.req.raw),
     );
     app.get("/.well-known/openid-configuration", (c) =>
-      openidConfigMeta(c.req.raw),
+      augmentMetadata(openidConfigMeta, config.authBaseUrl, c.req.raw),
     );
   }
 
@@ -438,6 +492,19 @@ export function createApp(
   // catch-all so this explicit GET handler wins over the plugin's own
   // mounted endpoints under /auth/oauth2/*.
   app.route("/auth", authConsentRoutes({ storage, auth }));
+  // T-158: Myme-owned DCR endpoint. Sits in front of the plugin's
+  // `/auth/oauth2/register` for two reasons: (1) the plugin's body
+  // schema rejects the device-code URN at validation time, (2) the
+  // plugin's write path goes through Better Auth's Drizzle adapter
+  // which mishandles `string[]` columns on the PG provider (HTTP 500
+  // on every authorization_code DCR). See `routes/oauth-register.ts`
+  // for the full why and the upstream source references.
+  if (storage.oauthProvider) {
+    app.route(
+      "/auth",
+      oauthRegisterRoutes(storage, storage.oauthProvider, auth),
+    );
+  }
 
   // Better-auth catch-all for unmatched /auth/* paths (sign-in, sign-up,
   // magic-link, passkey, federated OIDC, session, plus the oauth-provider

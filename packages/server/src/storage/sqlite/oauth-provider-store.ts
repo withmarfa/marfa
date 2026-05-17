@@ -11,6 +11,8 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type {
+  CreateClientInput,
+  CreateClientResult,
   OauthAccessTokenRow,
   OauthClientRow,
   OauthProviderStore,
@@ -221,6 +223,57 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       createdAt: now,
       scopes: scopesJson,
     });
+  }
+
+  async clientExists(clientId: string): Promise<boolean> {
+    const rows = await this.db
+      .select({ clientId: auth_oauth_client.clientId })
+      .from(auth_oauth_client)
+      .where(eq(auth_oauth_client.clientId, clientId))
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  async createClient(input: CreateClientInput): Promise<CreateClientResult> {
+    const id = generateId();
+    const now = new Date();
+    // JSON-encode every string[] field. See PG store for the
+    // upstream-bug context (CreateClientInput doc-block) — SQLite uses
+    // the same column layout (`text` columns holding JSON literals).
+    await this.db.insert(auth_oauth_client).values({
+      id,
+      clientId: input.clientId,
+      clientSecret: null,
+      disabled: false,
+      scopes: JSON.stringify(input.scopes),
+      userId: null,
+      createdAt: now,
+      updatedAt: now,
+      name: input.name,
+      uri: input.clientUri ?? null,
+      icon: input.logoUri ?? null,
+      contacts: input.contacts ? JSON.stringify(input.contacts) : null,
+      tos: input.tosUri ?? null,
+      policy: input.policyUri ?? null,
+      softwareId: input.softwareId ?? null,
+      softwareVersion: input.softwareVersion ?? null,
+      softwareStatement: input.softwareStatement ?? null,
+      redirectUris: JSON.stringify(input.redirectUris),
+      postLogoutRedirectUris: null,
+      tokenEndpointAuthMethod: input.tokenEndpointAuthMethod,
+      grantTypes: JSON.stringify(input.grantTypes),
+      responseTypes: JSON.stringify(input.responseTypes),
+      public: input.isPublic,
+      type: input.type ?? null,
+      requirePKCE: true,
+      referenceId: input.referenceId,
+      metadata: null,
+    });
+    return {
+      id,
+      clientId: input.clientId,
+      clientIdIssuedAt: Math.floor(now.getTime() / 1000),
+    };
   }
 
   /**
