@@ -400,6 +400,13 @@
       "when": 1779638402000,
       "tag": "0056_auth_jwks",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1779028180997,
+      "tag": "0057_grant_myme_app_membership",
+      "breakpoints": true
     }
   ]
 }
