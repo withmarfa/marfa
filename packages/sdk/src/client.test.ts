@@ -786,6 +786,26 @@ describe("types", () => {
     expect(noteType.id).toBe("core.note");
     expect(noteType.fields).toHaveProperty("title");
   });
+
+  it("register returns the persisted schema with id and version populated", async () => {
+    const id = `demo.t163_${Date.now().toString()}`;
+    const registered = await client.types.register({
+      id,
+      version: 1,
+      label: "T-163 register-unwrap test",
+      description:
+        "Ephemeral type proving register() returns the persisted schema",
+      fields: {
+        name: { type: "string", required: true },
+      },
+    });
+    try {
+      expect(registered.id).toBe(id);
+      expect(registered.version).toBe(1);
+    } finally {
+      await client.types.delete(id, { force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
