@@ -170,9 +170,13 @@ export async function cloneTemplate(): Promise<PgTemplateClone> {
   const sql = postgres(adminUrl, { max: 1 });
   // CREATE DATABASE FROM TEMPLATE serialises briefly per template inside
   // PG. Under parallel test execution multiple workers can race; if PG
-  // rejects with "source database is being accessed" we retry with a
-  // small backoff. The lock is released after each in-flight CREATE
-  // completes so retries succeed quickly.
+  // raises 55006 (object_in_use — "source database is being accessed by
+  // other users") we retry with a small backoff. The lock releases after
+  // each in-flight CREATE completes so retries succeed quickly.
+  //
+  // Matching on the SQLSTATE code rather than the error message string —
+  // codes are part of the SQL standard and stable across PG versions;
+  // messages aren't.
   try {
     const maxAttempts = 8;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -182,10 +186,8 @@ export async function cloneTemplate(): Promise<PgTemplateClone> {
         );
         break;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const transient =
-          message.includes("is being accessed") ||
-          message.includes("ObjectInUse");
+        const code = (err as { code?: unknown } | null)?.code;
+        const transient = code === "55006";
         if (!transient || attempt === maxAttempts) {
           throw err;
         }
