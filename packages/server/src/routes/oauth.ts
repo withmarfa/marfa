@@ -1547,10 +1547,73 @@ export function authRoutes(
   //     better-auth session (redirects to /auth/sign-in if absent).
   //   - POST /auth/device/consent  — approve/deny submission.
 
+  // Shared device-flow init handler. Reachable from JSON callers (the
+  // Myme CLI / SDK shape) and from RFC 8628 §3.1 form-encoded callers
+  // (the protocol-canonical shape, T-190). Both produce the same
+  // device-code envelope.
+  const initDeviceFlow = async (
+    c: Context,
+    clientId: string | null,
+    rawScope: string,
+  ): Promise<Response> => {
+    const scope = rawScope.trim();
+    if (!clientId || !scope) {
+      throw new MymeError(
+        ErrorCode.VALIDATION_ERROR,
+        "client_id and scope are required",
+      );
+    }
+    // T-131: client lookup migrated from the dropped `oauth_clients`
+    // table to the plugin's `auth_oauth_client` table.
+    const client = await storage.oauthProvider?.getClient(clientId);
+    if (!client) {
+      throw new MymeError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
+    }
+    // Validate every requested scope against the registry. Reject
+    // outright on any unknown scope so we don't store a code that
+    // can't be approved.
+    const requestedScopes = scope.split(" ").filter(Boolean);
+    const expanded = expandWildcardScopes(requestedScopes, knownTypes);
+    const parsed = expanded.map(parseScope).filter((s) => s !== null);
+    if (parsed.length === 0) {
+      throw new MymeError(ErrorCode.INVALID_SCOPE, "No valid scopes requested");
+    }
+
+    const deviceCodeRaw = generateToken(DEVICE_CODE_PREFIX);
+    const deviceCodeHash = sha256(deviceCodeRaw);
+    const userCode = generateUserCode();
+    const expiresAt = new Date(Date.now() + DEVICE_CODE_TTL_MS).toISOString();
+    const intervalSeconds = DEVICE_CODE_DEFAULT_INTERVAL_SECONDS;
+
+    await storage.oauth.createDeviceCode({
+      deviceCodeHash,
+      userCode,
+      clientId,
+      scope: requestedScopes.join(" "),
+      expiresAt,
+      intervalSeconds,
+    });
+
+    const verificationBase = auth?.baseURL ?? new URL(c.req.url).origin;
+    const verificationUri = `${verificationBase}/auth/device`;
+    const verificationUriComplete = `${verificationUri}?user_code=${encodeURIComponent(userCode)}`;
+    return c.json({
+      device_code: deviceCodeRaw,
+      user_code: userCode,
+      verification_uri: verificationUri,
+      verification_uri_complete: verificationUriComplete,
+      expires_in: DEVICE_CODE_TTL_MS / 1000,
+      interval: intervalSeconds,
+    });
+  };
+
   router.post("/device", async (c) => {
     const contentType = c.req.header("content-type") ?? "";
+
+    // -------------------- JSON init --------------------
+    // Myme's own CLI / SDK use this shape; not RFC-mandated but
+    // operationally convenient.
     if (contentType.includes("application/json")) {
-      // -------------------- Initiate flow --------------------
       let body: { client_id?: unknown; scope?: unknown };
       try {
         body = await c.req.json();
@@ -1559,62 +1622,31 @@ export function authRoutes(
       }
       const clientId =
         typeof body.client_id === "string" ? body.client_id : null;
-      const scope = typeof body.scope === "string" ? body.scope.trim() : "";
-      if (!clientId || !scope) {
-        throw new MymeError(
-          ErrorCode.VALIDATION_ERROR,
-          "client_id and scope are required",
-        );
-      }
-      // T-131: client lookup migrated from the dropped `oauth_clients`
-      // table to the plugin's `auth_oauth_client` table.
-      const client = await storage.oauthProvider?.getClient(clientId);
-      if (!client) {
-        throw new MymeError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
-      }
-      // Validate every requested scope against the registry. Reject
-      // outright on any unknown scope so we don't store a code that
-      // can't be approved.
-      const requestedScopes = scope.split(" ").filter(Boolean);
-      const expanded = expandWildcardScopes(requestedScopes, knownTypes);
-      const parsed = expanded.map(parseScope).filter((s) => s !== null);
-      if (parsed.length === 0) {
-        throw new MymeError(
-          ErrorCode.INVALID_SCOPE,
-          "No valid scopes requested",
-        );
-      }
+      const scope = typeof body.scope === "string" ? body.scope : "";
+      return initDeviceFlow(c, clientId, scope);
+    }
 
-      const deviceCodeRaw = generateToken(DEVICE_CODE_PREFIX);
-      const deviceCodeHash = sha256(deviceCodeRaw);
-      const userCode = generateUserCode();
-      const expiresAt = new Date(Date.now() + DEVICE_CODE_TTL_MS).toISOString();
-      const intervalSeconds = DEVICE_CODE_DEFAULT_INTERVAL_SECONDS;
-
-      await storage.oauth.createDeviceCode({
-        deviceCodeHash,
-        userCode,
-        clientId,
-        scope: requestedScopes.join(" "),
-        expiresAt,
-        intervalSeconds,
-      });
-
-      const verificationBase = auth?.baseURL ?? new URL(c.req.url).origin;
-      const verificationUri = `${verificationBase}/auth/device`;
-      const verificationUriComplete = `${verificationUri}?user_code=${encodeURIComponent(userCode)}`;
-      return c.json({
-        device_code: deviceCodeRaw,
-        user_code: userCode,
-        verification_uri: verificationUri,
-        verification_uri_complete: verificationUriComplete,
-        expires_in: DEVICE_CODE_TTL_MS / 1000,
-        interval: intervalSeconds,
-      });
+    // -------------------- Form-encoded --------------------
+    // Two distinct operations share the form-encoded surface:
+    //
+    //   1. **Init** — RFC 8628 §3.1. Body carries `client_id` (+
+    //      `scope`). Any client following the spec literally lands
+    //      here.
+    //   2. **User-code submission** — Myme's verification form. Body
+    //      carries `user_code`.
+    //
+    // Disambiguate by inspecting the body. A request with neither
+    // field falls through to the user-code branch and gets the
+    // existing `missing_code` redirect — same behaviour as before.
+    const formData = await c.req.formData();
+    const formClientId = formData.get("client_id");
+    if (typeof formClientId === "string" && formClientId !== "") {
+      const formScopeRaw = formData.get("scope");
+      const scope = typeof formScopeRaw === "string" ? formScopeRaw : "";
+      return initDeviceFlow(c, formClientId, scope);
     }
 
     // -------------------- Form submit user_code --------------------
-    const formData = await c.req.formData();
     const submittedRaw = formData.get("user_code");
     const submitted =
       typeof submittedRaw === "string"

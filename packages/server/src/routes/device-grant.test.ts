@@ -204,6 +204,65 @@ describe("POST /auth/device — initiate", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  // T-190: RFC 8628 §3.1 specifies the init request as
+  // `application/x-www-form-urlencoded`. Any client following the RFC
+  // literally must work end-to-end; QA Session 1 caught this hopping
+  // straight into the user-code submission branch and returning the
+  // wrong shape. Coverage below pins the form-encoded init path
+  // alongside the existing JSON init shape and the existing
+  // user-code submission path.
+  it("accepts an RFC 8628 form-encoded init request (T-190)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/device`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+        },
+        body: new URLSearchParams({
+          client_id: clientId,
+          scope: "core.note:read",
+        }).toString(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      device_code: string;
+      user_code: string;
+      verification_uri: string;
+      verification_uri_complete: string;
+      expires_in: number;
+      interval: number;
+    };
+    expect(body.device_code).toMatch(/^myme_dc_/);
+    expect(body.user_code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    expect(body.verification_uri).toMatch(/\/auth\/device$/);
+    expect(body.expires_in).toBe(600);
+    expect(body.interval).toBe(5);
+  });
+
+  it("rejects a form-encoded init with unknown client_id (T-190)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/device`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+        },
+        body: new URLSearchParams({
+          client_id: "fake",
+          scope: "core.note:read",
+        }).toString(),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_client");
+  });
 });
 
 describe("GET /auth/device — verification form", () => {
