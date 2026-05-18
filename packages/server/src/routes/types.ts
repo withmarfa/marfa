@@ -178,7 +178,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a custom type",
   description:
-    "Registers a custom type at runtime. Identifier must namespace under one of `app.<app-name>.<type>`, `user.<type>`, or `<publisher>.<type>` — reserved roots (`core`, `system`, `myme`) reject with `400 reserved_namespace`. Bodies are validated; mismatched semver bumps (additive change submitted as major, etc.) reject with `400 version_bump_mismatch`. Child types may not redefine ancestor fields — `400 inheritance_violation`.\n\nAdmin keys bypass; non-admin credentials need the `metadata.types:write` scope, default-off for new keys. See [Authoring types](/concepts/authoring-types) for the rubric and error catalogue.",
+    "Registers a custom type at runtime. Identifier must namespace under one of `app.<app-name>.<type>`, `user.<type>`, or `<publisher>.<type>` — reserved roots (`core`, `system`, `myme`) reject with `400 reserved_namespace`. Bodies are validated; mismatched semver bumps (additive change submitted as major, etc.) reject with `400 version_bump_mismatch`. Child types may not redefine ancestor fields — `400 inheritance_violation`. Property names may not shadow first-class `Item` wire fields (`device`, `source_id`, `timestamp`, `version`, `schema_version`, `tier`, `state`, `capture_latitude`, `capture_longitude`, etc.) — `400 property_shadows_field`.\n\nAdmin keys bypass; non-admin credentials need the `metadata.types:write` scope, default-off for new keys. See [Authoring types](/concepts/authoring-types) for the rubric and error catalogue.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -398,6 +398,9 @@ export function typeRoutes(storage: Storage) {
     if (!result.success) {
       // Surface specific discriminators so clients (e.g. conformance
       // conformance) can disambiguate from generic schema-shape failures.
+      const hasPropertyShadowsField = result.errors.some(
+        (e) => e.code === "property_shadows_field",
+      );
       const hasInheritanceViolation = result.errors.some(
         (e) => e.code === "inheritance_violation",
       );
@@ -406,7 +409,11 @@ export function typeRoutes(storage: Storage) {
       );
       let code: ErrorCode;
       let message: string;
-      if (hasInheritanceViolation) {
+      if (hasPropertyShadowsField) {
+        code = ErrorCode.PROPERTY_SHADOWS_FIELD;
+        message =
+          "Type schema declares a property whose name shadows a first-class Item field";
+      } else if (hasInheritanceViolation) {
         code = ErrorCode.INHERITANCE_VIOLATION;
         message = "Child type redefines a field declared by an ancestor";
       } else if (hasCompatibleWithViolation) {

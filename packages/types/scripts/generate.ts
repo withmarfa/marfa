@@ -67,6 +67,53 @@ const systemSchemas: JsonSchema[] = systemFiles.map((f) => {
   return JSON.parse(raw) as JsonSchema;
 });
 
+// Shadow rule (parallel to the server-side check in `validateTypeSchema`):
+// in-tree core/system types may not declare a field whose name shadows a
+// first-class field on the `Item` wire shape. Belt-and-braces against
+// future regressions on first-party schemas. Authoritative list mirrors
+// `RESERVED_ITEM_FIELDS` in `packages/shared/src/type-registry.ts`, which
+// is itself derived from the `Item` interface in
+// `packages/shared/src/types.ts`. Keep these two lists in sync — the
+// freshness test in `type-registry.test.ts` covers the runtime side; this
+// is the build-time gate.
+const RESERVED_ITEM_FIELDS = new Set([
+  "id",
+  "type",
+  "state",
+  "tier",
+  "tenant_id",
+  "properties",
+  "created_at",
+  "updated_at",
+  "timestamp",
+  "source",
+  "source_id",
+  "version",
+  "schema_version",
+  "device",
+  "capture_latitude",
+  "capture_longitude",
+]);
+
+const shadowViolations: { typeId: string; field: string }[] = [];
+for (const schema of [...schemas, ...systemSchemas]) {
+  for (const fieldName of Object.keys(schema.fields)) {
+    if (RESERVED_ITEM_FIELDS.has(fieldName)) {
+      shadowViolations.push({ typeId: schema.id, field: fieldName });
+    }
+  }
+}
+if (shadowViolations.length > 0) {
+  const lines = shadowViolations.map(
+    (v) =>
+      `  - ${v.typeId}: field "${v.field}" shadows a first-class Item field`,
+  );
+  console.error(
+    `Build aborted: in-tree types declare ${String(shadowViolations.length)} field name(s) that shadow first-class Item wire fields.\n${lines.join("\n")}\n\nFirst-class fields live as top-level columns on the items table; custom-type properties that reuse those names produce ambiguous data. Rename the property, or use the first-class field directly. Authoritative list: RESERVED_ITEM_FIELDS in packages/shared/src/type-registry.ts.`,
+  );
+  process.exit(1);
+}
+
 // Sort: parents before children (no parent first, then by depth)
 schemas.sort((a, b) => {
   const depthA = a.id.split(".").length;

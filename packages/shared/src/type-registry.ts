@@ -55,6 +55,37 @@ export const SYSTEM_TYPE_IDS: ReadonlySet<string> = new Set(
   ALL_SYSTEM_TYPES.map((schema) => schema.id),
 );
 
+/**
+ * First-class field names on the `Item` wire shape. Custom-type schemas may
+ * not declare `fields.<name>` for any name in this set — doing so would let a
+ * row carry two values under the same key (the first-class field and the
+ * shadowing property), with no way to tell which is authoritative. Enforced
+ * at `validateTypeSchema` time so type authors rename before any data is
+ * written; mirrored at build time by the in-tree types generator.
+ *
+ * Source of truth: the `Item` interface in `types.ts`. A freshness test
+ * (`type-registry.test.ts`) derives the set from a typed `Item` literal and
+ * fails loudly if this constant drifts.
+ */
+export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
+  "id",
+  "type",
+  "state",
+  "tier",
+  "tenant_id",
+  "properties",
+  "created_at",
+  "updated_at",
+  "timestamp",
+  "source",
+  "source_id",
+  "version",
+  "schema_version",
+  "device",
+  "capture_latitude",
+  "capture_longitude",
+]);
+
 // ---------------------------------------------------------------------------
 // Schema-enforcement levers (TSC42 §5)
 // ---------------------------------------------------------------------------
@@ -551,6 +582,23 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     errors.push({ field: "fields", message: "Required object" });
   } else {
     const fields = obj.fields as Record<string, unknown>;
+
+    // Shadow rule — custom-type fields may not collide with first-class
+    // `Item` wire fields. Letting `properties.<name>` reuse a top-level
+    // name means two values coexist under one key (the first-class column
+    // and the shadowing property), with nothing telling downstream
+    // consumers which is authoritative. Reject at registration so the
+    // type author renames before any data is written. Runs regardless of
+    // whether a parent is declared.
+    for (const fieldName of Object.keys(fields)) {
+      if (RESERVED_ITEM_FIELDS.has(fieldName)) {
+        errors.push({
+          field: `fields.${fieldName}`,
+          message: `Field "${fieldName}" shadows a first-class Item field. Custom-type schemas may not redefine first-class field names — set the corresponding Item field directly, or pick a more specific name for this property.`,
+          code: "property_shadows_field",
+        });
+      }
+    }
 
     // Inheritance rule — a child type may not redefine a field declared by
     // any ancestor in its parent chain. New-field addition remains allowed.
