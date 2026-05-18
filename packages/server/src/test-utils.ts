@@ -208,11 +208,17 @@ export async function seedOauthBearer(
     dialect === "pg"
       ? await import("./storage/pg/schema.js")
       : await import("./storage/sqlite/schema.js");
+  // PG: `redirect_uris` is native `text[]` (migration 0059); SQLite:
+  // plain `text` with JSON-serialised array via the Better Auth adapter.
+  const redirectUrisValue: unknown =
+    dialect === "pg"
+      ? ["http://localhost:5173/callback"]
+      : JSON.stringify(["http://localhost:5173/callback"]);
   const insertOp = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
     name: clientName,
-    redirectUris: JSON.stringify(["http://localhost:5173/callback"]),
+    redirectUris: redirectUrisValue,
     disabled: false,
     createdAt: now,
     updatedAt: now,

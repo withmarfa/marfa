@@ -55,11 +55,18 @@ async function createClient(c: TestContext): Promise<string> {
     };
   };
   const now = new Date();
+  // PG has native `text[]` columns for the plugin's `string[]` fields
+  // (see migration 0059); SQLite stays on `text` with JSON-serialised
+  // arrays via the Better Auth adapter (`supportsArrays: false`).
+  const redirectUris: unknown =
+    c.storage.betterAuthDialect === "pg"
+      ? ["http://localhost:0/callback"]
+      : JSON.stringify(["http://localhost:0/callback"]);
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
     name: "Test CLI",
-    redirectUris: JSON.stringify(["http://localhost:0/callback"]),
+    redirectUris,
     disabled: false,
     createdAt: now,
     updatedAt: now,

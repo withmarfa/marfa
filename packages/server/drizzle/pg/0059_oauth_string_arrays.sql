@@ -9,55 +9,68 @@
 -- the schema comment above `auth_oauth_client.scopes`.
 --
 -- Existing rows store JSON-stringified arrays (e.g. `["https://..."]`)
--- via the previous shape; the `USING` clause parses each row through
--- `jsonb_array_elements_text` to extract the array values. NULL and
--- empty rows produce NULL / empty arrays accordingly.
+-- via the previous shape; each USING clause parses the row through a
+-- helper that calls `jsonb_array_elements_text`. The helper is needed
+-- because PG rejects subqueries in `ALTER ... USING` transform
+-- expressions (`cannot use subquery in transform expression`,
+-- SQLSTATE 0A000) — wrapping the subquery in a function moves it out
+-- of the transform-expression slot. NULL and empty-string rows
+-- collapse to NULL arrays (the empty-string branch is defensive; the
+-- prior writer always emits `'[]'` for empty arrays).
+--
+-- The function is created in `pg_temp` so it's scoped to the migrator
+-- session and cleaned up implicitly on session close — no DROP needed
+-- and no risk of leaking the helper into application code.
+
+CREATE FUNCTION pg_temp.oauth_text_to_text_array(t text) RETURNS text[]
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+    WHEN t IS NULL OR t = '' THEN NULL::text[]
+    ELSE ARRAY(SELECT jsonb_array_elements_text(t::jsonb))
+  END;
+$$;
+--> statement-breakpoint
 
 ALTER TABLE "auth_oauth_client"
   ALTER COLUMN "scopes" TYPE text[]
-    USING CASE WHEN "scopes" IS NULL OR "scopes" = '' THEN NULL
-               ELSE ARRAY(SELECT jsonb_array_elements_text("scopes"::jsonb)) END;
+    USING pg_temp.oauth_text_to_text_array("scopes");
 --> statement-breakpoint
 
 ALTER TABLE "auth_oauth_client"
   ALTER COLUMN "contacts" TYPE text[]
-    USING CASE WHEN "contacts" IS NULL OR "contacts" = '' THEN NULL
-               ELSE ARRAY(SELECT jsonb_array_elements_text("contacts"::jsonb)) END;
+    USING pg_temp.oauth_text_to_text_array("contacts");
 --> statement-breakpoint
 
 ALTER TABLE "auth_oauth_client"
   ALTER COLUMN "redirect_uris" TYPE text[]
-    USING ARRAY(SELECT jsonb_array_elements_text("redirect_uris"::jsonb));
+    USING pg_temp.oauth_text_to_text_array("redirect_uris");
 --> statement-breakpoint
 
 ALTER TABLE "auth_oauth_client"
   ALTER COLUMN "post_logout_redirect_uris" TYPE text[]
-    USING CASE WHEN "post_logout_redirect_uris" IS NULL OR "post_logout_redirect_uris" = '' THEN NULL
-               ELSE ARRAY(SELECT jsonb_array_elements_text("post_logout_redirect_uris"::jsonb)) END;
+    USING pg_temp.oauth_text_to_text_array("post_logout_redirect_uris");
 --> statement-breakpoint
 
 ALTER TABLE "auth_oauth_client"
   ALTER COLUMN "grant_types" TYPE text[]
-    USING CASE WHEN "grant_types" IS NULL OR "grant_types" = '' THEN NULL
-               ELSE ARRAY(SELECT jsonb_array_elements_text("grant_types"::jsonb)) END;
+    USING pg_temp.oauth_text_to_text_array("grant_types");
 --> statement-breakpoint
 
 ALTER TABLE "auth_oauth_client"
   ALTER COLUMN "response_types" TYPE text[]
-    USING CASE WHEN "response_types" IS NULL OR "response_types" = '' THEN NULL
-               ELSE ARRAY(SELECT jsonb_array_elements_text("response_types"::jsonb)) END;
+    USING pg_temp.oauth_text_to_text_array("response_types");
 --> statement-breakpoint
 
 ALTER TABLE "auth_oauth_refresh_token"
   ALTER COLUMN "scopes" TYPE text[]
-    USING ARRAY(SELECT jsonb_array_elements_text("scopes"::jsonb));
+    USING pg_temp.oauth_text_to_text_array("scopes");
 --> statement-breakpoint
 
 ALTER TABLE "auth_oauth_access_token"
   ALTER COLUMN "scopes" TYPE text[]
-    USING ARRAY(SELECT jsonb_array_elements_text("scopes"::jsonb));
+    USING pg_temp.oauth_text_to_text_array("scopes");
 --> statement-breakpoint
 
 ALTER TABLE "auth_oauth_consent"
   ALTER COLUMN "scopes" TYPE text[]
-    USING ARRAY(SELECT jsonb_array_elements_text("scopes"::jsonb));
+    USING pg_temp.oauth_text_to_text_array("scopes");
