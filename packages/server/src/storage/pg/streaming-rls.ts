@@ -17,10 +17,19 @@ import { pgRequestContext, type PgTxContext } from "./request-context.js";
  * `set_config('myme.tenant_id', '<id>', false)`, and pins the
  * connection in the request-context ALS so the existing storage proxy
  * routes every read through it. On stream end (normal completion,
- * error, client disconnect, server shutdown) the helper runs
- * `DISCARD ALL` to clear the session state and returns the connection
- * to the pool; if `DISCARD ALL` fails the connection is destroyed
- * instead so it never returns poisoned.
+ * error, client disconnect, server shutdown) the helper resets the
+ * session state — `RESET ROLE` plus clearing the `myme.tenant_id`
+ * GUC — and returns the connection to the pool. If the reset fails the
+ * connection is destroyed instead so it never returns poisoned. The
+ * scoped reset is the precise match for the cleanup invariant ("no
+ * leaked tenant context on connection return to pool"); the previous
+ * `DISCARD ALL` was a sledgehammer that also invalidated server-side
+ * prepared statements while postgres.js retained their client-side
+ * names, surfacing as `prepared statement "<name>" does not exist`
+ * 500s on subsequent writes under concurrent SSE + write load (T-189).
+ * RLS policies read `current_setting('myme.tenant_id')` at execute
+ * time, not bind time, so cached statements are safe to survive the
+ * reset.
  *
  * **Why session-level rather than per-event short transactions:**
  * per-event txs add latency per emit and complicate cursor / replay
@@ -61,7 +70,7 @@ export interface StreamRlsContext {
   /** Synchronous variant for generator-style flows. Use the async
    *  variant unless you specifically need sync. */
   withInstalledContextSync: <T>(fn: () => T) => T;
-  /** Idempotent cleanup: clears session state via `DISCARD ALL` and
+  /** Idempotent cleanup: resets the session role + tenant GUC and
    *  releases the connection to the pool, or destroys it if cleanup
    *  fails. Safe to call from multiple termination paths. */
   release: () => Promise<void>;
@@ -167,16 +176,40 @@ export async function withStreamRls<T>(
  * would be served to a future request and read another tenant's
  * rows. Catastrophic. The cost of destroy is one re-establishment;
  * the cost of a leak is unbounded.
+ *
+ * Scoped reset, not `DISCARD ALL`. The cleanup invariant is "no
+ * leaked tenant context on connection return to pool" — that's
+ * narrower than `DISCARD ALL`, which also drops every prepared
+ * statement on the session. postgres.js caches statement names
+ * client-side per `Sql` instance and reuses them across reservations
+ * of the same underlying connection; nuking the server side without
+ * a client-side invalidation hook surfaces as `prepared statement
+ * "<name>" does not exist` 500s on the next request that touches the
+ * recycled connection (T-189 — ~20% POST /items failure rate under
+ * concurrent SSE + writes). The two statements below clear exactly
+ * what was set in `acquireStreamRls`:
+ *
+ *   - `RESET ROLE` — back to the pool's default owner role.
+ *   - `SELECT set_config('myme.tenant_id', '', false)` — empty the
+ *     custom GUC. Plain `RESET myme.tenant_id` would also work but
+ *     `set_config` matches the form used at acquire time and avoids
+ *     surprising error semantics if the GUC was never set on this
+ *     connection (idempotent on either path).
+ *
+ * RLS policies read `current_setting('myme.tenant_id')` at execute
+ * time, not bind time, so any prepared statement compiled while the
+ * session carried tenant A's GUC executes safely under tenant B once
+ * the GUC flips — the cache is value-agnostic.
+ *
+ * Must run outside a transaction; streaming routes don't wrap their
+ * cleanup in one.
  */
 async function disposeReserved(
   reserved: Awaited<ReturnType<PgClient["reserve"]>>,
 ): Promise<void> {
   try {
-    // DISCARD ALL: canonical reset for a pooled connection. Drops
-    // SET ROLE, every SET / set_config, prepared statements,
-    // sequences, temporary tables. Must run outside a transaction;
-    // streaming routes don't wrap their cleanup in one.
-    await reserved.unsafe(`DISCARD ALL`);
+    await reserved.unsafe(`RESET ROLE`);
+    await reserved`SELECT set_config('myme.tenant_id', '', false)`;
   } catch (err) {
     // Reset failed — connection is in an unknown state. Destroy
     // rather than return-to-pool. Log loud: silent connection
@@ -184,7 +217,7 @@ async function disposeReserved(
     // is fine, repeatedly is a real signal (Postgres connectivity
     // issue, or worse, a state-leak path we haven't anticipated).
     console.warn(
-      "[streaming-rls] DISCARD ALL failed; destroying reserved connection",
+      "[streaming-rls] session reset failed; destroying reserved connection",
       err,
     );
     try {
