@@ -57,10 +57,16 @@ docker run -d --rm \
   -p "${PG_PORT}:5432" \
   postgres:17 >/dev/null
 
-# Wait for ready. pg_isready inside the container is the authoritative check.
+# Wait for ready. pg_isready alone races against the postgres entrypoint's
+# initdb post-start phase — it can briefly report ready while the cluster is
+# still in startup recovery, surfacing as `57P03 the database system is
+# starting up` on the first real connection. Gate on an actual `SELECT 1`
+# round-trip via psql inside the container so we only break out when the
+# server is genuinely accepting queries.
 echo -n "  waiting for postgres to be ready" >&2
 for _ in $(seq 1 60); do
-  if docker exec "${CONTAINER_NAME}" pg_isready -U "${PG_USER}" -d "${PG_DB}" >/dev/null 2>&1; then
+  if docker exec "${CONTAINER_NAME}" pg_isready -U "${PG_USER}" -d "${PG_DB}" >/dev/null 2>&1 \
+     && docker exec "${CONTAINER_NAME}" psql -U "${PG_USER}" -d "${PG_DB}" -tAc 'SELECT 1' >/dev/null 2>&1; then
     echo " ✓" >&2
     break
   fi

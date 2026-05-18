@@ -66,11 +66,18 @@ async function seedClient(
     };
   };
   const now = new Date();
+  // PG has native `text[]` columns for the plugin's `string[]` fields
+  // (see migration 0059); SQLite stays on `text` with JSON-serialised
+  // arrays via the Better Auth adapter (`supportsArrays: false`).
+  const redirectUris: unknown =
+    c.storage.betterAuthDialect === "pg"
+      ? ["http://localhost:0/callback"]
+      : JSON.stringify(["http://localhost:0/callback"]);
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
     name: opts.name === undefined ? "Test Client" : opts.name,
-    redirectUris: JSON.stringify(["http://localhost:0/callback"]),
+    redirectUris,
     disabled: false,
     createdAt: now,
     updatedAt: now,
@@ -523,6 +530,14 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     const now = new Date();
     const tokenId = `at_${Math.random().toString(36).slice(2)}`;
     const tokenHash = `hash_${Math.random().toString(36).slice(2)}`;
+    // PG: `scopes` is native `text[]`; SQLite: JSON-serialised text.
+    // See migration 0059 + `auth_oauth_client.scopes` schema comment.
+    const wideScopes = [
+      "openid",
+      "core.note:read",
+      "core.note:write",
+      "core.task:read",
+    ];
     const op = db.insert(schemaModule.auth_oauth_access_token).values({
       id: tokenId,
       token: tokenHash,
@@ -531,12 +546,10 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       referenceId: null,
       expiresAt: new Date(now.getTime() + 3600_000),
       createdAt: now,
-      scopes: JSON.stringify([
-        "openid",
-        "core.note:read",
-        "core.note:write",
-        "core.task:read",
-      ]),
+      scopes:
+        ctx.storage.betterAuthDialect === "pg"
+          ? wideScopes
+          : JSON.stringify(wideScopes),
     } as Record<string, unknown>);
     await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
 
@@ -600,6 +613,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       };
     };
     const tokenHash = `hash_${Math.random().toString(36).slice(2)}`;
+    const sameScopes = ["openid", "core.note:read"];
     const op = db.insert(schemaModule.auth_oauth_access_token).values({
       id: `at_${Math.random().toString(36).slice(2)}`,
       token: tokenHash,
@@ -608,7 +622,11 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       referenceId: null,
       expiresAt: new Date(Date.now() + 3600_000),
       createdAt: new Date(),
-      scopes: JSON.stringify(["openid", "core.note:read"]),
+      // PG: native `text[]`; SQLite: JSON-serialised text.
+      scopes:
+        ctx.storage.betterAuthDialect === "pg"
+          ? sameScopes
+          : JSON.stringify(sameScopes),
     } as Record<string, unknown>);
     await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
 

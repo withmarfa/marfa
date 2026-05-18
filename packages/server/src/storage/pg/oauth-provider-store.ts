@@ -9,7 +9,6 @@
 
 import { eq, and, desc, sql } from "drizzle-orm";
 import { generateId } from "@mymehq/shared";
-import { safeJsonParse } from "../json-utils.js";
 import type {
   CreateClientInput,
   CreateClientResult,
@@ -61,13 +60,8 @@ export class PgOauthProviderStore implements OauthProviderStore {
     // Expired tokens return null — fail closed.
     const expMs = row.expiresAt ? row.expiresAt.getTime() : null;
     if (expMs !== null && expMs < Date.now()) return null;
-    const parsedScopes = safeJsonParse<unknown>(
-      row.scopes,
-      [],
-      "auth_oauth_access_token.scopes",
-    );
-    const scopes = Array.isArray(parsedScopes)
-      ? parsedScopes.filter((s): s is string => typeof s === "string")
+    const scopes = Array.isArray(row.scopes)
+      ? row.scopes.filter((s): s is string => typeof s === "string")
       : [];
     return {
       id: row.id,
@@ -94,13 +88,8 @@ export class PgOauthProviderStore implements OauthProviderStore {
       .limit(1);
     const row = rows[0];
     if (!row) return null;
-    const parsed = safeJsonParse<unknown>(
-      row.redirectUris,
-      [],
-      "auth_oauth_client.redirect_uris",
-    );
-    const redirectUris = Array.isArray(parsed)
-      ? parsed.filter((s): s is string => typeof s === "string")
+    const redirectUris = Array.isArray(row.redirectUris)
+      ? row.redirectUris.filter((s): s is string => typeof s === "string")
       : [];
     return {
       id: row.id,
@@ -195,7 +184,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
     const now = new Date();
     const accessExpires = new Date(now.getTime() + input.accessTtlMs);
     const refreshExpires = new Date(now.getTime() + 30 * 86_400_000);
-    const scopesJson = JSON.stringify(input.scopes);
+    const scopes = [...input.scopes];
     await this.db.insert(auth_oauth_refresh_token).values({
       id: refreshId,
       token: input.refreshTokenHash,
@@ -204,7 +193,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
       referenceId: input.referenceId,
       expiresAt: refreshExpires,
       createdAt: now,
-      scopes: scopesJson,
+      scopes,
     });
     await this.db.insert(auth_oauth_access_token).values({
       id: generateId(),
@@ -215,7 +204,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
       refreshId,
       expiresAt: accessExpires,
       createdAt: now,
-      scopes: scopesJson,
+      scopes,
     });
   }
 
@@ -235,34 +224,34 @@ export class PgOauthProviderStore implements OauthProviderStore {
     // the caller's clientId. Format-wise the PK only needs uniqueness.
     const id = generateId();
     const now = new Date();
-    // JSON-encode every string[] field. The PG schema declares these as
-    // plain `text` columns (not `text[]`); Myme's read helpers + the
-    // plugin's bearer-middleware-side reads (via `validateAccessToken`)
-    // route through `safeJsonParse`. See `CreateClientInput` doc-block
-    // for the upstream-bug context.
+    // `string[]` fields are now native PG `text[]` columns — pass arrays
+    // directly. The Better Auth Drizzle adapter expects PG-native arrays
+    // for `string[]`-typed fields (`supportsArrays: true` on the pg
+    // provider); see `auth_oauth_client.scopes` in the schema for the
+    // wider rationale.
     await this.db.insert(auth_oauth_client).values({
       id,
       clientId: input.clientId,
       clientSecret: null,
       disabled: false,
-      scopes: JSON.stringify(input.scopes),
+      scopes: [...input.scopes],
       userId: null,
       createdAt: now,
       updatedAt: now,
       name: input.name,
       uri: input.clientUri ?? null,
       icon: input.logoUri ?? null,
-      contacts: input.contacts ? JSON.stringify(input.contacts) : null,
+      contacts: input.contacts ? [...input.contacts] : null,
       tos: input.tosUri ?? null,
       policy: input.policyUri ?? null,
       softwareId: input.softwareId ?? null,
       softwareVersion: input.softwareVersion ?? null,
       softwareStatement: input.softwareStatement ?? null,
-      redirectUris: JSON.stringify(input.redirectUris),
+      redirectUris: [...input.redirectUris],
       postLogoutRedirectUris: null,
       tokenEndpointAuthMethod: input.tokenEndpointAuthMethod,
-      grantTypes: JSON.stringify(input.grantTypes),
-      responseTypes: JSON.stringify(input.responseTypes),
+      grantTypes: [...input.grantTypes],
+      responseTypes: [...input.responseTypes],
       public: input.isPublic,
       type: input.type ?? null,
       requirePKCE: true,
@@ -330,13 +319,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
       .limit(1);
     const row = rows[0];
     if (!row) return undefined;
-    // Better Auth's drizzle adapter stores `string[]` columns as JSON text.
-    const parsed = safeJsonParse<unknown>(
-      row.scopes,
-      [],
-      "auth_oauth_consent.scopes",
-    );
-    if (!Array.isArray(parsed)) return undefined;
-    return parsed.filter((s): s is string => typeof s === "string");
+    if (!Array.isArray(row.scopes)) return undefined;
+    return row.scopes.filter((s): s is string => typeof s === "string");
   }
 }
