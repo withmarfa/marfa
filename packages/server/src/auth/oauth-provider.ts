@@ -236,6 +236,23 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
 
+    // ----- Silence the OAuth discovery-doc location warning -----
+    // T-193: the plugin emits a WARN at construct time advising operators to
+    // serve the issuer-suffixed discovery URL
+    // (`/.well-known/oauth-authorization-server/auth` for our `/auth`
+    // basePath). Myme deliberately serves the bare-root variant
+    // (`/.well-known/oauth-authorization-server` — see `app.ts:450`) and
+    // documents the partial RFC 8414 §3 deviation in
+    // `packages/server/CLAUDE.md` under "Discovery doc issuer field". The
+    // `issuer` value matches what id_token signatures use, so RP-side token
+    // validation works; only strict-RFC-validators that string-compare the
+    // discovery URL host bite. Silence the WARN since the deviation is
+    // intentional. Same rationale for the `openid-configuration` sibling.
+    silenceWarnings: {
+      oauthAuthServerConfig: true,
+      openidConfig: true,
+    },
+
     // ----- Token storage -----
     // Custom hash matching `hashApiKey(token, salt)` in middleware/auth.ts
     // so bearer-middleware lookup paths are symmetric: compute the same
