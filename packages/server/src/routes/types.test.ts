@@ -187,6 +187,102 @@ describe("inheritance rule enforcement", () => {
   });
 });
 
+describe("first-class field shadow rejection", () => {
+  // Authoritative list from RESERVED_ITEM_FIELDS in type-registry.ts.
+  // Skip identifiers that fail upstream gates (e.g. `properties` is rejected
+  // by the route's body-shape check before validateTypeSchema runs).
+  const SHADOWED_FIELD_NAMES = [
+    "id",
+    "type",
+    "state",
+    "tier",
+    "tenant_id",
+    "created_at",
+    "updated_at",
+    "timestamp",
+    "source",
+    "source_id",
+    "version",
+    "schema_version",
+    "device",
+    "capture_latitude",
+    "capture_longitude",
+  ] as const;
+
+  for (const name of SHADOWED_FIELD_NAMES) {
+    it(`rejects a schema declaring fields.${name} with PROPERTY_SHADOWS_FIELD`, async () => {
+      const res = await request(ctx.app, "POST", "/types", {
+        key: ctx.adminKey,
+        body: {
+          id: `test.shadow_${name}`,
+          label: `Shadow ${name}`,
+          version: 1,
+          fields: {
+            [name]: { type: "string" },
+          },
+        },
+      });
+      expect(res.status).toBe(400);
+      const payload = (await res.json()) as {
+        error: {
+          code: string;
+          message: string;
+          details?: { errors?: { field: string; message: string }[] };
+        };
+      };
+      expect(payload.error.code).toBe("property_shadows_field");
+      const errors = payload.error.details?.errors ?? [];
+      const collision = errors.find((e) => e.field === `fields.${name}`);
+      expect(collision).toBeTruthy();
+      expect(collision?.message).toContain("first-class Item field");
+    });
+  }
+
+  it("accepts a schema whose fields don't shadow any first-class Item field", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.shadow_clean",
+        label: "Shadow Clean",
+        version: 1,
+        fields: {
+          input_device: { type: "string" },
+          duration_seconds: { type: "number" },
+        },
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("reports every shadowing field at once, not just the first", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: "test.shadow_many",
+        label: "Shadow Many",
+        version: 1,
+        fields: {
+          device: { type: "string" },
+          source_id: { type: "string" },
+          timestamp: { type: "datetime" },
+        },
+      },
+    });
+    expect(res.status).toBe(400);
+    const payload = (await res.json()) as {
+      error: {
+        code: string;
+        details?: { errors?: { field: string }[] };
+      };
+    };
+    expect(payload.error.code).toBe("property_shadows_field");
+    const fields = (payload.error.details?.errors ?? []).map((e) => e.field);
+    expect(fields).toContain("fields.device");
+    expect(fields).toContain("fields.source_id");
+    expect(fields).toContain("fields.timestamp");
+  });
+});
+
 describe("merge_policy on type schemas", () => {
   it("GET /types/core.note returns the resolved merge_policy", async () => {
     const res = await request(ctx.app, "GET", "/types/core.note", {

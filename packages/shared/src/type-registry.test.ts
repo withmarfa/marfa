@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  RESERVED_ITEM_FIELDS,
   TYPE_REGISTRY,
   getTypeSchema,
   getResolvedFields,
@@ -11,6 +12,7 @@ import {
   validateTypeSchema,
 } from "./type-registry.js";
 import type { ItemState } from "@mymehq/types";
+import type { Item } from "./types.js";
 
 describe("TYPE_REGISTRY", () => {
   it("contains 22 core types and 7 system types (TSC42 §4)", () => {
@@ -496,6 +498,103 @@ describe("validateTypeSchema — inheritance rule", () => {
       fields: {
         title: { type: "string", description: "A title" },
         body: { type: "string", description: "Body text" },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Freshness gate for RESERVED_ITEM_FIELDS. The set is hand-maintained in
+// type-registry.ts; the source of truth is the Item interface in types.ts.
+// This test builds the expected set from a Required<Item> literal so the
+// TypeScript shape check enforces "every Item field is present in the literal",
+// then asserts the runtime set matches. If Item grows a new field without
+// RESERVED_ITEM_FIELDS being updated, this test fails loudly.
+// -----------------------------------------------------------------------------
+describe("RESERVED_ITEM_FIELDS — freshness against Item interface", () => {
+  it("contains exactly the keys present on the Item wire shape", () => {
+    // Required<Item> forces every optional Item key to be present in the
+    // literal at compile time. The values are sentinels — we never inspect
+    // them; only the key set matters.
+    const itemShape: Required<Item> = {
+      id: "",
+      type: "",
+      state: "active",
+      tier: "library",
+      tenant_id: null,
+      properties: {},
+      created_at: "",
+      updated_at: "",
+      timestamp: "",
+      source: "",
+      source_id: "",
+      version: 1,
+      schema_version: 1,
+      device: "",
+      capture_latitude: 0,
+      capture_longitude: 0,
+    };
+    const expected = new Set(Object.keys(itemShape));
+    const actual = new Set(RESERVED_ITEM_FIELDS);
+    expect(actual).toEqual(expected);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Shadow rule — custom-type fields may not collide with first-class Item
+// fields. validateTypeSchema rejects with code "property_shadows_field" for
+// each colliding name. Server-side route layer (POST /types) surfaces the
+// rejection as HTTP 400 + PROPERTY_SHADOWS_FIELD.
+// -----------------------------------------------------------------------------
+describe("validateTypeSchema — property shadow rule", () => {
+  it("rejects a schema declaring a field that shadows a first-class Item field", () => {
+    const result = validateTypeSchema({
+      id: "test.shadow_device",
+      label: "Shadow Device",
+      version: 1,
+      fields: {
+        device: { type: "string" },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const collision = result.errors.find(
+      (e) => e.code === "property_shadows_field",
+    );
+    expect(collision).toBeTruthy();
+    expect(collision?.field).toBe("fields.device");
+  });
+
+  it("reports every shadowing field at once, not just the first", () => {
+    const result = validateTypeSchema({
+      id: "test.shadow_many",
+      label: "Shadow Many",
+      version: 1,
+      fields: {
+        device: { type: "string" },
+        source_id: { type: "string" },
+        timestamp: { type: "datetime" },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const fields = result.errors
+      .filter((e) => e.code === "property_shadows_field")
+      .map((e) => e.field);
+    expect(fields).toContain("fields.device");
+    expect(fields).toContain("fields.source_id");
+    expect(fields).toContain("fields.timestamp");
+  });
+
+  it("accepts a schema whose fields don't shadow any first-class Item field", () => {
+    const result = validateTypeSchema({
+      id: "test.shadow_clean",
+      label: "Shadow Clean",
+      version: 1,
+      fields: {
+        input_device: { type: "string" },
+        duration_seconds: { type: "number" },
       },
     });
     expect(result.success).toBe(true);

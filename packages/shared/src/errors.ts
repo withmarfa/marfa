@@ -156,6 +156,19 @@ export enum ErrorCode {
    */
   INHERITANCE_VIOLATION = "inheritance_violation",
   /**
+   * A type registration declared a `fields.<name>` whose key collides
+   * with a first-class field on the `Item` wire shape (e.g. `device`,
+   * `source_id`, `timestamp`, `version`, `schema_version`,
+   * `capture_latitude`, `capture_longitude`). Letting a custom type
+   * redefine a first-class field name means every row carries two
+   * values under the same name and nothing downstream can tell which is
+   * authoritative. Reject at registration so the type author renames
+   * before any data is written. Authoritative list lives at
+   * `RESERVED_ITEM_FIELDS` in `type-registry.ts`, derived from the
+   * `Item` interface in `types.ts`.
+   */
+  PROPERTY_SHADOWS_FIELD = "property_shadows_field",
+  /**
    * Server-side semver-diff at type registration (TSC42 §7): the submitted
    * version doesn't match the diff class against the existing schema. E.g.
    * removing a field while bumping a "patch" version, or re-submitting an
@@ -286,6 +299,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.INVALID_PROPERTIES]: 400,
   [ErrorCode.INVALID_SCHEMA]: 400,
   [ErrorCode.INHERITANCE_VIOLATION]: 400,
+  [ErrorCode.PROPERTY_SHADOWS_FIELD]: 400,
   [ErrorCode.EDGE_CONSTRAINT_VIOLATION]: 400,
   [ErrorCode.EDGE_CYCLE]: 400,
   [ErrorCode.EDGE_TYPE_NOT_FOUND]: 404,
