@@ -927,3 +927,154 @@ describe("T-141 — cancel route honesty when cascade wins the race", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// T-192 — full account-lifecycle exercise as a single arc.
+// ---------------------------------------------------------------------------
+//
+// Session 1 of the [[QA Pass — 2026-05-18]] deferred this — the
+// throwaway boot had no email backend and the test-side
+// `markEmailVerified` plumbing wasn't being driven through to the
+// full sequence. Individual segments are exercised by the suites
+// above (T-116 happy path / T-136 race / T-137 guard / T-139 audit /
+// T-141 honesty), but none of them walk the complete user arc:
+//
+//   sign-up → verify → sign-in → request-delete → confirm → cancel →
+//   re-sign-in → re-request → confirm → purge → hard-deleted.
+//
+// This describe block runs that arc as one test, asserting at each
+// step. It deliberately re-asserts invariants already covered
+// piecewise — the value is the single readable thread an operator
+// (or future agent) can point at when asking "did the lifecycle
+// actually work end-to-end against this build?". Failures in any
+// step localise to a clear assertion in the arc.
+
+describe("T-192 — full account-lifecycle arc", () => {
+  it("sign-up → verify → sign-in → request → confirm → cancel → re-request → confirm → purge", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const email = "lifecycle@example.com";
+    const lifecycle = ctx.storage.accountLifecycle;
+    expect(lifecycle).toBeTruthy();
+
+    // Step 1: sign-up. Test-side `markEmailVerified` stands in for
+    // clicking the real verify link.
+    await signUpAndVerify(ctx, email);
+
+    // Step 2: sign-in. Cookie authenticates the consent surface for
+    // POST /auth/account/delete. The exact status varies (better-auth
+    // returns 200 with Set-Cookie); the load-bearing assertion is
+    // that we got a session cookie back.
+    const firstSignIn = await signIn(ctx, email);
+    expect(firstSignIn.cookie).toBeTruthy();
+
+    // Step 3: request-delete. Confirm token issued.
+    const initiate1 = await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: { origin: ORIGIN, cookie: firstSignIn.cookie ?? "" },
+    });
+    expect(initiate1.status).toBe(202);
+    const confirmToken1 = await readLatestVerification(
+      ctx.storage,
+      "account-delete:",
+    );
+    expect(confirmToken1).toBeTruthy();
+
+    // Step 4: confirm. State flips to pending_deletion; sessions are
+    // dropped; cancel-by-link token gets minted on the next blocked
+    // sign-in attempt (T-137).
+    const confirm1 = await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(confirmToken1 ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+    expect(confirm1.status).toBe(200);
+    const pending = await lifecycle?.getAccountLifecycleByEmail(email);
+    expect(pending?.deletion_state).toBe("pending_deletion");
+    const authUserId = pending?.auth_user_id ?? "";
+    expect(authUserId).toBeTruthy();
+
+    // Step 5: sign-in blocked. T-137 — generic 401 indistinguishable
+    // from wrong-password; cancel-by-link token minted side-effect.
+    const blocked = await signIn(ctx, email);
+    expect(blocked.status).toBe(401);
+    const cancelToken = await readLatestVerification(
+      ctx.storage,
+      "account-cancel:",
+    );
+    expect(cancelToken).toBeTruthy();
+
+    // Step 6: cancel via link. Account back to active. T-141 doesn't
+    // fire here because cascade hasn't won — the audit row is the
+    // standard `delete_cancelled` shape.
+    const cancelRes = await request(
+      ctx.app,
+      "GET",
+      `/auth/account/cancel?token=${encodeURIComponent(cancelToken ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+    expect(cancelRes.status).toBe(200);
+    const restored = await lifecycle?.getAccountLifecycleByEmail(email);
+    expect(restored?.deletion_state).toBe("active");
+    expect(restored?.pending_deletion_at).toBeNull();
+
+    // Step 7: re-sign-in succeeds. The cancel actually restored access.
+    const secondSignIn = await signIn(ctx, email);
+    expect(secondSignIn.cookie).toBeTruthy();
+
+    // Step 8: second request-delete + confirm. Same shape as steps 3-4.
+    const initiate2 = await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: { origin: ORIGIN, cookie: secondSignIn.cookie ?? "" },
+    });
+    expect(initiate2.status).toBe(202);
+    const confirmToken2 = await readLatestVerification(
+      ctx.storage,
+      "account-delete:",
+    );
+    expect(confirmToken2).toBeTruthy();
+    expect(confirmToken2).not.toBe(confirmToken1);
+
+    const confirm2 = await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(confirmToken2 ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+    expect(confirm2.status).toBe(200);
+    const pending2 = await lifecycle?.getAccountLifecycleByEmail(email);
+    expect(pending2?.deletion_state).toBe("pending_deletion");
+
+    // Step 9: purge. Run the cascade against a cutoff 31 days in the
+    // future. T-136 invariant: re-check inside the transaction.
+    const purger = new PendingDeletePurger(
+      ctx.storage,
+      30,
+      3_600_000,
+      () => new Date(Date.now() + 31 * 86_400_000),
+      ctx.storage.coordination,
+    );
+    const purged = await purger.runOnce();
+    expect(purged).toBeGreaterThanOrEqual(1);
+    expect(await lifecycle?.getAccountLifecycle(authUserId)).toBeNull();
+
+    // Step 10: audit hygiene (T-139). The earlier
+    // delete_requested / delete_confirmed / delete_cancelled rows
+    // are keyed by `resource_id = authUserId` and got redacted by
+    // the post-cascade sweep. The `hard_deleted` row survives
+    // (emitted inside the cascade transaction). Across every row
+    // assert no plaintext email leaks in the details payload.
+    const audit = await ctx.storage.audit.list({ resource_id: authUserId });
+    expect(audit.data.length).toBeGreaterThan(0);
+    const hardDeleted = audit.data.find(
+      (r) => r.action === "auth.account.hard_deleted",
+    );
+    expect(hardDeleted).toBeTruthy();
+    for (const row of audit.data) {
+      const detailsStr = JSON.stringify(row.details);
+      expect(detailsStr.toLowerCase()).not.toContain(email.toLowerCase());
+    }
+
+    // Step 11: re-sign-in fails after purge. Account is gone.
+    const postPurgeSignIn = await signIn(ctx, email);
+    expect(postPurgeSignIn.status).toBe(401);
+  });
+});
