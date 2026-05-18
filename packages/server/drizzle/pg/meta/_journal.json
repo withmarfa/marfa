@@ -414,6 +414,13 @@
       "when": 1779638403000,
       "tag": "0058_users_role",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1779638404000,
+      "tag": "0059_oauth_string_arrays",
+      "breakpoints": true
     }
   ]
 }

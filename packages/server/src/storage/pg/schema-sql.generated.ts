@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS public.auth_oauth_access_token (
     refresh_id text,
     expires_at timestamp without time zone,
     created_at timestamp without time zone,
-    scopes text NOT NULL
+    scopes text[] NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.auth_oauth_client (
@@ -122,24 +122,24 @@ CREATE TABLE IF NOT EXISTS public.auth_oauth_client (
     skip_consent boolean,
     enable_end_session boolean,
     subject_type text,
-    scopes text,
+    scopes text[],
     user_id text,
     created_at timestamp without time zone,
     updated_at timestamp without time zone,
     name text,
     uri text,
     icon text,
-    contacts text,
+    contacts text[],
     tos text,
     policy text,
     software_id text,
     software_version text,
     software_statement text,
-    redirect_uris text NOT NULL,
-    post_logout_redirect_uris text,
+    redirect_uris text[] NOT NULL,
+    post_logout_redirect_uris text[],
     token_endpoint_auth_method text,
-    grant_types text,
-    response_types text,
+    grant_types text[],
+    response_types text[],
     public boolean,
     type text,
     require_pkce boolean,
@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS public.auth_oauth_consent (
     client_id text NOT NULL,
     user_id text,
     reference_id text,
-    scopes text NOT NULL,
+    scopes text[] NOT NULL,
     created_at timestamp without time zone,
     updated_at timestamp without time zone
 );
@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS public.auth_oauth_refresh_token (
     created_at timestamp without time zone,
     revoked timestamp without time zone,
     auth_time timestamp without time zone,
-    scopes text NOT NULL
+    scopes text[] NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.auth_passkey (

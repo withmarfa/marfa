@@ -730,8 +730,12 @@ export const auth_oauth_client = pgTable(
     skipConsent: boolean("skip_consent"),
     enableEndSession: boolean("enable_end_session"),
     subjectType: text("subject_type"),
-    /** JSON-encoded string[] — Better Auth adapter serialises */
-    scopes: text("scopes"),
+    // Plugin-declared `string[]` fields: the @better-auth Drizzle adapter
+    // sets `supportsArrays: true` for PG, so these must be native PG
+    // arrays (`text[]`). Plain `text` columns silently JSON-stringify on
+    // insert and return strings on read, which breaks the plugin's
+    // `client.redirectUris?.find(...)` callers with a TypeError.
+    scopes: text("scopes").array(),
     userId: text("user_id").references(() => auth_user.id, {
       onDelete: "cascade",
     }),
@@ -740,17 +744,17 @@ export const auth_oauth_client = pgTable(
     name: text("name"),
     uri: text("uri"),
     icon: text("icon"),
-    contacts: text("contacts"),
+    contacts: text("contacts").array(),
     tos: text("tos"),
     policy: text("policy"),
     softwareId: text("software_id"),
     softwareVersion: text("software_version"),
     softwareStatement: text("software_statement"),
-    redirectUris: text("redirect_uris").notNull(),
-    postLogoutRedirectUris: text("post_logout_redirect_uris"),
+    redirectUris: text("redirect_uris").array().notNull(),
+    postLogoutRedirectUris: text("post_logout_redirect_uris").array(),
     tokenEndpointAuthMethod: text("token_endpoint_auth_method"),
-    grantTypes: text("grant_types"),
-    responseTypes: text("response_types"),
+    grantTypes: text("grant_types").array(),
+    responseTypes: text("response_types").array(),
     public: boolean("public"),
     type: text("type"),
     requirePKCE: boolean("require_pkce"),
@@ -786,7 +790,9 @@ export const auth_oauth_refresh_token = pgTable(
     /** Single-use marker; plugin rotates on every refresh. Non-null = used. */
     revoked: timestamp("revoked", { mode: "date" }),
     authTime: timestamp("auth_time", { mode: "date" }),
-    scopes: text("scopes").notNull(),
+    // Plugin-declared `string[]` field — see the comment on
+    // `auth_oauth_client.scopes` for the rationale.
+    scopes: text("scopes").array().notNull(),
   },
   (table) => [
     index("idx_auth_oauth_refresh_token_token").on(table.token),
@@ -817,7 +823,9 @@ export const auth_oauth_access_token = pgTable(
     ),
     expiresAt: timestamp("expires_at", { mode: "date" }),
     createdAt: timestamp("created_at", { mode: "date" }),
-    scopes: text("scopes").notNull(),
+    // Plugin-declared `string[]` field — see the comment on
+    // `auth_oauth_client.scopes` for the rationale.
+    scopes: text("scopes").array().notNull(),
   },
   (table) => [
     uniqueIndex("idx_auth_oauth_access_token_token").on(table.token),
@@ -835,7 +843,9 @@ export const auth_oauth_consent = pgTable(
       onDelete: "cascade",
     }),
     referenceId: text("reference_id"),
-    scopes: text("scopes").notNull(),
+    // Plugin-declared `string[]` field — see the comment on
+    // `auth_oauth_client.scopes` for the rationale.
+    scopes: text("scopes").array().notNull(),
     createdAt: timestamp("created_at", { mode: "date" }),
     updatedAt: timestamp("updated_at", { mode: "date" }),
   },
