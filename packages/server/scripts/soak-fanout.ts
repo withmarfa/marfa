@@ -256,10 +256,8 @@ async function main(): Promise<void> {
   console.log("NOTE: this measures publish-side latency only. The bridge's");
   console.log("fanout to all subscribers is async after the publish returns.");
   console.log("");
-  console.log("Inspect on the server (Atlas):");
-  console.log(
-    "  ssh aic-atlas tail -200 ~/Services/myme-staging/logs/stderr.log \\",
-  );
+  console.log("Inspect server logs (adapt the path/host for your deploy):");
+  console.log("  tail -200 /path/to/myme/logs/stderr.log \\");
   console.log("    | grep -E '\\[reactive-run-bridge\\]'");
   console.log("");
   console.log("Look for:");

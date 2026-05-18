@@ -4,14 +4,18 @@ A typed data layer for structured personal data. Store, query, and sync items wi
 
 ## Packages
 
-| Package                               | Description                                                 |
-| ------------------------------------- | ----------------------------------------------------------- |
-| [`@mymehq/types`](./packages/types)   | Core type + edge JSON schemas; emits the runtime registries |
-| [`@mymehq/shared`](./packages/shared) | Wire types, Zod validation schemas, error codes             |
-| [`@mymehq/server`](./packages/server) | Hono HTTP server with SQLite and Postgres support           |
-| [`@mymehq/sdk`](./packages/sdk)       | TypeScript HTTP client                                      |
+| Package                                                 | Description                                                            |
+| ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [`@mymehq/types`](./packages/types)                     | Core type + edge JSON schemas; emits the runtime registries            |
+| [`@mymehq/shared`](./packages/shared)                   | Wire types, Zod validation schemas, error codes                        |
+| [`@mymehq/server`](./packages/server)                   | Hono HTTP server with SQLite and Postgres support                      |
+| [`@mymehq/sdk`](./packages/sdk)                         | TypeScript HTTP client                                                 |
+| [`@mymehq/webhooks`](./packages/webhooks)               | Cross-runtime inbound-webhook signature verification (Web Crypto only) |
+| [`@mymehq/runtime-control`](./packages/runtime-control) | Cloudflare Worker control plane for the hosted integrations substrate  |
+| [`@mymehq/runtime-sdk`](./packages/runtime-sdk)         | In-Worker SDK consumed by Integration Workers                          |
+| [`@mymehq/runtime-test`](./packages/runtime-test)       | In-Worker test harness mirroring `runtime-sdk`                         |
 
-`@mymehq/shared` and `@mymehq/sdk` publish to npm; `@mymehq/types` and `@mymehq/server` stay private.
+`@mymehq/shared`, `@mymehq/sdk`, and `@mymehq/webhooks` publish to npm; the rest stay private.
 
 ## Quick start
 
@@ -30,46 +34,6 @@ pnpm dev    # http://localhost:8600
 ```
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full development guide and [CLAUDE.md](./CLAUDE.md) for architecture, conventions, and workflow rules.
-
-## Docker
-
-Start the server with Postgres and S3-compatible storage:
-
-```bash
-docker compose up --build
-```
-
-The server will be available at `http://localhost:8600`.
-
-### Bootstrap
-
-Create your first API key (no auth required when zero keys exist):
-
-```bash
-curl -X POST http://localhost:8600/keys \
-  -H "Content-Type: application/json" \
-  -d '{"label": "admin"}'
-```
-
-### Verify
-
-```bash
-# Create an item
-curl -X POST http://localhost:8600/items \
-  -H "Authorization: Bearer <your-key>" \
-  -H "Content-Type: application/json" \
-  -d '{"type": "core.note", "properties": {"body": "Hello Docker"}}'
-
-# List items
-curl http://localhost:8600/items -H "Authorization: Bearer <your-key>"
-```
-
-### Clean up
-
-```bash
-docker compose down      # Stop containers (data persists in volumes)
-docker compose down -v   # Stop and delete all data
-```
 
 ## Documentation
 

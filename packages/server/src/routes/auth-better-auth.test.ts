@@ -381,11 +381,11 @@ describe("better-auth /auth/* surface", () => {
     // RP surfaces the mismatch.
     expect(body.issuer).toBe(`${base}/auth`);
 
-    // Every absolute-URL field starts with the configured base. If
-    // staging's plist is missing MYME_AUTH_BASE_URL the server falls
-    // back to `http://localhost:<port>` which the host header rewrites
-    // to the internal hostname (`http://aic-atlas:8602` in the wild).
-    // Asserting the prefix here catches that regression.
+    // Every absolute-URL field starts with the configured base. If the
+    // deployment is missing MYME_AUTH_BASE_URL the server falls back to
+    // `http://localhost:<port>`, which the host header then rewrites to
+    // the internal hostname. Asserting the prefix here catches that
+    // regression.
     const urlFields = [
       "authorization_endpoint",
       "token_endpoint",

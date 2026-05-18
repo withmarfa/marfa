@@ -21,12 +21,12 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 # --- Configuration (override via environment) ---
-ATLAS_HOST="${ATLAS_HOST:-aic-atlas}"
+DEPLOY_HOST="${DEPLOY_HOST:-}"
 SERVICE_DIR="${SERVICE_DIR:-\$HOME/Services/myme-staging}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 
 # SSH hardening — cap any single ssh invocation at ~45s instead of waiting
-# indefinitely. ConnectTimeout fails fast if Atlas is unreachable;
+# indefinitely. ConnectTimeout fails fast if the host is unreachable;
 # ServerAliveInterval + ServerAliveCountMax detect a stalled mid-session
 # tunnel (3 × 15s = ~45s before the client gives up).
 SSH_OPTS=(-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
@@ -57,7 +57,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --host)
-      ATLAS_HOST="$2"
+      DEPLOY_HOST="$2"
       shift 2
       ;;
     --help|-h)
@@ -66,7 +66,7 @@ while [[ $# -gt 0 ]]; do
       echo "Deploys both staging (:8602) and conformance (:8601) from main."
       echo ""
       echo "Environment:"
-      echo "  ATLAS_HOST                  SSH host (default: aic-atlas)"
+      echo "  DEPLOY_HOST                 SSH host (required; or pass via --host)"
       echo "  SERVICE_DIR                 Source tree (default: \$HOME/Services/myme-staging)"
       echo "  REPO_BRANCH                 Branch to deploy (default: main)"
       echo "  STAGING_DATABASE_URL        Postgres URL for the staging instance"
@@ -80,14 +80,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [ -z "$DEPLOY_HOST" ]; then
+  echo -e "${RED}DEPLOY_HOST is required (set in the environment or pass --host <hostname>).${NC}"
+  exit 1
+fi
+
 # --- Helpers ---
 remote() {
   # shellcheck disable=SC2029
-  ssh "${SSH_OPTS[@]}" "$ATLAS_HOST" "cd $SERVICE_DIR && $1"
+  ssh "${SSH_OPTS[@]}" "$DEPLOY_HOST" "cd $SERVICE_DIR && $1"
 }
 
 remote_raw() {
-  ssh "${SSH_OPTS[@]}" "$ATLAS_HOST" "$1"
+  ssh "${SSH_OPTS[@]}" "$DEPLOY_HOST" "$1"
 }
 
 timestamp() {
@@ -132,16 +137,16 @@ health_check() {
   return 1
 }
 
-echo -e "${GREEN}Deploying Myme to $ATLAS_HOST${NC}"
+echo -e "${GREEN}Deploying Myme to $DEPLOY_HOST${NC}"
 echo ""
 
 # --- Step 1: Pre-flight checks ---
 echo "1/7 Pre-flight checks..."
-if ! ssh "${SSH_OPTS[@]}" "$ATLAS_HOST" "echo ok" > /dev/null 2>&1; then
-  echo -e "${RED}Cannot connect to $ATLAS_HOST via SSH.${NC}"
+if ! ssh "${SSH_OPTS[@]}" "$DEPLOY_HOST" "echo ok" > /dev/null 2>&1; then
+  echo -e "${RED}Cannot connect to $DEPLOY_HOST via SSH.${NC}"
   echo "  Configure SSH access in ~/.ssh/config:"
-  echo "    Host aic-atlas"
-  echo "      HostName <tailscale-ip-or-hostname>"
+  echo "    Host $DEPLOY_HOST"
+  echo "      HostName <hostname-or-ip>"
   echo "      User <your-user>"
   exit 1
 fi

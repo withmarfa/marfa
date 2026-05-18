@@ -26,23 +26,23 @@ Both services share one source tree at `~/Services/myme-staging/`. A single depl
 # Rollback to the SHA recorded as `previous_sha` in version.json
 ./deploy.sh --rollback
 
-# Override SSH host alias
-./deploy.sh --host <hostname>
+# Override SSH host
+./deploy.sh --host <your-host>
 ```
 
 The script SSHs to the host, pulls `main`, runs `pnpm install --frozen-lockfile && pnpm build`, runs `pnpm --filter @mymehq/server migrate` against both databases (`myme_staging` and `myme_conformance`), writes `version.json` (current SHA + previous SHA + timestamp), restarts both launchd services, and verifies each health endpoint. Migrations are forward-only — the `--rollback` path reverts the source SHA but does not undo schema changes; if a rollback needs to undo a migration, that's a manual operator decision.
 
 ### Prerequisites
 
-1. **SSH access** — the default host alias is `aic-atlas`. Configure in `~/.ssh/config`:
+1. **SSH access** — set `DEPLOY_HOST` to your SSH alias and configure it in `~/.ssh/config`:
    ```
-   Host aic-atlas
+   Host <your-host>
      HostName <hostname-or-ip>
      User <your-user>
    ```
 2. **Source tree on the host** — clone once:
    ```bash
-   ssh aic-atlas "git clone <repo-url> ~/Services/myme-staging"
+   ssh <your-host> "git clone <repo-url> ~/Services/myme-staging"
    ```
 3. **pnpm** installed on the host (via fnm / nvm / Homebrew).
 
@@ -50,7 +50,7 @@ The script SSHs to the host, pulls `main`, runs `pnpm install --frozen-lockfile 
 
 All optional, all environment-overridable:
 
-- `ATLAS_HOST` — SSH alias (default: `aic-atlas`). Also settable via `--host`.
+- `DEPLOY_HOST` — SSH alias (required). Also settable via `--host`.
 - `SERVICE_DIR` — source tree (default: `$HOME/Services/myme-staging`).
 - `REPO_BRANCH` — branch to deploy (default: `main`).
 - `STAGING_DATABASE_URL` — Postgres URL for the staging instance.
@@ -60,21 +60,21 @@ All optional, all environment-overridable:
 
 ```bash
 # Health
-ssh aic-atlas "curl -s http://localhost:8602/health"    # staging
-ssh aic-atlas "curl -s http://localhost:8601/health"    # conformance
+ssh <your-host> "curl -s http://localhost:8602/health"    # staging
+ssh <your-host> "curl -s http://localhost:8601/health"    # conformance
 
 # Logs
-ssh aic-atlas "tail -50 ~/Services/myme-staging/logs/stderr.log"      # staging
-ssh aic-atlas "tail -50 ~/Services/myme-conformance/logs/stderr.log"  # conformance
+ssh <your-host> "tail -50 ~/Services/myme-staging/logs/stderr.log"      # staging
+ssh <your-host> "tail -50 ~/Services/myme-conformance/logs/stderr.log"  # conformance
 
 # Version
-ssh aic-atlas "cat ~/Services/myme-staging/version.json"
+ssh <your-host> "cat ~/Services/myme-staging/version.json"
 
 # Manual restart (staging)
-ssh aic-atlas "launchctl unload ~/Library/LaunchAgents/so.myme.staging.plist && sleep 1 && launchctl load ~/Library/LaunchAgents/so.myme.staging.plist"
+ssh <your-host> "launchctl unload ~/Library/LaunchAgents/so.myme.staging.plist && sleep 1 && launchctl load ~/Library/LaunchAgents/so.myme.staging.plist"
 
 # Manual restart (conformance)
-ssh aic-atlas "launchctl unload ~/Library/LaunchAgents/so.myme.conformance.plist && sleep 1 && launchctl load ~/Library/LaunchAgents/so.myme.conformance.plist"
+ssh <your-host> "launchctl unload ~/Library/LaunchAgents/so.myme.conformance.plist && sleep 1 && launchctl load ~/Library/LaunchAgents/so.myme.conformance.plist"
 ```
 
 ## Infrastructure setup

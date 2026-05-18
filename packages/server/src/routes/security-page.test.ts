@@ -37,7 +37,7 @@ const SAMPLE_SESSION: SecurityPageSession = {
   created_at: "2026-05-01T10:00:00Z",
   last_active_at: "2026-05-06T18:00:00Z",
   is_current: false,
-  ip_address: "100.127.105.110",
+  ip_address: "203.0.113.1",
   user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ...",
 };
 
@@ -120,7 +120,7 @@ describe("renderSecurityPage", () => {
       grants: [],
       sessions: [SAMPLE_SESSION],
     });
-    expect(html).toContain("100.127.105.110");
+    expect(html).toContain("203.0.113.1");
     expect(html).toContain("Mac");
   });
 

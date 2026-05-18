@@ -4,7 +4,7 @@ TypeScript HTTP client for the Myme API. Public package, published to npm via OI
 
 ## Layout
 
-- `src/client.ts` — the `MymeClient` class. Each API surface lives in a nested object (`client.items`, `client.types`, `client.keys`, `client.edges`, `client.search`, `client.metadata`, `client.tenants`, `client.webhooks`). Wire types come from `@mymehq/shared`; the SDK adds ergonomic input/output types where convenient.
+- `src/client.ts` — the `MymeClient` class. Each API surface lives in a nested object: `client.items`, `client.metadata`, `client.edges`, `client.blobs`, `client.types`, `client.keys`, `client.webhooks`, `client.connections`, `client.tenants`, `client.admin`, `client.auth`, `client.profile`. Wire types come from `@mymehq/shared`; the SDK adds ergonomic input/output types where convenient.
 - `src/transport.ts` — `HttpTransport` wrapping `fetch` with auth, timeout, and JSON encoding/decoding. Tests inject a custom `fetch` to drive an in-process Hono app.
 - `src/conflict.ts` — auto-merge / manual / callback conflict resolution for `client.items.update` (`auto` is the default; auto strategy resolves non-conflicting fields, surfaces real conflicts via `keep_both_copies` sibling items per the schema's merge_policy).
 - `src/errors.ts` — typed `MymeError` subclasses (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).

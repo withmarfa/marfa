@@ -17,14 +17,14 @@ This walkthrough gets you from a stock checkout to delivering an inbound webhook
 In **terminal A** (Myme server):
 
 ```sh
-cd ~/aic-local/Dev/MymeHQ/myme
+cd /path/to/myme
 pnpm --filter @mymehq/server run dev      # boots on :8602 by default
 ```
 
 In **terminal B** (control-plane Worker):
 
 ```sh
-cd ~/aic-local/Dev/MymeHQ/myme
+cd /path/to/myme
 pnpm --filter @mymehq/runtime-control dev  # wrangler dev on :8787
 ```
 
