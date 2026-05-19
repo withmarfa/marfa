@@ -34,9 +34,12 @@ describe("Template manifest", () => {
     expect(trigger.config.cron).toBe("*/5 * * * *");
   });
 
-  it("targets core.note and runs only on the hosted tier", () => {
+  it("targets core.note and runs on both hosted and local tiers", () => {
     expect(TEMPLATE_MANIFEST.target_types).toEqual(["core.note"]);
-    expect(TEMPLATE_MANIFEST.runtime_compatibility).toEqual(["hosted"]);
+    expect(TEMPLATE_MANIFEST.runtime_compatibility).toEqual([
+      "hosted",
+      "local",
+    ]);
   });
 
   it("declares no OAuth requirements", () => {

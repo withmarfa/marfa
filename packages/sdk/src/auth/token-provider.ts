@@ -1,5 +1,7 @@
 import type { TokenStorage } from "./storage.js";
 import { OAuthError } from "./errors.js";
+import { discoverEndpoints, type Endpoints } from "./discovery.js";
+import { normaliseIssuer } from "./issuer.js";
 
 interface PersistedTokens {
   access_token: string;
@@ -35,6 +37,11 @@ export interface TokenProviderConfig {
   storage: TokenStorage;
   storageKey: string;
   fetch?: typeof globalThis.fetch;
+  /** Pre-resolved OAuth endpoints. When omitted, `refresh()` discovers
+   *  them lazily via `/.well-known/oauth-authorization-server` on first
+   *  call. Callers that have already discovered (e.g. `MymeAuth` after
+   *  `handleCallback`) pass them in to skip a redundant fetch. */
+  endpoints?: Endpoints;
 }
 
 export class StoredTokenProvider implements TokenProvider {
@@ -43,16 +50,18 @@ export class StoredTokenProvider implements TokenProvider {
   private readonly storage: TokenStorage;
   private readonly storageKey: string;
   private readonly fetch: typeof globalThis.fetch;
+  private endpoints: Endpoints | null;
   private cache: PersistedTokens | null = null;
   private inflightRefresh: Promise<string> | null = null;
   private signOutHandlers = new Set<() => void>();
 
   constructor(config: TokenProviderConfig) {
-    this.issuer = config.issuer.replace(/\/+$/, "");
+    this.issuer = normaliseIssuer(config.issuer);
     this.clientId = config.clientId;
     this.storage = config.storage;
     this.storageKey = config.storageKey;
     this.fetch = config.fetch ?? globalThis.fetch.bind(globalThis);
+    this.endpoints = config.endpoints ?? null;
   }
 
   async hydrateFromStorage(): Promise<boolean> {
@@ -104,8 +113,9 @@ export class StoredTokenProvider implements TokenProvider {
     const previousScope = this.cache.scope;
     this.inflightRefresh = (async () => {
       try {
+        this.endpoints ??= await discoverEndpoints(this.issuer, this.fetch);
         // OAuth 2.0 §3.2: token endpoint takes form-encoded.
-        const res = await this.fetch(`${this.issuer}/auth/token`, {
+        const res = await this.fetch(this.endpoints.token, {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({

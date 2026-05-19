@@ -17,6 +17,8 @@ import { defaultTokenStorage } from "./storage.js";
 import type { TokenStorage } from "./storage.js";
 import { StoredTokenProvider } from "./token-provider.js";
 import type { TokenProvider } from "./token-provider.js";
+import { discoverEndpoints } from "./discovery.js";
+import { normaliseIssuer } from "./issuer.js";
 
 const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
@@ -25,7 +27,7 @@ const SLOW_DOWN_BUMP_MS = 5_000;
 export interface StartDeviceFlowConfig {
   /** Myme server URL — protocol + host (and port). */
   issuer: string;
-  /** OAuth client id, registered via POST /auth/clients. */
+  /** OAuth client id, registered via POST /auth/oauth2/register (DCR). */
   clientId: string;
   /** Scopes to request (e.g. ["core.note:read"]). */
   scopes: string[];
@@ -84,11 +86,12 @@ interface PollErrorResponse {
 export async function startDeviceFlow(
   config: StartDeviceFlowConfig,
 ): Promise<DeviceFlowHandle> {
-  const issuer = config.issuer.replace(/\/+$/, "");
+  const issuer = normaliseIssuer(config.issuer);
   const fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
   const storage = config.storage ?? defaultTokenStorage();
+  const endpoints = await discoverEndpoints(issuer, fetchImpl);
 
-  const initiateRes = await fetchImpl(`${issuer}/auth/device`, {
+  const initiateRes = await fetchImpl(endpoints.deviceAuthorize, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -127,7 +130,11 @@ export async function startDeviceFlow(
           );
         }
         await sleep(pollIntervalMs, options?.signal);
-        const res = await fetchImpl(`${issuer}/auth/device/token`, {
+        // RFC 8628 polling endpoint — Better Auth publishes initiate at
+        // `device_authorization_endpoint` and polling at the same path
+        // with `/token` appended. Discovery doesn't currently publish
+        // the polling URL as its own field, so derive it here.
+        const res = await fetchImpl(`${endpoints.deviceAuthorize}/token`, {
           method: "POST",
           headers: { "content-type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
@@ -138,15 +145,14 @@ export async function startDeviceFlow(
         });
         if (res.ok) {
           const tokens = (await res.json()) as TokenResponse;
-          const storageKey = `myme.auth.tokens:${
-            new URL(issuer).origin
-          }:${config.clientId}`;
+          const storageKey = `myme.auth.tokens:${issuer}:${config.clientId}`;
           const provider = new StoredTokenProvider({
             issuer,
             clientId: config.clientId,
             storage,
             storageKey,
             fetch: fetchImpl,
+            endpoints,
           });
           await provider.persist({
             access_token: tokens.access_token,

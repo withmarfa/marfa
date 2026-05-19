@@ -7,7 +7,8 @@ export {
   computeCodeChallenge,
   generateState,
 } from "./pkce.js";
-export type { TokenProvider } from "./token-provider.js";
+export { StoredTokenProvider } from "./token-provider.js";
+export type { TokenProvider, TokenProviderConfig } from "./token-provider.js";
 export {
   InMemoryTokenStorage,
   LocalStorageTokenStorage,
@@ -16,3 +17,5 @@ export {
 export type { TokenStorage } from "./storage.js";
 export { startDeviceFlow } from "./device-flow.js";
 export type { StartDeviceFlowConfig, DeviceFlowHandle } from "./device-flow.js";
+export { discoverEndpoints, DiscoveryError } from "./discovery.js";
+export type { Endpoints } from "./discovery.js";

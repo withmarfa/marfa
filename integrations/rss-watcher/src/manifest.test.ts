@@ -30,9 +30,12 @@ describe("RSS Watcher manifest", () => {
     }
   });
 
-  it("targets core.bookmark and runs only on the hosted tier", () => {
+  it("targets core.bookmark and runs on both hosted and local tiers", () => {
     expect(RSS_WATCHER_MANIFEST.target_types).toEqual(["core.bookmark"]);
-    expect(RSS_WATCHER_MANIFEST.runtime_compatibility).toEqual(["hosted"]);
+    expect(RSS_WATCHER_MANIFEST.runtime_compatibility).toEqual([
+      "hosted",
+      "local",
+    ]);
   });
 
   it("declares no OAuth requirements", () => {
