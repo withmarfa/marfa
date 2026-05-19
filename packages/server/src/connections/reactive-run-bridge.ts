@@ -45,6 +45,45 @@ import {
   type SubscriptionEntry,
 } from "./envelope.js";
 
+/**
+ * T-171 — Per-subscriber failure tracking thresholds.
+ *
+ * Two layers compose:
+ *   - Layer 1 (in-memory cooldown): absorb transient blips. A subscriber
+ *     that fails `COOLDOWN_THRESHOLD` consecutive event-loops (each loop
+ *     is up to `maxAttempts` network retries) enters a `COOLDOWN_MS`
+ *     quiet window during which the bridge skips dispatch silently.
+ *     Reset on the next successful (2xx) publish. Cap stops indefinite
+ *     extension if events keep firing.
+ *   - Layer 2 (persistent terminal state): a subscriber that fails
+ *     `ESCALATION_THRESHOLD` consecutive event-loops gets its underlying
+ *     `system.connection` item flipped to `runtime_status: "failing"`,
+ *     and a `system.activity` row of severity `action_required` is
+ *     emitted. `buildEntryForConnection` then gates further dispatch out.
+ *     Cleared via the cache-invalidation subscriber when an operator
+ *     transitions `runtime_status` off `failing`.
+ *
+ * Counts are event-loops, not network attempts — one count represents
+ * one full `sendOne` retry exhaustion (5 attempts + exponential backoff)
+ * or one immediate 4xx rejection (T-171 treats both as failures).
+ */
+const COOLDOWN_THRESHOLD = 3;
+const ESCALATION_THRESHOLD = 10;
+const COOLDOWN_MS = 60_000;
+const MAX_COOLDOWN_MS = 5 * 60_000;
+
+interface SubscriberFailureState {
+  consecutiveFailures: number;
+  /** Epoch ms after which the cooldown gate stops skipping. `null` when
+   *  the subscriber is below the cooldown threshold. */
+  cooldownUntil: number | null;
+}
+
+/** Result discriminator for `sendOne`. Lets `fanoutEvent` distinguish
+ *  success (reset failure counter) from rejection (don't reset) from
+ *  exhaustion (escalate). */
+type SendOneResult = "success" | "rejected";
+
 export interface BridgeConfig {
   queueUrl: string;
   apiToken: string;
@@ -60,6 +99,30 @@ export interface BridgeConfig {
    * fanout continues to the next subscriber.
    */
   sendTimeoutMs?: number;
+  /**
+   * T-171 — consecutive `sendOne` rejections before the in-memory
+   * cooldown gate arms. Each `consecutiveFailures` tick represents one
+   * exhausted retry loop (or one immediate 4xx). Default 3.
+   */
+  failureCooldownThreshold?: number;
+  /**
+   * T-171 — consecutive `sendOne` rejections before the underlying
+   * `system.connection` item is flipped to `runtime_status: "failing"`
+   * and a `system.activity action_required` row is emitted. Default 10.
+   */
+  failureEscalationThreshold?: number;
+  /**
+   * T-171 — cooldown window (ms) the bridge skips dispatch after a
+   * subscriber crosses `failureCooldownThreshold`. Default 60_000.
+   */
+  failureCooldownMs?: number;
+  /**
+   * T-171 — upper bound (ms from now) on cooldown extension when failures
+   * keep arriving. Each new failure extends the window; this caps total
+   * extension so a busy event stream can't push cooldown arbitrarily far
+   * into the future. Default 5 minutes.
+   */
+  failureCooldownMaxMs?: number;
   /** Custom fetch (for tests). */
   fetch?: typeof fetch;
 }
@@ -91,6 +154,12 @@ export function tryStartReactiveRunBridge(
     batchSize: config?.batchSize ?? 10,
     maxAttempts: config?.maxAttempts ?? 5,
     sendTimeoutMs: config?.sendTimeoutMs ?? 5000,
+    failureCooldownThreshold:
+      config?.failureCooldownThreshold ?? COOLDOWN_THRESHOLD,
+    failureEscalationThreshold:
+      config?.failureEscalationThreshold ?? ESCALATION_THRESHOLD,
+    failureCooldownMs: config?.failureCooldownMs ?? COOLDOWN_MS,
+    failureCooldownMaxMs: config?.failureCooldownMaxMs ?? MAX_COOLDOWN_MS,
     fetch: config?.fetch,
   });
 }
@@ -165,6 +234,11 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
         pipelining: 1,
       });
   const subscriptions = new Map<string, SubscriptionEntry>();
+  // T-171: per-subscriber failure tracking. Lives alongside subscriptions
+  // and shares its lifecycle — entries are cleaned up when a subscription
+  // is dropped (cache invalidation), reset on a successful (2xx) publish,
+  // and increment + cooldown + escalate on `sendOne` rejection.
+  const subscriberFailures = new Map<string, SubscriberFailureState>();
   let running = false;
   let stopRequested = false;
   // References to the active subscribe iterators so `stop()` can
@@ -190,6 +264,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
     const item = await storage.items.get(connectionId);
     if (item?.type !== "system.connection") {
       subscriptions.delete(connectionId);
+      subscriberFailures.delete(connectionId);
       return;
     }
     const entry = await buildEntryForConnection(storage, {
@@ -199,9 +274,14 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       tenant_id: item.tenant_id ?? null,
     });
     if (entry) {
+      // T-171: when a subscriber re-enters the registry (e.g. operator
+      // flips runtime_status off "failing"), clear any stale failure
+      // bookkeeping so dispatch starts fresh.
+      subscriberFailures.delete(connectionId);
       subscriptions.set(connectionId, entry);
     } else {
       subscriptions.delete(connectionId);
+      subscriberFailures.delete(connectionId);
     }
   };
 
@@ -270,6 +350,8 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
               await fanoutEvent(
                 next.value,
                 subscriptions,
+                subscriberFailures,
+                refreshConnection,
                 config,
                 fetchImpl,
                 pool,
@@ -292,6 +374,7 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       stopRequested = true;
       running = false;
       subscriptions.clear();
+      subscriberFailures.clear();
       // Wake the for-await loops by emitting synthetic events. Each
       // loop wakes, sees `stopRequested === true`, breaks. The
       // generator unwinds, `events.on(...)` detaches its listener, the
@@ -375,54 +458,61 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
 async function fanoutEvent(
   event: ItemEventWithId,
   subscriptions: Map<string, SubscriptionEntry>,
+  subscriberFailures: Map<string, SubscriberFailureState>,
+  refreshConnection: (connectionId: string) => Promise<void>,
   config: BridgeConfig,
   fetchImpl: typeof fetch,
   pool: Pool | null,
   storage: Storage,
 ): Promise<void> {
   const tasks: Promise<unknown>[] = [];
+  const now = Date.now();
   for (const entry of subscriptions.values()) {
     // The bridge's per-subscriber gate (self-event + tenant) is shared
     // with `POST /connections/preview-event` via the `evaluateDispatch`
     // helper — same code, same semantics, two callers.
     if (!evaluateDispatch(event, entry).would_dispatch) continue;
+    // T-171 Layer 1 — cooldown gate. A subscriber currently in cooldown
+    // is skipped silently for this event (no `sendOne`, no log line, no
+    // system.activity). Absorbs transient blips without polluting stderr
+    // or filling the audit trail with retry storms. The next event past
+    // `cooldownUntil` retries the subscriber; the failure state is
+    // preserved so a still-broken subscriber escalates further.
+    const failureState = subscriberFailures.get(entry.connection_id);
+    if (
+      failureState?.cooldownUntil != null &&
+      failureState.cooldownUntil > now
+    ) {
+      continue;
+    }
     const body = buildQueueMessageBody(event, entry);
     // T-013: each subscriber's send is wrapped in a per-fetch timeout
     // and an isolated try/catch. A slow / wedged Cloudflare Queues
     // endpoint for one subscriber doesn't break the rest. T-036:
     // each task is launched immediately so subscribers fan out in
     // parallel; allSettled below waits for every one.
-    const task = sendOne(body, config, fetchImpl, pool).catch(
-      async (err: unknown) => {
-        const reason = err instanceof Error ? err.message : String(err);
-        console.error(
-          `[reactive-run-bridge] subscriber ${entry.connection_id} fanout failed:`,
-          reason,
-        );
-        // Best-effort operator visibility — surface the failure as a
-        // system.activity row for the affected connection.
-        //
-        // `storage.items.create` is the storage-layer call only; it does
-        // NOT invoke `publish()` (publish is the route-layer's job in
-        // `routes/items.ts`). So this write is invisible to the bridge's
-        // own `subscribe()` listener — no loop. Same precedent as
-        // `defaultCycleDetectionWiring`'s overflow hook in `pubsub.ts`.
-        try {
-          await storage.items.create(
-            {
-              type: "system.activity",
-              properties: {
-                severity: "error",
-                summary: `Fanout to connection ${entry.connection_id} failed`,
-                connection_id: entry.connection_id,
-                detail: { reason, item_id: event.item.id },
-              },
-            },
-            event.tenantId,
-          );
-        } catch {
-          // Don't crash the drainer over a follow-up activity write.
+    const task = sendOne(body, config, fetchImpl, pool).then(
+      (result) => {
+        if (result === "success") {
+          // T-171: a successful publish resets the failure ladder. The
+          // next failure starts at 1 again rather than picking up from
+          // wherever we'd accumulated to.
+          subscriberFailures.delete(entry.connection_id);
         }
+        // 4xx rejections (`result === "rejected"`) intentionally leave
+        // the failure state untouched — they aren't success, but they
+        // also don't repeat the retry storm that drove this ticket.
+      },
+      async (err: unknown) => {
+        await handleSubscriberFailure(
+          entry,
+          err,
+          event,
+          subscriberFailures,
+          refreshConnection,
+          config,
+          storage,
+        );
       },
     );
     tasks.push(task);
@@ -433,12 +523,177 @@ async function fanoutEvent(
   await Promise.allSettled(tasks);
 }
 
+/**
+ * T-171 — handle a `sendOne` rejection: log, surface to operators via
+ * `system.activity`, increment the in-memory counter, arm cooldown at
+ * `COOLDOWN_THRESHOLD`, escalate to persistent `runtime_status: failing`
+ * at `ESCALATION_THRESHOLD`.
+ *
+ * Best-effort throughout: a follow-up storage write that fails must
+ * never crash the drainer.
+ */
+async function handleSubscriberFailure(
+  entry: SubscriptionEntry,
+  err: unknown,
+  event: ItemEventWithId,
+  subscriberFailures: Map<string, SubscriberFailureState>,
+  refreshConnection: (connectionId: string) => Promise<void>,
+  config: BridgeConfig,
+  storage: Storage,
+): Promise<void> {
+  const reason = err instanceof Error ? err.message : String(err);
+  console.error(
+    `[reactive-run-bridge] subscriber ${entry.connection_id} fanout failed:`,
+    reason,
+  );
+  // Operator-visible per-event row (severity error) — historical behaviour.
+  // The system.activity write is the storage-layer call only; it does
+  // NOT invoke `publish()` (publish is the route-layer's job in
+  // `routes/items.ts`). So this write is invisible to the bridge's own
+  // `subscribe()` listener — no loop. Same precedent as
+  // `defaultCycleDetectionWiring`'s overflow hook in `pubsub.ts`.
+  try {
+    await storage.items.create(
+      {
+        type: "system.activity",
+        properties: {
+          severity: "error",
+          summary: `Fanout to connection ${entry.connection_id} failed`,
+          connection_id: entry.connection_id,
+          detail: { reason, item_id: event.item.id },
+        },
+      },
+      event.tenantId,
+    );
+  } catch {
+    // Don't crash the drainer over a follow-up activity write.
+  }
+
+  // T-171 failure-ladder bookkeeping.
+  const cooldownThreshold =
+    config.failureCooldownThreshold ?? COOLDOWN_THRESHOLD;
+  const escalationThreshold =
+    config.failureEscalationThreshold ?? ESCALATION_THRESHOLD;
+  const cooldownMs = config.failureCooldownMs ?? COOLDOWN_MS;
+  const cooldownMaxMs = config.failureCooldownMaxMs ?? MAX_COOLDOWN_MS;
+  const prev = subscriberFailures.get(entry.connection_id) ?? {
+    consecutiveFailures: 0,
+    cooldownUntil: null,
+  };
+  const consecutiveFailures = prev.consecutiveFailures + 1;
+  let cooldownUntil = prev.cooldownUntil;
+  if (consecutiveFailures >= cooldownThreshold) {
+    // Each subsequent failure within the cooldown extends the window,
+    // capped at cooldownMaxMs from now so events that keep firing
+    // don't push the window arbitrarily far into the future.
+    const now = Date.now();
+    cooldownUntil = Math.min(now + cooldownMs, now + cooldownMaxMs);
+  }
+  subscriberFailures.set(entry.connection_id, {
+    consecutiveFailures,
+    cooldownUntil,
+  });
+
+  // T-171 Layer 2 — persistent escalation. Once we cross the
+  // escalation threshold of consecutive event-loop failures, flip the
+  // underlying connection item to `runtime_status: failing` and emit a
+  // single action_required activity row. `buildEntryForConnection` then
+  // drops the subscriber from the registry on the next refresh; recovery
+  // requires an operator to clear the field.
+  if (consecutiveFailures === escalationThreshold) {
+    await markSubscriberFailing(
+      storage,
+      entry,
+      reason,
+      event.tenantId,
+      escalationThreshold,
+    );
+    // Drop the subscriber from the in-memory registry now — the
+    // persistent flip we just did doesn't fire a `publish()` event (it's
+    // a storage-layer write only, same precedent as the per-event
+    // system.activity row above), so the cache-invalidation subscriber
+    // won't re-evaluate this connection until something else writes to
+    // it. Without this drop, follow-up events would keep dispatching to
+    // the dead subscriber until restart. Refresh re-reads the now-flipped
+    // item, gets back `null` from buildEntryForConnection, and removes
+    // the entry plus its failure bookkeeping.
+    await refreshConnection(entry.connection_id);
+  }
+}
+
+/**
+ * Flip the connection's `runtime_status` to `failing` and emit a
+ * `system.activity` row of severity `action_required`. Mirrors the
+ * `markReauthRequired` pattern in `routes/connection-proxy.ts` —
+ * best-effort, version-conflict tolerant, never throws.
+ */
+async function markSubscriberFailing(
+  storage: Storage,
+  entry: SubscriptionEntry,
+  reason: string,
+  tenantId: string | undefined,
+  consecutiveFailures: number,
+): Promise<void> {
+  try {
+    const connection = await storage.items.get(entry.connection_id);
+    if (connection?.type !== "system.connection") return;
+    const props = connection.properties as {
+      kind?: string;
+      runtime_status?: string;
+    };
+    // Only escalate `kind: integration` subscribers (the bridge's
+    // universe) and skip if already terminal — avoids re-stamping or
+    // duplicating the activity row on noisy ladders.
+    if (props.kind !== "integration") return;
+    if (props.runtime_status === "failing") return;
+    await storage.items.update(
+      entry.connection_id,
+      {
+        properties: {
+          ...connection.properties,
+          runtime_status: "failing",
+          last_error_at: new Date().toISOString(),
+        },
+      },
+      tenantId,
+    );
+  } catch (err) {
+    // Best-effort — the per-event error row already informed operators.
+    console.error(
+      `[reactive-run-bridge] failed to mark subscriber ${entry.connection_id} failing:`,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+  // Emit the action_required activity row separately so a failed
+  // items.update above doesn't block surface telemetry.
+  try {
+    await storage.items.create(
+      {
+        type: "system.activity",
+        properties: {
+          severity: "action_required",
+          summary: `Subscriber ${entry.connection_id} marked failing after sustained dispatch failures`,
+          connection_id: entry.connection_id,
+          detail: {
+            consecutive_failures: consecutiveFailures,
+            integration_name: entry.integration_name,
+            last_reason: reason,
+          },
+        },
+      },
+      tenantId,
+    );
+  } catch {
+    // Don't crash the drainer over a follow-up activity write.
+  }
+}
+
 async function sendOne(
   body: QueueMessageBody,
   config: BridgeConfig,
   fetchImpl: typeof fetch,
   pool: Pool | null,
-): Promise<void> {
+): Promise<SendOneResult> {
   const maxAttempts = config.maxAttempts ?? 5;
   const timeoutMs = config.sendTimeoutMs ?? 5000;
   const url = new URL(config.queueUrl);
@@ -465,13 +720,13 @@ async function sendOne(
         // Drain the body so the connection returns to the pool cleanly.
         // Without this, connections leak and the Pool eventually wedges.
         await res.body.dump();
-        if (res.statusCode >= 200 && res.statusCode < 300) return;
+        if (res.statusCode >= 200 && res.statusCode < 300) return "success";
         // Retry on 5xx, give up on 4xx.
         if (res.statusCode < 500) {
           console.error(
             `[reactive-run-bridge] non-retryable ${String(res.statusCode)} from queue`,
           );
-          return;
+          return "rejected";
         }
       } else {
         // Test path — config.fetch injected. Pool bypassed.
@@ -484,13 +739,13 @@ async function sendOne(
           body: JSON.stringify({ body, contentType: "json" }),
           signal: controller.signal,
         });
-        if (res.ok) return;
+        if (res.ok) return "success";
         // Retry on 5xx, give up on 4xx.
         if (res.status < 500) {
           console.error(
             `[reactive-run-bridge] non-retryable ${String(res.status)} from queue`,
           );
-          return;
+          return "rejected";
         }
       }
     } catch (err) {
