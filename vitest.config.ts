@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    projects: ["packages/*"],
+    projects: ["packages/*", "integrations/*"],
     // PG parallelism is owned by the server package's own vitest config:
     // each test file clones a fresh PG database from the template
     // (`packages/server/src/storage/pg/test-template.ts`), so workers
