@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { startDeviceFlow } from "./device-flow.js";
 import { InMemoryTokenStorage } from "./storage.js";
 import { OAuthError } from "./errors.js";
+import { __resetDiscoveryCache } from "./discovery.js";
 
 /**
  * Unit tests for startDeviceFlow. Uses a mock fetch to drive the flow
@@ -70,9 +71,26 @@ const errorResponse = (errCode: string, status = 400): Response =>
     headers: { "content-type": "application/json" },
   });
 
+const discoveryResponse = (): Response =>
+  new Response(
+    JSON.stringify({
+      authorization_endpoint: `${ISSUER}/auth/oauth2/authorize`,
+      token_endpoint: `${ISSUER}/auth/oauth2/token`,
+      device_authorization_endpoint: `${ISSUER}/auth/device`,
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+
 describe("startDeviceFlow", () => {
+  beforeEach(() => {
+    __resetDiscoveryCache();
+  });
+
   it("initiates and returns a handle exposing user_code + URLs", async () => {
-    const { fetch, calls } = makeMockFetch([initiateResponse()]);
+    const { fetch, calls } = makeMockFetch([
+      discoveryResponse(),
+      initiateResponse(),
+    ]);
     const handle = await startDeviceFlow({
       issuer: ISSUER,
       clientId: CLIENT_ID,
@@ -84,9 +102,12 @@ describe("startDeviceFlow", () => {
     expect(handle.verification_uri).toBe(`${ISSUER}/auth/device`);
     expect(handle.verification_uri_complete).toContain("user_code=WDJB-MJHT");
     expect(handle.expires_in).toBe(600);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe(`${ISSUER}/auth/device`);
-    const rawBody = calls[0]?.init?.body;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.url).toBe(
+      `${ISSUER}/.well-known/oauth-authorization-server`,
+    );
+    expect(calls[1]?.url).toBe(`${ISSUER}/auth/device`);
+    const rawBody = calls[1]?.init?.body;
     const bodyStr = typeof rawBody === "string" ? rawBody : "{}";
     const initBody = JSON.parse(bodyStr) as {
       client_id: string;
@@ -98,6 +119,7 @@ describe("startDeviceFlow", () => {
 
   it("polls until approved, then returns a TokenProvider", async () => {
     const { fetch } = makeMockFetch([
+      discoveryResponse(),
       initiateResponse(),
       errorResponse("authorization_pending"),
       errorResponse("authorization_pending"),
@@ -120,6 +142,7 @@ describe("startDeviceFlow", () => {
     // slow_down response the next sleep is ~5s. Allow 10s for the
     // test to absorb that bump.
     const { fetch, calls } = makeMockFetch([
+      discoveryResponse(),
       initiateResponse(),
       errorResponse("slow_down"),
       tokenResponse(),
@@ -132,12 +155,13 @@ describe("startDeviceFlow", () => {
       fetch,
     });
     await handle.pollForToken();
-    // Three poll calls: initiate + 2 token-endpoint hits.
-    expect(calls).toHaveLength(3);
+    // Four calls: discovery + initiate + 2 token-endpoint hits.
+    expect(calls).toHaveLength(4);
   }, 10_000);
 
   it("throws OAuthError(access_denied) when user denies", async () => {
     const { fetch } = makeMockFetch([
+      discoveryResponse(),
       initiateResponse(),
       errorResponse("access_denied"),
     ]);
@@ -160,6 +184,7 @@ describe("startDeviceFlow", () => {
 
   it("throws OAuthError(expired_token) on terminal expired_token error", async () => {
     const { fetch } = makeMockFetch([
+      discoveryResponse(),
       initiateResponse(),
       errorResponse("expired_token"),
     ]);
@@ -177,6 +202,7 @@ describe("startDeviceFlow", () => {
 
   it("respects an AbortSignal", async () => {
     const { fetch } = makeMockFetch([
+      discoveryResponse(),
       initiateResponse(),
       errorResponse("authorization_pending"),
     ]);

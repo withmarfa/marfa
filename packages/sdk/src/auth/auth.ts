@@ -8,6 +8,8 @@ import {
 import { StoredTokenProvider } from "./token-provider.js";
 import type { TokenProvider } from "./token-provider.js";
 import { OAuthError } from "./errors.js";
+import { discoverEndpoints } from "./discovery.js";
+import { normaliseIssuer } from "./issuer.js";
 
 /**
  * MymeAuth — owns the OAuth dance for browser apps signing into Myme.
@@ -30,7 +32,7 @@ import { OAuthError } from "./errors.js";
 export interface MymeAuthConfig {
   /** Myme server URL — protocol + host (and port). */
   issuer: string;
-  /** OAuth client id, registered via POST /auth/clients. */
+  /** OAuth client id, registered via POST /auth/oauth2/register (DCR). */
   clientId: string;
   /** Exact-match redirect URI. Must be registered for this client. */
   redirectUri: string;
@@ -59,7 +61,7 @@ export class MymeAuth {
   private readonly tokensKey: string;
 
   constructor(config: MymeAuthConfig) {
-    this.issuer = config.issuer.replace(/\/+$/, "");
+    this.issuer = normaliseIssuer(config.issuer);
     this.clientId = config.clientId;
     this.redirectUri = config.redirectUri;
     this.scopes = config.scopes;
@@ -70,15 +72,8 @@ export class MymeAuth {
     // ids on the same origin distinct. Persisted state and the resulting
     // token bundle live under separate keys so we can clear them
     // independently.
-    const origin = (() => {
-      try {
-        return new URL(this.issuer).origin;
-      } catch {
-        return this.issuer;
-      }
-    })();
-    this.pendingKey = `myme.auth.pending:${origin}:${config.clientId}`;
-    this.tokensKey = `myme.auth.tokens:${origin}:${config.clientId}`;
+    this.pendingKey = `myme.auth.pending:${this.issuer}:${config.clientId}`;
+    this.tokensKey = `myme.auth.tokens:${this.issuer}:${config.clientId}`;
   }
 
   /** Build the authorize URL and persist the PKCE verifier + state. */
@@ -94,7 +89,8 @@ export class MymeAuth {
     };
     await this.storage.set(this.pendingKey, JSON.stringify(pending));
 
-    const url = new URL(`${this.issuer}/auth/authorize`);
+    const endpoints = await discoverEndpoints(this.issuer, this.fetch);
+    const url = new URL(endpoints.authorize);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", this.clientId);
     url.searchParams.set("redirect_uri", this.redirectUri);
@@ -137,8 +133,9 @@ export class MymeAuth {
       throw new OAuthError("invalid_request", "State mismatch on callback");
     }
 
+    const endpoints = await discoverEndpoints(this.issuer, this.fetch);
     // OAuth 2.0 §3.2: token endpoint takes form-encoded.
-    const res = await this.fetch(`${this.issuer}/auth/token`, {
+    const res = await this.fetch(endpoints.token, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -186,6 +183,7 @@ export class MymeAuth {
       storage: this.storage,
       storageKey: this.tokensKey,
       fetch: this.fetch,
+      endpoints,
     });
     await provider.persist({
       access_token: body.access_token,

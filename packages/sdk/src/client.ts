@@ -1642,7 +1642,7 @@ export class MymeClient {
    * the same handle validators as `PUT /auth/me/handle`.
    *
    * Apps that need a third-party-OAuth-style read should use the
-   * standard OIDC `profile` / `email` scopes via `/auth/userinfo`
+   * standard OIDC `profile` / `email` scopes via `/auth/oauth2/userinfo`
    * instead — this surface is for first-party callers (CLI, MCP, the
    * user themselves) holding a tenant-scoped bearer.
    */

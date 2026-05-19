@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import {
   computeCodeChallenge,
   generateCodeVerifier,
@@ -6,6 +6,7 @@ import {
 } from "./pkce.js";
 import { InMemoryTokenStorage } from "./storage.js";
 import { MymeAuth } from "./auth.js";
+import { __resetDiscoveryCache } from "./discovery.js";
 
 describe("PKCE primitives", () => {
   it("generates a verifier within RFC 7636 length bounds", () => {
@@ -44,7 +45,26 @@ describe("InMemoryTokenStorage", () => {
   });
 });
 
+function discoveryFetch(issuer: string): typeof globalThis.fetch {
+  const doc = JSON.stringify({
+    authorization_endpoint: `${issuer}/auth/oauth2/authorize`,
+    token_endpoint: `${issuer}/auth/oauth2/token`,
+    device_authorization_endpoint: `${issuer}/auth/device`,
+  });
+  return () =>
+    Promise.resolve(
+      new Response(doc, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+}
+
 describe("MymeAuth", () => {
+  beforeEach(() => {
+    __resetDiscoveryCache();
+  });
+
   it("buildAuthorizeUrl persists verifier+state and produces a valid URL", async () => {
     const storage = new InMemoryTokenStorage();
     const auth = new MymeAuth({
@@ -53,12 +73,13 @@ describe("MymeAuth", () => {
       redirectUri: "http://localhost:5173/callback",
       scopes: ["core.note:read"],
       storage,
+      fetch: discoveryFetch("http://localhost:8602"),
     });
 
     const url = await auth.buildAuthorizeUrl();
     const parsed = new URL(url);
     expect(parsed.origin).toBe("http://localhost:8602");
-    expect(parsed.pathname).toBe("/auth/authorize");
+    expect(parsed.pathname).toBe("/auth/oauth2/authorize");
     expect(parsed.searchParams.get("response_type")).toBe("code");
     expect(parsed.searchParams.get("client_id")).toBe("test-client");
     expect(parsed.searchParams.get("redirect_uri")).toBe(
