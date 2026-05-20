@@ -551,6 +551,16 @@ export const bulkActionJobs = pgTable(
     index("idx_bulk_action_jobs_status").on(table.status),
     index("idx_bulk_action_jobs_tenant_id").on(table.tenant_id),
     index("idx_bulk_action_jobs_gc").on(table.status, table.finished_at),
+    // NULLS NOT DISTINCT is applied by migration 0061 (Drizzle 0.45.2's
+    // uniqueIndex builder doesn't expose .nullsNotDistinct() yet — only
+    // `unique()` constraints carry it, and those don't support WHERE).
+    // Without it, two replays from a tenant-less admin credential
+    // (tenant_id IS NULL) wouldn't conflict on the (NULL, key) pair
+    // because PG defaults treat NULLs as distinct in unique indexes.
+    // Idempotency would silently double-fire for the admin path.
+    // See T-218 conformance test "Idempotency-Key returns the same job
+    // id on replay". When drizzle-orm grows the API, fold this back into
+    // the index declaration.
     uniqueIndex("idx_bulk_action_jobs_idempotency")
       .on(table.tenant_id, table.idempotency_key)
       .where(sql`idempotency_key IS NOT NULL`),
