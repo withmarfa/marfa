@@ -70,6 +70,10 @@ export class HttpTransport {
       query?:
         | Record<string, string | number | boolean | string[] | undefined>
         | object;
+      /** Per-call timeout override (ms). Falls back to the transport
+       *  default (30s). Used by polling helpers that want a tighter
+       *  per-request budget than the default global. */
+      timeoutMs?: number;
     },
   ): Promise<T> {
     const { data } = await this.requestWithStatus<T>(method, path, options);
@@ -106,6 +110,7 @@ export class HttpTransport {
       query?:
         | Record<string, string | number | boolean | string[] | undefined>
         | object;
+      timeoutMs?: number;
     },
   ): Promise<{ data: T; status: number }> {
     const response = await this.rawRequest(method, path, options);
@@ -162,6 +167,8 @@ export class HttpTransport {
         | Record<string, string | number | boolean | string[] | undefined>
         | object;
       headers?: Record<string, string>;
+      /** Per-call timeout override (ms). Falls back to transport default. */
+      timeoutMs?: number;
     },
   ): Promise<Response> {
     const url = this.buildUrl(path, options?.query);
@@ -171,9 +178,10 @@ export class HttpTransport {
     };
 
     const controller = new AbortController();
+    const effectiveTimeoutMs = options?.timeoutMs ?? this.timeoutMs;
     const timeout = setTimeout(() => {
       controller.abort();
-    }, this.timeoutMs);
+    }, effectiveTimeoutMs);
 
     const init: RequestInit = { method, headers, signal: controller.signal };
 
@@ -190,9 +198,9 @@ export class HttpTransport {
       if (err instanceof DOMException && err.name === "AbortError") {
         throw new MymeError(
           "timeout",
-          `Request to ${path} timed out after ${String(this.timeoutMs)}ms`,
+          `Request to ${path} timed out after ${String(effectiveTimeoutMs)}ms`,
           0,
-          { path, timeoutMs: this.timeoutMs },
+          { path, timeoutMs: effectiveTimeoutMs },
           err,
         );
       }

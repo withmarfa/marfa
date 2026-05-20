@@ -37,6 +37,8 @@ import type {
 import { generateId } from "@mymehq/shared";
 import { HttpTransport } from "./transport.js";
 import {
+  BulkJobCancelledError,
+  BulkJobFailedError,
   MymeError,
   NotFoundError,
   ValidationError,
@@ -49,6 +51,7 @@ import {
   type ConflictResolver,
   type ConflictAutoMergeListener,
 } from "./conflict.js";
+import { pollUntilTerminal } from "./poll.js";
 
 // ---------------------------------------------------------------------------
 // Config and option types
@@ -451,6 +454,22 @@ export type BulkActionJobStatus =
   | "failed"
   | "cancelled";
 
+/** Polling knobs accepted by `bulkAction()`. Default polling is
+ *  250ms → 500ms → 1s → 2s exponential, capped at the global max,
+ *  with a 30-minute total wall-clock budget. */
+export interface BulkActionPollOptions {
+  /** Initial poll interval (ms). Default 250. */
+  pollIntervalMs?: number;
+  /** Backoff ceiling (ms). Default 2000. */
+  maxPollIntervalMs?: number;
+  /** Total wait budget (ms). Default 30 minutes. */
+  maxWaitMs?: number;
+  /** Called after each non-terminal poll. Useful for surfacing
+   *  progress to a UI without consumers having to drive polling
+   *  themselves via `bulkActionAsync` + `bulkActionStatus`. */
+  onProgress?: (job: BulkActionJob) => void;
+}
+
 /** Async-job envelope returned by `POST /items/bulk_action` (non-dry-run)
  *  and by `GET /items/bulk_action/jobs/:id`. The SDK's `bulkAction()`
  *  resolves with the embedded `BulkActionResult` once `status` is
@@ -851,7 +870,10 @@ export class MymeClient {
      * Non-admin callers see their match set narrowed to writable types
      * for every action except `purge`, which hard-403s.
      */
-    bulkAction: async (input: BulkActionInput): Promise<BulkActionResult> => {
+    bulkAction: async (
+      input: BulkActionInput,
+      options?: BulkActionPollOptions,
+    ): Promise<BulkActionResult> => {
       if (input.action === "purge") {
         // Runtime guard for JS callers — the TS discriminated union
         // pins `confirm: "PURGE"` at compile time, but nothing stops a
@@ -866,12 +888,114 @@ export class MymeClient {
           );
         }
       }
-      return this.transport.request<BulkActionResult>(
-        "POST",
-        "/items/bulk_action",
-        { body: input },
-      );
+      // T-218: the server returns 200 for dry-run (synchronous) and
+      // 202 + a BulkActionJob envelope for everything else. The default
+      // shape of `bulkAction()` keeps callers blissfully unaware — poll
+      // internally and resolve with the same BulkActionResult shape
+      // they got before the async refactor.
+      const { data, status } = await this.transport.requestWithStatus<
+        BulkActionResult | BulkActionJob
+      >("POST", "/items/bulk_action", { body: input });
+      if (status === 200) {
+        // dry_run path stayed synchronous; the response IS the result.
+        return data as BulkActionResult;
+      }
+      const queued = data as BulkActionJob;
+      const final = await pollUntilTerminal({
+        fetchOnce: () => this.items.bulkActionStatus(queued.id),
+        isTerminal: (job) =>
+          job.status === "completed" ||
+          job.status === "failed" ||
+          job.status === "cancelled",
+        onProgress: options?.onProgress,
+        pollIntervalMs: options?.pollIntervalMs,
+        maxPollIntervalMs: options?.maxPollIntervalMs,
+        maxWaitMs: options?.maxWaitMs,
+      });
+      if (final.status === "cancelled") {
+        throw new BulkJobCancelledError({
+          jobId: final.id,
+          processed: final.processed,
+          succeeded: final.succeeded,
+          errored: final.errored,
+        });
+      }
+      if (final.status === "failed") {
+        throw new BulkJobFailedError({
+          jobId: final.id,
+          reason: final.error ?? "Unknown error",
+        });
+      }
+      if (!final.result) {
+        throw new MymeError(
+          "internal_error",
+          `Bulk action job ${final.id} reached terminal status '${final.status}' but carried no result envelope`,
+          0,
+        );
+      }
+      return final.result;
     },
+
+    /**
+     * T-218: low-level companion to `bulkAction()`. Fires the POST and
+     * returns the initial job envelope without polling. Callers wanting
+     * explicit control over the lifecycle (a UI that wants to surface
+     * progress directly, an LLM tool returning the job id, etc.) drive
+     * polling themselves via `bulkActionStatus`. Dry-run requests are
+     * still synchronous on the server; this method throws with a
+     * descriptive error if `dry_run: true` is set so callers don't
+     * silently lose their result.
+     */
+    bulkActionAsync: async (input: BulkActionInput): Promise<BulkActionJob> => {
+      if (input.action === "purge") {
+        const confirm = (input as { confirm?: string }).confirm;
+        if (confirm !== "PURGE") {
+          throw new MymeError(
+            "bulk_confirmation_required",
+            "bulkAction({ action: 'purge' }) requires confirm: 'PURGE'",
+            400,
+          );
+        }
+      }
+      if (input.dry_run === true) {
+        throw new MymeError(
+          "invalid_request",
+          "bulkActionAsync does not support dry_run; use bulkAction({ dry_run: true }) for the synchronous dry-run path",
+          400,
+        );
+      }
+      const { data, status } =
+        await this.transport.requestWithStatus<BulkActionJob>(
+          "POST",
+          "/items/bulk_action",
+          { body: input },
+        );
+      // Server returns 202 for the async path; defensive check.
+      if (status !== 202) {
+        throw new MymeError(
+          "internal_error",
+          `Expected 202 from bulk_action async path, got ${String(status)}`,
+          status,
+        );
+      }
+      return data;
+    },
+
+    /** T-218: poll a bulk_action job by id. Single GET — no polling. */
+    bulkActionStatus: (jobId: string): Promise<BulkActionJob> =>
+      this.transport.request<BulkActionJob>(
+        "GET",
+        `/items/bulk_action/jobs/${encodeURIComponent(jobId)}`,
+        { timeoutMs: 5_000 },
+      ),
+
+    /** T-218: request cancellation of a bulk_action job. Idempotent —
+     *  already-terminal jobs return their existing state unchanged. */
+    bulkActionCancel: (jobId: string): Promise<BulkActionJob> =>
+      this.transport.request<BulkActionJob>(
+        "DELETE",
+        `/items/bulk_action/jobs/${encodeURIComponent(jobId)}`,
+      ),
 
     /** Outbound edges from this item. Shortcut for edges.listFromSource. */
     edges: (

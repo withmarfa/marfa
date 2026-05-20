@@ -107,3 +107,54 @@ export class ConflictError extends MymeError {
     this.clientPatch = clientPatch;
   }
 }
+
+/**
+ * T-218: an async `bulkAction` job reached `status: 'cancelled'` (the
+ * caller, or another credential with admin, DELETE'd the job mid-run).
+ * The envelope carries the partial-count state; the SDK surfaces it
+ * via this error subclass so callers can react explicitly.
+ */
+export class BulkJobCancelledError extends MymeError {
+  readonly jobId: string;
+  readonly processed: number;
+  readonly succeeded: number;
+  readonly errored: number;
+  constructor(args: {
+    jobId: string;
+    processed: number;
+    succeeded: number;
+    errored: number;
+  }) {
+    super(
+      "bulk_job_cancelled",
+      `Bulk action job ${args.jobId} was cancelled after ${String(args.processed)} processed`,
+      0,
+    );
+    this.name = "BulkJobCancelledError";
+    this.jobId = args.jobId;
+    this.processed = args.processed;
+    this.succeeded = args.succeeded;
+    this.errored = args.errored;
+  }
+}
+
+/**
+ * T-218: an async `bulkAction` job reached `status: 'failed'` — the
+ * worker hit an unrecoverable error (typically a storage-level
+ * problem). The `error` field on the envelope carries the underlying
+ * reason; surfaced via this subclass.
+ */
+export class BulkJobFailedError extends MymeError {
+  readonly jobId: string;
+  readonly reason: string;
+  constructor(args: { jobId: string; reason: string }) {
+    super(
+      "bulk_job_failed",
+      `Bulk action job ${args.jobId} failed: ${args.reason}`,
+      0,
+    );
+    this.name = "BulkJobFailedError";
+    this.jobId = args.jobId;
+    this.reason = args.reason;
+  }
+}
