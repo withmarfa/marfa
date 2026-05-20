@@ -184,6 +184,32 @@ export class SqliteEdgeStore implements EdgeStore {
     await this.db.delete(edges).where(where).run();
   }
 
+  async deleteBySourceBatch(
+    sourceIds: string[],
+    edgeType?: string,
+  ): Promise<number> {
+    if (sourceIds.length === 0) return 0;
+    const unique = Array.from(new Set(sourceIds));
+    const where = edgeType
+      ? and(inArray(edges.source_id, unique), eq(edges.edge_type, edgeType))
+      : inArray(edges.source_id, unique);
+    const result = await this.db.delete(edges).where(where).run();
+    return result.rowsAffected;
+  }
+
+  async deleteByTargetBatch(
+    targetIds: string[],
+    edgeType?: string,
+  ): Promise<number> {
+    if (targetIds.length === 0) return 0;
+    const unique = Array.from(new Set(targetIds));
+    const where = edgeType
+      ? and(inArray(edges.target_id, unique), eq(edges.edge_type, edgeType))
+      : inArray(edges.target_id, unique);
+    const result = await this.db.delete(edges).where(where).run();
+    return result.rowsAffected;
+  }
+
   async countBySource(sourceId: string, edgeType: string): Promise<number> {
     const row = await this.db
       .select({ c: count() })
