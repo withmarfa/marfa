@@ -1092,7 +1092,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_verification_identifier ON public.auth_verif
 
 CREATE INDEX IF NOT EXISTS idx_bulk_action_jobs_gc ON public.bulk_action_jobs USING btree (status, finished_at);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_action_jobs_idempotency ON public.bulk_action_jobs USING btree (tenant_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_action_jobs_idempotency ON public.bulk_action_jobs USING btree (tenant_id, idempotency_key) NULLS NOT DISTINCT WHERE (idempotency_key IS NOT NULL);
 
 CREATE INDEX IF NOT EXISTS idx_bulk_action_jobs_status ON public.bulk_action_jobs USING btree (status);
 
