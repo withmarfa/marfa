@@ -39,6 +39,7 @@ interface ConnectionProperties {
   kind?: string;
   integration_ref?: string;
   status?: string;
+  runtime_status?: string;
 }
 
 interface IntegrationProperties {
@@ -60,6 +61,10 @@ interface ManifestTrigger {
  *   - The manifest is invalid (validateManifest rejects it)
  *   - The manifest declares no `item-event` trigger
  *   - The connection's `properties.status` is set and not `active`
+ *   - The connection's `properties.runtime_status` is `failing` (T-171 —
+ *     subscriber tripped the sustained-failure escalation in the bridge;
+ *     dispatch stays gated until an operator clears the field or
+ *     transitions it back to a non-failing value)
  */
 export async function buildEntryForConnection(
   storage: Storage,
@@ -82,6 +87,7 @@ export async function buildEntryForConnection(
   const props = connection.properties as ConnectionProperties;
   if (props.kind !== "integration") return null;
   if (props.status && props.status !== "active") return null;
+  if (props.runtime_status === "failing") return null;
   const ref = props.integration_ref;
   if (!ref) return null;
   const integration = await storage.items.get(ref);

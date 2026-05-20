@@ -216,6 +216,27 @@ describe("buildEntryForConnection", () => {
     });
     expect(entry).toBeNull();
   });
+
+  it("returns null when runtime_status is failing (T-171)", async () => {
+    // A subscriber that the bridge marked `runtime_status: failing` after
+    // sustained dispatch failures is gated out of the registry — no more
+    // event-time fanout to a connection the bridge already gave up on.
+    const intId = await createIntegration(
+      manifest({ name: "acme.runtime-failing-skip" }),
+    );
+    const connId = await createConnection({ integrationRef: intId });
+    const item = await ctx.storage.items.get(connId);
+    if (!item) throw new Error("connection missing after create");
+
+    const entry = await buildEntryForConnection(ctx.storage, {
+      id: item.id,
+      properties: {
+        ...item.properties,
+        runtime_status: "failing",
+      },
+    });
+    expect(entry).toBeNull();
+  });
 });
 
 describe("loadSubscriptions", () => {
@@ -628,5 +649,255 @@ describe("bridge fanout via in-process pubsub", () => {
     }
 
     await bridge!.stop();
+  });
+});
+
+describe("bridge failure-tracking (T-171)", () => {
+  // Common test rig: a subscriber whose fetch always rejects, paired with
+  // a healthy subscriber so we can verify the cooldown gate is targeted
+  // (the healthy peer keeps receiving fanout while the failing peer is in
+  // cooldown). Each test sets its own thresholds via BridgeConfig.
+
+  interface FailureTestRig {
+    bridge: NonNullable<ReturnType<typeof tryStartReactiveRunBridge>>;
+    deadConnId: string;
+    healthyConnId: string;
+    deadAttempts: { count: number };
+    healthyDeliveries: { count: number };
+  }
+
+  async function makeFailureRig(opts: {
+    failureCooldownThreshold?: number;
+    failureEscalationThreshold?: number;
+    failureCooldownMs?: number;
+    failureCooldownMaxMs?: number;
+    /** Optional toggle the test can flip to make the "dead" subscriber
+     *  succeed on demand (used by the recovery test). */
+    deadResponseHolder?: { ok: boolean };
+  }): Promise<FailureTestRig> {
+    const intDead = await createIntegration(
+      manifest({
+        name: `acme.t171-dead-${Math.random().toString(36).slice(2, 8)}`,
+      }),
+    );
+    const intHealthy = await createIntegration(
+      manifest({
+        name: `acme.t171-healthy-${Math.random().toString(36).slice(2, 8)}`,
+      }),
+    );
+    const deadConnId = await createConnection({ integrationRef: intDead });
+    const healthyConnId = await createConnection({
+      integrationRef: intHealthy,
+    });
+    const deadAttempts = { count: 0 };
+    const healthyDeliveries = { count: 0 };
+    const responseHolder = opts.deadResponseHolder ?? { ok: false };
+
+    const stubFetch: typeof fetch = ((
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      void input;
+      const body = JSON.parse(init?.body as string) as {
+        body: { connection_id: string };
+      };
+      if (body.body.connection_id === deadConnId) {
+        deadAttempts.count++;
+        if (responseHolder.ok) {
+          return Promise.resolve(new Response(null, { status: 202 }));
+        }
+        // Reject immediately on every attempt — sendOne's retry loop
+        // exhausts quickly under maxAttempts: 1 + sendTimeoutMs: 50.
+        return Promise.reject(new Error("dead-subscriber"));
+      }
+      if (body.body.connection_id === healthyConnId) {
+        healthyDeliveries.count++;
+        return Promise.resolve(new Response(null, { status: 202 }));
+      }
+      return Promise.resolve(new Response(null, { status: 202 }));
+    }) as typeof fetch;
+
+    const bridge = tryStartReactiveRunBridge(ctx.storage, {
+      queueUrl: "http://queue.local/produce",
+      apiToken: "stub-token",
+      fetch: stubFetch,
+      maxAttempts: 1,
+      sendTimeoutMs: 50,
+      failureCooldownThreshold: opts.failureCooldownThreshold,
+      failureEscalationThreshold: opts.failureEscalationThreshold,
+      failureCooldownMs: opts.failureCooldownMs,
+      failureCooldownMaxMs: opts.failureCooldownMaxMs,
+    });
+    if (!bridge) throw new Error("bridge not constructed");
+    await bridge.start();
+    await new Promise((r) => setTimeout(r, 100));
+
+    return {
+      bridge,
+      deadConnId,
+      healthyConnId,
+      deadAttempts,
+      healthyDeliveries,
+    };
+  }
+
+  async function publishOne(label: string): Promise<void> {
+    const item = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: label } },
+      undefined,
+    );
+    await publish({
+      type: "created",
+      item,
+      originatingConnectionId: "itm_t171_origin",
+    });
+    // Allow the per-attempt timeout (50ms) and the catch handler's
+    // storage writes to settle.
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  it("Layer 1: arms cooldown after N consecutive failures and skips dispatch within the window", async () => {
+    const rig = await makeFailureRig({
+      failureCooldownThreshold: 3,
+      // Long cooldown vs. test wall-clock — ensures the gate stays armed
+      // for the remaining publishes in this scenario.
+      failureCooldownMs: 10_000,
+      failureEscalationThreshold: 9999, // out of reach
+    });
+    try {
+      // Three consecutive failures → cooldown arms after the third.
+      await publishOne("layer1-1");
+      await publishOne("layer1-2");
+      await publishOne("layer1-3");
+      expect(rig.deadAttempts.count).toBe(3);
+
+      // Subsequent publishes while in cooldown — dispatch is skipped
+      // for the dead subscriber. The healthy subscriber keeps getting
+      // delivered so we know the bridge isn't broken globally.
+      const healthyBefore = rig.healthyDeliveries.count;
+      await publishOne("layer1-skip-1");
+      await publishOne("layer1-skip-2");
+      expect(rig.deadAttempts.count).toBe(3);
+      expect(rig.healthyDeliveries.count).toBe(healthyBefore + 2);
+    } finally {
+      await rig.bridge.stop();
+    }
+  });
+
+  it("Layer 2: flips runtime_status to failing and emits action_required activity at the escalation threshold", async () => {
+    const rig = await makeFailureRig({
+      failureCooldownThreshold: 999, // skip Layer 1 noise
+      failureCooldownMs: 1, // cooldowns clear quickly if Layer 1 fires
+      failureEscalationThreshold: 3,
+    });
+    try {
+      await publishOne("layer2-1");
+      await publishOne("layer2-2");
+      await publishOne("layer2-3");
+      expect(rig.deadAttempts.count).toBe(3);
+
+      // Connection's runtime_status flipped to "failing".
+      const updated = await ctx.storage.items.get(rig.deadConnId);
+      const props = updated?.properties as { runtime_status?: string };
+      expect(props.runtime_status).toBe("failing");
+
+      // Action_required system.activity emitted for the subscriber.
+      const activity = await ctx.storage.items.list({
+        type: "system.activity",
+        limit: 100,
+      });
+      const escalation = activity.data.find((row) => {
+        const p = row.properties as {
+          connection_id?: string;
+          severity?: string;
+        };
+        return (
+          p.connection_id === rig.deadConnId && p.severity === "action_required"
+        );
+      });
+      expect(escalation).toBeTruthy();
+    } finally {
+      await rig.bridge.stop();
+    }
+  });
+
+  it("recovery: a successful publish resets the failure counter", async () => {
+    const responseHolder = { ok: false };
+    const rig = await makeFailureRig({
+      failureCooldownThreshold: 3,
+      failureCooldownMs: 1, // short so we can fire follow-up events
+      failureEscalationThreshold: 4,
+      deadResponseHolder: responseHolder,
+    });
+    try {
+      // Two failures — below the cooldown threshold so the next publish
+      // still attempts dispatch.
+      await publishOne("recovery-fail-1");
+      await publishOne("recovery-fail-2");
+      expect(rig.deadAttempts.count).toBe(2);
+
+      // Flip the "dead" subscriber to healthy; one success resets the
+      // counter.
+      responseHolder.ok = true;
+      await publishOne("recovery-success");
+      expect(rig.deadAttempts.count).toBe(3);
+
+      // Re-fail. Need 3 more failures before the cooldown arms again —
+      // proving the counter started fresh. Re-flip to dead.
+      responseHolder.ok = false;
+      await publishOne("recovery-refail-1");
+      await publishOne("recovery-refail-2");
+      // After only 2 post-reset failures, cooldown hasn't armed yet —
+      // the next publish should still hit the dead subscriber.
+      await publishOne("recovery-refail-3");
+      expect(rig.deadAttempts.count).toBe(6);
+    } finally {
+      await rig.bridge.stop();
+    }
+  });
+
+  it("operator recovery: flipping runtime_status off failing re-enables dispatch via cache invalidation", async () => {
+    // After Layer 2 escalation, the subscriber is gated out of the
+    // registry. Updating the connection (e.g. operator transitions
+    // runtime_status to "healthy") fires the invalidation listener →
+    // refreshConnection → buildEntryForConnection re-evaluates → the
+    // entry returns to the map. Subsequent events dispatch again.
+    const rig = await makeFailureRig({
+      failureCooldownThreshold: 999,
+      failureEscalationThreshold: 2,
+    });
+    try {
+      await publishOne("op-recovery-fail-1");
+      await publishOne("op-recovery-fail-2");
+      const escalated = await ctx.storage.items.get(rig.deadConnId);
+      const props = escalated?.properties as { runtime_status?: string };
+      expect(props.runtime_status).toBe("failing");
+
+      // Now the dead subscriber is gated out — additional publishes
+      // should NOT increment deadAttempts.
+      const deadAttemptsAtEscalation = rig.deadAttempts.count;
+      await publishOne("op-recovery-gated");
+      expect(rig.deadAttempts.count).toBe(deadAttemptsAtEscalation);
+
+      // Operator clears runtime_status (transition to "healthy"). The
+      // routes layer would call publish() after items.update; mirror that
+      // here so the bridge's invalidation subscriber re-evaluates.
+      const updated = await ctx.storage.items.update(rig.deadConnId, {
+        properties: {
+          ...escalated!.properties,
+          runtime_status: "healthy",
+        },
+      });
+      if ("error" in updated) throw new Error("unexpected conflict");
+      await publish({ type: "updated", item: updated });
+      // Cache invalidation propagates through the in-process pubsub.
+      await new Promise((r) => setTimeout(r, 150));
+
+      // Next publish should reach the dead subscriber again.
+      await publishOne("op-recovery-after-flip");
+      expect(rig.deadAttempts.count).toBe(deadAttemptsAtEscalation + 1);
+    } finally {
+      await rig.bridge.stop();
+    }
   });
 });
