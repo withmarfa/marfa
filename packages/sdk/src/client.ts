@@ -441,6 +441,42 @@ export interface BulkActionResult {
   blob_hashes_referenced?: number;
 }
 
+/** Terminal vs non-terminal lifecycle states for a `bulk_action` job.
+ *  Terminal values (`completed`, `failed`, `cancelled`) freeze the row;
+ *  the worker only mutates `queued` → `in_progress` → terminal. */
+export type BulkActionJobStatus =
+  | "queued"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+/** Async-job envelope returned by `POST /items/bulk_action` (non-dry-run)
+ *  and by `GET /items/bulk_action/jobs/:id`. The SDK's `bulkAction()`
+ *  resolves with the embedded `BulkActionResult` once `status` is
+ *  terminal; advanced callers using `bulkActionAsync()` receive the
+ *  envelope directly and drive their own polling. */
+export interface BulkActionJob {
+  id: string;
+  action: string;
+  status: BulkActionJobStatus;
+  /** Frozen at job-create time after the route's pagination phase. */
+  matched: number;
+  processed: number;
+  succeeded: number;
+  errored: number;
+  /** ISO 8601; present once the worker has claimed the job. */
+  started_at?: string;
+  /** ISO 8601; present once the worker has reached a terminal state. */
+  finished_at?: string;
+  /** Failure reason. Populated on `status === 'failed'`. */
+  error?: string;
+  /** Final result envelope. Populated on `status === 'completed'`;
+   *  absent on `cancelled` (whole-or-nothing — partial counts live on
+   *  the envelope's `processed`/`succeeded`/`errored` fields). */
+  result?: BulkActionResult;
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------

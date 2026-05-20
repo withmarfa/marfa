@@ -202,6 +202,15 @@ export enum ErrorCode {
   BULK_CAP_EXCEEDED = "bulk_cap_exceeded",
   /** An atomic bulk upsert failed on one item and rolled back the whole batch. */
   BULK_ATOMIC_ROLLBACK = "bulk_atomic_rollback",
+  /**
+   * T-218: a referenced bulk_action job id does not exist or is not
+   * visible to the caller. Returned by `GET /items/bulk_action/jobs/:id`
+   * and `DELETE /items/bulk_action/jobs/:id`. The cancelled / failed
+   * terminal states are NOT in this enum — they're carried in the job
+   * envelope's `status` field on a 200 GET, and SDKs classify them
+   * client-side rather than the server returning an HTTP error.
+   */
+  BULK_JOB_NOT_FOUND = "bulk_job_not_found",
   // ---------------------------------------------------------------------
   // Email transport (Wave C PR1)
   // ---------------------------------------------------------------------
@@ -308,6 +317,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.BULK_CONFIRMATION_REQUIRED]: 400,
   [ErrorCode.BULK_CAP_EXCEEDED]: 400,
   [ErrorCode.BULK_ATOMIC_ROLLBACK]: 400,
+  [ErrorCode.BULK_JOB_NOT_FOUND]: 404,
   [ErrorCode.EMAIL_TRANSPORT_NOT_CONFIGURED]: 503,
   [ErrorCode.EMAIL_SEND_FAILED]: 502,
   [ErrorCode.HANDLE_RESERVED]: 400,
