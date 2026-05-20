@@ -103,6 +103,12 @@ export function eventRoutes(
           }
         };
 
+        // Flush response headers immediately so reverse proxies that buffer
+        // SSE bodies (notably Cloudflare Tunnel) deliver the 200 + content-type
+        // to the client without waiting for the first event or the 30s
+        // keep-alive ping. SSE comments are ignored by EventSource parsers.
+        send(": connected\n\n");
+
         // Keep-alive pings
         const keepAlive = setInterval(() => {
           send(":ping\n\n");

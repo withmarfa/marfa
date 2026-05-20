@@ -183,6 +183,15 @@ describe("GET /events — catchup_too_old", () => {
     expect(findEvent(text, "catchup_too_old")).toBeNull();
   });
 
+  it("emits an initial `: connected` SSE comment so proxies flush headers", async () => {
+    const res = await request(ctx.app, "GET", "/events", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    const { text } = await readSse(res, { timeoutMs: 100 });
+    expect(text.startsWith(": connected\n\n")).toBe(true);
+  });
+
   it("does not emit catchup_too_old when the event log is empty for the tenant", async () => {
     // Spin up a second context with its own fresh storage so min(id) is
     // genuinely null. Sharing `ctx` would mean any prior test that
