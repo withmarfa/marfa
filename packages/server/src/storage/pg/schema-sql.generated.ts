@@ -225,6 +225,28 @@ CREATE TABLE IF NOT EXISTS public.blobs (
     tenant_id text DEFAULT ''::text NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS public.bulk_action_jobs (
+    id text NOT NULL,
+    tenant_id text,
+    api_key_id text,
+    status text NOT NULL,
+    action text NOT NULL,
+    input text NOT NULL,
+    matched_ids text NOT NULL,
+    matched_count integer DEFAULT 0 NOT NULL,
+    processed_count integer DEFAULT 0 NOT NULL,
+    succeeded_count integer DEFAULT 0 NOT NULL,
+    errored_count integer DEFAULT 0 NOT NULL,
+    result text,
+    error text,
+    worker_id text,
+    worker_heartbeat_at text,
+    idempotency_key text,
+    created_at text NOT NULL,
+    started_at text,
+    finished_at text
+);
+
 CREATE TABLE IF NOT EXISTS public.connection_leased_tokens (
     id text NOT NULL,
     connection_id text NOT NULL,
@@ -713,6 +735,20 @@ $$;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.bulk_action_jobs'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
+    ALTER TABLE ONLY public.bulk_action_jobs
+        ADD CONSTRAINT bulk_action_jobs_pkey PRIMARY KEY (id);
+  END IF;
+END
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
 WHERE c.conrelid = 'public.connection_leased_tokens'::regclass AND c.contype = 'p'
   AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
@@ -1054,6 +1090,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_user_email ON public.auth_user USING 
 
 CREATE INDEX IF NOT EXISTS idx_auth_verification_identifier ON public.auth_verification USING btree (identifier);
 
+CREATE INDEX IF NOT EXISTS idx_bulk_action_jobs_gc ON public.bulk_action_jobs USING btree (status, finished_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_action_jobs_idempotency ON public.bulk_action_jobs USING btree (tenant_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
+
+CREATE INDEX IF NOT EXISTS idx_bulk_action_jobs_status ON public.bulk_action_jobs USING btree (status);
+
+CREATE INDEX IF NOT EXISTS idx_bulk_action_jobs_tenant_id ON public.bulk_action_jobs USING btree (tenant_id);
+
 CREATE INDEX IF NOT EXISTS idx_connection_leased_tokens_connection_id ON public.connection_leased_tokens USING btree (connection_id, expires_at);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_connection_leased_tokens_hash ON public.connection_leased_tokens USING btree (lease_token_hash);
@@ -1331,6 +1375,11 @@ ALTER TABLE public.blobs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS blobs_tenant_isolation ON public.blobs;
 CREATE POLICY blobs_tenant_isolation ON public.blobs TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id = ''::text)));
 
+ALTER TABLE public.bulk_action_jobs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS bulk_action_jobs_tenant_isolation ON public.bulk_action_jobs;
+CREATE POLICY bulk_action_jobs_tenant_isolation ON public.bulk_action_jobs TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+
 ALTER TABLE public.connection_leased_tokens ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS connection_leased_tokens_tenant_isolation ON public.connection_leased_tokens;
@@ -1395,6 +1444,6 @@ CREATE POLICY versions_tenant_isolation ON public.versions TO myme_app USING ((E
 -- search_path — pg_dump emits its CREATE TABLE statements with the
 -- \`public.\` prefix, and grants must match the qualified table for
 -- non-default search_paths (e.g. test schemas) to apply correctly.
-GRANT DELETE, INSERT, SELECT, UPDATE ON "public"."api_keys", "public"."audit_log", "public"."blobs", "public"."connection_leased_tokens", "public"."connection_oauth_tokens", "public"."custom_edge_types", "public"."custom_types", "public"."edges", "public"."event_log", "public"."inbound_webhook_events", "public"."inbound_webhooks", "public"."items", "public"."metadata", "public"."oauth_device_codes", "public"."outbound_webhook_deliveries", "public"."outbound_webhooks", "public"."rate_limit_windows", "public"."settings", "public"."tenant_quotas", "public"."tenants", "public"."users", "public"."versions" TO "myme_app";
+GRANT DELETE, INSERT, SELECT, UPDATE ON "public"."api_keys", "public"."audit_log", "public"."blobs", "public"."bulk_action_jobs", "public"."connection_leased_tokens", "public"."connection_oauth_tokens", "public"."custom_edge_types", "public"."custom_types", "public"."edges", "public"."event_log", "public"."inbound_webhook_events", "public"."inbound_webhooks", "public"."items", "public"."metadata", "public"."oauth_device_codes", "public"."outbound_webhook_deliveries", "public"."outbound_webhooks", "public"."rate_limit_windows", "public"."settings", "public"."tenant_quotas", "public"."tenants", "public"."users", "public"."versions" TO "myme_app";
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "myme_app";
 `;

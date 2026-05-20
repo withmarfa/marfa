@@ -421,6 +421,13 @@
       "when": 1779638404000,
       "tag": "0059_oauth_string_arrays",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1779638405000,
+      "tag": "0060_bulk_action_jobs",
+      "breakpoints": true
     }
   ]
 }
