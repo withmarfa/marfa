@@ -4804,7 +4804,7 @@
         },
         "responses": {
           "200": {
-            "description": "Bulk action result",
+            "description": "Dry-run result (synchronous; non-dry-run goes async)",
             "content": {
               "application/json": {
                 "schema": {
@@ -4863,6 +4863,122 @@
                     "succeeded",
                     "errored",
                     "dry_run"
+                  ]
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Job queued. Poll GET /items/bulk_action/jobs/{id} until status is terminal (completed / failed / cancelled). SDKs do this transparently for callers; the envelope is exposed for explicit-control use cases.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "in_progress",
+                        "completed",
+                        "failed",
+                        "cancelled"
+                      ]
+                    },
+                    "matched": {
+                      "type": "integer"
+                    },
+                    "processed": {
+                      "type": "integer"
+                    },
+                    "succeeded": {
+                      "type": "integer"
+                    },
+                    "errored": {
+                      "type": "integer"
+                    },
+                    "started_at": {
+                      "type": "string"
+                    },
+                    "finished_at": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "matched": {
+                          "type": "integer"
+                        },
+                        "succeeded": {
+                          "type": "integer"
+                        },
+                        "errored": {
+                          "type": "integer"
+                        },
+                        "dry_run": {
+                          "type": "boolean"
+                        },
+                        "ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "code",
+                              "message"
+                            ]
+                          }
+                        },
+                        "blob_hashes_referenced": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "action",
+                        "matched",
+                        "succeeded",
+                        "errored",
+                        "dry_run"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "action",
+                    "status",
+                    "matched",
+                    "processed",
+                    "succeeded",
+                    "errored"
                   ]
                 }
               }
@@ -4963,6 +5079,522 @@
                           "type": "string",
                           "enum": [
                             "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items/bulk_action/jobs/{id}": {
+      "get": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Get bulk_action job status",
+        "description": "Returns the current state of an asynchronous bulk_action job. Status progresses queued → in_progress → one of (completed | failed | cancelled). Once terminal, the `result` field carries the BulkActionResult envelope (matching the historic synchronous response). Only the credential that created the job or an admin can read it.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current job state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "in_progress",
+                        "completed",
+                        "failed",
+                        "cancelled"
+                      ]
+                    },
+                    "matched": {
+                      "type": "integer"
+                    },
+                    "processed": {
+                      "type": "integer"
+                    },
+                    "succeeded": {
+                      "type": "integer"
+                    },
+                    "errored": {
+                      "type": "integer"
+                    },
+                    "started_at": {
+                      "type": "string"
+                    },
+                    "finished_at": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "matched": {
+                          "type": "integer"
+                        },
+                        "succeeded": {
+                          "type": "integer"
+                        },
+                        "errored": {
+                          "type": "integer"
+                        },
+                        "dry_run": {
+                          "type": "boolean"
+                        },
+                        "ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "code",
+                              "message"
+                            ]
+                          }
+                        },
+                        "blob_hashes_referenced": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "action",
+                        "matched",
+                        "succeeded",
+                        "errored",
+                        "dry_run"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "action",
+                    "status",
+                    "matched",
+                    "processed",
+                    "succeeded",
+                    "errored"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the originating credential and not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "bulk_job_not_found"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Cancel a bulk_action job",
+        "description": "Signal cancellation. Queued jobs flip to `cancelled` immediately; in-progress jobs flip when the worker observes the flag between chunks (typically within seconds). Terminal jobs return their existing final state — no error. Auth: the originating credential or an admin.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job state after the cancel signal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "in_progress",
+                        "completed",
+                        "failed",
+                        "cancelled"
+                      ]
+                    },
+                    "matched": {
+                      "type": "integer"
+                    },
+                    "processed": {
+                      "type": "integer"
+                    },
+                    "succeeded": {
+                      "type": "integer"
+                    },
+                    "errored": {
+                      "type": "integer"
+                    },
+                    "started_at": {
+                      "type": "string"
+                    },
+                    "finished_at": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "matched": {
+                          "type": "integer"
+                        },
+                        "succeeded": {
+                          "type": "integer"
+                        },
+                        "errored": {
+                          "type": "integer"
+                        },
+                        "dry_run": {
+                          "type": "boolean"
+                        },
+                        "ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "errors": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "code",
+                              "message"
+                            ]
+                          }
+                        },
+                        "blob_hashes_referenced": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "action",
+                        "matched",
+                        "succeeded",
+                        "errored",
+                        "dry_run"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "action",
+                    "status",
+                    "matched",
+                    "processed",
+                    "succeeded",
+                    "errored"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the originating credential and not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "bulk_job_not_found"
                           ]
                         },
                         "message": {
