@@ -32,6 +32,7 @@ import { PgSettingsStore } from "./settings-store.js";
 import { PgCoordinationStore } from "./coordination-store.js";
 import { PgTenantQuotaStore } from "./tenant-quota-store.js";
 import { PgRateLimitStore } from "./rate-limit-store.js";
+import { PgBulkActionJobStore } from "./bulk-action-job-store.js";
 import { PgAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { pgDeleteAccountCascade } from "./account-cascade.js";
 import { pgRequestContext } from "./request-context.js";
@@ -134,6 +135,12 @@ export async function createPgStorage(
     accountLifecycle: new PgAccountLifecycleStore(baseDb),
     settings: new PgSettingsStore(db),
     coordination: new PgCoordinationStore(client),
+    // T-218: async substrate for bulk_action. Wired on the wrapped
+    // instance so RLS scopes its tenant_id reads/writes per request;
+    // the worker runs outside a request and bypasses RLS via the
+    // unwrapped path on `client.reserve()` — not needed in the store
+    // class itself, only at the worker boundary.
+    bulkActionJobs: new PgBulkActionJobStore(db),
     tenantQuotas: new PgTenantQuotaStore(db),
     // T-026: cluster-shared rate-limit + per-email throttle counters.
     // Wired on the wrapped instance so the request-context RLS proxy

@@ -27,6 +27,7 @@ import { SqliteSettingsStore } from "./settings-store.js";
 import { SqliteCoordinationStore } from "./coordination-store.js";
 import { SqliteTenantQuotaStore } from "./tenant-quota-store.js";
 import { SqliteRateLimitStore } from "./rate-limit-store.js";
+import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { sqliteDeleteAccountCascade } from "./account-cascade.js";
 import {
@@ -136,6 +137,9 @@ export async function createSqliteStorage(
     accountLifecycle: new SqliteAccountLifecycleStore(db),
     settings: new SqliteSettingsStore(db),
     coordination: new SqliteCoordinationStore(),
+    // T-218: async substrate for bulk_action — single-process, see
+    // bulk-action-job-store.ts for the no-FOR-UPDATE claim path.
+    bulkActionJobs: new SqliteBulkActionJobStore(db),
     tenantQuotas: new SqliteTenantQuotaStore(db),
     // T-026: cluster-shared rate-limit + per-email throttle counters.
     // Same shape as the PG wiring; SQLite is single-process by file

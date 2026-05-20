@@ -100,6 +100,28 @@ CREATE TABLE IF NOT EXISTS "oauth_device_codes" (
   FOREIGN KEY (\`connection_item_id\`) REFERENCES \`items\`(\`id\`) ON UPDATE no action ON DELETE set null
 );
 
+CREATE TABLE IF NOT EXISTS "bulk_action_jobs" (
+  "id" TEXT PRIMARY KEY NOT NULL,
+  "tenant_id" TEXT,
+  "api_key_id" TEXT,
+  "status" TEXT NOT NULL,
+  "action" TEXT NOT NULL,
+  "input" TEXT NOT NULL,
+  "matched_ids" TEXT NOT NULL,
+  "matched_count" INTEGER NOT NULL DEFAULT 0,
+  "processed_count" INTEGER NOT NULL DEFAULT 0,
+  "succeeded_count" INTEGER NOT NULL DEFAULT 0,
+  "errored_count" INTEGER NOT NULL DEFAULT 0,
+  "result" TEXT,
+  "error" TEXT,
+  "worker_id" TEXT,
+  "worker_heartbeat_at" TEXT,
+  "idempotency_key" TEXT,
+  "created_at" TEXT NOT NULL,
+  "started_at" TEXT,
+  "finished_at" TEXT
+);
+
 CREATE TABLE IF NOT EXISTS \`inbound_webhooks\` (
   \`id\` text PRIMARY KEY NOT NULL,
   \`tenant_id\` text,
@@ -460,6 +482,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS \`auth_user_email_unique\` ON \`auth_user\` (\
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_auth_user_email\` ON \`auth_user\` (\`email\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_auth_verification_identifier\` ON \`auth_verification\` (\`identifier\`);
+
+CREATE INDEX IF NOT EXISTS "idx_bulk_action_jobs_gc"
+  ON "bulk_action_jobs" ("status", "finished_at");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "idx_bulk_action_jobs_idempotency"
+  ON "bulk_action_jobs" ("tenant_id", "idempotency_key")
+  WHERE "idempotency_key" IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS "idx_bulk_action_jobs_status"
+  ON "bulk_action_jobs" ("status");
+
+CREATE INDEX IF NOT EXISTS "idx_bulk_action_jobs_tenant_id"
+  ON "bulk_action_jobs" ("tenant_id");
 
 CREATE INDEX IF NOT EXISTS \`idx_connection_leased_tokens_connection_id\` ON \`connection_leased_tokens\` (\`connection_id\`, \`expires_at\`);
 

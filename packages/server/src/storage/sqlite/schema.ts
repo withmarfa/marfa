@@ -549,6 +549,43 @@ export const auditLog = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// bulk_action_jobs (T-218 — see pg/schema.ts for design notes)
+// ---------------------------------------------------------------------------
+
+export const bulkActionJobs = sqliteTable(
+  "bulk_action_jobs",
+  {
+    id: text("id").primaryKey(),
+    tenant_id: text("tenant_id"),
+    api_key_id: text("api_key_id"),
+    status: text("status").notNull(),
+    action: text("action").notNull(),
+    input: text("input").notNull(),
+    matched_ids: text("matched_ids").notNull(),
+    matched_count: integer("matched_count").notNull().default(0),
+    processed_count: integer("processed_count").notNull().default(0),
+    succeeded_count: integer("succeeded_count").notNull().default(0),
+    errored_count: integer("errored_count").notNull().default(0),
+    result: text("result"),
+    error: text("error"),
+    worker_id: text("worker_id"),
+    worker_heartbeat_at: text("worker_heartbeat_at"),
+    idempotency_key: text("idempotency_key"),
+    created_at: text("created_at").notNull(),
+    started_at: text("started_at"),
+    finished_at: text("finished_at"),
+  },
+  (table) => [
+    index("idx_bulk_action_jobs_status").on(table.status),
+    index("idx_bulk_action_jobs_tenant_id").on(table.tenant_id),
+    index("idx_bulk_action_jobs_gc").on(table.status, table.finished_at),
+    uniqueIndex("idx_bulk_action_jobs_idempotency")
+      .on(table.tenant_id, table.idempotency_key)
+      .where(sql`idempotency_key IS NOT NULL`),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // rate_limit_windows (T-026 — see pg/schema.ts for design notes)
 // ---------------------------------------------------------------------------
 

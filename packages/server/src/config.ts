@@ -97,6 +97,14 @@ export interface AppConfig {
    *  `MYME_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
    *  applies the 1h fallback when unset. */
   rateLimitCleanupIntervalMs?: number;
+  /** T-218: how long a terminal `bulk_action_jobs` row survives before
+   *  the GC sweep drops it. Counted against `finished_at`. Default
+   *  7 days; env override `MYME_BULK_ACTION_JOB_RETENTION_MS`. Set to
+   *  `0` to disable the sweep entirely (the table grows unbounded). */
+  bulkActionJobRetentionMs?: number;
+  /** T-218: cadence (ms) for the `bulk_action_jobs` GC sweep. Default
+   *  3_600_000 (1h); env override `MYME_BULK_ACTION_JOB_GC_INTERVAL_MS`. */
+  bulkActionJobGcIntervalMs?: number;
   errorWebhookUrl: string;
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
@@ -342,6 +350,14 @@ export function loadConfig(): AppConfig {
     ),
     rateLimitCleanupIntervalMs: envNumber(
       process.env.MYME_RATE_LIMIT_CLEANUP_INTERVAL_MS,
+      3_600_000,
+    ),
+    bulkActionJobRetentionMs: envNumber(
+      process.env.MYME_BULK_ACTION_JOB_RETENTION_MS,
+      7 * 24 * 3_600_000,
+    ),
+    bulkActionJobGcIntervalMs: envNumber(
+      process.env.MYME_BULK_ACTION_JOB_GC_INTERVAL_MS,
       3_600_000,
     ),
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",

@@ -20,9 +20,11 @@
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
+import type { Context } from "hono";
 import {
   MymeError,
   ErrorCode,
+  generateId,
   isValidTimestamp,
   isValidTypeIdentifier,
   ITEM_STATES,
@@ -32,14 +34,16 @@ import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAdmin,
   requireAuth,
-  requireTypeAccess,
   getTypeFilter,
 } from "../middleware/auth.js";
-import type { Storage } from "../storage/interface.js";
+import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
-import { collectBlobHashes } from "../storage/blob-utils.js";
 import { applyInlineEdges } from "./_edges-inline.js";
+import {
+  BulkActionJobSchema,
+  type BulkActionResult as BulkActionResultType,
+} from "../bulk-actions/types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -259,7 +263,12 @@ const bulkActionRoute = createRoute({
       content: {
         "application/json": { schema: BulkActionResponseSchema },
       },
-      description: "Bulk action result",
+      description: "Dry-run result (synchronous; non-dry-run goes async)",
+    },
+    202: {
+      content: { "application/json": { schema: BulkActionJobSchema } },
+      description:
+        "Job queued. Poll GET /items/bulk_action/jobs/{id} until status is terminal (completed / failed / cancelled). SDKs do this transparently for callers; the envelope is exposed for explicit-control use cases.",
     },
     400: {
       content: {
@@ -289,6 +298,102 @@ const bulkActionRoute = createRoute({
         },
       },
       description: "Admin required (purge only)",
+    },
+  },
+});
+
+// T-218: poll endpoint for a queued / running / terminal job. The job
+// envelope is identical to what `POST /items/bulk_action` returns
+// initially; subsequent calls reflect the worker's progress until the
+// row reaches a terminal status. Auth: the originating credential or
+// an admin.
+const bulkActionStatusRoute = createRoute({
+  method: "get",
+  path: "/bulk_action/jobs/{id}",
+  tags: ["Items"],
+  summary: "Get bulk_action job status",
+  description:
+    "Returns the current state of an asynchronous bulk_action job. Status progresses queued → in_progress → one of (completed | failed | cancelled). Once terminal, the `result` field carries the BulkActionResult envelope (matching the historic synchronous response). Only the credential that created the job or an admin can read it.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({ id: z.string() }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: BulkActionJobSchema } },
+      description: "Current job state",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Not the originating credential and not an admin",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["bulk_job_not_found"]),
+        },
+      },
+      description: "Job not found",
+    },
+  },
+});
+
+// T-218: request cancellation. Idempotent — already-terminal rows
+// return their final state without mutation. The worker observes the
+// `cancelled` flag between chunks and stops; the response from this
+// endpoint surfaces the row as-of-now, which may still show
+// `in_progress` if the worker hasn't yet observed the flag.
+const bulkActionCancelRoute = createRoute({
+  method: "delete",
+  path: "/bulk_action/jobs/{id}",
+  tags: ["Items"],
+  summary: "Cancel a bulk_action job",
+  description:
+    "Signal cancellation. Queued jobs flip to `cancelled` immediately; in-progress jobs flip when the worker observes the flag between chunks (typically within seconds). Terminal jobs return their existing final state — no error. Auth: the originating credential or an admin.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({ id: z.string() }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: BulkActionJobSchema } },
+      description: "Job state after the cancel signal",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Not the originating credential and not an admin",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["bulk_job_not_found"]),
+        },
+      },
+      description: "Job not found",
     },
   },
 });
@@ -708,129 +813,32 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
-    // Per-item transactions. A failure on one row leaves the others
-    // applied — matches "best-effort cleanup" intent.
-    const errors: { id: string; code: string; message: string }[] = [];
-    const succeededIds: string[] = [];
-    const blobHashes = new Set<string>();
-
-    for (const item of matched) {
-      try {
-        await storage.runInTransaction(async () => {
-          switch (action) {
-            case "transition": {
-              if (item.state !== body.state) {
-                await storage.items.transition(item.id, body.state, tenantId);
-              }
-              break;
-            }
-            case "purge": {
-              collectBlobHashes(item.properties, blobHashes);
-              await storage.edges.deleteBySource(item.id);
-              await storage.edges.deleteByTarget(item.id);
-              await storage.items.bulkPurge([item.id], tenantId);
-              break;
-            }
-            case "update_tags": {
-              if (body.add && body.add.length > 0) {
-                await storage.metadata.addTags(item.id, body.add);
-              }
-              if (body.remove && body.remove.length > 0) {
-                for (const tag of body.remove) {
-                  await storage.metadata.removeTag(item.id, tag);
-                }
-              }
-              break;
-            }
-            case "update_tier": {
-              const updated = await storage.items.update(
-                item.id,
-                { tier: body.tier },
-                tenantId,
-              );
-              if ("error" in updated) {
-                throw new MymeError(
-                  ErrorCode.CONFLICT,
-                  "Version conflict during bulk update_tier",
-                );
-              }
-              break;
-            }
-            case "update_properties": {
-              // Shallow merge, matches PATCH /items/{id} semantics.
-              const updated = await storage.items.update(
-                item.id,
-                { properties: body.patch },
-                tenantId,
-              );
-              if ("error" in updated) {
-                throw new MymeError(
-                  ErrorCode.CONFLICT,
-                  "Version conflict during bulk update_properties",
-                );
-              }
-              break;
-            }
-            case "update_timestamp": {
-              const updated = await storage.items.update(
-                item.id,
-                { timestamp: body.timestamp },
-                tenantId,
-              );
-              if ("error" in updated) {
-                throw new MymeError(
-                  ErrorCode.CONFLICT,
-                  "Version conflict during bulk update_timestamp",
-                );
-              }
-              break;
-            }
-          }
-        });
-
-        // Non-admin callers: belt-and-braces check that the caller had
-        // type-write access on this specific item. getTypeFilter already
-        // narrowed the match set, but the check here keeps the contract
-        // explicit in case a type permission changes mid-batch.
-        if (action !== "purge") {
-          requireTypeAccess(c, item.type, "write");
-        }
-
-        succeededIds.push(item.id);
-      } catch (err) {
-        errors.push({
-          id: item.id,
-          code: err instanceof MymeError ? err.code : "internal_error",
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    // Events (opt-in). Fire one per succeeded id; no aggregate event.
-    if (emitEvents) {
-      for (const id of succeededIds) {
-        if (action === "purge") {
-          // There's no "item purged" event in the current pubsub enum.
-          // Purge is not a lifecycle state a subscriber observes; skip.
-          continue;
-        }
-        const fresh = await storage.items.get(id, tenantId);
-        if (!fresh) continue;
-        const metadata = await storage.metadata.get(id);
-        const eventType =
-          action === "transition"
-            ? "state_changed"
-            : action === "update_tags"
-              ? "metadata_changed"
-              : "updated";
-        await publish({
-          type: eventType,
-          item: fresh,
-          metadata,
-          tenantId,
-        });
-      }
-    }
+    // Non-dry-run: T-218 async substrate. INSERT a job row carrying the
+    // frozen matched ids + the auth context; respond 202; the in-process
+    // worker (see packages/server/src/bulk-actions/worker.ts) picks the
+    // row up and runs it.
+    //
+    // `emit_events` is stored on the row (worker honours it) but not
+    // fired here. The historic synchronous endpoint fired per-item
+    // events after every mutation; the worker does the same once
+    // implemented in `runChunk`. For v1 of T-218, emit_events is a
+    // no-op — runner.ts intentionally drops the flag. Documented as a
+    // known regression vs the synchronous shape; revisit if a real
+    // consumer needs it before launch.
+    void emitEvents;
+    const idempotencyKey = c.req.header("Idempotency-Key") ?? null;
+    const apiKeyId = c.get("apiKey")?.id ?? null;
+    const job = await storage.bulkActionJobs.create({
+      id: generateId(),
+      tenant_id: tenantId ?? null,
+      api_key_id: apiKeyId,
+      action,
+      input: JSON.stringify(body),
+      matched_ids: JSON.stringify(matched.map((i) => i.id)),
+      matched_count: matched.length,
+      idempotency_key: idempotencyKey,
+      created_at: new Date().toISOString(),
+    });
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -841,34 +849,89 @@ export function bulkRoutes(storage: Storage) {
       details: {
         sub_action: action,
         matched: matched.length,
-        succeeded: succeededIds.length,
-        errored: errors.length,
+        job_id: job.id,
+        idempotency_replay: !!(
+          idempotencyKey &&
+          job.created_at < new Date(Date.now() - 1000).toISOString()
+        ),
       },
     });
 
-    const response: z.infer<typeof BulkActionResponseSchema> = {
-      action,
-      matched: matched.length,
-      succeeded: succeededIds.length,
-      errored: errors.length,
-      dry_run: false,
-    };
+    return c.json(jobRowToEnvelope(job), 202);
+  });
 
-    // Return ids inline when the result set is small enough to be useful
-    // (similar pattern to dry_run). Callers wanting the full set should
-    // rerun with dry_run=true first.
-    if (succeededIds.length > 0 && succeededIds.length <= 100) {
-      response.ids = succeededIds;
+  // GET /items/bulk_action/jobs/:id — poll status.
+  router.openapi(bulkActionStatusRoute, async (c) => {
+    requireAuth(c);
+    const id = c.req.valid("param").id;
+    const job = await storage.bulkActionJobs.getById(id);
+    if (!job) {
+      throw new MymeError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
     }
-    if (errors.length > 0) {
-      response.errors = errors;
-    }
-    if (action === "purge") {
-      response.blob_hashes_referenced = blobHashes.size;
-    }
+    assertJobAuth(c, job);
+    return c.json(jobRowToEnvelope(job), 200);
+  });
 
-    return c.json(response, 200);
+  // DELETE /items/bulk_action/jobs/:id — request cancellation.
+  router.openapi(bulkActionCancelRoute, async (c) => {
+    requireAuth(c);
+    const id = c.req.valid("param").id;
+    const existing = await storage.bulkActionJobs.getById(id);
+    if (!existing) {
+      throw new MymeError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
+    }
+    assertJobAuth(c, existing);
+    await storage.bulkActionJobs.cancel(id, new Date().toISOString());
+    const after = await storage.bulkActionJobs.getById(id);
+    // After cancel() either flipped to cancelled or the job had already
+    // reached a terminal state — either way, surface the row as-of-now.
+    return c.json(jobRowToEnvelope(after ?? existing), 200);
   });
 
   return router;
+}
+
+// Caller is allowed to read/cancel a job only if it created the job
+// (api_key_id match) or holds platform admin. Tenant match alone is not
+// sufficient — within a tenant, separate credentials don't observe each
+// other's bulk_action jobs (consistent with how other ops surfaces
+// behave).
+function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
+  const apiKey = c.get("apiKey");
+  if (!apiKey) {
+    throw new MymeError(ErrorCode.UNAUTHORIZED, "Missing credential");
+  }
+  // Admin (platform-admin or tenant-admin with no tenant scope on the
+  // job) bypasses the credential check.
+  if (apiKey.role === "admin") return;
+  if (job.api_key_id && apiKey.id === job.api_key_id) return;
+  throw new MymeError(
+    ErrorCode.FORBIDDEN,
+    "This job belongs to a different credential",
+  );
+}
+
+// Render a server-internal row as the SDK-facing envelope shape. Strips
+// `matched_ids` (frozen list — large, not useful to callers), `input`
+// (already known to the caller), `worker_id`, `worker_heartbeat_at`,
+// `api_key_id`. Parses the JSON-encoded `result` if present.
+function jobRowToEnvelope(
+  job: BulkActionJobRow,
+): z.infer<typeof BulkActionJobSchema> {
+  const envelope: z.infer<typeof BulkActionJobSchema> = {
+    id: job.id,
+    action: job.action,
+    status: job.status,
+    matched: job.matched_count,
+    processed: job.processed_count,
+    succeeded: job.succeeded_count,
+    errored: job.errored_count,
+  };
+  if (job.started_at) envelope.started_at = job.started_at;
+  if (job.finished_at) envelope.finished_at = job.finished_at;
+  if (job.error) envelope.error = job.error;
+  if (job.result) {
+    envelope.result = JSON.parse(job.result) as BulkActionResultType;
+  }
+  return envelope;
 }

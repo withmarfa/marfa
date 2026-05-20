@@ -6,6 +6,7 @@ import {
   createApp,
   createSqliteStorage,
   FilesystemBlobBackend,
+  BulkActionWorker,
 } from "@mymehq/server";
 import { MymeClient } from "./client.js";
 import {
@@ -109,7 +110,17 @@ beforeAll(async () => {
     fetch: testFetch,
   });
 
+  // T-218: the bulk_action endpoint is async — start the worker so
+  // SDK calls that poll for terminal state actually complete. Tight
+  // pollIntervalMs because tests want fast turnaround.
+  const bulkActionWorker = new BulkActionWorker({
+    storage,
+    pollIntervalMs: 25,
+  });
+  await bulkActionWorker.start();
+
   cleanup = () => {
+    bulkActionWorker.stop();
     void storage.close();
   };
 });

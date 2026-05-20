@@ -502,6 +502,62 @@ export const auditLog = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// bulk_action_jobs (T-218: async substrate for /items/bulk_action)
+// ---------------------------------------------------------------------------
+
+// Job rows for the async bulk_action endpoint. POST /items/bulk_action
+// (non-dry-run) inserts a row; the in-process worker picks it up via
+// SELECT ... FOR UPDATE SKIP LOCKED, runs the action in batched-SQL
+// chunks, writes progress to processed_count / succeeded_count /
+// errored_count, then writes the final BulkActionResult envelope to
+// `result` and flips status to a terminal value.
+//
+// `matched_ids` is the frozen-at-create-time list of item ids the
+// worker iterates; the route's pagination phase resolves the filter
+// once so the worker doesn't re-evaluate it. `input` is the original
+// BulkActionInput for replay / debugging / audit.
+//
+// `idempotency_key` carries the optional `Idempotency-Key` header — a
+// partial unique index (tenant_id, idempotency_key) lets replayed POSTs
+// resolve to the same job row.
+//
+// GC: completed / failed / cancelled rows expire after
+// BULK_ACTION_JOB_RETENTION_MS (default 7 days). Index on
+// (status, finished_at) backs the sweep query.
+export const bulkActionJobs = pgTable(
+  "bulk_action_jobs",
+  {
+    id: text("id").primaryKey(),
+    tenant_id: text("tenant_id"),
+    api_key_id: text("api_key_id"),
+    status: text("status").notNull(),
+    action: text("action").notNull(),
+    input: text("input").notNull(),
+    matched_ids: text("matched_ids").notNull(),
+    matched_count: integer("matched_count").notNull().default(0),
+    processed_count: integer("processed_count").notNull().default(0),
+    succeeded_count: integer("succeeded_count").notNull().default(0),
+    errored_count: integer("errored_count").notNull().default(0),
+    result: text("result"),
+    error: text("error"),
+    worker_id: text("worker_id"),
+    worker_heartbeat_at: text("worker_heartbeat_at"),
+    idempotency_key: text("idempotency_key"),
+    created_at: text("created_at").notNull(),
+    started_at: text("started_at"),
+    finished_at: text("finished_at"),
+  },
+  (table) => [
+    index("idx_bulk_action_jobs_status").on(table.status),
+    index("idx_bulk_action_jobs_tenant_id").on(table.tenant_id),
+    index("idx_bulk_action_jobs_gc").on(table.status, table.finished_at),
+    uniqueIndex("idx_bulk_action_jobs_idempotency")
+      .on(table.tenant_id, table.idempotency_key)
+      .where(sql`idempotency_key IS NOT NULL`),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // rate_limit_windows (T-026: cluster-shared rate-limit + throttle counters)
 // ---------------------------------------------------------------------------
 

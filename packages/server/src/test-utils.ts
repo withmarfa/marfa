@@ -13,6 +13,8 @@ import type { AppEnv } from "./middleware/auth.js";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { BulkActionWorker } from "./bulk-actions/index.js";
+import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
 
 /** Salt used by `createTestContext` for `hashApiKey`. Exposed so tests
  *  that mint additional api keys (e.g. for tenant-scoped admin coverage)
@@ -594,4 +596,92 @@ export function request(
     ? { incoming: { socket: { remoteAddress: options.peer } } }
     : undefined;
   return Promise.resolve(app.request(path, init, env));
+}
+
+/**
+ * T-218: drive `POST /items/bulk_action` through to a terminal state
+ * synchronously for tests. The async endpoint returns 202 + a job
+ * envelope; this helper drains the in-process worker by calling
+ * `runOnce()` until the queue is empty, then GETs the final job state,
+ * and returns the unwrapped `BulkActionResult` so existing test
+ * assertions on `succeeded` / `matched` / `ids` / `errors` /
+ * `blob_hashes_referenced` continue to work without restructuring.
+ *
+ * For dry_run requests the server stays synchronous; the helper just
+ * passes through the 200 response.
+ *
+ * Error paths (400 / 401 / 403) are returned as-is via `errorResponse`.
+ *
+ * Returns:
+ *   - `initialStatus`: status of the initial POST (200 for dry_run /
+ *     error, 202 for queued).
+ *   - `result`: the BulkActionResult once terminal-completed. Absent
+ *     when the job ended in `cancelled` / `failed`.
+ *   - `job`: the final BulkActionJob envelope (terminal state); absent
+ *     for dry_run and error paths.
+ *   - `errorResponse`: the error body when the POST was non-2xx.
+ */
+export async function runBulkActionAsync(
+  ctx: TestContext,
+  body: Record<string, unknown>,
+  key: string,
+): Promise<{
+  initialStatus: number;
+  result?: BulkActionResult;
+  job?: BulkActionJob;
+  errorResponse?: { error: { code: string; message: string } };
+}> {
+  const res = await request(ctx.app, "POST", "/items/bulk_action", {
+    body,
+    key,
+  });
+  if (res.status === 200) {
+    // dry_run path stayed synchronous.
+    return {
+      initialStatus: 200,
+      result: (await res.json()) as BulkActionResult,
+    };
+  }
+  if (res.status !== 202) {
+    return {
+      initialStatus: res.status,
+      errorResponse: (await res.json()) as {
+        error: { code: string; message: string };
+      },
+    };
+  }
+  const queued = (await res.json()) as BulkActionJob;
+
+  // Drain the queue. The worker `runOnce()` claims at most one job
+  // per call; loop until it reports no work. In tests the loop body
+  // typically runs once.
+  const worker = new BulkActionWorker({
+    storage: ctx.storage,
+    chunkSize: 100,
+    pollIntervalMs: 1, // unused — we never call start()
+  });
+  while (await worker.runOnce()) {
+    /* keep draining */
+  }
+
+  const finalRes = await request(
+    ctx.app,
+    "GET",
+    `/items/bulk_action/jobs/${queued.id}`,
+    { key },
+  );
+  if (finalRes.status !== 200) {
+    return {
+      initialStatus: 202,
+      errorResponse: (await finalRes.json()) as {
+        error: { code: string; message: string };
+      },
+    };
+  }
+  const finalJob = (await finalRes.json()) as BulkActionJob;
+  return {
+    initialStatus: 202,
+    job: finalJob,
+    ...(finalJob.result ? { result: finalJob.result } : {}),
+  };
 }
