@@ -1513,6 +1513,126 @@ export interface BetterAuthStorageAdapter {
   betterAuthDialect: "sqlite" | "pg";
 }
 
+// ---------------------------------------------------------------------------
+// bulk_action_jobs store (T-218 async substrate)
+// ---------------------------------------------------------------------------
+
+export type BulkActionJobStatus =
+  | "queued"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+/** Server-side row shape for a `bulk_action_jobs` entry. The SDK-facing
+ *  envelope (`BulkActionJob` in `@mymehq/sdk/client`) is a strict subset
+ *  — fields like `matched_ids`, `worker_id`, `worker_heartbeat_at`,
+ *  `api_key_id`, and the original `input` are server-internal. */
+export interface BulkActionJobRow {
+  id: string;
+  tenant_id: string | null;
+  api_key_id: string | null;
+  status: BulkActionJobStatus;
+  action: string;
+  /** Original BulkActionInput, JSON-encoded. */
+  input: string;
+  /** Frozen matched id list, JSON-encoded `string[]`. */
+  matched_ids: string;
+  matched_count: number;
+  processed_count: number;
+  succeeded_count: number;
+  errored_count: number;
+  /** Final BulkActionResult envelope, JSON-encoded. Populated on
+   *  `completed`. */
+  result: string | null;
+  /** Failure reason on `failed`. */
+  error: string | null;
+  worker_id: string | null;
+  worker_heartbeat_at: string | null;
+  idempotency_key: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface CreateBulkActionJobInput {
+  id: string;
+  tenant_id: string | null;
+  api_key_id: string | null;
+  action: string;
+  input: string;
+  matched_ids: string;
+  matched_count: number;
+  idempotency_key: string | null;
+  created_at: string;
+}
+
+export interface BulkActionJobProgress {
+  processed_count: number;
+  succeeded_count: number;
+  errored_count: number;
+}
+
+export interface BulkActionJobStore {
+  /**
+   * INSERT a fresh row in `queued` state. When `idempotency_key` is set
+   * and a row with the same `(tenant_id, idempotency_key)` already
+   * exists, returns that existing row instead of creating a new one
+   * — the `ON CONFLICT` happens at the unique-index level so this is a
+   * race-safe replay path.
+   */
+  create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow>;
+  /** Fetch by id. Tenant scoping is the caller's responsibility — the
+   *  store returns the row regardless. The route handler enforces auth
+   *  (`api_key_id` match or admin). */
+  getById(id: string): Promise<BulkActionJobRow | null>;
+  /**
+   * Atomically claim the next queued job. On Postgres, wraps a single
+   * UPDATE in `SELECT … FOR UPDATE SKIP LOCKED` so multiple server
+   * processes coordinate naturally. Sets `status='in_progress'`,
+   * `started_at`, `worker_id`, `worker_heartbeat_at`. Returns the
+   * claimed row, or `null` if the queue is empty.
+   *
+   * SQLite has no FOR UPDATE — single-process by design, so a plain
+   * `UPDATE WHERE status='queued' RETURNING …` with `LIMIT 1` suffices.
+   */
+  claimNext(workerId: string, now: string): Promise<BulkActionJobRow | null>;
+  /** Bump progress counts + heartbeat. Idempotent — over-writes
+   *  whatever was there before, doesn't sum. */
+  updateProgress(
+    id: string,
+    progress: BulkActionJobProgress,
+    heartbeatAt: string,
+  ): Promise<void>;
+  /** Terminal `completed`. Writes the result envelope, sets
+   *  `finished_at`, clears `worker_heartbeat_at`. */
+  complete(
+    id: string,
+    result: string,
+    finalCounts: BulkActionJobProgress,
+    finishedAt: string,
+  ): Promise<void>;
+  /** Terminal `failed`. Writes the error string, sets `finished_at`. */
+  fail(id: string, error: string, finishedAt: string): Promise<void>;
+  /** Request cancellation. Flips `queued` or `in_progress` rows to
+   *  `cancelled`; no-op (returns `false`) on already-terminal rows.
+   *  The worker observes the flag between chunks. */
+  cancel(id: string, finishedAt: string): Promise<boolean>;
+  /**
+   * Boot-time recovery: any `in_progress` job whose
+   * `worker_heartbeat_at` is older than `staleBeforeIso` is reset to
+   * `queued`. Returns the number of rows reset. Called once on server
+   * boot before the worker loop starts.
+   */
+  recoverStale(staleBeforeIso: string): Promise<number>;
+  /**
+   * GC: drop terminal rows whose `finished_at` is older than
+   * `expireBeforeIso`. Returns the number of rows deleted. Called by
+   * the maintenance sweep on the same cadence as `purgeTrashedOlderThan`.
+   */
+  gcExpired(expireBeforeIso: string): Promise<number>;
+}
+
 export interface Storage extends Partial<BetterAuthStorageAdapter> {
   items: ItemStore;
   metadata: MetadataStore;
@@ -1549,6 +1669,10 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   accountLifecycle?: AccountLifecycleStore;
   settings: SettingsStore;
   coordination: CoordinationStore;
+  /** T-218: async substrate for `POST /items/bulk_action`. Always wired
+   *  on both dialects. The worker module reads + writes through this
+   *  store; the route handler creates jobs + serves GET / DELETE. */
+  bulkActionJobs: BulkActionJobStore;
 
   users?: UserStore;
   tenants?: TenantStore;

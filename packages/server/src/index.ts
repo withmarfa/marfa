@@ -31,6 +31,10 @@ import { log } from "./middleware/logger.js";
 import { createEmailTransport } from "./email/index.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import { checkLegacySyncAgentExtensions } from "./storage/legacy-extension-check.js";
+import {
+  BulkActionWorker,
+  BulkActionJobGcSweeper,
+} from "./bulk-actions/index.js";
 
 async function main() {
   const config = loadConfig();
@@ -250,6 +254,24 @@ async function main() {
   );
   rateLimitCleaner.start();
 
+  // T-218: in-process worker for async bulk_action jobs + periodic GC
+  // sweep over terminal rows. On PG the worker's `claimNext` uses
+  // `SELECT … FOR UPDATE SKIP LOCKED` so multi-instance deployments
+  // coordinate naturally; SQLite is single-process by design. The GC
+  // sweep is cluster-coordinated via the standard `withJobLock`
+  // pattern (mirrors the rate-limit cleaner) so two servers don't
+  // double-delete.
+  const bulkActionWorker = new BulkActionWorker({ storage });
+  await bulkActionWorker.start();
+  const bulkActionGc = new BulkActionJobGcSweeper(
+    storage,
+    config.bulkActionJobRetentionMs ?? 7 * 24 * 3_600_000,
+    config.bulkActionJobGcIntervalMs ?? 3_600_000,
+    undefined,
+    storage.coordination,
+  );
+  bulkActionGc.start();
+
   // T-140: surface a one-shot WARN at boot if any items still carry
   // `extensions['sync-agent'].*` (un-migrated post-T-130). Best-effort,
   // never blocks boot. Operator-facing log line names the migration
@@ -369,6 +391,8 @@ async function main() {
     authSessionCleaner?.stop();
     pendingDeletePurger?.stop();
     rateLimitCleaner.stop();
+    bulkActionWorker.stop();
+    bulkActionGc.stop();
     if (reactiveRunBridge) {
       void reactiveRunBridge.stop().catch(() => {
         // Bridge cleanup errors during shutdown are swallowed; the
