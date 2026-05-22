@@ -94,7 +94,9 @@ async function main() {
   // boots without the Cloudflare Queues hop (self-hoster path). When set,
   // the bridge subscribes to pubsub and forwards `item-event`s to the
   // configured queue producer for fanout to per-Integration Workers.
-  const reactiveRunBridge = tryStartReactiveRunBridge(storage);
+  const reactiveRunBridge = tryStartReactiveRunBridge(storage, {
+    sendTimeoutMs: config.reactiveRunSendTimeoutMs,
+  });
   if (reactiveRunBridge) {
     void reactiveRunBridge
       .start()

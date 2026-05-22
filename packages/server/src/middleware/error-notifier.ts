@@ -6,6 +6,12 @@
 const DEBOUNCE_MS = 60_000;
 const debounceMap = new Map<string, number>();
 
+/** Fallback per-fetch delivery timeout (ms) when no explicit value is
+ *  supplied. Production passes `AppConfig.errorWebhookTimeoutMs` (env
+ *  `MYME_ERROR_WEBHOOK_TIMEOUT_MS`) through `createErrorHandler`, so the
+ *  operator-tunable value is the live one. */
+const DEFAULT_WEBHOOK_TIMEOUT_MS = 5_000;
+
 // Periodic cleanup of expired debounce entries
 const cleanup = setInterval(() => {
   const now = Date.now();
@@ -26,6 +32,7 @@ export interface ErrorNotification {
 export function notifyError(
   webhookUrl: string,
   notification: ErrorNotification,
+  timeoutMs: number = DEFAULT_WEBHOOK_TIMEOUT_MS,
 ): void {
   const errorKey = `${notification.error.slice(0, 100)}:${notification.path}`;
   const now = Date.now();
@@ -51,7 +58,7 @@ export function notifyError(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, parse_mode: "Markdown" }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(timeoutMs),
     }).catch(() => undefined);
   } else {
     // Generic webhook — POST JSON payload
@@ -59,7 +66,7 @@ export function notifyError(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(notification),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(timeoutMs),
     }).catch(() => {
       // Silently swallow — webhook failures must not cascade
     });

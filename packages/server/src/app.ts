@@ -84,7 +84,20 @@ export function createApp(
   const app = new OpenAPIHono<AppEnv>();
 
   // Global error handler
-  app.onError(createErrorHandler({ errorWebhookUrl: config.errorWebhookUrl }));
+  app.onError(
+    createErrorHandler({
+      errorWebhookUrl: config.errorWebhookUrl,
+      errorWebhookTimeoutMs: config.errorWebhookTimeoutMs,
+    }),
+  );
+
+  // Expose the resolved AppConfig on the request context so handlers and
+  // middleware (e.g. quota enforcement) read env-derived values from the
+  // single config source rather than re-reading `process.env`.
+  app.use("*", async (c, next) => {
+    c.set("config", config);
+    await next();
+  });
 
   // Structured logging (wraps entire request lifecycle)
   app.use("*", loggerMiddleware());

@@ -34,6 +34,7 @@ function isMymeError(err: unknown): err is {
 
 export function createErrorHandler(config: {
   errorWebhookUrl: string;
+  errorWebhookTimeoutMs?: number;
 }): ErrorHandler<AppEnv> {
   return (err, c) => {
     if (isMymeError(err)) {
@@ -118,13 +119,17 @@ export function createErrorHandler(config: {
     });
 
     if (config.errorWebhookUrl) {
-      notifyError(config.errorWebhookUrl, {
-        timestamp: new Date().toISOString(),
-        request_id: c.get("requestId"),
-        error: err instanceof Error ? err.message : String(err),
-        path: c.req.path,
-        method: c.req.method,
-      });
+      notifyError(
+        config.errorWebhookUrl,
+        {
+          timestamp: new Date().toISOString(),
+          request_id: c.get("requestId"),
+          error: err instanceof Error ? err.message : String(err),
+          path: c.req.path,
+          method: c.req.method,
+        },
+        config.errorWebhookTimeoutMs,
+      );
     }
 
     return jsonResponse(
