@@ -4,25 +4,23 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Myme deploy script
 #
-# Deploys the Myme server via SSH + git pull.
+# Deploys the Myme server to a remote host over SSH: git pull + build +
+# migrate + restart. Manages one or more launchd-supervised service
+# instances that share a single source tree (SERVICE_DIR).
 #
-# Topology:
-#   - :8602  so.myme.staging      — active instance (Postgres: myme_staging)
-#   - :8601  so.myme.conformance  — conformance instance (Postgres: myme_conformance)
-#
-# Both services share a single source tree at ~/Services/myme-staging/
-# and separate launchd plists. A deploy rebuilds once and restarts both
-# launchd services.
+# Every host-, service-, and database-specific value comes from the
+# environment — nothing operator-specific is baked into this script. See
+# the self-hosting docs for a worked example of the DEPLOY_SERVICE_* vars.
 #
 # Usage:
-#   ./deploy.sh                Deploy latest main (restarts both services)
+#   ./deploy.sh                Deploy latest main (restarts every service)
 #   ./deploy.sh --rollback     Rollback to previous SHA recorded in version.json
 #   ./deploy.sh --host myhost  Override SSH host
 # ---------------------------------------------------------------------------
 
-# --- Configuration (override via environment) ---
+# --- Configuration (all via environment) ---
 DEPLOY_HOST="${DEPLOY_HOST:-}"
-SERVICE_DIR="${SERVICE_DIR:-\$HOME/Services/myme-staging}"
+SERVICE_DIR="${SERVICE_DIR:-\$HOME/myme}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 
 # SSH hardening — cap any single ssh invocation at ~45s instead of waiting
@@ -31,14 +29,17 @@ REPO_BRANCH="${REPO_BRANCH:-main}"
 # tunnel (3 × 15s = ~45s before the client gives up).
 SSH_OPTS=(-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
 
-# Services managed by this script. Paired arrays: label / port / database URL.
-SERVICE_LABELS=("so.myme.staging" "so.myme.conformance")
-SERVICE_NAMES=("staging" "conformance")
-SERVICE_PORTS=(8602 8601)
-SERVICE_DBS=(
-  "${STAGING_DATABASE_URL:-postgres://myme:myme_prod@localhost:5432/myme_staging}"
-  "${CONFORMANCE_DATABASE_URL:-postgres://myme:myme_prod@localhost:5432/myme_conformance}"
-)
+# Services managed by this deploy. Each is described by the Nth entry of
+# four comma-separated lists supplied via the environment — all four must
+# be set and the same length:
+#   DEPLOY_SERVICE_NAMES    — human-readable name per service
+#   DEPLOY_SERVICE_LABELS   — launchd label per service (restart target)
+#   DEPLOY_SERVICE_PORTS    — health-check port per service
+#   DEPLOY_SERVICE_DB_URLS  — Postgres URL per service (migration target)
+IFS=',' read -ra SERVICE_NAMES <<< "${DEPLOY_SERVICE_NAMES:-}"
+IFS=',' read -ra SERVICE_LABELS <<< "${DEPLOY_SERVICE_LABELS:-}"
+IFS=',' read -ra SERVICE_PORTS <<< "${DEPLOY_SERVICE_PORTS:-}"
+IFS=',' read -ra SERVICE_DBS <<< "${DEPLOY_SERVICE_DB_URLS:-}"
 
 # --- Defaults ---
 ROLLBACK=false
@@ -63,14 +64,16 @@ while [[ $# -gt 0 ]]; do
     --help|-h)
       echo "Usage: ./deploy.sh [--rollback] [--host hostname]"
       echo ""
-      echo "Deploys both staging (:8602) and conformance (:8601) from main."
+      echo "Deploys every configured service from the target branch."
       echo ""
       echo "Environment:"
-      echo "  DEPLOY_HOST                 SSH host (required; or pass via --host)"
-      echo "  SERVICE_DIR                 Source tree (default: \$HOME/Services/myme-staging)"
-      echo "  REPO_BRANCH                 Branch to deploy (default: main)"
-      echo "  STAGING_DATABASE_URL        Postgres URL for the staging instance"
-      echo "  CONFORMANCE_DATABASE_URL    Postgres URL for the conformance instance"
+      echo "  DEPLOY_HOST               SSH host (required; or pass via --host)"
+      echo "  SERVICE_DIR               Source tree on the host (default: \$HOME/myme)"
+      echo "  REPO_BRANCH               Branch to deploy (default: main)"
+      echo "  DEPLOY_SERVICE_NAMES      Comma-separated service names (required)"
+      echo "  DEPLOY_SERVICE_LABELS     Comma-separated launchd labels (required)"
+      echo "  DEPLOY_SERVICE_PORTS      Comma-separated health-check ports (required)"
+      echo "  DEPLOY_SERVICE_DB_URLS    Comma-separated Postgres URLs (required)"
       exit 0
       ;;
     *)
@@ -82,6 +85,20 @@ done
 
 if [ -z "$DEPLOY_HOST" ]; then
   echo -e "${RED}DEPLOY_HOST is required (set in the environment or pass --host <hostname>).${NC}"
+  exit 1
+fi
+
+if [ ${#SERVICE_NAMES[@]} -eq 0 ]; then
+  echo -e "${RED}No services configured.${NC}"
+  echo "  Set DEPLOY_SERVICE_NAMES, DEPLOY_SERVICE_LABELS, DEPLOY_SERVICE_PORTS,"
+  echo "  and DEPLOY_SERVICE_DB_URLS — comma-separated, one entry per service."
+  exit 1
+fi
+
+if [ ${#SERVICE_LABELS[@]} -ne ${#SERVICE_NAMES[@]} ] ||
+  [ ${#SERVICE_PORTS[@]} -ne ${#SERVICE_NAMES[@]} ] ||
+  [ ${#SERVICE_DBS[@]} -ne ${#SERVICE_NAMES[@]} ]; then
+  echo -e "${RED}DEPLOY_SERVICE_* lists must all be the same length.${NC}"
   exit 1
 fi
 

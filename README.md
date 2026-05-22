@@ -39,7 +39,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full development guide and [CLA
 
 - Architecture, conventions, and workflow rules: [`CLAUDE.md`](./CLAUDE.md)
 - Contributor guide: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
-- Production deployment: [`DEPLOYMENT.md`](./DEPLOYMENT.md)
+- Self-hosting and deployment: <https://docs.myme.so/self-hosting>
 - Product docs and guides: <https://docs.myme.so>
 
 ## License

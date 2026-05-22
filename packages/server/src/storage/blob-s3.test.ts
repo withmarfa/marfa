@@ -256,7 +256,7 @@ describe("S3BlobBackend", () => {
         bucket: "myme-runtime-payloads-staging",
         region: "auto",
         endpoint:
-          "https://fb81b3c1ad68ef6dbd689897e8897b10.r2.cloudflarestorage.com",
+          "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
         accessKeyId: "R2_ACCESS_KEY_ID",
         secretAccessKey: "R2_SECRET_ACCESS_KEY",
       });
@@ -269,7 +269,7 @@ describe("S3BlobBackend", () => {
         }
       ).client;
       expect(client.config.endpoint).toBe(
-        "https://fb81b3c1ad68ef6dbd689897e8897b10.r2.cloudflarestorage.com",
+        "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",
       );
       expect(client.config.forcePathStyle).toBe(true);
       expect(client.config.region).toBe("auto");

@@ -4,7 +4,7 @@ Scripts and templates for the Connections runtime substrate. The runtime stack i
 
 ## Layout
 
-- `wrangler.control.toml` — control-plane Worker config (`@mymehq/runtime-control`). One Worker per env: `dev` (default), `staging`, `prod`.
+- `wrangler.control.toml` — control-plane Worker config (`@mymehq/runtime-control`). One Worker per env: `dev` (default), `staging`, `prod`. Carries `REPLACE_WITH_*` placeholders (account-id var, route hostnames, KV namespace ids) and example domains — fill these in for your own account before deploying. `account_id` itself is intentionally absent; Wrangler reads it from `CLOUDFLARE_ACCOUNT_ID` in the environment.
 - `wrangler.integration.template.toml` — copy this into each `integrations/<name>/` once Layer 3 starts. Defaults to per-env (`dev`/`staging`/`prod`) Worker names that follow `myme-integration-<name>[-env]`.
 - `provision.ts` — idempotent script that creates Queues, KV namespaces, R2 buckets via the Cloudflare REST API. Run once per env; safe to re-run.
 - `tunnel.config.example.yml` — local-dev tunnel template. Copy to `tunnel.config.yml` (gitignored), fill in tunnel UUID + handle.
@@ -16,10 +16,10 @@ Scripts and templates for the Connections runtime substrate. The runtime stack i
 export CLOUDFLARE_API_TOKEN=<token with Workers/Queues/KV/R2 write>
 export CLOUDFLARE_ACCOUNT_ID=<account id>
 # Optional, for named-tunnel DNS automation:
-export CLOUDFLARE_ZONE_ID=<zone id for myme.so>
+export CLOUDFLARE_ZONE_ID=<zone id for your domain>
 ```
 
-The current account-scoped token does not carry zone-edit. Named-tunnel DNS routing (CNAME → tunnel UUID) is left as a manual step OR requires a token-scope extension; `provision.ts` fails gracefully on the DNS step with clear instructions.
+If your account-scoped token does not carry zone-edit permission, named-tunnel DNS routing (CNAME → tunnel UUID) is left as a manual step OR requires a token-scope extension; `provision.ts` fails gracefully on the DNS step with clear instructions.
 
 ## Provision an environment
 

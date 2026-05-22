@@ -6,10 +6,10 @@ name = "myme-runtime-control"
 main = "../../packages/runtime-control/src/index.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
-# Wrangler doesn't expand env vars in TOML for `account_id`; hardcoding is the
-# pragmatic path. This is the dedicated Myme Cloudflare account (post-T-059
-# migration) — not a secret. Personal aic-cloudflare account stays separate.
-account_id = "fb81b3c1ad68ef6dbd689897e8897b10"
+# `account_id` is intentionally omitted — Wrangler reads it from the
+# CLOUDFLARE_ACCOUNT_ID environment variable at deploy time, so no
+# operator's account is baked into the committed config. See
+# infra/cloudflare/README.md.
 
 # Default (dev) environment — bound to the cloudflared-tunnel hostname
 # the developer brings up with `cloudflared tunnel --url …`.
@@ -17,29 +17,34 @@ account_id = "fb81b3c1ad68ef6dbd689897e8897b10"
 
 [vars]
 ENVIRONMENT = "dev"
-CLOUDFLARE_ACCOUNT_ID = "fb81b3c1ad68ef6dbd689897e8897b10"
+# Worker runtime var (the DLQ HTTP-pull client reads it). Wrangler does not
+# expand env vars in [vars], so the operator fills this in before deploy.
+CLOUDFLARE_ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
 
 # ---- Staging --------------------------------------------------------------
+# `routes` and `zone_name` below are operator-specific — replace the
+# example hostnames with the domain/zone you deploy under, or remove the
+# `routes` block and bind the Worker to a *.workers.dev subdomain.
 [env.staging]
 name = "myme-runtime-control-staging"
 routes = [
-  { pattern = "runtime-staging.myme.so/*", zone_name = "myme.so" },
+  { pattern = "runtime-staging.example.com/*", zone_name = "example.com" },
 ]
 
 [env.staging.vars]
 ENVIRONMENT = "staging"
-CLOUDFLARE_ACCOUNT_ID = "fb81b3c1ad68ef6dbd689897e8897b10"
+CLOUDFLARE_ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
 
 # ---- Production -----------------------------------------------------------
 [env.prod]
 name = "myme-runtime-control-prod"
 routes = [
-  { pattern = "runtime.myme.so/*", zone_name = "myme.so" },
+  { pattern = "runtime.example.com/*", zone_name = "example.com" },
 ]
 
 [env.prod.vars]
 ENVIRONMENT = "prod"
-CLOUDFLARE_ACCOUNT_ID = "fb81b3c1ad68ef6dbd689897e8897b10"
+CLOUDFLARE_ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
 
 # ---------------------------------------------------------------------------
 # Queue producers — wired in PR 3 of Layer 1; scheduled-poll added by T-084.
@@ -85,7 +90,7 @@ queue = "myme-scheduled-poll-prod"
 
 [[env.staging.kv_namespaces]]
 binding = "IDEMPOTENCY_KV"
-id = "2a6c8397db694f8a898c16450d8fd1cc"
+id = "REPLACE_WITH_STAGING_KV_ID"
 
 [[env.prod.kv_namespaces]]
 binding = "IDEMPOTENCY_KV"
