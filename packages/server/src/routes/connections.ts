@@ -47,7 +47,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 //     the shared helpers in `connections/envelope.ts` so the bridge and
 //     the preview surface compute the same shape.
 //
-// Auth model: `requireTenantAdmin` on every route. Workspace admins
+// Auth model: `requireTenantAdmin` on every route. Tenant admins
 // operate on their own tenant's connections (storage lookups + writes
 // are scoped via `apiKey.tenant_id`); platform admins on single-tenant
 // self-hosts operate without a tenant scope and reach every connection.
@@ -308,7 +308,7 @@ const previewEventRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not a workspace admin or platform admin.",
+      description: "Caller is not a tenant admin or platform admin.",
     },
     404: {
       content: {

@@ -47,7 +47,7 @@ export function renderAccountPendingDeletionEmail(
     `We've received and confirmed your account-deletion request. Your account will be permanently deleted in ${String(input.graceDays)} days, on ${input.deletionDate}.`,
     "",
     "What will be deleted:",
-    "  - Every item, edge, tag, and version in your workspace",
+    "  - Every item, edge, tag, and version in your space",
     "  - Every API key and OAuth grant on the account",
     "  - Every uploaded blob",
     "  - Your user record (sessions, passkeys, accounts)",
@@ -78,7 +78,7 @@ export function renderAccountPendingDeletionEmail(
 <p style="margin:0 0 24px 0;color:${MUTED};">Your account will be permanently deleted in <strong style="color:${DANGER};">${String(input.graceDays)} days</strong>, on ${escapeHtml(input.deletionDate)}.</p>
 <h2 style="margin:24px 0 8px 0;font-size:15px;font-weight:600;color:${TEXT};">What will be deleted</h2>
 <ul style="margin:0 0 24px 0;padding-left:20px;color:${MUTED};">
-<li>Every item, edge, tag, and version in your workspace</li>
+<li>Every item, edge, tag, and version in your space</li>
 <li>Every API key and OAuth grant on the account</li>
 <li>Every uploaded blob</li>
 <li>Your user record (sessions, passkeys, accounts)</li>

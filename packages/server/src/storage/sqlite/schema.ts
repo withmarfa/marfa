@@ -604,7 +604,7 @@ export const rateLimitWindows = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// settings (generic single-row-per-key KV for workspace-wide flags)
+// settings (generic single-row-per-key KV for instance-wide flags)
 // ---------------------------------------------------------------------------
 
 export const settings = sqliteTable("settings", {

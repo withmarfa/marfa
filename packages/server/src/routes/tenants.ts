@@ -141,7 +141,7 @@ const getQuotasRoute = createRoute({
   tags: ["Tenants"],
   summary: "Get tenant quotas",
   description:
-    "Returns the per-tenant quota ceilings for a specific tenant — items, webhooks, blobs, storage bytes, and per-minute rate limit. `null` on a field means the env default applies; an entirely-null payload means no per-tenant override is configured. Platform-admin only — workspace admins use `GET /tenants/me/quotas` to read their own ceilings without knowing their tenant id.",
+    "Returns the per-tenant quota ceilings for a specific tenant — items, webhooks, blobs, storage bytes, and per-minute rate limit. `null` on a field means the env default applies; an entirely-null payload means no per-tenant override is configured. Platform-admin only — tenant admins use `GET /tenants/me/quotas` to read their own ceilings without knowing their tenant id.",
   security: [{ bearerAuth: [] }],
   request: { params: z.object({ id: z.string() }) },
   responses: {

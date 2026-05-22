@@ -90,7 +90,7 @@ describe("T-053 tenant-scoped export — tenant_admin self-export", () => {
       tenantB,
     );
 
-    // Tenant A's workspace admin exports — should see ONLY itemA.
+    // Tenant A's admin exports — should see ONLY itemA.
     const res = await request(ctx.app, "GET", "/export", { key: wsAdminA });
     expect(res.status).toBe(200);
     const ids = await readNdjsonItems(res);

@@ -305,7 +305,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       requireTenantAdmin(c);
     }
 
-    // T-007: under bootstrap, atomically claim the workspace sentinel
+    // T-007: under bootstrap, atomically claim the sentinel
     // BEFORE minting. Two concurrent unauthenticated POST /keys against a
     // fresh DB both pass the middleware gate (which reads the sentinel
     // non-atomically); only the caller whose INSERT-ON-CONFLICT-DO-NOTHING

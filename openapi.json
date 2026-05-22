@@ -14102,7 +14102,7 @@
           "Tenants"
         ],
         "summary": "Get tenant quotas",
-        "description": "Returns the per-tenant quota ceilings for a specific tenant — items, webhooks, blobs, storage bytes, and per-minute rate limit. `null` on a field means the env default applies; an entirely-null payload means no per-tenant override is configured. Platform-admin only — workspace admins use `GET /tenants/me/quotas` to read their own ceilings without knowing their tenant id.",
+        "description": "Returns the per-tenant quota ceilings for a specific tenant — items, webhooks, blobs, storage bytes, and per-minute rate limit. `null` on a field means the env default applies; an entirely-null payload means no per-tenant override is configured. Platform-admin only — tenant admins use `GET /tenants/me/quotas` to read their own ceilings without knowing their tenant id.",
         "security": [
           {
             "bearerAuth": []
@@ -16835,7 +16835,7 @@
             }
           },
           "403": {
-            "description": "Caller is not a workspace admin or platform admin.",
+            "description": "Caller is not a tenant admin or platform admin.",
             "content": {
               "application/json": {
                 "schema": {
