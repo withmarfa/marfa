@@ -289,6 +289,20 @@ Outbound webhooks fire on item events (`item.created`, `item.updated`, `item.del
 - Prefer `unknown` over `any`
 - Named exports only, no default exports
 
+### Boolean naming
+
+Name a boolean so it reads as a yes/no. Three valid shapes:
+
+- **Bare** for adjectives and participles — `active`, `verified`, `disabled`, `public`, `succeeded`. These already read as a yes/no.
+- **Prefixed** for state and possession — `is_` for state (`is_platform`), `has_` for possession (`has_more`).
+- **Verb-led** for action directives — `force_` / `skip_` / `enable_` (`force_snapshot`, `skip_consent`, `enable_end_session`). Use these for a boolean that tells the system to _do_ something, where a state prefix would misdescribe it.
+
+A bare noun reads as neither yes nor no — rename it to one of the shapes above. Applies to wire fields, DB columns, and in-code variables alike.
+
+### `tenant` vs "space"
+
+The internal code term for an isolated data boundary is **`tenant`** — keep it in code, schemas, DB columns, and the role vocabulary (`tenant_admin`). The user-facing word is **"space"** — use it in product docs and any user-visible copy. Not "instance" (that means a server deployment) and not "workspace" (oversells the team angle — a space is usually one person). The split is deliberate: don't surface `tenant` to users, don't invent a third term in code.
+
 ## Commits
 
 Conventional Commits with package scope: `feat(shared):`, `fix(server):`, `test(sdk):`

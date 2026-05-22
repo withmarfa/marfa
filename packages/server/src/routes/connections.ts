@@ -2,7 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MymeError, ErrorCode } from "@mymehq/shared";
 import type { PreviewEventEnvelope, PreviewEventResult } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireWorkspaceAdmin } from "../middleware/auth.js";
+import { requireTenantAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   performUninstall,
@@ -47,7 +47,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 //     the shared helpers in `connections/envelope.ts` so the bridge and
 //     the preview surface compute the same shape.
 //
-// Auth model: `requireWorkspaceAdmin` on every route. Workspace admins
+// Auth model: `requireTenantAdmin` on every route. Workspace admins
 // operate on their own tenant's connections (storage lookups + writes
 // are scoped via `apiKey.tenant_id`); platform admins on single-tenant
 // self-hosts operate without a tenant scope and reach every connection.
@@ -329,10 +329,10 @@ export function connectionRoutes(storage: Storage, salt: string) {
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(installRoute, async (c) => {
-    // T-051: workspace_admin can install/uninstall own-tenant connections.
+    // T-051: tenant_admin can install/uninstall own-tenant connections.
     // Lookups + writes are scoped via `apiKey.tenant_id`, so cross-tenant
     // attempts surface as NOT_FOUND.
-    const apiKey = requireWorkspaceAdmin(c);
+    const apiKey = requireTenantAdmin(c);
     const { integration_id, label } = c.req.valid("json");
     const tenantId = apiKey.tenant_id ?? undefined;
     const clientIp = c.var.clientIp;
@@ -407,11 +407,11 @@ export function connectionRoutes(storage: Storage, salt: string) {
   });
 
   r.openapi(previewEventRoute, async (c) => {
-    // T-083: tenant-scoped preview of bridge fanout. workspace_admin so a
+    // T-083: tenant-scoped preview of bridge fanout. tenant_admin so a
     // tenant admin can debug their own connectors without needing platform
     // creds; storage reads thread `apiKey.tenant_id` so cross-tenant
     // probes 404 on either the item or the filtered connection.
-    const apiKey = requireWorkspaceAdmin(c);
+    const apiKey = requireTenantAdmin(c);
     const tenantId = apiKey.tenant_id ?? undefined;
     const body = c.req.valid("json");
 
@@ -560,10 +560,10 @@ export function connectionRoutes(storage: Storage, salt: string) {
   });
 
   r.openapi(uninstallRoute, async (c) => {
-    // T-051: workspace_admin can install/uninstall own-tenant connections.
+    // T-051: tenant_admin can install/uninstall own-tenant connections.
     // Lookups + writes are scoped via `apiKey.tenant_id`, so cross-tenant
     // attempts surface as NOT_FOUND.
-    const apiKey = requireWorkspaceAdmin(c);
+    const apiKey = requireTenantAdmin(c);
     const { id: connectionId } = c.req.valid("param");
     const tenantId = apiKey.tenant_id ?? undefined;
     const clientIp = c.var.clientIp;

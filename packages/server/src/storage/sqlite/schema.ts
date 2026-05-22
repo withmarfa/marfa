@@ -45,7 +45,7 @@ export const users = sqliteTable(
     }),
     /** T-178: principal role projected onto OAuth bearer principals.
      *  Defaults to `member`; operator elevates via SQL until a real
-     *  provisioning UI lands. Gates `requireWorkspaceAdmin` /
+     *  provisioning UI lands. Gates `requireTenantAdmin` /
      *  `requireAdmin` routes for OAuth-authenticated requests. */
     role: text("role").notNull().default("member"),
     created_at: text("created_at").notNull(),
@@ -329,7 +329,7 @@ export const outboundWebhookDeliveries = sqliteTable(
     event: text("event").notNull(),
     status_code: integer("status_code"),
     attempt: integer("attempt").notNull(),
-    success: integer("success").notNull().default(0),
+    succeeded: integer("succeeded").notNull().default(0),
     error: text("error"),
     created_at: text("created_at").notNull(),
     next_attempt_at: text("next_attempt_at"),

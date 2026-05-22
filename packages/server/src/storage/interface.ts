@@ -400,7 +400,7 @@ export interface WebhookDeliveryStore {
     event: string;
     statusCode?: number;
     attempt: number;
-    success: boolean;
+    succeeded: boolean;
     error?: string;
   }): Promise<void>;
   list(webhookId: string, limit?: number): Promise<WebhookDelivery[]>;

@@ -3,13 +3,13 @@
  *
  * Coverage:
  *
- *   - workspace_admin's self-export returns only the calling tenant's
+ *   - tenant_admin's self-export returns only the calling tenant's
  *     rows. Other tenants' items, even when present in the same DB,
  *     are filtered out at the storage layer.
  *
- *   - workspace_admin with `target_tenant_id` matching own succeeds.
+ *   - tenant_admin with `target_tenant_id` matching own succeeds.
  *
- *   - workspace_admin with mismatching `target_tenant_id` is rejected
+ *   - tenant_admin with mismatching `target_tenant_id` is rejected
  *     with 403 (cross-tenant authority not granted).
  *
  *   - platform admin with explicit `target_tenant_id` scopes to that
@@ -45,7 +45,7 @@ async function mintTenantAdmin(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "workspace_admin",
+      role: "tenant_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
     },
@@ -67,7 +67,7 @@ async function readNdjsonItems(res: Response): Promise<string[]> {
     });
 }
 
-describe("T-053 tenant-scoped export — workspace_admin self-export", () => {
+describe("T-053 tenant-scoped export — tenant_admin self-export", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();

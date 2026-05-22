@@ -1,22 +1,22 @@
 /**
- * Wave B Part 2 — workspace_admin completeness pass.
+ * Wave B Part 2 — tenant_admin completeness pass.
  *
  * Coverage for the additions on top of the T-051 base:
  *
- *   - `checkTypeAccess` and `computeTypeFilter` admit `workspace_admin`
- *     with the same bypass admin gets — `workspace_admin` is the
+ *   - `checkTypeAccess` and `computeTypeFilter` admit `tenant_admin`
+ *     with the same bypass admin gets — `tenant_admin` is the
  *     "admin within tenant" tier and shouldn't be additionally gated
  *     by `type_permissions`.
  *
  *   - `GET /tenants/me/quotas` returns the calling tenant's row for
- *     workspace_admin; rejects platform-admin (no tenant_id) with 400.
+ *     tenant_admin; rejects platform-admin (no tenant_id) with 400.
  *
- *   - `GET /keys` (widened): workspace_admin sees only own-tenant keys.
+ *   - `GET /keys` (widened): tenant_admin sees only own-tenant keys.
  *
- *   - `DELETE /keys/:id` (widened): workspace_admin can revoke own-
+ *   - `DELETE /keys/:id` (widened): tenant_admin can revoke own-
  *     tenant key; cross-tenant attempts surface as 404 (cloak).
  *
- *   - `DELETE /items/:id/purge` (widened): workspace_admin can purge
+ *   - `DELETE /items/:id/purge` (widened): tenant_admin can purge
  *     own-tenant items.
  */
 
@@ -81,9 +81,9 @@ async function mintKey(
 // Unit — type_permissions bypass + computeTypeFilter
 // ---------------------------------------------------------------------------
 
-describe("workspace_admin bypasses type_permissions", () => {
-  it("checkTypeAccess returns silently for workspace_admin on any type", () => {
-    const key = fakeKey("workspace_admin", { type_permissions: {} });
+describe("tenant_admin bypasses type_permissions", () => {
+  it("checkTypeAccess returns silently for tenant_admin on any type", () => {
+    const key = fakeKey("tenant_admin", { type_permissions: {} });
     expect(() => {
       checkTypeAccess(key, "core.note", "write");
     }).not.toThrow();
@@ -96,7 +96,7 @@ describe("workspace_admin bypasses type_permissions", () => {
   });
 
   it("checkTypeAccess still gates system.* writes on is_platform", () => {
-    const key = fakeKey("workspace_admin", {
+    const key = fakeKey("tenant_admin", {
       type_permissions: {},
       is_platform: false,
     });
@@ -109,8 +109,8 @@ describe("workspace_admin bypasses type_permissions", () => {
     }).toThrow();
   });
 
-  it("computeTypeFilter returns undefined (no filter) for workspace_admin", () => {
-    const key = fakeKey("workspace_admin", {
+  it("computeTypeFilter returns undefined (no filter) for tenant_admin", () => {
+    const key = fakeKey("tenant_admin", {
       type_permissions: { "core.note": "read" },
     });
     expect(computeTypeFilter(key)).toBeUndefined();
@@ -136,12 +136,12 @@ describe("GET /tenants/me/quotas", () => {
     await ctx.cleanup();
   });
 
-  it("returns the calling tenant's quota row for workspace_admin", async () => {
+  it("returns the calling tenant's quota row for tenant_admin", async () => {
     ctx = await createTestContext();
     const tenantA = `tenant-quota-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdmin = await mintKey(ctx, {
       label: "ws-admin-quota",
-      role: "workspace_admin",
+      role: "tenant_admin",
       tenantId: tenantA,
     });
 
@@ -189,19 +189,19 @@ describe("widened routes — keys + items.purge", () => {
     await ctx.cleanup();
   });
 
-  it("workspace_admin GET /keys lists only own-tenant keys", async () => {
+  it("tenant_admin GET /keys lists only own-tenant keys", async () => {
     ctx = await createTestContext();
     const tenantA = `tenant-keys-a-${Math.random().toString(36).slice(2, 10)}`;
     const tenantB = `tenant-keys-b-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdminA = await mintKey(ctx, {
       label: "ws-keys-a",
-      role: "workspace_admin",
+      role: "tenant_admin",
       tenantId: tenantA,
     });
-    // Mint a tenant B key — workspace_admin in tenant A should not see it.
+    // Mint a tenant B key — tenant_admin in tenant A should not see it.
     await mintKey(ctx, {
       label: "ws-keys-b",
-      role: "workspace_admin",
+      role: "tenant_admin",
       tenantId: tenantB,
     });
 
@@ -215,20 +215,20 @@ describe("widened routes — keys + items.purge", () => {
     expect(body.keys.length).toBeGreaterThan(0);
   });
 
-  it("workspace_admin DELETE /keys/:id of cross-tenant key returns 404", async () => {
+  it("tenant_admin DELETE /keys/:id of cross-tenant key returns 404", async () => {
     ctx = await createTestContext();
     const tenantA = `tenant-rev-a-${Math.random().toString(36).slice(2, 10)}`;
     const tenantB = `tenant-rev-b-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdminA = await mintKey(ctx, {
       label: "ws-rev-a",
-      role: "workspace_admin",
+      role: "tenant_admin",
       tenantId: tenantA,
     });
     // Mint a key in tenant B; capture its id directly from the store
     // (tests don't need the raw key, just the row id).
     await mintKey(ctx, {
       label: "ws-rev-b",
-      role: "workspace_admin",
+      role: "tenant_admin",
       tenantId: tenantB,
     });
     const allKeys = await ctx.storage.keys.list();
@@ -244,12 +244,12 @@ describe("widened routes — keys + items.purge", () => {
     expect(res.status).toBe(404);
   });
 
-  it("workspace_admin can purge an item in own tenant", async () => {
+  it("tenant_admin can purge an item in own tenant", async () => {
     ctx = await createTestContext();
     const tenantA = `tenant-purge-${Math.random().toString(36).slice(2, 10)}`;
     const wsAdmin = await mintKey(ctx, {
       label: "ws-purge",
-      role: "workspace_admin",
+      role: "tenant_admin",
       tenantId: tenantA,
     });
 

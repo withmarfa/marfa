@@ -56,7 +56,7 @@ async function mintTenantAdmin(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "workspace_admin",
+      role: "tenant_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
       is_platform: false,

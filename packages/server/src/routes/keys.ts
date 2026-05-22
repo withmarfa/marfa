@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireWorkspaceAdmin, hashApiKey } from "../middleware/auth.js";
+import { requireTenantAdmin, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -29,7 +29,7 @@ const KeyResponseSchema = z.object({
   key: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.enum(["admin", "workspace_admin", "member"]),
+  role: z.enum(["admin", "tenant_admin", "member"]),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -73,7 +73,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key in the caller's tenant. The plaintext `key` field is returned **once** in the response — the server never shows it again. Store it securely; rotating means revoking the old key and creating a new one.\n\n`role` controls scope: `admin` bypasses every permission check; `workspace_admin` is the admin tier within a tenant; `member` is scoped by the three permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`) plus `metadata_permissions`. `source` is stamped onto every item written by the key and is unique per tenant. `default_tier` stamps `library` or `feed` when the writing client omits a tier.\n\nIn bootstrap mode (zero keys exist on a fresh server), no auth is required and the minted key is always admin. Once any key exists, bootstrap mode disables — further key creation requires an admin or workspace_admin token. See [Permissions](/api/permissions) for the permission-map grammar.",
+    "Creates a new API key in the caller's tenant. The plaintext `key` field is returned **once** in the response — the server never shows it again. Store it securely; rotating means revoking the old key and creating a new one.\n\n`role` controls scope: `admin` bypasses every permission check; `tenant_admin` is the admin tier within a tenant; `member` is scoped by the three permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`) plus `metadata_permissions`. `source` is stamped onto every item written by the key and is unique per tenant. `default_tier` stamps `library` or `feed` when the writing client omits a tier.\n\nIn bootstrap mode (zero keys exist on a fresh server), no auth is required and the minted key is always admin. Once any key exists, bootstrap mode disables — further key creation requires an admin or tenant_admin token. See [Permissions](/api/permissions) for the permission-map grammar.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -85,7 +85,7 @@ const createKeyRoute = createRoute({
               .string()
               .min(1, "source display name is required")
               .max(200),
-            role: z.enum(["admin", "workspace_admin", "member"]).optional(),
+            role: z.enum(["admin", "tenant_admin", "member"]).optional(),
             default_tier: z.enum(["library", "feed"]).optional(),
             is_platform: z.boolean().optional(),
             type_permissions: z
@@ -131,7 +131,7 @@ const listKeysRoute = createRoute({
   tags: ["Keys"],
   summary: "List API keys",
   description:
-    "Returns every API key in the caller's tenant. Hashes are returned in lieu of plaintext — the plaintext is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour per key; treat it as a coarse activity signal, not an audit log. Admin or workspace_admin only.",
+    "Returns every API key in the caller's tenant. Hashes are returned in lieu of plaintext — the plaintext is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour per key; treat it as a coarse activity signal, not an audit log. Admin or tenant_admin only.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -161,7 +161,7 @@ const revokeKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Revoke an API key",
   description:
-    "Revokes the key immediately. The next request bearing the revoked token returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. The revocation is audit-logged. Admin or workspace_admin only.",
+    "Revokes the key immediately. The next request bearing the revoked token returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. The revocation is audit-logged. Admin or tenant_admin only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -211,7 +211,7 @@ const KeyDetailSchema = z.object({
   id: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.enum(["admin", "workspace_admin", "member"]),
+  role: z.enum(["admin", "tenant_admin", "member"]),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -232,7 +232,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates mutable fields on an API key in place — `label`, `default_tier`, and the four permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`, `metadata_permissions`). `source` and `role` are immutable after creation and rejected with `400 validation_error` if present in the body — to change them, revoke and recreate. Admin or workspace_admin only.",
+    "Updates mutable fields on an API key in place — `label`, `default_tier`, and the four permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`, `metadata_permissions`). `source` and `role` are immutable after creation and rejected with `400 validation_error` if present in the body — to change them, revoke and recreate. Admin or tenant_admin only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string() }),
@@ -297,12 +297,12 @@ export function keyRoutes(storage: Storage, salt: string) {
   router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");
     if (!isBootstrap) {
-      // T-051: workspace_admin can mint own-tenant keys. The new key's
+      // T-051: tenant_admin can mint own-tenant keys. The new key's
       // tenant_id is stamped from the caller's tenant_id in the storage
       // layer; `is_platform` is coerced to `false` unless the caller is
-      // itself platform (see line ~310 below), so a workspace_admin
+      // itself platform (see line ~310 below), so a tenant_admin
       // cannot escalate to platform via the request body.
-      requireWorkspaceAdmin(c);
+      requireTenantAdmin(c);
     }
 
     // T-007: under bootstrap, atomically claim the workspace sentinel
@@ -343,7 +343,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     }
 
     // T-051: stamp the new key's tenant_id from the caller's tenant_id
-    // so a workspace_admin minting an own-tenant key gets the binding
+    // so a tenant_admin minting an own-tenant key gets the binding
     // automatically. Bootstrap is a special case — the seed admin is
     // stamped tenant-less (NULL) so it can write across tenants until a
     // hosted-mode tenant is created. Platform admins on a single-tenant
@@ -402,30 +402,30 @@ export function keyRoutes(storage: Storage, salt: string) {
 
   router.openapi(listKeysRoute, async (c) => {
     // T-051 follow-on (Wave B Part 2): widened from `requireAdmin`
-    // to `requireWorkspaceAdmin`. workspace_admin sees only its own
+    // to `requireTenantAdmin`. tenant_admin sees only its own
     // tenant's keys; admin (no tenant_id) sees all. Cross-tenant
     // visibility is fenced at the application layer here AND at the
     // DB layer (T-025 RLS) when enforcement is on.
-    const key = requireWorkspaceAdmin(c);
+    const key = requireTenantAdmin(c);
     const all = await storage.keys.list();
     const visible =
-      key.role === "workspace_admin" && key.tenant_id
+      key.role === "tenant_admin" && key.tenant_id
         ? all.filter((k) => k.tenant_id === key.tenant_id)
         : all;
     return c.json({ keys: visible }, 200);
   });
 
   router.openapi(revokeKeyRoute, async (c) => {
-    const key = requireWorkspaceAdmin(c);
+    const key = requireTenantAdmin(c);
     const { id } = c.req.valid("param");
 
     if (!isValidId(id)) {
       throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
 
-    // workspace_admin can only revoke keys in its own tenant —
+    // tenant_admin can only revoke keys in its own tenant —
     // surface as 404 so cross-tenant probes can't enumerate ids.
-    if (key.role === "workspace_admin" && key.tenant_id) {
+    if (key.role === "tenant_admin" && key.tenant_id) {
       const target = await storage.keys.get(id);
       if (target?.tenant_id !== key.tenant_id) {
         throw new MymeError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
@@ -446,7 +446,7 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(updateKeyRoute, async (c) => {
-    const key = requireWorkspaceAdmin(c);
+    const key = requireTenantAdmin(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
@@ -471,10 +471,10 @@ export function keyRoutes(storage: Storage, salt: string) {
     if (!existing) {
       throw new MymeError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
-    // workspace_admin can only update keys in its own tenant — same
+    // tenant_admin can only update keys in its own tenant — same
     // 404 cloak as revoke.
     if (
-      key.role === "workspace_admin" &&
+      key.role === "tenant_admin" &&
       key.tenant_id &&
       existing.tenant_id !== key.tenant_id
     ) {

@@ -128,7 +128,7 @@ export async function seedOauthBearer(
     clientName?: string;
     tenantId?: string;
     authUserId?: string;
-    userRole?: "admin" | "workspace_admin" | "member";
+    userRole?: "admin" | "tenant_admin" | "member";
   } = {},
 ): Promise<{ token: string; grantId: string; clientId: string }> {
   if (

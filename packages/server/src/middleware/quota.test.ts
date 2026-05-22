@@ -26,14 +26,14 @@ async function mintTenantAdmin(
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
   const raw = `myme_k1_quota_test_${suffix}`;
-  // Note: `workspace_admin` doesn't bypass `type_permissions` today
+  // Note: `tenant_admin` doesn't bypass `type_permissions` today
   // (admin-only bypass — gap to address in a follow-on); grant `*: write`
   // explicitly so the test can exercise items.create.
   await ctx.storage.keys.create(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "workspace_admin",
+      role: "tenant_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
       is_platform: false,

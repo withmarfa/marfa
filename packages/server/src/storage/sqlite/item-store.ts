@@ -313,7 +313,7 @@ export class SqliteItemStore implements ItemStore {
       // readable types" — typically a member-tier credential or an OAuth
       // token whose scopes don't project into any type_permission. The
       // route layer (computeTypeFilter) returns `undefined` to mean "no
-      // filter" (admin / workspace_admin) and an array to mean "filter
+      // filter" (admin / tenant_admin) and an array to mean "filter
       // to these patterns". An empty array must filter to zero rows; the
       // earlier shape silently fell through and returned every row.
       if (filters.allowed_types.length === 0) {
@@ -475,7 +475,7 @@ export class SqliteItemStore implements ItemStore {
             latestTs,
             this.versionSnapshotIntervalMs,
             false,
-            input.snapshot === true,
+            input.force_snapshot === true,
           )
         ) {
           await writeVersion(currentProps);
@@ -561,7 +561,7 @@ export class SqliteItemStore implements ItemStore {
           latestTs,
           this.versionSnapshotIntervalMs,
           false,
-          input.snapshot === true,
+          input.force_snapshot === true,
         )
       ) {
         await writeVersion(currentProps);

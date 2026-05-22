@@ -2,7 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MymeError } from "@mymehq/shared";
 import type { TenantConfig } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin, requireWorkspaceAdmin } from "../middleware/auth.js";
+import { requireAdmin, requireTenantAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -41,7 +41,7 @@ const getConfigRoute = createRoute({
   tags: ["Tenants"],
   summary: "Get the current tenant's configuration",
   description:
-    "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers under `enforcement` (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or workspace_admin.",
+    "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers under `enforcement` (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or tenant_admin.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -75,7 +75,7 @@ const putConfigRoute = createRoute({
   tags: ["Tenants"],
   summary: "Replace the current tenant's configuration",
   description:
-    "Overwrites the tenant's config with the supplied object — full replacement, not merge. The accepted shape carries the optional `enforcement` block (`strict_mode`, `source_allowlist`, `source_filter`) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`). Cleanup-job override values must be non-negative — `0` disables the corresponding job for this tenant.\n\nAdmin or workspace_admin. See [Schema enforcement](/concepts/schema-enforcement).",
+    "Overwrites the tenant's config with the supplied object — full replacement, not merge. The accepted shape carries the optional `enforcement` block (`strict_mode`, `source_allowlist`, `source_filter`) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`). Cleanup-job override values must be non-negative — `0` disables the corresponding job for this tenant.\n\nAdmin or tenant_admin. See [Schema enforcement](/concepts/schema-enforcement).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -170,9 +170,9 @@ const getQuotasRoute = createRoute({
   },
 });
 
-// T-052 follow-on (Wave B Part 2): workspace_admin's read-own surface.
+// T-052 follow-on (Wave B Part 2): tenant_admin's read-own surface.
 // `GET /tenants/me/quotas` resolves the calling key's tenant_id from
-// `c.var.apiKey` so workspace_admins don't need to know — or be told
+// `c.var.apiKey` so tenant_admins don't need to know — or be told
 // — their own tenant_id to read their ceilings. Cleaner than asking
 // them to invoke the platform-admin route at `/{tenant_id}/quotas`.
 const getOwnQuotasRoute = createRoute({
@@ -181,7 +181,7 @@ const getOwnQuotasRoute = createRoute({
   tags: ["Tenants"],
   summary: "Get current tenant quotas",
   description:
-    "Returns the calling tenant's quota ceilings, resolved from the calling credential's tenant so the caller doesn't need to know its own tenant id. Returns a row of nulls when no per-tenant override is configured (env defaults apply). Platform-admin keys with no tenant id receive `400` — use `GET /tenants/{id}/quotas` with the explicit id instead. Admin or workspace_admin.",
+    "Returns the calling tenant's quota ceilings, resolved from the calling credential's tenant so the caller doesn't need to know its own tenant id. Returns a row of nulls when no per-tenant override is configured (env defaults apply). Platform-admin keys with no tenant id receive `400` — use `GET /tenants/{id}/quotas` with the explicit id instead. Admin or tenant_admin.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -303,12 +303,12 @@ export function tenantRoutes(storage: Storage) {
   //
   // **Route order matters.** The `/me/quotas` route is registered BEFORE
   // `/{id}/quotas` so a request to `GET /tenants/me/quotas` matches the
-  // workspace-admin handler instead of the platform-admin handler with
+  // tenant-admin handler instead of the platform-admin handler with
   // `id="me"`. Hono dispatches in registration order; flipping these
-  // would surface as a 403 for workspace_admin (caught in the test
-  // suite — see `auth.workspace-admin-completeness.test.ts`).
+  // would surface as a 403 for tenant_admin (caught in the test
+  // suite — see `auth.tenant-admin-completeness.test.ts`).
   router.openapi(getOwnQuotasRoute, async (c) => {
-    const key = requireWorkspaceAdmin(c);
+    const key = requireTenantAdmin(c);
     const tenantId = key.tenant_id;
     if (!tenantId) {
       // Platform admin keys (no tenant_id) hit this — they should use
