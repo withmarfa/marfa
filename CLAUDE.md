@@ -208,11 +208,12 @@ If any of `types-freshness` / `openapi-freshness` / `schema-sql-freshness` fails
 
 ## Before pushing
 
-Tiered local validation, in increasing thoroughness:
+Two validation layers:
 
-- **Pre-push git hook (slim)** — automatic. Runs `build + typecheck + lint + format:check + test:changed` on every `git push` (build first so cross-package type resolution sees fresh `dist/*.d.ts`). `test:changed` scopes to tests whose files changed against `origin/main`; SQLite-only, target sub-30s. Installed via `git config --local core.hooksPath hooks` which `pnpm install`'s `prepare` step sets automatically. Skippable with `git push --no-verify` for transient infra flake.
-- **`pnpm test:full`** — explicit. Full dual-dialect matrix (`build + typecheck + lint + format:check + test:fresh-sqlite + test:pg`) without a clean install. Useful for confirming local dialect coverage when the slim gate's diff-scoped tests don't reach what you've touched.
-- **`pnpm ci-local`** — explicit. Clean install (`rm -rf node_modules`) + everything `test:full` runs. The "before opening a PR" gate; mirrors CI exactly. Takes a few minutes.
+- **Pre-push git hook (slim)** — automatic, fast local feedback. Runs `build + typecheck + lint + format:check + test:changed` on every `git push` (build first so cross-package type resolution sees fresh `dist/*.d.ts`). `test:changed` scopes to tests whose files changed against `origin/main`; SQLite-only, target sub-30s. Installed via `git config --local core.hooksPath hooks` which `pnpm install`'s `prepare` step sets automatically. Skippable with `git push --no-verify` for transient infra flake.
+- **`ci.yml`** — the authoritative run. The full dual-dialect matrix on every PR, on self-hosted or GitHub-hosted runners (`CI_RUNNER`). This is the gate that decides mergeability — the real workflow on real hardware, not a local approximation.
+
+For a full local check before opening a PR, `pnpm test:full` runs the whole dual-dialect matrix (`build + typecheck + lint + format:check + test:fresh-sqlite + test:pg + smoke:worker-entry`) without a clean install — useful when the slim gate's diff-scoped tests don't reach what you've touched.
 
 Per-target helpers for narrow runs:
 
@@ -221,7 +222,7 @@ Per-target helpers for narrow runs:
 - **`pnpm test`** — full SQLite suite, single run.
 - **`pnpm test:fresh-sqlite`** / **`pnpm test:pg`** — single-dialect runs.
 
-`test:pg` (and `test:full` / `ci-local` through it) boots a throw-away `postgres:17` container per invocation. Container name + port carry the invoking shell's PID so concurrent runs across worktrees don't clobber each other. Requires Docker (OrbStack / Docker Desktop / compatible daemon); if the daemon isn't reachable, the script skips gracefully with a `⊘` message — GitHub Actions runs the Postgres matrix on every PR, so local Docker is belt-and-braces, not a blocker.
+`test:pg` (and `test:full` through it) boots a throw-away `postgres:17` container per invocation. Container name + port carry the invoking shell's PID so concurrent runs across worktrees don't clobber each other. Requires Docker (OrbStack / Docker Desktop / compatible daemon); if the daemon isn't reachable, the script skips gracefully with a `⊘` message — GitHub Actions runs the Postgres matrix on every PR, so local Docker is belt-and-braces, not a blocker.
 
 **Why slim by default.** The prior pre-push hook ran the full ~1800-test dual-dialect suite and routinely got bypassed via `--no-verify` — a hook that's bypassed isn't a gate. The slim gate gives fast feedback on what you actually touched; CI's full matrix is the authoritative dual-dialect check.
 
