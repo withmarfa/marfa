@@ -53,6 +53,9 @@ data/
 # Deploy artifacts (generated on server, not in repo)
 version.json
 deploy.log
+
+# Operator deploy config — copy deploy.env.example to deploy.env and fill in.
+deploy.env
 .claude/settings.local.json
 .claude/plans/
 .claude/scheduled_tasks.lock

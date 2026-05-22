@@ -16,7 +16,16 @@ set -euo pipefail
 #   ./deploy.sh                Deploy latest main (restarts every service)
 #   ./deploy.sh --rollback     Rollback to previous SHA recorded in version.json
 #   ./deploy.sh --host myhost  Override SSH host
+#
+# Operator config: deploy.sh sources ./deploy.env (gitignored) when
+# present. Copy deploy.env.example to deploy.env and fill it in.
 # ---------------------------------------------------------------------------
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/deploy.env" ]; then
+  # shellcheck disable=SC1091
+  . "$SCRIPT_DIR/deploy.env"
+fi
 
 # --- Configuration (all via environment) ---
 DEPLOY_HOST="${DEPLOY_HOST:-}"
