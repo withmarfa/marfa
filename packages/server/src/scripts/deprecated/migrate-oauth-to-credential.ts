@@ -21,16 +21,16 @@
  *
  * Usage:
  *   pnpm --filter @mymehq/server migrate:oauth-to-credential
- *   pnpm --filter @mymehq/server tsx src/scripts/migrate-oauth-to-credential.ts --dialect=sqlite
- *   pnpm --filter @mymehq/server tsx src/scripts/migrate-oauth-to-credential.ts --dialect=pg
+ *   pnpm --filter @mymehq/server tsx src/scripts/deprecated/migrate-oauth-to-credential.ts --dialect=sqlite
+ *   pnpm --filter @mymehq/server tsx src/scripts/deprecated/migrate-oauth-to-credential.ts --dialect=pg
  *
  * Environment:
  *   - SQLITE_PATH (sqlite default ./data/myme.db)
  *   - DATABASE_URL (pg required)
  *   - MYME_AUTH_SECRET (required for encryption — same key the server uses)
  */
-import { encryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
-import type { Storage } from "../storage/interface.js";
+import { encryptSecret, SECRET_INFO } from "../../crypto/secret-encryption.js";
+import type { Storage } from "../../storage/interface.js";
 
 interface MigrationReport {
   total: number;
@@ -257,10 +257,11 @@ async function main(): Promise<void> {
       console.error("DATABASE_URL is required for --dialect=pg");
       process.exit(1);
     }
-    const { createPgStorage } = await import("../storage/pg/index.js");
+    const { createPgStorage } = await import("../../storage/pg/index.js");
     storage = await createPgStorage(url);
   } else {
-    const { createSqliteStorage } = await import("../storage/sqlite/index.js");
+    const { createSqliteStorage } =
+      await import("../../storage/sqlite/index.js");
     const path = process.env.SQLITE_PATH ?? "./data/myme.db";
     storage = await createSqliteStorage(path);
   }

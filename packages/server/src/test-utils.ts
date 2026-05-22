@@ -251,7 +251,7 @@ export async function seedOauthBearer(
   // Mint the token pair via the plugin's storage helper. Hash the BARE
   // (prefix-stripped) token to match what the plugin's `storeTokens.hash`
   // does — see middleware/auth.ts bearer path + the device-flow terminal
-  // in routes/oauth.ts for the canonical convention.
+  // in routes/auth-pages.ts for the canonical convention.
   const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const rawRefresh = `myme_rt_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const { hashApiKey } = await import("./middleware/auth.js");

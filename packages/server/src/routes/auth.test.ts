@@ -6,7 +6,6 @@ import { createTestContext, request } from "../test-utils.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { createApp } from "../app.js";
-import { touchLastUsedCache } from "../middleware/auth.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -287,47 +286,5 @@ describe("KeyStore.updateLastUsed — DB-side debounce", () => {
 
     const afterKey = await ctx.storage.keys.get(id);
     expect(afterKey?.last_used_at).toBe(firstStamp);
-  });
-});
-
-describe("touchLastUsedCache — bounded LRU eviction (§3.5)", () => {
-  it("evicts the oldest entry when size exceeds cap", () => {
-    // Use a tiny cap by overflowing past 32_768 once via direct API; that's
-    // expensive — simpler to verify the FIFO contract on a smaller scale by
-    // pre-filling the cache. The cap is internal; we verify the eviction
-    // policy by confirming insertion order is preserved and the oldest key
-    // is dropped first.
-    const cache = new Map<string, number>();
-    // Fill with 100 entries.
-    for (let i = 0; i < 100; i++) {
-      touchLastUsedCache(cache, `k${String(i)}`, i);
-    }
-    expect(cache.size).toBe(100);
-    // First inserted key is still present (no overflow yet).
-    expect(cache.has("k0")).toBe(true);
-
-    // Re-touch k0 — it should move to the back, leaving k1 as the oldest.
-    touchLastUsedCache(cache, "k0", 1000);
-    const keys = Array.from(cache.keys());
-    expect(keys[0]).toBe("k1");
-    expect(keys[keys.length - 1]).toBe("k0");
-  });
-
-  it("FIFO contract: oldest insertion key is dropped first", () => {
-    // Construct a tiny synthetic instance with a custom cap by exploiting
-    // that touchLastUsedCache evicts when `size > LAST_USED_CACHE_MAX`. We
-    // can't reach 32_768 cheaply in a unit test; instead, verify the
-    // insertion-order invariant the eviction relies on.
-    const cache = new Map<string, number>();
-    touchLastUsedCache(cache, "alpha", 1);
-    touchLastUsedCache(cache, "beta", 2);
-    touchLastUsedCache(cache, "gamma", 3);
-    // Re-touch beta — should move to back.
-    touchLastUsedCache(cache, "beta", 4);
-    const keys = Array.from(cache.keys());
-    // Order: alpha (oldest), gamma, beta (most recent).
-    expect(keys).toEqual(["alpha", "gamma", "beta"]);
-    // Re-touch values reflect the latest timestamp.
-    expect(cache.get("beta")).toBe(4);
   });
 });

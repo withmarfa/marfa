@@ -25,7 +25,7 @@
  * Usage:
  *   pnpm --filter @mymehq/server migrate:sync-json-to-connection
  *   SYNC_JSON_PATH=/path/to/sync.json pnpm tsx \
- *     packages/server/src/scripts/migrate-sync-json-to-connection.ts
+ *     packages/server/src/scripts/deprecated/migrate-sync-json-to-connection.ts
  *     [--dialect=sqlite|pg]
  *
  * Environment:
@@ -39,9 +39,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { encryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
+import { encryptSecret, SECRET_INFO } from "../../crypto/secret-encryption.js";
 import { SYNC_MANIFEST } from "@mymehq/integration-sync";
-import type { Storage } from "../storage/interface.js";
+import type { Storage } from "../../storage/interface.js";
 
 interface SyncJsonShape {
   url?: string;
@@ -254,10 +254,11 @@ async function main(): Promise<void> {
       console.error("DATABASE_URL is required for --dialect=pg");
       process.exit(1);
     }
-    const { createPgStorage } = await import("../storage/pg/index.js");
+    const { createPgStorage } = await import("../../storage/pg/index.js");
     storage = await createPgStorage(url);
   } else {
-    const { createSqliteStorage } = await import("../storage/sqlite/index.js");
+    const { createSqliteStorage } =
+      await import("../../storage/sqlite/index.js");
     const path = process.env.SQLITE_PATH ?? "./data/myme.db";
     storage = await createSqliteStorage(path);
   }

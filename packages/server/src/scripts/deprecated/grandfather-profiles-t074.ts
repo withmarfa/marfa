@@ -24,8 +24,8 @@
  * migration shape.
  *
  * Usage:
- *   pnpm --filter @mymehq/server tsx src/scripts/grandfather-profiles-t074.ts --dialect=sqlite
- *   pnpm --filter @mymehq/server tsx src/scripts/grandfather-profiles-t074.ts --dialect=pg
+ *   pnpm --filter @mymehq/server tsx src/scripts/deprecated/grandfather-profiles-t074.ts --dialect=sqlite
+ *   pnpm --filter @mymehq/server tsx src/scripts/deprecated/grandfather-profiles-t074.ts --dialect=pg
  *
  * Environment:
  *   - SQLITE_PATH (sqlite default ./data/myme.db)
@@ -36,8 +36,8 @@
  */
 import { randomBytes } from "node:crypto";
 import { isReservedHandle, isValidHandle } from "@mymehq/shared";
-import type { Storage } from "../storage/interface.js";
-import { hashApiKey } from "../middleware/auth.js";
+import type { Storage } from "../../storage/interface.js";
+import { hashApiKey } from "../../middleware/auth.js";
 
 interface AuthUserRow {
   id: string;
@@ -328,14 +328,15 @@ async function main(): Promise<void> {
   }
   let storage: Storage;
   if (dialect === "pg") {
-    const { createPgStorage } = await import("../storage/pg/index.js");
+    const { createPgStorage } = await import("../../storage/pg/index.js");
     const databaseUrl = process.env.DATABASE_URL;
     if (!databaseUrl) {
       throw new Error("DATABASE_URL is required for --dialect=pg");
     }
     storage = await createPgStorage(databaseUrl, { authMode: "hosted" });
   } else {
-    const { createSqliteStorage } = await import("../storage/sqlite/index.js");
+    const { createSqliteStorage } =
+      await import("../../storage/sqlite/index.js");
     const sqlitePath = process.env.SQLITE_PATH ?? "./data/myme.db";
     storage = await createSqliteStorage(sqlitePath, { authMode: "hosted" });
   }

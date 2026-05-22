@@ -3,9 +3,9 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
-import { createSqliteStorage } from "../storage/sqlite/index.js";
-import { createPgTestStorage } from "../test-utils.js";
-import type { Storage } from "../storage/interface.js";
+import { createSqliteStorage } from "../../storage/sqlite/index.js";
+import { createPgTestStorage } from "../../test-utils.js";
+import type { Storage } from "../../storage/interface.js";
 import { grandfatherProfilesT074 } from "./grandfather-profiles-t074.js";
 
 /**

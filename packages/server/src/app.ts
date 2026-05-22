@@ -25,7 +25,7 @@ import { runtimeCredentialRoutes } from "./routes/runtime-credentials.js";
 import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
-import { authRoutes } from "./routes/oauth.js";
+import { authRoutes } from "./routes/auth-pages.js";
 import { oauthRegisterRoutes } from "./routes/oauth-register.js";
 import {
   oauthProviderAuthServerMetadata,

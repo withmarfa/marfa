@@ -60,7 +60,7 @@ interface OAuthConfig {
  * `connection.properties.configuration` for plaintext OAuth fields,
  * including the client_secret) was dropped in T-022 once Layer 2
  * migrations had run. The migration script at
- * `src/scripts/migrate-oauth-to-credential.ts` is what installed
+ * `src/scripts/deprecated/migrate-oauth-to-credential.ts` is what installed
  * `credential_ref` on every existing connection.
  */
 async function readOAuthConfig(
