@@ -138,7 +138,7 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
             label: `${tenant}-admin`,
             source: `${tenant}-source-${suffix}`,
             role: "admin",
-            // workspace_admin would also pass; admin (with tenant_id
+            // tenant_admin would also pass; admin (with tenant_id
             // set) is the simplest path.
             type_permissions: { "*": "write" },
             default_tier: "library",

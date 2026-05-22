@@ -37,7 +37,7 @@ export interface ExportRoutesOptions {
  * T-053: resolve the target tenant for an export request.
  *
  * Three cases:
- *   1. **workspace_admin / member with tenant_id** — caller's tenant
+ *   1. **tenant_admin / member with tenant_id** — caller's tenant
  *      wins; cross-tenant attempts (`?target_tenant_id` set to
  *      anything other than the caller's own) are rejected with 403.
  *   2. **platform admin (no tenant_id)** — MUST pass an explicit
@@ -101,7 +101,7 @@ const exportRoute = createRoute({
       format: z.string().optional(),
       // T-053: platform admins scope a hosted-mode export to a
       // specific tenant by passing `?target_tenant_id=<id>`. Tenant-
-      // bound callers (workspace_admin / member) get their own
+      // bound callers (tenant_admin / member) get their own
       // tenant automatically; supplying a mismatching value here
       // returns 403.
       target_tenant_id: z.string().optional(),

@@ -293,7 +293,7 @@ describe("GET /webhooks/:id/deliveries", () => {
         event: "item.created",
         statusCode: 200,
         attempt: 1,
-        success: true,
+        succeeded: true,
       });
     }
 

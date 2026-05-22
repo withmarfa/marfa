@@ -450,7 +450,7 @@ export class PgItemStore implements ItemStore {
               latestTs,
               this.versionSnapshotIntervalMs,
               false,
-              input.snapshot === true,
+              input.force_snapshot === true,
             )
           ) {
             await this.versionStore.create(
@@ -558,7 +558,7 @@ export class PgItemStore implements ItemStore {
             mergeLatestTs,
             this.versionSnapshotIntervalMs,
             false,
-            input.snapshot === true,
+            input.force_snapshot === true,
           )
         ) {
           await this.versionStore.create(

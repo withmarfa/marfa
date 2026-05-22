@@ -37,7 +37,7 @@ const TEST_API_KEY_SALT = "test-salt";
  *   the wrapped form endpoint (which provisions the
  *   `tenants` + `users` bridge atomically), flips
  *   `auth_user.email_verified = TRUE` directly so sign-in is unblocked,
- *   then mints a `workspace_admin` API key bound to the new user's
+ *   then mints a `tenant_admin` API key bound to the new user's
  *   tenant. The returned client uses that key as bearer; the
  *   account-lifecycle routes resolve the bridge and recover the
  *   `auth_user.id` for `requestDelete` / `confirmDelete` / `cancel`.
@@ -179,7 +179,7 @@ export interface HostedModeFixture extends Omit<KeysModeFixture, "adminKey"> {
   /** `users.tenant_id` for the bridged Myme profile. The bearer key is
    *  scoped to this tenant. */
   tenantId: string;
-  /** A `workspace_admin` API key bound to `tenantId` — the SDK client
+  /** A `tenant_admin` API key bound to `tenantId` — the SDK client
    *  uses this as bearer. Use to mint additional clients in tests
    *  that need to compare auth surfaces. */
   bearerKey: string;
@@ -187,7 +187,7 @@ export interface HostedModeFixture extends Omit<KeysModeFixture, "adminKey"> {
 
 /**
  * Boot the server in hosted mode, sign up a fresh user, mint a
- * tenant-scoped `workspace_admin` bearer that resolves to
+ * tenant-scoped `tenant_admin` bearer that resolves to
  * `auth_user.id` via the `users` bridge.
  *
  * Sign-up uses the wrapped `POST /auth/sign-up` form endpoint (not
@@ -293,16 +293,16 @@ export async function createHostedModeFixture(
   }
   const tenantId = user.tenant_id;
 
-  // Mint a workspace_admin key bound to the user's tenant. This is the
+  // Mint a tenant_admin key bound to the user's tenant. This is the
   // same shape the real sign-up flow stamps (per
-  // deprecated/grandfather-profiles-t074.ts:260) — workspace_admin role with
+  // deprecated/grandfather-profiles-t074.ts:260) — tenant_admin role with
   // `*: write` permissions, scoped to the user's tenant.
   const rawKey = `myme_k1_sdk_hosted_${suffix}`;
   await storage.keys.create(
     {
       label: `sdk-hosted-${suffix}`,
       source: `sdk-hosted-${suffix}`,
-      role: "workspace_admin",
+      role: "tenant_admin",
       type_permissions: { "*": "write" },
       default_tier: "library",
       is_platform: false,

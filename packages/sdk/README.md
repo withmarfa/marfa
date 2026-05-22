@@ -51,7 +51,7 @@ try {
 
 ### Hosted-mode fixture (`createHostedModeFixture`)
 
-For SDK surfaces that resolve an `auth_user` from the bearer (account lifecycle, future passkey shims, anything that needs `client.auth.account.*`). Boots the server in `authMode: 'hosted'`, signs up a fresh user via the wrapped form endpoint (which provisions `tenants` + `users` bridge atomically), marks email-verified directly, and mints a `workspace_admin` API key bound to the new user's tenant. The returned client uses that key as bearer; account-lifecycle routes resolve through the bridge.
+For SDK surfaces that resolve an `auth_user` from the bearer (account lifecycle, future passkey shims, anything that needs `client.auth.account.*`). Boots the server in `authMode: 'hosted'`, signs up a fresh user via the wrapped form endpoint (which provisions `tenants` + `users` bridge atomically), marks email-verified directly, and mints a `tenant_admin` API key bound to the new user's tenant. The returned client uses that key as bearer; account-lifecycle routes resolve through the bridge.
 
 ```ts
 import {

@@ -351,7 +351,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       // Falls back to `member` when no Myme `users` row maps to the
       // auth_user (legacy rows the grandfather migration missed, or a
       // token whose user was hard-deleted mid-session).
-      let projectedRole: "admin" | "workspace_admin" | "member" = "member";
+      let projectedRole: "admin" | "tenant_admin" | "member" = "member";
       if (oauthToken.userId && storage.users) {
         const user = await storage.users.getByAuthUserId(oauthToken.userId);
         if (user) projectedRole = user.role;
@@ -472,7 +472,7 @@ export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
 
 /**
  * Tenant-bounded admin gate (T-051). Admits both `admin` (platform admin,
- * full instance authority) and `workspace_admin` (tenant-bounded admin
+ * full instance authority) and `tenant_admin` (tenant-bounded admin
  * within own `tenant_id`). Used for routes that genuinely belong inside a
  * tenant — own keys, webhooks, types, connections, extensions, blobs,
  * export. Routes that need platform authority (system config, cross-tenant
@@ -480,21 +480,21 @@ export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
  *
  * Cross-tenant safety is the route's responsibility:
  *   - Routes that take a path id (`/webhooks/:id`, `/keys/:id`) must pass
- *     `key.tenant_id` into the storage lookup so a workspace_admin
+ *     `key.tenant_id` into the storage lookup so a tenant_admin
  *     attempting to address another tenant's resource gets a 404.
  *   - Routes that list resources must pass `key.tenant_id` into the list
- *     query so workspace_admins see only their own.
+ *     query so tenant_admins see only their own.
  *   - Routes that create resources must stamp the new resource's
  *     `tenant_id` from `key.tenant_id` (the storage layer typically does
  *     this; verify on each callsite).
  *
  * Once T-025 (Postgres RLS) lands, the DB layer enforces this independently
  * — but until then the application layer is the load-bearing fence and
- * every workspace_admin-accepting route must thread `tenant_id` correctly.
+ * every tenant_admin-accepting route must thread `tenant_id` correctly.
  */
-export function checkWorkspaceAdmin(apiKey: ApiKey | undefined): ApiKey {
+export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
-  if (key.role !== "admin" && key.role !== "workspace_admin") {
+  if (key.role !== "admin" && key.role !== "tenant_admin") {
     throw new MymeError(ErrorCode.FORBIDDEN, "Admin access required");
   }
   return key;
@@ -541,17 +541,17 @@ export function checkTypeAccess(
     }
   }
 
-  // T-051 follow-on (Wave B Part 2): workspace_admin is admin-shaped
+  // T-051 follow-on (Wave B Part 2): tenant_admin is admin-shaped
   // within its own tenant. The application-layer tenant scoping +
-  // T-025 RLS at the DB layer keep workspace_admin reads/writes
+  // T-025 RLS at the DB layer keep tenant_admin reads/writes
   // confined to its tenant_id; bypassing type_permissions here gives
   // it the full type surface within that scope, matching admin's
-  // platform-wide behaviour. A workspace_admin key whose
+  // platform-wide behaviour. A tenant_admin key whose
   // type_permissions are deliberately tightened (e.g. to delegate
   // only `core.note`) belongs as `member` with explicit
-  // type_permissions instead — workspace_admin is the "full admin
+  // type_permissions instead — tenant_admin is the "full admin
   // within tenant" tier.
-  if (key.role === "admin" || key.role === "workspace_admin") return;
+  if (key.role === "admin" || key.role === "tenant_admin") return;
 
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (resolved === "none") {
@@ -571,11 +571,11 @@ export function checkTypeAccess(
 export function computeTypeFilter(
   apiKey: ApiKey | undefined,
 ): string[] | undefined {
-  // workspace_admin sees the full type surface within its tenant —
+  // tenant_admin sees the full type surface within its tenant —
   // see `checkTypeAccess` for the rationale. Returning `undefined`
   // here means "no filter"; tenant scoping is applied separately in
   // the storage layer (item-store filters by `tenant_id`).
-  if (!apiKey || apiKey.role === "admin" || apiKey.role === "workspace_admin") {
+  if (!apiKey || apiKey.role === "admin" || apiKey.role === "tenant_admin") {
     return undefined;
   }
 
@@ -602,13 +602,13 @@ export function requireAdmin(c: Context<AppEnv>): ApiKey {
 }
 
 /**
- * Tenant-bounded admin gate. Admits `admin` (platform) OR `workspace_admin`
- * (tenant-bounded). See `checkWorkspaceAdmin` for the safety contract:
+ * Tenant-bounded admin gate. Admits `admin` (platform) OR `tenant_admin`
+ * (tenant-bounded). See `checkTenantAdmin` for the safety contract:
  * the calling route MUST thread `key.tenant_id` into storage queries so a
- * workspace_admin cannot reach another tenant's resources via path id.
+ * tenant_admin cannot reach another tenant's resources via path id.
  */
-export function requireWorkspaceAdmin(c: Context<AppEnv>): ApiKey {
-  return checkWorkspaceAdmin(c.get("apiKey"));
+export function requireTenantAdmin(c: Context<AppEnv>): ApiKey {
+  return checkTenantAdmin(c.get("apiKey"));
 }
 
 export function requireTypeAccess(
@@ -620,8 +620,8 @@ export function requireTypeAccess(
 }
 
 /**
- * Enforces a per-edge-type permission check. Admin and workspace_admin
- * keys always pass (workspace_admin is admin-shaped within its tenant
+ * Enforces a per-edge-type permission check. Admin and tenant_admin
+ * keys always pass (tenant_admin is admin-shaped within its tenant
  * — see `checkTypeAccess` for the layered-helper rationale, T-051
  * follow-on / Wave B Part 2). Non-admin keys (member + OAuth-derived
  * synthetic keys) need either the specific edge-type permission or
@@ -637,7 +637,7 @@ export function requireEdgePermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  if (apiKey.role === "admin" || apiKey.role === "workspace_admin") return;
+  if (apiKey.role === "admin" || apiKey.role === "tenant_admin") return;
   if (edgePermissionCovers(apiKey.edge_permissions, edgeType, level)) return;
   throw new MymeError(
     ErrorCode.EDGE_PERMISSION_DENIED,
@@ -661,12 +661,12 @@ export function requireMetadataPermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  // Same admin-tier shape as `requireEdgePermission`: workspace_admin
+  // Same admin-tier shape as `requireEdgePermission`: tenant_admin
   // is admin-shaped within its tenant for metadata mutations too. The
   // platform-credential gate on `metadata.types:write` registration of
   // reserved-namespace types still applies via the route-level
   // `is_platform` check, not here.
-  if (apiKey.role === "admin" || apiKey.role === "workspace_admin") return;
+  if (apiKey.role === "admin" || apiKey.role === "tenant_admin") return;
   if (metadataPermissionCovers(apiKey.metadata_permissions, subresource, level))
     return;
   throw new MymeError(

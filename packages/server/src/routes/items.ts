@@ -19,7 +19,7 @@ import type { ItemState } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
-  requireWorkspaceAdmin,
+  requireTenantAdmin,
   requireTypeAccess,
   requireEdgePermission,
   getTypeFilter,
@@ -321,7 +321,7 @@ const updateItemRoute = createRoute({
           schema: z.object({
             properties: z.record(z.string(), z.unknown()).optional(),
             version: z.number().int().min(0).optional(),
-            snapshot: z.boolean().optional(),
+            force_snapshot: z.boolean().optional(),
             /** Toggle the tier (`library` ↔ `feed`). Independent of the
              *  properties merge path — last-writer-wins. */
             tier: z.enum(["library", "feed"]).optional(),
@@ -1509,7 +1509,7 @@ export function itemRoutes(storage: Storage) {
               {
                 properties: body.properties,
                 version: body.version,
-                snapshot: body.snapshot === true ? true : undefined,
+                force_snapshot: body.force_snapshot === true ? true : undefined,
                 tier: hasTier ? body.tier : undefined,
                 timestamp: hasTimestamp ? body.timestamp : undefined,
                 source_id: hasSourceId ? body.source_id : undefined,
@@ -1824,10 +1824,10 @@ export function itemRoutes(storage: Storage) {
     }
 
     // T-051 follow-on (Wave B Part 2): widened from `requireAdmin` to
-    // `requireWorkspaceAdmin`. The purge is already tenant-scoped via
-    // the explicit `tenantId` thread below — workspace_admin sees only
+    // `requireTenantAdmin`. The purge is already tenant-scoped via
+    // the explicit `tenantId` thread below — tenant_admin sees only
     // its own tenant's items.
-    requireWorkspaceAdmin(c);
+    requireTenantAdmin(c);
     const tenantId = c.get("apiKey")?.tenant_id;
     // Edges no longer carry a FK to items (thread-target compat window) so
     // cascade cleanup must happen explicitly before the item row goes.

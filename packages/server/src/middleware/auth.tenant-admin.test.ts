@@ -1,24 +1,24 @@
 /**
- * Tests for the T-051 workspace_admin role + helper.
+ * Tests for the T-051 tenant_admin role + helper.
  *
  * Two layers of coverage:
  *
- * 1. Unit-level — `checkWorkspaceAdmin(apiKey)` admits both `admin` and
- *    `workspace_admin`, rejects `member`, throws on missing key.
+ * 1. Unit-level — `checkTenantAdmin(apiKey)` admits both `admin` and
+ *    `tenant_admin`, rejects `member`, throws on missing key.
  *
  * 2. Integration — through-the-app behavior of the routes widened in this
  *    PR (POST /keys, /webhooks, /connections install/uninstall):
- *      - workspace_admin can mint own-tenant keys but cannot escalate to
+ *      - tenant_admin can mint own-tenant keys but cannot escalate to
  *        platform (is_platform silently coerced to false).
- *      - workspace_admin can CRUD own-tenant webhooks; cross-tenant
+ *      - tenant_admin can CRUD own-tenant webhooks; cross-tenant
  *        attempts surface as 404.
- *      - member is still rejected on workspace-admin-gated routes.
+ *      - member is still rejected on tenant-admin-gated routes.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
 import type { ApiKey } from "@mymehq/shared";
 import { MymeError, ErrorCode } from "@mymehq/shared";
-import { checkWorkspaceAdmin, hashApiKey } from "./auth.js";
+import { checkTenantAdmin, hashApiKey } from "./auth.js";
 import {
   createTestContext,
   request,
@@ -52,31 +52,31 @@ function fakeKey(
   };
 }
 
-describe("checkWorkspaceAdmin (unit)", () => {
+describe("checkTenantAdmin (unit)", () => {
   it("admits admin", () => {
     const key = fakeKey("admin");
-    expect(checkWorkspaceAdmin(key)).toBe(key);
+    expect(checkTenantAdmin(key)).toBe(key);
   });
 
-  it("admits workspace_admin", () => {
-    const key = fakeKey("workspace_admin");
-    expect(checkWorkspaceAdmin(key)).toBe(key);
+  it("admits tenant_admin", () => {
+    const key = fakeKey("tenant_admin");
+    expect(checkTenantAdmin(key)).toBe(key);
   });
 
   it("rejects member with FORBIDDEN", () => {
     const key = fakeKey("member");
-    expect(() => checkWorkspaceAdmin(key)).toThrow(MymeError);
+    expect(() => checkTenantAdmin(key)).toThrow(MymeError);
     try {
-      checkWorkspaceAdmin(key);
+      checkTenantAdmin(key);
     } catch (e) {
       expect((e as MymeError).code).toBe(ErrorCode.FORBIDDEN);
     }
   });
 
   it("rejects undefined with UNAUTHORIZED", () => {
-    expect(() => checkWorkspaceAdmin(undefined)).toThrow(MymeError);
+    expect(() => checkTenantAdmin(undefined)).toThrow(MymeError);
     try {
-      checkWorkspaceAdmin(undefined);
+      checkTenantAdmin(undefined);
     } catch (e) {
       expect((e as MymeError).code).toBe(ErrorCode.UNAUTHORIZED);
     }
@@ -97,7 +97,7 @@ async function mintKey(
   },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `myme_k1_workspace_admin_test_${suffix}`;
+  const raw = `myme_k1_tenant_admin_test_${suffix}`;
   const keyHash = hashApiKey(raw, TEST_API_KEY_SALT);
   await ctx.storage.keys.create(
     {
@@ -114,21 +114,21 @@ async function mintKey(
   return raw;
 }
 
-describe("workspace_admin integration — widened routes", () => {
+describe("tenant_admin integration — widened routes", () => {
   let ctx: TestContext;
 
   afterEach(async () => {
     await ctx.cleanup();
   });
 
-  it("workspace_admin can mint an own-tenant key", async () => {
+  it("tenant_admin can mint an own-tenant key", async () => {
     ctx = await createTestContext();
     const tenantA = {
       id: `tenant-a-${Math.random().toString(36).slice(2, 10)}`,
     };
     const wsAdmin = await mintKey(ctx, {
       label: "ws-admin-a",
-      role: "workspace_admin",
+      role: "tenant_admin",
       tenantId: tenantA.id,
     });
 
@@ -149,23 +149,23 @@ describe("workspace_admin integration — widened routes", () => {
       is_platform: boolean;
     };
     expect(minted.role).toBe("member");
-    // workspace_admin is not platform; their minted key MUST not be platform
+    // tenant_admin is not platform; their minted key MUST not be platform
     expect(minted.is_platform).toBe(false);
 
-    // Stored row carries the workspace_admin's tenant_id (T-051: stamped
+    // Stored row carries the tenant_admin's tenant_id (T-051: stamped
     // automatically from caller).
     const stored = await ctx.storage.keys.get(minted.id);
     expect(stored?.tenant_id).toBe(tenantA.id);
   });
 
-  it("workspace_admin cannot escalate to is_platform: true", async () => {
+  it("tenant_admin cannot escalate to is_platform: true", async () => {
     ctx = await createTestContext();
     const tenantA = {
       id: `tenant-a-${Math.random().toString(36).slice(2, 10)}`,
     };
     const wsAdmin = await mintKey(ctx, {
       label: "ws-admin-a-2",
-      role: "workspace_admin",
+      role: "tenant_admin",
       tenantId: tenantA.id,
     });
 
@@ -185,7 +185,7 @@ describe("workspace_admin integration — widened routes", () => {
     expect(minted.is_platform).toBe(false);
   });
 
-  it("member is rejected by workspace-admin-gated POST /keys (FORBIDDEN)", async () => {
+  it("member is rejected by tenant-admin-gated POST /keys (FORBIDDEN)", async () => {
     ctx = await createTestContext();
     const tenantA = {
       id: `tenant-a-${Math.random().toString(36).slice(2, 10)}`,
@@ -209,7 +209,7 @@ describe("workspace_admin integration — widened routes", () => {
     expect(res.status).toBe(403);
   });
 
-  it("workspace_admin can create + list + get own-tenant webhook; cross-tenant get is 404", async () => {
+  it("tenant_admin can create + list + get own-tenant webhook; cross-tenant get is 404", async () => {
     ctx = await createTestContext();
     const tenantA = {
       id: `tenant-a-${Math.random().toString(36).slice(2, 10)}`,
@@ -219,12 +219,12 @@ describe("workspace_admin integration — widened routes", () => {
     };
     const wsAdminA = await mintKey(ctx, {
       label: "ws-admin-a-wh",
-      role: "workspace_admin",
+      role: "tenant_admin",
       tenantId: tenantA.id,
     });
     const wsAdminB = await mintKey(ctx, {
       label: "ws-admin-b-wh",
-      role: "workspace_admin",
+      role: "tenant_admin",
       tenantId: tenantB.id,
     });
 
@@ -270,7 +270,7 @@ describe("workspace_admin integration — widened routes", () => {
     expect(getB.status).toBe(404);
   });
 
-  it("member is rejected by workspace-admin-gated webhook routes (FORBIDDEN)", async () => {
+  it("member is rejected by tenant-admin-gated webhook routes (FORBIDDEN)", async () => {
     ctx = await createTestContext();
     const tenantA = {
       id: `tenant-a-${Math.random().toString(36).slice(2, 10)}`,

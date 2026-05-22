@@ -10,7 +10,7 @@
  *   - POST /auth/account/delete/cancel    — session-cookie cancel.
  *   - GET  /auth/account/cancel           — email-cancel-by-link.
  *
- * Dual auth on the JSON endpoints: bearer (workspace_admin / admin in
+ * Dual auth on the JSON endpoints: bearer (tenant_admin / admin in
  * the same tenant as the auth_user) OR better-auth session cookie.
  * Email recipients click the GET endpoints, which are token-gated
  * directly — no caller credential needed.
@@ -42,7 +42,7 @@ function newToken(): string {
 /**
  * Resolve the caller into an `auth_user.id`. Two paths:
  *
- *   1. Bearer auth (api key) — workspace_admin or admin in a tenant.
+ *   1. Bearer auth (api key) — tenant_admin or admin in a tenant.
  *      We resolve the tenant's `users.auth_user_id` (canonical bridge,
  *      T-074).
  *   2. Better-auth session cookie — `auth.getSession()` returns the

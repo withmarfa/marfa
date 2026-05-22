@@ -33,10 +33,10 @@ The OpenAPI spec is generated from `createRoute` definitions — never hand-edit
 Three tiers, picked by intent:
 
 - **`requireAuth(c)`** — bearer token must resolve. No role check.
-- **`requireWorkspaceAdmin(c)`** — admits both `admin` (platform) and `workspace_admin` (tenant-bounded). Use for routes that genuinely belong inside a tenant. **The route MUST thread `key.tenant_id` into storage queries** so a workspace_admin attempting to address another tenant's resource gets a 404 (cross-tenant probes never see other tenants' data). With T-025 (Postgres RLS) wired, the DB layer enforces this independently when `MYME_RLS_ENFORCE=true`; the application-layer fence remains load-bearing for self-hosts that leave RLS off.
+- **`requireTenantAdmin(c)`** — admits both `admin` (platform) and `tenant_admin` (tenant-bounded). Use for routes that genuinely belong inside a tenant. **The route MUST thread `key.tenant_id` into storage queries** so a tenant_admin attempting to address another tenant's resource gets a 404 (cross-tenant probes never see other tenants' data). With T-025 (Postgres RLS) wired, the DB layer enforces this independently when `MYME_RLS_ENFORCE=true`; the application-layer fence remains load-bearing for self-hosts that leave RLS off.
 - **`requireAdmin(c)`** — platform-only. Use for routes that need cross-tenant authority or instance-level ops: tenant CRUD, OAuth client registration, audit cleanup, metrics, archive restore, platform-credential mint.
 
-**Type access bypass.** `checkTypeAccess` and `computeTypeFilter` admit both `admin` and `workspace_admin` without consulting `type_permissions`. workspace_admin is the "admin within tenant" tier — keys deliberately scoped to a subset of types belong as `member` with explicit `type_permissions`, not as workspace_admin. The platform-credential gate on `system.*` / `myme.*` writes still applies (workspace_admin is not platform unless explicitly minted that way).
+**Type access bypass.** `checkTypeAccess` and `computeTypeFilter` admit both `admin` and `tenant_admin` without consulting `type_permissions`. tenant_admin is the "admin within tenant" tier — keys deliberately scoped to a subset of types belong as `member` with explicit `type_permissions`, not as tenant_admin. The platform-credential gate on `system.*` / `myme.*` writes still applies (tenant_admin is not platform unless explicitly minted that way).
 
 When auditing a `requireAdmin` callsite for tenant widening: the route is safe to widen iff every storage operation it performs filters by (or stamps from) the caller's `tenant_id`. Lookups via path id MUST go through tenant-scoped store methods (e.g., `get(id, tenant_id)`); list operations MUST pass `tenant_id`; create operations MUST stamp `tenant_id` from the caller. If any of those isn't the case, either leave as `requireAdmin` or add a route-level tenant filter / 404-cloak (the pattern used in `keys.list/revoke/update` here).
 
@@ -46,7 +46,7 @@ Routes widened in T-051 (Wave B Part 1): `POST /keys`, all `/webhooks/*`, `POST 
 
 Most write routes follow the same gate sequence:
 
-1. Resolve auth (`requireAuth(c)`, `requireWorkspaceAdmin(c)`, `requireAdmin(c)`, or — for metadata-layer mutations — `requireMetadataPermission(c, subresource, level)` which admits admin + scope-bearing credentials).
+1. Resolve auth (`requireAuth(c)`, `requireTenantAdmin(c)`, `requireAdmin(c)`, or — for metadata-layer mutations — `requireMetadataPermission(c, subresource, level)` which admits admin + scope-bearing credentials).
 2. Validate body shape (Zod via `createRoute`).
 3. Check type permissions (`requireTypeAccess(c, type, "write")`).
 4. Resolve enforcement levers (TSC42 §5): tenant config + per-credential override → effective `EnforcementSettings`.
@@ -122,7 +122,7 @@ The helper lives at `storage/pg/streaming-rls.ts`. Public surface: `acquireStrea
 
 - `options.rlsEnforce === true` (env-driven; default on for T-146).
 - `options.pgClient !== null` (PG dialect; SQLite passes `null`).
-- Caller has a tenant_id (workspace_admin / member — not platform-admin / anonymous / single-tenant self-host).
+- Caller has a tenant_id (tenant_admin / member — not platform-admin / anonymous / single-tenant self-host).
 
 If any condition is false the route runs on the owner connection, matching the per-request middleware's bypass semantics.
 
@@ -152,9 +152,9 @@ The `runTenantCleanup` helper in `storage/retention.ts` is the shared fan-out ru
 
 OAuth tokens are issued with scopes parsed by `parseScope` in `@mymehq/shared`. At token-resolve time the auth middleware projects them into the synthetic `ApiKey`'s `type_permissions`, `edge_permissions`, and `metadata_permissions` maps. From that point the data plane gates flow through the same helpers used for ordinary API keys:
 
-- **`requireTypeAccess(c, type, level)`** — consults `type_permissions`. Wired on every single-item GET / PATCH / DELETE / restore / transition / version, on every POST `/items` (against `body.type`), and on edge-source and edge-target writes (`POST /items` with `edges`). Admin and workspace_admin bypass; member + OAuth-derived synthetic keys must match the projected permission. List reads use `getTypeFilter` instead — see below.
-- **`requireEdgePermission(c, edgeType, level)`** — consults `edge_permissions`. Wired on `POST /edges`, `PATCH /edges/:id`, `DELETE /edges/:id`, and on every edge mutation inside an atomic `POST /items`. Admin and workspace_admin bypass.
-- **`requireMetadataPermission(c, subresource, level)`** — consults `metadata_permissions`. Wired on `POST /types` (`metadata.types:write`). Admin and workspace_admin bypass.
+- **`requireTypeAccess(c, type, level)`** — consults `type_permissions`. Wired on every single-item GET / PATCH / DELETE / restore / transition / version, on every POST `/items` (against `body.type`), and on edge-source and edge-target writes (`POST /items` with `edges`). Admin and tenant_admin bypass; member + OAuth-derived synthetic keys must match the projected permission. List reads use `getTypeFilter` instead — see below.
+- **`requireEdgePermission(c, edgeType, level)`** — consults `edge_permissions`. Wired on `POST /edges`, `PATCH /edges/:id`, `DELETE /edges/:id`, and on every edge mutation inside an atomic `POST /items`. Admin and tenant_admin bypass.
+- **`requireMetadataPermission(c, subresource, level)`** — consults `metadata_permissions`. Wired on `POST /types` (`metadata.types:write`). Admin and tenant_admin bypass.
 - **List-read enforcement via `getTypeFilter`** — list endpoints (`GET /items`, `/search`, `/export`, bulk reads) project `type_permissions` into a storage-layer `allowed_types` filter. Out-of-scope types silently drop from the result set (status 200 with empty data) — implicit denial, not 403. The single-item GET path enforces explicitly via `requireTypeAccess`. Strict rejection on list filter mismatch would force callers to know exactly what's in scope; the implicit-denial shape lets a token pass `?type=X` even with a multi-type scope and get the right results.
 - **Empty `allowed_types` filters to zero rows.** The storage layer treats `allowed_types: []` as "no readable types" (forces `1=0` in SQL); previously it silently passed through and returned every row, a real security gap a no-scope token could exploit. Fixed in T-045 alongside the projection wiring.
 - **More-restrictive-wins is automatic.** OAuth tokens are synthetic `ApiKey` records built only from the granted scopes — there's no underlying API key whose permissions might be wider. Scope and credential are the same map.

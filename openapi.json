@@ -1615,7 +1615,7 @@
                     "type": "integer",
                     "minimum": 0
                   },
-                  "snapshot": {
+                  "force_snapshot": {
                     "type": "boolean"
                   },
                   "tier": {
@@ -11205,7 +11205,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key in the caller's tenant. The plaintext `key` field is returned **once** in the response — the server never shows it again. Store it securely; rotating means revoking the old key and creating a new one.\n\n`role` controls scope: `admin` bypasses every permission check; `workspace_admin` is the admin tier within a tenant; `member` is scoped by the three permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`) plus `metadata_permissions`. `source` is stamped onto every item written by the key and is unique per tenant. `default_tier` stamps `library` or `feed` when the writing client omits a tier.\n\nIn bootstrap mode (zero keys exist on a fresh server), no auth is required and the minted key is always admin. Once any key exists, bootstrap mode disables — further key creation requires an admin or workspace_admin token. See [Permissions](/api/permissions) for the permission-map grammar.",
+        "description": "Creates a new API key in the caller's tenant. The plaintext `key` field is returned **once** in the response — the server never shows it again. Store it securely; rotating means revoking the old key and creating a new one.\n\n`role` controls scope: `admin` bypasses every permission check; `tenant_admin` is the admin tier within a tenant; `member` is scoped by the three permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`) plus `metadata_permissions`. `source` is stamped onto every item written by the key and is unique per tenant. `default_tier` stamps `library` or `feed` when the writing client omits a tier.\n\nIn bootstrap mode (zero keys exist on a fresh server), no auth is required and the minted key is always admin. Once any key exists, bootstrap mode disables — further key creation requires an admin or tenant_admin token. See [Permissions](/api/permissions) for the permission-map grammar.",
         "security": [
           {
             "bearerAuth": []
@@ -11230,7 +11230,7 @@
                     "type": "string",
                     "enum": [
                       "admin",
-                      "workspace_admin",
+                      "tenant_admin",
                       "member"
                     ]
                   },
@@ -11318,7 +11318,7 @@
                       "type": "string",
                       "enum": [
                         "admin",
-                        "workspace_admin",
+                        "tenant_admin",
                         "member"
                       ]
                     },
@@ -11443,7 +11443,7 @@
           "Keys"
         ],
         "summary": "List API keys",
-        "description": "Returns every API key in the caller's tenant. Hashes are returned in lieu of plaintext — the plaintext is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour per key; treat it as a coarse activity signal, not an audit log. Admin or workspace_admin only.",
+        "description": "Returns every API key in the caller's tenant. Hashes are returned in lieu of plaintext — the plaintext is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour per key; treat it as a coarse activity signal, not an audit log. Admin or tenant_admin only.",
         "security": [
           {
             "bearerAuth": []
@@ -11602,7 +11602,7 @@
           "Keys"
         ],
         "summary": "Revoke an API key",
-        "description": "Revokes the key immediately. The next request bearing the revoked token returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. The revocation is audit-logged. Admin or workspace_admin only.",
+        "description": "Revokes the key immediately. The next request bearing the revoked token returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. The revocation is audit-logged. Admin or tenant_admin only.",
         "security": [
           {
             "bearerAuth": []
@@ -11686,7 +11686,7 @@
           "Keys"
         ],
         "summary": "Update an API key",
-        "description": "Updates mutable fields on an API key in place — `label`, `default_tier`, and the four permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`, `metadata_permissions`). `source` and `role` are immutable after creation and rejected with `400 validation_error` if present in the body — to change them, revoke and recreate. Admin or workspace_admin only.",
+        "description": "Updates mutable fields on an API key in place — `label`, `default_tier`, and the four permission maps (`type_permissions`, `extension_permissions`, `edge_permissions`, `metadata_permissions`). `source` and `role` are immutable after creation and rejected with `400 validation_error` if present in the body — to change them, revoke and recreate. Admin or tenant_admin only.",
         "security": [
           {
             "bearerAuth": []
@@ -11792,7 +11792,7 @@
                       "type": "string",
                       "enum": [
                         "admin",
-                        "workspace_admin",
+                        "tenant_admin",
                         "member"
                       ]
                     },
@@ -13441,7 +13441,7 @@
           "Tenants"
         ],
         "summary": "Get the current tenant's configuration",
-        "description": "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers under `enforcement` (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or workspace_admin.",
+        "description": "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers under `enforcement` (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or tenant_admin.",
         "security": [
           {
             "bearerAuth": []
@@ -13618,7 +13618,7 @@
           "Tenants"
         ],
         "summary": "Replace the current tenant's configuration",
-        "description": "Overwrites the tenant's config with the supplied object — full replacement, not merge. The accepted shape carries the optional `enforcement` block (`strict_mode`, `source_allowlist`, `source_filter`) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`). Cleanup-job override values must be non-negative — `0` disables the corresponding job for this tenant.\n\nAdmin or workspace_admin. See [Schema enforcement](/concepts/schema-enforcement).",
+        "description": "Overwrites the tenant's config with the supplied object — full replacement, not merge. The accepted shape carries the optional `enforcement` block (`strict_mode`, `source_allowlist`, `source_filter`) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`). Cleanup-job override values must be non-negative — `0` disables the corresponding job for this tenant.\n\nAdmin or tenant_admin. See [Schema enforcement](/concepts/schema-enforcement).",
         "security": [
           {
             "bearerAuth": []
@@ -13921,7 +13921,7 @@
           "Tenants"
         ],
         "summary": "Get current tenant quotas",
-        "description": "Returns the calling tenant's quota ceilings, resolved from the calling credential's tenant so the caller doesn't need to know its own tenant id. Returns a row of nulls when no per-tenant override is configured (env defaults apply). Platform-admin keys with no tenant id receive `400` — use `GET /tenants/{id}/quotas` with the explicit id instead. Admin or workspace_admin.",
+        "description": "Returns the calling tenant's quota ceilings, resolved from the calling credential's tenant so the caller doesn't need to know its own tenant id. Returns a row of nulls when no per-tenant override is configured (env defaults apply). Platform-admin keys with no tenant id receive `400` — use `GET /tenants/{id}/quotas` with the explicit id instead. Admin or tenant_admin.",
         "security": [
           {
             "bearerAuth": []
@@ -18241,7 +18241,7 @@
                           "attempt": {
                             "type": "number"
                           },
-                          "success": {
+                          "succeeded": {
                             "type": "boolean"
                           },
                           "error": {
@@ -18258,7 +18258,7 @@
                           "event",
                           "status_code",
                           "attempt",
-                          "success",
+                          "succeeded",
                           "error",
                           "created_at"
                         ]

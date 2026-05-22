@@ -52,7 +52,7 @@ const restoreArchiveRoute = createRoute({
     query: z.object({
       // T-053: platform admins targeting a specific tenant pass an
       // explicit `?target_tenant_id=<id>`. Tenant-bound admins
-      // (workspace_admin / admin with tenant_id) may not override —
+      // (tenant_admin / admin with tenant_id) may not override —
       // the manifest tenant_id must match their own tenant.
       target_tenant_id: z.string().optional(),
     }),

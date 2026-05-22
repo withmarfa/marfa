@@ -28,7 +28,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     tenant_id: row.tenant_id ?? undefined,
     label: row.label,
     source: row.source,
-    role: row.role as "admin" | "workspace_admin" | "member",
+    role: row.role as "admin" | "tenant_admin" | "member",
     default_tier: row.default_tier as Tier,
     is_platform: row.is_platform,
     is_runtime_credential: row.is_runtime_credential,

@@ -27,26 +27,26 @@ export const TIERS: readonly Tier[] = ["library", "feed"] as const;
  *
  * Applies to both API-key principals (the historical surface) and to
  * OAuth-bearer principals via `users.role` (T-178). The role gates
- * admin-shaped routes via `requireWorkspaceAdmin(c)` and `requireAdmin(c)`;
+ * admin-shaped routes via `requireTenantAdmin(c)` and `requireAdmin(c)`;
  * the bearer middleware projects this onto the synthetic principal
  * regardless of credential type.
  *
  * - `admin` — platform admin (single-tenant compat: full instance authority).
  *   Bypasses every permission map. Used for system config, cross-tenant ops,
  *   minting platform credentials.
- * - `workspace_admin` — tenant-bounded admin (T-051). Full admin authority
+ * - `tenant_admin` — tenant-bounded admin (T-051). Full admin authority
  *   *within the calling principal's `tenant_id`*: own keys, webhooks, types,
  *   connections, extensions. Cannot cross-tenant read/write (RLS-enforced),
  *   cannot mint platform credentials, cannot touch system config.
  * - `member` — non-admin credential. Bound by `type_permissions` /
  *   `edge_permissions` / `extension_permissions` / `metadata_permissions`.
  */
-export type MymeRole = "admin" | "workspace_admin" | "member";
+export type MymeRole = "admin" | "tenant_admin" | "member";
 
 /** Valid role values as a readonly array, useful for validation. */
 export const MYME_ROLES: readonly MymeRole[] = [
   "admin",
-  "workspace_admin",
+  "tenant_admin",
   "member",
 ] as const;
 
@@ -114,7 +114,9 @@ export interface CreateItemInput {
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
   version?: number;
-  snapshot?: boolean;
+  /** Force a version snapshot for this update, bypassing the
+   *  snapshot-interval throttle in version gating. */
+  force_snapshot?: boolean;
   /** Toggle the tier (`library` ↔ `feed`). Independent of the version-merge
    *  path for `properties`; flipping `tier` doesn't conflict (it's a single
    *  metadata-axis flag, last-writer-wins by design). */
@@ -532,7 +534,7 @@ export interface WebhookDelivery {
   event: string;
   status_code: number | null;
   attempt: number;
-  success: boolean;
+  succeeded: boolean;
   error: string | null;
   created_at: string;
 }
@@ -929,7 +931,7 @@ export interface EnforcementSettings {
  * Per-tenant resource quotas (T-052). Empty / missing limits fall back to
  * the instance defaults from env (`MYME_DEFAULT_QUOTA_*`). Quotas are
  * platform-admin-managed via `GET/PUT /admin/tenants/:id/quotas`; tenant-
- * own reads land via `GET /tenants/me/quotas` (workspace_admin or admin).
+ * own reads land via `GET /tenants/me/quotas` (tenant_admin or admin).
  *
  * Counts (e.g. `items_count`) are computed on-demand from existing tables
  * at quota-check time. The plan's eager-increment + daily reconcile
@@ -1027,7 +1029,7 @@ export interface User {
   /** T-178: principal role projected onto the bearer principal for
    *  OAuth-authenticated requests. Defaults to `member`; operator
    *  elevates via SQL until a real provisioning UI lands. The role
-   *  gates admin-shaped routes (`requireWorkspaceAdmin`, `requireAdmin`)
+   *  gates admin-shaped routes (`requireTenantAdmin`, `requireAdmin`)
    *  whether the request arrives via API key or OAuth bearer. */
   role: MymeRole;
   created_at: string;

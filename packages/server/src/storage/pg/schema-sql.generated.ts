@@ -401,7 +401,7 @@ CREATE TABLE IF NOT EXISTS public.outbound_webhook_deliveries (
     event text NOT NULL,
     status_code integer,
     attempt integer NOT NULL,
-    success integer DEFAULT 0 NOT NULL,
+    succeeded integer DEFAULT 0 NOT NULL,
     error text,
     created_at text NOT NULL,
     next_attempt_at text,

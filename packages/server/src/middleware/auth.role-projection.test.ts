@@ -2,7 +2,7 @@
  * T-178 — bearer middleware projects `users.role` onto OAuth principals.
  *
  * Before T-178 the middleware hardcoded `role: "member"` on every OAuth
- * bearer, so admin-gated routes (`/keys` CRUD via `requireWorkspaceAdmin`,
+ * bearer, so admin-gated routes (`/keys` CRUD via `requireTenantAdmin`,
  * `/admin/*` via `requireAdmin`) always 403-ed for OAuth-authenticated
  * admins. After T-178 the middleware reads the underlying `users.role`
  * for the auth_user the token was issued to.
@@ -51,11 +51,11 @@ describe("T-178 — bearer middleware role projection (OAuth)", () => {
     expect(res.status).toBe(200);
   });
 
-  it("projects users.role 'workspace_admin' onto the OAuth principal — /keys CRUD succeeds (tenant-scoped)", async () => {
-    const tenant = await tenants().create("workspace-admin-tenant");
+  it("projects users.role 'tenant_admin' onto the OAuth principal — /keys CRUD succeeds (tenant-scoped)", async () => {
+    const tenant = await tenants().create("tenant-admin-tenant");
     const { token } = await seedOauthBearer(ctx.storage, [], {
       tenantId: tenant.id,
-      userRole: "workspace_admin",
+      userRole: "tenant_admin",
     });
 
     const res = await request(ctx.app, "GET", "/keys", { key: token });
@@ -72,7 +72,7 @@ describe("T-178 — bearer middleware role projection (OAuth)", () => {
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     // Authenticated but insufficient role → 403, not 401. Before T-178
     // every OAuth bearer landed here; the change makes the gate gradient
-    // (admin/workspace_admin pass, member fails).
+    // (admin/tenant_admin pass, member fails).
     expect(res.status).toBe(403);
   });
 
@@ -93,7 +93,7 @@ describe("T-178 — bearer middleware role projection (OAuth)", () => {
     });
 
     // POST /keys with is_platform: true — the route accepts the role gate
-    // (admin passes requireWorkspaceAdmin), but `is_platform` is coerced
+    // (admin passes requireTenantAdmin), but `is_platform` is coerced
     // to `false` because the caller is OAuth-authenticated, not an API
     // key with `is_platform: true`. (See routes/keys.ts:337-343.)
     const res = await request(ctx.app, "POST", "/keys", {

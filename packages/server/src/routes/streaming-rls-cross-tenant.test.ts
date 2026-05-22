@@ -40,11 +40,11 @@ async function mintTenantKey(
     {
       label,
       source: `${label}-${suffix}`,
-      // workspace_admin: bypasses type-permission checks, so any leak
+      // tenant_admin: bypasses type-permission checks, so any leak
       // observed would be a DB-layer leak (the application-layer
       // filter is genuinely bypassed for this credential — exactly
       // what RLS is supposed to fence against).
-      role: "workspace_admin",
+      role: "tenant_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
     },
@@ -173,7 +173,7 @@ describe.skipIf(!isPg)(
       // Parse line-by-line; tenant A's stream must contain itemA and
       // never itemB. This holds whether RLS catches the row or the
       // application layer catches it — but with `*: write` perms +
-      // workspace_admin role, the application-layer filter only
+      // tenant_admin role, the application-layer filter only
       // narrows by tenant_id (which goes into the WHERE clause); if
       // the WHERE were dropped (regression), RLS is the second fence.
       const ids = body

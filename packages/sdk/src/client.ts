@@ -1743,7 +1743,7 @@ export class MymeClient {
    *
    * The data plane (every other namespace on the client) authenticates
    * with a bearer token; these account-management endpoints accept
-   * EITHER a bearer (workspace_admin / admin in the user's tenant)
+   * EITHER a bearer (tenant_admin / admin in the user's tenant)
    * OR a better-auth session cookie. The CLI flow uses a bearer (the
    * user's own key); web flows use the cookie. The transport sends
    * the bearer header by default, so SDK callers operating with a

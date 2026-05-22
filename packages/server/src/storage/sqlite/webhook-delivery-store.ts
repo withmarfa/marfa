@@ -18,7 +18,7 @@ function rowToDelivery(
     event: row.event,
     status_code: row.status_code ?? null,
     attempt: row.attempt,
-    success: row.success === 1,
+    succeeded: row.succeeded === 1,
     error: row.error ?? null,
     created_at: row.created_at,
   };
@@ -32,7 +32,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     event: string;
     statusCode?: number;
     attempt: number;
-    success: boolean;
+    succeeded: boolean;
     error?: string;
   }): Promise<void> {
     await this.db
@@ -43,7 +43,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         event: entry.event,
         status_code: entry.statusCode ?? null,
         attempt: entry.attempt,
-        success: entry.success ? 1 : 0,
+        succeeded: entry.succeeded ? 1 : 0,
         error: entry.error ?? null,
         created_at: new Date().toISOString(),
       })
@@ -78,7 +78,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         event: entry.event,
         status_code: null,
         attempt: 0,
-        success: 0,
+        succeeded: 0,
         error: null,
         created_at: new Date().toISOString(),
         next_attempt_at: entry.nextAttemptAt,
@@ -177,7 +177,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .update(outboundWebhookDeliveries)
       .set({
         status: "success",
-        success: 1,
+        succeeded: 1,
         status_code: statusCode,
         attempt,
       })
