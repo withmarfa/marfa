@@ -63,6 +63,52 @@ describe("GET /export", () => {
     }
   });
 
+  it("filters export by source", async () => {
+    // `source` is stamped from the credential, not the request body —
+    // so two keys with distinct sources give two distinct item sources.
+    const tag = Math.random().toString(36).slice(2);
+    const sourceA = `export-src-a-${tag}`;
+    const sourceB = `export-src-b-${tag}`;
+
+    const mintKey = async (source: string): Promise<string> => {
+      const res = await request(ctx.app, "POST", "/keys", {
+        key: ctx.adminKey,
+        body: { label: source, source, role: "admin", type_permissions: {} },
+      });
+      return ((await res.json()) as { key: string }).key;
+    };
+    const keyA = await mintKey(sourceA);
+    const keyB = await mintKey(sourceB);
+
+    for (const [key, sid] of [
+      [keyA, "a-1"],
+      [keyA, "a-2"],
+      [keyB, "b-1"],
+    ] as const) {
+      await request(ctx.app, "POST", "/items", {
+        key,
+        body: {
+          type: "core.note",
+          properties: { body: "source filter" },
+          source_id: sid,
+        },
+      });
+    }
+
+    const res = await request(ctx.app, "GET", `/export?source=${sourceA}`, {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+
+    const text = await res.text();
+    const lines = text.trim().split("\n").filter(Boolean);
+    expect(lines.length).toBe(2);
+    for (const line of lines) {
+      const parsed = JSON.parse(line) as { item: { source: string } };
+      expect(parsed.item.source).toBe(sourceA);
+    }
+  });
+
   it("round-trips: export then /items/bulk produces same items", async () => {
     // Round-trip via the new /items/bulk endpoint (replaces /import).
     // Use a new source_id on the bulk side so the insert doesn't dedupe.

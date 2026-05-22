@@ -90,12 +90,13 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export tenant data",
   description:
-    "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON or a tar.gz archive. Filterable by `type`, `state`, `tags`, `tier`, `since` / `until`. NDJSON is the default — one JSON object per line, items first then edges then metadata, suitable for piping into another store or `jq`. `format=archive` produces a `myme-archive-v1.tar.gz` ingestible by `POST /admin/restore-archive` for tenant-to-tenant migrations.\n\nLong-running; the response keeps streaming until the filter is exhausted. Tenant-scoped — exports only what the caller can read. See [Bulk operations — archive restore](/api/bulk-operations#archive-restore) for the round-trip.",
+    "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON or a tar.gz archive. Filterable by `type`, `state`, `source`, `since` / `until`. NDJSON is the default — one JSON object per line, items first then edges then metadata, suitable for piping into another store or `jq`. `format=archive` produces a `myme-archive-v1.tar.gz` ingestible by `POST /admin/restore-archive` for tenant-to-tenant migrations.\n\nLong-running; the response keeps streaming until the filter is exhausted. Tenant-scoped — exports only what the caller can read. See [Bulk operations — archive restore](/api/bulk-operations#archive-restore) for the round-trip.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
       type: z.string().optional(),
       state: z.string().optional(),
+      source: z.string().optional(),
       since: z.string().optional(),
       until: z.string().optional(),
       format: z.string().optional(),
@@ -211,6 +212,7 @@ export function exportRoutes(
 
     const since = query.since;
     const until = query.until;
+    const source = query.source;
 
     const allowedTypes = getTypeFilter(c);
     const encoder = new TextEncoder();
@@ -236,6 +238,7 @@ export function exportRoutes(
                 tenantId,
                 type,
                 state,
+                source,
                 since,
                 until,
                 allowed_types: allowedTypes,
@@ -324,6 +327,7 @@ async function handleArchiveExport(
   }
   const since = c.req.query("since");
   const until = c.req.query("until");
+  const source = c.req.query("source");
   // T-053: resolve target tenant (caller's own, or platform-admin's
   // explicit target). The audit row in the parent handler already
   // captured the `started` action; the manifest below stamps the
@@ -354,6 +358,7 @@ async function handleArchiveExport(
           tenantId,
           type,
           state,
+          source,
           since,
           until,
           allowed_types: allowedTypes,
