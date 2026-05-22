@@ -106,6 +106,18 @@ export interface AppConfig {
    *  3_600_000 (1h); env override `MYME_BULK_ACTION_JOB_GC_INTERVAL_MS`. */
   bulkActionJobGcIntervalMs?: number;
   errorWebhookUrl: string;
+  /** Per-fetch timeout (ms) for error-webhook delivery in
+   *  `middleware/error-notifier.ts`. Env override
+   *  `MYME_ERROR_WEBHOOK_TIMEOUT_MS`. Default 5000. Optional on the type
+   *  so test contexts constructing `AppConfig` literals don't have to
+   *  supply it; `loadConfig` always populates it. */
+  errorWebhookTimeoutMs?: number;
+  /** Per-fetch timeout (ms) for the reactive-run bridge's Cloudflare
+   *  Queues producer call. Env override `MYME_REACTIVE_RUN_SEND_TIMEOUT_MS`.
+   *  Default 5000. Threaded into `BridgeConfig.sendTimeoutMs` at bridge
+   *  construction so operators can tune it for real Queues latency.
+   *  Optional on the type for the same reason as `errorWebhookTimeoutMs`. */
+  reactiveRunSendTimeoutMs?: number;
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
   trustedProxyCidrs: CidrRange[];
@@ -361,6 +373,14 @@ export function loadConfig(): AppConfig {
       3_600_000,
     ),
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
+    errorWebhookTimeoutMs: envNumber(
+      process.env.MYME_ERROR_WEBHOOK_TIMEOUT_MS,
+      5000,
+    ),
+    reactiveRunSendTimeoutMs: envNumber(
+      process.env.MYME_REACTIVE_RUN_SEND_TIMEOUT_MS,
+      5000,
+    ),
     // Parse + validate at startup. Malformed CIDRs throw — we want bad
     // config to surface immediately, not silently degrade.
     trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),

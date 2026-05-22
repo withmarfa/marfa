@@ -15,6 +15,7 @@ import {
 } from "@mymehq/shared";
 import type { ApiKey } from "@mymehq/shared";
 import type { Storage } from "../storage/interface.js";
+import type { AppConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // Hono environment type (shared across all routes)
@@ -30,6 +31,12 @@ export interface AppEnv extends Record<string, unknown> {
     isBootstrap: boolean;
     authType: "api_key" | "oauth" | undefined;
     requestId: string;
+    /**
+     * The resolved `AppConfig`, stamped onto every request by `createApp`.
+     * Lets middleware and route handlers read env-derived settings from
+     * the single config source instead of re-reading `process.env`.
+     */
+    config: AppConfig;
     /**
      * Effective client IP for the current request, resolved once via
      * `getClientIp` and stashed by `clientIpMiddleware` (T-027). Routes

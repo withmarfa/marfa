@@ -481,6 +481,8 @@ export async function createTestContext(
     trashPurgeIntervalMs: 3_600_000,
     authSessionCleanupIntervalMs: 3_600_000,
     errorWebhookUrl: "",
+    errorWebhookTimeoutMs: 5000,
+    reactiveRunSendTimeoutMs: 5000,
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
     authAllowSignup: true,
