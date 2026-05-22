@@ -8,7 +8,7 @@ name = "myme-integration-task-auto-archive"
 main = "src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
-account_id = "fb81b3c1ad68ef6dbd689897e8897b10"
+# `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from the env.
 
 [vars]
 INTEGRATION_NAME = "mymehq.task-auto-archive"
@@ -26,7 +26,6 @@ new_sqlite_classes = ["PerConnectionState"]
 # ---- Staging --------------------------------------------------------------
 [env.staging]
 name = "myme-integration-task-auto-archive-staging"
-account_id = "fb81b3c1ad68ef6dbd689897e8897b10"
 
 [env.staging.vars]
 INTEGRATION_NAME = "mymehq.task-auto-archive"

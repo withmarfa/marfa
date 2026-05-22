@@ -2,7 +2,7 @@
 #
 # Use case: developer running `wrangler dev` against the control-plane
 # Worker on localhost:8787 needs a public HTTPS URL so the Myme server
-# (on :8602 or wherever) can deliver inbound webhooks to it.
+# (on its configured port) can deliver inbound webhooks to it.
 #
 # Two options:
 #
@@ -15,7 +15,7 @@
 #      cloudflared tunnel login
 #      cloudflared tunnel create myme-runtime-dev-<your-handle>
 #      cloudflared tunnel route dns myme-runtime-dev-<your-handle> \
-#        runtime-dev.<your-handle>.dev.myme.so
+#        runtime-dev.<your-handle>.<your-domain>
 #      cloudflared tunnel --config ./tunnel.config.yml run
 #
 # This file is the template for option 2 — copy to tunnel.config.yml,
@@ -26,6 +26,6 @@ tunnel: REPLACE_WITH_TUNNEL_UUID
 credentials-file: ${HOME}/.cloudflared/REPLACE_WITH_TUNNEL_UUID.json
 
 ingress:
-  - hostname: runtime-dev.REPLACE_WITH_HANDLE.dev.myme.so
+  - hostname: runtime-dev.REPLACE_WITH_HANDLE.REPLACE_WITH_DOMAIN
     service: http://localhost:8787
   - service: http_status:404
