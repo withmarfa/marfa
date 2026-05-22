@@ -105,12 +105,6 @@ export interface UpdateOptions {
    */
   expectedVersion?: number;
   /**
-   * Legacy alias for `expectedVersion`. Kept for backwards compatibility;
-   * new code should use `expectedVersion`.
-   * @deprecated Use `expectedVersion`.
-   */
-  version?: number;
-  /**
    * Override the client's default conflict strategy for this update.
    * - `"auto"`: auto-merge non-conflicting fields (default)
    * - `"manual"`: throw `ConflictError` with both versions
@@ -626,8 +620,7 @@ export class MymeClient {
       // Skip the upfront GET when the caller has supplied an expected
       // version. `type` stays optional — the conflict handler lazy-fetches
       // it only if a `keep_both_copies` path needs to spawn a sibling item.
-      // eslint-disable-next-line @typescript-eslint/no-deprecated
-      const expected = options?.expectedVersion ?? options?.version;
+      const expected = options?.expectedVersion;
       let version: number;
       let type: string | undefined = options?.type;
       if (expected !== undefined) {

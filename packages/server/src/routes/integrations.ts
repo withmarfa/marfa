@@ -212,7 +212,7 @@ export function integrationRoutes(storage: Storage, salt: string) {
   //   - `apiRouter` carries the OpenAPI-registered JSON CRUD surface.
   //   - `htmlRouter` carries the HTML consent/install flow (plain Hono,
   //     not OpenAPI — the response is HTML, not JSON, so the OpenAPI
-  //     spec doesn't describe it; same precedent as routes/oauth.ts'
+  //     spec doesn't describe it; same precedent as routes/auth-pages.ts'
   //     /authorize handlers).
   // Mixing OpenAPI routes and plain Hono routes on a single
   // OpenAPIHono instance was observed to cause Hono's body parser to

@@ -13,10 +13,10 @@
  *   - Idempotency: running twice doesn't create duplicates.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { createTestContext } from "../../test-utils.js";
+import type { TestContext } from "../../test-utils.js";
 import { migrateOauthToCredential } from "./migrate-oauth-to-credential.js";
-import { decryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
+import { decryptSecret, SECRET_INFO } from "../../crypto/secret-encryption.js";
 
 let ctx: TestContext;
 

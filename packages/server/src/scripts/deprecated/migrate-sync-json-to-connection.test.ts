@@ -16,13 +16,13 @@ import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createTestContext } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { createTestContext } from "../../test-utils.js";
+import type { TestContext } from "../../test-utils.js";
 import {
   migrateSyncJsonToConnection,
   type MigrationPaths,
 } from "./migrate-sync-json-to-connection.js";
-import { decryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
+import { decryptSecret, SECRET_INFO } from "../../crypto/secret-encryption.js";
 
 let ctx: TestContext;
 

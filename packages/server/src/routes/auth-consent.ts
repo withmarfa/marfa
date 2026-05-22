@@ -2,7 +2,7 @@
  * T-131: `/auth/authorize` consent page (Hono route).
  *
  * Replaces the homegrown GET/POST `/auth/authorize` handlers that lived
- * in `routes/oauth.ts`. The @better-auth/oauth-provider plugin's
+ * in `routes/auth-pages.ts`. The @better-auth/oauth-provider plugin's
  * `consentPage: "/auth/authorize"` config redirects unauthenticated /
  * unaccepted authorization requests here with the **full signed
  * authorize-request query string** as the URL's search part:
@@ -350,7 +350,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
 /**
  * Write or refresh the `system.connection { kind: "app" }` projection for
  * an accepted code-flow consent. Mirrors what `createUserAppGrant` in
- * `routes/oauth.ts` does for the device-flow path. Emits
+ * `routes/auth-pages.ts` does for the device-flow path. Emits
  * `auth.grant.created` audit row in both branches (creation + re-consent).
  *
  * Re-consent behaviour: if a projection already exists for (tenant,

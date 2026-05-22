@@ -182,7 +182,7 @@ describe("items", () => {
     const updated = await client.items.update(
       item.id,
       { title: "V2" },
-      { version: 1 },
+      { expectedVersion: 1 },
     );
     expect(updated.version).toBe(2);
   });
@@ -295,14 +295,14 @@ describe("conflict resolution", () => {
     await client.items.update(
       item.id,
       { title: "Server title" },
-      { version: 1 },
+      { expectedVersion: 1 },
     );
 
     // Second update changes body with stale version — server auto-merges
     const result = await client.items.update(
       item.id,
       { body: "New body" },
-      { version: 1 },
+      { expectedVersion: 1 },
     );
     expect(result.properties.title).toBe("Server title");
     expect(result.properties.body).toBe("New body");
@@ -315,7 +315,7 @@ describe("conflict resolution", () => {
     await client.items.update(
       item.id,
       { title: "Server title" },
-      { version: 1 },
+      { expectedVersion: 1 },
     );
 
     // Second update also changes title with stale version — real conflict
@@ -323,7 +323,7 @@ describe("conflict resolution", () => {
     const result = await client.items.update(
       item.id,
       { title: "Client title", body: "Client body" },
-      { version: 1, conflict: "auto" },
+      { expectedVersion: 1, conflict: "auto" },
     );
     // After auto-merge: title = server's value, body = client's value
     expect(result.properties.title).toBe("Server title");
@@ -335,14 +335,14 @@ describe("conflict resolution", () => {
     await client.items.update(
       item.id,
       { title: "Server title" },
-      { version: 1 },
+      { expectedVersion: 1 },
     );
 
     try {
       await client.items.update(
         item.id,
         { title: "Client title" },
-        { version: 1, conflict: "manual" },
+        { expectedVersion: 1, conflict: "manual" },
       );
       expect.fail("Should have thrown ConflictError");
     } catch (err) {
@@ -359,14 +359,14 @@ describe("conflict resolution", () => {
     await client.items.update(
       item.id,
       { title: "Server title" },
-      { version: 1 },
+      { expectedVersion: 1 },
     );
 
     const result = await client.items.update(
       item.id,
       { title: "Client title" },
       {
-        version: 1,
+        expectedVersion: 1,
         conflict: "callback",
         resolve: (conflict) => ({
           title: `${String(conflict.current.properties.title)} + ${String(conflict.clientPatch.title)}`,
@@ -384,14 +384,18 @@ describe("conflict resolution", () => {
 describe("conflict resolution — policy-aware auto strategy", () => {
   it("core.note body conflict spawns a conflicted-copy sibling", async () => {
     const item = await createNote({ title: "Original title", body: "Base" });
-    await client.items.update(item.id, { body: "Server body" }, { version: 1 });
+    await client.items.update(
+      item.id,
+      { body: "Server body" },
+      { expectedVersion: 1 },
+    );
 
     const events: string[] = [];
     const result = await client.items.update(
       item.id,
       { body: "Client body" },
       {
-        version: 1,
+        expectedVersion: 1,
         conflict: "auto",
         type: "core.note",
         onAutoMerge: (e) => {
@@ -415,7 +419,7 @@ describe("conflict resolution — policy-aware auto strategy", () => {
     await client.items.update(
       item.id,
       { title: "Server title" },
-      { version: 1 },
+      { expectedVersion: 1 },
     );
 
     let spawned: string | undefined;
@@ -423,7 +427,7 @@ describe("conflict resolution — policy-aware auto strategy", () => {
       item.id,
       { title: "Client title" },
       {
-        version: 1,
+        expectedVersion: 1,
         conflict: "auto",
         type: "core.note",
         onAutoMerge: (e) => {
@@ -441,7 +445,7 @@ describe("conflict resolution — policy-aware auto strategy", () => {
     await client.items.update(
       item.id,
       { body: "Server body", title: "Server title" },
-      { version: 1 },
+      { expectedVersion: 1 },
     );
 
     let event: { conflictedCopyId?: string; fields: string[] } | undefined;
@@ -449,7 +453,7 @@ describe("conflict resolution — policy-aware auto strategy", () => {
       item.id,
       { body: "Client body", title: "Client title" },
       {
-        version: 1,
+        expectedVersion: 1,
         conflict: "auto",
         type: "core.note",
         onAutoMerge: (e) => {
@@ -478,7 +482,7 @@ describe("conflict resolution — policy-aware auto strategy", () => {
     await client.items.update(
       item.id,
       { given_name: "Server Alice" },
-      { version: 1 },
+      { expectedVersion: 1 },
     );
 
     let spawned: string | undefined;
@@ -486,7 +490,7 @@ describe("conflict resolution — policy-aware auto strategy", () => {
       item.id,
       { given_name: "Client Alice" },
       {
-        version: 1,
+        expectedVersion: 1,
         conflict: "auto",
         type: "core.entity.person",
         onAutoMerge: (e) => {
@@ -609,14 +613,14 @@ describe("items.update expectedVersion", () => {
     expect(firstGetIdx).toBeGreaterThan(firstPatchIdx);
   });
 
-  it("legacy options.version still skips the GET (backward compat)", async () => {
+  it("skips the GET when expectedVersion is provided", async () => {
     const item = await createNote();
     const { client: c, calls } = newClient();
 
     const updated = await c.items.update(
       item.id,
       { title: "Patched" },
-      { version: item.version, type: "core.note" },
+      { expectedVersion: item.version, type: "core.note" },
     );
 
     expect(updated.version).toBe(item.version + 1);

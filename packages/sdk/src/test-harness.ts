@@ -295,7 +295,7 @@ export async function createHostedModeFixture(
 
   // Mint a workspace_admin key bound to the user's tenant. This is the
   // same shape the real sign-up flow stamps (per
-  // grandfather-profiles-t074.ts:260) — workspace_admin role with
+  // deprecated/grandfather-profiles-t074.ts:260) — workspace_admin role with
   // `*: write` permissions, scoped to the user's tenant.
   const rawKey = `myme_k1_sdk_hosted_${suffix}`;
   await storage.keys.create(
