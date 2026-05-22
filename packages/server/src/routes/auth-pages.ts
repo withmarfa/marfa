@@ -54,7 +54,7 @@ const ACCESS_TOKEN_TTL_MS = 3600_000; // 1 hour
  */
 const METADATA_SCOPE_DESCRIPTIONS: Record<string, string> = {
   metadata: "Read or write any metadata-layer resource",
-  "metadata.types": "Register and update custom data types in your workspace",
+  "metadata.types": "Register and update custom data types in your space",
 };
 
 /**

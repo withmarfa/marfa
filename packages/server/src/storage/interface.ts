@@ -1208,7 +1208,7 @@ export interface EventLogStore {
 }
 
 // ---------------------------------------------------------------------------
-// Settings store (workspace-wide KV for bootstrap sentinel etc.)
+// Settings store (instance-wide KV for bootstrap sentinel etc.)
 // ---------------------------------------------------------------------------
 
 export interface SettingsStore {

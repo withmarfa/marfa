@@ -1535,7 +1535,7 @@ export class MymeClient {
      * Defaults to all subscribers in the caller's tenant; pass
      * `connection_id` to filter to one. The optional `cycle` override
      * lets you reproduce reactive scenarios ("what if hop_count was N?").
-     * Workspace-admin only.
+     * Tenant-admin only.
      */
     previewEvent: async (
       input: PreviewEventRequest,

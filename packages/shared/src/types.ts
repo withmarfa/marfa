@@ -723,7 +723,7 @@ export interface PreviewEventCycleOverride {
  * `QueueMessageBody` envelopes the reactive-run bridge would emit, and
  * for each subscribing connection that wouldn't be dispatched, the reason
  * why. Pure server-side transform — no handler invocation, no queue
- * producer call. Workspace-admin scoped.
+ * producer call. Tenant-admin scoped.
  */
 export interface PreviewEventRequest {
   /** id of an existing item the operator wants to simulate fanout for. */

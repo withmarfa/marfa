@@ -520,7 +520,7 @@ export async function createTestContext(
     keyHash,
   );
   // Match what POST /keys would do on a real bootstrap call — stamp the
-  // workspace sentinel so subsequent POST /keys calls in this context
+  // bootstrap sentinel so subsequent POST /keys calls in this context
   // require admin auth instead of re-entering bootstrap mode.
   await storage.settings.set("bootstrapped", "true");
 
