@@ -11,8 +11,8 @@
 # Scope: SQLite only, only tests whose files changed against `origin/main`.
 # Target runtime: sub-30s for a typical small change. The slim gate
 # trades dual-dialect coverage for speed — CI runs the full PG + SQLite
-# matrix on every PR push, and `pnpm ci-local` is the explicit full-
-# matrix gate for the pre-PR moment.
+# matrix on every PR push, and `pnpm test:full` is the explicit local
+# full-matrix run for the pre-PR moment.
 #
 # Why slim. The prior pre-push (full ~1800-test dual-dialect suite) was
 # slow enough that contributors and agents routinely bypassed it with
@@ -27,7 +27,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 echo "═══ pre-push: build + typecheck + lint + format:check + test:changed ═══"
-echo "(slim gate; full matrix is \`pnpm ci-local\`. skip with --no-verify.)"
+echo "(slim gate; full matrix is \`pnpm test:full\`. skip with --no-verify.)"
 echo
 
 pnpm build
@@ -50,5 +50,4 @@ fi
 
 echo
 echo "═══ ✓ pre-push passed ═══"
-echo "Full matrix: \`pnpm ci-local\` (clean install + both dialects)"
-echo "Or per-tier: \`pnpm test:full\` (skips clean install)"
+echo "Full local matrix: \`pnpm test:full\` (build + typecheck + lint + both dialects)"
