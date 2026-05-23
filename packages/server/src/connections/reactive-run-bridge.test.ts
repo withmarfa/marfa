@@ -8,8 +8,13 @@ const STORAGE_STUB = {
   },
 } as unknown as Storage;
 
+/** Constant URL the resolver returns regardless of integration_name —
+ *  fine for tests that only assert bridge wiring, not per-integration
+ *  routing. */
+const RESOLVE_ANY = () => "https://queue.example.com";
+
 describe("tryStartReactiveRunBridge", () => {
-  it("returns null when queueUrl is missing (self-hoster path)", () => {
+  it("returns null when resolveQueueUrl is missing (self-hoster path)", () => {
     const bridge = tryStartReactiveRunBridge(STORAGE_STUB, {
       apiToken: "token",
     });
@@ -18,40 +23,141 @@ describe("tryStartReactiveRunBridge", () => {
 
   it("returns null when apiToken is missing", () => {
     const bridge = tryStartReactiveRunBridge(STORAGE_STUB, {
-      queueUrl: "https://queue.example.com",
+      resolveQueueUrl: RESOLVE_ANY,
     });
     expect(bridge).toBeNull();
   });
 
   it("returns a runtime when both are present", async () => {
     const bridge = tryStartReactiveRunBridge(STORAGE_STUB, {
-      queueUrl: "https://queue.example.com",
+      resolveQueueUrl: RESOLVE_ANY,
       apiToken: "token",
     });
     expect(bridge).not.toBeNull();
     expect(typeof bridge?.start).toBe("function");
     expect(typeof bridge?.stop).toBe("function");
-    // Bridges constructed without `config.fetch` instantiate a Pool;
-    // stop() to release it cleanly (avoids leaked-handle warnings).
+    // Bridges constructed without `config.fetch` instantiate Pool(s) on
+    // first send; stop() to release them cleanly (avoids leaked-handle
+    // warnings if any were created during bridge lifetime).
     await bridge?.stop();
   });
 
   it("respects explicit config over env vars", async () => {
-    const prevUrl = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URL;
+    const prevUrls = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
     const prevToken = process.env.CLOUDFLARE_QUEUES_API_TOKEN;
     try {
-      process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URL = "https://env-url";
+      process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = JSON.stringify({
+        "foo.bar": "https://env-url",
+      });
       process.env.CLOUDFLARE_QUEUES_API_TOKEN = "env-token";
       const bridge = tryStartReactiveRunBridge(STORAGE_STUB);
       expect(bridge).not.toBeNull();
       await bridge?.stop();
     } finally {
-      if (prevUrl === undefined)
-        delete process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URL;
-      else process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URL = prevUrl;
+      if (prevUrls === undefined)
+        delete process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
+      else process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = prevUrls;
       if (prevToken === undefined)
         delete process.env.CLOUDFLARE_QUEUES_API_TOKEN;
       else process.env.CLOUDFLARE_QUEUES_API_TOKEN = prevToken;
+    }
+  });
+});
+
+// T-233 — env-var parsing for CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS.
+// Replaces the single-URL CLOUDFLARE_QUEUES_REACTIVE_RUN_URL shape;
+// each integration's reactive-run queue is now resolved via the map.
+describe("tryStartReactiveRunBridge — env-var resolution (T-233)", () => {
+  const restoreEnv = (urls: string | undefined, token: string | undefined) => {
+    if (urls === undefined) {
+      delete process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
+    } else {
+      process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = urls;
+    }
+    if (token === undefined) delete process.env.CLOUDFLARE_QUEUES_API_TOKEN;
+    else process.env.CLOUDFLARE_QUEUES_API_TOKEN = token;
+  };
+
+  it("returns null when the URLs env var is unset", () => {
+    const prevUrls = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
+    const prevToken = process.env.CLOUDFLARE_QUEUES_API_TOKEN;
+    try {
+      delete process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
+      process.env.CLOUDFLARE_QUEUES_API_TOKEN = "token";
+      const bridge = tryStartReactiveRunBridge(STORAGE_STUB);
+      expect(bridge).toBeNull();
+    } finally {
+      restoreEnv(prevUrls, prevToken);
+    }
+  });
+
+  it("returns null when the URLs env var is malformed JSON", () => {
+    const prevUrls = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
+    const prevToken = process.env.CLOUDFLARE_QUEUES_API_TOKEN;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(vi.fn());
+    try {
+      process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = "not-json";
+      process.env.CLOUDFLARE_QUEUES_API_TOKEN = "token";
+      const bridge = tryStartReactiveRunBridge(STORAGE_STUB);
+      expect(bridge).toBeNull();
+      expect(errSpy).toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+      restoreEnv(prevUrls, prevToken);
+    }
+  });
+
+  it("returns null when the URLs env var is an empty object", () => {
+    const prevUrls = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
+    const prevToken = process.env.CLOUDFLARE_QUEUES_API_TOKEN;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(vi.fn());
+    try {
+      process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = "{}";
+      process.env.CLOUDFLARE_QUEUES_API_TOKEN = "token";
+      const bridge = tryStartReactiveRunBridge(STORAGE_STUB);
+      expect(bridge).toBeNull();
+      expect(errSpy).toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+      restoreEnv(prevUrls, prevToken);
+    }
+  });
+
+  it("returns null when the URLs env var is a JSON array (not an object)", () => {
+    const prevUrls = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
+    const prevToken = process.env.CLOUDFLARE_QUEUES_API_TOKEN;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(vi.fn());
+    try {
+      process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = '["https://x"]';
+      process.env.CLOUDFLARE_QUEUES_API_TOKEN = "token";
+      const bridge = tryStartReactiveRunBridge(STORAGE_STUB);
+      expect(bridge).toBeNull();
+      expect(errSpy).toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+      restoreEnv(prevUrls, prevToken);
+    }
+  });
+
+  it("ignores entries whose value isn't a non-empty string but still boots if at least one is valid", async () => {
+    const prevUrls = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
+    const prevToken = process.env.CLOUDFLARE_QUEUES_API_TOKEN;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(vi.fn());
+    try {
+      process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS = JSON.stringify({
+        "valid.one": "https://valid.example.com",
+        "invalid.bool": true,
+        "invalid.empty": "",
+      });
+      process.env.CLOUDFLARE_QUEUES_API_TOKEN = "token";
+      const bridge = tryStartReactiveRunBridge(STORAGE_STUB);
+      expect(bridge).not.toBeNull();
+      // Two warnings, one per ignored entry.
+      expect(errSpy).toHaveBeenCalledTimes(2);
+      await bridge?.stop();
+    } finally {
+      errSpy.mockRestore();
+      restoreEnv(prevUrls, prevToken);
     }
   });
 });
@@ -63,20 +169,23 @@ describe("tryStartReactiveRunBridge", () => {
 // connection-reuse property is a guarantee of undici itself and is
 // verified end-to-end via the staging load smoke described in the
 // T-135 vault ticket.
-describe("reactive-run-bridge — Pool transport (T-135)", () => {
-  it("stop() releases the Pool cleanly when Pool is in use", async () => {
-    // Construct without config.fetch — Pool is created.
+describe("reactive-run-bridge — Pool transport (T-135 + T-233)", () => {
+  it("stop() releases Pools cleanly when Pool path is in use", async () => {
+    // Construct without config.fetch — Pools are created on demand by
+    // sendOne. Without an actual fanout the map stays empty; stop()
+    // still iterates and closes whatever's in the map (no entries).
     const bridge = tryStartReactiveRunBridge(STORAGE_STUB, {
-      queueUrl: "https://queue.example.com/queue",
+      resolveQueueUrl: () => "https://queue.example.com/queue",
       apiToken: "token",
     });
     expect(bridge).not.toBeNull();
-    // stop() must await pool.close(); if the wiring is broken, vitest
-    // surfaces open-handle warnings. Idempotent at the Pool layer.
+    // stop() must await every pool.close(); if the wiring is broken,
+    // vitest surfaces open-handle warnings. Idempotent at the Pool
+    // layer (close() is safe on any state).
     await expect(bridge?.stop()).resolves.toBeUndefined();
   });
 
-  it("stop() succeeds when config.fetch was injected (Pool bypassed)", async () => {
+  it("stop() succeeds when config.fetch was injected (Pools bypassed)", async () => {
     const fetchStub = vi.fn(
       () =>
         new Response("{}", {
@@ -85,7 +194,7 @@ describe("reactive-run-bridge — Pool transport (T-135)", () => {
         }),
     );
     const bridge = tryStartReactiveRunBridge(STORAGE_STUB, {
-      queueUrl: "https://queue.example.com/queue",
+      resolveQueueUrl: () => "https://queue.example.com/queue",
       apiToken: "token",
       fetch: fetchStub as unknown as typeof fetch,
     });
@@ -97,13 +206,14 @@ describe("reactive-run-bridge — Pool transport (T-135)", () => {
     expect(fetchStub).not.toHaveBeenCalled();
   });
 
-  it("Pool URL parsing handles queueUrl with path + query segments", async () => {
-    // The Pool is constructed against `new URL(queueUrl).origin`, and
-    // sendOne uses `url.pathname + url.search` for the request path.
-    // Smoke-test the URL forms we hit in production (Cloudflare Queues
-    // messages endpoint sits under /client/v4/accounts/<id>/queues/<id>/messages).
+  it("Pool URL parsing handles per-integration URLs with path + query segments", async () => {
+    // The Pool is constructed against `new URL(url).origin` per origin
+    // (T-233); sendOne uses `url.pathname + url.search` for the request
+    // path. Smoke-test the URL forms we hit in production (Cloudflare
+    // Queues messages endpoint sits under
+    // /client/v4/accounts/<id>/queues/<id>/messages).
     const bridge = tryStartReactiveRunBridge(STORAGE_STUB, {
-      queueUrl:
+      resolveQueueUrl: () =>
         "https://api.cloudflare.com/client/v4/accounts/abc/queues/xyz/messages",
       apiToken: "token",
     });

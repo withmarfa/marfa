@@ -89,11 +89,12 @@ async function main() {
   // Enable SSE event persistence
   initEventLog(storage.eventLog, defaultCycleDetectionWiring(storage));
 
-  // Reactive-run bridge — opt-in via CLOUDFLARE_QUEUES_REACTIVE_RUN_URL +
-  // CLOUDFLARE_QUEUES_API_TOKEN. When unset, returns null and the server
-  // boots without the Cloudflare Queues hop (self-hoster path). When set,
-  // the bridge subscribes to pubsub and forwards `item-event`s to the
-  // configured queue producer for fanout to per-Integration Workers.
+  // Reactive-run bridge — opt-in via CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS
+  // + CLOUDFLARE_QUEUES_API_TOKEN. When unset, returns null and the
+  // server boots without the Cloudflare Queues hop (self-hoster path).
+  // When set, the bridge subscribes to pubsub and forwards `item-event`s
+  // to the per-integration queue producer (T-233) for fanout to the
+  // owning per-Integration Worker.
   const reactiveRunBridge = tryStartReactiveRunBridge(storage, {
     sendTimeoutMs: config.reactiveRunSendTimeoutMs,
   });
@@ -111,7 +112,7 @@ async function main() {
   } else {
     log(
       "info",
-      "Reactive-run bridge disabled (CLOUDFLARE_QUEUES_REACTIVE_RUN_URL / CLOUDFLARE_QUEUES_API_TOKEN unset)",
+      "Reactive-run bridge disabled (CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS / CLOUDFLARE_QUEUES_API_TOKEN unset or malformed)",
     );
   }
 

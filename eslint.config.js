@@ -74,6 +74,16 @@ export default [
       // checkout's lint must not descend into them or it'll surface
       // work-in-progress code from other agents/branches.
       ".claude/worktrees/",
+      // Global scratch folders (per the user's ~/.gitignore_global —
+      // also documented in the user-level CLAUDE.md). These hold
+      // throwaway harnesses, captures, and never-tracked files; they
+      // sit in the repo tree but aren't part of the project's source
+      // set. Without this ignore, lint trips on any `.ts` an agent
+      // drops there for local exploration (e.g. the validation
+      // harness from T-231 close-out).
+      "_local/",
+      "_tmp/",
+      "_ignore/",
     ],
   },
 ];

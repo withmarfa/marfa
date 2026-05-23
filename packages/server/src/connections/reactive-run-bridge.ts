@@ -10,9 +10,20 @@
  * abstraction now; just file the comment so the swap point is obvious.
  *
  * The bridge is OPT-IN: it only runs when both
- * `CLOUDFLARE_QUEUES_REACTIVE_RUN_URL` and `CLOUDFLARE_QUEUES_API_TOKEN`
+ * `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` and `CLOUDFLARE_QUEUES_API_TOKEN`
  * are set. Self-hoster instances leave both unset and the bridge is a
  * no-op startup-time function. Server tests skip the bridge.
+ *
+ * T-233 — per-integration reactive-run queues. Each integration that
+ * declares an `item-event` trigger has its own producer URL; the
+ * bridge resolves `integration_name` → URL at fanout time. The prior
+ * shared-queue `CLOUDFLARE_QUEUES_REACTIVE_RUN_URL` shape couldn't
+ * coexist with more than one outbound integration because Cloudflare
+ * Queues only allow one consumer per queue — the runtime-sdk's
+ * queue-consumer filter silently acked + dropped messages addressed
+ * to integrations other than the consumer-claiming Worker. The per-
+ * integration shape mirrors the existing scheduled-poll +
+ * webhook-receipt families.
  *
  * Concurrency: a single worker drains the subscription and posts to
  * Cloudflare Queues. The bridge is gated by
@@ -90,7 +101,22 @@ interface SubscriberFailureState {
 type SendOneResult = "success" | "rejected";
 
 export interface BridgeConfig {
-  queueUrl: string;
+  /**
+   * T-233 — resolves the Cloudflare Queues producer URL for a given
+   * `integration_name`. The bridge calls this for every fanout target.
+   *
+   * Return `null` for an unmapped integration — the bridge logs an
+   * error, emits a one-time `action_required` `system.activity` row
+   * (per integration per process lifetime), and skips dispatch. The
+   * subscriber's failure ladder is NOT incremented because an unmapped
+   * integration is a server-side env-config gap, not a connection
+   * health issue.
+   *
+   * Production wiring reads `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS`
+   * (JSON map of `integration_name → producer URL`); tests pass a
+   * function directly.
+   */
+  resolveQueueUrl: (integrationName: string) => string | null;
   apiToken: string;
   /** Per-batch send size; the producer endpoint accepts up to ~100. */
   batchSize?: number;
@@ -146,17 +172,27 @@ export interface BridgeRuntime {
  * Build a bridge runtime that connects the in-process pubsub to the
  * Cloudflare Queues HTTP producer. Returns null when the bridge env
  * vars are unset (self-hoster path).
+ *
+ * Two activation conditions, both must hold:
+ *   1. `CLOUDFLARE_QUEUES_API_TOKEN` set (or `config.apiToken`).
+ *   2. EITHER `config.resolveQueueUrl` supplied (test path), OR
+ *      `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` parses into a non-empty
+ *      JSON map.
+ *
+ * Unparseable env-var JSON logs an error and returns null — better to
+ * boot the server with the bridge disabled (surfaces in the
+ * `"Reactive-run bridge disabled"` log line + the empty activity
+ * stream) than to boot with a half-built resolver that maps nothing.
  */
 export function tryStartReactiveRunBridge(
   storage: Storage,
   config?: Partial<BridgeConfig>,
 ): BridgeRuntime | null {
-  const queueUrl =
-    config?.queueUrl ?? process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URL;
+  const resolveQueueUrl = config?.resolveQueueUrl ?? buildResolverFromEnv();
   const apiToken = config?.apiToken ?? process.env.CLOUDFLARE_QUEUES_API_TOKEN;
-  if (!queueUrl || !apiToken) return null;
+  if (!resolveQueueUrl || !apiToken) return null;
   return createBridge(storage, {
-    queueUrl,
+    resolveQueueUrl,
     apiToken,
     batchSize: config?.batchSize ?? 10,
     maxAttempts: config?.maxAttempts ?? 5,
@@ -169,6 +205,60 @@ export function tryStartReactiveRunBridge(
     failureCooldownMaxMs: config?.failureCooldownMaxMs ?? MAX_COOLDOWN_MS,
     fetch: config?.fetch,
   });
+}
+
+/**
+ * T-233 — read `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` and build a
+ * resolver from it. JSON map: `{ "integration.name": "https://..." }`.
+ *
+ * Returns null when:
+ *   - The env var is unset or empty string (self-hoster path).
+ *   - The env var is malformed JSON (logs error, treats as disabled).
+ *   - The parsed value isn't a plain string-keyed string-valued object
+ *     (logs error, treats as disabled).
+ *   - The parsed map is empty (no point booting the bridge with no
+ *     reachable integrations).
+ *
+ * Otherwise returns a function that consults the map.
+ */
+function buildResolverFromEnv():
+  | ((integrationName: string) => string | null)
+  | null {
+  const raw = process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.error(
+      "[reactive-run-bridge] CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS is not valid JSON; bridge disabled:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    console.error(
+      "[reactive-run-bridge] CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS must be a JSON object of integration_name → URL; bridge disabled",
+    );
+    return null;
+  }
+  const map: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value !== "string" || value.length === 0) {
+      console.error(
+        `[reactive-run-bridge] CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS["${key}"] must be a non-empty string; entry ignored`,
+      );
+      continue;
+    }
+    map[key] = value;
+  }
+  if (Object.keys(map).length === 0) {
+    console.error(
+      "[reactive-run-bridge] CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS parsed to an empty map; bridge disabled",
+    );
+    return null;
+  }
+  return (integrationName: string) => map[integrationName] ?? null;
 }
 
 /**
@@ -225,21 +315,38 @@ async function loadSubscriptions(
 
 function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   const fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
-  // T-135: bounded keep-alive Pool to the queue origin. Caps concurrent
-  // TCP connections at 10 regardless of subscriber fanout count, which
-  // prevents the connection storm that exhausted Atlas's ephemeral port
-  // range under sustained load (see T-133 root cause). When config.fetch
-  // is injected (test path), bypass Pool entirely so existing tests keep
-  // working with their mocked fetch. Pool lifetime = bridge lifetime;
-  // closed in stop() below.
-  const pool: Pool | null = config.fetch
-    ? null
-    : new Pool(new URL(config.queueUrl).origin, {
-        connections: 10,
-        keepAliveTimeout: 30_000,
-        keepAliveMaxTimeout: 600_000,
-        pipelining: 1,
-      });
+  // T-135 + T-233: bounded keep-alive Pool per queue ORIGIN. Pre-T-233
+  // the bridge held one Pool for the single queue URL; with per-
+  // integration URLs the queues may live at different origins, so the
+  // map is keyed by `new URL(url).origin`. In practice every Cloudflare
+  // queue for a given account shares the same `api.cloudflare.com`
+  // origin so the map usually has one entry, but the shape supports
+  // multi-origin without changes. Lazy creation: first send to a new
+  // origin spawns its Pool; stop() closes them all.
+  //
+  // When config.fetch is injected (test path), bypass Pool entirely so
+  // existing tests keep working with their mocked fetch.
+  const pools: Map<string, Pool> | null = config.fetch ? null : new Map();
+  const ensurePool = (origin: string): Pool | null => {
+    if (!pools) return null;
+    let pool = pools.get(origin);
+    if (pool) return pool;
+    pool = new Pool(origin, {
+      connections: 10,
+      keepAliveTimeout: 30_000,
+      keepAliveMaxTimeout: 600_000,
+      pipelining: 1,
+    });
+    pools.set(origin, pool);
+    return pool;
+  };
+  // T-233 — dedup set for "no queue URL mapped for this integration"
+  // operator-visible activity rows. Without this the bridge would emit
+  // one row per fanout event for a misconfigured integration, drowning
+  // the action_required surface. Reset only on process restart;
+  // operators are expected to flip the env var, restart, and pick up
+  // the new mapping (env-config gaps don't hot-reload).
+  const unmappedIntegrationsReported = new Set<string>();
   const subscriptions = new Map<string, SubscriptionEntry>();
   // T-171: per-subscriber failure tracking. Lives alongside subscriptions
   // and shares its lifecycle — entries are cleaned up when a subscription
@@ -358,10 +465,11 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
                 next.value,
                 subscriptions,
                 subscriberFailures,
+                unmappedIntegrationsReported,
                 refreshConnection,
                 config,
                 fetchImpl,
-                pool,
+                ensurePool,
                 storage,
               );
             }
@@ -427,10 +535,17 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       const exit = drainerExit;
       drainerExit = null;
       if (exit) await exit;
-      // Close the Pool last — after the drainer has stopped issuing
+      // Close every Pool last — after the drainer has stopped issuing
       // new requests. close() awaits in-flight, then destroys all
-      // connections. Tests injecting config.fetch won't have a Pool.
-      if (pool) await pool.close();
+      // connections. Tests injecting config.fetch won't have any pools.
+      if (pools) {
+        await Promise.all(
+          Array.from(pools.values()).map((p) =>
+            p.close().catch(() => undefined),
+          ),
+        );
+        pools.clear();
+      }
     },
   };
 }
@@ -466,10 +581,11 @@ async function fanoutEvent(
   event: ItemEventWithId,
   subscriptions: Map<string, SubscriptionEntry>,
   subscriberFailures: Map<string, SubscriberFailureState>,
+  unmappedIntegrationsReported: Set<string>,
   refreshConnection: (connectionId: string) => Promise<void>,
   config: BridgeConfig,
   fetchImpl: typeof fetch,
-  pool: Pool | null,
+  ensurePool: (origin: string) => Pool | null,
   storage: Storage,
 ): Promise<void> {
   const tasks: Promise<unknown>[] = [];
@@ -492,13 +608,30 @@ async function fanoutEvent(
     ) {
       continue;
     }
+    // T-233 — resolve the per-integration queue URL. An unmapped
+    // integration is an env-config gap on the server, not a connection
+    // health issue: log error, emit a one-time `action_required`
+    // activity row per integration per process lifetime, skip dispatch
+    // for this event. Subscriber failure ladder is intentionally NOT
+    // incremented — the connection is fine; the operator just hasn't
+    // pointed the bridge at this integration's queue yet.
+    const queueUrl = config.resolveQueueUrl(entry.integration_name);
+    if (queueUrl === null) {
+      await handleUnmappedIntegration(
+        entry,
+        event,
+        unmappedIntegrationsReported,
+        storage,
+      );
+      continue;
+    }
     const body = buildQueueMessageBody(event, entry);
     // T-013: each subscriber's send is wrapped in a per-fetch timeout
     // and an isolated try/catch. A slow / wedged Cloudflare Queues
     // endpoint for one subscriber doesn't break the rest. T-036:
     // each task is launched immediately so subscribers fan out in
     // parallel; allSettled below waits for every one.
-    const task = sendOne(body, config, fetchImpl, pool).then(
+    const task = sendOne(body, queueUrl, config, fetchImpl, ensurePool).then(
       (result) => {
         if (result === "success") {
           // T-171: a successful publish resets the failure ladder. The
@@ -528,6 +661,50 @@ async function fanoutEvent(
   // never rejects, but allSettled documents the intent — we wait for
   // every subscriber to finish (success or failure) before returning.
   await Promise.allSettled(tasks);
+}
+
+/**
+ * T-233 — handle a fanout target whose integration has no queue URL
+ * mapped in the bridge's resolver. Logged loudly every time (the bug
+ * matters); the operator-visible `system.activity` row is deduped per
+ * integration per process lifetime so a misconfigured integration
+ * doesn't drown the action_required surface.
+ *
+ * Best-effort throughout; the bridge must never crash on an env-config
+ * gap.
+ */
+async function handleUnmappedIntegration(
+  entry: SubscriptionEntry,
+  event: ItemEventWithId,
+  unmappedIntegrationsReported: Set<string>,
+  storage: Storage,
+): Promise<void> {
+  console.error(
+    `[reactive-run-bridge] no queue URL mapped for integration "${entry.integration_name}" (connection ${entry.connection_id}); skipping dispatch — set CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS to include this integration`,
+  );
+  if (unmappedIntegrationsReported.has(entry.integration_name)) return;
+  unmappedIntegrationsReported.add(entry.integration_name);
+  try {
+    await storage.items.create(
+      {
+        type: "system.activity",
+        properties: {
+          severity: "action_required",
+          summary: `Integration "${entry.integration_name}" has no reactive-run queue URL mapped`,
+          connection_id: entry.connection_id,
+          detail: {
+            integration_name: entry.integration_name,
+            item_id: event.item.id,
+            hint: "Add this integration to CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS and restart the server.",
+          },
+        },
+      },
+      event.tenantId,
+    );
+  } catch {
+    // Don't crash the drainer over an activity-row write failure;
+    // stderr already carries the loud error.
+  }
 }
 
 /**
@@ -697,13 +874,20 @@ async function markSubscriberFailing(
 
 async function sendOne(
   body: QueueMessageBody,
+  queueUrl: string,
   config: BridgeConfig,
   fetchImpl: typeof fetch,
-  pool: Pool | null,
+  ensurePool: (origin: string) => Pool | null,
 ): Promise<SendOneResult> {
   const maxAttempts = config.maxAttempts ?? 5;
   const timeoutMs = config.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS;
-  const url = new URL(config.queueUrl);
+  const url = new URL(queueUrl);
+  // T-233 — Pool is keyed by origin; lazy-create when the bridge first
+  // sends to a previously-unseen origin. Same Pool serves every send
+  // to that origin for the bridge's lifetime; stop() closes them all.
+  // In the test path (config.fetch injected) ensurePool returns null
+  // and we use the direct fetch branch below.
+  const pool = ensurePool(url.origin);
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => {
@@ -737,7 +921,7 @@ async function sendOne(
         }
       } else {
         // Test path — config.fetch injected. Pool bypassed.
-        const res = await fetchImpl(config.queueUrl, {
+        const res = await fetchImpl(queueUrl, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${config.apiToken}`,
