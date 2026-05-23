@@ -1,8 +1,13 @@
 #:schema node_modules/wrangler/config-schema.json
 # Per-Integration Worker for mymehq.task-auto-archive.
 # Item-event + schedule fallback (daily 03:00 UTC).
-# Reactive-run is consumed exclusively here; scheduled-poll is per-
-# integration to coexist with rss-watcher.
+#
+# T-233 — reactive-run is now per-integration. Each integration that
+# consumes reactive item-event envelopes has its own queue
+# (`myme-reactive-run-<slug>-<env>`); the server's bridge routes
+# envelopes per `integration_name` via the
+# `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` env var. Mirrors the existing
+# per-integration shape for scheduled-poll + webhook-receipt families.
 
 name = "myme-integration-task-auto-archive"
 main = "src/worker.ts"
@@ -54,7 +59,7 @@ queue = "myme-scheduled-poll-task-auto-archive-staging-dlq"
 
 [[env.staging.queues.producers]]
 binding = "REACTIVE_RUN_DLQ_QUEUE"
-queue = "myme-reactive-run-staging-dlq"
+queue = "myme-reactive-run-mymehq-task-auto-archive-staging-dlq"
 
 [[env.staging.queues.consumers]]
 queue = "myme-scheduled-poll-task-auto-archive-staging"
@@ -63,12 +68,16 @@ max_batch_timeout = 30
 max_retries = 6
 dead_letter_queue = "myme-scheduled-poll-task-auto-archive-staging-dlq"
 
+# T-233 — own queue, no consumer collision with other integrations.
+# Pre-T-233 this declared `myme-reactive-run-staging` (the shared
+# queue), which meant only one Worker could consume reactive-run
+# envelopes across the whole hosted substrate.
 [[env.staging.queues.consumers]]
-queue = "myme-reactive-run-staging"
+queue = "myme-reactive-run-mymehq-task-auto-archive-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-reactive-run-staging-dlq"
+dead_letter_queue = "myme-reactive-run-mymehq-task-auto-archive-staging-dlq"
 
 # Secrets (`wrangler secret put --env staging`):
 #   - MYME_API_URL
