@@ -17,15 +17,18 @@
  *     items.create / keys.createRuntimeCredential — exercised here via
  *     the basic positive path.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import {
   createTestContext,
+  markEmailVerified,
   request,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { IntegrationManifest } from "@mymehq/shared";
 import { hashApiKey } from "../middleware/auth.js";
+
+const ORIGIN = "http://localhost:0";
 
 let ctx: TestContext;
 
@@ -588,5 +591,196 @@ describe("GET /integrations — catalogue visibility (T-232)", () => {
       data: { id: string; properties: Record<string, unknown> }[];
     };
     expect(body.data.some((d) => d.id === nullTenantConnection.id)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Browser session auth on /integrations/:id/install
+//
+// Prior behaviour: install routes only accepted Bearer tokens. A browser
+// navigation (cookie present, no Authorization header) hit `requireAuth`
+// and 401'd, even though the routes are documented as a browser consent
+// flow. Fix: try the BetterAuth session cookie first, fall back to Bearer.
+// Unauthenticated requests are 401 when an Authorization header was
+// presented (API client failure) and 302 to /auth/sign-in otherwise
+// (browser navigation).
+// ---------------------------------------------------------------------------
+
+describe("/integrations/:id/install — browser session auth", () => {
+  let sessionCtx: TestContext;
+  // Uniqueness suffix per test so accounts don't collide across cases.
+  let counter = 0;
+
+  beforeAll(async () => {
+    sessionCtx = await createTestContext({ authAllowSignup: true });
+  });
+
+  afterAll(async () => {
+    await sessionCtx.cleanup();
+  });
+
+  afterEach(() => {
+    counter++;
+  });
+
+  async function signInUser(email: string): Promise<string> {
+    const password = "correct horse battery";
+    const signUpRes = await request(
+      sessionCtx.app,
+      "POST",
+      "/auth/sign-up/email",
+      {
+        body: { email, password, name: "Test User" },
+        headers: { origin: ORIGIN },
+      },
+    );
+    if (signUpRes.status !== 200) {
+      const text = await signUpRes.text();
+      throw new Error(
+        `sign-up failed (${String(signUpRes.status)}): ${text.slice(0, 300)}`,
+      );
+    }
+    await markEmailVerified(sessionCtx.storage, email);
+    const signInRes = await request(
+      sessionCtx.app,
+      "POST",
+      "/auth/sign-in/email",
+      {
+        body: { email, password },
+        headers: { origin: ORIGIN },
+      },
+    );
+    if (signInRes.status !== 200) {
+      const text = await signInRes.text();
+      throw new Error(
+        `sign-in failed (${String(signInRes.status)}): ${text.slice(0, 300)}`,
+      );
+    }
+    const setCookie = signInRes.headers.get("set-cookie");
+    if (!setCookie) throw new Error("sign-in: no Set-Cookie header");
+    const cookies = setCookie.split(/,\s*(?=[a-zA-Z0-9_-]+=)/);
+    for (const c of cookies) {
+      const head = c.split(";")[0];
+      if (head?.includes("session_token")) return head;
+    }
+    throw new Error("sign-in: session_token cookie not found");
+  }
+
+  async function registerIntegration(name: string): Promise<string> {
+    const res = await request(sessionCtx.app, "POST", "/integrations", {
+      key: sessionCtx.adminKey,
+      body: { manifest: baseManifest({ name }) },
+    });
+    if (res.status !== 201) {
+      throw new Error(`register failed: ${String(res.status)}`);
+    }
+    const body = (await res.json()) as RegisterResponse;
+    return body.id;
+  }
+
+  it("GET returns the consent HTML to a signed-in browser (no Bearer)", async () => {
+    const integrationId = await registerIntegration(
+      `acme.session-get-${String(counter)}`,
+    );
+    const cookie = await signInUser(
+      `session-get-${String(counter)}@example.com`,
+    );
+
+    const res = await sessionCtx.app.request(
+      `/integrations/${integrationId}/install`,
+      { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain(`action="/integrations/${integrationId}/install"`);
+    expect(html).toContain('name="decision"');
+  });
+
+  it("POST completes the install for a signed-in browser session", async () => {
+    const integrationId = await registerIntegration(
+      `acme.session-post-${String(counter)}`,
+    );
+    const cookie = await signInUser(
+      `session-post-${String(counter)}@example.com`,
+    );
+
+    const formBody = new URLSearchParams({
+      decision: "approve",
+      label: "Browser-Installed",
+    }).toString();
+
+    const res = await sessionCtx.app.request(
+      `/integrations/${integrationId}/install`,
+      {
+        method: "POST",
+        headers: {
+          cookie,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: formBody,
+      },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Connection installed");
+
+    // Confirm the connection landed in the session user's tenant scope —
+    // the audit row's key_id should carry the synthetic `auth_user:<id>`
+    // marker so operators can recognise session-backed installs.
+    const audit = await sessionCtx.storage.audit.list({
+      action: "integration.install",
+      limit: 50,
+    });
+    const sessionAudit = audit.data.find((r) =>
+      r.key_id?.startsWith("auth_user:"),
+    );
+    expect(sessionAudit).toBeDefined();
+  });
+
+  it("Bearer path still works (regression cover)", async () => {
+    // The bug fix shouldn't change the existing Bearer flow at all —
+    // operators / tests / CLIs that present an Authorization header
+    // continue to resolve through `c.var.apiKey`.
+    const integrationId = await registerIntegration(
+      `acme.bearer-regression-${String(counter)}`,
+    );
+    const res = await sessionCtx.app.request(
+      `/integrations/${integrationId}/install`,
+      { headers: { Authorization: `Bearer ${sessionCtx.adminKey}` } },
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+  });
+
+  it("401s when an Authorization header is presented but invalid", async () => {
+    // Bearer was attempted but rejected by the bearer middleware → the
+    // API-client failure shape. Negative test from the bug report.
+    const integrationId = await registerIntegration(
+      `acme.bad-bearer-${String(counter)}`,
+    );
+    const res = await sessionCtx.app.request(
+      `/integrations/${integrationId}/install`,
+      { headers: { Authorization: "Bearer myme_k1_completely_invalid" } },
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("302s to /auth/sign-in on an unauthenticated browser navigation (no Bearer, no session)", async () => {
+    // No Authorization header, no session cookie — the only sensible
+    // response is a redirect to sign-in with the install URL preserved,
+    // so the user lands back on the consent screen after authenticating.
+    const integrationId = await registerIntegration(
+      `acme.anon-${String(counter)}`,
+    );
+    const res = await sessionCtx.app.request(
+      `/integrations/${integrationId}/install`,
+    );
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("/auth/sign-in");
+    expect(location).toContain(
+      encodeURIComponent(`/integrations/${integrationId}/install`),
+    );
   });
 });

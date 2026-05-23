@@ -492,7 +492,10 @@ export function createApp(
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/credentials", credentialRoutes(storage));
   app.route("/system", runtimeCredentialRoutes(storage, config.apiKeySalt));
-  app.route("/integrations", integrationRoutes(storage, config.apiKeySalt));
+  app.route(
+    "/integrations",
+    integrationRoutes(storage, config.apiKeySalt, auth),
+  );
   app.route("/tenants", tenantRoutes(storage));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   // T-146: streaming routes receive `rlsEnforce` + `pgClient` so they

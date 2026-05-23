@@ -19,11 +19,14 @@
  * caller. Listing/get is admin-or-platform.
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MymeError, ErrorCode } from "@mymehq/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import type { MymeAuth } from "../auth/instance.js";
+import { resolveTenantIdForAuthUser } from "../auth/oauth-provider.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { renderInstallConsentScreen } from "./integration-install-page.js";
@@ -207,7 +210,11 @@ function toResponse(item: {
   };
 }
 
-export function integrationRoutes(storage: Storage, salt: string) {
+export function integrationRoutes(
+  storage: Storage,
+  salt: string,
+  auth?: MymeAuth,
+) {
   // Two routers mounted at the same prefix:
   //   - `apiRouter` carries the OpenAPI-registered JSON CRUD surface.
   //   - `htmlRouter` carries the HTML consent/install flow (plain Hono,
@@ -344,12 +351,76 @@ export function integrationRoutes(storage: Storage, salt: string) {
   // routes returning HTML. This mirrors the precedent set by the OAuth
   // consent flow (routes/consent.ts) which also stays out of the
   // OpenAPI surface because the response is an HTML form, not JSON.
+  //
+  // Dual auth path (browser session OR Bearer): the install consent
+  // screen is designed for human navigation, so a BetterAuth session
+  // cookie is sufficient. Operator / test / CLI callers still go via a
+  // Bearer-resolved api_key. `resolveInstallCaller` returns the caller's
+  // tenant scope + an apiKeyId for the audit trail, or a Response on
+  // unauthenticated browser navigations (302 to sign-in), or throws
+  // 401 when an `Authorization` header was presented but didn't
+  // resolve (the API-client failure shape).
   // ---------------------------------------------------------------------
 
+  interface InstallCaller {
+    /** Stable id for the audit trail. For Bearer callers: the api_keys
+     *  row id. For session callers: `auth_user:<userId>` so operator
+     *  queries can recognise session-backed installs. */
+    apiKeyId: string;
+    /** Tenant scope — `undefined` for platform-admin Bearer callers,
+     *  the user's tenant for session callers, the key's tenant for
+     *  ordinary Bearer callers. */
+    tenantId: string | undefined;
+  }
+
+  async function resolveInstallCaller(
+    c: Context<AppEnv>,
+  ): Promise<InstallCaller | Response> {
+    // Bearer path wins when present — preserves the existing test +
+    // operator paths verbatim (no behavioural change for Authorization-
+    // header callers).
+    const apiKey = c.get("apiKey");
+    if (apiKey) {
+      return { apiKeyId: apiKey.id, tenantId: apiKey.tenant_id };
+    }
+    // Session path — browser navigation with a cookie but no Bearer.
+    if (auth) {
+      const session = await auth.getSession(c.req.raw.headers);
+      if (session) {
+        const tenantId = await resolveTenantIdForAuthUser(
+          storage,
+          session.user.id,
+        );
+        return {
+          apiKeyId: `auth_user:${session.user.id}`,
+          tenantId,
+        };
+      }
+    }
+    // Unauthenticated. Two shapes:
+    //   - Authorization header sent but bearer middleware rejected it
+    //     → 401 (API-client failure shape; the bug-report's
+    //     "still returns 401" negative test).
+    //   - No Authorization header → browser navigation; redirect to
+    //     /auth/sign-in with the install URL preserved as `return_to`
+    //     so the user lands back on the consent screen after signing
+    //     in.
+    if (c.req.header("authorization")) {
+      throw new MymeError(ErrorCode.UNAUTHORIZED, "Authentication required");
+    }
+    const url = new URL(c.req.url);
+    const returnTo = `${url.pathname}${url.search}`;
+    return c.redirect(
+      `/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`,
+      302,
+    );
+  }
+
   htmlRouter.get("/:id/install", async (c) => {
-    const apiKey = requireAuth(c);
+    const caller = await resolveInstallCaller(c);
+    if (caller instanceof Response) return caller;
     const id = c.req.param("id");
-    const item = await storage.items.get(id, apiKey.tenant_id);
+    const item = await storage.items.get(id, caller.tenantId);
     if (item?.type !== "system.integration") {
       throw new MymeError(
         ErrorCode.INTEGRATION_NOT_FOUND,
@@ -370,9 +441,10 @@ export function integrationRoutes(storage: Storage, salt: string) {
   });
 
   htmlRouter.post("/:id/install", async (c) => {
-    const apiKey = requireAuth(c);
+    const caller = await resolveInstallCaller(c);
+    if (caller instanceof Response) return caller;
     const id = c.req.param("id");
-    const item = await storage.items.get(id, apiKey.tenant_id);
+    const item = await storage.items.get(id, caller.tenantId);
     if (item?.type !== "system.integration") {
       throw new MymeError(
         ErrorCode.INTEGRATION_NOT_FOUND,
@@ -404,8 +476,8 @@ export function integrationRoutes(storage: Storage, salt: string) {
     }
 
     const installed = await performInstall(storage, salt, {
-      apiKeyId: apiKey.id,
-      tenantId: apiKey.tenant_id,
+      apiKeyId: caller.apiKeyId,
+      tenantId: caller.tenantId,
       clientIp: c.get("clientIp") ?? null,
       integrationItemId: id,
       manifest: props.manifest,
@@ -424,7 +496,7 @@ export function integrationRoutes(storage: Storage, salt: string) {
     // pubsub for the bridge to fan out to newly-installed connectors.
     const connection = await storage.items.get(
       installed.connection_id,
-      apiKey.tenant_id ?? undefined,
+      caller.tenantId ?? undefined,
     );
     if (connection) {
       const metadata = await storage.metadata.get(connection.id);
@@ -432,7 +504,7 @@ export function integrationRoutes(storage: Storage, salt: string) {
         type: "created",
         item: connection,
         metadata,
-        tenantId: apiKey.tenant_id ?? undefined,
+        tenantId: caller.tenantId ?? undefined,
       });
     }
 
