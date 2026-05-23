@@ -68,7 +68,7 @@ queue = "myme-scheduled-poll-google-calendar-staging-dlq"
 
 [[env.staging.queues.producers]]
 binding = "REACTIVE_RUN_DLQ_QUEUE"
-queue = "myme-reactive-run-staging-dlq"
+queue = "myme-reactive-run-google-calendar-staging-dlq"
 
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
@@ -81,12 +81,17 @@ max_batch_timeout = 30
 max_retries = 6
 dead_letter_queue = "myme-scheduled-poll-google-calendar-staging-dlq"
 
+# T-233 — per-integration reactive-run queue. Each integration with an
+# item-event trigger gets its own queue (Cloudflare Queues only allow
+# one consumer per queue); the server's bridge routes envelopes by
+# `integration_name` to the matching queue URL via
+# `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS`.
 [[env.staging.queues.consumers]]
-queue = "myme-reactive-run-staging"
+queue = "myme-reactive-run-google-calendar-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-reactive-run-staging-dlq"
+dead_letter_queue = "myme-reactive-run-google-calendar-staging-dlq"
 
 [[env.staging.queues.consumers]]
 queue = "myme-webhook-receipt-google-calendar-staging"
@@ -124,7 +129,7 @@ queue = "myme-scheduled-poll-google-calendar-prod-dlq"
 
 [[env.prod.queues.producers]]
 binding = "REACTIVE_RUN_DLQ_QUEUE"
-queue = "myme-reactive-run-prod-dlq"
+queue = "myme-reactive-run-google-calendar-prod-dlq"
 
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
@@ -137,12 +142,14 @@ max_batch_timeout = 30
 max_retries = 6
 dead_letter_queue = "myme-scheduled-poll-google-calendar-prod-dlq"
 
+# T-233 — see staging block above for the per-integration reactive-run
+# rationale. Prod queues are provisioned by `pnpm provision prod`.
 [[env.prod.queues.consumers]]
-queue = "myme-reactive-run-prod"
+queue = "myme-reactive-run-google-calendar-prod"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-reactive-run-prod-dlq"
+dead_letter_queue = "myme-reactive-run-google-calendar-prod-dlq"
 
 [[env.prod.queues.consumers]]
 queue = "myme-webhook-receipt-google-calendar-prod"
