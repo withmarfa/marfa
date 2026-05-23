@@ -125,9 +125,31 @@ export function decodeCursor(cursor: string): CursorPayload {
 // Sub-store interfaces
 // ---------------------------------------------------------------------------
 
+/**
+ * Optional knobs for single-item `get` lookups.
+ *
+ * `includePlatformScoped` mirrors `ItemFilters.includePlatformScoped` for the
+ * single-id path: when set alongside a real `tenantId`, the WHERE clause
+ * widens to `(tenant_id = $tenantId OR tenant_id IS NULL)` so platform-
+ * scoped rows (written by `is_platform: true` credentials with
+ * `tenant_id` NULL) resolve for in-tenant callers. Used by the
+ * Integrations install + get-by-id endpoints, which legitimately need
+ * to fetch a platform-scoped `system.integration` manifest from a
+ * tenant-scoped caller. Default off — generic gets MUST NOT pick this
+ * up, or null-tenant rows from any source could leak across tenants.
+ * No effect when `tenantId` is undefined.
+ */
+export interface ItemGetOptions {
+  includePlatformScoped?: boolean;
+}
+
 export interface ItemStore {
   create(input: CreateItemInput, tenantId?: string): Promise<Item>;
-  get(id: string, tenantId?: string): Promise<Item | null>;
+  get(
+    id: string,
+    tenantId?: string,
+    options?: ItemGetOptions,
+  ): Promise<Item | null>;
   /**
    * Batched `get` — returns a map keyed by item id for every id in `ids` that
    * resolves to a non-trashed item in the caller's tenant scope. Missing ids

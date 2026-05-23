@@ -13,9 +13,14 @@
  * the JSON response shapes the SDK consumes.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { performInstall } from "../connections/install-pipeline.js";
+import { hashApiKey } from "../middleware/auth.js";
 import type { IntegrationManifest } from "@mymehq/shared";
 
 let ctx: TestContext;
@@ -250,6 +255,47 @@ describe("POST /connections/install — error mapping", () => {
     };
     expect(body.error.code).toBe("validation_error");
     expect(body.error.details?.actual_type).toBe("core.note");
+  });
+});
+
+describe("POST /connections/install — platform-scoped manifest, tenant_admin caller (T-234)", () => {
+  // The route is widened to admit `tenant_admin` (T-051 Wave B). A
+  // tenant_admin's tenant_id is non-null, so without the
+  // `includePlatformScoped` widening on the manifest lookup the route
+  // 404s for any manifest registered by a platform credential. Pin
+  // both the success path and the tenant-stamping invariant.
+  it("tenant_admin can install a platform-scoped manifest; resulting connection lands in caller tenant", async () => {
+    if (!ctx.storage.tenants) return;
+    const tenant = await ctx.storage.tenants.create("t234-conn-install");
+    const integration = await createIntegration(); // tenant_id: null
+
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const rawKey = `myme_k1_test_tadmin_${suffix}`;
+    const hash = hashApiKey(rawKey, TEST_API_KEY_SALT);
+    await ctx.storage.keys.create(
+      {
+        label: `t234-tadmin-${suffix}`,
+        source: `t234-tadmin-${suffix}`,
+        role: "tenant_admin",
+        default_tier: "library",
+        is_platform: false,
+      },
+      hash,
+      tenant.id,
+    );
+
+    const res = await request(ctx.app, "POST", "/connections/install", {
+      key: rawKey,
+      body: { integration_id: integration.id },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as InstallResponse;
+
+    const conn = await ctx.storage.items.get(body.connection_id, tenant.id);
+    expect(conn?.type).toBe("system.connection");
+    expect(conn?.tenant_id).toBe(tenant.id);
+    const props = conn?.properties as { integration_ref?: string };
+    expect(props.integration_ref).toBe(integration.id);
   });
 });
 

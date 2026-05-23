@@ -333,7 +333,13 @@ export function integrationRoutes(
   apiRouter.openapi(getRoute, async (c) => {
     const apiKey = requireAuth(c);
     const id = c.req.valid("param").id;
-    const item = await storage.items.get(id, apiKey.tenant_id);
+    // Catalogue manifests are platform-scoped (tenant_id IS NULL) — opt
+    // into the widening so tenant members can resolve them. The
+    // type-check on the next line stays as the authoritative gate; only
+    // genuine `system.integration` items pass.
+    const item = await storage.items.get(id, apiKey.tenant_id, {
+      includePlatformScoped: true,
+    });
     if (item?.type !== "system.integration") {
       throw new MymeError(
         ErrorCode.INTEGRATION_NOT_FOUND,
@@ -420,7 +426,11 @@ export function integrationRoutes(
     const caller = await resolveInstallCaller(c);
     if (caller instanceof Response) return caller;
     const id = c.req.param("id");
-    const item = await storage.items.get(id, caller.tenantId);
+    // Catalogue manifests are platform-scoped — widen the lookup. See
+    // the JSON `getRoute` handler above for the same pattern.
+    const item = await storage.items.get(id, caller.tenantId, {
+      includePlatformScoped: true,
+    });
     if (item?.type !== "system.integration") {
       throw new MymeError(
         ErrorCode.INTEGRATION_NOT_FOUND,
@@ -444,7 +454,11 @@ export function integrationRoutes(
     const caller = await resolveInstallCaller(c);
     if (caller instanceof Response) return caller;
     const id = c.req.param("id");
-    const item = await storage.items.get(id, caller.tenantId);
+    // Catalogue manifests are platform-scoped — widen the lookup. See
+    // the JSON `getRoute` handler above for the same pattern.
+    const item = await storage.items.get(id, caller.tenantId, {
+      includePlatformScoped: true,
+    });
     if (item?.type !== "system.integration") {
       throw new MymeError(
         ErrorCode.INTEGRATION_NOT_FOUND,

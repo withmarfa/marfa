@@ -42,6 +42,15 @@ When auditing a `requireAdmin` callsite for tenant widening: the route is safe t
 
 Routes widened in T-051 (Wave B Part 1): `POST /keys`, all `/webhooks/*`, `POST /connections/install`, `POST /connections/:id/uninstall`. Routes widened in Wave B Part 2: `GET /keys`, `DELETE /keys/:id`, `PATCH /keys/:id`, `DELETE /items/:id/purge`, plus the new `GET /tenants/me/quotas`. Routes still on `requireAdmin`: `tenants.*` (cross-tenant CRUD by definition), `oauth.client/token`, `audit.cleanup`, `metrics`, `admin-archive`, admin blob ops, and `types.update/delete` + `edge-types.create/delete` (the storage layer for custom types/edge-types loads through an in-memory registry that doesn't currently filter by tenant_id at lookup time — widening these requires a small registry-side audit, filed as follow-on).
 
+**Platform-scoped catalogue reads (T-234).** Some `system.*` types are registered by platform credentials (`is_platform: true`) and live with `tenant_id IS NULL` — `system.integration` is the canonical example today. Tenant members must still be able to read them (the catalogue is a marketplace surface), so the reads need to opt in to the widening:
+
+- For **list reads**, set `ItemFilters.includePlatformScoped: true` on `items.list({...})`.
+- For **single-id reads**, pass `{ includePlatformScoped: true }` as the third arg to `items.get(id, tenantId, ...)`.
+
+The widening flips the WHERE clause from `tenant_id = $tenantId` to `(tenant_id = $tenantId OR tenant_id IS NULL)`. The default keeps the strict equality fence — never widen by default, or null-tenant rows from any source could leak across tenant boundaries. Always pair the widening with a type check on the result (`item?.type === "system.<expected>"`) as the authoritative gate; the type filter is the safety net, the widening is just the lookup mechanic. The four call sites today: `GET /integrations/:id`, `GET /integrations/:id/install`, `POST /integrations/:id/install`, `POST /connections/install` (the admin install path).
+
+**Tenant-scoped lookups must stay fenced.** The inverse holds for tenant-scoped items (every `system.connection`, `system.credential`, `system.activity`, `system.webhook`, plus all `core.*` and user-defined types): when a route has a known-good `tenant_id` in hand from an upstream lookup or from a server-signed envelope, **thread that `tenant_id` into every downstream `items.get` call**. The fence on the upstream call is not transitive — each individual lookup needs its own belt. A bare `items.get(id)` against a tenant-scoped type silently widens to "any tenant", which is rarely the intent.
+
 ## Per-route enforcement order
 
 Most write routes follow the same gate sequence:
