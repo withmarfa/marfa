@@ -294,3 +294,163 @@ describe("performInstall — compensating writes on activity failure", () => {
     ]);
   });
 });
+
+describe("performInstall — credentialRef (OAuth provider credential reuse)", () => {
+  async function setupIntegrationItem(): Promise<string> {
+    const integration = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: "acme.install-pipeline-direct",
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          direction: "both",
+          runtime_compatibility: ["hosted"],
+          manifest: manifest() as unknown as Record<string, unknown>,
+          registered_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    return integration.id;
+  }
+
+  async function setupOauthCredential(): Promise<string> {
+    const credential = await ctx.storage.items.create(
+      {
+        type: "system.credential",
+        properties: {
+          label: "shared-oauth-provider",
+          kind: "oauth_token",
+          oauth_provider_config: {
+            oauth_authorize_url: "https://example.com/oauth/authorize",
+            oauth_token_url: "https://example.com/oauth/token",
+            oauth_client_id: "shared-client",
+            upstream_base_url: "https://api.example.com",
+          },
+          secret_encrypted:
+            "test-encrypted-placeholder|test-encrypted-placeholder|tag",
+        },
+      },
+      undefined,
+    );
+    return credential.id;
+  }
+
+  it("stamps credential_ref onto the connection when supplied", async () => {
+    const adminKey = await ctx.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+
+    const integrationId = await setupIntegrationItem();
+    const credentialId = await setupOauthCredential();
+    // Count the system.credential rows whose oauth_provider_config has the
+    // same client_id as the one we'll reference. After install, this count
+    // must stay 1 — a second install with the same credential_ref must not
+    // duplicate the provider credential.
+    function countSharedProviderCredentials(): Promise<number> {
+      return ctx.storage.items.list({ type: "system.credential" }).then(
+        (page) =>
+          page.data.filter((c) => {
+            const cfg = (
+              c.properties as {
+                oauth_provider_config?: { oauth_client_id?: string };
+              }
+            ).oauth_provider_config;
+            return cfg?.oauth_client_id === "shared-client";
+          }).length,
+      );
+    }
+    expect(await countSharedProviderCredentials()).toBe(1);
+
+    const result = await performInstall(ctx.storage, "test-salt", {
+      apiKeyId: adminKey.id,
+      tenantId: undefined,
+      integrationItemId: integrationId,
+      manifest: manifest() as unknown as Record<string, unknown>,
+      label: "with-credential-ref",
+      credentialRef: credentialId,
+    });
+
+    const connection = await ctx.storage.items.get(result.connection_id);
+    expect(connection?.type).toBe("system.connection");
+    const props = connection?.properties as { credential_ref?: string };
+    expect(props.credential_ref).toBe(credentialId);
+
+    // The OAuth provider credential count must not have grown — the
+    // existing row was reused, not duplicated. The runtime credential
+    // (kind: api_key, lives on the api_keys table, not as a
+    // system.credential item) is still freshly minted, which is correct
+    // and doesn't affect this count.
+    expect(await countSharedProviderCredentials()).toBe(1);
+  });
+
+  it("rejects when credential_ref does not resolve", async () => {
+    const adminKey = await ctx.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+
+    const integrationId = await setupIntegrationItem();
+
+    await expect(
+      performInstall(ctx.storage, "test-salt", {
+        apiKeyId: adminKey.id,
+        tenantId: undefined,
+        integrationItemId: integrationId,
+        manifest: manifest() as unknown as Record<string, unknown>,
+        label: "bad-credential-ref",
+        credentialRef: "itm_credref_does_not_exist",
+      }),
+    ).rejects.toThrow(/does not resolve/);
+  });
+
+  it("rejects when credential_ref points to a non-oauth_token credential", async () => {
+    const adminKey = await ctx.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+
+    const integrationId = await setupIntegrationItem();
+    const wrongKindCredential = await ctx.storage.items.create(
+      {
+        type: "system.credential",
+        properties: { label: "wrong-kind", kind: "api_key" },
+      },
+      undefined,
+    );
+
+    await expect(
+      performInstall(ctx.storage, "test-salt", {
+        apiKeyId: adminKey.id,
+        tenantId: undefined,
+        integrationItemId: integrationId,
+        manifest: manifest() as unknown as Record<string, unknown>,
+        label: "wrong-kind-credential-ref",
+        credentialRef: wrongKindCredential.id,
+      }),
+    ).rejects.toThrow(/expected 'oauth_token'/);
+  });
+
+  it("connection has no credential_ref when credentialRef is omitted", async () => {
+    const adminKey = await ctx.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+
+    const integrationId = await setupIntegrationItem();
+
+    const result = await performInstall(ctx.storage, "test-salt", {
+      apiKeyId: adminKey.id,
+      tenantId: undefined,
+      integrationItemId: integrationId,
+      manifest: manifest() as unknown as Record<string, unknown>,
+      label: "no-credential-ref",
+    });
+
+    const connection = await ctx.storage.items.get(result.connection_id);
+    const props = connection?.properties as { credential_ref?: string };
+    expect(props.credential_ref).toBeUndefined();
+  });
+});

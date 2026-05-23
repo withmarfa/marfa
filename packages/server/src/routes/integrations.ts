@@ -379,6 +379,16 @@ export function integrationRoutes(storage: Storage, salt: string) {
     const decision = formData.decision;
     const labelOverride =
       typeof formData.label === "string" ? formData.label : "";
+    // Optional credential_ref carried as a hidden form field — used when
+    // the consent screen was pre-armed with an existing OAuth provider
+    // credential to reuse (e.g. installing a second Google service onto
+    // an account that already has google.calendar). When absent the
+    // install pipeline behaves as today.
+    const credentialRefOverride =
+      typeof formData.credential_ref === "string" &&
+      formData.credential_ref.length > 0
+        ? formData.credential_ref
+        : undefined;
 
     if (decision !== "approve") {
       return c.html(renderDeniedPage());
@@ -393,6 +403,9 @@ export function integrationRoutes(storage: Storage, salt: string) {
       label:
         labelOverride.trim() ||
         `${props.manifest_name} ${props.manifest_version}`,
+      ...(credentialRefOverride !== undefined
+        ? { credentialRef: credentialRefOverride }
+        : {}),
     });
 
     // Publish a `created` event for the new system.connection so the
