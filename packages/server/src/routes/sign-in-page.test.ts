@@ -5,7 +5,11 @@ import {
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
+import {
+  renderSignInPage,
+  synthesizeOauthReturnTo,
+  validateReturnTo,
+} from "./sign-in-page.js";
 
 /**
  * Smoke tests for GET /auth/sign-in (HTML page) + the POST /auth/sign-in
@@ -212,6 +216,65 @@ describe("validateReturnTo", () => {
   });
 });
 
+describe("synthesizeOauthReturnTo", () => {
+  it("wraps OAuth params into a /auth/authorize URL", () => {
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: "abc",
+      redirect_uri: "http://localhost:8080/cb",
+      scope: "openid profile email",
+      state: "xyz",
+      code_challenge: "challenge123",
+      code_challenge_method: "S256",
+      sig: "signed",
+    });
+    const returnTo = synthesizeOauthReturnTo(params);
+    expect(returnTo).toMatch(/^\/auth\/authorize\?/);
+    expect(returnTo).toContain("response_type=code");
+    expect(returnTo).toContain("client_id=abc");
+    expect(returnTo).toContain("sig=signed");
+    // Crucially preserves redirect_uri + code_challenge so the plugin's
+    // signature re-check on resumption succeeds.
+    expect(returnTo).toContain(
+      "redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcb",
+    );
+    expect(returnTo).toContain("code_challenge=challenge123");
+  });
+
+  it("strips sign-in-page-local params (mode / error / sent / return_to)", () => {
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: "abc",
+      sig: "x",
+      mode: "magic",
+      error: "invalid_credentials",
+      sent: "1",
+      return_to: "/foo",
+    });
+    const returnTo = synthesizeOauthReturnTo(params);
+    expect(returnTo).not.toContain("mode=");
+    expect(returnTo).not.toContain("error=");
+    expect(returnTo).not.toContain("sent=");
+    expect(returnTo).not.toContain("return_to=");
+    expect(returnTo).toContain("response_type=code");
+  });
+
+  it("returns bare /auth/authorize when only local params are present", () => {
+    const params = new URLSearchParams({ mode: "magic", error: "x" });
+    expect(synthesizeOauthReturnTo(params)).toBe("/auth/authorize");
+  });
+
+  it("always produces a same-origin path (validateReturnTo accepts it)", () => {
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: "abc",
+      sig: "x",
+    });
+    const returnTo = synthesizeOauthReturnTo(params);
+    expect(validateReturnTo(returnTo)).toBe(returnTo);
+  });
+});
+
 describe("GET /auth/sign-in", () => {
   it("returns 200 + text/html with the form", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
@@ -307,6 +370,74 @@ describe("GET /auth/sign-in", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain("Check your email");
   });
+
+  // -------------------------------------------------------------------
+  // OAuth-param synthesis (bug fix: @better-auth/oauth-provider's
+  // `loginPage` redirects with OAuth params appended directly onto
+  // /auth/sign-in instead of wrapped in `return_to`, so the form lost
+  // them on submit and the user landed on `/` after credential check.)
+  // -------------------------------------------------------------------
+
+  it("synthesizes return_to=/auth/authorize?… when OAuth params land on /auth/sign-in directly", async () => {
+    ctx = await createTestContext();
+    const oauthParams = new URLSearchParams({
+      response_type: "code",
+      client_id: "client-xyz",
+      redirect_uri: "http://localhost:8080/cb",
+      scope: "openid",
+      state: "state123",
+      code_challenge: "challenge123",
+      code_challenge_method: "S256",
+      sig: "signature-stub",
+    });
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/sign-in?${oauthParams.toString()}`,
+      { headers: { origin: ORIGIN } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // The form's hidden return_to should now point back at /auth/authorize
+    // carrying the full OAuth query string.
+    expect(html).toMatch(
+      /<input type="hidden" name="return_to" value="\/auth\/authorize\?[^"]*response_type=code/,
+    );
+    expect(html).toContain("client_id=client-xyz");
+    expect(html).toContain("sig=signature-stub");
+  });
+
+  it("prefers an explicit return_to over OAuth-param synthesis", async () => {
+    // When BOTH `return_to` AND OAuth params are on the URL, the explicit
+    // return_to wins — the well-behaved consent-gate path stays intact.
+    ctx = await createTestContext();
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/auth/sign-in?return_to=%2Fauth%2Fauthorize%3Fa%3D1&response_type=code&client_id=xx",
+      { headers: { origin: ORIGIN } },
+    );
+    const html = await res.text();
+    expect(html).toContain(
+      '<input type="hidden" name="return_to" value="/auth/authorize?a=1">',
+    );
+    // Synthesized URL would carry client_id=xx; absent means explicit won.
+    expect(html).not.toMatch(/return_to[^"]*client_id=xx/);
+  });
+
+  it("does NOT synthesize when no OAuth indicator (response_type) is present", async () => {
+    ctx = await createTestContext();
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/auth/sign-in?client_id=stray&mode=password",
+      { headers: { origin: ORIGIN } },
+    );
+    const html = await res.text();
+    // Bare /auth/sign-in (no return_to and no response_type) → form
+    // carries return_to="/" — the long-standing default.
+    expect(html).toContain('name="return_to" value="/"');
+  });
 });
 
 describe("POST /auth/sign-in (form wrapper)", () => {
@@ -366,6 +497,120 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     );
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("error=missing_field");
+  });
+
+  it("OAuth-init URL round-trip: GET synthesises return_to, POST honours it (bug fix)", async () => {
+    // The bug this fix addresses: when @better-auth/oauth-provider's
+    // `loginPage` redirects an unauthenticated user from
+    // /auth/oauth2/authorize to /auth/sign-in, it appends OAuth params
+    // directly (not wrapped in return_to). Pre-fix the form lost them
+    // on submit and the success redirect landed on `/`. Post-fix the
+    // GET handler synthesises return_to=/auth/authorize?<params>, the
+    // hidden field carries it forward, POST honours it, user lands at
+    // the consent screen as RFC 6749 §3.1 prescribes.
+    ctx = await createTestContext({ authAllowSignup: true });
+    await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "carla@example.com",
+        password: "correct horse",
+        name: "Carla",
+      },
+      headers: { origin: ORIGIN },
+    });
+    await markEmailVerified(ctx.storage, "carla@example.com");
+
+    // 1. GET /auth/sign-in with OAuth params directly on the URL —
+    //    simulating the plugin's loginPage redirect shape.
+    const oauthQuery = new URLSearchParams({
+      response_type: "code",
+      client_id: "client-roundtrip",
+      redirect_uri: "http://localhost:8080/cb",
+      scope: "openid profile",
+      state: "rt-state",
+      code_challenge: "ch",
+      code_challenge_method: "S256",
+      sig: "sig-stub",
+    }).toString();
+    const formGet = await request(
+      ctx.app,
+      "GET",
+      `/auth/sign-in?${oauthQuery}`,
+      { headers: { origin: ORIGIN } },
+    );
+    const html = await formGet.text();
+    const match = /name="return_to" value="([^"]+)"/.exec(html);
+    expect(match).not.toBeNull();
+    const returnTo = (match?.[1] ?? "").replace(/&amp;/g, "&");
+    expect(returnTo.startsWith("/auth/authorize?")).toBe(true);
+    expect(returnTo).toContain("response_type=code");
+    expect(returnTo).toContain("client_id=client-roundtrip");
+    expect(returnTo).toContain("sig=sig-stub");
+
+    // 2. POST credentials with that return_to → 302 lands at it.
+    const formBody = new URLSearchParams({
+      mode: "password",
+      email: "carla@example.com",
+      password: "correct horse",
+      return_to: returnTo,
+    });
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/sign-in`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+        },
+        body: formBody.toString(),
+      }),
+    );
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location.startsWith("/auth/authorize?")).toBe(true);
+    expect(location).toContain("response_type=code");
+    expect(location).toContain("client_id=client-roundtrip");
+    expect(location).toContain("sig=sig-stub");
+    const cookies =
+      typeof (res.headers as Headers & { getSetCookie?: () => string[] })
+        .getSetCookie === "function"
+        ? (
+            res.headers as Headers & { getSetCookie: () => string[] }
+          ).getSetCookie()
+        : [res.headers.get("set-cookie") ?? ""];
+    expect(cookies.some((c) => c.includes("myme.auth"))).toBe(true);
+  });
+
+  it("rejects an off-origin return_to (open-redirect guard, defence in depth)", async () => {
+    // validateReturnTo runs on the POST side too, so even if some
+    // upstream slipped an absolute URL into the hidden field, the
+    // wrapper falls back to "/" instead of redirecting off-origin.
+    ctx = await createTestContext({ authAllowSignup: true });
+    await request(ctx.app, "POST", "/auth/sign-up/email", {
+      body: {
+        email: "dora@example.com",
+        password: "correct horse",
+        name: "Dora",
+      },
+      headers: { origin: ORIGIN },
+    });
+    await markEmailVerified(ctx.storage, "dora@example.com");
+    const formBody = new URLSearchParams({
+      mode: "password",
+      email: "dora@example.com",
+      password: "correct horse",
+      return_to: "https://attacker.example/steal",
+    });
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/sign-in`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+        },
+        body: formBody.toString(),
+      }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/");
   });
 
   it("redirects to return_to with Set-Cookie on successful sign-in", async () => {
