@@ -18,6 +18,10 @@
  * Resources created:
  *   - Queues:  myme-webhook-receipt-<env>, myme-scheduled-poll-<env>,
  *              myme-reactive-run-<env> (+ -dlq variants)
+ *   - Per-integration reactive-run queues (T-233):
+ *              myme-reactive-run-<integration>-<env> (+ -dlq)
+ *              for every integration in REACTIVE_RUN_INTEGRATIONS that
+ *              declares an `item-event` trigger.
  *   - KV:      myme-control-idempotency-<env>
  *   - R2:      myme-runtime-payloads-<env>
  *
@@ -32,6 +36,45 @@ type Env = "dev" | "staging" | "prod";
 
 function isEnv(s: string): s is Env {
   return s === "dev" || s === "staging" || s === "prod";
+}
+
+/**
+ * T-233 — the set of in-tree integrations that consume reactive
+ * `item-event` envelopes on the hosted substrate. Each entry gets its
+ * own `myme-reactive-run-<integration>-<env>` queue (+ DLQ); the
+ * server's `reactive-run-bridge` routes envelopes per `integration_name`
+ * to the matching producer URL (env var
+ * `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS`).
+ *
+ * Hardcoded rather than derived from `integrations/<name>/src/manifest.ts`
+ * because the set is small + stable, and the alternative (TS-parse the
+ * manifest source to find `triggers.item-event`) adds a script-side
+ * build dependency this lean provisioner doesn't carry. Add an entry
+ * whenever a new integration with an `item-event` trigger lands.
+ *
+ * Hosted-only — `mymehq.sync` is local-only (no Cloudflare deploy), so
+ * not in this list. `mymehq.github-webhooks` and `mymehq.rss-watcher`
+ * have no `item-event` trigger.
+ */
+const REACTIVE_RUN_INTEGRATIONS = [
+  "mymehq.task-auto-archive",
+  "google.calendar",
+] as const;
+
+/**
+ * Cloudflare Queue names must match `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`
+ * (no dots). The publisher-namespaced manifest name (e.g.
+ * `mymehq.task-auto-archive`, `google.calendar`) carries a dot, so the
+ * provisioner lowercases + replaces every dot with a hyphen to derive
+ * the queue-name slug — same shape already used by the existing
+ * `myme-scheduled-poll-<slug>-<env>` and
+ * `myme-webhook-receipt-<slug>-<env>` queues.
+ *
+ *   "mymehq.task-auto-archive" → "mymehq-task-auto-archive"
+ *   "google.calendar"          → "google-calendar"
+ */
+function queueSlug(integrationName: string): string {
+  return integrationName.toLowerCase().replace(/\./g, "-");
 }
 
 interface ResourceIds {
@@ -50,9 +93,26 @@ async function provisionQueues(
     `myme-webhook-receipt-${env}-dlq`,
     `myme-scheduled-poll-${env}`,
     `myme-scheduled-poll-${env}-dlq`,
+    // The shared `myme-reactive-run-${env}` (+ DLQ) is the legacy
+    // single-consumer queue. T-233 splits per integration; the shared
+    // queue + DLQ stay declared here for backward-compat through the
+    // task-auto-archive migration window. Once PR3 drains it, the
+    // shared queue can be removed from this list.
     `myme-reactive-run-${env}`,
     `myme-reactive-run-${env}-dlq`,
   ];
+  // T-233 — per-integration reactive-run queues. Each integration with
+  // an `item-event` trigger gets its own queue + DLQ; the server's
+  // bridge routes envelopes per `integration_name` to the matching
+  // queue URL. Mirrors the existing per-integration shape for
+  // scheduled-poll + webhook-receipt families. The integration name's
+  // publisher dot is replaced with a hyphen for the queue slug because
+  // Cloudflare Queues reject dot characters in queue names.
+  for (const integration of REACTIVE_RUN_INTEGRATIONS) {
+    const slug = queueSlug(integration);
+    wanted.push(`myme-reactive-run-${slug}-${env}`);
+    wanted.push(`myme-reactive-run-${slug}-${env}-dlq`);
+  }
   const existing = await client.listQueues();
   const existingByName = new Map(existing.map((q) => [q.queue_name, q]));
 
@@ -215,6 +275,37 @@ async function main(): Promise<void> {
   console.log("");
   console.log("Done. Resource IDs (for wrangler.*.toml bindings):");
   console.log(JSON.stringify(out, null, 2));
+
+  // T-233 — pre-built CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS map for the
+  // server's env. The server reads this at boot to route reactive item-
+  // event envelopes per `integration_name` (see
+  // packages/server/src/connections/reactive-run-bridge.ts). Operator
+  // pastes the value below into the staging/prod env (Atlas plist, K8s
+  // secret, etc.). One URL per integration; new integrations need an
+  // entry in REACTIVE_RUN_INTEGRATIONS at the top of this script + a
+  // re-run.
+  const reactiveRunUrls: Record<string, string> = {};
+  for (const integration of REACTIVE_RUN_INTEGRATIONS) {
+    const queueName = `myme-reactive-run-${queueSlug(integration)}-${env}`;
+    const queueId = out.queues[queueName];
+    if (!queueId) {
+      console.warn(
+        `[reactive-urls] ! ${integration}: queue ${queueName} not provisioned; skipping URL entry`,
+      );
+      continue;
+    }
+    // Map key is the FULL integration_name (with dot) — that's what
+    // the server's bridge resolver looks up against the envelope's
+    // `integration_name` field. Queue NAME drops the dot for CF's
+    // naming rule; the URL embeds the queue ID, not the name.
+    reactiveRunUrls[integration] =
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/queues/${queueId}/messages`;
+  }
+  console.log("");
+  console.log(
+    "T-233 — CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS (paste into server env):",
+  );
+  console.log(JSON.stringify(reactiveRunUrls));
 }
 
 main().catch((err: unknown) => {
