@@ -62,6 +62,13 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   triggers: [
     { type: "schedule", config: { cron: "*/10 * * * *" } },
     { type: "item-event" },
+    // Webhook trigger handles Google Calendar push notifications
+    // (channels.watch). Channels point at the integration's inbound
+    // receipt URL; pushes carry no body — verification is by
+    // X-Goog-Channel-Token via the `google-channel` adapter. The
+    // schedule trigger above stays as both the channel-renewal cron
+    // and the fallback during channel gaps + initial sync.
+    { type: "webhook" },
   ],
   bidirectional_handling: {
     echo_ttl_seconds: 120,
@@ -70,7 +77,12 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
     partial_write_mode: "accept-partial",
   },
   oauth_requirements: { calendar: "proxy" },
-  webhook_verification: { method: "hmac-sha256" },
+  // Google Calendar push notifications carry no body and verify by
+  // shared-secret header echo (X-Goog-Channel-Token). The
+  // `google-channel` adapter in `@mymehq/webhooks` matches the channel
+  // token against the per-Connection inbound-webhook subscription
+  // secret captured at install time.
+  webhook_verification: { method: "google-channel" },
   permissions: {
     extension: { "connection.runtime": "write" },
     edge: {},

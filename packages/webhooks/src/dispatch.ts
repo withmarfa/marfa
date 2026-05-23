@@ -13,10 +13,12 @@ import { verifyHmacSha256 } from "./hmac-sha256.js";
 import { verifySlack } from "./slack.js";
 import { verifyStripe } from "./stripe.js";
 import { verifyGitHub } from "./github.js";
+import { verifyGoogleChannel } from "./google-channel.js";
 
 export const ADAPTERS: Record<VerificationMethod, Verifier> = {
   "hmac-sha256": verifyHmacSha256,
   slack: verifySlack,
   stripe: verifyStripe,
   github: verifyGitHub,
+  "google-channel": verifyGoogleChannel,
 };
