@@ -82,7 +82,17 @@ async function readOAuthConfig(
       `Connection ${connection.id} has no credential_ref. Install the connection via /integrations/:id/install or migrate the legacy inline OAuth config to a system.credential item.`,
     );
   }
-  const credential = await storage.items.get(credentialRef);
+  // T-235: thread the connection's tenant into the credential lookup.
+  // The install pipeline at `connections/install-pipeline.ts:166-186`
+  // already validates `credentialRef` is in the caller's tenant before
+  // stamping it onto the connection, so any legitimately-installed
+  // reference IS in the same tenant. The fence here is defence-in-depth
+  // — if a future code path bypasses the install validation, a
+  // malformed reference can't reach into another tenant's credentials.
+  const credential = await storage.items.get(
+    credentialRef,
+    connection.tenant_id ?? undefined,
+  );
   if (credential?.type !== "system.credential") {
     throw new MymeError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,

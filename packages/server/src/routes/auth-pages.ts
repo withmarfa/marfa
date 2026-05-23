@@ -2011,8 +2011,21 @@ export function authRoutes(
     // tenant_id + the scopes the user actually approved. The grant
     // properties already carry the scope set; we read them as the
     // authoritative input to the token-mint.
+    //
+    // `connection_item_id` comes from the server-controlled
+    // `oauth_device_codes` row written by the device-code approve
+    // handler — never user-supplied — so a wrong-type result is not
+    // reachable today. T-235 adds the type check as a defence-in-depth
+    // belt: if a future change to the approve handler ever stamped a
+    // non-`system.connection` id, the code below would otherwise
+    // silently mint an orphan token from whatever properties it found.
     const deviceGrant = await storage.items.get(row.connection_item_id);
-    const grantProps = deviceGrant?.properties ?? {};
+    if (deviceGrant?.type !== "system.connection") {
+      throw new Error(
+        "Device-flow grant resolves to non-system.connection item (projection drift?)",
+      );
+    }
+    const grantProps = deviceGrant.properties;
     const grantScopes = Array.isArray(grantProps.scopes)
       ? (grantProps.scopes as string[])
       : [];
@@ -2037,7 +2050,7 @@ export function authRoutes(
       refreshTokenHash: refreshHash,
       clientId: grantClientId,
       authUserId: grantUserId,
-      referenceId: deviceGrant?.tenant_id ?? null,
+      referenceId: deviceGrant.tenant_id ?? null,
       scopes: grantScopes,
       accessTtlMs: ACCESS_TOKEN_TTL_MS,
     });
@@ -2046,7 +2059,7 @@ export function authRoutes(
     await stampOAuthGrantLastUsed(
       storage,
       row.connection_item_id,
-      deviceGrant?.tenant_id ?? undefined,
+      deviceGrant.tenant_id ?? undefined,
     );
 
     return c.json({

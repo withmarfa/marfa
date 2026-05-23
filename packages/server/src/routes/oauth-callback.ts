@@ -81,7 +81,18 @@ async function readAuthorizeConfig(
       "Connection has no credential_ref — cannot start OAuth flow",
     );
   }
-  const credential = await storage.items.get(credentialRef);
+  // T-235: thread the connection's tenant into the credential lookup.
+  // Both call sites for `readAuthorizeConfig` resolve the connection
+  // through an untenanted lookup (admin start route, unauthenticated
+  // provider callback) — once the connection is in hand, its
+  // `tenant_id` is the load-bearing input to fence the credential
+  // resolution. The install pipeline enforces same-tenant
+  // `credential_ref` on create, so any legitimately-installed
+  // reference IS in the same tenant; this is defence-in-depth.
+  const credential = await storage.items.get(
+    credentialRef,
+    connection.tenant_id ?? undefined,
+  );
   if (credential?.type !== "system.credential") {
     throw new MymeError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
