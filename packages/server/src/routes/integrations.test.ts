@@ -18,9 +18,14 @@
  *     the basic positive path.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { IntegrationManifest } from "@mymehq/shared";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -370,5 +375,218 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
       },
     );
     expect(res.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-232 — catalogue visibility for tenant-scoped member tokens.
+//
+// Manifests register under platform credentials (is_platform: true), which
+// carry tenant_id: null. The default tenant-equality filter on items.list
+// hid them from any in-tenant caller — turning the marketplace surface
+// invisible to every real user. The fix opts the dedicated catalogue list
+// into `includePlatformScoped: true` so platform-scoped rows surface
+// alongside the caller's own; per-tenant integration rows must stay
+// isolated, and the generic /items route must stay strictly equality-fenced.
+// ---------------------------------------------------------------------------
+
+describe("GET /integrations — catalogue visibility (T-232)", () => {
+  async function mintTenantKey(
+    tenantId: string,
+    typePermissions: Record<string, "read" | "write" | "none"> = {},
+  ): Promise<string> {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const raw = `myme_k1_test_member_${suffix}`;
+    const hash = hashApiKey(raw, TEST_API_KEY_SALT);
+    await ctx.storage.keys.create(
+      {
+        label: `test-member-${suffix}`,
+        source: `test-member-${suffix}`,
+        role: "member",
+        type_permissions: typePermissions,
+        default_tier: "library",
+        is_platform: false,
+      },
+      hash,
+      tenantId,
+    );
+    return raw;
+  }
+
+  it("returns platform-registered manifests to a member token in a tenant", async () => {
+    // The platform admin (ctx.adminKey) registers a fresh manifest. It
+    // lands with tenant_id: null because the admin carries no tenant.
+    const reg = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: baseManifest({ name: "acme.member-visibility" }) },
+    });
+    expect(reg.status).toBe(201);
+    const regBody = (await reg.json()) as RegisterResponse;
+
+    if (!ctx.storage.tenants) return;
+    const tenant = await ctx.storage.tenants.create("tenant-member-vis");
+    const memberKey = await mintTenantKey(tenant.id, {
+      "system.integration": "read",
+    });
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/integrations?manifest_name=acme.member-visibility",
+      { key: memberKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListResponse;
+    const match = body.data.find((d) => d.id === regBody.id);
+    expect(match).toBeDefined();
+    expect(match?.manifest_name).toBe("acme.member-visibility");
+  });
+
+  it("preserves existing behaviour for member tokens without the read scope", async () => {
+    // The dedicated catalogue list does not gate on type_permissions
+    // (the route just calls requireAuth). This test pins that pre-existing
+    // behaviour: a member token with no system.integration grant still
+    // resolves the endpoint at status 200 — no new rejection introduced.
+    await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: baseManifest({ name: "acme.member-no-scope" }) },
+    });
+
+    if (!ctx.storage.tenants) return;
+    const tenant = await ctx.storage.tenants.create("tenant-member-no-scope");
+    const memberKey = await mintTenantKey(tenant.id, {}); // no scope
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/integrations?manifest_name=acme.member-no-scope",
+      { key: memberKey },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("platform credentials still see every manifest", async () => {
+    // Existing platform-admin behaviour preserved. Sanity check that the
+    // widening flag doesn't accidentally constrain admin reads.
+    await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: baseManifest({ name: "acme.platform-still-sees" }) },
+    });
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/integrations?manifest_name=acme.platform-still-sees",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListResponse;
+    expect(
+      body.data.some((d) => d.manifest_name === "acme.platform-still-sees"),
+    ).toBe(true);
+  });
+
+  it("does not leak a tenant-scoped manifest to another tenant's member", async () => {
+    // Defence-in-depth — if a stray system.integration row carries a real
+    // tenant_id (whether seeded by accident, by a future code path, or
+    // copied during data migration), it must NOT cross the tenant
+    // boundary just because the catalogue endpoint widens to include
+    // platform-scoped rows.
+    if (!ctx.storage.tenants) return;
+    const tenantA = await ctx.storage.tenants.create("tenant-iso-A");
+    const tenantB = await ctx.storage.tenants.create("tenant-iso-B");
+
+    // Build a tenant-A-bound system.integration row by going through
+    // the storage layer directly (we don't expose a tenant-bound
+    // register API surface — this is a defensive shape test).
+    const tenantAOnly = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: "acme.tenant-a-private",
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          summary: "Tenant-A-only manifest fixture",
+          direction: "read" as const,
+          runtime_compatibility: ["hosted"],
+          registered_at: new Date().toISOString(),
+          manifest: { name: "acme.tenant-a-private", version: "1.0.0" },
+        },
+      },
+      tenantA.id,
+    );
+
+    // A platform-scoped manifest also lives in the catalogue so we can
+    // assert the member in tenant B still sees null-tenant rows.
+    const platformManifest = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: {
+        manifest: baseManifest({ name: "acme.platform-catalogue-iso" }),
+      },
+    });
+    const platformBody = (await platformManifest.json()) as RegisterResponse;
+
+    const memberB = await mintTenantKey(tenantB.id, {
+      "system.integration": "read",
+    });
+    const res = await request(ctx.app, "GET", "/integrations?limit=200", {
+      key: memberB,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ListResponse;
+
+    // tenant-A's private row must NOT leak to tenant B
+    expect(body.data.some((d) => d.id === tenantAOnly.id)).toBe(false);
+    expect(
+      body.data.some((d) => d.manifest_name === "acme.tenant-a-private"),
+    ).toBe(false);
+
+    // ...but the platform-scoped catalogue row IS visible
+    expect(body.data.some((d) => d.id === platformBody.id)).toBe(true);
+  });
+
+  it("does not widen the generic /items route — system.connection stays tenant-isolated", async () => {
+    // Out-of-scope guard. The fix is local to the catalogue endpoint;
+    // a stray system.connection row with tenant_id IS NULL (known
+    // leftover dev data shape per the T-232 brief) must remain
+    // invisible to a member token hitting the generic /items route.
+    // Mirrors the staging end-to-end check `curl /items?type=system.connection`.
+    if (!ctx.storage.tenants) return;
+    const tenant = await ctx.storage.tenants.create("tenant-items-gate");
+    const memberKey = await mintTenantKey(tenant.id, {
+      "system.connection": "read",
+    });
+
+    // Seed a NULL-tenant system.connection row to stand in for the
+    // staging leftover.
+    const nullTenantConnection = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          direction: "read",
+          runtime_status: "healthy",
+          granted_at: new Date().toISOString(),
+          integration_ref: "irrelevant",
+          credential_ref: "irrelevant",
+          triggers: [],
+          runtime_compatibility: ["hosted"],
+        },
+      },
+      undefined, // tenant_id: null
+    );
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/items?type=system.connection&limit=200",
+      { key: memberKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { id: string; properties: Record<string, unknown> }[];
+    };
+    expect(body.data.some((d) => d.id === nullTenantConnection.id)).toBe(false);
   });
 });

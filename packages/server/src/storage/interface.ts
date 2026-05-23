@@ -34,6 +34,17 @@ export type SortDirection = "asc" | "desc";
 
 export interface ItemFilters {
   tenantId?: string;
+  /** Opt-in widening of the tenant filter for catalogue surfaces. When
+   *  `tenantId` is set AND this flag is true, the WHERE clause becomes
+   *  `(tenant_id = $tenantId OR tenant_id IS NULL)` — so platform-scoped
+   *  rows (written by `is_platform: true` credentials with `tenant_id` NULL)
+   *  surface to in-tenant callers alongside their own rows. Used by the
+   *  Integrations catalogue list (`GET /integrations`) so registered
+   *  manifests, which carry `tenant_id IS NULL` by design, are visible to
+   *  any authenticated tenant member. Default off — generic list reads
+   *  must NOT pick this up, or null-tenant rows from any source would
+   *  leak across tenant boundaries. No effect when `tenantId` is unset. */
+  includePlatformScoped?: boolean;
   type?: string;
   state?: ItemState;
   source?: string;

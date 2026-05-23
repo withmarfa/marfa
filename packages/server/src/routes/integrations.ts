@@ -305,8 +305,17 @@ export function integrationRoutes(storage: Storage, salt: string) {
     const filter = query.manifest_name
       ? `properties.manifest_name eq "${query.manifest_name}"`
       : undefined;
+    // The integration catalogue is the marketplace surface — manifests
+    // are registered by platform credentials (is_platform: true), which
+    // carry `tenant_id: null`. The default tenant-equality fence on
+    // `items.list` would hide every such row from in-tenant callers,
+    // so opt this catalogue read into the platform-scoped widening.
+    // The flag is local to catalogue list endpoints; the generic
+    // /items route and other tenant-scoped reads remain strictly
+    // equality-fenced.
     const items = await storage.items.list({
       tenantId: apiKey.tenant_id,
+      includePlatformScoped: true,
       type: "system.integration",
       filter,
       limit: query.limit ?? 50,

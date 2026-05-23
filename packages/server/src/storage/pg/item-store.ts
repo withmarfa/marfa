@@ -276,8 +276,21 @@ export class PgItemStore implements ItemStore {
       }
     }
 
-    if (filters.tenantId)
-      conditions.push(eq(items.tenant_id, filters.tenantId));
+    if (filters.tenantId) {
+      // Opt-in widening for catalogue list endpoints — see
+      // `ItemFilters.includePlatformScoped` for why platform-scoped
+      // (tenant_id IS NULL) rows surface to tenant callers in this
+      // narrow case. Default keeps the strict equality fence.
+      if (filters.includePlatformScoped) {
+        const tenantClause = or(
+          eq(items.tenant_id, filters.tenantId),
+          isNull(items.tenant_id),
+        );
+        if (tenantClause) conditions.push(tenantClause);
+      } else {
+        conditions.push(eq(items.tenant_id, filters.tenantId));
+      }
+    }
     if (filters.source) conditions.push(eq(items.source, filters.source));
 
     if (filters.sources && filters.sources.length > 0) {
