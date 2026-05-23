@@ -52,7 +52,13 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
     "Bidirectional sync between Google Calendar and Myme. Reads events from calendars the user picks at install and writes Myme-side mutations back via OAuth proxy.",
   direction: "both",
   runtime_compatibility: ["hosted", "local"],
-  target_types: ["core.event"],
+  // `google.calendar.event` is the upstream-fidelity type (full Calendar
+  // field set, the recommended default). `core.event` is the cross-app
+  // shared shape (lossier — no recurrence, no timezone, no etag); the
+  // install-time picker lets the user opt into it when cross-app interop
+  // matters more than fidelity. The runtime credential is granted write
+  // permission on both so either is reachable at handler time.
+  target_types: ["core.event", "google.calendar.event"],
   triggers: [
     { type: "schedule", config: { cron: "*/10 * * * *" } },
     { type: "item-event" },
