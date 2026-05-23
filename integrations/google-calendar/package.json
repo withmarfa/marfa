@@ -8,6 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
     "build": "tsup"
   },
   "dependencies": {
