@@ -485,6 +485,14 @@ export function authRoutes(
     }
 
     if (mode === "magic") {
+      // Better-Auth's magic-link plugin validates `callbackURL` against
+      // its trusted-origins allowlist and rejects bare relative paths
+      // with `{code: "INVALID_CALLBACK_URL"}`. Resolve `returnTo`
+      // against `auth.baseURL` so the upstream receives a same-origin
+      // absolute URL. validateReturnTo (POST side) already guarantees
+      // `returnTo` is a relative same-origin path; the absolute form
+      // is just `<baseURL><returnTo>`.
+      const absoluteCallbackURL = new URL(returnTo, auth.baseURL).toString();
       const upstream = new Request(
         new URL("/auth/sign-in/magic-link", c.req.url),
         {
@@ -494,7 +502,10 @@ export function authRoutes(
             { "content-type": "application/json" },
             auth.baseURL,
           ),
-          body: JSON.stringify({ email: emailStr, callbackURL: returnTo }),
+          body: JSON.stringify({
+            email: emailStr,
+            callbackURL: absoluteCallbackURL,
+          }),
         },
       );
       const response = await auth.handler(upstream);
@@ -610,7 +621,10 @@ export function authRoutes(
       ),
       body: JSON.stringify({
         providerId,
-        callbackURL: returnTo,
+        // Better-Auth's generic-oauth plugin enforces the same
+        // trusted-origins check as magic-link — absolute same-origin
+        // URL required.
+        callbackURL: new URL(returnTo, auth.baseURL).toString(),
       }),
     });
     const response = await auth.handler(upstream);
@@ -1039,7 +1053,13 @@ export function authRoutes(
           { "content-type": "application/json" },
           auth.baseURL,
         ),
-        body: JSON.stringify({ email: emailStr, callbackURL: returnTo }),
+        body: JSON.stringify({
+          email: emailStr,
+          // Resolve to an absolute URL — Better-Auth's verify-email
+          // plugin validates callbackURL against its trusted-origins
+          // allowlist and rejects bare relative paths.
+          callbackURL: new URL(returnTo, auth.baseURL).toString(),
+        }),
       },
     );
     try {
