@@ -70,6 +70,7 @@ export interface ControlPlaneEnv {
   INTEGRATION_RSS_WATCHER?: ServiceBinding;
   INTEGRATION_GITHUB_WEBHOOKS?: ServiceBinding;
   INTEGRATION_TASK_AUTO_ARCHIVE?: ServiceBinding;
+  INTEGRATION_GOOGLE_CALENDAR?: ServiceBinding;
 }
 
 /** Subset of Cloudflare's Fetcher binding (service binding) we use. */
