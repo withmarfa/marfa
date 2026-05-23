@@ -67,8 +67,11 @@ describe("verification dispatch", () => {
   });
 
   it("ADAPTERS table has an entry for every method", () => {
+    // T-231 added `google-channel` for Google Workspace push
+    // notifications (Calendar / Drive / Gmail).
     expect(Object.keys(ADAPTERS).sort()).toEqual([
       "github",
+      "google-channel",
       "hmac-sha256",
       "slack",
       "stripe",

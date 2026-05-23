@@ -161,6 +161,10 @@ const WebhookVerificationSchema = z.discriminatedUnion("method", [
   z.object({ method: z.literal("slack") }),
   z.object({ method: z.literal("stripe") }),
   z.object({ method: z.literal("github") }),
+  // `google-channel` covers Google Workspace push notifications
+  // (Calendar / Drive / Gmail) — body-less; verification by X-Goog-
+  // Channel-Token header against the per-channel stored secret.
+  z.object({ method: z.literal("google-channel") }),
 ]);
 
 export const IntegrationManifestSchema = z

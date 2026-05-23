@@ -53,6 +53,7 @@ export const VERIFICATION_METHODS = [
   "slack",
   "stripe",
   "github",
+  "google-channel",
 ] as const;
 
 export type VerificationMethod = (typeof VERIFICATION_METHODS)[number];
