@@ -130,7 +130,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "mymehq.google-calendar",
+    integration_name: "google.calendar",
     myme: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
@@ -152,7 +152,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
 
 const SCHEDULE_MSG = (): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "mymehq.google-calendar",
+  integration_name: "google.calendar",
   connection_id: "conn_gcal_test",
   scheduled_for_ms: Date.now(),
 });
@@ -163,7 +163,7 @@ const ITEM_EVENT = (
   origin = "conn_other",
 ): ItemEventMessage => ({
   kind: "item-event",
-  integration_name: "mymehq.google-calendar",
+  integration_name: "google.calendar",
   connection_id: "conn_gcal_test",
   event_type: eventType,
   item_id: itemId,
