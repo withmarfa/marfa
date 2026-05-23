@@ -15,7 +15,7 @@ export default {
     return new Response(
       JSON.stringify({
         ok: true,
-        integration: "mymehq.google-calendar",
+        integration: "google.calendar",
         message:
           "Google Calendar Integration. Schedule (inbound) + item-event (outbound) handlers registered; HTTP surface unused.",
       }),
