@@ -3,7 +3,6 @@ import type { ControlPlaneEnv } from "./env.js";
 import { registerHealthRoute } from "./routes/health.js";
 import { registerWebhookRoutes } from "./routes/webhooks.js";
 import { registerLeaseRoutes } from "./routes/lease.js";
-import { registerInstallCallbackRoute } from "./routes/install-callback.js";
 import { registerArmScheduleRoute } from "./routes/arm-schedule.js";
 import { registerVerifyRoute } from "./routes/verify.js";
 import { registerDlqRoutes } from "./routes/dlq.js";
@@ -20,7 +19,6 @@ export function buildApp(): Hono<{ Bindings: ControlPlaneEnv }> {
   registerHealthRoute(app, VERSION);
   registerWebhookRoutes(app);
   registerLeaseRoutes(app);
-  registerInstallCallbackRoute(app);
   registerArmScheduleRoute(app);
   registerVerifyRoute(app);
   registerDlqRoutes(app);

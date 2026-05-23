@@ -81,16 +81,6 @@ describe("control plane app — base routes", () => {
     });
   });
 
-  it("returns 501 for install callback (Layer 2 wires it)", async () => {
-    const app = buildApp();
-    const res = await app.request(
-      "/install-callback",
-      { method: "POST", body: "{}" },
-      TEST_ENV,
-    );
-    expect(res.status).toBe(501);
-  });
-
   it("returns 404 for unknown routes", async () => {
     const app = buildApp();
     const res = await app.request(
