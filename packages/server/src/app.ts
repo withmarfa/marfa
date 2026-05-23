@@ -51,6 +51,7 @@ import {
   leaseTokenValidationRoutes,
 } from "./routes/connection-leased-tokens.js";
 import { connectionRoutes } from "./routes/connections.js";
+import { connectionConfigureRoutes } from "./routes/connection-configure.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { adminRoutes } from "./routes/admin.js";
@@ -575,6 +576,7 @@ export function createApp(
   // orchestrates a full teardown across credentials, OAuth tokens, leased
   // tokens, inbound webhooks, and the connection's lifecycle state.
   app.route("/connections", connectionRoutes(storage, config.apiKeySalt));
+  app.route("/connections", connectionConfigureRoutes(storage));
   app.route("/lease-tokens", leaseTokenValidationRoutes(storage));
   app.route("/webhooks/inbound", inboundWebhookReceiptRoutes(storage));
   app.route("/webhooks", webhookRoutes(storage));

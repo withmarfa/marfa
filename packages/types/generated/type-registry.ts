@@ -318,6 +318,34 @@ const coreFileVideo: TypeSchema = {
   merge_policy: { default: "last_writer_wins" },
 };
 
+const googleCalendarEvent: TypeSchema = {
+  id: "google.calendar.event",
+  label: "Google Calendar Event",
+  description: "An event on a Google Calendar, captured with upstream fidelity. Mirrors the Calendar API event resource closely so a round-trip preserves the fields Google considers authoritative. For cross-app interop with non-Google consumers, the Google Calendar integration can also be configured to write to `core.event` instead, but the default and the fidelity choice is this type.",
+  version: 1,
+  fields: {
+    title: { type: "string", description: "Event summary (maps to Calendar `summary`)", required: true },
+    description: { type: "string", description: "Event description" },
+    starts_at: { type: "datetime", description: "Start time. ISO datetime for timed events; ISO date (YYYY-MM-DD) for all-day events." },
+    ends_at: { type: "datetime", description: "End time. ISO datetime for timed events; ISO date for all-day events." },
+    timezone: { type: "string", description: "IANA timezone identifier (e.g. \"Europe/London\"). Set on timed events; omitted on all-day events." },
+    all_day: { type: "boolean", description: "True when the event is an all-day event (Calendar `start.date` instead of `start.dateTime`)." },
+    place: { type: "string", description: "Free-text location (maps to Calendar `location`)" },
+    html_link: { type: "url", description: "Stable HTTPS link to the event on the Google Calendar web UI." },
+    etag: { type: "string", description: "Calendar's change-detection token. Used for conditional updates and as the content-hash key for echo suppression." },
+    source_calendar_id: { type: "string", description: "ID of the Google Calendar this event lives on (the user's `oblix.cyzr@gmail.com` primary calendar, a shared work calendar, etc.). Set on inbound items so multi-calendar mappings round-trip; outbound writes derive the target calendar from this field or fall back to the connection's configured default." },
+    status: { type: "enum", description: "Calendar event status.", enum_values: ["confirmed", "tentative", "cancelled"] },
+    transparency: { type: "enum", description: "Whether the event blocks time on the user's calendar (Calendar `transparency`).", enum_values: ["opaque", "transparent"] },
+    visibility: { type: "enum", description: "Event visibility setting (Calendar `visibility`).", enum_values: ["default", "public", "private", "confidential"] },
+    organizer_email: { type: "string", description: "Email address of the event organizer (Calendar `organizer.email`)." },
+    creator_email: { type: "string", description: "Email address of the event creator (Calendar `creator.email`)." },
+    recurrence: { type: "array", description: "RRULE / EXRULE / RDATE / EXDATE strings (Calendar `recurrence`). Single-instance round-trip is supported; full recurrence expansion is deliberately not implemented in v1 — the field carries the raw rule for round-trip fidelity.", items_type: "string" },
+    recurring_event_id: { type: "string", description: "When set, this event is an instance of a recurring series; value is the Calendar event id of the series parent." },
+    color_id: { type: "string", description: "Calendar event colour id (numeric string, 1–11; see Calendar's `colors.get`)." },
+  },
+  display_hints: { title_field: "title", body_field: "description" },
+};
+
 const coreMediaAlbum: TypeSchema = {
   id: "core.media.album",
   parent: "core.media",
@@ -535,6 +563,7 @@ export const ALL_TYPES: TypeSchema[] = [
   coreFileAudio,
   coreFileImage,
   coreFileVideo,
+  googleCalendarEvent,
   coreMediaAlbum,
   coreMediaArticle,
   coreMediaBook,

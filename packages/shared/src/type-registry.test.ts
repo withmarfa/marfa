@@ -15,8 +15,10 @@ import type { ItemState } from "@mymehq/types";
 import type { Item } from "./types.js";
 
 describe("TYPE_REGISTRY", () => {
-  it("contains 22 core types and 7 system types (TSC42 §4)", () => {
-    expect(TYPE_REGISTRY.size).toBe(29);
+  it("contains 23 core types and 7 system types (TSC42 §4)", () => {
+    // T-231 added `google.calendar.event` as the 23rd core-bundled type
+    // (the first publisher-namespaced type to ship in-tree).
+    expect(TYPE_REGISTRY.size).toBe(30);
     expect(TYPE_REGISTRY.has("system.device")).toBe(true);
     expect(TYPE_REGISTRY.has("system.credential")).toBe(true);
     expect(TYPE_REGISTRY.has("system.webhook")).toBe(true);
