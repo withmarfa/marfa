@@ -12,7 +12,6 @@ The Cloudflare Worker control plane for the hosted integrations substrate. Route
 - `src/routes/`:
   - `webhooks.ts` — `POST /webhooks/inbound/:connection_id`: verifies the signature via `@mymehq/webhooks`, looks up the subscription, enqueues onto `WEBHOOK_RECEIPT_QUEUE`. Returns 202 on accept.
   - `lease.ts` — `POST /connections/:id/leased-tokens`: mints short-TTL bearers via the broker.
-  - `install-callback.ts` — `POST /connections/install/:provider/callback`: OAuth-bootstrap callback path for connector install.
   - `verify.ts` — `GET /verify`: signature-verification probe surface (admin only).
   - `arm-schedule.ts` — `POST /schedules/arm`: enqueues a schedule message for a cron tick (used by the hosted-side scheduler).
   - `dlq.ts` — `GET /dlq/peek` and `POST /dlq/replay`: gated on `CLOUDFLARE_QUEUES_API_TOKEN`.
