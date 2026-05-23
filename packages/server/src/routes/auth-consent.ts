@@ -583,6 +583,72 @@ const OIDC_SCOPE_DESCRIPTIONS: Record<string, string> = {
 };
 
 /**
+ * User-facing copy for the consent screen, keyed by type id (core
+ * types, system types) or edge type id. Intentionally separate from
+ * the type registry's `description` field — those are written for
+ * developers (reference notes, schema rationale, internal references
+ * to workstream IDs, etc.) and read fine in API docs but land poorly
+ * on a consent screen. Keep these short, plain, second-person, and
+ * one line each.
+ *
+ * Missing entries fall back to the type registry's `description` —
+ * which is correct behaviour for custom types registered at runtime
+ * via `POST /types`, where the operator controls the copy. For core
+ * + system types every entry is curated below so the registry copy
+ * never reaches the screen.
+ */
+const CONSENT_TYPE_DESCRIPTIONS: Record<string, string> = {
+  // Core content
+  "core.note": "Your notes.",
+  "core.task": "Your tasks and to-dos.",
+  "core.bookmark": "Bookmarks and saved links.",
+  "core.highlight": "Highlights and excerpts.",
+  "core.event": "Calendar events.",
+  "core.message": "Messages and conversations.",
+
+  // Entities
+  "core.entity": "Organisations and other entities.",
+  "core.entity.person": "People in your contacts.",
+  "core.entity.place": "Places and venues.",
+
+  // Files
+  "core.file": "Files.",
+  "core.file.audio": "Audio files and recordings.",
+  "core.file.image": "Photos and images.",
+  "core.file.video": "Videos.",
+
+  // Media
+  "core.media": "Media — books, films, music, podcasts.",
+  "core.media.album": "Music albums.",
+  "core.media.article": "Articles.",
+  "core.media.book": "Books.",
+  "core.media.film": "Films.",
+  "core.media.podcast": "Podcasts.",
+  "core.media.series": "TV series.",
+  "core.media.song": "Songs.",
+  "core.media.tv_episode": "TV episodes.",
+
+  // System
+  "system.activity": "Background activity and notifications.",
+  "system.app": "Connected apps.",
+  "system.connection": "Connections to other apps and services.",
+  "system.credential": "API keys and credentials.",
+  "system.device": "Devices signed in to your account.",
+  "system.integration": "Available integrations.",
+  "system.webhook": "Webhook subscriptions.",
+
+  // Edge types — relationships between items.
+  about: "Links between items and what they're about.",
+  "parent-of": "Parent and child relationships.",
+  "in-thread": "Items grouped into threads.",
+  "attached-to": "File attachments on items.",
+  references: "References between items.",
+  "authored-by": "Authorship — who created what.",
+  "derived-from": "Items derived from other items.",
+  supersedes: "Updates and replacements between items.",
+};
+
+/**
  * Build the `{ typePattern: description }` map the renderer uses for
  * the plain-English hint per scope row. Three sources by kind (F11):
  *
@@ -596,7 +662,9 @@ const OIDC_SCOPE_DESCRIPTIONS: Record<string, string> = {
  * Missing entries fall through to the renderer rendering just the
  * literal — never an error.
  */
-function buildScopeDescriptions(scopes: ParsedScope[]): Record<string, string> {
+export function buildScopeDescriptions(
+  scopes: ParsedScope[],
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const s of scopes) {
     if (s.kind === "oidc") {
@@ -610,14 +678,29 @@ function buildScopeDescriptions(scopes: ParsedScope[]): Record<string, string> {
       // kind === "edge"; guard for the type-checker.
       const edgeType = s.edgeType;
       if (edgeType) {
-        const edgeSchema = EDGE_TYPE_REGISTRY.get(edgeType);
-        if (edgeSchema?.description) {
-          out[s.typePattern] = edgeSchema.description;
+        // Curated user-facing copy wins. Falls back to the registry's
+        // engineering description for any edge type without a curated
+        // entry (custom edge types registered at runtime).
+        const curated = CONSENT_TYPE_DESCRIPTIONS[edgeType];
+        if (curated) {
+          out[s.typePattern] = curated;
+        } else {
+          const edgeSchema = EDGE_TYPE_REGISTRY.get(edgeType);
+          if (edgeSchema?.description) {
+            out[s.typePattern] = edgeSchema.description;
+          }
         }
       }
       continue;
     }
     if (s.kind === "metadata") continue;
+    // Same pattern for type scopes — curated copy first, registry
+    // description as fallback (covers custom types).
+    const curated = CONSENT_TYPE_DESCRIPTIONS[s.typePattern];
+    if (curated) {
+      out[s.typePattern] = curated;
+      continue;
+    }
     const schema = TYPE_REGISTRY.get(s.typePattern);
     if (schema?.description) {
       out[s.typePattern] = schema.description;

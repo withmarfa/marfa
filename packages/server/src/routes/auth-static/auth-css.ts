@@ -90,9 +90,10 @@ export const AUTH_CSS = `/*
 }
 
 body {
-  /* 16px body to keep iOS Safari from auto-zooming form fields. */
+  /* 14px body for a denser, more elegant feel. Form inputs bump back
+     to 16px so iOS Safari doesn't auto-zoom them. */
   font:
-    16px/1.55 -apple-system,
+    14px/1.55 -apple-system,
     BlinkMacSystemFont,
     "Segoe UI",
     Helvetica,
@@ -113,9 +114,9 @@ body {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 40px;
+  padding: 32px;
   width: 100%;
-  max-width: 460px;
+  max-width: 420px;
   box-shadow:
     0 1px 2px rgba(15, 15, 15, 0.03),
     0 12px 36px rgba(15, 15, 15, 0.05);
@@ -124,29 +125,29 @@ body {
 /* Wider variant for surfaces that show longer scope lists / diff
    sections (consent, security page). */
 .card--wide {
-  max-width: 560px;
+  max-width: 480px;
 }
 
 @media (max-width: 520px) {
   .card {
-    padding: 28px 20px;
+    padding: 24px 18px;
     border-radius: var(--radius-md);
   }
 }
 
 h1 {
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 600;
-  margin: 0 0 10px;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
+  margin: 0 0 8px;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
 }
 
 /* \`.lede\` is the subtitle paragraph below the H1 — short, soft-ink. */
 .lede {
   color: var(--ink-soft);
   margin: 0 0 var(--gap-xl);
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -220,16 +221,25 @@ h1 {
 input[type="email"],
 input[type="password"],
 input[type="text"] {
-  font: inherit;
-  /* 44px effective tap target (12 + 1.5em line + 12). */
-  padding: 12px;
+  /* 16px on the input itself so iOS Safari doesn't auto-zoom on focus
+     (independent of the 14px body). Compact 8/10px padding keeps the
+     field elegant — roughly 36px tall. */
+  font:
+    16px/1.4 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Helvetica,
+    Arial,
+    sans-serif;
+  padding: 8px 10px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--ink);
   width: 100%;
-  min-height: 44px;
-  transition: border-color 120ms var(--ease), box-shadow 120ms var(--ease);
+  transition:
+    border-color 120ms var(--ease),
+    box-shadow 120ms var(--ease);
 }
 input[type="email"]:focus,
 input[type="password"]:focus,
@@ -253,15 +263,17 @@ input[type="text"]:focus {
 
 .btn {
   font: inherit;
-  /* 44px tap target. */
-  min-height: 44px;
-  padding: 10px 16px;
+  /* ~32px tall — elegant, not chunky. */
+  min-height: 32px;
+  padding: 6px 14px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   cursor: pointer;
+  font-size: 13px;
   font-weight: 500;
   background: var(--card);
   color: var(--ink);
+  white-space: nowrap;
   transition:
     background 120ms var(--ease),
     border-color 120ms var(--ease),
@@ -293,19 +305,18 @@ input[type="text"]:focus {
   border-color: var(--accent-hover);
 }
 
+/* Legacy size modifier — retained for any callsite that still asks for
+   a bigger button, but the consent + sign-in screens no longer use it. */
 .btn--lg {
-  min-height: 50px;
-  padding: 14px 20px;
-  font-size: 15px;
-  font-weight: 600;
-  border-radius: 8px;
+  min-height: 40px;
+  padding: 10px 18px;
+  font-size: 14px;
 }
 
 .btn--ghost {
   background: transparent;
   border-color: transparent;
   color: var(--ink-soft);
-  font-weight: 500;
 }
 .btn--ghost:hover {
   background: var(--hairline);
@@ -365,19 +376,19 @@ input[type="text"]:focus {
 /* ---------------------------------------------------------------- */
 
 .consent-header {
-  margin: 0 0 var(--gap-xl);
+  margin: 0 0 var(--gap-lg);
 }
 .consent-title {
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 600;
-  margin: 0 0 10px;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
+  margin: 0 0 8px;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
 }
 .consent-lede {
   margin: 0;
   color: var(--ink-soft);
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.5;
 }
 .consent-lede .client-name {
@@ -391,37 +402,61 @@ input[type="text"]:focus {
   gap: 0;
 }
 .consent-footnote {
-  margin: 22px 0 0;
+  margin: 18px 0 0;
   text-align: center;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink-faint);
 }
 
-/* Section block — used on consent + diff variants. No box, no border;
-   the section is just a labelled group with hairline-divided rows. */
+/* Section block — collapsible disclosure via native <details>. The
+   summary is a single row (label, count, chevron) that flips to reveal
+   per-scope toggles. No box, no border — just a hairline-divided list
+   inside when open. */
 .section {
   margin: 0;
   padding: 0;
   background: transparent;
   border: 0;
+  border-top: 1px solid var(--hairline);
 }
-.section + .section {
-  margin-top: var(--gap-xl);
+.section:first-of-type {
+  border-top: 0;
+}
+
+/* Strip the native marker so the custom chevron is the only one. */
+details.section > summary {
+  list-style: none;
+}
+details.section > summary::-webkit-details-marker {
+  display: none;
 }
 
 .section__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--gap-md);
-  padding: 0 0 12px;
+  padding: 12px 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
 }
+.section__head:hover .section__label {
+  color: var(--accent-hover);
+}
+.section__head--static {
+  cursor: default;
+}
+.section__head--static:hover .section__label {
+  color: var(--ink);
+}
+
 .section__label {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--ink);
   margin: 0;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 .section__count {
@@ -429,10 +464,29 @@ input[type="text"]:focus {
   color: var(--ink-faint);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  margin-right: 6px;
 }
+.section__chevron {
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid var(--ink-faint);
+  border-bottom: 1.5px solid var(--ink-faint);
+  transform: rotate(-45deg);
+  transition: transform 160ms var(--ease);
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+details.section[open] > summary .section__chevron {
+  transform: rotate(45deg);
+}
+.section__head--static .section__chevron {
+  display: none;
+}
+
 .section__hint {
-  margin: -6px 0 12px;
-  font-size: 13px;
+  margin: 0 0 8px;
+  font-size: 12px;
   color: var(--ink-soft);
   line-height: 1.5;
 }
@@ -449,7 +503,7 @@ input[type="text"]:focus {
 .scope-list {
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--hairline);
+  padding-bottom: 8px;
 }
 
 /* A single scope row — text on the left, toggle on the right. The
@@ -459,12 +513,11 @@ input[type="text"]:focus {
   align-items: center;
   justify-content: space-between;
   gap: var(--gap-md);
-  padding: 14px 0;
+  padding: 8px 0;
   cursor: pointer;
-  border-bottom: 1px solid var(--hairline);
 }
 .scope-row__text {
-  font-size: 14.5px;
+  font-size: 13px;
   color: var(--ink);
   line-height: 1.45;
   flex: 1;
@@ -480,12 +533,13 @@ input[type="text"]:focus {
 }
 
 /* iOS-style toggle switch. The native checkbox is visually hidden but
-   keyboard-focusable; the track + thumb are pure CSS. */
+   keyboard-focusable; the track + thumb are pure CSS. Compact
+   28×16 sizing — discreet, not chunky. */
 .toggle {
   position: relative;
   display: inline-block;
-  width: 38px;
-  height: 22px;
+  width: 28px;
+  height: 16px;
   flex-shrink: 0;
 }
 .toggle input {
@@ -502,7 +556,7 @@ input[type="text"]:focus {
   position: absolute;
   inset: 0;
   background: var(--border-strong);
-  border-radius: 22px;
+  border-radius: 16px;
   transition: background 160ms var(--ease);
   pointer-events: none;
 }
@@ -511,20 +565,20 @@ input[type="text"]:focus {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 18px;
-  height: 18px;
+  width: 12px;
+  height: 12px;
   background: #ffffff;
   border-radius: 50%;
   transition: transform 180ms var(--ease);
   box-shadow:
-    0 1px 2px rgba(15, 15, 15, 0.2),
+    0 1px 2px rgba(15, 15, 15, 0.18),
     0 0 0 0.5px rgba(15, 15, 15, 0.04);
 }
 .toggle input:checked + .toggle__track {
   background: var(--ink);
 }
 .toggle input:checked + .toggle__track::before {
-  transform: translateX(16px);
+  transform: translateX(12px);
 }
 .toggle input:focus-visible + .toggle__track {
   box-shadow: 0 0 0 3px rgba(15, 15, 15, 0.18);
@@ -583,11 +637,13 @@ input[type="text"]:focus {
   margin-top: 2px;
 }
 
-/* Action row at the bottom of consent / device-consent forms. */
+/* Action row at the bottom of consent / device-consent forms.
+   Side-by-side: Deny left (secondary), Allow right (primary, takes the
+   weight of the row at 2× width). */
 .actions {
   display: flex;
-  gap: 12px;
-  margin-top: var(--gap-xl);
+  gap: 8px;
+  margin-top: var(--gap-lg);
 }
 .actions form {
   flex: 1;
@@ -596,9 +652,15 @@ input[type="text"]:focus {
 .actions button {
   width: 100%;
 }
+.actions .btn--primary {
+  flex: 2;
+}
 .actions--stacked {
   flex-direction: column;
   gap: var(--gap-sm);
+}
+.actions--stacked .btn--primary {
+  flex: initial;
 }
 
 /* Used inside the .lede / consent-lede to highlight the requesting
