@@ -3,14 +3,24 @@ import type { ParsedScope } from "@mymehq/shared";
 import { renderConsentScreen } from "./consent.js";
 
 /**
- * Wave C PR4 — behaviour-preserving smoke for `renderConsentScreen`
- * after the layout extraction. T-131 rewrote the form shape to match
- * the @better-auth/oauth-provider plugin: the form now POSTs back to
- * `/auth/authorize/decision` (Myme handler, which proxies to
- * `/auth/oauth2/consent`) with a single `oauth_query` hidden field
- * carrying the plugin's full signed authorize-request query string.
- * This test file asserts the HTML shape directly so a future tweak
- * to the layout helper can't silently break the consent surface.
+ * Shape-asserting smoke for `renderConsentScreen`. Covers:
+ *
+ * - Layout / contract (Wave C PR4 + T-131): shared stylesheet link,
+ *   no inline `<style>`, form posts to `/auth/authorize/decision` with
+ *   the signed `oauth_query` round-tripped verbatim, scope checkboxes
+ *   named `scopes` with the literal as `value`, Allow/Deny buttons
+ *   carry `name="accept" value="true|false"`, wide card variant.
+ *
+ * - Re-consent diff variant (Wave C PR5 / T-032): added / kept /
+ *   removed group rendering, heading copy switch, removed rows
+ *   strikethrough-classed.
+ *
+ * - Error banner (T-131 F2): rendered when `errorMessage` is set,
+ *   escaped against XSS, absent otherwise.
+ *
+ * - Polish-pass shape: title + lede only (no avatar / no eyebrow),
+ *   sections rendered as plain labelled groups, toggle-switch
+ *   markup wrapping a real checkbox, primary "Allow access" button.
  */
 
 const SCOPES: ParsedScope[] = [
@@ -33,7 +43,7 @@ const PARAMS = {
   },
 };
 
-describe("renderConsentScreen (Wave C PR4)", () => {
+describe("renderConsentScreen — layout + form contract", () => {
   it("links to the shared stylesheet and carries no inline <style> block", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain(
@@ -42,19 +52,13 @@ describe("renderConsentScreen (Wave C PR4)", () => {
     expect(html).not.toContain("<style>");
   });
 
-  it("escapes the client name in the title", () => {
+  it("escapes the client name in the body", () => {
     const html = renderConsentScreen({
       ...PARAMS,
       clientName: "<script>alert(1)</script>",
     });
     expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;script&gt;");
-  });
-
-  it("renders a separate read + write section when both kinds present", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toContain("<h2>Read access</h2>");
-    expect(html).toContain("<h2>Read and write access</h2>");
   });
 
   it("threads scope literals + plain-English descriptions into rows", () => {
@@ -90,10 +94,10 @@ describe("renderConsentScreen (Wave C PR4)", () => {
     expect(html).not.toContain('name="response_type"');
   });
 
-  it("renders Approve + Deny buttons with accept=true|false (plugin contract)", () => {
+  it("renders Allow + Deny buttons with accept=true|false (plugin contract)", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toMatch(
-      /<button[^>]*name="accept"[^>]*value="true"[^>]*>Approve<\/button>/,
+      /<button[^>]*name="accept"[^>]*value="true"[^>]*>Allow access<\/button>/,
     );
     expect(html).toMatch(
       /<button[^>]*name="accept"[^>]*value="false"[^>]*>Deny<\/button>/,
@@ -105,41 +109,77 @@ describe("renderConsentScreen (Wave C PR4)", () => {
     expect(html).toContain('class="card card--wide"');
   });
 
-  it("omits the read section when no read scopes", () => {
+  it("hides scope literals (no monospace pills in the consent rows)", () => {
+    const html = renderConsentScreen(PARAMS);
+    // The literals exist as the checkbox `value`, but nothing renders
+    // them as visible monospace pills the way the old design did.
+    expect(html).not.toContain('class="scope-row__literal"');
+    expect(html).not.toContain('class="scope-literal"');
+  });
+});
+
+describe("renderConsentScreen — flat (first-time) sections", () => {
+  it("renders a Read access + Read and write access section when both kinds present", () => {
+    const html = renderConsentScreen(PARAMS);
+    expect(html).toContain(">Read access<");
+    expect(html).toContain(">Read and write access<");
+  });
+
+  it("renders an Identity section when OIDC scopes are present", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [
+        { kind: "oidc", typePattern: "openid", oidcScope: "openid" },
+        { kind: "oidc", typePattern: "email", oidcScope: "email" },
+        ...SCOPES,
+      ] as ParsedScope[],
+      descriptions: {
+        ...PARAMS.descriptions,
+        openid: "Confirm your identity.",
+        email: "See your email address.",
+      },
+    });
+    expect(html).toContain(">Identity<");
+    expect(html).toContain('value="openid"');
+    expect(html).toContain('value="email"');
+    expect(html).toContain("Confirm your identity.");
+  });
+
+  it("omits sections with no scopes (no empty Read access block)", () => {
     const html = renderConsentScreen({
       ...PARAMS,
       scopes: [{ typePattern: "core.note", operation: "write" }],
     });
-    expect(html).not.toContain("Read access</h2>");
-    expect(html).toContain("Read and write access</h2>");
+    expect(html).not.toContain(">Read access<");
+    expect(html).toContain(">Read and write access<");
   });
 
-  it("omits the write section when no write scopes", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [{ typePattern: "core.note", operation: "read" }],
-    });
-    expect(html).toContain("Read access</h2>");
-    expect(html).not.toContain("Read and write access</h2>");
+  it("renders the per-section count next to the label", () => {
+    const html = renderConsentScreen(PARAMS);
+    // 2 read scopes (note:read + task:read), 1 write scope (note:write).
+    expect(html).toMatch(/Read access<\/h2>\s*<span class="section__count">2</);
+    expect(html).toMatch(
+      /Read and write access<\/h2>\s*<span class="section__count">1</,
+    );
   });
 });
 
-describe("renderConsentScreen — re-consent diff (Wave C PR5 / T-032)", () => {
-  it("renders the kept / added / removed groups when priorScopes is supplied", () => {
+describe("renderConsentScreen — re-consent diff", () => {
+  it("renders kept / added / removed groups when priorScopes is supplied", () => {
     const html = renderConsentScreen({
       ...PARAMS,
       // PARAMS.scopes = note:read, note:write, task:read
       priorScopes: ["core.note:read", "core.task:write"],
     });
-    expect(html).toContain('class="section section--kept"');
-    expect(html).toContain('class="section section--added"');
-    expect(html).toContain('class="section section--removed"');
-    expect(html).toContain("Previously granted</h2>");
-    expect(html).toContain("New permissions</h2>");
-    expect(html).toContain("No longer requested</h2>");
+    expect(html).toContain("section--kept");
+    expect(html).toContain("section--added");
+    expect(html).toContain("section--removed");
+    expect(html).toContain("New permissions");
+    expect(html).toContain("Previously granted");
+    expect(html).toContain("No longer requested");
     // Flat sections must NOT render in diff mode.
-    expect(html).not.toContain("Read access</h2>");
-    expect(html).not.toContain("Read and write access</h2>");
+    expect(html).not.toContain(">Read access<");
+    expect(html).not.toContain(">Read and write access<");
   });
 
   it("kept group carries scopes present in BOTH prev + next", () => {
@@ -147,10 +187,9 @@ describe("renderConsentScreen — re-consent diff (Wave C PR5 / T-032)", () => {
       ...PARAMS,
       priorScopes: ["core.note:read"],
     });
-    // core.note:read is in both → kept
-    expect(html).toMatch(
-      /section--kept[\s\S]*?core\.note:read[\s\S]*?(?:section--|<\/div>)/,
-    );
+    // core.note:read is in both → kept. The literal still rides as
+    // the checkbox `value`, even though it isn't visible.
+    expect(html).toMatch(/section--kept[\s\S]*?value="core\.note:read"/);
   });
 
   it("added group carries scopes new in next", () => {
@@ -159,8 +198,8 @@ describe("renderConsentScreen — re-consent diff (Wave C PR5 / T-032)", () => {
       priorScopes: ["core.note:read"],
     });
     // core.note:write + core.task:read are added (new in next)
-    expect(html).toMatch(/section--added[\s\S]*?core\.note:write/);
-    expect(html).toMatch(/section--added[\s\S]*?core\.task:read/);
+    expect(html).toMatch(/section--added[\s\S]*?value="core\.note:write"/);
+    expect(html).toMatch(/section--added[\s\S]*?value="core\.task:read"/);
   });
 
   it("removed group carries scopes from prev that next omits, with strikethrough class", () => {
@@ -168,8 +207,8 @@ describe("renderConsentScreen — re-consent diff (Wave C PR5 / T-032)", () => {
       ...PARAMS,
       priorScopes: ["core.note:read", "core.task:write"],
     });
-    expect(html).toMatch(/section--removed[\s\S]*?core\.task:write/);
-    expect(html).toContain('class="scope-row scope-row--removed"');
+    expect(html).toMatch(/section--removed[\s\S]*?Tasks and todos\./);
+    expect(html).toContain("scope-row--removed");
   });
 
   it("omits a diff group when its set is empty", () => {
@@ -185,13 +224,15 @@ describe("renderConsentScreen — re-consent diff (Wave C PR5 / T-032)", () => {
 
   it("changes the heading copy in the diff variant", () => {
     const flat = renderConsentScreen(PARAMS);
-    expect(flat).toContain("wants to access your data");
+    expect(flat).toContain("Allow access");
+    expect(flat).toContain("asking to access your Myme space");
 
     const diff = renderConsentScreen({
       ...PARAMS,
       priorScopes: ["core.note:read"],
     });
-    expect(diff).toContain("requesting updated access");
+    expect(diff).toContain("Update access");
+    expect(diff).toContain("needs different permissions");
   });
 
   it("removed scopes render their plain-English description", () => {
@@ -203,10 +244,6 @@ describe("renderConsentScreen — re-consent diff (Wave C PR5 / T-032)", () => {
     expect(html).toMatch(/section--removed[\s\S]*?Tasks and todos/);
   });
 });
-
-// ---------------------------------------------------------------------------
-// T-131 fix-up: F2 error banner + F11 description coverage for OIDC + edge
-// ---------------------------------------------------------------------------
 
 describe("renderConsentScreen — error banner (T-131 F2)", () => {
   it("omits the alert div when errorMessage is undefined", () => {
@@ -231,5 +268,38 @@ describe("renderConsentScreen — error banner (T-131 F2)", () => {
     });
     expect(html).not.toContain("<img src=x");
     expect(html).toContain("&lt;img");
+  });
+});
+
+describe("renderConsentScreen — polish-pass shape", () => {
+  it("renders an H1 title + client-name lede (no avatar, no eyebrow)", () => {
+    const html = renderConsentScreen(PARAMS);
+    expect(html).toContain('class="consent-title"');
+    expect(html).toContain('class="consent-lede"');
+    expect(html).toMatch(/<span class="client-name">Test CLI<\/span>/);
+    // No leftover avatar / eyebrow markup from the earlier iteration.
+    expect(html).not.toContain("consent-avatar");
+    expect(html).not.toContain("consent-eyebrow");
+  });
+
+  it("wraps each scope checkbox in a toggle-switch", () => {
+    const html = renderConsentScreen(PARAMS);
+    expect(html).toContain('class="toggle"');
+    expect(html).toContain('class="toggle__track"');
+    expect(html).toMatch(
+      /<input type="checkbox" name="scopes" value="core\.note:read" checked>/,
+    );
+  });
+
+  it("renders the revocation footnote", () => {
+    const html = renderConsentScreen(PARAMS);
+    expect(html).toContain('class="consent-footnote"');
+    expect(html).toContain("Security settings");
+  });
+
+  it("ships no inline <script> (CSS-only toggles, no JS needed)", () => {
+    const html = renderConsentScreen(PARAMS);
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("data-section-master");
   });
 });

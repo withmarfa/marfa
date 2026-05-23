@@ -7,24 +7,27 @@
  * loses syntax highlighting inside the literal but the runtime
  * shape is bytewise identical to a real `auth.css`.
  *
- * Wave C PR4. Future PRs (PR5 polish, PR6 passkey button, PR7
- * security page) will edit this file in place.
+ * Wave C PR4 established this file. The consent-polish pass tightens
+ * the design tokens, refines typography, and introduces the
+ * consent-page primitives (clean section labels, toggle switches,
+ * hairline-divided rows). The shared shell — sign-in / sign-up /
+ * verify-email / forgot-password / reset-password / device-flow /
+ * security — picks up the typographic + token polish automatically.
  */
 
 export const AUTH_CSS = `/*
  * Myme auth-page stylesheet.
  *
- * Wave C PR4 — single source of truth for CSS across every auth surface
- * (sign-in, sign-up, consent, device flow, and the email-verify /
- * forgot-password / reset-password pages added in PR2 + PR3). Loaded
- * once and cached at the edge; the page renderers reference classes
- * by name and never inline styles.
+ * Single source of truth for CSS across every auth surface (sign-in,
+ * sign-up, consent, device flow, email-verify, forgot-password,
+ * reset-password, security). Loaded once and cached at the edge; page
+ * renderers reference classes by name and never inline styles.
  *
  * Design tokens are CSS custom properties so a self-host operator can
  * theme the surface with a small override stylesheet without forking.
  *
  * Mobile-first: 16px body, 44px tap targets, single-column form on
- * small screens. The card lifts to a centred max-width:420px / 460px
+ * small screens. The card lifts to a centred max-width:460px / 560px
  * panel from 480px up.
  */
 
@@ -32,18 +35,18 @@ export const AUTH_CSS = `/*
   color-scheme: light;
 
   /* Surface tokens. */
-  --bg: #fafaf8;
+  --bg: #fafaf7;
   --card: #ffffff;
-  --ink: #1a1a1a;
-  --ink-soft: #555;
-  --ink-faint: #999;
-  --border: #e2e2dc;
+  --ink: #0f0f0f;
+  --ink-soft: #5a5a55;
+  --ink-faint: #9b9b96;
+  --border: #ececea;
+  --border-strong: #d9d9d4;
+  --hairline: #f1f1ee;
 
-  /* Accent — the dark-ink primary used on every auth page since
-     Wave A; keeps the surface visually consistent with the rest of
-     the Myme product. */
-  --accent: #1a1a1a;
-  --accent-hover: #333;
+  /* Accent — dark-ink primary used across all auth surfaces. */
+  --accent: #0f0f0f;
+  --accent-hover: #2a2a2a;
 
   /* Status banners. */
   --error-bg: #fdecec;
@@ -53,22 +56,33 @@ export const AUTH_CSS = `/*
   --success-border: #b8d8af;
   --success-ink: #2a5a1f;
 
-  /* Section background — used by consent + device-consent group blocks. */
-  --section-bg: #f7f7f3;
+  /* Section background — kept for legacy auth surfaces that group
+     scopes in a tinted block (device-consent today). */
+  --section-bg: #fafaf7;
 
-  /* Scope literal pill — monospace badge inside consent rows. */
-  --pill-bg: #eef0ea;
-  --pill-ink: #4b5563;
+  /* Scope literal pill — used by the security page only; the consent
+     screen hides literals entirely. */
+  --pill-bg: #f1f1ee;
+  --pill-ink: #6a6a64;
+
+  /* Diff variants — subtle tints rather than saturated colours. */
+  --added-tint: #f0f6ee;
+  --added-ink: #2a5a1f;
+  --removed-tint: #f4f3f0;
 
   /* Scale tokens. */
   --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
   --gap-xs: 4px;
   --gap-sm: 8px;
   --gap-md: 14px;
   --gap-lg: 20px;
-  --gap-xl: 24px;
+  --gap-xl: 28px;
+  --gap-xxl: 40px;
+
+  /* Motion. */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 * {
@@ -77,57 +91,76 @@ export const AUTH_CSS = `/*
 
 body {
   /* 16px body to keep iOS Safari from auto-zooming form fields. */
-  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica,
-    Arial, sans-serif;
+  font:
+    16px/1.55 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Helvetica,
+    Arial,
+    sans-serif;
   margin: 0;
-  padding: 24px;
+  padding: 32px 20px;
   background: var(--bg);
   color: var(--ink);
   min-height: 100vh;
   display: grid;
   place-items: center;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 32px;
+  padding: 40px;
   width: 100%;
   max-width: 460px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 1px 2px rgba(15, 15, 15, 0.03),
+    0 12px 36px rgba(15, 15, 15, 0.05);
 }
 
 /* Wider variant for surfaces that show longer scope lists / diff
-   sections (consent, security page once it lands in PR7). */
+   sections (consent, security page). */
 .card--wide {
   max-width: 560px;
 }
 
+@media (max-width: 520px) {
+  .card {
+    padding: 28px 20px;
+    border-radius: var(--radius-md);
+  }
+}
+
 h1 {
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 600;
-  margin: 0 0 8px;
-  letter-spacing: -0.01em;
+  margin: 0 0 10px;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 /* \`.lede\` is the subtitle paragraph below the H1 — short, soft-ink. */
 .lede {
   color: var(--ink-soft);
   margin: 0 0 var(--gap-xl);
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 15px;
+  line-height: 1.5;
 }
 
-.banner {
+.banner,
+.alert {
   margin: 0 0 16px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   border: 1px solid;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.45;
 }
-.banner--error {
+.banner--error,
+.alert--error {
   background: var(--error-bg);
   border-color: var(--error-border);
   color: var(--error-ink);
@@ -190,24 +223,29 @@ input[type="text"] {
   font: inherit;
   /* 44px effective tap target (12 + 1.5em line + 12). */
   padding: 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--ink);
   width: 100%;
   min-height: 44px;
+  transition: border-color 120ms var(--ease), box-shadow 120ms var(--ease);
 }
 input[type="email"]:focus,
 input[type="password"]:focus,
 input[type="text"]:focus {
-  outline: 2px solid var(--ink);
-  outline-offset: 1px;
+  outline: none;
   border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(15, 15, 15, 0.08);
 }
 
 /* Monospace centred input for the device-flow user_code. */
 .field__input--code {
-  font: 18px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    18px/1 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   letter-spacing: 0.1em;
   text-align: center;
   text-transform: uppercase;
@@ -219,18 +257,25 @@ input[type="text"]:focus {
   min-height: 44px;
   padding: 10px 16px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--ink);
+  border: 1px solid var(--border-strong);
   cursor: pointer;
   font-weight: 500;
   background: var(--card);
   color: var(--ink);
+  transition:
+    background 120ms var(--ease),
+    border-color 120ms var(--ease),
+    transform 80ms var(--ease);
 }
 .btn:hover {
   background: var(--bg);
 }
+.btn:active {
+  transform: translateY(0.5px);
+}
 .btn:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(15, 15, 15, 0.18);
 }
 .btn:disabled,
 .btn[disabled] {
@@ -241,9 +286,30 @@ input[type="text"]:focus {
 .btn--primary {
   background: var(--accent);
   color: var(--card);
+  border-color: var(--accent);
 }
 .btn--primary:hover {
   background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn--lg {
+  min-height: 50px;
+  padding: 14px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+.btn--ghost:hover {
+  background: var(--hairline);
+  color: var(--ink);
 }
 
 .btn--oidc {
@@ -294,60 +360,182 @@ input[type="text"]:focus {
   color: var(--ink);
 }
 
-/* Section block — used on consent and device-consent screens to group
-   scopes (read / write / kept / added / removed in the PR5 diff
-   variant). */
-.section {
-  margin: 16px 0;
-  padding: 12px 14px;
-  background: var(--section-bg);
-  border-radius: var(--radius-md);
-  border-left: 3px solid transparent;
+/* ---------------------------------------------------------------- */
+/* Consent screen                                                   */
+/* ---------------------------------------------------------------- */
+
+.consent-header {
+  margin: 0 0 var(--gap-xl);
 }
-.section h2 {
-  font-size: 12px;
-  margin: 0 0 var(--gap-sm);
+.consent-title {
+  font-size: 28px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.consent-lede {
+  margin: 0;
   color: var(--ink-soft);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.consent-lede .client-name {
+  color: var(--ink);
   font-weight: 600;
 }
 
-/* Wave C PR5 / T-032 — re-consent diff variants. Subtle accent borders
-   so the user can scan kept / added / removed at a glance without
-   leaving the dark-ink design system. */
-.section--kept {
-  /* Same neutral as flat sections — no extra emphasis. */
+.consent-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
-.section--added {
-  background: #ecf6e9;
-  border-left-color: #2a5a1f;
+.consent-footnote {
+  margin: 22px 0 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--ink-faint);
 }
-.section--added h2 {
-  color: #2a5a1f;
+
+/* Section block — used on consent + diff variants. No box, no border;
+   the section is just a labelled group with hairline-divided rows. */
+.section {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
 }
-.section--removed {
-  background: #f3f0ec;
-  border-left-color: var(--ink-faint);
+.section + .section {
+  margin-top: var(--gap-xl);
 }
-.section--removed h2 {
+
+.section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-md);
+  padding: 0 0 12px;
+}
+.section__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.section__count {
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.section__hint {
+  margin: -6px 0 12px;
+  font-size: 13px;
   color: var(--ink-soft);
+  line-height: 1.5;
 }
-/* Removed scope rows render as static (no checkbox): strike them so
-   the user sees they're being dropped rather than re-granted. */
-.scope-row--removed {
-  margin: var(--gap-xs) 0;
-  opacity: 0.7;
+
+/* Diff variants — colour the section label rather than tinting the
+   background; keeps the monochrome direction. */
+.section--added .section__label {
+  color: var(--added-ink);
 }
-.scope-row--removed .scope-literal {
-  text-decoration: line-through;
-}
-.scope-row--removed .scope-human {
+.section--removed .section__label {
   color: var(--ink-soft);
 }
 
-/* Bulleted scope list — one row per <scope>:<verb> entry, optional
-   plain-English description on the second line. */
+.scope-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hairline);
+}
+
+/* A single scope row — text on the left, toggle on the right. The
+   whole row is a label so the user can click anywhere to toggle. */
+.scope-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-md);
+  padding: 14px 0;
+  cursor: pointer;
+  border-bottom: 1px solid var(--hairline);
+}
+.scope-row__text {
+  font-size: 14.5px;
+  color: var(--ink);
+  line-height: 1.45;
+  flex: 1;
+  min-width: 0;
+}
+
+.scope-row--removed {
+  cursor: default;
+}
+.scope-row--removed .scope-row__text {
+  color: var(--ink-faint);
+  text-decoration: line-through;
+}
+
+/* iOS-style toggle switch. The native checkbox is visually hidden but
+   keyboard-focusable; the track + thumb are pure CSS. */
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.toggle input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+.toggle__track {
+  position: absolute;
+  inset: 0;
+  background: var(--border-strong);
+  border-radius: 22px;
+  transition: background 160ms var(--ease);
+  pointer-events: none;
+}
+.toggle__track::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: #ffffff;
+  border-radius: 50%;
+  transition: transform 180ms var(--ease);
+  box-shadow:
+    0 1px 2px rgba(15, 15, 15, 0.2),
+    0 0 0 0.5px rgba(15, 15, 15, 0.04);
+}
+.toggle input:checked + .toggle__track {
+  background: var(--ink);
+}
+.toggle input:checked + .toggle__track::before {
+  transform: translateX(16px);
+}
+.toggle input:focus-visible + .toggle__track {
+  box-shadow: 0 0 0 3px rgba(15, 15, 15, 0.18);
+}
+.toggle input:disabled + .toggle__track {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Legacy .scopes list — kept for surfaces that still use the old
+   bullet-list shape (device-consent on some pages). */
 .scopes {
   margin: 0;
   padding: 0;
@@ -365,17 +553,19 @@ input[type="text"]:focus {
   margin-bottom: 0;
 }
 .scopes code {
-  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    12px/1.4 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   color: var(--ink-faint);
   display: block;
   margin-top: 2px;
 }
 
-/* Consent-screen scope row — checkbox + literal pill + human description. */
-.scope-row {
-  display: block;
-  margin: var(--gap-xs) 0;
-}
+/* Legacy alias — older consent renderer used .scope-literal /
+   .scope-human directly. Kept so the security-page rows + any
+   unchanged renderers still pick up the same styling tokens. */
 .scope-literal {
   display: inline-block;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -406,9 +596,13 @@ input[type="text"]:focus {
 .actions button {
   width: 100%;
 }
+.actions--stacked {
+  flex-direction: column;
+  gap: var(--gap-sm);
+}
 
-/* Used inside the .lede to highlight the requesting client name on
-   consent + device-consent. */
+/* Used inside the .lede / consent-lede to highlight the requesting
+   client name on consent + device-consent. */
 .client-name {
   font-weight: 600;
   color: var(--ink);
@@ -471,5 +665,14 @@ input[type="text"]:focus {
 .tag--current {
   background: var(--success-bg);
   color: var(--success-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+  }
 }
 `;

@@ -28,6 +28,15 @@
  * hidden field `oauth_query`. `client_id` is rendered for the projection
  * handler's use (it reads the form's `client_id` directly to write the
  * `system.connection { kind: "app" }` row + audit emit).
+ *
+ * Polish pass: visual rework toward a calm, restrained surface (Luma /
+ * Amie / Linear reference). No avatar, no eyebrow, no boxed sections,
+ * no monospace scope literals — just confident typography, sections as
+ * bold labels with quiet counts, and one toggle per scope. Default is
+ * everything on; the primary "Allow access" button is the obvious move.
+ * The hard form contract (action, hidden inputs, scope `name`/`value`,
+ * accept button names) is preserved verbatim — the toggles are
+ * visually-styled checkboxes so submission shape doesn't change.
  */
 
 import type { ParsedScope } from "@mymehq/shared";
@@ -82,183 +91,201 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function scopeLiteralFor(scope: ParsedScope): string {
+  return scope.kind === "oidc"
+    ? (scope.oidcScope ?? scope.typePattern)
+    : `${scope.typePattern}:${scope.operation}`;
+}
+
+interface SectionDescriptor {
+  /** Visible section heading. */
+  label: string;
+  /** Optional short hint shown under the heading. */
+  hint?: string;
+  /** Modifier CSS class (added / removed variants in the diff path). */
+  modifier?: "kept" | "added" | "removed";
+  scopes: ParsedScope[];
+}
+
 /** Renders the OAuth consent screen as an HTML string. */
 export function renderConsentScreen(params: ConsentParams): string {
   const descriptionFor = (typePattern: string): string | undefined =>
     params.descriptions?.[typePattern];
 
-  // The "removed" branch only carries literals (no `ParsedScope`),
-  // since we render them as-is without splitting on read/write.
-  const scopeCheckbox = (scope: ParsedScope, opts?: { checked?: boolean }) => {
-    const literal =
-      scope.kind === "oidc"
-        ? (scope.oidcScope ?? scope.typePattern)
-        : `${scope.typePattern}:${scope.operation}`;
+  /** A single grant-this-permission row — toggle on the right. */
+  const scopeRow = (scope: ParsedScope, opts?: { checked?: boolean }) => {
+    const literal = scopeLiteralFor(scope);
     const description = descriptionFor(scope.typePattern);
-    const humanLine = description
-      ? `<span class="scope-human">${escapeHtml(description)}</span>`
-      : "";
+    // Fall back to the literal only if there's no plain-English line
+    // for this scope — that should be rare (every core type + OIDC
+    // scope has a description). The literal is otherwise hidden.
+    const human = description ?? literal;
     const checked = opts?.checked === false ? "" : "checked";
     return `<label class="scope-row">
-      <input type="checkbox" name="scopes" value="${escapeHtml(literal)}" ${checked}>
-      <code class="scope-literal">${escapeHtml(literal)}</code>
-      ${humanLine}
+      <span class="scope-row__text">${escapeHtml(human)}</span>
+      <span class="toggle">
+        <input type="checkbox" name="scopes" value="${escapeHtml(literal)}" ${checked}>
+        <span class="toggle__track" aria-hidden="true"></span>
+      </span>
     </label>`;
   };
 
-  // For the "removed" rows we don't have a parsed shape — but we know
-  // every scope literal is `<typePattern>:<verb>`. Split on the LAST
-  // `:` so a typePattern containing `:` (rare today, future-proofing)
-  // still parses cleanly.
+  /** Static row used for "No longer requested" entries in the diff variant. */
   const removedRow = (literal: string): string => {
     const lastColon = literal.lastIndexOf(":");
     const typePattern = lastColon > 0 ? literal.slice(0, lastColon) : literal;
     const description = descriptionFor(typePattern);
-    const humanLine = description
-      ? `<span class="scope-human">${escapeHtml(description)}</span>`
-      : "";
+    const human = description ?? literal;
     return `<div class="scope-row scope-row--removed">
-      <code class="scope-literal">${escapeHtml(literal)}</code>
-      ${humanLine}
+      <span class="scope-row__text">${escapeHtml(human)}</span>
     </div>`;
+  };
+
+  const renderSection = (descriptor: SectionDescriptor): string => {
+    if (descriptor.scopes.length === 0) return "";
+
+    const modifierClass = descriptor.modifier
+      ? ` section--${descriptor.modifier}`
+      : "";
+
+    const hintHtml = descriptor.hint
+      ? `<p class="section__hint">${escapeHtml(descriptor.hint)}</p>`
+      : "";
+
+    if (descriptor.modifier === "removed") {
+      const literals = descriptor.scopes.map((s) => scopeLiteralFor(s));
+      return `<section class="section${modifierClass}">
+        <header class="section__head">
+          <h2 class="section__label">${escapeHtml(descriptor.label)}</h2>
+          <span class="section__count">${String(descriptor.scopes.length)}</span>
+        </header>
+        ${hintHtml}
+        <div class="scope-list">${literals.map(removedRow).join("")}</div>
+      </section>`;
+    }
+
+    return `<section class="section${modifierClass}">
+      <header class="section__head">
+        <h2 class="section__label">${escapeHtml(descriptor.label)}</h2>
+        <span class="section__count">${String(descriptor.scopes.length)}</span>
+      </header>
+      ${hintHtml}
+      <div class="scope-list">
+        ${descriptor.scopes.map((s) => scopeRow(s)).join("")}
+      </div>
+    </section>`;
   };
 
   const safeClient = escapeHtml(params.clientName);
   const safeClientId = escapeHtml(params.clientId);
   const safeOauthQuery = escapeHtml(params.oauthQuery);
-
-  // Decide diff-vs-flat rendering. Diff path triggers when caller
-  // passed `priorScopes` and there's at least one scope on either
-  // side — empty-prior + empty-next never happens (we'd have rejected
-  // earlier), and a single-empty side trivially collapses to flat.
   const showDiff = params.priorScopes !== undefined;
 
-  let scopesHtml: string;
+  const sections: SectionDescriptor[] = [];
+
   if (showDiff) {
-    // Compute diff against literal scope strings (`<type>:<verb>` or bare OIDC literal).
-    const scopeLiteral = (s: ParsedScope) =>
-      s.kind === "oidc"
-        ? (s.oidcScope ?? s.typePattern)
-        : `${s.typePattern}:${s.operation}`;
-    const nextLiterals = params.scopes.map(scopeLiteral);
+    const nextLiterals = params.scopes.map(scopeLiteralFor);
     const diff = computeConsentDiff(params.priorScopes ?? [], nextLiterals);
-    // Re-hydrate the kept / added literals back to ParsedScopes so
-    // the renderer can split read/write description lookup. Map by
-    // literal back to the input.
     const parsedByLiteral = new Map<string, ParsedScope>();
     for (const scope of params.scopes) {
-      parsedByLiteral.set(scopeLiteral(scope), scope);
+      parsedByLiteral.set(scopeLiteralFor(scope), scope);
     }
-    const keptParsed = diff.kept
-      .map((lit) => parsedByLiteral.get(lit))
-      .filter((s): s is ParsedScope => s !== undefined);
-    const addedParsed = diff.added
-      .map((lit) => parsedByLiteral.get(lit))
-      .filter((s): s is ParsedScope => s !== undefined);
+    const lookup = (lits: readonly string[]): ParsedScope[] =>
+      lits
+        .map((lit) => parsedByLiteral.get(lit))
+        .filter((s): s is ParsedScope => s !== undefined);
 
-    const keptSection =
-      keptParsed.length > 0
-        ? `<div class="section section--kept">
-            <h2>Previously granted</h2>
-            ${keptParsed.map((s) => scopeCheckbox(s)).join("\n")}
-          </div>`
-        : "";
-    const addedSection =
-      addedParsed.length > 0
-        ? `<div class="section section--added">
-            <h2>New permissions</h2>
-            ${addedParsed.map((s) => scopeCheckbox(s)).join("\n")}
-          </div>`
-        : "";
-    const removedSection =
-      diff.removed.length > 0
-        ? `<div class="section section--removed">
-            <h2>No longer requested</h2>
-            <p class="field__hint">These permissions were granted previously but the app isn't asking for them now. They'll be dropped when you approve.</p>
-            ${diff.removed.map((lit) => removedRow(lit)).join("\n")}
-          </div>`
-        : "";
-    scopesHtml = `${keptSection}${addedSection}${removedSection}`;
+    // Order: the change first ("New permissions"), then the carry-over,
+    // then the informational drop-list at the bottom.
+    sections.push({
+      label: "New permissions",
+      hint: "These were not part of the previous grant.",
+      modifier: "added",
+      scopes: lookup(diff.added),
+    });
+    sections.push({
+      label: "Previously granted",
+      modifier: "kept",
+      scopes: lookup(diff.kept),
+    });
+
+    // Removed section uses literals only — wrap in dummy ParsedScopes
+    // so the descriptor + render loop stay uniform.
+    const removedAsParsed: ParsedScope[] = diff.removed.map((literal) => {
+      const lastColon = literal.lastIndexOf(":");
+      const typePattern = lastColon > 0 ? literal.slice(0, lastColon) : literal;
+      const operationPart = lastColon > 0 ? literal.slice(lastColon + 1) : "";
+      const operation: ParsedScope["operation"] =
+        operationPart === "write" ? "write" : "read";
+      return {
+        typePattern,
+        operation,
+      } as ParsedScope;
+    });
+    sections.push({
+      label: "No longer requested",
+      hint: "These were granted before but the app is not asking for them now. They will be dropped.",
+      modifier: "removed",
+      scopes: removedAsParsed,
+    });
   } else {
-    // First-time consent — OIDC identity / read / write sections.
     const oidcScopes = params.scopes.filter((s) => s.kind === "oidc");
     const readScopes = params.scopes.filter((s) => s.operation === "read");
     const writeScopes = params.scopes.filter((s) => s.operation === "write");
 
-    const oidcSection =
-      oidcScopes.length > 0
-        ? `<div class="section">
-            <h2>Identity</h2>
-            ${oidcScopes.map((s) => scopeCheckbox(s)).join("\n")}
-          </div>`
-        : "";
-    const readSection =
-      readScopes.length > 0
-        ? `<div class="section">
-            <h2>Read access</h2>
-            ${readScopes.map((s) => scopeCheckbox(s)).join("\n")}
-          </div>`
-        : "";
-    const writeSection =
-      writeScopes.length > 0
-        ? `<div class="section">
-            <h2>Read and write access</h2>
-            ${writeScopes.map((s) => scopeCheckbox(s)).join("\n")}
-          </div>`
-        : "";
-    scopesHtml = `${oidcSection}${readSection}${writeSection}`;
+    sections.push({
+      label: "Identity",
+      scopes: oidcScopes,
+    });
+    sections.push({
+      label: "Read access",
+      scopes: readScopes,
+    });
+    sections.push({
+      label: "Read and write access",
+      scopes: writeScopes,
+    });
   }
 
-  // Lede copy reflects whether we're showing a fresh consent or a
-  // re-consent with changes.
-  const leadeText = showDiff
-    ? `<span class="client-name">${safeClient}</span> is requesting updated access to your data`
-    : `<span class="client-name">${safeClient}</span> wants to access your data`;
+  const sectionsHtml = sections.map(renderSection).join("");
 
-  // T-131: form POSTs to the Myme decision handler at
-  // /auth/authorize/decision (not directly to the plugin's
-  // /auth/oauth2/consent) so the consent-side `system.connection`
-  // projection + `auth.grant.created` audit row land deterministically.
-  // The Myme handler then proxies to the plugin to complete the flow.
-  //
-  // The plugin's /oauth2/consent endpoint takes `{ accept, scope?,
-  // oauth_query }` — the `oauth_query` is the full signed query string
-  // the plugin redirected here with (carries response_type, client_id,
-  // redirect_uri, scope, state, code_challenge, code_challenge_method,
-  // exp, sig). The plugin's before-hook verifies the sig and re-hydrates
-  // the original request parameters into `oAuthState` before the consent
-  // endpoint runs.
-  //
-  // We also carry `client_id` as a separate hidden field for display
-  // / UI purposes. The decision handler reads `client_id` (+ scopes)
-  // from the verified `oauth_query` instead — the form fields are NOT
-  // trusted for projection writes (F1).
-  //
-  // F2 fix-up: optional error banner above the form, used when the
-  // page is reached via a redirect from a failed consent submission
-  // (e.g. zero-scopes accept). Renders nothing when errorMessage is
-  // undefined.
+  const titleText = showDiff ? "Update access" : "Allow access";
+  const ledeText = showDiff
+    ? `<span class="client-name">${safeClient}</span> needs different permissions than before.`
+    : `<span class="client-name">${safeClient}</span> is asking to access your Myme space. Untick anything you'd rather not share.`;
+
+  // T-131 F2 inline error banner — survives across pages because the
+  // POST handler 302s back to GET with `?error=...` on validation
+  // failure rather than re-rendering.
   const errorBanner = params.errorMessage
     ? `<div class="alert alert--error" role="alert">${escapeHtml(params.errorMessage)}</div>`
     : "";
+
   const bodyHtml = `
-    <h1>${leadeText}</h1>
+    <header class="consent-header">
+      <h1 class="consent-title">${escapeHtml(titleText)}</h1>
+      <p class="consent-lede">${ledeText}</p>
+    </header>
     ${errorBanner}
-    <form method="POST" action="/auth/authorize/decision">
+    <form method="POST" action="/auth/authorize/decision" class="consent-form" novalidate>
       <input type="hidden" name="client_id" value="${safeClientId}">
       <input type="hidden" name="oauth_query" value="${safeOauthQuery}">
 
-      ${scopesHtml}
+      ${sectionsHtml}
 
-      <div class="actions">
-        <button type="submit" name="accept" value="true" class="btn btn--primary">Approve</button>
-        <button type="submit" name="accept" value="false" class="btn">Deny</button>
+      <div class="actions actions--stacked">
+        <button type="submit" name="accept" value="true" class="btn btn--primary btn--lg">Allow access</button>
+        <button type="submit" name="accept" value="false" class="btn btn--ghost">Deny</button>
       </div>
+
+      <p class="consent-footnote">You can revoke this anytime from Security settings.</p>
     </form>
   `;
 
   return renderAuthLayout({
-    title: `Authorize ${params.clientName}`,
+    title: showDiff
+      ? `Update access — ${params.clientName}`
+      : `Authorize ${params.clientName}`,
     bodyHtml,
     wide: true,
   });
