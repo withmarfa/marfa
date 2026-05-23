@@ -36,7 +36,7 @@ import type {
   ItemState,
   PaginatedResult,
 } from "@mymehq/shared";
-import type { ItemStore, ItemFilters } from "../interface.js";
+import type { ItemStore, ItemFilters, ItemGetOptions } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { detectConflict } from "../conflict.js";
 import { items, metadata, versions } from "./schema.js";
@@ -73,10 +73,23 @@ export class SqliteItemStore implements ItemStore {
     private versionSnapshotIntervalMs = 600_000,
   ) {}
 
-  private tenantWhere(id: string, tenantId?: string) {
-    return tenantId
-      ? and(eq(items.id, id), eq(items.tenant_id, tenantId))
-      : eq(items.id, id);
+  private tenantWhere(
+    id: string,
+    tenantId?: string,
+    includePlatformScoped?: boolean,
+  ) {
+    if (!tenantId) return eq(items.id, id);
+    if (includePlatformScoped) {
+      // Catalogue widening — see `ItemGetOptions.includePlatformScoped`.
+      // Only the public `get` path threads `true` here; every other
+      // caller (update, delete, transition, ...) leaves the equality
+      // fence in place.
+      return and(
+        eq(items.id, id),
+        or(eq(items.tenant_id, tenantId), isNull(items.tenant_id)),
+      );
+    }
+    return and(eq(items.id, id), eq(items.tenant_id, tenantId));
   }
 
   async create(input: CreateItemInput, tenantId?: string): Promise<Item> {
@@ -180,11 +193,15 @@ export class SqliteItemStore implements ItemStore {
   }
 
   // Fix 4: trashed items return null (404 to callers)
-  async get(id: string, tenantId?: string): Promise<Item | null> {
+  async get(
+    id: string,
+    tenantId?: string,
+    options?: ItemGetOptions,
+  ): Promise<Item | null> {
     const row = await this.db
       .select()
       .from(items)
-      .where(this.tenantWhere(id, tenantId))
+      .where(this.tenantWhere(id, tenantId, options?.includePlatformScoped))
       .get();
     if (!row) return null;
     if (row.state === "trashed") return null;

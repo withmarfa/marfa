@@ -133,7 +133,8 @@ const installRoute = createRoute({
           schema: makeErrorResponseSchema(["integration_not_found"]),
         },
       },
-      description: "Integration not found in this tenant scope.",
+      description:
+        "Integration not found. Matches both genuinely-missing manifest ids and ids that exist but resolve to a non-`system.integration` item.",
     },
   },
 });
@@ -347,11 +348,18 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const tenantId = apiKey.tenant_id ?? undefined;
     const clientIp = c.var.clientIp;
 
-    const integration = await storage.items.get(integration_id, tenantId);
+    // Manifests are platform-scoped (`tenant_id IS NULL`) — opt into
+    // the widening so a tenant_admin caller can install. The
+    // type-check on the next line stays as the authoritative gate; the
+    // resulting connection is stamped with the caller's tenant_id
+    // (passed through `input.tenantId` into the install pipeline).
+    const integration = await storage.items.get(integration_id, tenantId, {
+      includePlatformScoped: true,
+    });
     if (!integration) {
       throw new MymeError(
         ErrorCode.INTEGRATION_NOT_FOUND,
-        "Integration not found in this tenant scope",
+        "Integration not found",
       );
     }
     if (integration.type !== "system.integration") {

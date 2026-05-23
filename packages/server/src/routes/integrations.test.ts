@@ -595,6 +595,206 @@ describe("GET /integrations — catalogue visibility (T-232)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// T-234 — platform-scoped get-by-id + install for tenant member callers.
+//
+// The catalogue list endpoint opts into `includePlatformScoped: true` so
+// platform-scoped manifests surface to in-tenant callers (T-232). The
+// single-id `get` calls (`GET /integrations/:id`, `GET/POST
+// /integrations/:id/install`) and the admin install (`POST
+// /connections/install`) did not — they tenant-fenced through
+// `items.get(id, tenantId)` and therefore 404'd for any caller with a
+// real tenant. Catalogue listed manifests but trying to open or install
+// one threw `integration_not_found`.
+//
+// The fix adds `ItemGetOptions.includePlatformScoped` and threads it
+// through all four sites. The resulting install pipeline still stamps
+// the new `system.connection` with the caller's tenant_id (never the
+// manifest's null tenant) — the regression test below pins that.
+// ---------------------------------------------------------------------------
+
+describe("GET /integrations/:id + /:id/install — platform-scope (T-234)", () => {
+  async function mintTenantMember(
+    tenantId: string,
+    typePermissions: Record<string, "read" | "write" | "none"> = {
+      "system.integration": "read",
+    },
+  ): Promise<string> {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const raw = `myme_k1_test_member_${suffix}`;
+    const hash = hashApiKey(raw, TEST_API_KEY_SALT);
+    await ctx.storage.keys.create(
+      {
+        label: `t234-member-${suffix}`,
+        source: `t234-member-${suffix}`,
+        role: "member",
+        type_permissions: typePermissions,
+        default_tier: "library",
+        is_platform: false,
+      },
+      hash,
+      tenantId,
+    );
+    return raw;
+  }
+
+  it("GET /integrations/:id resolves a platform-scoped manifest for a member token", async () => {
+    // Manifest registered by platform admin → lives with tenant_id: null.
+    // Pre-fix this returned 404 to any caller with a real tenant; the
+    // tenant-fenced get filtered the null-tenant row out.
+    const reg = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: baseManifest({ name: "acme.t234-get-by-id" }) },
+    });
+    expect(reg.status).toBe(201);
+    const regBody = (await reg.json()) as RegisterResponse;
+
+    if (!ctx.storage.tenants) return;
+    const tenant = await ctx.storage.tenants.create("t234-tenant-get");
+    const memberKey = await mintTenantMember(tenant.id);
+
+    const res = await request(ctx.app, "GET", `/integrations/${regBody.id}`, {
+      key: memberKey,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as RegisterResponse;
+    expect(body.id).toBe(regBody.id);
+    expect(body.manifest_name).toBe("acme.t234-get-by-id");
+  });
+
+  it("GET /integrations/:id/install renders consent HTML for a tenant member with a Bearer token", async () => {
+    const reg = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: baseManifest({ name: "acme.t234-install-html" }) },
+    });
+    const regBody = (await reg.json()) as RegisterResponse;
+
+    if (!ctx.storage.tenants) return;
+    const tenant = await ctx.storage.tenants.create("t234-tenant-html");
+    const memberKey = await mintTenantMember(tenant.id);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/integrations/${regBody.id}/install`,
+      { key: memberKey },
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain(`action="/integrations/${regBody.id}/install"`);
+    expect(html).toContain('name="decision"');
+  });
+
+  it("POST /integrations/:id/install completes for a tenant member and stamps the connection with the caller's tenant_id", async () => {
+    const reg = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: baseManifest({ name: "acme.t234-install-post" }) },
+    });
+    const regBody = (await reg.json()) as RegisterResponse;
+
+    if (!ctx.storage.tenants) return;
+    const tenant = await ctx.storage.tenants.create("t234-tenant-post");
+    const memberKey = await mintTenantMember(tenant.id);
+
+    const formBody = new URLSearchParams({
+      decision: "approve",
+      label: "T-234-member-install",
+    }).toString();
+
+    const res = await ctx.app.request(`/integrations/${regBody.id}/install`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${memberKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: formBody,
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Connection installed");
+
+    // Pin the load-bearing tenant invariant: the connection lands in
+    // the caller's tenant, NOT in the manifest's null tenant. Without
+    // this guard a future regression in the install pipeline could
+    // silently land cross-tenant rows.
+    const connections = await ctx.storage.items.list({
+      tenantId: tenant.id,
+      type: "system.connection",
+      limit: 50,
+    });
+    const installed = connections.data.find(
+      (c) =>
+        (c.properties as { integration_ref?: string }).integration_ref ===
+        regBody.id,
+    );
+    expect(installed).toBeDefined();
+    expect(installed?.tenant_id).toBe(tenant.id);
+  });
+
+  it("POST /integrations/:id/install on an unknown id still returns INTEGRATION_NOT_FOUND", async () => {
+    // Negative test — the widening must not turn a missing manifest
+    // into a 500 or a silent success. The type check on the next line
+    // is the authoritative gate; only genuine `system.integration`
+    // items pass.
+    if (!ctx.storage.tenants) return;
+    const tenant = await ctx.storage.tenants.create("t234-tenant-missing");
+    const memberKey = await mintTenantMember(tenant.id);
+
+    const res = await ctx.app.request(
+      "/integrations/01999999-9999-7999-9999-999999999999/install",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${memberKey}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: "decision=approve",
+      },
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as ErrorBody;
+    expect(body.error.code).toBe("integration_not_found");
+  });
+
+  it("widening does not leak a tenant-scoped system.integration into another tenant via get-by-id", async () => {
+    // Defence-in-depth — if a stray system.integration row carries a
+    // real tenant_id (seeded by accident, or via a future tenant-bound
+    // register path), it must not be reachable by id from another
+    // tenant via the catalogue endpoint.
+    if (!ctx.storage.tenants) return;
+    const tenantA = await ctx.storage.tenants.create("t234-iso-A");
+    const tenantB = await ctx.storage.tenants.create("t234-iso-B");
+
+    const tenantABound = await ctx.storage.items.create(
+      {
+        type: "system.integration",
+        properties: {
+          manifest_name: "acme.t234-tenant-a-only",
+          manifest_version: "1.0.0",
+          publisher: "Acme",
+          direction: "read" as const,
+          runtime_compatibility: ["hosted"],
+          registered_at: new Date().toISOString(),
+          manifest: { name: "acme.t234-tenant-a-only", version: "1.0.0" },
+        },
+      },
+      tenantA.id,
+    );
+    const memberB = await mintTenantMember(tenantB.id);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/integrations/${tenantABound.id}`,
+      {
+        key: memberB,
+      },
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Browser session auth on /integrations/:id/install
 //
 // Prior behaviour: install routes only accepted Bearer tokens. A browser
