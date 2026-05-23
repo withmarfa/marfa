@@ -247,10 +247,18 @@ export function isValidTypeIdentifier(value: string): boolean {
       // (server-side validation rejects deeper system registrations).
       return segments.length >= 2;
     default:
-      // <publisher>.<type>: exactly two segments. Publisher handles cannot
-      // collide with reserved roots; see classifyNamespace.
+      // <publisher>.<type>[.<subtype>...] — at least two segments. A
+      // publisher namespace may carry sub-namespaces just like the
+      // reserved roots do (e.g. `google.calendar.event`,
+      // `google.tasks.task`). The original cap was `=== 2` and was lifted
+      // when the `google.*` integration family landed needing
+      // `google.calendar.event` as a publisher type — no other publisher
+      // identifier today is deeper than two segments, so the cap was a
+      // bounded-set assumption rather than a structural rule.
+      // Publisher handles still cannot collide with reserved roots; see
+      // classifyNamespace.
       if (RESERVED_ROOTS.has(root)) return false;
-      return segments.length === 2;
+      return segments.length >= 2;
   }
 }
 

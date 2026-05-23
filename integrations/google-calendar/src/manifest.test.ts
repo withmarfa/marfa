@@ -35,8 +35,15 @@ describe("Google Calendar manifest", () => {
     });
   });
 
-  it("targets core.event and direction is both", () => {
-    expect(GOOGLE_CALENDAR_MANIFEST.target_types).toEqual(["core.event"]);
+  it("targets both core.event (cross-app shape) and google.calendar.event (upstream-fidelity shape); direction is both", () => {
+    // Both target types are declared so the install pipeline grants the
+    // runtime credential permission to write either. The user picks
+    // which is actually written via the install-time configure form
+    // (default: google.calendar.event for full fidelity).
+    expect(GOOGLE_CALENDAR_MANIFEST.target_types).toEqual([
+      "core.event",
+      "google.calendar.event",
+    ]);
     expect(GOOGLE_CALENDAR_MANIFEST.direction).toBe("both");
   });
 });

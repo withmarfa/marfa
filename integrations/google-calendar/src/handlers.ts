@@ -62,15 +62,107 @@ import { CALENDAR_API_BASE, DEFAULT_CALENDAR_ID } from "./manifest.js";
 const CURSOR_KEY = "main";
 
 interface CalendarCursor {
-  /** Opaque sync token from Calendar's incremental-sync API. */
+  /** Opaque sync token from Calendar's incremental-sync API (legacy
+   *  single-calendar mode only — populated when no `selected_calendar_ids`
+   *  is configured). Multi-calendar mode uses `per_calendar[].syncToken`
+   *  below. */
   syncToken: string | null;
-  /** ISO timestamp of the last successful schedule run. */
+  /** ISO timestamp of the last successful schedule run (legacy mode). */
   last_inbound_at: string | null;
   /** Map of Calendar event id → Myme item id. Used to look up
    *  the Myme item on echo / update / delete without round-tripping
    *  through the server. Bounded by Calendar's own dedup;
-   *  realistically a few hundred to a few thousand entries. */
+   *  realistically a few hundred to a few thousand entries. The shape
+   *  stays a flat `Record<string, string>` for backward compatibility
+   *  with legacy single-calendar cursors — the per-event calendar id
+   *  lives alongside in `mapping_calendars`. */
   mappings: Record<string, string>;
+  /** Multi-calendar mode only: per-event calendar id, so updates and
+   *  deletes know which calendar the mapped event lives on. Sparse —
+   *  legacy single-calendar cursors leave this undefined and writes go
+   *  to the connection's primary calendar. */
+  mapping_calendars?: Record<string, string>;
+  /** Multi-calendar mode only: per-calendar sync cursor. Top-level
+   *  `syncToken` is unused when this is populated. */
+  per_calendar?: Record<
+    string,
+    { syncToken: string | null; last_inbound_at: string | null }
+  >;
+}
+
+/**
+ * Normalised view of the connection's `properties.configuration` for
+ * the handler. Legacy mode (no `selected_calendar_ids`) preserves the
+ * pre-T-231 behaviour: single primary-calendar sync, writes as
+ * `core.event`. Multi mode honours the install-time picker selections.
+ */
+interface ConnectionConfig {
+  mode: "legacy" | "multi";
+  /** Single calendar id in legacy mode; nominated default-write in multi. */
+  default_write_calendar_id: string;
+  /** All calendars to sync from. Single-entry array in legacy mode. */
+  selected_calendar_ids: string[];
+  /** Target type for inbound items. `core.event` in legacy; configurable
+   *  in multi (default `google.calendar.event`). */
+  target_type: string;
+}
+
+async function resolveConnectionConfig(
+  ctx: ConnectionContext,
+): Promise<ConnectionConfig> {
+  try {
+    const connection = await ctx.myme.getItem(ctx.connection_id);
+    const props = connection?.properties as
+      | { configuration?: Record<string, unknown> }
+      | undefined;
+    const cfg = props?.configuration ?? {};
+    const rawSelected = cfg.selected_calendar_ids;
+    const selected: string[] = Array.isArray(rawSelected)
+      ? rawSelected.filter((v): v is string => typeof v === "string")
+      : [];
+    const defaultWrite =
+      typeof cfg.default_write_calendar_id === "string" &&
+      cfg.default_write_calendar_id.length > 0
+        ? cfg.default_write_calendar_id
+        : null;
+    const targetType =
+      typeof cfg.target_type === "string" && cfg.target_type.length > 0
+        ? cfg.target_type
+        : null;
+
+    if (selected.length > 0 && defaultWrite !== null) {
+      return {
+        mode: "multi",
+        selected_calendar_ids: selected,
+        default_write_calendar_id: defaultWrite,
+        target_type: targetType ?? "google.calendar.event",
+      };
+    }
+
+    // Legacy fallback. The pre-T-231 `resolveCalendarId` path honoured
+    // a single `calendar_id` string on configuration as the calendar to
+    // sync; preserve that as the legacy single-calendar id.
+    const legacyCalendarId =
+      typeof cfg.calendar_id === "string" && cfg.calendar_id.length > 0
+        ? cfg.calendar_id
+        : DEFAULT_CALENDAR_ID;
+    return {
+      mode: "legacy",
+      selected_calendar_ids: [legacyCalendarId],
+      default_write_calendar_id: legacyCalendarId,
+      target_type: targetType ?? "core.event",
+    };
+  } catch {
+    // If the connection lookup fails for any reason, fall back to the
+    // fully-legacy primary-calendar / core.event defaults so the
+    // handler still does something useful rather than failing hard.
+    return {
+      mode: "legacy",
+      selected_calendar_ids: [DEFAULT_CALENDAR_ID],
+      default_write_calendar_id: DEFAULT_CALENDAR_ID,
+      target_type: "core.event",
+    };
+  }
 }
 
 interface CalendarEvent {
@@ -81,8 +173,17 @@ interface CalendarEvent {
   location?: string;
   htmlLink?: string;
   etag?: string;
-  start?: { dateTime?: string; date?: string };
-  end?: { dateTime?: string; date?: string };
+  start?: { dateTime?: string; date?: string; timeZone?: string };
+  end?: { dateTime?: string; date?: string; timeZone?: string };
+  // Multi-calendar / full-fidelity fields (used by `google.calendar.event`
+  // target type; safely ignored when target is `core.event`).
+  transparency?: string;
+  visibility?: string;
+  organizer?: { email?: string };
+  creator?: { email?: string };
+  recurrence?: string[];
+  recurringEventId?: string;
+  colorId?: string;
 }
 
 interface EventsListResponse {
@@ -95,6 +196,18 @@ export async function handleSchedule(
   ctx: ConnectionContext,
   message: ScheduleMessage,
 ): Promise<HandlerResult> {
+  const config = await resolveConnectionConfig(ctx);
+  if (config.mode === "multi") {
+    return handleScheduleMulti(ctx, message, config);
+  }
+  return handleScheduleLegacy(ctx, message, config);
+}
+
+async function handleScheduleLegacy(
+  ctx: ConnectionContext,
+  message: ScheduleMessage,
+  config: ConnectionConfig,
+): Promise<HandlerResult> {
   void message;
   const cursor: CalendarCursor = ((await ctx.cursor.read(
     CURSOR_KEY,
@@ -104,7 +217,7 @@ export async function handleSchedule(
     mappings: {},
   };
 
-  const calendarId = await resolveCalendarId(ctx);
+  const calendarId = config.default_write_calendar_id;
   const params = new URLSearchParams();
   if (cursor.syncToken !== null) params.set("syncToken", cursor.syncToken);
   else params.set("maxResults", "250"); // initial backfill cap
@@ -171,7 +284,7 @@ export async function handleSchedule(
       continue;
     }
 
-    const input = buildEventInput(event);
+    const input = buildEventInput(event, config.target_type, calendarId);
     try {
       if (myme_id !== undefined) {
         await ctx.myme.updateItem(myme_id, input);
@@ -216,6 +329,18 @@ export async function handleItemEvent(
   ctx: ConnectionContext,
   message: ItemEventMessage,
 ): Promise<HandlerResult> {
+  const config = await resolveConnectionConfig(ctx);
+  if (config.mode === "multi") {
+    return handleItemEventMulti(ctx, message, config);
+  }
+  return handleItemEventLegacy(ctx, message, config);
+}
+
+async function handleItemEventLegacy(
+  ctx: ConnectionContext,
+  message: ItemEventMessage,
+  config: ConnectionConfig,
+): Promise<HandlerResult> {
   // Defensive self-event filter — the bridge already drops these
   // (Layer 2 PR 3) but check anyway.
   if (
@@ -240,7 +365,12 @@ export async function handleItemEvent(
     // as a delete-equivalent if we know the mapping by checking
     // mappings reverse: but the bridge gives us item_id, and
     // mappings are external_id → myme_id, so reverse-lookup.
-    return ackHandledIfMappedAsDelete(ctx, cursor, message.item_id);
+    return ackHandledIfMappedAsDelete(
+      ctx,
+      cursor,
+      message.item_id,
+      config.default_write_calendar_id,
+    );
   }
 
   const externalId = findExternalIdFor(cursor, item.id);
@@ -282,7 +412,10 @@ export async function handleItemEvent(
     // and returns 409 on conflict. The 409 path below recovers the
     // mapping idempotently without creating a duplicate event.
     const deterministicId = await deriveDeterministicCalendarId(item.id);
-    const calendarId = await resolveCalendarId(ctx);
+    // Legacy single-calendar mode: write to the configured default
+    // calendar (which is the primary by default and matches the
+    // pre-T-231 `resolveCalendarId` behaviour exactly).
+    const calendarId = config.default_write_calendar_id;
     const postPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`;
     const postPayload = { ...calendarPayload, id: deterministicId };
     const resp = await ctx.myme.proxyRequest("POST", postPath, postPayload);
@@ -352,35 +485,354 @@ export function registerHandlers(): void {
   registerItemEventHandler(handleItemEvent);
 }
 
-async function resolveCalendarId(ctx: ConnectionContext): Promise<string> {
-  try {
-    const connection = await ctx.myme.getItem(ctx.connection_id);
-    const props = connection?.properties as
-      | { configuration?: unknown }
-      | undefined;
-    const config = props?.configuration;
-    if (
-      typeof config === "object" &&
-      config !== null &&
-      "calendar_id" in config
-    ) {
-      const raw = (config as { calendar_id?: unknown }).calendar_id;
-      if (typeof raw === "string" && raw.length > 0) return raw;
-    }
-  } catch {
-    // Fall through.
-  }
-  return DEFAULT_CALENDAR_ID;
+// ---------------------------------------------------------------------------
+// Multi-calendar handlers (T-231 PR3). Active when the connection's
+// `properties.configuration` carries `selected_calendar_ids[]` and a
+// `default_write_calendar_id` — i.e. the post-install picker has been
+// run. Until then, the legacy single-calendar path above runs unchanged.
+// ---------------------------------------------------------------------------
+
+interface PerCalendarCursor {
+  syncToken: string | null;
+  last_inbound_at: string | null;
 }
 
-function buildEventInput(event: CalendarEvent): CreateItemInput {
+/**
+ * Inbound sweep across every selected calendar. Each calendar carries
+ * its own `syncToken` so incremental sync state doesn't bleed between
+ * them. Per-event failures isolate; one calendar's 410 doesn't drop
+ * the others. Mapping table records the calendar id alongside the
+ * Myme item id so subsequent updates/deletes route correctly.
+ */
+async function handleScheduleMulti(
+  ctx: ConnectionContext,
+  message: ScheduleMessage,
+  config: ConnectionConfig,
+): Promise<HandlerResult> {
+  void message;
+  const cursor: CalendarCursor = ((await ctx.cursor.read(
+    CURSOR_KEY,
+  )) as CalendarCursor | null) ?? {
+    syncToken: null,
+    last_inbound_at: null,
+    mappings: {},
+  };
+  cursor.per_calendar = cursor.per_calendar ?? {};
+  cursor.mapping_calendars = cursor.mapping_calendars ?? {};
+
+  let totalUpserted = 0;
+  let totalSkippedEcho = 0;
+  let totalTrashed = 0;
+  const perCalendarOutcomes: Record<
+    string,
+    { upserted: number; skipped: number; trashed: number; reset: boolean }
+  > = {};
+
+  for (const calendarId of config.selected_calendar_ids) {
+    const perCal: PerCalendarCursor = cursor.per_calendar[calendarId] ?? {
+      syncToken: null,
+      last_inbound_at: null,
+    };
+    const params = new URLSearchParams();
+    if (perCal.syncToken !== null) params.set("syncToken", perCal.syncToken);
+    else params.set("maxResults", "250");
+    const listPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`;
+
+    let response: Response;
+    try {
+      response = await ctx.myme.proxyRequest("GET", listPath);
+    } catch (err) {
+      await ctx.activity.emit({
+        severity: "action_required",
+        summary: `google-calendar: events.list fetch failed for ${calendarId}`,
+        detail: { error: errorMessage(err) },
+      });
+      continue;
+    }
+
+    if (response.status === 410) {
+      perCal.syncToken = null;
+      cursor.per_calendar[calendarId] = perCal;
+      perCalendarOutcomes[calendarId] = {
+        upserted: 0,
+        skipped: 0,
+        trashed: 0,
+        reset: true,
+      };
+      await ctx.activity.emit({
+        severity: "info",
+        summary: `google-calendar: syncToken invalidated for ${calendarId}, re-bootstrapping`,
+      });
+      continue;
+    }
+    if (!response.ok) {
+      await ctx.activity.emit({
+        severity: "action_required",
+        summary: `google-calendar: events.list returned ${String(response.status)} for ${calendarId}`,
+        detail: { status: response.status },
+      });
+      continue;
+    }
+
+    let payload: EventsListResponse;
+    try {
+      payload = await response.json();
+    } catch (err) {
+      await ctx.activity.emit({
+        severity: "action_required",
+        summary: `google-calendar: events.list parse failed for ${calendarId}`,
+        detail: { error: errorMessage(err) },
+      });
+      continue;
+    }
+
+    let upserted = 0;
+    let skippedEcho = 0;
+    let trashed = 0;
+    for (const event of payload.items ?? []) {
+      const myme_id = cursor.mappings[event.id];
+      if (event.status === "cancelled") {
+        if (myme_id !== undefined) {
+          try {
+            await ctx.myme.transitionItem(myme_id, "trashed");
+            trashed += 1;
+            Reflect.deleteProperty(cursor.mappings, event.id);
+            Reflect.deleteProperty(cursor.mapping_calendars, event.id);
+          } catch (err) {
+            await ctx.activity.emit({
+              severity: "action_required",
+              summary: `google-calendar: failed to trash myme item for cancelled event ${event.id}`,
+              detail: { error: errorMessage(err) },
+            });
+          }
+        }
+        continue;
+      }
+
+      const hash = contentHashForEvent(event);
+      if (await ctx.echo.shouldSkipReactive(event.id, hash)) {
+        skippedEcho += 1;
+        continue;
+      }
+
+      const input = buildEventInput(event, config.target_type, calendarId);
+      try {
+        if (myme_id !== undefined) {
+          await ctx.myme.updateItem(myme_id, input);
+        } else {
+          const created = await ctx.myme.createItem({
+            ...input,
+            source_id: event.id,
+          });
+          cursor.mappings[event.id] = created.id;
+          cursor.mapping_calendars[event.id] = calendarId;
+        }
+        upserted += 1;
+      } catch (err) {
+        await ctx.activity.emit({
+          severity: "action_required",
+          summary: `google-calendar: failed to upsert myme item for event ${event.id}`,
+          detail: { error: errorMessage(err) },
+        });
+      }
+    }
+
+    if (typeof payload.nextSyncToken === "string") {
+      perCal.syncToken = payload.nextSyncToken;
+    }
+    perCal.last_inbound_at = new Date().toISOString();
+    cursor.per_calendar[calendarId] = perCal;
+    perCalendarOutcomes[calendarId] = {
+      upserted,
+      skipped: skippedEcho,
+      trashed,
+      reset: false,
+    };
+    totalUpserted += upserted;
+    totalSkippedEcho += skippedEcho;
+    totalTrashed += trashed;
+  }
+
+  await ctx.cursor.write(CURSOR_KEY, cursor);
+  await ctx.activity.emit({
+    severity: "info",
+    summary: `google-calendar inbound (multi): upserted=${String(totalUpserted)} echo_skipped=${String(totalSkippedEcho)} trashed=${String(totalTrashed)}`,
+    detail: {
+      calendars_swept: config.selected_calendar_ids.length,
+      per_calendar: perCalendarOutcomes,
+    },
+  });
+
+  return { ok: true };
+}
+
+/**
+ * Outbound reactive handler for multi-calendar mode. New items route
+ * to `default_write_calendar_id`. Updates and deletes route to the
+ * calendar the event is mapped against (via `cursor.mapping_calendars`),
+ * falling back to the default-write calendar when the mapping is
+ * missing (shouldn't happen in steady state but guards against
+ * partial-cursor recoveries).
+ */
+async function handleItemEventMulti(
+  ctx: ConnectionContext,
+  message: ItemEventMessage,
+  config: ConnectionConfig,
+): Promise<HandlerResult> {
+  if (
+    ctx.cycle?.originating_connection_id === ctx.connection_id ||
+    message.cycle.originating_connection_id === ctx.connection_id
+  ) {
+    return { ok: true };
+  }
+
+  const cursor: CalendarCursor = ((await ctx.cursor.read(
+    CURSOR_KEY,
+  )) as CalendarCursor | null) ?? {
+    syncToken: null,
+    last_inbound_at: null,
+    mappings: {},
+  };
+  cursor.mapping_calendars = cursor.mapping_calendars ?? {};
+
+  const item = await ctx.myme.getItem(message.item_id);
+  if (item === null) {
+    return ackHandledIfMappedAsDelete(
+      ctx,
+      cursor,
+      message.item_id,
+      config.default_write_calendar_id,
+    );
+  }
+
+  const externalId = findExternalIdFor(cursor, item.id);
+
+  if (externalId !== null && (await ctx.echo.inLagWindow(externalId))) {
+    return { ok: false, retry: true, reason: "in_lag_window" };
+  }
+
+  const mappedCalendarId =
+    externalId !== null
+      ? (cursor.mapping_calendars[externalId] ??
+        config.default_write_calendar_id)
+      : config.default_write_calendar_id;
+
+  if (item.state === "trashed") {
+    if (externalId !== null) {
+      const path = buildEventPath(externalId, mappedCalendarId);
+      const resp = await ctx.myme.proxyRequest("DELETE", path);
+      if (!resp.ok && resp.status !== 410 && resp.status !== 404) {
+        return reportOutboundFailure(ctx, "DELETE", externalId, resp);
+      }
+      Reflect.deleteProperty(cursor.mappings, externalId);
+      Reflect.deleteProperty(cursor.mapping_calendars, externalId);
+      await ctx.cursor.write(CURSOR_KEY, cursor);
+      await ctx.activity.emit({
+        severity: "info",
+        summary: `google-calendar outbound: deleted Calendar event ${externalId} on ${mappedCalendarId}`,
+      });
+    }
+    return { ok: true };
+  }
+
+  const calendarPayload = buildCalendarPayload(item);
+
+  if (externalId === null) {
+    // New event — route to the default-write calendar.
+    const writeCalendarId = config.default_write_calendar_id;
+    const deterministicId = await deriveDeterministicCalendarId(item.id);
+    const postPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(writeCalendarId)}/events`;
+    const postPayload = { ...calendarPayload, id: deterministicId };
+    const resp = await ctx.myme.proxyRequest("POST", postPath, postPayload);
+
+    if (resp.status === 409) {
+      // T-020 idempotent recovery — same handling as legacy.
+      const fetchPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(writeCalendarId)}/events/${encodeURIComponent(deterministicId)}`;
+      const fetchResp = await ctx.myme.proxyRequest("GET", fetchPath);
+      if (!fetchResp.ok) {
+        return reportOutboundFailure(
+          ctx,
+          "GET (after 409)",
+          deterministicId,
+          fetchResp,
+        );
+      }
+      const body: CalendarEvent = await fetchResp.json();
+      cursor.mappings[deterministicId] = item.id;
+      cursor.mapping_calendars[deterministicId] = writeCalendarId;
+      await ctx.echo.trackOutboundWrite(
+        deterministicId,
+        contentHashForEvent(body),
+      );
+      await ctx.cursor.write(CURSOR_KEY, cursor);
+      await ctx.activity.emit({
+        severity: "info",
+        summary: `google-calendar outbound: idempotent recovery on ${writeCalendarId} for Myme item ${item.id}`,
+      });
+      return { ok: true };
+    }
+
+    if (!resp.ok) {
+      return reportOutboundFailure(ctx, "POST", "(new)", resp);
+    }
+    const body: CalendarEvent = await resp.json();
+    cursor.mappings[body.id] = item.id;
+    cursor.mapping_calendars[body.id] = writeCalendarId;
+    await ctx.echo.trackOutboundWrite(body.id, contentHashForEvent(body));
+    await ctx.cursor.write(CURSOR_KEY, cursor);
+    await ctx.activity.emit({
+      severity: "info",
+      summary: `google-calendar outbound: created Calendar event ${body.id} on ${writeCalendarId}`,
+    });
+    return { ok: true };
+  }
+
+  // PATCH — update existing mapped event on its mapped calendar.
+  const path = buildEventPath(externalId, mappedCalendarId);
+  const resp = await ctx.myme.proxyRequest("PATCH", path, calendarPayload);
+  if (!resp.ok) {
+    return reportOutboundFailure(ctx, "PATCH", externalId, resp);
+  }
+  const body: CalendarEvent = await resp.json();
+  await ctx.echo.trackOutboundWrite(externalId, contentHashForEvent(body));
+  await ctx.activity.emit({
+    severity: "info",
+    summary: `google-calendar outbound: patched Calendar event ${externalId} on ${mappedCalendarId}`,
+  });
+  return { ok: true };
+}
+
+/**
+ * Build the Myme-side `CreateItemInput` from a Calendar event.
+ *
+ * `targetType` defaults to `"core.event"` so legacy single-calendar
+ * callers (the pre-T-231 schedule handler) write cross-app `core.event`
+ * items as they always did. Multi-calendar mode passes the
+ * configured target type — usually `"google.calendar.event"` for
+ * upstream-fidelity round-trip. When the target is
+ * `google.calendar.event` the function additionally writes the
+ * Google-specific fields the type carries (timezone, all_day, etag,
+ * html_link, source_calendar_id, recurrence, etc.).
+ *
+ * `sourceCalendarId` is the Calendar id the event lives on. Only
+ * meaningful when the target type knows about it
+ * (`google.calendar.event`); ignored when writing `core.event`.
+ */
+function buildEventInput(
+  event: CalendarEvent,
+  targetType = "core.event",
+  sourceCalendarId?: string,
+): CreateItemInput {
   const properties: Record<string, unknown> = {
     title: event.summary ?? "Untitled event",
   };
   if (event.description !== undefined)
     properties.description = event.description;
-  if (event.location !== undefined) properties.place = event.location;
-  if (event.htmlLink !== undefined) properties.url = event.htmlLink;
+  if (event.location !== undefined) {
+    // `core.event` uses `place`; `google.calendar.event` also uses
+    // `place` (we keep the cross-app idiom for the location field).
+    properties.place = event.location;
+  }
   if (event.start?.dateTime !== undefined) {
     properties.starts_at = event.start.dateTime;
   } else if (event.start?.date !== undefined) {
@@ -392,28 +844,124 @@ function buildEventInput(event: CalendarEvent): CreateItemInput {
     properties.ends_at = event.end.date;
   }
   if (event.status !== undefined) properties.status = event.status;
-  return { type: "core.event", properties };
+
+  if (targetType === "core.event") {
+    // Legacy cross-app target carries the html link as a generic url.
+    if (event.htmlLink !== undefined) properties.url = event.htmlLink;
+    return { type: targetType, properties };
+  }
+
+  // `google.calendar.event` (upstream-fidelity target). Carry the
+  // Google-specific fields the type declares so a round-trip preserves
+  // what Calendar considers authoritative.
+  if (event.htmlLink !== undefined) properties.html_link = event.htmlLink;
+  if (event.etag !== undefined) properties.etag = event.etag;
+  if (event.start?.timeZone !== undefined) {
+    properties.timezone = event.start.timeZone;
+  } else if (event.end?.timeZone !== undefined) {
+    properties.timezone = event.end.timeZone;
+  }
+  // all_day is implied by `date` (no time) rather than `dateTime`.
+  if (event.start?.date !== undefined && event.start.dateTime === undefined) {
+    properties.all_day = true;
+  }
+  if (sourceCalendarId !== undefined) {
+    properties.source_calendar_id = sourceCalendarId;
+  }
+  if (event.transparency !== undefined)
+    properties.transparency = event.transparency;
+  if (event.visibility !== undefined) properties.visibility = event.visibility;
+  if (event.organizer?.email !== undefined)
+    properties.organizer_email = event.organizer.email;
+  if (event.creator?.email !== undefined)
+    properties.creator_email = event.creator.email;
+  if (Array.isArray(event.recurrence) && event.recurrence.length > 0) {
+    properties.recurrence = event.recurrence;
+  }
+  if (event.recurringEventId !== undefined) {
+    properties.recurring_event_id = event.recurringEventId;
+  }
+  if (event.colorId !== undefined) properties.color_id = event.colorId;
+  return { type: targetType, properties };
 }
 
+/**
+ * Build the Calendar API request payload from a Myme item.
+ *
+ * Honours optional `all_day` (writes `start.date` / `end.date` instead
+ * of `dateTime`) and `timezone` (sets `start.timeZone` / `end.timeZone`).
+ * Both are read from item properties — present on
+ * `google.calendar.event` items, absent on plain `core.event` items.
+ * The fallback (no `all_day`, no `timezone`) matches the pre-T-231
+ * behaviour exactly: `start: { dateTime: <iso> }`, `end: { dateTime: <iso> }`.
+ */
 function buildCalendarPayload(item: ItemResource): Record<string, unknown> {
-  const props = item.properties ?? {};
-  const summary = (props as { title?: unknown }).title;
-  const description = (props as { description?: unknown }).description;
-  const place = (props as { place?: unknown }).place;
-  const startsAt = (props as { starts_at?: unknown }).starts_at;
-  const endsAt = (props as { ends_at?: unknown }).ends_at;
+  const props = (item.properties ?? {}) as {
+    title?: unknown;
+    description?: unknown;
+    place?: unknown;
+    starts_at?: unknown;
+    ends_at?: unknown;
+    timezone?: unknown;
+    all_day?: unknown;
+    transparency?: unknown;
+    visibility?: unknown;
+    recurrence?: unknown;
+  };
   const payload: Record<string, unknown> = {};
-  if (typeof summary === "string") payload.summary = summary;
-  if (typeof description === "string") payload.description = description;
-  if (typeof place === "string") payload.location = place;
-  if (typeof startsAt === "string") payload.start = { dateTime: startsAt };
-  if (typeof endsAt === "string") payload.end = { dateTime: endsAt };
+  if (typeof props.title === "string") payload.summary = props.title;
+  if (typeof props.description === "string")
+    payload.description = props.description;
+  if (typeof props.place === "string") payload.location = props.place;
+
+  const isAllDay = props.all_day === true;
+  const timezone =
+    typeof props.timezone === "string" && props.timezone.length > 0
+      ? props.timezone
+      : undefined;
+
+  if (typeof props.starts_at === "string") {
+    if (isAllDay) {
+      payload.start = { date: props.starts_at };
+    } else if (timezone !== undefined) {
+      payload.start = { dateTime: props.starts_at, timeZone: timezone };
+    } else {
+      payload.start = { dateTime: props.starts_at };
+    }
+  }
+  if (typeof props.ends_at === "string") {
+    if (isAllDay) {
+      payload.end = { date: props.ends_at };
+    } else if (timezone !== undefined) {
+      payload.end = { dateTime: props.ends_at, timeZone: timezone };
+    } else {
+      payload.end = { dateTime: props.ends_at };
+    }
+  }
+  if (typeof props.transparency === "string")
+    payload.transparency = props.transparency;
+  if (typeof props.visibility === "string")
+    payload.visibility = props.visibility;
+  if (
+    Array.isArray(props.recurrence) &&
+    props.recurrence.every((r) => typeof r === "string") &&
+    props.recurrence.length > 0
+  ) {
+    payload.recurrence = props.recurrence;
+  }
   return payload;
 }
 
-function buildEventPath(externalId: string): string {
-  // Use primary calendar for v1; multi-calendar support is future work.
-  return `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(DEFAULT_CALENDAR_ID)}/events/${encodeURIComponent(externalId)}`;
+/**
+ * Build the path to a specific event on a given calendar. Defaults to
+ * the connection's primary calendar so legacy single-calendar code
+ * paths continue to address the primary as before.
+ */
+function buildEventPath(
+  externalId: string,
+  calendarId: string = DEFAULT_CALENDAR_ID,
+): string {
+  return `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(externalId)}`;
 }
 
 function findExternalIdFor(
@@ -430,17 +978,26 @@ async function ackHandledIfMappedAsDelete(
   ctx: ConnectionContext,
   cursor: CalendarCursor,
   myme_id: string,
+  fallbackCalendarId: string = DEFAULT_CALENDAR_ID,
 ): Promise<HandlerResult> {
   const externalId = findExternalIdFor(cursor, myme_id);
   if (externalId === null) {
     return { ok: true };
   }
-  const path = buildEventPath(externalId);
+  // Multi-calendar mode tracks per-event calendar_id in
+  // `mapping_calendars`; legacy mode has no entry there and falls
+  // back to the connection's default-write calendar.
+  const calendarId =
+    cursor.mapping_calendars?.[externalId] ?? fallbackCalendarId;
+  const path = buildEventPath(externalId, calendarId);
   const resp = await ctx.myme.proxyRequest("DELETE", path);
   if (!resp.ok && resp.status !== 410 && resp.status !== 404) {
     return reportOutboundFailure(ctx, "DELETE", externalId, resp);
   }
   Reflect.deleteProperty(cursor.mappings, externalId);
+  if (cursor.mapping_calendars !== undefined) {
+    Reflect.deleteProperty(cursor.mapping_calendars, externalId);
+  }
   await ctx.cursor.write(CURSOR_KEY, cursor);
   return { ok: true };
 }
