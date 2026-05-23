@@ -271,7 +271,7 @@ describe("GET /auth/authorize (consent page)", () => {
     // the exact wording (the registry's description could be edited);
     // just verify some plain text is included beyond the bare literal.
     expect(html).toContain("edge.parent-of:read");
-    expect(html).toMatch(/<span class="scope-human">[^<]+<\/span>/);
+    expect(html).toMatch(/<span class="scope-row__text">[^<]+<\/span>/);
   });
 });
 
