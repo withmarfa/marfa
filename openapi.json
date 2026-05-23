@@ -12030,6 +12030,211 @@
         }
       }
     },
+    "/credentials/oauth-provider": {
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Create an OAuth provider credential",
+        "description": "Creates a `system.credential` of `kind: oauth_token` carrying an upstream service's OAuth client config — authorize URL, token URL, client_id, encrypted client_secret, upstream API base URL, and optional default scope. The resulting credential id is passed as `credential_ref` on subsequent `POST /connections/install` calls so multiple integrations of the same upstream (e.g. `google.calendar` + `google.tasks`) share one OAuth client and one stored secret instead of duplicating per-integration.\n\nThe client_secret is encrypted server-side under the `connectionOauthToken` HKDF domain (AES-256-GCM). Decryption only happens at the OAuth proxy + callback paths; the plaintext is never returned by any read path.\n\nTenant-scoped: the credential is created in the calling key's tenant, and integrations within that tenant can reference it. Cross-tenant reuse is not supported — each tenant brings its own OAuth provider config.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "oauth_authorize_url": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "format": "uri"
+                  },
+                  "oauth_token_url": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "format": "uri"
+                  },
+                  "oauth_client_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "oauth_client_secret": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048
+                  },
+                  "upstream_base_url": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "format": "uri"
+                  },
+                  "oauth_default_scope": {
+                    "type": "string",
+                    "maxLength": 2048
+                  }
+                },
+                "required": [
+                  "label",
+                  "oauth_authorize_url",
+                  "oauth_token_url",
+                  "oauth_client_id",
+                  "oauth_client_secret",
+                  "upstream_base_url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Credential created. Returns the new credential's id for use as `credential_ref` on install.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "credential_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "credential_id"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "validation_error",
+                            "missing_required_field"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an admin or tenant_admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/system/runtime-credentials": {
       "post": {
         "tags": [
@@ -16380,6 +16585,9 @@
                   },
                   "label": {
                     "type": "string"
+                  },
+                  "credential_ref": {
+                    "type": "string"
                   }
                 },
                 "required": [
@@ -19966,3 +20174,5 @@
     }
   }
 }
+(node:36780) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)

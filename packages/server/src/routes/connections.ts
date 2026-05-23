@@ -64,6 +64,12 @@ const InstallRequestSchema = z.object({
   /** Display label for the connection and seed credential. Defaults
    *  server-side to `${manifest_name} ${manifest_version}` when omitted. */
   label: z.string().optional(),
+  /** Optional id of an existing `system.credential` (kind `oauth_token`)
+   *  to reference instead of provisioning a fresh provider credential.
+   *  Lets multiple integrations of the same upstream (e.g.
+   *  `google.calendar` + `google.tasks`) share one OAuth client config.
+   *  Create such credentials via `POST /credentials/oauth-provider`. */
+  credential_ref: z.string().optional(),
 });
 
 const InstallResultSchema = z.object({
@@ -333,7 +339,11 @@ export function connectionRoutes(storage: Storage, salt: string) {
     // Lookups + writes are scoped via `apiKey.tenant_id`, so cross-tenant
     // attempts surface as NOT_FOUND.
     const apiKey = requireTenantAdmin(c);
-    const { integration_id, label } = c.req.valid("json");
+    const {
+      integration_id,
+      label,
+      credential_ref: credentialRef,
+    } = c.req.valid("json");
     const tenantId = apiKey.tenant_id ?? undefined;
     const clientIp = c.var.clientIp;
 
@@ -366,6 +376,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
       manifest: props.manifest,
       label: effectiveLabel,
       clientIp,
+      ...(credentialRef !== undefined ? { credentialRef } : {}),
     });
 
     // Best-effort: arm the schedule alarm if the manifest has a schedule

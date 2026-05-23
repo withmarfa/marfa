@@ -39,7 +39,7 @@
  * the upgrade flow on purpose.
  */
 import { randomBytes } from "node:crypto";
-import type { IntegrationManifest } from "@mymehq/shared";
+import { ErrorCode, MymeError, type IntegrationManifest } from "@mymehq/shared";
 import { hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 
@@ -68,6 +68,31 @@ export interface InstallInput {
    *  row so installs are attributable. Null when the install runs
    *  outside a Hono request (e.g. one-shot CLI scripts). */
   clientIp?: string | null;
+  /**
+   * Optional id of a pre-existing `system.credential` (kind `oauth_token`)
+   * to reference from the new connection. When supplied, the install
+   * pipeline does NOT create a fresh OAuth provider credential — the
+   * connection's `credential_ref` points at this existing row instead,
+   * so multiple integrations of the same upstream provider (e.g.
+   * `google.calendar` + `google.tasks`) share one OAuth client config
+   * and one stored secret. Create such credentials via
+   * `POST /credentials/oauth-provider`.
+   *
+   * Per-install behaviour:
+   *   - When unset (the historic default): no `credential_ref` is set on
+   *     the connection. OAuth-backed integrations must populate it
+   *     out-of-band before any proxy or callback call works.
+   *   - When set: validated to resolve to a `system.credential` of
+   *     `kind: "oauth_token"` in the caller's tenant. Stamped onto
+   *     `connection.properties.credential_ref` at step 1. A mismatched
+   *     or missing credential rejects the install with
+   *     `INVALID_REQUEST` before any state is written.
+   *
+   * The runtime credential (the api_key bound to the new connection_id)
+   * stays per-install — it's NOT reused. Only the OAuth provider
+   * credential is.
+   */
+  credentialRef?: string;
 }
 
 export interface InstallResult {
@@ -133,6 +158,33 @@ export async function performInstall(
   const manifest = input.manifest as IntegrationManifest;
   const now = new Date().toISOString();
 
+  // -------------------------------------------------------------------
+  // Pre-step: validate `credentialRef` resolves to a usable
+  // `kind: oauth_token` credential in the caller's tenant. Done BEFORE
+  // any writes so a bad ref doesn't leak compensating-write activity.
+  // -------------------------------------------------------------------
+  if (input.credentialRef !== undefined) {
+    const candidate = await storage.items.get(
+      input.credentialRef,
+      input.tenantId,
+    );
+    if (candidate?.type !== "system.credential") {
+      throw new MymeError(
+        ErrorCode.INVALID_REQUEST,
+        `credential_ref ${input.credentialRef} does not resolve to a system.credential item in this tenant`,
+        { credential_ref: input.credentialRef },
+      );
+    }
+    const credProps = candidate.properties as { kind?: unknown };
+    if (credProps.kind !== "oauth_token") {
+      throw new MymeError(
+        ErrorCode.INVALID_REQUEST,
+        `credential_ref ${input.credentialRef} resolves to a system.credential of kind '${String(credProps.kind)}'; expected 'oauth_token'`,
+        { credential_ref: input.credentialRef, kind: credProps.kind },
+      );
+    }
+  }
+
   // Compensation stack — each step pushes a rollback closure. On any
   // subsequent failure we walk the stack in reverse and re-throw.
   //
@@ -160,7 +212,7 @@ export async function performInstall(
   // -------------------------------------------------------------------
   // Step 1: insert the system.connection item.
   // -------------------------------------------------------------------
-  const connectionProperties = {
+  const connectionProperties: Record<string, unknown> = {
     kind: "integration" as const,
     status: "active" as const,
     granted_at: now,
@@ -171,6 +223,9 @@ export async function performInstall(
     runtime_status: "healthy" as const,
     feed_activity: false,
   };
+  if (input.credentialRef !== undefined) {
+    connectionProperties.credential_ref = input.credentialRef;
+  }
 
   const connection = await storage.items.create(
     {
@@ -264,6 +319,9 @@ export async function performInstall(
         manifest_name: manifest.name,
         manifest_version: manifest.version,
         ttl_seconds: INSTALL_CREDENTIAL_TTL_SECONDS,
+        ...(input.credentialRef !== undefined
+          ? { credential_ref: input.credentialRef }
+          : {}),
       },
     });
   } catch (err) {
