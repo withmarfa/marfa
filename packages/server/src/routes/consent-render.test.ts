@@ -119,10 +119,10 @@ describe("renderConsentScreen — layout + form contract", () => {
 });
 
 describe("renderConsentScreen — flat (first-time) sections", () => {
-  it("renders a Read access + Read and write access section when both kinds present", () => {
+  it("renders a Read + Read &amp; write section when both kinds present", () => {
     const html = renderConsentScreen(PARAMS);
-    expect(html).toContain(">Read access<");
-    expect(html).toContain(">Read and write access<");
+    expect(html).toContain(">Read<");
+    expect(html).toContain(">Read &amp; write<");
   });
 
   it("renders an Identity section when OIDC scopes are present", () => {
@@ -145,22 +145,32 @@ describe("renderConsentScreen — flat (first-time) sections", () => {
     expect(html).toContain("Confirm your identity.");
   });
 
-  it("omits sections with no scopes (no empty Read access block)", () => {
+  it("omits sections with no scopes (no empty Read block)", () => {
     const html = renderConsentScreen({
       ...PARAMS,
       scopes: [{ typePattern: "core.note", operation: "write" }],
     });
-    expect(html).not.toContain(">Read access<");
-    expect(html).toContain(">Read and write access<");
+    expect(html).not.toContain(">Read<");
+    expect(html).toContain(">Read &amp; write<");
   });
 
-  it("renders the per-section count next to the label", () => {
+  it("renders a 'N enabled' count next to each section label", () => {
     const html = renderConsentScreen(PARAMS);
     // 2 read scopes (note:read + task:read), 1 write scope (note:write).
-    expect(html).toMatch(/Read access<\/h2>\s*<span class="section__count">2</);
+    // Defaults-everything-on → initial count is the same as the total.
     expect(html).toMatch(
-      /Read and write access<\/h2>\s*<span class="section__count">1</,
+      /Read<\/span>\s*<span class="section__count"[^>]*>2 enabled</,
     );
+    expect(html).toMatch(
+      /Read &amp; write<\/span>\s*<span class="section__count"[^>]*>1 enabled</,
+    );
+  });
+
+  it("renders sections as <details> collapsed by default", () => {
+    const html = renderConsentScreen(PARAMS);
+    // <details> not <details open> — the user has to click to expand.
+    expect(html).toMatch(/<details class="section"[^>]*data-section/);
+    expect(html).not.toMatch(/<details[^>]*\sopen[^>]*data-section/);
   });
 });
 
@@ -178,8 +188,8 @@ describe("renderConsentScreen — re-consent diff", () => {
     expect(html).toContain("Previously granted");
     expect(html).toContain("No longer requested");
     // Flat sections must NOT render in diff mode.
-    expect(html).not.toContain(">Read access<");
-    expect(html).not.toContain(">Read and write access<");
+    expect(html).not.toContain(">Read<");
+    expect(html).not.toContain(">Read &amp; write<");
   });
 
   it("kept group carries scopes present in BOTH prev + next", () => {
@@ -297,9 +307,19 @@ describe("renderConsentScreen — polish-pass shape", () => {
     expect(html).toContain("Security settings");
   });
 
-  it("ships no inline <script> (CSS-only toggles, no JS needed)", () => {
+  it("ships the live-count enhancement script (keeps 'X enabled' accurate as toggles flip)", () => {
     const html = renderConsentScreen(PARAMS);
-    expect(html).not.toContain("<script>");
-    expect(html).not.toContain("data-section-master");
+    expect(html).toContain("data-section");
+    expect(html).toContain("data-section-count");
+    expect(html).toMatch(/<script>[\s\S]*data-section-count[\s\S]*<\/script>/);
+  });
+
+  it("renders Allow + Deny side-by-side (not stacked)", () => {
+    const html = renderConsentScreen(PARAMS);
+    expect(html).toContain('class="actions"');
+    expect(html).not.toContain("actions--stacked");
+    // No longer using the chunky --lg / --ghost variants.
+    expect(html).not.toContain("btn--lg");
+    expect(html).not.toContain("btn--ghost");
   });
 });

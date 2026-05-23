@@ -152,28 +152,38 @@ export function renderConsentScreen(params: ConsentParams): string {
       ? `<p class="section__hint">${escapeHtml(descriptor.hint)}</p>`
       : "";
 
+    const total = descriptor.scopes.length;
+
+    // Removed-section variant: read-only list, no toggles, no
+    // disclosure (it's informational so should always be visible).
     if (descriptor.modifier === "removed") {
       const literals = descriptor.scopes.map((s) => scopeLiteralFor(s));
       return `<section class="section${modifierClass}">
-        <header class="section__head">
-          <h2 class="section__label">${escapeHtml(descriptor.label)}</h2>
-          <span class="section__count">${String(descriptor.scopes.length)}</span>
+        <header class="section__head section__head--static">
+          <span class="section__label">${escapeHtml(descriptor.label)}</span>
+          <span class="section__count">${String(total)}</span>
         </header>
         ${hintHtml}
         <div class="scope-list">${literals.map(removedRow).join("")}</div>
       </section>`;
     }
 
-    return `<section class="section${modifierClass}">
-      <header class="section__head">
-        <h2 class="section__label">${escapeHtml(descriptor.label)}</h2>
-        <span class="section__count">${String(descriptor.scopes.length)}</span>
-      </header>
+    // All other sections collapse by default. Summary shows label +
+    // live "X enabled" / "X of Y enabled" count + chevron. Defaults
+    // are everything-on, so the initial state always reads "Y enabled"
+    // with no "of" — clean.
+    const countLabel = `${String(total)} enabled`;
+    return `<details class="section${modifierClass}" data-section>
+      <summary class="section__head">
+        <span class="section__label">${escapeHtml(descriptor.label)}</span>
+        <span class="section__count" data-section-count data-section-total="${String(total)}">${countLabel}</span>
+        <span class="section__chevron" aria-hidden="true"></span>
+      </summary>
       ${hintHtml}
       <div class="scope-list">
         ${descriptor.scopes.map((s) => scopeRow(s)).join("")}
       </div>
-    </section>`;
+    </details>`;
   };
 
   const safeClient = escapeHtml(params.clientName);
@@ -238,11 +248,11 @@ export function renderConsentScreen(params: ConsentParams): string {
       scopes: oidcScopes,
     });
     sections.push({
-      label: "Read access",
+      label: "Read",
       scopes: readScopes,
     });
     sections.push({
-      label: "Read and write access",
+      label: "Read & write",
       scopes: writeScopes,
     });
   }
@@ -261,6 +271,38 @@ export function renderConsentScreen(params: ConsentParams): string {
     ? `<div class="alert alert--error" role="alert">${escapeHtml(params.errorMessage)}</div>`
     : "";
 
+  // Live "X enabled" / "X of Y enabled" count on each section summary.
+  // Without JS the count still renders correctly at the initial state
+  // (everything-on → "Y enabled"); the script just keeps it accurate
+  // when the user toggles individual scopes. Also stops propagation on
+  // toggle clicks so flicking a switch inside the summary doesn't also
+  // collapse the section.
+  const enhancementScript = `
+    (function () {
+      var sections = document.querySelectorAll('[data-section]');
+      sections.forEach(function (section) {
+        var checkboxes = section.querySelectorAll('input[type="checkbox"][name="scopes"]');
+        var countEl = section.querySelector('[data-section-count]');
+        if (!countEl || checkboxes.length === 0) return;
+        var total = checkboxes.length;
+        function update() {
+          var checked = 0;
+          checkboxes.forEach(function (c) { if (c.checked) checked++; });
+          countEl.textContent = checked === total
+            ? total + ' enabled'
+            : checked + ' of ' + total + ' enabled';
+        }
+        checkboxes.forEach(function (c) { c.addEventListener('change', update); });
+        update();
+        section.querySelectorAll('.scope-row').forEach(function (row) {
+          row.addEventListener('click', function (e) { e.stopPropagation(); });
+        });
+      });
+    })();
+  `
+    .trim()
+    .replace(/\s+/g, " ");
+
   const bodyHtml = `
     <header class="consent-header">
       <h1 class="consent-title">${escapeHtml(titleText)}</h1>
@@ -273,13 +315,14 @@ export function renderConsentScreen(params: ConsentParams): string {
 
       ${sectionsHtml}
 
-      <div class="actions actions--stacked">
-        <button type="submit" name="accept" value="true" class="btn btn--primary btn--lg">Allow access</button>
-        <button type="submit" name="accept" value="false" class="btn btn--ghost">Deny</button>
+      <div class="actions">
+        <button type="submit" name="accept" value="false" class="btn">Deny</button>
+        <button type="submit" name="accept" value="true" class="btn btn--primary">Allow access</button>
       </div>
 
       <p class="consent-footnote">You can revoke this anytime from Security settings.</p>
     </form>
+    <script>${enhancementScript}</script>
   `;
 
   return renderAuthLayout({

@@ -6,6 +6,11 @@
  * inlined. Open the files in a browser (or agent-browser) to QA the
  * design without spinning up the full server stack.
  *
+ * Descriptions go through the live `buildScopeDescriptions` from
+ * `auth-consent.ts` so the preview reflects what users actually see
+ * (curated copy first, registry fallback otherwise). Engineering
+ * descriptions never leak through.
+ *
  * Not committed-runtime code; not exercised by tests.
  *
  *   pnpm --filter @mymehq/server tsx scripts/preview-consent.ts
@@ -15,13 +20,13 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ParsedScope } from "@mymehq/shared";
 import { renderConsentScreen } from "../src/routes/consent.js";
+import { buildScopeDescriptions } from "../src/routes/auth-consent.js";
 import { AUTH_CSS } from "../src/routes/auth-static/auth-css.js";
 
 const FIXTURES: {
   name: string;
   clientName: string;
   scopes: ParsedScope[];
-  descriptions: Record<string, string>;
   priorScopes?: string[];
   errorMessage?: string;
 }[] = [
@@ -62,32 +67,6 @@ const FIXTURES: {
       { typePattern: "core.bookmark", operation: "write" },
       { typePattern: "core.highlight", operation: "write" },
     ],
-    descriptions: {
-      email: "See your email address.",
-      offline_access: "Stay signed in even when you're not using the app.",
-      openid: "Confirm your identity.",
-      profile: "See your name and profile picture.",
-      "core.bookmark":
-        "Content you captured from elsewhere — a saved URL, a highlight, an excerpt, a clipped paragraph.",
-      "core.entity.person":
-        "Contact information for an individual. Inherits all core.entity fields.",
-      "core.entity.place":
-        "A location or venue. Inherits all core.entity fields.",
-      "core.entity":
-        "A non-person entity — a company, band, team, charity, brand, school.",
-      "core.event": "Something that happens at a time.",
-      "core.file.audio":
-        "Recordings, music files, voice memos. Inherits all core.file fields.",
-      "core.file.image":
-        "Photos, screenshots, diagrams. Inherits all core.file fields.",
-      "core.file.video": "Video files. Inherits all core.file fields.",
-      "core.file":
-        "A file or binary reference — the generic fallback for non-media files.",
-      "core.highlight":
-        "A user's engagement with content — the highlighted passage plus optional annotation.",
-      "core.note": "Text content you created.",
-      "core.task": "Tasks and todos.",
-    },
   },
   {
     name: "02-cli-minimal-fresh.html",
@@ -101,10 +80,6 @@ const FIXTURES: {
       { typePattern: "core.note", operation: "read" },
       { typePattern: "core.note", operation: "write" },
     ],
-    descriptions: {
-      openid: "Confirm your identity.",
-      "core.note": "Text content you created.",
-    },
   },
   {
     name: "03-marfa-reconsent-diff.html",
@@ -129,16 +104,6 @@ const FIXTURES: {
       "core.event:read",
       "core.highlight:read",
     ],
-    descriptions: {
-      openid: "Confirm your identity.",
-      "core.note": "Text content you created.",
-      "core.task": "Tasks and todos.",
-      "core.bookmark":
-        "Content you captured from elsewhere — a saved URL, a highlight, an excerpt, a clipped paragraph.",
-      "core.event": "Something that happens at a time.",
-      "core.highlight":
-        "A user's engagement with content — the highlighted passage plus optional annotation.",
-    },
   },
   {
     name: "04-error-banner.html",
@@ -151,10 +116,6 @@ const FIXTURES: {
       } as ParsedScope,
       { typePattern: "core.note", operation: "read" },
     ],
-    descriptions: {
-      openid: "Confirm your identity.",
-      "core.note": "Text content you created.",
-    },
     errorMessage: "Approve needs at least one permission ticked.",
   },
 ];
@@ -170,12 +131,29 @@ const indexLines: string[] = [
 ];
 
 for (const fixture of FIXTURES) {
+  // Build the descriptions map through the live production code path
+  // so curated copy + registry fallbacks are exercised identically.
+  // For the diff variant, also pre-build descriptions for the prior
+  // scopes' types so removed-rows render their human-readable copy.
+  const allScopes: ParsedScope[] = [...fixture.scopes];
+  if (fixture.priorScopes) {
+    for (const literal of fixture.priorScopes) {
+      const lastColon = literal.lastIndexOf(":");
+      const typePattern = lastColon > 0 ? literal.slice(0, lastColon) : literal;
+      const operationPart = lastColon > 0 ? literal.slice(lastColon + 1) : "";
+      const operation: ParsedScope["operation"] =
+        operationPart === "write" ? "write" : "read";
+      allScopes.push({ typePattern, operation } as ParsedScope);
+    }
+  }
+  const descriptions = buildScopeDescriptions(allScopes);
+
   const html = renderConsentScreen({
     clientName: fixture.clientName,
     scopes: fixture.scopes,
     clientId: "preview-client",
     oauthQuery: "preview=1",
-    descriptions: fixture.descriptions,
+    descriptions,
     priorScopes: fixture.priorScopes,
     errorMessage: fixture.errorMessage,
   });

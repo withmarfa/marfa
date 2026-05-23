@@ -276,3 +276,34 @@ export function validateReturnTo(raw: unknown): string {
   if (raw.startsWith("/\\")) return "/";
   return raw;
 }
+
+/**
+ * Build a synthetic `return_to` pointing back at `/auth/authorize` when
+ * a request lands on `/auth/sign-in` with OAuth params on the URL
+ * itself (rather than wrapped in an explicit `return_to`).
+ *
+ * Triggered by the @better-auth/oauth-provider plugin's `loginPage`
+ * redirect: the plugin appends the full (verified, signed)
+ * authorize-request query string directly onto `/auth/sign-in` when
+ * the user isn't yet signed in. The Hono sign-in handler folds those
+ * params back into a `/auth/authorize?…` URL so the existing
+ * form-round-trip carries them through credential check.
+ *
+ * The page-local params (`mode`, `error`, `sent`, `return_to`) are
+ * stripped before re-encoding — they belong to the sign-in page's UX
+ * state, not to the OAuth request.
+ *
+ * The return value is always same-origin (it starts with
+ * `/auth/authorize?`), so it satisfies `validateReturnTo`.
+ */
+const SIGN_IN_LOCAL_PARAMS = new Set(["mode", "error", "sent", "return_to"]);
+
+export function synthesizeOauthReturnTo(params: URLSearchParams): string {
+  const filtered = new URLSearchParams();
+  for (const [key, value] of params) {
+    if (SIGN_IN_LOCAL_PARAMS.has(key)) continue;
+    filtered.append(key, value);
+  }
+  const qs = filtered.toString();
+  return qs.length === 0 ? "/auth/authorize" : `/auth/authorize?${qs}`;
+}

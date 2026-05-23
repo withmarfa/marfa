@@ -22,7 +22,11 @@ import type {
   MymeAuthSession,
   MymeAuthSessionUser,
 } from "../auth/instance.js";
-import { renderSignInPage, validateReturnTo } from "./sign-in-page.js";
+import {
+  renderSignInPage,
+  synthesizeOauthReturnTo,
+  validateReturnTo,
+} from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
 import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
@@ -416,9 +420,29 @@ export function authRoutes(
     const url = new URL(c.req.url);
     const modeRaw = url.searchParams.get("mode");
     const mode = modeRaw === "magic" ? "magic" : "password";
-    const returnTo = validateReturnTo(url.searchParams.get("return_to"));
     const error = url.searchParams.get("error") ?? undefined;
     const magicLinkSent = url.searchParams.get("sent") === "1";
+
+    // Two paths feed `return_to`:
+    //
+    //  1. Explicit `return_to` query param. Set by Myme's own
+    //     `requireConsentSession` redirect (the well-behaved
+    //    consent-gate path).
+    //  2. Bare OAuth params on the URL (`response_type`, `client_id`,
+    //     `sig`, etc.) with no `return_to` wrapping. The
+    //     @better-auth/oauth-provider plugin's `loginPage` config
+    //     redirects unauthenticated users at `/auth/oauth2/authorize`
+    //     here by appending the verified-query parameters directly
+    //     onto `/auth/sign-in`. Before this fix the params were dropped
+    //     on form submit (no hidden `return_to` field carried them
+    //     forward) and the user landed on `/` after credential check.
+    //     Detect that shape and synthesize `return_to=/auth/authorize?<full original query>`
+    //     so the existing form-round-trip path takes over for password,
+    //     magic-link, and passkey.
+    let returnTo = validateReturnTo(url.searchParams.get("return_to"));
+    if (returnTo === "/" && url.searchParams.has("response_type")) {
+      returnTo = synthesizeOauthReturnTo(url.searchParams);
+    }
 
     const html = renderSignInPage({
       mode,
