@@ -22,10 +22,12 @@
  *     each failure surfaces as a `system.activity`.
  *
  * OAuth uses the proxy mode (`oauth_requirements: { calendar: "proxy" }`).
- * The Calendar OAuth tokens must already be present in
- * `storage.connectionOauthTokens` for the connector to function;
- * the bootstrap-the-tokens flow is a follow-on substrate PR (the
- * server doesn't yet expose `/oauth/callback/google`).
+ * Calendar OAuth tokens are bootstrapped via the server's
+ * provider-agnostic `GET /oauth/callback/:provider` route
+ * (see `packages/server/src/routes/oauth-callback.ts`), which
+ * exchanges the authorization code and persists tokens to
+ * `storage.connectionOauthTokens`. The connector reads them at
+ * request time through the OAuth proxy.
  */
 import type { IntegrationManifest } from "@mymehq/shared";
 
