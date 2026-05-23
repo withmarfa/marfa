@@ -134,6 +134,10 @@ service = "myme-integration-github-webhooks-staging"
 binding = "INTEGRATION_TASK_AUTO_ARCHIVE"
 service = "myme-integration-task-auto-archive-staging"
 
+[[env.staging.services]]
+binding = "INTEGRATION_GOOGLE_CALENDAR"
+service = "myme-integration-google-calendar-staging"
+
 # ---------------------------------------------------------------------------
 # R2 — Layer 2 wires this for large inbound webhook bodies (>256KB).
 #

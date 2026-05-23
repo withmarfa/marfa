@@ -116,6 +116,8 @@ function resolveServiceBinding(
       return env.INTEGRATION_GITHUB_WEBHOOKS;
     case "mymehq.task-auto-archive":
       return env.INTEGRATION_TASK_AUTO_ARCHIVE;
+    case "google.calendar":
+      return env.INTEGRATION_GOOGLE_CALENDAR;
     default:
       return undefined;
   }
