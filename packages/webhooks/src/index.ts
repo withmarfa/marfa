@@ -14,4 +14,5 @@ export { verifyHmacSha256 } from "./hmac-sha256.js";
 export { verifySlack } from "./slack.js";
 export { verifyStripe } from "./stripe.js";
 export { verifyGitHub } from "./github.js";
+export { verifyGoogleChannel } from "./google-channel.js";
 export { ADAPTERS } from "./dispatch.js";
