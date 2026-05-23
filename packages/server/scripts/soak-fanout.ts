@@ -13,8 +13,9 @@
  *     (PR feat/wave-a-substrate-bringup, T-040 part 1).
  *   - The deployment carries the JSON install endpoint
  *     `POST /connections/install`.
- *   - The server's CLOUDFLARE_QUEUES_REACTIVE_RUN_URL +
- *     CLOUDFLARE_QUEUES_API_TOKEN are set; on boot the server logs
+ *   - The server's CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS +
+ *     CLOUDFLARE_QUEUES_API_TOKEN are set (T-233 — JSON map of
+ *     integration_name → producer URL); on boot the server logs
  *     "Reactive-run bridge started".
  *
  * Usage (against staging):

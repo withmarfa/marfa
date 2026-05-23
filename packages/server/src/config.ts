@@ -208,7 +208,7 @@ export interface AppConfig {
   /**
    * Integration runtime substrate (T-173 + T-174). `"hosted"` runs
    * against the Cloudflare control plane + per-Integration Workers
-   * (set `CLOUDFLARE_QUEUES_REACTIVE_RUN_URL` +
+   * (set `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` +
    * `CLOUDFLARE_QUEUES_API_TOKEN`). `"local"` runs the in-process Node
    * substrate (`pg-boss` for scheduling, `worker_thread` pool for
    * handler execution); requires Postgres.
