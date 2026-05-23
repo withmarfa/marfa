@@ -689,4 +689,46 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe("invalid_request");
   });
+
+  // T-235: defence-in-depth. The token-issuance handler resolves
+  // `connection_item_id` (set at consent-approve time) and treats the
+  // resulting item as a `system.connection` grant — pulling scopes,
+  // client_id, user_id, tenant_id out of its properties. Pre-T-235 the
+  // handler skipped the type check, so a corrupted `connection_item_id`
+  // pointing at any non-grant item would have silently minted a token
+  // with whatever scopes that item happened to carry. The check below
+  // pins the new guard: a wrong-type item produces a clear-message
+  // failure, no token issued.
+  it("rejects token issuance when connection_item_id resolves to a non-system.connection item (T-235)", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const initResult = await initiate(ctx, clientId);
+
+    // Seed an item of the wrong type — a plain note — and approve the
+    // device code against it, bypassing the consent UI. This simulates
+    // a projection drift the type check is meant to catch.
+    const decoyNote = await ctx.storage.items.create(
+      {
+        type: "core.note",
+        properties: { body: "T-235 decoy — must not become a grant" },
+      },
+      undefined,
+    );
+    const codeRow = await ctx.storage.oauth.findDeviceCodeByUserCode(
+      initResult.user_code,
+    );
+    expect(codeRow).not.toBeNull();
+    const approved = await ctx.storage.oauth.approveDeviceCode(
+      codeRow!.id,
+      decoyNote.id,
+    );
+    expect(approved).toBe(true);
+
+    const poll = await pollToken(ctx, initResult.device_code, clientId);
+    expect(poll.status).toBe(500);
+    // No access token in the response — handler threw before
+    // `mintTokenPair` ran.
+    expect(poll.body.access_token).toBeUndefined();
+    expect(poll.body.refresh_token).toBeUndefined();
+  });
 });

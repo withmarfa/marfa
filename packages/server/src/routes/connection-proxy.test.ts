@@ -1,7 +1,12 @@
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 import {
   encryptSecret,
   decryptSecret,
@@ -607,6 +612,92 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
       `/connections/${connectionId}/proxy/path`,
       { key: ctx.adminKey },
     );
+    expect(proxyRes.status).toBe(422);
+    const err = (await proxyRes.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("oauth_proxy_upstream_invalid");
+  });
+
+  // T-235: defence-in-depth. The install pipeline already enforces
+  // same-tenant `credential_ref` at install-time, so any
+  // legitimately-installed connection points at a credential in its
+  // own tenant. If a future bypass of that validation ever lands a
+  // cross-tenant `credential_ref`, the proxy MUST refuse to decrypt —
+  // otherwise an attacker who can write a connection row in their own
+  // tenant could exfiltrate another tenant's OAuth secret. The fence
+  // here is `readOAuthConfig` threading `connection.tenant_id` into
+  // the credential lookup.
+  it("refuses to resolve a cross-tenant credential_ref (T-235)", async () => {
+    if (!ctx.storage.tenants) return;
+    const tenantA = await ctx.storage.tenants.create("t235-proxy-A");
+    const tenantB = await ctx.storage.tenants.create("t235-proxy-B");
+
+    // Mint a tenant-A admin key. Admin (not platform) is tenant-bounded
+    // — `requireConnectionProxyAccess` admits it for connections inside
+    // its own tenant; the proxy then calls readOAuthConfig, which is
+    // where the cross-tenant credential lookup happens.
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const rawKey = `myme_k1_t235_admin_a_${suffix}`;
+    const hash = hashApiKey(rawKey, TEST_API_KEY_SALT);
+    await ctx.storage.keys.create(
+      {
+        label: `t235-admin-a-${suffix}`,
+        source: `t235-admin-a-${suffix}`,
+        role: "admin",
+        default_tier: "library",
+        is_platform: false,
+      },
+      hash,
+      tenantA.id,
+    );
+
+    // Credential lives in tenant B.
+    const crossCred = await ctx.storage.items.create(
+      {
+        type: "system.credential",
+        properties: {
+          label: "tenant-B-secret",
+          kind: "oauth_token",
+          oauth_provider_config: {
+            upstream_base_url: "https://upstream.test",
+            oauth_token_url: "https://upstream.test/oauth/token",
+            oauth_client_id: "tenant-b-client",
+          },
+          secret_encrypted: encryptSecret(
+            "tenant-b-secret-do-not-leak",
+            SECRET_INFO.connectionOauthToken,
+          ),
+        },
+      },
+      tenantB.id,
+    );
+
+    // Connection lives in tenant A but its credential_ref points at
+    // the tenant-B credential. Build through storage so we bypass the
+    // install pipeline (the bypass IS the scenario we're guarding).
+    const crossConn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: "acme.demo",
+          credential_ref: crossCred.id,
+        },
+      },
+      tenantA.id,
+    );
+
+    // Tenant-A admin proxies through the connection.
+    const proxyRes = await request(
+      ctx.app,
+      "POST",
+      `/connections/${crossConn.id}/proxy/path`,
+      { key: rawKey },
+    );
+
+    // Fence holds: 422 upstream-invalid (credential lookup miss),
+    // NOT 200 with a decrypted tenant-B secret.
     expect(proxyRes.status).toBe(422);
     const err = (await proxyRes.json()) as { error: { code: string } };
     expect(err.error.code).toBe("oauth_proxy_upstream_invalid");
