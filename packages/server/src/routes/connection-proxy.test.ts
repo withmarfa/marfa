@@ -788,3 +788,173 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
     expect(body.error.code).toBe("forbidden");
   });
 });
+
+// ---------------------------------------------------------------------------
+// kind: api_token branch (T-241)
+// ---------------------------------------------------------------------------
+
+async function createApiTokenCredential(opts?: {
+  upstream_base_url?: string;
+  api_token?: string;
+}): Promise<string> {
+  const cfg = {
+    upstream_base_url: "https://upstream.test",
+    api_token: "td-test-token-deadbeef",
+    ...opts,
+  };
+  const res = await request(ctx.app, "POST", "/items", {
+    key: ctx.adminKey,
+    body: {
+      type: "system.credential",
+      properties: {
+        label: "test-api-token-cred",
+        kind: "api_token",
+        api_token_config: { upstream_base_url: cfg.upstream_base_url },
+        secret_encrypted: encryptSecret(
+          cfg.api_token,
+          SECRET_INFO.connectionOauthToken,
+        ),
+      },
+    },
+  });
+  if (res.status !== 201) {
+    throw new Error(`createApiTokenCredential failed: ${String(res.status)}`);
+  }
+  const body = (await res.json()) as ItemResponse;
+  return body.item.id;
+}
+
+async function createApiTokenConnection(opts?: {
+  upstream_base_url?: string;
+  api_token?: string;
+}): Promise<string> {
+  const credId = await createApiTokenCredential(opts);
+  const res = await request(ctx.app, "POST", "/items", {
+    key: ctx.adminKey,
+    body: {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+        integration_ref: "acme.demo-api-token",
+        credential_ref: credId,
+      },
+    },
+  });
+  if (res.status !== 201) {
+    throw new Error(`createApiTokenConnection failed: ${String(res.status)}`);
+  }
+  const body = (await res.json()) as ItemResponse;
+  return body.item.id;
+}
+
+describe("POST /connections/:id/proxy/* — kind:api_token (T-241)", () => {
+  it("stamps the static bearer verbatim on the upstream call (no token row, no refresh)", async () => {
+    const connectionId = await createApiTokenConnection({
+      upstream_base_url: "https://api.todoist.com",
+      api_token: "rd_td_static_token_xyz",
+    });
+
+    const fetchState = installFetchScript([
+      ({ url, init }) => {
+        expect(url).toBe("https://api.todoist.com/rest/v2/tasks");
+        const headers = init.headers as Record<string, string>;
+        expect(headers.Authorization).toBe("Bearer rd_td_static_token_xyz");
+        return jsonResponse(200, [{ id: "1", content: "hello" }]);
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/connections/${connectionId}/proxy/rest/v2/tasks`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    expect(fetchState.calls).toBe(1);
+  });
+
+  it("upstream 401 surfaces as reauth_required + system.activity action_required (no retry, no refresh)", async () => {
+    const connectionId = await createApiTokenConnection({
+      upstream_base_url: "https://api.todoist.com",
+      api_token: "stale-static-token",
+    });
+
+    // Only ONE upstream call expected — no retry on 401 for static tokens.
+    const fetchState = installFetchScript([
+      () => jsonResponse(401, { error: "unauthorized" }),
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/connections/${connectionId}/proxy/rest/v2/tasks`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("oauth_proxy_reauth_required");
+    expect(fetchState.calls).toBe(1);
+
+    // Connection flipped to reauth_required.
+    const conn = await ctx.storage.items.get(connectionId);
+    expect(conn?.properties.runtime_status).toBe("reauth_required");
+
+    // system.activity row emitted with action_required severity.
+    const activities = await ctx.storage.items.list({
+      type: "system.activity",
+      limit: 50,
+    });
+    const matched = activities.data.find(
+      (it) => it.properties.connection_id === connectionId,
+    );
+    expect(matched?.properties.severity).toBe("action_required");
+  });
+
+  it("does NOT require a connectionOauthTokens row to be present", async () => {
+    // Distinct from the OAuth flow: kind:api_token reads everything it
+    // needs from the credential row. No `seedToken` call here.
+    const connectionId = await createApiTokenConnection({
+      api_token: "no-token-row-needed",
+    });
+
+    installFetchScript([() => jsonResponse(200, { ok: true })]);
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/proxy/things`,
+      { key: ctx.adminKey, body: { x: 1 } },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("audit row carries credential_kind: api_token", async () => {
+    const connectionId = await createApiTokenConnection({
+      api_token: "audit-trail-token",
+    });
+
+    installFetchScript([() => jsonResponse(200, { ok: true })]);
+
+    await request(ctx.app, "GET", `/connections/${connectionId}/proxy/path`, {
+      key: ctx.adminKey,
+    });
+
+    await vi.waitFor(async () => {
+      const audit = await ctx.storage.audit.list({
+        action: "connection_proxy.call",
+        limit: 50,
+      });
+      const callRows = audit.data.filter(
+        (r: { resource_id?: string | null }) => r.resource_id === connectionId,
+      );
+      expect(callRows.length).toBeGreaterThanOrEqual(1);
+      const latest = callRows[callRows.length - 1];
+      expect(
+        (latest?.details as { credential_kind?: string } | undefined)
+          ?.credential_kind,
+      ).toBe("api_token");
+    });
+  });
+});

@@ -38,6 +38,7 @@ import {
 // ---------------------------------------------------------------------------
 
 interface OAuthConfig {
+  kind: "oauth_token";
   upstream_base_url: string;
   oauth_token_url: string;
   oauth_client_id: string;
@@ -45,28 +46,45 @@ interface OAuthConfig {
   oauth_client_secret: string;
 }
 
+interface ApiTokenConfig {
+  kind: "api_token";
+  upstream_base_url: string;
+  /** Plaintext bearer token. */
+  bearer_token: string;
+}
+
+type CredentialConfig = OAuthConfig | ApiTokenConfig;
+
 /**
- * Read the OAuth config for a Connection.
+ * Read the upstream + secret config for a Connection.
  *
  * The connection must reference a `system.credential` item via
- * `properties.credential_ref`. The credential carries:
- *   - `kind: "oauth_token"`
- *   - `oauth_provider_config` (the non-secret fields:
- *     `upstream_base_url`, `oauth_token_url`, `oauth_client_id`)
- *   - `secret_encrypted` — the AES-GCM-encrypted client secret under
- *     the `connectionOauthToken` HKDF domain
+ * `properties.credential_ref`. Two credential kinds are accepted
+ * (T-241), returned as a discriminated union:
+ *
+ *   - **`kind: "oauth_token"`** — `oauth_provider_config` carries the
+ *     non-secret OAuth fields (`upstream_base_url`, `oauth_token_url`,
+ *     `oauth_client_id`); `secret_encrypted` holds the encrypted
+ *     client secret. The proxy uses this shape to refresh access
+ *     tokens against `oauth_token_url`.
+ *   - **`kind: "api_token"`** — `api_token_config` carries just
+ *     `upstream_base_url`; `secret_encrypted` holds the bearer token
+ *     directly. The proxy stamps the bearer verbatim — there is no
+ *     refresh URL because static tokens have no refresh primitive.
+ *
+ * Both shapes encrypt under the `connectionOauthToken` HKDF domain.
  *
  * The transition-period inline-config fallback (reading
  * `connection.properties.configuration` for plaintext OAuth fields,
  * including the client_secret) was dropped in T-022 once Layer 2
  * migrations had run. The migration script at
- * `src/scripts/deprecated/migrate-oauth-to-credential.ts` is what installed
- * `credential_ref` on every existing connection.
+ * `src/scripts/deprecated/migrate-oauth-to-credential.ts` is what
+ * installed `credential_ref` on every existing connection.
  */
-async function readOAuthConfig(
+async function readCredentialConfig(
   storage: Storage,
   connection: Item,
-): Promise<OAuthConfig> {
+): Promise<CredentialConfig> {
   // Connection must reference a `system.credential` row via
   // `properties.credential_ref`. The transition-period inline-config
   // fallback (reading `properties.configuration` for plaintext OAuth
@@ -106,30 +124,64 @@ async function readOAuthConfig(
       oauth_token_url?: string;
       oauth_client_id?: string;
     };
+    api_token_config?: {
+      upstream_base_url?: string;
+    };
     secret_encrypted?: string;
   };
-  const cfg = credProps.oauth_provider_config;
-  if (
-    credProps.kind !== "oauth_token" ||
-    typeof cfg?.upstream_base_url !== "string" ||
-    typeof cfg.oauth_token_url !== "string" ||
-    typeof cfg.oauth_client_id !== "string" ||
-    typeof credProps.secret_encrypted !== "string"
-  ) {
+  if (typeof credProps.secret_encrypted !== "string") {
     throw new MymeError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
-      `Connection ${connection.id}'s credential_ref ${credentialRef} is not a usable kind:oauth_token with the required oauth_provider_config + secret_encrypted fields.`,
+      `Connection ${connection.id}'s credential_ref ${credentialRef} is missing the encrypted secret.`,
     );
   }
-  return {
-    upstream_base_url: cfg.upstream_base_url,
-    oauth_token_url: cfg.oauth_token_url,
-    oauth_client_id: cfg.oauth_client_id,
-    oauth_client_secret: decryptSecret(
-      credProps.secret_encrypted,
-      SECRET_INFO.connectionOauthToken,
-    ),
-  };
+
+  if (credProps.kind === "oauth_token") {
+    const cfg = credProps.oauth_provider_config;
+    if (
+      typeof cfg?.upstream_base_url !== "string" ||
+      typeof cfg.oauth_token_url !== "string" ||
+      typeof cfg.oauth_client_id !== "string"
+    ) {
+      throw new MymeError(
+        ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
+        `Connection ${connection.id}'s credential_ref ${credentialRef} is not a usable kind:oauth_token — required oauth_provider_config fields are missing.`,
+      );
+    }
+    return {
+      kind: "oauth_token",
+      upstream_base_url: cfg.upstream_base_url,
+      oauth_token_url: cfg.oauth_token_url,
+      oauth_client_id: cfg.oauth_client_id,
+      oauth_client_secret: decryptSecret(
+        credProps.secret_encrypted,
+        SECRET_INFO.connectionOauthToken,
+      ),
+    };
+  }
+
+  if (credProps.kind === "api_token") {
+    const cfg = credProps.api_token_config;
+    if (typeof cfg?.upstream_base_url !== "string") {
+      throw new MymeError(
+        ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
+        `Connection ${connection.id}'s credential_ref ${credentialRef} is not a usable kind:api_token — api_token_config.upstream_base_url is missing.`,
+      );
+    }
+    return {
+      kind: "api_token",
+      upstream_base_url: cfg.upstream_base_url,
+      bearer_token: decryptSecret(
+        credProps.secret_encrypted,
+        SECRET_INFO.connectionOauthToken,
+      ),
+    };
+  }
+
+  throw new MymeError(
+    ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
+    `Connection ${connection.id}'s credential_ref ${credentialRef} has unsupported kind '${String(credProps.kind)}' (expected 'oauth_token' or 'api_token').`,
+  );
 }
 
 /**
@@ -595,7 +647,7 @@ export function connectionProxyRoutes(storage: Storage) {
       connectionId,
     );
 
-    const config = await readOAuthConfig(storage, connection);
+    const config = await readCredentialConfig(storage, connection);
 
     // Derive upstream URL: strip the route prefix from the request path
     // and prepend the configured upstream base URL.
@@ -612,135 +664,188 @@ export function connectionProxyRoutes(storage: Storage) {
     // Read body once — we may retry it after a refresh.
     const bodyBytes = await c.req.raw.arrayBuffer();
 
-    // Look up the token row. tenantId-scoped read so cross-tenant
-    // requests against the same connection_id can't peek.
-    let row = await storage.connectionOauthTokens.get(connectionId, tenantId);
-    if (!row) {
-      void storage.audit.log({
-        client_ip: c.get("clientIp") ?? null,
-        tenant_id: c.get("apiKey")?.tenant_id ?? null,
-        key_id: c.get("apiKey")?.id,
-        action: "connection_proxy.token_missing",
-        resource_type: "connection",
-        resource_id: connectionId,
-      });
-      throw new MymeError(
-        ErrorCode.OAUTH_PROXY_TOKEN_MISSING,
-        "Connection has no stored OAuth token; complete authorisation first",
-      );
-    }
-
-    // Proactive refresh — when access_token expires inside the leeway
-    // window, refresh before issuing the call.
-    const expiresAtMs = Date.parse(row.expires_at);
-    const proactiveDue =
-      Number.isFinite(expiresAtMs) &&
-      expiresAtMs - Date.now() < PROACTIVE_REFRESH_LEEWAY_SEC * 1000;
-
-    if (proactiveDue) {
-      const result = await withRefreshLock(storage, connectionId, () =>
-        refreshAccessToken(storage, connectionId, config),
-      );
-      if (!result.ok) {
-        if (result.invalidGrant) {
-          await markReauthRequired(
-            storage,
-            connection,
-            tenantId,
-            result.reason,
-            c.get("clientIp") ?? null,
-          );
-        }
-        void storage.audit.log({
-          client_ip: c.get("clientIp") ?? null,
-          tenant_id: c.get("apiKey")?.tenant_id ?? null,
-          key_id: c.get("apiKey")?.id,
-          action: "connection_proxy.refresh_failed",
-          resource_type: "connection",
-          resource_id: connectionId,
-          details: {
-            reason: result.reason,
-            invalid_grant: result.invalidGrant,
-          },
-        });
-        throw new MymeError(
-          ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
-          `Refresh failed: ${result.reason}`,
-        );
-      }
-      // Re-read row so the caller sees rotated state.
-      row = await storage.connectionOauthTokens.get(connectionId, tenantId);
-      if (!row) {
-        // Should be impossible — refresh just wrote.
-        throw new MymeError(
-          ErrorCode.OAUTH_PROXY_TOKEN_MISSING,
-          "Token row vanished mid-refresh",
-        );
-      }
-    }
-
-    let accessToken: string;
-    try {
-      accessToken = decryptSecret(
-        row.access_token_encrypted,
-        SECRET_INFO.connectionOauthToken,
-      );
-    } catch {
-      throw new MymeError(
-        ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
-        "Stored access token is unreadable; reauthorise to recover",
-      );
-    }
-
     const method = c.req.method;
-    let outcome = await performUpstreamCall(
-      upstreamUrl,
-      method,
-      c.req.raw.headers,
-      bodyBytes,
-      accessToken,
-    );
+    let outcome: ProxyAttemptOutcome;
 
-    // Reactive refresh on 401. Single retry per call.
-    if (outcome.status === 401) {
-      const result = await withRefreshLock(storage, connectionId, () =>
-        refreshAccessToken(storage, connectionId, config),
-      );
-      if (!result.ok) {
-        if (result.invalidGrant) {
-          await markReauthRequired(
-            storage,
-            connection,
-            tenantId,
-            result.reason,
-            c.get("clientIp") ?? null,
-          );
-        }
-        void storage.audit.log({
-          client_ip: c.get("clientIp") ?? null,
-          tenant_id: c.get("apiKey")?.tenant_id ?? null,
-          key_id: c.get("apiKey")?.id,
-          action: "connection_proxy.refresh_failed",
-          resource_type: "connection",
-          resource_id: connectionId,
-          details: {
-            reason: result.reason,
-            invalid_grant: result.invalidGrant,
-          },
-        });
-        throw new MymeError(
-          ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
-          `Upstream 401 and refresh failed: ${result.reason}`,
-        );
-      }
-      // Retry once with the new access token.
+    if (config.kind === "api_token") {
+      // -----------------------------------------------------------------
+      // Static-API-token branch (T-241). The bearer is in `config` —
+      // no token row to look up, no refresh primitive. Stamp it
+      // verbatim. On upstream 401, surface 401 + flip the connection
+      // to reauth_required (operator must reinstall with a fresh
+      // token).
+      // -----------------------------------------------------------------
       outcome = await performUpstreamCall(
         upstreamUrl,
         method,
         c.req.raw.headers,
         bodyBytes,
-        result.access_token,
+        config.bearer_token,
       );
+
+      if (outcome.status === 401) {
+        const reason = "Static API token rejected by upstream (HTTP 401)";
+        await markReauthRequired(
+          storage,
+          connection,
+          tenantId,
+          reason +
+            " — reinstall the connection with a fresh token via POST /credentials/api-token + POST /connections/install.",
+          c.get("clientIp") ?? null,
+        );
+        void storage.audit.log({
+          client_ip: c.get("clientIp") ?? null,
+          tenant_id: c.get("apiKey")?.tenant_id ?? null,
+          key_id: c.get("apiKey")?.id,
+          action: "connection_proxy.api_token_rejected",
+          resource_type: "connection",
+          resource_id: connectionId,
+          details: {
+            method,
+            upstream_host: new URL(upstreamUrl).host,
+          },
+        });
+        throw new MymeError(
+          ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
+          `Upstream 401: ${reason}`,
+        );
+      }
+    } else {
+      // -----------------------------------------------------------------
+      // OAuth-token branch (the pre-T-241 shape). Look up the stored
+      // access/refresh tokens, proactively refresh inside the leeway
+      // window, reactively refresh on 401 + retry once.
+      // -----------------------------------------------------------------
+
+      // Look up the token row. tenantId-scoped read so cross-tenant
+      // requests against the same connection_id can't peek.
+      let row = await storage.connectionOauthTokens.get(connectionId, tenantId);
+      if (!row) {
+        void storage.audit.log({
+          client_ip: c.get("clientIp") ?? null,
+          tenant_id: c.get("apiKey")?.tenant_id ?? null,
+          key_id: c.get("apiKey")?.id,
+          action: "connection_proxy.token_missing",
+          resource_type: "connection",
+          resource_id: connectionId,
+        });
+        throw new MymeError(
+          ErrorCode.OAUTH_PROXY_TOKEN_MISSING,
+          "Connection has no stored OAuth token; complete authorisation first",
+        );
+      }
+
+      // Proactive refresh — when access_token expires inside the leeway
+      // window, refresh before issuing the call.
+      const expiresAtMs = Date.parse(row.expires_at);
+      const proactiveDue =
+        Number.isFinite(expiresAtMs) &&
+        expiresAtMs - Date.now() < PROACTIVE_REFRESH_LEEWAY_SEC * 1000;
+
+      if (proactiveDue) {
+        const result = await withRefreshLock(storage, connectionId, () =>
+          refreshAccessToken(storage, connectionId, config),
+        );
+        if (!result.ok) {
+          if (result.invalidGrant) {
+            await markReauthRequired(
+              storage,
+              connection,
+              tenantId,
+              result.reason,
+              c.get("clientIp") ?? null,
+            );
+          }
+          void storage.audit.log({
+            client_ip: c.get("clientIp") ?? null,
+            tenant_id: c.get("apiKey")?.tenant_id ?? null,
+            key_id: c.get("apiKey")?.id,
+            action: "connection_proxy.refresh_failed",
+            resource_type: "connection",
+            resource_id: connectionId,
+            details: {
+              reason: result.reason,
+              invalid_grant: result.invalidGrant,
+            },
+          });
+          throw new MymeError(
+            ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
+            `Refresh failed: ${result.reason}`,
+          );
+        }
+        // Re-read row so the caller sees rotated state.
+        row = await storage.connectionOauthTokens.get(connectionId, tenantId);
+        if (!row) {
+          // Should be impossible — refresh just wrote.
+          throw new MymeError(
+            ErrorCode.OAUTH_PROXY_TOKEN_MISSING,
+            "Token row vanished mid-refresh",
+          );
+        }
+      }
+
+      let accessToken: string;
+      try {
+        accessToken = decryptSecret(
+          row.access_token_encrypted,
+          SECRET_INFO.connectionOauthToken,
+        );
+      } catch {
+        throw new MymeError(
+          ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
+          "Stored access token is unreadable; reauthorise to recover",
+        );
+      }
+
+      outcome = await performUpstreamCall(
+        upstreamUrl,
+        method,
+        c.req.raw.headers,
+        bodyBytes,
+        accessToken,
+      );
+
+      // Reactive refresh on 401. Single retry per call.
+      if (outcome.status === 401) {
+        const result = await withRefreshLock(storage, connectionId, () =>
+          refreshAccessToken(storage, connectionId, config),
+        );
+        if (!result.ok) {
+          if (result.invalidGrant) {
+            await markReauthRequired(
+              storage,
+              connection,
+              tenantId,
+              result.reason,
+              c.get("clientIp") ?? null,
+            );
+          }
+          void storage.audit.log({
+            client_ip: c.get("clientIp") ?? null,
+            tenant_id: c.get("apiKey")?.tenant_id ?? null,
+            key_id: c.get("apiKey")?.id,
+            action: "connection_proxy.refresh_failed",
+            resource_type: "connection",
+            resource_id: connectionId,
+            details: {
+              reason: result.reason,
+              invalid_grant: result.invalidGrant,
+            },
+          });
+          throw new MymeError(
+            ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
+            `Upstream 401 and refresh failed: ${result.reason}`,
+          );
+        }
+        // Retry once with the new access token.
+        outcome = await performUpstreamCall(
+          upstreamUrl,
+          method,
+          c.req.raw.headers,
+          bodyBytes,
+          result.access_token,
+        );
+      }
     }
 
     void storage.audit.log({
@@ -755,6 +860,7 @@ export function connectionProxyRoutes(storage: Storage) {
         upstream_status: outcome.status,
         // Don't log path query — could contain bearer-equivalent secrets.
         upstream_host: new URL(upstreamUrl).host,
+        credential_kind: config.kind,
       },
     });
 
