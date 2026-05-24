@@ -1,0 +1,26 @@
+{
+  "name": "@mymehq/integration-google-drive",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Inbound-only Google Drive connector (Drive v3 API). Schedule trigger seeds + incrementally syncs via files.list + changes.list with a persisted pageToken cursor; webhook trigger receives changes.watch push notifications and triggers a re-sync. Reuses the Google OAuth provider credential established for the google.* family via credential_ref. Blob handling deferred (substrate gap — ConnectionClient.uploadBlob not yet exposed). Outbound writes deferred to a follow-on ticket.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@mymehq/runtime-sdk": "workspace:*",
+    "@mymehq/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "@mymehq/runtime-test": "workspace:*",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2",
+    "tsup": "^8.5.1"
+  }
+}

@@ -374,6 +374,32 @@ const googleContactsContact: TypeSchema = {
   display_hints: { title_field: "title", body_field: "biography" },
 };
 
+const googleDriveFile: TypeSchema = {
+  id: "google.drive.file",
+  label: "Google Drive File",
+  description: "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the integration reads files into Myme but does not write back. `compatible_with` falls through to `core.file` for cross-app consumers.",
+  version: 1,
+  fields: {
+    title: { type: "string", description: "File name (maps to Drive `name`).", required: true },
+    mime_type: { type: "string", description: "MIME type (maps to Drive `mimeType`). Google-native types are `application/vnd.google-apps.*` and require export rather than alt=media download.", required: true },
+    drive_file_id: { type: "string", description: "Stable Drive file id. Used as the external_id on the cursor mapping.", required: true },
+    size_bytes: { type: "integer", description: "File size in bytes (maps to Drive `size`). Null for native Google formats (Docs / Sheets / Slides)." },
+    created_at_drive: { type: "datetime", description: "Drive-side created timestamp (maps to Drive `createdTime`)." },
+    modified_at_drive: { type: "datetime", description: "Drive-side modified timestamp (maps to Drive `modifiedTime`). Used for incremental ordering when changes.list cursor is absent." },
+    owners: { type: "array", description: "Owner email addresses (each entry is the `emailAddress` of an owner from Drive's `owners` array).", items_type: "string" },
+    parents: { type: "array", description: "Parent folder ids (maps to Drive `parents`).", items_type: "string" },
+    trashed: { type: "boolean", description: "Drive `trashed` flag. Handler maps `trashed: true` to a Myme tombstone (state-trashed) rather than persisting the flag literally." },
+    web_view_link: { type: "url", description: "Stable HTTPS URL to view the file in the Drive web UI (maps to Drive `webViewLink`)." },
+    icon_link: { type: "url", description: "URL to a small icon for the file's type (maps to Drive `iconLink`)." },
+    thumbnail_link: { type: "url", description: "URL to a short-lived thumbnail (maps to Drive `thumbnailLink`). Stored as a URL only; not downloaded." },
+    md5_checksum: { type: "string", description: "MD5 checksum of the file content (maps to Drive `md5Checksum`). Available for binary file types; absent for native Google formats." },
+    sha256_checksum: { type: "string", description: "SHA-256 checksum where Drive provides it (`sha256Checksum`; recent addition to the v3 API)." },
+    blob_ref: { type: "string", description: "Reference to the downloaded binary content as a Myme blob (`sha256:<hex>`). Populated only when `connection.properties.configuration.download_mode` is `all-files` (or a matching glob). Stays empty in the default `metadata` mode. **Substrate dependency:** the `@mymehq/runtime-sdk` ConnectionClient does not yet expose a blob-upload primitive — v1 ships with metadata-only ingest; the all-files mode requires a follow-on substrate PR that adds `uploadBlob` to the SDK." },
+    etag: { type: "string", description: "Drive's change-detection token (Drive returns ETag-style hashes on most responses). Used as the content-hash key for echo suppression." },
+  },
+  display_hints: { title_field: "title" },
+};
+
 const googleTasksTask: TypeSchema = {
   id: "google.tasks.task",
   label: "Google Task",
@@ -615,6 +641,7 @@ export const ALL_TYPES: TypeSchema[] = [
   coreFileVideo,
   googleCalendarEvent,
   googleContactsContact,
+  googleDriveFile,
   googleTasksTask,
   coreMediaAlbum,
   coreMediaArticle,

@@ -143,6 +143,8 @@ binding = "INTEGRATION_GOOGLE_TASKS"
 service = "myme-integration-google-tasks-staging"
 
 [[env.staging.services]]
+binding = "INTEGRATION_GOOGLE_DRIVE"
+service = "myme-integration-google-drive-staging"
 binding = "INTEGRATION_GOOGLE_CONTACTS"
 service = "myme-integration-google-contacts-staging"
 

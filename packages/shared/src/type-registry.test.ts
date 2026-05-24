@@ -15,15 +15,17 @@ import type { ItemState } from "@mymehq/types";
 import type { Item } from "./types.js";
 
 describe("TYPE_REGISTRY", () => {
-  it("contains 25 core types and 7 system types (TSC42 §4)", () => {
+  it("contains 26 core types and 7 system types (TSC42 §4)", () => {
     // T-231 added `google.calendar.event` as the 23rd core-bundled type
     // (the first publisher-namespaced type to ship in-tree).
     // T-236 added `google.tasks.task` as the 24th.
     // T-237 added `google.contacts.contact` as the 25th.
-    expect(TYPE_REGISTRY.size).toBe(32);
+    // T-238 added `google.drive.file` as the 26th.
+    expect(TYPE_REGISTRY.size).toBe(33);
     expect(TYPE_REGISTRY.has("google.calendar.event")).toBe(true);
     expect(TYPE_REGISTRY.has("google.tasks.task")).toBe(true);
     expect(TYPE_REGISTRY.has("google.contacts.contact")).toBe(true);
+    expect(TYPE_REGISTRY.has("google.drive.file")).toBe(true);
     expect(TYPE_REGISTRY.has("system.device")).toBe(true);
     expect(TYPE_REGISTRY.has("system.credential")).toBe(true);
     expect(TYPE_REGISTRY.has("system.webhook")).toBe(true);
