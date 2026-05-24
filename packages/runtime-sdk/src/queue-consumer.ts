@@ -288,6 +288,18 @@ export async function consumeBatch(
       thrownClassName =
         err instanceof Error ? err.constructor.name || "Error" : "unknown";
       thrownMessage = err instanceof Error ? err.message : String(err);
+      // T-255: surface the throw via console.error. The activity-emit
+      // backstop below relies on a working ConnectionClient (Myme
+      // reachable + runtime credential mintable); when the throw is a
+      // mint / credential-bootstrap failure, the backstop fails too and
+      // the message gets retried + DLQ'd in silence. console.error here
+      // is the only operator-visible signal in that degraded mode —
+      // wrangler tail / Cloudflare logs surface it before the retry
+      // ladder consumes the message. Keeps the existing activity-emit
+      // path for the healthy-Myme case where it still works.
+      console.error(
+        `[runtime-sdk:consumeBatch] dispatch threw on ${message.kind} for connection ${message.connection_id} (integration=${message.integration_name}, attempts=${String(msg.attempts)}): ${thrownClassName}: ${thrownMessage}`,
+      );
       result = {
         ok: false,
         retry: false,

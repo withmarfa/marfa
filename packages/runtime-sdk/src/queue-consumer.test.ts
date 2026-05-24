@@ -248,6 +248,51 @@ describe("consumeBatch", () => {
     expect(retried.retried).toBe(false);
   });
 
+  it("logs to console.error when buildConnectionContext throws (T-255)", async () => {
+    // Reproduces the silent-failure mode that motivated T-255: when the
+    // queue consumer's credential mint fails (e.g. broker secrets missing
+    // on the Worker), the throw is caught by the dispatch try/catch but
+    // the activity-emit backstop downstream also can't reach Myme — so
+    // nothing surfaces to the operator. The console.error added in
+    // T-255 is the only visible signal in that degraded mode.
+    registerScheduleHandler(() => Promise.resolve({ ok: true }));
+    const env: ConsumerEnvironment = {
+      ...makeEnv(),
+      mintCredential: () =>
+        Promise.reject(
+          new Error(
+            "lease broker returned 500: undefined/lease/conn_a/runtime",
+          ),
+        ),
+    };
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (msg: unknown) => {
+      errors.push(String(msg));
+    };
+    try {
+      const msg = makeMsg(SCHED(), 1);
+      await consumeBatch(env, [msg]);
+      // First-attempt throws retry, so the message ends in retried — but
+      // the console.error must fire regardless of the retry/ack outcome.
+      expect(msg.retried).toBe(true);
+    } finally {
+      console.error = originalError;
+    }
+    // Operator-visible signal: a single line with the integration name,
+    // connection id, error class, and message — enough to grep in tail
+    // / Cloudflare logs and act on without spelunking the activity log.
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    const line = errors[0];
+    expect(line).toContain("[runtime-sdk:consumeBatch]");
+    expect(line).toContain("dispatch threw");
+    expect(line).toContain("schedule");
+    expect(line).toContain("conn_a");
+    expect(line).toContain("demo");
+    expect(line).toContain("Error");
+    expect(line).toContain("lease broker returned 500");
+  });
+
   it("acks-and-skips messages whose tenant_id mismatches env.tenantId (T-017)", async () => {
     let dispatched = 0;
     registerScheduleHandler(() => {
