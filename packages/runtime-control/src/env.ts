@@ -73,6 +73,7 @@ export interface ControlPlaneEnv {
   INTEGRATION_GOOGLE_CALENDAR?: ServiceBinding;
   INTEGRATION_GOOGLE_TASKS?: ServiceBinding;
   INTEGRATION_GOOGLE_DRIVE?: ServiceBinding;
+  INTEGRATION_GOOGLE_CONTACTS?: ServiceBinding;
 }
 
 /** Subset of Cloudflare's Fetcher binding (service binding) we use. */

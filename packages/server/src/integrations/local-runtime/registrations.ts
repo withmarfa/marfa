@@ -75,6 +75,7 @@ export async function loadInTreeRegistrations(options: {
     "github-webhooks",
     "google-calendar",
     "google-tasks",
+    "google-contacts",
     "task-auto-archive",
     "sync",
   ];

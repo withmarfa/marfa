@@ -61,6 +61,7 @@ const REACTIVE_RUN_INTEGRATIONS = [
   "google.calendar",
   "google.tasks",
   "google.drive",
+  "google.contacts",
 ] as const;
 
 /**

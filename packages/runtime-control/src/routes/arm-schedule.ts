@@ -122,6 +122,8 @@ function resolveServiceBinding(
       return env.INTEGRATION_GOOGLE_TASKS;
     case "google.drive":
       return env.INTEGRATION_GOOGLE_DRIVE;
+    case "google.contacts":
+      return env.INTEGRATION_GOOGLE_CONTACTS;
     default:
       return undefined;
   }
