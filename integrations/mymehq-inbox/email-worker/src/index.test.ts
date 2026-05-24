@@ -1,14 +1,16 @@
 /**
- * Worker-side unit tests for the envelope-builder and signing path.
- * End-to-end (real MIME → real upstream POST) lives in the validation
+ * Worker-side unit tests for the envelope-builder, signing path, and
+ * Service-Binding dispatch shape (T-250). End-to-end (real MIME →
+ * real CF Email Routing → real bound Worker) lives in the validation
  * harness at `_local/validate-mymehq-inbox.ts`; this file covers the
- * pure functions.
+ * pure functions + the dispatch contract.
  */
-import { describe, it, expect } from "vitest";
-import { __internals } from "./index.js";
+import { describe, it, expect, vi } from "vitest";
+import workerHandler, { __internals } from "./index.js";
 import type { Email } from "postal-mime";
 
-const { buildEnvelope, hmacSha256Hex, filterHeaders } = __internals;
+const { buildEnvelope, hmacSha256Hex, filterHeaders, SERVICE_BINDING_HOST } =
+  __internals;
 
 function makeEmail(overrides: Partial<Email>): Email {
   // postal-mime's Email type requires `headers`, `headerLines`,
@@ -158,5 +160,116 @@ describe("hmacSha256Hex", () => {
     const a = await hmacSha256Hex("s", "body1");
     const b = await hmacSha256Hex("s", "body2");
     expect(a).not.toBe(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Service-Binding dispatch shape (T-250)
+// ---------------------------------------------------------------------------
+
+describe("email() — Service-Binding dispatch (T-250)", () => {
+  // Build a fake `ForwardableEmailMessage` shaped enough that
+  // postal-mime parses the raw stream and the handler reaches the
+  // dispatch step.
+  function makeMessage(rawRfc822: string): {
+    from: string;
+    to: string;
+    raw: ReadableStream<Uint8Array>;
+  } {
+    const bytes = new TextEncoder().encode(rawRfc822);
+    return {
+      from: "august@cayzer.me",
+      to: "capture@inbox.myme.so",
+      raw: new ReadableStream({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      }),
+    };
+  }
+
+  const RFC822 = [
+    "From: august@cayzer.me",
+    "To: capture@inbox.myme.so",
+    "Subject: T-250 dispatch smoke",
+    "Message-ID: <t250-smoke@cayzer.me>",
+    "Date: Sun, 24 May 2026 20:00:00 +0000",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "Body bytes for the dispatch smoke.",
+  ].join("\r\n");
+
+  it("calls env.RUNTIME_CONTROL.fetch with the correct path, signature header, and JSON body", async () => {
+    const fetchSpy = vi
+      .fn<(request: Request) => Promise<Response>>()
+      .mockResolvedValue(new Response("ok", { status: 200 }));
+    const env = {
+      RUNTIME_CONTROL: { fetch: fetchSpy } as unknown as Fetcher,
+      CONNECTION_ID: "019e5acf-a55a-7c9b-8be9-ced0d1b9386b",
+      WEBHOOK_SECRET: "shared-secret-for-test",
+      ENVIRONMENT: "test",
+    };
+
+    await workerHandler.email(
+      makeMessage(RFC822) as ForwardableEmailMessage,
+      env,
+    );
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const sent = fetchSpy.mock.calls[0]?.[0];
+    if (!sent) throw new Error("expected RUNTIME_CONTROL.fetch to be called");
+    // URL: synthetic host + the connection_id baked into the path
+    expect(new URL(sent.url).pathname).toBe(
+      "/webhooks/inbound/019e5acf-a55a-7c9b-8be9-ced0d1b9386b",
+    );
+    expect(sent.url.startsWith(SERVICE_BINDING_HOST)).toBe(true);
+    expect(sent.method).toBe("POST");
+    // Headers: signature shape + delivery id from Message-ID
+    expect(sent.headers.get("Content-Type")).toBe("application/json");
+    expect(sent.headers.get("X-Myme-Delivery-Id")).toBe(
+      "<t250-smoke@cayzer.me>",
+    );
+    expect(sent.headers.get("X-Myme-Signature")).toMatch(
+      /^sha256=[0-9a-f]{64}$/,
+    );
+    // Body: a parseable envelope with the expected subject
+    const body = await sent.json<{ subject: string; message_id: string }>();
+    expect(body.subject).toBe("T-250 dispatch smoke");
+    expect(body.message_id).toBe("<t250-smoke@cayzer.me>");
+  });
+
+  it("ACKs (returns without throwing) when the binding rejects with a non-2xx", async () => {
+    const fetchSpy = vi.fn(
+      (): Promise<Response> =>
+        Promise.resolve(new Response("nope", { status: 500 })),
+    );
+    const env = {
+      RUNTIME_CONTROL: { fetch: fetchSpy } as unknown as Fetcher,
+      CONNECTION_ID: "019e5acf-a55a-7c9b-8be9-ced0d1b9386b",
+      WEBHOOK_SECRET: "s",
+      ENVIRONMENT: "test",
+    };
+    await expect(
+      workerHandler.email(makeMessage(RFC822) as ForwardableEmailMessage, env),
+    ).resolves.toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it("ACKs when the binding throws (bound Worker missing / errored)", async () => {
+    const fetchSpy = vi.fn(
+      (): Promise<Response> =>
+        Promise.reject(new Error("binding target not found")),
+    );
+    const env = {
+      RUNTIME_CONTROL: { fetch: fetchSpy } as unknown as Fetcher,
+      CONNECTION_ID: "019e5acf-a55a-7c9b-8be9-ced0d1b9386b",
+      WEBHOOK_SECRET: "s",
+      ENVIRONMENT: "test",
+    };
+    await expect(
+      workerHandler.email(makeMessage(RFC822) as ForwardableEmailMessage, env),
+    ).resolves.toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 });

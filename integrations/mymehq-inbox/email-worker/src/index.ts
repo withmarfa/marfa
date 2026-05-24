@@ -9,13 +9,20 @@
  *      (from, to, subject, text/html bodies, headers, attachments).
  *   3. We HMAC-SHA256 the JSON body with `WEBHOOK_SECRET` (= the
  *      per-connection subscription secret on the Myme server).
- *   4. POST the body to `WEBHOOK_URL` (= `https://<server>/runtime/
- *      webhook/<connection_id>`).
- *   5. The server verifies the HMAC, idempotency-checks on the
+ *   4. Dispatch via a Cloudflare Worker Service Binding —
+ *      `env.RUNTIME_CONTROL.fetch(request)` against the bound
+ *      `myme-runtime-control-<env>` Worker at path
+ *      `/webhooks/inbound/<CONNECTION_ID>`. The synthetic
+ *      `https://runtime-control` host in the URL is ignored by the
+ *      binding; only path + headers + body reach the bound Worker's
+ *      `fetch` handler. No DNS / TLS / edge involved. Replaces the
+ *      `myme-runtime-control-staging.mymehq.workers.dev` HTTP-fetch
+ *      workaround that landed in T-244 (closed in T-250).
+ *   5. The bound Worker verifies the HMAC, idempotency-checks on the
  *      Message-ID, and enqueues a `WebhookMessage` for the
  *      `mymehq.inbox` handler.
  *
- * On non-2xx response from the server, we LOG and ACK — throwing
+ * On non-2xx response from the bound Worker, we LOG and ACK — throwing
  * would bounce the email. Cloudflare Email Routing offers at-least-
  * once delivery on its own retry path; the receiver-side
  * Message-ID idempotency makes duplicate forwards safe.
@@ -34,14 +41,21 @@ import PostalMime, {
 
 interface Env {
   /**
-   * Fully-qualified URL the Worker POSTs the signed envelope to. The
-   * connection id is baked into the path at deploy time (one Email
-   * Worker per Connection — every install mints a fresh Worker
-   * deployment with this var set).
-   *
-   * Example: `https://staging.myme.so/runtime/webhook/019e5ab0-...`.
+   * Service Binding to the `myme-runtime-control-<env>` Worker. The
+   * binding name is declared in `wrangler.toml` per-env. Calling
+   * `env.RUNTIME_CONTROL.fetch(request)` invokes the bound Worker's
+   * `fetch` handler directly — no DNS, TLS, or edge routing involved.
+   * Replaces the prior `WEBHOOK_URL` HTTP-fetch path (T-250).
    */
-  WEBHOOK_URL: string;
+  RUNTIME_CONTROL: Fetcher;
+  /**
+   * The `system.connection` id this Email Worker dispatches against.
+   * Baked in at deploy time (one Email Worker per Connection — every
+   * install mints a fresh Worker deployment with this set). Used to
+   * build the Service-Binding request path:
+   * `/webhooks/inbound/<CONNECTION_ID>`.
+   */
+  CONNECTION_ID: string;
   /**
    * Per-connection subscription secret. Same value the Myme server
    * stores encrypted under `inbound_webhooks.secret_encrypted`. The
@@ -82,6 +96,13 @@ const HEADER_ALLOWLIST = new Set<string>([
   "x-mailer",
 ]);
 
+/** Synthetic host used to construct the Service-Binding `Request`.
+ *  Service Bindings ignore the host portion — only path, headers,
+ *  and body reach the bound Worker's fetch handler. A stable
+ *  recognisable placeholder makes accidental "real" fetches in tests
+ *  obvious. */
+const SERVICE_BINDING_HOST = "https://runtime-control";
+
 export default {
   async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
     let parsed: Email;
@@ -101,24 +122,30 @@ export default {
     const signatureHex = await hmacSha256Hex(env.WEBHOOK_SECRET, body);
     const deliveryId = envelope.message_id ?? crypto.randomUUID();
 
-    let resp: Response;
-    try {
-      resp = await fetch(env.WEBHOOK_URL, {
+    const request = new Request(
+      `${SERVICE_BINDING_HOST}/webhooks/inbound/${env.CONNECTION_ID}`,
+      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Myme-Signature": `sha256=${signatureHex}`,
           "X-Myme-Delivery-Id": deliveryId,
-          "User-Agent": "mymehq-inbox-email-worker/0.1.0",
+          "User-Agent": "mymehq-inbox-email-worker/0.2.0",
         },
         body,
-      });
+      },
+    );
+
+    let resp: Response;
+    try {
+      resp = await env.RUNTIME_CONTROL.fetch(request);
     } catch (err) {
-      // Network-level failure. ACK rather than bouncing — at-least-
-      // once retries via the server-side idempotency map make
-      // duplicate forwards safe.
+      // Service-Binding-level failure (bound Worker missing, throw
+      // inside its fetch handler, etc.). ACK rather than bouncing —
+      // at-least-once retries via the server-side idempotency map
+      // make duplicate forwards safe.
       console.error(
-        `[email-worker] webhook dispatch failed env=${env.ENVIRONMENT ?? "unknown"} delivery=${deliveryId} err=${describeError(err)}`,
+        `[email-worker] runtime-control dispatch failed env=${env.ENVIRONMENT ?? "unknown"} delivery=${deliveryId} err=${describeError(err)}`,
       );
       return;
     }
@@ -126,7 +153,7 @@ export default {
     if (!resp.ok) {
       const text = await safeReadText(resp);
       console.error(
-        `[email-worker] webhook non-2xx env=${env.ENVIRONMENT ?? "unknown"} status=${String(resp.status)} delivery=${deliveryId} body=${text.slice(0, 256)}`,
+        `[email-worker] runtime-control non-2xx env=${env.ENVIRONMENT ?? "unknown"} status=${String(resp.status)} delivery=${deliveryId} body=${text.slice(0, 256)}`,
       );
       return;
     }
@@ -298,4 +325,9 @@ async function safeReadText(resp: Response): Promise<string> {
   }
 }
 
-export const __internals = { buildEnvelope, hmacSha256Hex, filterHeaders };
+export const __internals = {
+  buildEnvelope,
+  hmacSha256Hex,
+  filterHeaders,
+  SERVICE_BINDING_HOST,
+};
