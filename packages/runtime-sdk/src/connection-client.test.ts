@@ -384,3 +384,81 @@ describe("ConnectionClient cycle headers (T-039)", () => {
     }
   });
 });
+
+describe("ConnectionClient — server-response unwrap", () => {
+  it("getItem unwraps the { item, metadata } server envelope (T-236 substrate fix)", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch(
+        [
+          // `GET /items/:id` returns `{ item, metadata }` from the
+          // server. Pre-fix, the SDK returned the wrapper as the
+          // ItemResource, so handler code reading `item.id` and
+          // `item.properties.<x>` saw `undefined` — visible in T-236's
+          // hosted Marfa walkthrough as `title: null` on outbound tasks.
+          () =>
+            new Response(
+              JSON.stringify({
+                item: {
+                  id: "task_1",
+                  type: "core.task",
+                  state: "active",
+                  properties: { title: "Buy milk" },
+                },
+                metadata: {
+                  item_id: "task_1",
+                  tags: [],
+                  extensions: {},
+                },
+              }),
+              { status: 200 },
+            ),
+        ],
+        captured,
+      ),
+    });
+    const item = await client.getItem("task_1");
+    expect(item).not.toBeNull();
+    expect(item?.id).toBe("task_1");
+    expect((item?.properties as { title?: string }).title).toBe("Buy milk");
+    expect(captured[0]!.method).toBe("GET");
+    expect(captured[0]!.url).toBe("https://api.example.com/items/task_1");
+  });
+
+  it("updateItem unwraps the { item, metadata } server envelope", async () => {
+    const captured: Captured[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch(
+        [
+          () =>
+            new Response(
+              JSON.stringify({
+                item: {
+                  id: "task_1",
+                  type: "core.task",
+                  state: "active",
+                  properties: { title: "Buy oat milk" },
+                },
+                metadata: { item_id: "task_1", tags: [], extensions: {} },
+              }),
+              { status: 200 },
+            ),
+        ],
+        captured,
+      ),
+    });
+    const item = await client.updateItem("task_1", {
+      type: "core.task",
+      properties: { title: "Buy oat milk" },
+    });
+    expect(item.id).toBe("task_1");
+    expect((item.properties as { title?: string }).title).toBe("Buy oat milk");
+    expect(captured[0]!.method).toBe("PATCH");
+  });
+});
