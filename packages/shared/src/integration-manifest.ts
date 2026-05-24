@@ -156,6 +156,26 @@ const BidirectionalHandlingSchema = z.object({
 
 const OAuthRequirementValue = z.enum(["proxy", "leased"]);
 
+/**
+ * Token-credential requirements — manifest 1.1.0 additive field (T-241).
+ *
+ * For integrations whose upstream uses a static API token (Todoist,
+ * Readwise, Raindrop, etc.) rather than an OAuth flow. The map key
+ * names the capability (typically the integration's name, e.g.
+ * `todoist`); the value is always `"required"` today. The install
+ * pipeline accepts a `credential_ref` pointing at a
+ * `system.credential` of `kind: api_token` whose `api_token_config`
+ * carries the upstream base URL; the connection proxy reads the
+ * bearer at request time and stamps `Authorization: Bearer …`
+ * directly, with no refresh primitive.
+ *
+ * Optional + additive: existing manifests at 1.0.0 keep validating
+ * without declaring this field. Integrations that declare it bump
+ * `manifest_schema_version` to `1.1.0` so the field's presence is
+ * intentional, not silent.
+ */
+const TokenRequirementValue = z.literal("required");
+
 const WebhookVerificationSchema = z.discriminatedUnion("method", [
   z.object({ method: z.literal("hmac-sha256") }),
   z.object({ method: z.literal("slack") }),
@@ -187,6 +207,14 @@ export const IntegrationManifestSchema = z
       .min(1, "at least one runtime_compatibility entry is required"),
     bidirectional_handling: BidirectionalHandlingSchema,
     oauth_requirements: z.record(z.string().min(1), OAuthRequirementValue),
+    /**
+     * Static-API-token requirements — manifest 1.1.0 additive field.
+     * Optional; present on integrations whose upstream uses a bearer
+     * token rather than OAuth. See `TokenRequirementValue` above.
+     */
+    token_requirements: z
+      .record(z.string().min(1), TokenRequirementValue)
+      .optional(),
     webhook_verification: WebhookVerificationSchema,
     manifest_schema_version: SemverSchema,
     permissions: PermissionsSchema.optional(),

@@ -69,28 +69,33 @@ export interface InstallInput {
    *  outside a Hono request (e.g. one-shot CLI scripts). */
   clientIp?: string | null;
   /**
-   * Optional id of a pre-existing `system.credential` (kind `oauth_token`)
-   * to reference from the new connection. When supplied, the install
-   * pipeline does NOT create a fresh OAuth provider credential — the
-   * connection's `credential_ref` points at this existing row instead,
-   * so multiple integrations of the same upstream provider (e.g.
-   * `google.calendar` + `google.tasks`) share one OAuth client config
-   * and one stored secret. Create such credentials via
-   * `POST /credentials/oauth-provider`.
+   * Optional id of a pre-existing `system.credential` to reference from
+   * the new connection. Multiple integrations of the same upstream
+   * (e.g. `google.calendar` + `google.tasks`) share one credential row
+   * instead of duplicating per-integration.
+   *
+   * Two credential kinds are accepted (T-241):
+   *   - `kind: "oauth_token"` — created by
+   *     `POST /credentials/oauth-provider`. Carries OAuth client config
+   *     + encrypted client secret. The connection's OAuth dance reads
+   *     it at `/oauth/callback/:provider`; the proxy reads it for
+   *     refresh.
+   *   - `kind: "api_token"` — created by `POST /credentials/api-token`.
+   *     Carries upstream base URL + encrypted bearer. The proxy stamps
+   *     the bearer transparently; no refresh primitive.
    *
    * Per-install behaviour:
-   *   - When unset (the historic default): no `credential_ref` is set on
-   *     the connection. OAuth-backed integrations must populate it
+   *   - When unset: no `credential_ref` is set on the connection.
+   *     Token-backed or OAuth-backed integrations must populate it
    *     out-of-band before any proxy or callback call works.
-   *   - When set: validated to resolve to a `system.credential` of
-   *     `kind: "oauth_token"` in the caller's tenant. Stamped onto
-   *     `connection.properties.credential_ref` at step 1. A mismatched
-   *     or missing credential rejects the install with
+   *   - When set: validated to resolve to a `system.credential` whose
+   *     `kind` is one of the accepted set, in the caller's tenant.
+   *     Stamped onto `connection.properties.credential_ref` at step 1.
+   *     A mismatched or missing credential rejects the install with
    *     `INVALID_REQUEST` before any state is written.
    *
    * The runtime credential (the api_key bound to the new connection_id)
-   * stays per-install — it's NOT reused. Only the OAuth provider
-   * credential is.
+   * stays per-install — it's NOT reused. Only the provider credential is.
    */
   credentialRef?: string;
 }
@@ -176,10 +181,14 @@ export async function performInstall(
       );
     }
     const credProps = candidate.properties as { kind?: unknown };
-    if (credProps.kind !== "oauth_token") {
+    // T-241: accept both oauth_token (the original kind) and api_token
+    // (static-bearer integrations). Both shapes carry an
+    // upstream_base_url + an encrypted secret; the connection-proxy
+    // branches at request time on `kind`.
+    if (credProps.kind !== "oauth_token" && credProps.kind !== "api_token") {
       throw new MymeError(
         ErrorCode.INVALID_REQUEST,
-        `credential_ref ${input.credentialRef} resolves to a system.credential of kind '${String(credProps.kind)}'; expected 'oauth_token'`,
+        `credential_ref ${input.credentialRef} resolves to a system.credential of kind '${String(credProps.kind)}'; expected 'oauth_token' or 'api_token'`,
         { credential_ref: input.credentialRef, kind: credProps.kind },
       );
     }

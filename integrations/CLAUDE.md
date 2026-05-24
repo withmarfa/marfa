@@ -92,6 +92,55 @@ To install an OAuth-backed integration:
    provider name), exchanges the code, persists tokens encrypted
    under `SECRET_INFO.connectionOauthToken`.
 
+## Token-backed integrations (T-241)
+
+Manifests whose upstream uses a static API token rather than an OAuth
+flow declare `token_requirements: { <capability>: "required" }` and
+bump their `manifest_schema_version` to `1.1.0`. Today's instances are
+Todoist, Readwise, Raindrop — every API-key-based upstream lands here.
+
+The substrate seam mirrors the OAuth one: the bearer lives on a
+`system.credential` row, referenced from the connection via
+`credential_ref`. The two kinds share the same encryption domain
+(`connectionOauthToken`), the same install path
+(`POST /connections/install`), and the same proxy entry point
+(`POST /connections/:id/proxy/*`). The differences:
+
+- **Kind on the credential** — `kind: "api_token"` instead of
+  `kind: "oauth_token"`. The non-secret config lives under
+  `api_token_config: { upstream_base_url }` (parallel to
+  `oauth_provider_config`); the bearer lives under `secret_encrypted`.
+- **Install path** — `POST /credentials/api-token` (body
+  `{ label, upstream_base_url, api_token }`) instead of
+  `/credentials/oauth-provider`. Same `requireTenantAdmin` gate.
+  Returns `{ credential_id }` for use as `credential_ref` on
+  `POST /connections/install`.
+- **No OAuth dance** — there is no authorize URL, no callback. The
+  user supplies the bearer at install time directly; the connection
+  is immediately usable.
+- **Bearer stamped verbatim** — `ctx.myme.proxyRequest(...)` reads the
+  credential, decrypts the bearer, sets `Authorization: Bearer <token>`
+  on every upstream call. No proactive refresh, no reactive refresh.
+- **401 → `action_required`** — when the upstream rejects the bearer,
+  the proxy flips `runtime_status` to `reauth_required` and emits a
+  `system.activity` of `severity: action_required` reading "Static API
+  token rejected — reinstall connection with a fresh token". Static
+  tokens have no refresh primitive; the operator recovery path is
+  to mint a fresh credential via `POST /credentials/api-token` and
+  reinstall the connection.
+
+To install a token-backed integration end-to-end:
+
+1. Admin calls `POST /credentials/api-token` with the upstream base
+   URL and the user-supplied bearer → `{ credential_id }`.
+2. Admin calls `POST /connections/install` with
+   `{ integration_id, credential_ref: credential_id }` →
+   `{ connection_id }`. The connection is immediately active; no
+   further consent step.
+3. Subsequent scheduled / reactive runs of the integration call
+   `ctx.myme.proxyRequest(...)`; the server stamps the bearer
+   transparently.
+
 ## Substrate parity
 
 `@mymehq/server`'s `MYME_INTEGRATION_RUNTIME` env var picks the

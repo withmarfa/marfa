@@ -171,6 +171,17 @@
         ]
       }
     },
+    "token_requirements": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "string",
+        "const": "required"
+      }
+    },
     "webhook_verification": {
       "oneOf": [
         {

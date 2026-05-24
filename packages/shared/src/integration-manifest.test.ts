@@ -236,6 +236,46 @@ describe("IntegrationManifestSchema — invalid values", () => {
   });
 });
 
+describe("IntegrationManifestSchema — token_requirements (1.1.0 additive)", () => {
+  it("accepts manifests that declare token_requirements", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      manifest_schema_version: "1.1.0",
+      token_requirements: { todoist: "required" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.token_requirements).toEqual({ todoist: "required" });
+    }
+  });
+
+  it("accepts manifests omitting token_requirements (backward compatible)", () => {
+    const result = IntegrationManifestSchema.safeParse(VALID_MANIFEST);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.token_requirements).toBeUndefined();
+    }
+  });
+
+  it("rejects an unknown token_requirements value", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      manifest_schema_version: "1.1.0",
+      token_requirements: { todoist: "optional" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an empty token_requirements key", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      manifest_schema_version: "1.1.0",
+      token_requirements: { "": "required" },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("parseManifestSchemaMajor", () => {
   it("returns the major component for a valid semver", () => {
     expect(parseManifestSchemaMajor("1.0.0")).toBe(1);
