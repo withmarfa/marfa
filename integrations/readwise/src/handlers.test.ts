@@ -33,13 +33,20 @@ interface InMemoryStorage {
 }
 
 function createMemoryStorage(): InMemoryStorage {
+  // By-value get/put (T-257) mirrors real Cloudflare DO storage —
+  // every value is structured-cloned on the way in and out so handlers
+  // can't mutate stored objects by reference. Without this the
+  // "second sweep uses persisted watermark" test flakes whenever the
+  // wall clock ticks between the test's cursor read and the second
+  // sweep's mutate-then-write of the same object reference.
   const data = new Map<string, unknown>();
   return {
     get(key) {
-      return Promise.resolve(data.get(key));
+      const v = data.get(key);
+      return Promise.resolve(v === undefined ? undefined : structuredClone(v));
     },
     put(key, value) {
-      data.set(key, value);
+      data.set(key, structuredClone(value));
       return Promise.resolve();
     },
     delete(key) {
