@@ -219,9 +219,11 @@ export class ConnectionClient {
   /** POST/GET/PATCH/DELETE through the connection-proxy route, forwarding
    *  the runtime credential. Server's wildcard `/connections/:id/proxy/*`
    *  passes through to the upstream service with the connector's stored
-   *  OAuth bearer applied. Returns the raw Response so handlers stream /
-   *  parse as needed. Used by the Google Calendar integration for all
-   *  Calendar API calls. */
+   *  bearer applied (OAuth access_token for `kind: oauth_token`
+   *  credentials, the static API token for `kind: api_token` credentials).
+   *  Returns the raw Response so handlers stream / parse as needed.
+   *  Used by the Google Calendar integration for all Calendar API
+   *  calls. */
   async proxyRequest(
     method: string,
     upstreamPath: string,
@@ -236,6 +238,30 @@ export class ConnectionClient {
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  /** Form-encoded variant of `proxyRequest` for upstreams that demand
+   *  `application/x-www-form-urlencoded` rather than JSON. Todoist's
+   *  Sync API (`POST /api/v1/sync`) is the canonical example — fields
+   *  like `resource_types` + `commands` are JSON-stringified into form
+   *  values rather than sent as a JSON body. Returns the raw Response
+   *  so handlers parse as they need. */
+  async proxyRequestForm(
+    method: string,
+    upstreamPath: string,
+    formFields: Record<string, string>,
+  ): Promise<Response> {
+    const path = `/connections/${this.credential.connection_id}/proxy${upstreamPath}`;
+    const url = `${this.apiUrl}${path}`;
+    const body = new URLSearchParams(formFields).toString();
+    return this.fetchImpl(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.credential.api_key}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
     });
   }
 
