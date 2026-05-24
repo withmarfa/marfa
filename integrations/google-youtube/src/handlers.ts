@@ -623,15 +623,19 @@ async function syncSubscriptions(
   let pageToken: string | undefined;
   let upserted = 0;
   let highestSubscribedAt: string | null = null;
-  let stop = false;
 
-  for (let page = 0; page < MAX_PAGES_PER_SWEEP && !stop; page++) {
+  // No early-termination flag here — YouTube Data API v3's
+  // `subscriptions.list` doesn't expose time-ordering (`order` only
+  // accepts `alphabetical | relevance | unread`), so we walk every
+  // page every sweep. The per-item watermark skip below keeps the
+  // upsert work bounded; mapping-based dedup
+  // (`cursor.mappings.channels`) keeps repeated subscriptions cheap
+  // (T-258).
+  for (let page = 0; page < MAX_PAGES_PER_SWEEP; page++) {
     const params = new URLSearchParams();
     params.set("part", SUBSCRIPTIONS_PART);
     params.set("mine", "true");
     params.set("maxResults", String(PAGE_SIZE));
-    // Newest-first so the watermark break works.
-    params.set("order", "newest");
     if (pageToken !== undefined) params.set("pageToken", pageToken);
     const data = await proxyJson<ListResponse<SubscriptionResource>>(
       ctx,
@@ -644,10 +648,13 @@ async function syncSubscriptions(
       const subscribedAt = sub.subscriberSnippet?.subscribedAt ?? "";
       const channelId = sub.snippet?.resourceId?.channelId ?? "";
       if (subscribedAt === "" || channelId === "") continue;
-      if (watermark !== null && subscribedAt <= watermark) {
-        stop = true;
-        break;
-      }
+      // Skip-if-watermark-stale rather than break-on-watermark-stale —
+      // YouTube doesn't time-order subscriptions.list, so we MUST walk
+      // every page and per-item filter (no early-termination
+      // short-circuit). Mapping-based dedup below keeps the upsert
+      // work bounded; this branch keeps the proxy traffic bounded
+      // too once a sub has been seen once (T-258).
+      if (watermark !== null && subscribedAt <= watermark) continue;
       if (highestSubscribedAt === null || subscribedAt > highestSubscribedAt) {
         highestSubscribedAt = subscribedAt;
       }
