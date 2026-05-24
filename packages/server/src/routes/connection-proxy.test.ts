@@ -703,3 +703,88 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
     expect(err.error.code).toBe("oauth_proxy_upstream_invalid");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Runtime-credential proxy access (widened gate from T-236 substrate fix)
+// ---------------------------------------------------------------------------
+
+describe("POST /connections/:id/proxy/* — runtime credentials", () => {
+  it("accepts runtime credentials minted for the connection (is_runtime_credential + connection_id match)", async () => {
+    const connectionId = await createConnection();
+    await seedToken(connectionId);
+
+    // Mint a runtime credential bound to this connection — same shape
+    // the install pipeline (source `integration:<id>`) and the lease
+    // broker (source `runtime-<prefix>-<ts>`) produce. The free-form
+    // source does NOT match `oauth:${connectionId}`; the widened gate
+    // matches on the `(is_runtime_credential, connection_id)` pair.
+    const rawKey = "myme_k1_" + "f".repeat(64);
+    const keyHash = hashApiKey(rawKey, TEST_API_KEY_SALT);
+    await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: "test runtime credential",
+        source: `integration:${connectionId}`,
+        role: "member",
+        type_permissions: { "*": "write" },
+        extension_permissions: { "connection.runtime": "write" },
+        edge_permissions: {},
+        connection_id: connectionId,
+      },
+      keyHash,
+      undefined,
+    );
+
+    const fetchState = installFetchScript([
+      ({ url, init }) => {
+        expect(url).toBe("https://upstream.test/whatever");
+        const headers = init.headers as Record<string, string>;
+        expect(headers.Authorization).toBe("Bearer access-original");
+        return jsonResponse(200, { ok: true });
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/proxy/whatever`,
+      { key: rawKey },
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchState.calls).toBe(1);
+  });
+
+  it("rejects runtime credentials bound to a different connection (cross-connection probe)", async () => {
+    const connectionA = await createConnection();
+    const connectionB = await createConnection();
+    await seedToken(connectionA);
+
+    // Credential bound to connectionB attempts to proxy through connectionA.
+    const rawKey = "myme_k1_" + "e".repeat(64);
+    const keyHash = hashApiKey(rawKey, TEST_API_KEY_SALT);
+    await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: "wrong-connection runtime credential",
+        source: `integration:${connectionB}`,
+        role: "member",
+        type_permissions: { "*": "write" },
+        extension_permissions: { "connection.runtime": "write" },
+        edge_permissions: {},
+        connection_id: connectionB,
+      },
+      keyHash,
+      undefined,
+    );
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionA}/proxy/whatever`,
+      { key: rawKey },
+    );
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
+  });
+});

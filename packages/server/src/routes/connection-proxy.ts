@@ -521,7 +521,23 @@ async function requireConnectionProxyAccess(
     throw new MymeError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found");
   }
   const isAdmin = key.role === "admin" || key.is_platform;
-  const isConnector = key.source === `oauth:${connectionId}`;
+  // Two connector-credential shapes accept here:
+  //   1. OAuth-token grants the user issued for a kind:app connection —
+  //      synthetic credentials minted in middleware/auth.ts with
+  //      `source: "oauth:<connectionId>"`.
+  //   2. Runtime credentials minted for a kind:integration connection by
+  //      the install pipeline (source `integration:<id>`) or the
+  //      lease broker (source `runtime-<prefix>-<ts>`). Both carry
+  //      `is_runtime_credential: true` and `connection_id` stamped at
+  //      mint time, so the gate matches on that pair rather than the
+  //      free-form source string. Without this widening, every
+  //      hosted-substrate integration Worker's `ctx.myme.proxyRequest`
+  //      call 403s on dispatch — surfaced by T-236's hosted Marfa
+  //      walkthrough (the first integration to drive the proxy under
+  //      a broker-minted credential in production).
+  const isConnector =
+    key.source === `oauth:${connectionId}` ||
+    (key.is_runtime_credential === true && key.connection_id === connectionId);
   if (!isAdmin && !isConnector) {
     throw new MymeError(
       ErrorCode.FORBIDDEN,

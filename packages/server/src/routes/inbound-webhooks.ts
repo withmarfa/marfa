@@ -97,7 +97,12 @@ async function requireConnectionAccess(
     throw new MymeError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found");
   }
   const isAdmin = key.role === "admin" || key.is_platform;
-  const isConnector = key.source === `oauth:${connectionId}`;
+  // Same widening as `requireConnectionProxyAccess` in
+  // `routes/connection-proxy.ts` — accept runtime credentials minted
+  // for this connection alongside the OAuth-app-grant shape.
+  const isConnector =
+    key.source === `oauth:${connectionId}` ||
+    (key.is_runtime_credential === true && key.connection_id === connectionId);
   if (!isAdmin && !isConnector) {
     throw new MymeError(
       ErrorCode.FORBIDDEN,
