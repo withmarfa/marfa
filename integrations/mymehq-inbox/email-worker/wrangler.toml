@@ -8,13 +8,24 @@
 #      `mymehq.captured_email`.
 #   3. HMAC-SHA256 signs the body with `WEBHOOK_SECRET` (= the
 #      per-connection subscription secret on the Myme server).
-#   4. POSTs to `WEBHOOK_URL` (= the staging server's
-#      `/runtime/webhook/:connection_id` endpoint, with the connection
-#      id baked in at deploy time).
+#   4. Dispatches via a Cloudflare Worker Service Binding
+#      (`env.RUNTIME_CONTROL.fetch(...)`) at path
+#      `/webhooks/inbound/:connection_id`. No edge / HTTP fetch — the
+#      bound runtime-control Worker's fetch handler receives the
+#      request directly. Replaces the workers.dev URL workaround
+#      that landed in T-244 (T-250).
 #
-# Secrets (set via `wrangler secret put --env staging`):
-#   - WEBHOOK_URL     (e.g. `https://staging.myme.so/runtime/webhook/<connection_id>`)
-#   - WEBHOOK_SECRET  (matches the subscription's encrypted secret on the Myme server)
+# Secrets (set via `wrangler secret put --env <env>`):
+#   - CONNECTION_ID   the system.connection id baked into the
+#                     Service-Binding path (one Email Worker per
+#                     Connection in the v1 single-tenant shape).
+#   - WEBHOOK_SECRET  matches the subscription's encrypted secret on
+#                     the Myme server.
+#
+# Service Bindings (configured per-env below):
+#   - RUNTIME_CONTROL → myme-runtime-control-<env>. Replaces the
+#                       prior `WEBHOOK_URL` HTTP-fetch path. No DNS,
+#                       no TLS, no edge involved.
 #
 # This Worker has NO durable state — it's a stateless edge translator
 # from "email envelope" to "signed JSON webhook". Reliability comes
@@ -36,9 +47,17 @@ name = "myme-mymehq-inbox-email-worker-staging"
 [env.staging.vars]
 ENVIRONMENT = "staging"
 
+[[env.staging.services]]
+binding = "RUNTIME_CONTROL"
+service = "myme-runtime-control-staging"
+
 # ---- Production -----------------------------------------------------------
 [env.prod]
 name = "myme-mymehq-inbox-email-worker-prod"
 
 [env.prod.vars]
 ENVIRONMENT = "prod"
+
+[[env.prod.services]]
+binding = "RUNTIME_CONTROL"
+service = "myme-runtime-control-prod"

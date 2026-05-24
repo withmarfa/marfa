@@ -27,18 +27,26 @@ mymehq-inbox-email-worker (CF Email Worker)
       │  postal-mime → JSON envelope
       │  HMAC-SHA256 over body with WEBHOOK_SECRET
       ▼
-POST https://staging.myme.so/runtime/webhook/<connection_id>
+env.RUNTIME_CONTROL.fetch(/webhooks/inbound/<CONNECTION_ID>)
       │  X-Myme-Signature: sha256=<hex>
       │  X-Myme-Delivery-Id: <Message-ID>
+      │  (Cloudflare Worker Service Binding — no DNS / TLS / edge)
       ▼
-Myme server (cloudflare-email verifier → enqueue WebhookMessage)
-      │
+runtime-control Worker (cloudflare-email verifier → enqueue
+      │  to myme-webhook-receipt-mymehq-inbox-<env>)
       ▼
 mymehq.inbox integration handler
       │  decode → buildCapturedEmail → ctx.myme.createItem
       ▼
 mymehq.captured_email item (source_id = Message-ID)
 ```
+
+T-250 replaced step 4's HTTP fetch with the Service Binding shape.
+The prior `WEBHOOK_URL` workaround pointed at
+`myme-runtime-control-staging.mymehq.workers.dev` — the
+custom-domain route returned 522 during T-244 validation; the
+workers.dev URL sidestepped it. Service Bindings remove the edge
+hop entirely, so both 522 and the workers.dev URL go away.
 
 ## Two Workers, one integration
 
@@ -54,8 +62,13 @@ This directory is one logical integration with two deployable Workers:
 - **`./email-worker/`** — the Cloudflare Email Worker that converts
   inbound email → signed JSON webhook. Distinct Cloudflare product
   (Email Worker), distinct wrangler.toml, distinct deploy command,
-  distinct npm workspace package. Not bound under the control plane —
-  it talks directly to the staging server's `/runtime/webhook/` route.
+  distinct npm workspace package. Holds a **Service Binding** to the
+  runtime-control Worker (`RUNTIME_CONTROL` → `myme-runtime-control-<env>`)
+  and dispatches via `env.RUNTIME_CONTROL.fetch(...)` at path
+  `/webhooks/inbound/<CONNECTION_ID>`. The two are deploy-coupled in
+  one direction: the Email Worker's deploy fails with
+  `binding target not found` if runtime-control hasn't been deployed
+  to the same env yet. Bring runtime-control up first.
 
 The two are independent deployables — bring them up in either order;
 the system tolerates one being absent (the Email Worker would have
@@ -123,9 +136,14 @@ include:_spf.mx.cloudflare.net ~all`) is present on the
 2. **Email Routing rule.** Inside the `myme.so` zone, create a
    custom-address rule: `capture@inbox.myme.so` → "Send to Worker:
    `myme-mymehq-inbox-email-worker-staging`".
-3. **Deploy the Email Worker.** `wrangler deploy --env staging`
-   from `./email-worker/` after setting `WEBHOOK_URL` and
-   `WEBHOOK_SECRET` via `wrangler secret put --env staging`.
+3. **Deploy the Email Worker.** Use the T-251 wrapper:
+   `scripts/deploy-worker.sh integrations/mymehq-inbox/email-worker --env staging`
+   after setting `CONNECTION_ID` (the `system.connection` id this
+   Worker dispatches against) and `WEBHOOK_SECRET` (matches the
+   subscription's `secret_encrypted` on the Myme server) via
+   `wrangler secret put --env staging`. The `RUNTIME_CONTROL` Service
+   Binding is declared in `wrangler.toml` and resolves at deploy
+   time — runtime-control must be deployed first.
 
 The Worker holds NO durable state — re-deploying overwrites the
 existing Worker, and Email Routing rules persist independently.

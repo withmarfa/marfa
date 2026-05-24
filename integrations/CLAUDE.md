@@ -141,6 +141,34 @@ To install a token-backed integration end-to-end:
    `ctx.myme.proxyRequest(...)`; the server stamps the bearer
    transparently.
 
+## Worker-to-Worker calls use Service Bindings, not HTTP fetch (T-250)
+
+When a Cloudflare Worker in this monorepo calls another Cloudflare
+Worker in the same account, declare a Service Binding in the caller's
+`wrangler.toml` and dispatch via `env.<BINDING>.fetch(request)` —
+never `fetch(<workers.dev URL>, ...)` or `fetch(<custom-domain>, ...)`.
+Service Bindings dispatch directly to the bound Worker's `fetch`
+handler with no DNS, TLS, or edge hop, so they:
+
+- sidestep custom-domain availability incidents (the 522 that
+  surfaced in T-244 was the trigger for T-250)
+- avoid leaking deployment topology through `<service>.<account>.workers.dev`
+  URLs
+- type-check the binding target at deploy time (`binding target not
+found` is a hard failure, not a silent 404)
+
+The synthetic host in the constructed `Request` URL is ignored by
+the binding — only path, headers, and body reach the bound Worker.
+Convention: use `https://<binding-name-lowercase>` as the placeholder
+host so tests / logs make the binding shape obvious.
+
+The mymehq-inbox Email Worker is the canonical example —
+`integrations/mymehq-inbox/email-worker/wrangler.toml` declares
+`RUNTIME_CONTROL → myme-runtime-control-<env>`, and
+`src/index.ts` dispatches via
+`env.RUNTIME_CONTROL.fetch(...)` against
+`/webhooks/inbound/<CONNECTION_ID>`.
+
 ## First-deploy operator setup (hosted substrate, T-255)
 
 Every per-Integration Worker needs three secrets set before the first
