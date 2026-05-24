@@ -314,7 +314,7 @@ const bulkActionStatusRoute = createRoute({
   path: "/bulk_action/jobs/{id}",
   operationId: "getABulkActionJob",
   tags: ["Items"],
-  summary: "Get bulk_action job status",
+  summary: "Get a bulk-action job",
   description:
     "Returns the current state of an asynchronous bulk_action job. Status progresses queued → in_progress → one of (completed | failed | cancelled). Once terminal, the `result` field carries the BulkActionResult envelope (matching the historic synchronous response). Only the credential that created the job or an admin can read it.",
   security: [{ bearerAuth: [] }],
@@ -363,7 +363,7 @@ const bulkActionCancelRoute = createRoute({
   path: "/bulk_action/jobs/{id}",
   operationId: "cancelABulkActionJob",
   tags: ["Items"],
-  summary: "Cancel a bulk_action job",
+  summary: "Cancel a bulk-action job",
   description:
     "Signal cancellation. Queued jobs flip to `cancelled` immediately; in-progress jobs flip when the worker observes the flag between chunks (typically within seconds). Terminal jobs return their existing final state — no error. Auth: the originating credential or an admin.",
   security: [{ bearerAuth: [] }],
