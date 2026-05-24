@@ -59,6 +59,7 @@ function isEnv(s: string): s is Env {
 const REACTIVE_RUN_INTEGRATIONS = [
   "mymehq.task-auto-archive",
   "google.calendar",
+  "google.tasks",
 ] as const;
 
 /**
