@@ -184,6 +184,7 @@ const BulkActionResponseSchema = z.object({
 const bulkRoute = createRoute({
   method: "post",
   path: "/bulk",
+  operationId: "bulkUpsertItems",
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
@@ -244,6 +245,7 @@ const bulkRoute = createRoute({
 const bulkActionRoute = createRoute({
   method: "post",
   path: "/bulk_action",
+  operationId: "applyABulkAction",
   tags: ["Items"],
   summary: "Apply a bulk action",
   description:
@@ -310,6 +312,7 @@ const bulkActionRoute = createRoute({
 const bulkActionStatusRoute = createRoute({
   method: "get",
   path: "/bulk_action/jobs/{id}",
+  operationId: "getABulkActionJob",
   tags: ["Items"],
   summary: "Get bulk_action job status",
   description:
@@ -358,6 +361,7 @@ const bulkActionStatusRoute = createRoute({
 const bulkActionCancelRoute = createRoute({
   method: "delete",
   path: "/bulk_action/jobs/{id}",
+  operationId: "cancelABulkActionJob",
   tags: ["Items"],
   summary: "Cancel a bulk_action job",
   description:

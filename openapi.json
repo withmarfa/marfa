@@ -4029,6 +4029,7 @@
     },
     "/items/bulk": {
       "post": {
+        "operationId": "bulkUpsertItems",
         "tags": [
           "Items"
         ],
@@ -4340,6 +4341,7 @@
     },
     "/items/bulk_action": {
       "post": {
+        "operationId": "applyABulkAction",
         "tags": [
           "Items"
         ],
@@ -5109,6 +5111,7 @@
     },
     "/items/bulk_action/jobs/{id}": {
       "get": {
+        "operationId": "getABulkActionJob",
         "tags": [
           "Items"
         ],
@@ -5366,6 +5369,7 @@
         }
       },
       "delete": {
+        "operationId": "cancelABulkActionJob",
         "tags": [
           "Items"
         ],
@@ -7527,6 +7531,7 @@
     },
     "/edges/bulk": {
       "post": {
+        "operationId": "bulkUpsertEdges",
         "tags": [
           "Edges"
         ],
