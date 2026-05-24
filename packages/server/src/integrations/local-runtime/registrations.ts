@@ -81,6 +81,7 @@ export async function loadInTreeRegistrations(options: {
     "sync",
     "todoist",
     "readwise",
+    "raindrop",
   ];
   const registrations: LocalIntegrationRegistration[] = [];
   for (const dir of dirs) {

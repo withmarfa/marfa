@@ -195,6 +195,31 @@ importers:
         specifier: ^4.1.2
         version: 4.1.2(@types/node@22.19.15)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@22.19.15)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.8.3))
 
+  integrations/raindrop:
+    dependencies:
+      '@mymehq/runtime-sdk':
+        specifier: workspace:*
+        version: link:../../packages/runtime-sdk
+      '@mymehq/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20251201.0
+        version: 4.20260501.1
+      '@mymehq/runtime-test':
+        specifier: workspace:*
+        version: link:../../packages/runtime-test
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(postcss@8.5.8)(tsx@4.21.0)(typescript@6.0.2)(yaml@2.8.3)
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.2
+      vitest:
+        specifier: ^4.1.2
+        version: 4.1.2(@types/node@22.19.15)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@22.19.15)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.8.3))
+
   integrations/readwise:
     dependencies:
       '@mymehq/runtime-sdk':
