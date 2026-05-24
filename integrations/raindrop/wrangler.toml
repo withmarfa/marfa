@@ -1,0 +1,86 @@
+#:schema node_modules/wrangler/config-schema.json
+# Per-Integration Worker for raindrop.
+
+name = "myme-integration-raindrop"
+main = "src/worker.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+INTEGRATION_NAME = "raindrop.bookmarks"
+MANIFEST_CRON = "*/10 * * * *"
+ENVIRONMENT = "dev"
+
+[[durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# ---- Staging --------------------------------------------------------------
+[env.staging]
+name = "myme-integration-raindrop-staging"
+
+[env.staging.vars]
+INTEGRATION_NAME = "raindrop.bookmarks"
+MANIFEST_CRON = "*/10 * * * *"
+ENVIRONMENT = "staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-raindrop-staging"
+
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "myme-scheduled-poll-raindrop-staging-dlq"
+
+[[env.staging.queues.consumers]]
+queue = "myme-scheduled-poll-raindrop-staging"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "myme-scheduled-poll-raindrop-staging-dlq"
+
+# ---- Prod -----------------------------------------------------------------
+[env.prod]
+name = "myme-integration-raindrop-prod"
+
+[env.prod.vars]
+INTEGRATION_NAME = "raindrop.bookmarks"
+MANIFEST_CRON = "*/10 * * * *"
+ENVIRONMENT = "prod"
+
+[[env.prod.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.prod.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-raindrop-prod"
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "myme-scheduled-poll-raindrop-prod-dlq"
+
+[[env.prod.queues.consumers]]
+queue = "myme-scheduled-poll-raindrop-prod"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "myme-scheduled-poll-raindrop-prod-dlq"
+
+# Secrets: MYME_API_URL, MYME_RUNTIME_CONTROL_URL, MYME_RUNTIME_BROKER_KEY

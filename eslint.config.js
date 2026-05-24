@@ -22,10 +22,10 @@ export default [
           // across 6 packages + 1 integration + the root vitest +
           // eslint configs). Bumped to 30 in T-236 (google-tasks),
           // then 32 in T-237 (google-contacts), then 34 in T-241
-          // (todoist), then 36 in T-242 (readwise) — each new
-          // integration adds its tsup + vitest configs to the
-          // default-project file set.
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 36,
+          // (todoist), then 36 in T-242 (readwise), then 38 in T-243
+          // (raindrop) — each new integration adds its tsup + vitest
+          // configs to the default-project file set.
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 38,
         },
         tsconfigRootDir: import.meta.dirname,
       },

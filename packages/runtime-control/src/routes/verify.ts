@@ -139,6 +139,8 @@ function resolveServiceBinding(
       return env.INTEGRATION_TODOIST_TASKS;
     case "readwise.highlights":
       return env.INTEGRATION_READWISE;
+    case "raindrop.bookmarks":
+      return env.INTEGRATION_RAINDROP;
     default:
       return undefined;
   }

@@ -1,0 +1,26 @@
+{
+  "name": "@mymehq/integration-raindrop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Inbound Raindrop bookmarks + collections connector. Token-credential install (kind: api_token, default Bearer). Polls Raindrop's REST API on a 10-minute cron and lands raindrops as raindrop.raindrop items with parent-of edges to raindrop.collection items.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@mymehq/runtime-sdk": "workspace:*",
+    "@mymehq/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "@mymehq/runtime-test": "workspace:*",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2",
+    "tsup": "^8.5.1"
+  }
+}
