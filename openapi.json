@@ -1726,9 +1726,7 @@
                               "edges": {
                                 "type": "array",
                                 "items": {
-                          (node:75285) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
-(Use `node --trace-deprecation ...` to show where the warning was created)
-        "type": "object",
+                                  "type": "object",
                                   "properties": {
                                     "id": {
                                       "type": "string"
@@ -12269,6 +12267,14 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 4096
+                  },
+                  "auth_scheme": {
+                    "type": "string",
+                    "enum": [
+                      "Bearer",
+                      "Token",
+                      "Basic"
+                    ]
                   }
                 },
                 "required": [
@@ -20359,3 +20365,5 @@
     }
   }
 }
+(node:7496) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)

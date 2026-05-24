@@ -46,11 +46,23 @@ interface OAuthConfig {
   oauth_client_secret: string;
 }
 
+/**
+ * HTTP Authorization scheme stamped on `kind:api_token` proxy calls.
+ * Most modern APIs use `Bearer`; Readwise's REST API requires `Token`;
+ * `Basic` is included for upstreams that present the token as a
+ * basic-auth password. T-246.
+ */
+type ApiTokenAuthScheme = "Bearer" | "Token" | "Basic";
+
 interface ApiTokenConfig {
   kind: "api_token";
   upstream_base_url: string;
   /** Plaintext bearer token. */
   bearer_token: string;
+  /** HTTP Authorization scheme to stamp; default `Bearer` when absent
+   *  on the underlying credential. Set on api_token credentials at
+   *  mint time via `POST /credentials/api-token { auth_scheme: ... }`. */
+  auth_scheme: ApiTokenAuthScheme;
 }
 
 type CredentialConfig = OAuthConfig | ApiTokenConfig;
@@ -126,6 +138,7 @@ async function readCredentialConfig(
     };
     api_token_config?: {
       upstream_base_url?: string;
+      auth_scheme?: string;
     };
     secret_encrypted?: string;
   };
@@ -168,6 +181,21 @@ async function readCredentialConfig(
         `Connection ${connection.id}'s credential_ref ${credentialRef} is not a usable kind:api_token — api_token_config.upstream_base_url is missing.`,
       );
     }
+    // T-246: default to `Bearer` for backward compatibility with
+    // T-241 PR1 credentials that pre-date the field. Anything not in
+    // the supported set falls back to Bearer rather than 500'ing on a
+    // misconfigured credential.
+    const SUPPORTED_SCHEMES: ApiTokenAuthScheme[] = [
+      "Bearer",
+      "Token",
+      "Basic",
+    ];
+    const rawScheme = cfg.auth_scheme;
+    const auth_scheme: ApiTokenAuthScheme =
+      typeof rawScheme === "string" &&
+      (SUPPORTED_SCHEMES as string[]).includes(rawScheme)
+        ? (rawScheme as ApiTokenAuthScheme)
+        : "Bearer";
     return {
       kind: "api_token",
       upstream_base_url: cfg.upstream_base_url,
@@ -175,6 +203,7 @@ async function readCredentialConfig(
         credProps.secret_encrypted,
         SECRET_INFO.connectionOauthToken,
       ),
+      auth_scheme,
     };
   }
 
@@ -611,10 +640,17 @@ async function performUpstreamCall(
   callerHeaders: Headers,
   bodyBytes: ArrayBuffer,
   accessToken: string,
+  /**
+   * HTTP Authorization scheme. Default `Bearer` (every OAuth flow +
+   * the common api_token shape); the api_token branch passes
+   * `config.auth_scheme` here to support upstreams like Readwise
+   * (`Token`) or Basic-auth APIs.
+   */
+  authScheme: "Bearer" | "Token" | "Basic" = "Bearer",
 ): Promise<ProxyAttemptOutcome> {
   const headers: Record<string, string> = {
     ...filterRequestHeaders(callerHeaders),
-    Authorization: `Bearer ${accessToken}`,
+    Authorization: `${authScheme} ${accessToken}`,
   };
   const upstreamResp = await fetch(upstreamUrl, {
     method,
@@ -681,6 +717,7 @@ export function connectionProxyRoutes(storage: Storage) {
         c.req.raw.headers,
         bodyBytes,
         config.bearer_token,
+        config.auth_scheme,
       );
 
       if (outcome.status === 401) {
