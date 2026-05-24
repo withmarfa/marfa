@@ -45,9 +45,12 @@ mymehq.captured_email item (source_id = Message-ID)
 This directory is one logical integration with two deployable Workers:
 
 - **`./src/`** — the standard per-Integration Worker (consumes
-  `myme-webhook-receipt-<env>` queue, runs the handler). Same shape as
-  every other in-tree integration. Bound under `INTEGRATION_MYMEHQ_INBOX`
-  in `wrangler.control.toml`.
+  `myme-webhook-receipt-mymehq-inbox-<env>` — its own dedicated
+  queue per T-247; CF Queues allow only one consumer per queue, so
+  every inbound-webhook integration gets its own). Bound under
+  `INTEGRATION_MYMEHQ_INBOX` in `wrangler.control.toml`. The control
+  plane's webhook receipt route resolves the producer binding
+  (`WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX`) by `integration_name`.
 - **`./email-worker/`** — the Cloudflare Email Worker that converts
   inbound email → signed JSON webhook. Distinct Cloudflare product
   (Email Worker), distinct wrangler.toml, distinct deploy command,

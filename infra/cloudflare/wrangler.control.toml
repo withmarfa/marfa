@@ -70,6 +70,23 @@ queue = "myme-reactive-run-staging"
 binding = "SCHEDULED_POLL_QUEUE"
 queue = "myme-scheduled-poll-staging"
 
+# T-247 — per-integration webhook-receipt queue producers. The route
+# in `webhooks.ts` resolves the binding by `integration_name`. Each
+# integration that ships a `webhook` trigger lands a binding here
+# AND a `[[env.<env>.queues.consumers]]` block in its own wrangler.toml
+# pointing at the same queue.
+#
+# The shared `WEBHOOK_RECEIPT_QUEUE` above stays as the fallback for
+# `mymehq.github-webhooks` until it migrates onto its own queue.
+
+[[env.staging.queues.producers]]
+binding = "WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX"
+queue = "myme-webhook-receipt-mymehq-inbox-staging"
+
+[[env.staging.queues.producers]]
+binding = "WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR"
+queue = "myme-webhook-receipt-google-calendar-staging"
+
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE"
 queue = "myme-webhook-receipt-prod"
@@ -81,6 +98,15 @@ queue = "myme-reactive-run-prod"
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
 queue = "myme-scheduled-poll-prod"
+
+# T-247 — prod mirror of the per-integration webhook-receipt producers.
+[[env.prod.queues.producers]]
+binding = "WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX"
+queue = "myme-webhook-receipt-mymehq-inbox-prod"
+
+[[env.prod.queues.producers]]
+binding = "WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR"
+queue = "myme-webhook-receipt-google-calendar-prod"
 
 # ---------------------------------------------------------------------------
 # KV — short-lived idempotency cache used by the control plane to

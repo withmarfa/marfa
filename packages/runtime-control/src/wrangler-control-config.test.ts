@@ -70,12 +70,50 @@ interface ServiceBinding {
   service: string;
 }
 
+interface QueueProducer {
+  binding: string;
+  queue: string;
+}
+
+interface QueueConsumer {
+  queue: string;
+  dead_letter_queue?: string;
+}
+
 interface WranglerControlConfig {
   env?: {
-    staging?: { services?: ServiceBinding[] };
-    prod?: { services?: ServiceBinding[] };
+    staging?: {
+      services?: ServiceBinding[];
+      queues?: { producers?: QueueProducer[]; consumers?: QueueConsumer[] };
+    };
+    prod?: {
+      services?: ServiceBinding[];
+      queues?: { producers?: QueueProducer[]; consumers?: QueueConsumer[] };
+    };
   };
 }
+
+/**
+ * T-247: per-integration webhook-receipt queue bindings. Each entry
+ * has both a `binding` field (matched against `webhooks.ts`'s
+ * `resolveWebhookQueueProducer` switch) and an `integration_name`
+ * field (the dispatch key the runtime-control route resolves
+ * against). The freshness test asserts both halves are in sync:
+ *   - every binding referenced in the resolver has a producer in
+ *     wrangler.control.toml.
+ *   - every producer in wrangler.control.toml has a matching switch
+ *     case in the resolver.
+ */
+const WEBHOOK_RECEIPT_PRODUCERS = [
+  {
+    binding: "WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX",
+    integration: "mymehq-inbox",
+  },
+  {
+    binding: "WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR",
+    integration: "google-calendar",
+  },
+] as const;
 
 function loadConfig(): WranglerControlConfig {
   const text = readFileSync(WRANGLER_CONTROL_TOML_PATH, "utf8");
@@ -136,6 +174,23 @@ describe("wrangler.control.toml — structural freshness (T-245)", () => {
         .toLowerCase()
         .replace(/_/g, "-");
       expect(entry.service).toBe(`myme-integration-${expectedSlug}-prod`);
+    }
+  });
+
+  it("declares every per-integration webhook-receipt producer in staging + prod (T-247)", () => {
+    const config = loadConfig();
+    for (const env of ["staging", "prod"] as const) {
+      const producers = config.env?.[env]?.queues?.producers ?? [];
+      const bindings = producers.map((p) => p.binding);
+      for (const expected of WEBHOOK_RECEIPT_PRODUCERS) {
+        expect(bindings).toContain(expected.binding);
+        // Queue name follows the deterministic
+        // `myme-webhook-receipt-<integration-slug>-<env>` shape.
+        const producer = producers.find((p) => p.binding === expected.binding);
+        expect(producer?.queue).toBe(
+          `myme-webhook-receipt-${expected.integration}-${env}`,
+        );
+      }
     }
   });
 

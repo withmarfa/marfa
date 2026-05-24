@@ -3,6 +3,67 @@ import { ADAPTERS } from "@mymehq/webhooks";
 import type { ControlPlaneEnv } from "../env.js";
 import { MymeServerClient } from "../myme-client.js";
 
+/** Slim shape — mirror of the `QueueProducer` shape in env.ts. */
+interface QueueProducer {
+  send(
+    body: unknown,
+    opts?: { contentType?: "json" | "text" | "v8" },
+  ): Promise<void>;
+}
+
+/**
+ * Per-integration webhook-receipt queue routing (T-247). Each
+ * integration with a `webhook` trigger gets its own queue and its own
+ * producer binding on the control plane. Cloudflare Queues allow only
+ * one consumer per queue; the runtime-sdk's envelope filter on
+ * `integration_name` is a defence-in-depth check that only fires
+ * AFTER a message reaches a consumer, so a shared queue would
+ * silently filter out every integration except the one that owns the
+ * consumer slot. Pre-T-247 this collapsed onto github-webhooks.
+ *
+ * The resolver returns the per-integration producer when one is
+ * bound, falling back to the legacy shared `WEBHOOK_RECEIPT_QUEUE`
+ * for backward compatibility with github-webhooks. Returning
+ * `undefined` means no producer is wired — the route returns 503.
+ */
+export function resolveWebhookQueueProducer(
+  env: ControlPlaneEnv,
+  integrationName: string,
+): { producer: QueueProducer; routedVia: "dedicated" | "shared" } | undefined {
+  const dedicated = pickDedicatedProducer(env, integrationName);
+  if (dedicated) return { producer: dedicated, routedVia: "dedicated" };
+  if (env.WEBHOOK_RECEIPT_QUEUE) {
+    return { producer: env.WEBHOOK_RECEIPT_QUEUE, routedVia: "shared" };
+  }
+  return undefined;
+}
+
+function pickDedicatedProducer(
+  env: ControlPlaneEnv,
+  integrationName: string,
+): QueueProducer | undefined {
+  switch (integrationName) {
+    case "mymehq.inbox":
+      return env.WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX;
+    case "google.calendar":
+      return env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR;
+    default:
+      return undefined;
+  }
+}
+
+/** True iff at least one webhook-receipt producer is bound. Used by
+ *  the route's early sanity check to fail fast on a misconfigured
+ *  deployment (no queues at all) rather than letting the per-
+ *  integration resolver surface the same error per-request later. */
+function hasAnyWebhookProducer(env: ControlPlaneEnv): boolean {
+  return (
+    env.WEBHOOK_RECEIPT_QUEUE !== undefined ||
+    env.WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX !== undefined ||
+    env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR !== undefined
+  );
+}
+
 /**
  * Inbound webhook receiver.
  *
@@ -47,17 +108,22 @@ export function registerWebhookRoutes(
         503,
       );
     }
-    if (!env.WEBHOOK_RECEIPT_QUEUE) {
+    // T-247 — early sanity check: if no webhook-receipt producer
+    // binding is wired AT ALL (neither the legacy shared nor any
+    // per-integration), fail fast with a clear deploy-misconfigured
+    // 503. The per-integration resolver lower down handles the
+    // narrower case "the requested integration's producer isn't
+    // wired" once we know which integration it routes to.
+    if (!hasAnyWebhookProducer(env)) {
       return c.json(
         {
           error: "queue_unbound",
           message:
-            "WEBHOOK_RECEIPT_QUEUE binding missing — provision and re-deploy.",
+            "No webhook-receipt queue producer is bound. Provision the queues and re-deploy.",
         },
         503,
       );
     }
-
     const rawBody = await c.req.arrayBuffer();
     const myme = new MymeServerClient(
       env.MYME_API_URL,
@@ -135,6 +201,26 @@ export function registerWebhookRoutes(
       );
     }
 
+    // T-247: resolve the per-integration queue producer (with the
+    // shared queue as fallback for github-webhooks). Done here, AFTER
+    // verification + integration_name resolution, so the 503
+    // surfaces a real misconfiguration (binding missing for an
+    // integration we routed to) rather than a generic 503 on every
+    // request.
+    const queueChoice = resolveWebhookQueueProducer(
+      env,
+      matched.sub.integration_name,
+    );
+    if (!queueChoice) {
+      return c.json(
+        {
+          error: "queue_unbound",
+          message: `No webhook-receipt queue producer is bound for integration '${matched.sub.integration_name}'. Add a per-integration binding to wrangler.control.toml or wire the shared WEBHOOK_RECEIPT_QUEUE fallback.`,
+        },
+        503,
+      );
+    }
+
     // Idempotency: drop deliveries we've already enqueued in the recent
     // past. KV TTL (3600s) bounds the cache size.
     if (env.IDEMPOTENCY_KV) {
@@ -169,7 +255,7 @@ export function registerWebhookRoutes(
     }
     const bodyBase64 = btoa(bodyString);
 
-    await env.WEBHOOK_RECEIPT_QUEUE.send(
+    await queueChoice.producer.send(
       {
         kind: "webhook",
         integration_name: matched.sub.integration_name,
@@ -188,6 +274,7 @@ export function registerWebhookRoutes(
         ok: true,
         connection_id: connectionId,
         delivery_id: matched.deliveryId,
+        routed_via: queueChoice.routedVia,
       },
       202,
     );
