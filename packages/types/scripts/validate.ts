@@ -1,14 +1,23 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+// Mirror the FieldType union in `src/schema-types.ts`. Out-of-sync
+// kept slipping through CI because `types-freshness` runs on
+// dispatch/main only, not on every PR. Keeping these two lists in
+// step is a low-cost invariant — pair with a TS-side test when
+// the union grows next.
 const VALID_TYPES = [
   "string",
   "integer",
   "number",
   "boolean",
+  "url",
+  "email",
+  "datetime",
+  "date",
+  "enum",
   "array",
   "object",
-  "enum",
 ];
 
 const VALID_FORMATS = ["url", "date", "datetime", "email", "bcp47", "iso3166"];
