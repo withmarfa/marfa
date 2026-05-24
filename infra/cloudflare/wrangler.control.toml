@@ -142,6 +142,10 @@ service = "myme-integration-google-calendar-staging"
 binding = "INTEGRATION_GOOGLE_TASKS"
 service = "myme-integration-google-tasks-staging"
 
+[[env.staging.services]]
+binding = "INTEGRATION_GOOGLE_CONTACTS"
+service = "myme-integration-google-contacts-staging"
+
 # ---------------------------------------------------------------------------
 # R2 — Layer 2 wires this for large inbound webhook bodies (>256KB).
 #
