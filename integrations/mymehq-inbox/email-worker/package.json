@@ -1,0 +1,22 @@
+{
+  "name": "@mymehq/integration-mymehq-inbox-email-worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Email Worker companion to the mymehq.inbox integration. Receives inbound emails via Cloudflare Email Routing, parses MIME via postal-mime, HMAC-signs the JSON envelope, and POSTs to the staging server's webhook receipt endpoint. Distinct deployable from the integration Worker — same logical pipeline, two physical Workers.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "postal-mime": "^2.5.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}

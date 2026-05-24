@@ -185,6 +185,11 @@ const WebhookVerificationSchema = z.discriminatedUnion("method", [
   // (Calendar / Drive / Gmail) — body-less; verification by X-Goog-
   // Channel-Token header against the per-channel stored secret.
   z.object({ method: z.literal("google-channel") }),
+  // T-244: Cloudflare Email Routing → Email Worker → signed JSON
+  // envelope. Verification is HMAC-SHA256 over the body (same on-wire
+  // shape as `hmac-sha256`); the distinct method declares the body
+  // schema (parsed-email envelope) the integration handler expects.
+  z.object({ method: z.literal("cloudflare-email") }),
 ]);
 
 export const IntegrationManifestSchema = z

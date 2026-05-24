@@ -7,7 +7,16 @@ export default defineConfig({
     // directory is matched. Integrations all ship a vitest.config.ts
     // so we glob those specifically — avoids vitest tripping on
     // per-folder docs like `integrations/CLAUDE.md`.
-    projects: ["packages/*", "integrations/*/vitest.config.ts"],
+    //
+    // T-244 adds the third glob — the mymehq.inbox integration ships
+    // a sibling Cloudflare Email Worker at
+    // `integrations/mymehq-inbox/email-worker/` with its own
+    // vitest.config.ts, the only nested-workspace package today.
+    projects: [
+      "packages/*",
+      "integrations/*/vitest.config.ts",
+      "integrations/*/email-worker/vitest.config.ts",
+    ],
     // PG parallelism is owned by the server package's own vitest config:
     // each test file clones a fresh PG database from the template
     // (`packages/server/src/storage/pg/test-template.ts`), so workers

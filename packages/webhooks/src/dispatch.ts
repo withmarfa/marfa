@@ -14,6 +14,7 @@ import { verifySlack } from "./slack.js";
 import { verifyStripe } from "./stripe.js";
 import { verifyGitHub } from "./github.js";
 import { verifyGoogleChannel } from "./google-channel.js";
+import { verifyCloudflareEmail } from "./cloudflare-email.js";
 
 export const ADAPTERS: Record<VerificationMethod, Verifier> = {
   "hmac-sha256": verifyHmacSha256,
@@ -21,4 +22,5 @@ export const ADAPTERS: Record<VerificationMethod, Verifier> = {
   stripe: verifyStripe,
   github: verifyGitHub,
   "google-channel": verifyGoogleChannel,
+  "cloudflare-email": verifyCloudflareEmail,
 };

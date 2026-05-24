@@ -141,6 +141,8 @@ function resolveServiceBinding(
       return env.INTEGRATION_READWISE;
     case "raindrop.bookmarks":
       return env.INTEGRATION_RAINDROP;
+    case "mymehq.inbox":
+      return env.INTEGRATION_MYMEHQ_INBOX;
     default:
       return undefined;
   }

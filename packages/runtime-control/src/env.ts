@@ -77,6 +77,7 @@ export interface ControlPlaneEnv {
   INTEGRATION_TODOIST_TASKS?: ServiceBinding;
   INTEGRATION_READWISE?: ServiceBinding;
   INTEGRATION_RAINDROP?: ServiceBinding;
+  INTEGRATION_MYMEHQ_INBOX?: ServiceBinding;
 }
 
 /** Subset of Cloudflare's Fetcher binding (service binding) we use. */
