@@ -406,7 +406,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     ).rejects.toThrow(/does not resolve/);
   });
 
-  it("rejects when credential_ref points to a non-oauth_token credential", async () => {
+  it("rejects when credential_ref points to a kind the install pipeline doesn't accept (api_key)", async () => {
     const adminKey = await ctx.storage.keys
       .list()
       .then((keys) => keys.find((k) => k.role === "admin"));
@@ -430,7 +430,43 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
         label: "wrong-kind-credential-ref",
         credentialRef: wrongKindCredential.id,
       }),
-    ).rejects.toThrow(/expected 'oauth_token'/);
+    ).rejects.toThrow(/expected 'oauth_token' or 'api_token'/);
+  });
+
+  it("accepts credential_ref pointing at a system.credential of kind 'api_token' (T-241)", async () => {
+    const adminKey = await ctx.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+
+    const integrationId = await setupIntegrationItem();
+    const apiTokenCredential = await ctx.storage.items.create(
+      {
+        type: "system.credential",
+        properties: {
+          label: "todoist-test-token",
+          kind: "api_token",
+          api_token_config: { upstream_base_url: "https://api.todoist.com" },
+          secret_encrypted:
+            "test-encrypted-placeholder|test-encrypted-placeholder|tag",
+        },
+      },
+      undefined,
+    );
+
+    const result = await performInstall(ctx.storage, "test-salt", {
+      apiKeyId: adminKey.id,
+      tenantId: undefined,
+      integrationItemId: integrationId,
+      manifest: manifest() as unknown as Record<string, unknown>,
+      label: "with-api-token-credential",
+      credentialRef: apiTokenCredential.id,
+    });
+
+    const connection = await ctx.storage.items.get(result.connection_id);
+    expect(connection?.type).toBe("system.connection");
+    const props = connection?.properties as { credential_ref?: string };
+    expect(props.credential_ref).toBe(apiTokenCredential.id);
   });
 
   it("connection has no credential_ref when credentialRef is omitted", async () => {
