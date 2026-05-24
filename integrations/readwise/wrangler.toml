@@ -1,0 +1,101 @@
+#:schema node_modules/wrangler/config-schema.json
+# Per-Integration Worker for readwise.
+#
+# Single trigger type — schedule (hourly Export API sweep; highlights
+# aren't time-critical, the slower cadence saves Readwise rate-limit
+# budget). The Worker consumes:
+#
+#   - a per-integration scheduled-poll queue
+#
+# Deliberately NO reactive-run queue (no `item-event` trigger; the
+# integration is inbound-only) and NO webhook-receipt queue (Readwise
+# offers no webhook surface).
+
+name = "myme-integration-readwise"
+main = "src/worker.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+# `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from env.
+
+[vars]
+INTEGRATION_NAME = "readwise"
+MANIFEST_CRON = "0 * * * *"
+ENVIRONMENT = "dev"
+
+[[durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# ---- Staging --------------------------------------------------------------
+[env.staging]
+name = "myme-integration-readwise-staging"
+
+[env.staging.vars]
+INTEGRATION_NAME = "readwise"
+MANIFEST_CRON = "0 * * * *"
+ENVIRONMENT = "staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# T-103: DLQ producer bindings.
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-readwise-staging"
+
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "myme-scheduled-poll-readwise-staging-dlq"
+
+[[env.staging.queues.consumers]]
+queue = "myme-scheduled-poll-readwise-staging"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "myme-scheduled-poll-readwise-staging-dlq"
+
+# ---- Prod -----------------------------------------------------------------
+[env.prod]
+name = "myme-integration-readwise-prod"
+
+[env.prod.vars]
+INTEGRATION_NAME = "readwise"
+MANIFEST_CRON = "0 * * * *"
+ENVIRONMENT = "prod"
+
+[[env.prod.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.prod.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-readwise-prod"
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "myme-scheduled-poll-readwise-prod-dlq"
+
+[[env.prod.queues.consumers]]
+queue = "myme-scheduled-poll-readwise-prod"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "myme-scheduled-poll-readwise-prod-dlq"
+
+# Secrets (`wrangler secret put --env <env>`):
+#   - MYME_API_URL
+#   - MYME_RUNTIME_CONTROL_URL
+#   - MYME_RUNTIME_BROKER_KEY
