@@ -151,7 +151,20 @@ export class ConnectionClient {
 
   async getItem(id: string): Promise<ItemResource | null> {
     try {
-      return await this.request<ItemResource>("GET", `/items/${id}`);
+      // Same unwrap shape as `createItem` / `transitionItem`: the
+      // server returns `GET /items/:id` as `{ item, metadata }`, not
+      // the bare ItemResource. Pre-fix every handler that read
+      // `item.id` / `item.properties.<x>` saw `undefined` (visible
+      // during T-236's hosted Marfa walkthrough — the outbound task
+      // landed on Google with `title: null` and `notes: "[myme-id:undefined]"`).
+      const wrapped = await this.request<{ item: ItemResource } | ItemResource>(
+        "GET",
+        `/items/${id}`,
+      );
+      if ("item" in wrapped && typeof wrapped.item === "object") {
+        return wrapped.item;
+      }
+      return wrapped as ItemResource;
     } catch (err) {
       if (err instanceof MymeApiError && err.status === 404) return null;
       throw err;
@@ -162,7 +175,18 @@ export class ConnectionClient {
     id: string,
     patch: Partial<CreateItemInput>,
   ): Promise<ItemResource> {
-    return this.request<ItemResource>("PATCH", `/items/${id}`, patch);
+    // Server returns `PATCH /items/:id` as `{ item, metadata }` — same
+    // unwrap shape as the other Item-returning methods. Without this,
+    // callers reading the returned `item.id` see `undefined`.
+    const wrapped = await this.request<{ item: ItemResource } | ItemResource>(
+      "PATCH",
+      `/items/${id}`,
+      patch,
+    );
+    if ("item" in wrapped && typeof wrapped.item === "object") {
+      return wrapped.item;
+    }
+    return wrapped as ItemResource;
   }
 
   /** GET /items with the supplied query. Server caps the page size at
