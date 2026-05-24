@@ -110,3 +110,15 @@ max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
 dead_letter_queue = "myme-reactive-run-google-contacts-prod-dlq"
+
+# Secrets (`wrangler secret put --env <env>`):
+#   - MYME_API_URL
+#   - MYME_RUNTIME_CONTROL_URL
+#   - MYME_RUNTIME_BROKER_KEY
+#
+# Required for the queue consumer to mint per-Connection runtime
+# credentials via the control plane's `/lease/:connection_id/runtime`
+# broker. Without them the consumer throws on first dispatch and the
+# error surfaces only via console.error (T-255). Use the helper at
+# `infra/cloudflare/scripts/init-integration-worker-secrets.sh` to
+# set all three from your local secrets.env on first deploy.

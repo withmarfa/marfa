@@ -141,6 +141,45 @@ To install a token-backed integration end-to-end:
    `ctx.myme.proxyRequest(...)`; the server stamps the bearer
    transparently.
 
+## First-deploy operator setup (hosted substrate, T-255)
+
+Every per-Integration Worker needs three secrets set before the first
+queue dispatch will succeed:
+
+- `MYME_API_URL` — the deployed Myme API URL the in-Worker
+  `ConnectionClient` calls back into.
+- `MYME_RUNTIME_CONTROL_URL` — the runtime-control Worker's URL,
+  where the consumer mints per-Connection runtime credentials via
+  the `/lease/:connection_id/runtime` broker.
+- `MYME_RUNTIME_BROKER_KEY` — the platform broker key the consumer
+  presents to that lease endpoint. Same value as the server's
+  `MYME_RUNTIME_BROKER_KEY` env.
+
+Without these the queue consumer's `mintCredential()` throws on the
+first dispatch with a URL like `undefined/lease/<id>/runtime`. T-255
+added a `console.error` line surfacing the failure via `wrangler tail`
+(grep for `[runtime-sdk:consumeBatch] dispatch threw`), but messages
+silently retry + go to DLQ; no items land, no `system.activity`
+appears (the activity-emit path needs a working `ConnectionClient`
+that needs the broker secrets — circular dependency in the degraded
+mode). Failing-loud beats failing-silent: set the secrets first.
+
+A helper at `infra/cloudflare/scripts/init-integration-worker-secrets.sh`
+reads the three values from the calling shell's environment and runs
+`wrangler secret put` for each:
+
+```bash
+# Source your per-machine secrets file first so the three env vars
+# (MYME_API_URL, MYME_RUNTIME_CONTROL_URL, MYME_RUNTIME_BROKER_KEY)
+# + CLOUDFLARE_API_TOKEN are exported.
+./infra/cloudflare/scripts/init-integration-worker-secrets.sh \
+  integrations/google-contacts staging
+```
+
+Re-run the helper any time the broker key rotates. Each integration's
+`wrangler.toml` carries a comment block listing the same three
+secrets as a reminder.
+
 ## Substrate parity
 
 `@mymehq/server`'s `MYME_INTEGRATION_RUNTIME` env var picks the
