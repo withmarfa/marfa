@@ -246,6 +246,140 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
     expect(html).toContain(`action="/integrations/${regBody.id}/install"`);
     expect(html).toContain('name="decision"');
   });
+
+  describe("?credential_ref= pre-arm", () => {
+    /**
+     * The route accepts an optional `?credential_ref=<id>` query param.
+     * When set, the GET validates it resolves to a same-tenant
+     * `system.credential` of `kind: oauth_token` and renders it as a
+     * hidden form field so the POST install carries it through to the
+     * install pipeline. When unset (the historic default) the form
+     * omits the hidden field — install behaves as today.
+     */
+
+    async function createOAuthCredential(label = "Test OAuth"): Promise<{
+      id: string;
+      label: string;
+    }> {
+      const res = await request(
+        ctx.app,
+        "POST",
+        "/credentials/oauth-provider",
+        {
+          key: ctx.adminKey,
+          body: {
+            label,
+            oauth_authorize_url: "https://accounts.example.com/oauth2/auth",
+            oauth_token_url: "https://accounts.example.com/oauth2/token",
+            oauth_client_id: "test-client.example",
+            oauth_client_secret: "test-secret",
+            upstream_base_url: "https://api.example.com",
+          },
+        },
+      );
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { credential_id: string };
+      return { id: body.credential_id, label };
+    }
+
+    it("omits the hidden field when no credential_ref is provided", async () => {
+      const reg = await request(ctx.app, "POST", "/integrations", {
+        key: ctx.adminKey,
+        body: { manifest: baseManifest({ name: "acme.no-prearm" }) },
+      });
+      const regBody = (await reg.json()) as RegisterResponse;
+
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/integrations/${regBody.id}/install`,
+        { key: ctx.adminKey },
+      );
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).not.toContain('name="credential_ref"');
+      expect(html).not.toContain("Reusing existing OAuth credential");
+    });
+
+    it("renders the hidden field + hint when a valid credential_ref is provided", async () => {
+      const reg = await request(ctx.app, "POST", "/integrations", {
+        key: ctx.adminKey,
+        body: { manifest: baseManifest({ name: "acme.with-prearm" }) },
+      });
+      const regBody = (await reg.json()) as RegisterResponse;
+      const cred = await createOAuthCredential("Google (e2e test)");
+
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/integrations/${regBody.id}/install?credential_ref=${cred.id}`,
+        { key: ctx.adminKey },
+      );
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      // Hidden form input carries the id through to POST
+      expect(html).toContain('name="credential_ref"');
+      expect(html).toContain(`value="${cred.id}"`);
+      // Human-readable hint above the form
+      expect(html).toContain("Reusing existing OAuth credential");
+      expect(html).toContain(cred.label);
+    });
+
+    it("rejects credential_ref that does not resolve in this tenant", async () => {
+      const reg = await request(ctx.app, "POST", "/integrations", {
+        key: ctx.adminKey,
+        body: { manifest: baseManifest({ name: "acme.bad-prearm" }) },
+      });
+      const regBody = (await reg.json()) as RegisterResponse;
+
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/integrations/${regBody.id}/install?credential_ref=01999999-9999-7999-9999-999999999999`,
+        { key: ctx.adminKey },
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as {
+        error: { code: string; message: string };
+      };
+      expect(body.error.code).toBe("invalid_request");
+      expect(body.error.message).toContain(
+        "does not resolve to a system.credential",
+      );
+    });
+
+    it("rejects credential_ref that resolves to a non-oauth_token credential", async () => {
+      const reg = await request(ctx.app, "POST", "/integrations", {
+        key: ctx.adminKey,
+        body: { manifest: baseManifest({ name: "acme.wrong-kind-prearm" }) },
+      });
+      const regBody = (await reg.json()) as RegisterResponse;
+
+      // Create a system.credential of a different kind (api_key) directly
+      // via the items store; the route should reject it as wrong kind.
+      const wrongKindCred = await ctx.storage.items.create({
+        type: "system.credential",
+        properties: {
+          label: "wrong-kind test",
+          kind: "api_key",
+          secret_encrypted: "irrelevant",
+        },
+      });
+
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/integrations/${regBody.id}/install?credential_ref=${wrongKindCred.id}`,
+        { key: ctx.adminKey },
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as {
+        error: { code: string; message: string };
+      };
+      expect(body.error.code).toBe("invalid_request");
+      expect(body.error.message).toContain("expected 'oauth_token'");
+    });
+  });
 });
 
 describe("POST /integrations/:id/install (install pipeline)", () => {

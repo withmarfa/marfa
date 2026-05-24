@@ -438,6 +438,41 @@ export function integrationRoutes(
       );
     }
     const props = item.properties as unknown as IntegrationProperties;
+
+    // Optional `?credential_ref=<id>` pre-arm — when present, validate
+    // it resolves to a same-tenant `system.credential` of `kind:
+    // oauth_token` (the same constraints the install pipeline enforces)
+    // before passing it through to the renderer as a hidden form
+    // field. Validating here keeps the POST surface unchanged and
+    // surfaces a clean 4xx if the operator wired a bad reference,
+    // rather than letting the install proceed and failing deep in
+    // OAuth start. NOT widened to `includePlatformScoped: true` —
+    // credentials are tenant-scoped by design (see the credentials
+    // route docstring); cross-tenant reuse is explicitly not supported.
+    const credentialRefParam = c.req.query("credential_ref");
+    let credentialRefHint: string | undefined;
+    let credentialRefLabel: string | undefined;
+    if (credentialRefParam !== undefined && credentialRefParam.length > 0) {
+      const cred = await storage.items.get(credentialRefParam, caller.tenantId);
+      if (cred?.type !== "system.credential") {
+        throw new MymeError(
+          ErrorCode.INVALID_REQUEST,
+          `credential_ref ${credentialRefParam} does not resolve to a system.credential item in this tenant`,
+          { credential_ref: credentialRefParam },
+        );
+      }
+      const credProps = cred.properties as { kind?: string; label?: string };
+      if (credProps.kind !== "oauth_token") {
+        throw new MymeError(
+          ErrorCode.INVALID_REQUEST,
+          `credential_ref ${credentialRefParam} resolves to a system.credential of kind '${String(credProps.kind)}'; expected 'oauth_token'`,
+          { credential_ref: credentialRefParam, kind: credProps.kind },
+        );
+      }
+      credentialRefHint = cred.id;
+      credentialRefLabel = credProps.label ?? cred.id;
+    }
+
     const html = renderInstallConsentScreen({
       integrationId: id,
       manifestName: props.manifest_name,
@@ -446,6 +481,8 @@ export function integrationRoutes(
       summary: props.summary ?? "",
       direction: props.direction,
       manifest: props.manifest,
+      ...(credentialRefHint !== undefined ? { credentialRefHint } : {}),
+      ...(credentialRefLabel !== undefined ? { credentialRefLabel } : {}),
     });
     return c.html(html);
   });

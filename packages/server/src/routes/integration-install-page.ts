@@ -22,6 +22,29 @@ interface ConsentParams {
   summary: string;
   direction: "read" | "write" | "both";
   manifest: Record<string, unknown>;
+  /**
+   * Optional pre-arm: id of a same-tenant `system.credential` of
+   * `kind: oauth_token` the caller wants the install to reuse. When
+   * set the form renders a hidden `credential_ref` input so the POST
+   * carries it through to the install pipeline. The Marfa side
+   * appends `?credential_ref=…` when an existing OAuth provider
+   * credential should be reused (e.g. installing `google.tasks` onto
+   * an account that already authorised `google.calendar`). When
+   * absent the form omits the field and the install pipeline behaves
+   * as today (per-Connection credential, no reuse).
+   *
+   * The GET route validates the id resolves to a same-tenant
+   * `system.credential` of `kind: oauth_token` before passing it
+   * here; the renderer trusts that gate and just emits the value.
+   */
+  credentialRefHint?: string;
+  /**
+   * Optional human-readable label for the pre-arm hint, surfaced as
+   * a small note above the Install button so the user can see which
+   * credential they're about to reuse. Falls back to the credential
+   * id when omitted.
+   */
+  credentialRefLabel?: string;
 }
 
 function escapeHtml(str: string): string {
@@ -122,6 +145,8 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
     .approve { background: #2563eb; color: white; border-color: #2563eb; }
     .deny { background: white; color: #374151; }
     .direction { font-style: italic; color: #4b5563; }
+    .credential-hint { margin: 16px 0; padding: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; font-size: 0.875rem; color: #064e3b; }
+    .credential-hint code { background: #d1fae5; color: #064e3b; }
   </style>
 </head>
 <body>
@@ -134,7 +159,10 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
   ${renderTriggers(params.manifest)}
   ${renderPermissions(params.manifest)}
 
+  ${renderCredentialHint(params)}
+
   <form method="POST" action="/integrations/${escapeHtml(params.integrationId)}/install">
+    ${renderCredentialRefInput(params)}
     <div class="section">
       <h2>Connection label</h2>
       <input class="label-input" type="text" name="label" value="${escapeHtml(`${params.manifestName} ${params.manifestVersion}`)}">
@@ -146,4 +174,23 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
   </form>
 </body>
 </html>`;
+}
+
+/** Surface the pre-arm note above the form so the user can see which
+ *  existing credential the install will reuse. Returns "" when no
+ *  pre-arm was passed (default install behaviour, no UI shift). */
+function renderCredentialHint(params: ConsentParams): string {
+  if (!params.credentialRefHint) return "";
+  const label = params.credentialRefLabel ?? params.credentialRefHint;
+  return `<div class="credential-hint">Reusing existing OAuth credential: <code>${escapeHtml(label)}</code>. The install will skip the credential-bootstrap step and reuse this one for the upstream OAuth dance.</div>`;
+}
+
+/** Hidden form field that carries the pre-arm through to the POST
+ *  install route, which already accepts `credential_ref` as an
+ *  optional form field (`routes/integrations.ts` performInstall call).
+ *  Returns "" when no pre-arm — keeps the historic install body shape
+ *  exactly. */
+function renderCredentialRefInput(params: ConsentParams): string {
+  if (!params.credentialRefHint) return "";
+  return `<input type="hidden" name="credential_ref" value="${escapeHtml(params.credentialRefHint)}">`;
 }
