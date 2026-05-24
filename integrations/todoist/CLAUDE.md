@@ -7,7 +7,10 @@ user's Todoist API token is supplied at install via
 
 ## Identity
 
-- Manifest name: **`todoist`** (publisher `todoist`).
+- Manifest name: **`todoist.tasks`** (publisher `todoist`, identifier
+  `tasks`). The publisher-namespaced grammar (`<publisher>.<type>`) is
+  enforced by the manifest schema — single-segment names like
+  `todoist` fail validation.
 - Target types: `core.task` AND `todoist.task`. The install pipeline
   grants the runtime credential write permission on both; new inbound
   items land as `todoist.task` by default for upstream fidelity.

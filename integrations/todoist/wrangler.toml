@@ -1,5 +1,5 @@
 #:schema node_modules/wrangler/config-schema.json
-# Per-Integration Worker for todoist.
+# Per-Integration Worker for todoist.tasks.
 #
 # Two trigger types — schedule (10-minute incremental Sync API sweep)
 # and item-event (outbound reactive via REST + Sync commands). The
@@ -35,10 +35,10 @@ new_sqlite_classes = ["PerConnectionState"]
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
-name = "myme-integration-todoist-staging"
+name = "myme-integration-todoist-tasks-staging"
 
 [env.staging.vars]
-INTEGRATION_NAME = "todoist"
+INTEGRATION_NAME = "todoist.tasks"
 MANIFEST_CRON = "*/10 * * * *"
 ENVIRONMENT = "staging"
 
@@ -53,37 +53,37 @@ new_sqlite_classes = ["PerConnectionState"]
 # T-103: DLQ producer bindings — one per consumer queue family.
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-todoist-staging"
+queue = "myme-scheduled-poll-todoist-tasks-staging"
 
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-todoist-staging-dlq"
+queue = "myme-scheduled-poll-todoist-tasks-staging-dlq"
 
 [[env.staging.queues.producers]]
 binding = "REACTIVE_RUN_DLQ_QUEUE"
-queue = "myme-reactive-run-todoist-staging-dlq"
+queue = "myme-reactive-run-todoist-tasks-staging-dlq"
 
 [[env.staging.queues.consumers]]
-queue = "myme-scheduled-poll-todoist-staging"
+queue = "myme-scheduled-poll-todoist-tasks-staging"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-todoist-staging-dlq"
+dead_letter_queue = "myme-scheduled-poll-todoist-tasks-staging-dlq"
 
 # T-233 — per-integration reactive-run queue.
 [[env.staging.queues.consumers]]
-queue = "myme-reactive-run-todoist-staging"
+queue = "myme-reactive-run-todoist-tasks-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-reactive-run-todoist-staging-dlq"
+dead_letter_queue = "myme-reactive-run-todoist-tasks-staging-dlq"
 
 # ---- Prod -----------------------------------------------------------------
 [env.prod]
-name = "myme-integration-todoist-prod"
+name = "myme-integration-todoist-tasks-prod"
 
 [env.prod.vars]
-INTEGRATION_NAME = "todoist"
+INTEGRATION_NAME = "todoist.tasks"
 MANIFEST_CRON = "*/10 * * * *"
 ENVIRONMENT = "prod"
 
@@ -97,29 +97,29 @@ new_sqlite_classes = ["PerConnectionState"]
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-todoist-prod"
+queue = "myme-scheduled-poll-todoist-tasks-prod"
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-todoist-prod-dlq"
+queue = "myme-scheduled-poll-todoist-tasks-prod-dlq"
 
 [[env.prod.queues.producers]]
 binding = "REACTIVE_RUN_DLQ_QUEUE"
-queue = "myme-reactive-run-todoist-prod-dlq"
+queue = "myme-reactive-run-todoist-tasks-prod-dlq"
 
 [[env.prod.queues.consumers]]
-queue = "myme-scheduled-poll-todoist-prod"
+queue = "myme-scheduled-poll-todoist-tasks-prod"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-todoist-prod-dlq"
+dead_letter_queue = "myme-scheduled-poll-todoist-tasks-prod-dlq"
 
 [[env.prod.queues.consumers]]
-queue = "myme-reactive-run-todoist-prod"
+queue = "myme-reactive-run-todoist-tasks-prod"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-reactive-run-todoist-prod-dlq"
+dead_letter_queue = "myme-reactive-run-todoist-tasks-prod-dlq"
 
 # Secrets (`wrangler secret put --env <env>`):
 #   - MYME_API_URL
