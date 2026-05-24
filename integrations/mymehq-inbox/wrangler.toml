@@ -1,0 +1,86 @@
+#:schema node_modules/wrangler/config-schema.json
+# Per-Integration Worker for mymehq.inbox.
+# Webhook-only integration — consumes the shared webhook-receipt
+# queue. The companion Cloudflare Email Worker that converts inbound
+# email → signed JSON webhook lives at `email-worker/` and ships its
+# own `wrangler.toml`; the two are deployed independently.
+
+name = "myme-integration-mymehq-inbox"
+main = "src/worker.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+# `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from the env.
+
+[vars]
+INTEGRATION_NAME = "mymehq.inbox"
+ENVIRONMENT = "dev"
+
+[[durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# ---- Staging --------------------------------------------------------------
+[env.staging]
+name = "myme-integration-mymehq-inbox-staging"
+
+[env.staging.vars]
+INTEGRATION_NAME = "mymehq.inbox"
+ENVIRONMENT = "staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# T-103: DLQ producer binding so the consumer wrapper can stamp
+# `_failure_reason` on permanent failures before they leave the
+# operator's peekable surface.
+[[env.staging.queues.producers]]
+binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
+queue = "myme-webhook-receipt-staging-dlq"
+
+[[env.staging.queues.consumers]]
+queue = "myme-webhook-receipt-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 6
+dead_letter_queue = "myme-webhook-receipt-staging-dlq"
+
+# Secrets (`wrangler secret put --env staging`):
+#   - MYME_API_URL
+#   - MYME_RUNTIME_CONTROL_URL
+#   - MYME_RUNTIME_BROKER_KEY
+
+# ---- Production -----------------------------------------------------------
+[env.prod]
+name = "myme-integration-mymehq-inbox-prod"
+
+[env.prod.vars]
+INTEGRATION_NAME = "mymehq.inbox"
+ENVIRONMENT = "prod"
+
+[[env.prod.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.prod.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.prod.queues.producers]]
+binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
+queue = "myme-webhook-receipt-prod-dlq"
+
+[[env.prod.queues.consumers]]
+queue = "myme-webhook-receipt-prod"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 6
+dead_letter_queue = "myme-webhook-receipt-prod-dlq"

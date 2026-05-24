@@ -20,6 +20,7 @@ import {
   verifySlack,
   verifyStripe,
   verifyGitHub,
+  verifyCloudflareEmail,
 } from "./index.js";
 
 const SECRET = "topsecret-shared-key";
@@ -68,8 +69,10 @@ describe("verification dispatch", () => {
 
   it("ADAPTERS table has an entry for every method", () => {
     // T-231 added `google-channel` for Google Workspace push
-    // notifications (Calendar / Drive / Gmail).
+    // notifications (Calendar / Drive / Gmail). T-244 added
+    // `cloudflare-email` for the mymehq.inbox integration.
     expect(Object.keys(ADAPTERS).sort()).toEqual([
+      "cloudflare-email",
       "github",
       "google-channel",
       "hmac-sha256",
@@ -313,5 +316,50 @@ describe("verifyGitHub", () => {
     const r = await verifyGitHub(body, headers, SECRET);
     expect(r.verified).toBe(false);
     expect(r.external_delivery_id).toBe("still-attributable");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cloudflare-email (T-244)
+// ---------------------------------------------------------------------------
+
+describe("verifyCloudflareEmail", () => {
+  // The adapter delegates to verifyHmacSha256 verbatim — the test
+  // surface mirrors the wire shape the Email Worker emits: JSON body
+  // signed with `X-Myme-Signature` + Message-ID as `X-Myme-Delivery-Id`.
+
+  it("verifies a correctly-signed email envelope", async () => {
+    const body = asBuffer(
+      '{"from":{"address":"august@cayzer.me"},"subject":"hi","text_body":"hello"}',
+    );
+    const sig = await hmacHex(SECRET, body);
+    const headers = new Headers({
+      "content-type": "application/json",
+      "x-myme-signature": `sha256=${sig}`,
+      "x-myme-delivery-id": "<CA+abc@mail.example.com>",
+    });
+    const r = await verifyCloudflareEmail(body, headers, SECRET);
+    expect(r.verified).toBe(true);
+    expect(r.external_delivery_id).toBe("<CA+abc@mail.example.com>");
+  });
+
+  it("rejects a payload signed with the wrong worker secret", async () => {
+    const body = asBuffer('{"x":1}');
+    const sig = await hmacHex("wrong-worker-secret", body);
+    const headers = new Headers({ "x-myme-signature": `sha256=${sig}` });
+    const r = await verifyCloudflareEmail(body, headers, SECRET);
+    expect(r.verified).toBe(false);
+    expect(r.reason).toBe("signature_mismatch");
+  });
+
+  it("surfaces Message-ID as external_delivery_id even when verification fails", async () => {
+    const body = asBuffer('{"x":1}');
+    const headers = new Headers({
+      "x-myme-signature": "sha256=00",
+      "x-myme-delivery-id": "<replayed-message-id@example.com>",
+    });
+    const r = await verifyCloudflareEmail(body, headers, SECRET);
+    expect(r.verified).toBe(false);
+    expect(r.external_delivery_id).toBe("<replayed-message-id@example.com>");
   });
 });

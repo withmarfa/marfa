@@ -82,6 +82,7 @@ export async function loadInTreeRegistrations(options: {
     "todoist",
     "readwise",
     "raindrop",
+    "mymehq-inbox",
   ];
   const registrations: LocalIntegrationRegistration[] = [];
   for (const dir of dirs) {

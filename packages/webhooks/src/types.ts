@@ -54,6 +54,12 @@ export const VERIFICATION_METHODS = [
   "stripe",
   "github",
   "google-channel",
+  // T-244: Cloudflare Email Worker → JSON envelope, HMAC-signed by
+  // the Worker against the per-connection subscription secret. The
+  // adapter shares the on-the-wire shape of `hmac-sha256` (signature
+  // header `X-Myme-Signature`, idempotency header `X-Myme-Delivery-Id`)
+  // — the split exists to declare the body schema at manifest time.
+  "cloudflare-email",
 ] as const;
 
 export type VerificationMethod = (typeof VERIFICATION_METHODS)[number];

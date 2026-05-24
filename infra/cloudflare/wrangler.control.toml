@@ -162,6 +162,10 @@ service = "myme-integration-readwise-staging"
 binding = "INTEGRATION_RAINDROP"
 service = "myme-integration-raindrop-staging"
 
+[[env.staging.services]]
+binding = "INTEGRATION_MYMEHQ_INBOX"
+service = "myme-integration-mymehq-inbox-staging"
+
 # ---- Prod service bindings -----------------------------------------------
 # Mirror the staging block above. Every entry in the dispatch switches
 # (`packages/runtime-control/src/routes/arm-schedule.ts`, `verify.ts`)
@@ -211,6 +215,10 @@ service = "myme-integration-readwise-prod"
 [[env.prod.services]]
 binding = "INTEGRATION_RAINDROP"
 service = "myme-integration-raindrop-prod"
+
+[[env.prod.services]]
+binding = "INTEGRATION_MYMEHQ_INBOX"
+service = "myme-integration-mymehq-inbox-prod"
 
 # ---------------------------------------------------------------------------
 # R2 — Layer 2 wires this for large inbound webhook bodies (>256KB).
