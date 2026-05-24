@@ -137,6 +137,8 @@ function resolveServiceBinding(
       return env.INTEGRATION_GOOGLE_CONTACTS;
     case "todoist.tasks":
       return env.INTEGRATION_TODOIST_TASKS;
+    case "readwise.highlights":
+      return env.INTEGRATION_READWISE;
     default:
       return undefined;
   }

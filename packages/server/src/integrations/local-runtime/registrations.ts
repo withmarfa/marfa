@@ -80,6 +80,7 @@ export async function loadInTreeRegistrations(options: {
     "task-auto-archive",
     "sync",
     "todoist",
+    "readwise",
   ];
   const registrations: LocalIntegrationRegistration[] = [];
   for (const dir of dirs) {

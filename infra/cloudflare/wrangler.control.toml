@@ -154,6 +154,10 @@ service = "myme-integration-google-contacts-staging"
 binding = "INTEGRATION_TODOIST_TASKS"
 service = "myme-integration-todoist-tasks-staging"
 
+[[env.staging.services]]
+binding = "INTEGRATION_READWISE"
+service = "myme-integration-readwise-staging"
+
 # ---- Prod service bindings -----------------------------------------------
 # Mirror the staging block above. Every entry in the dispatch switches
 # (`packages/runtime-control/src/routes/arm-schedule.ts`, `verify.ts`)
@@ -195,6 +199,10 @@ service = "myme-integration-google-contacts-prod"
 [[env.prod.services]]
 binding = "INTEGRATION_TODOIST_TASKS"
 service = "myme-integration-todoist-tasks-prod"
+
+[[env.prod.services]]
+binding = "INTEGRATION_READWISE"
+service = "myme-integration-readwise-prod"
 
 # ---------------------------------------------------------------------------
 # R2 — Layer 2 wires this for large inbound webhook bodies (>256KB).
