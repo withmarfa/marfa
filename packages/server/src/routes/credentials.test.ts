@@ -24,12 +24,19 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
+// Unique-source suffix so callers don't 409 on duplicate `source` when
+// the helper runs more than once across suites in the same file.
+function uniqueSuffix(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
 async function mintMemberKey(): Promise<string> {
+  const suffix = uniqueSuffix();
   const res = await request(ctx.app, "POST", "/keys", {
     key: ctx.adminKey,
     body: {
-      label: "member-test",
-      source: "member-test",
+      label: `member-test-${suffix}`,
+      source: `member-test-${suffix}`,
       role: "member",
       type_permissions: {},
     },
@@ -40,11 +47,12 @@ async function mintMemberKey(): Promise<string> {
 }
 
 async function mintTenantAdminKey(): Promise<string> {
+  const suffix = uniqueSuffix();
   const res = await request(ctx.app, "POST", "/keys", {
     key: ctx.adminKey,
     body: {
-      label: "tenant-admin-test",
-      source: "tenant-admin-test",
+      label: `tenant-admin-test-${suffix}`,
+      source: `tenant-admin-test-${suffix}`,
       role: "tenant_admin",
     },
   });
@@ -202,6 +210,137 @@ describe("POST /credentials/oauth-provider — validation", () => {
     const res = await request(ctx.app, "POST", "/credentials/oauth-provider", {
       key: ctx.adminKey,
       body: { ...VALID_BODY, oauth_client_secret: "" },
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /credentials/api-token (T-241)
+// ---------------------------------------------------------------------------
+
+const VALID_API_TOKEN_BODY = {
+  label: "Todoist (test)",
+  upstream_base_url: "https://api.todoist.com",
+  api_token: "td-test-token-deadbeef",
+};
+
+describe("POST /credentials/api-token — auth gate", () => {
+  it("rejects unauthenticated requests with 401", async () => {
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      body: VALID_API_TOKEN_BODY,
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects member keys with 403", async () => {
+    const memberKey = await mintMemberKey();
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: memberKey,
+      body: VALID_API_TOKEN_BODY,
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /credentials/api-token — happy path", () => {
+  it("creates a system.credential of kind api_token with the right shape", async () => {
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: ctx.adminKey,
+      body: VALID_API_TOKEN_BODY,
+    });
+    expect(res.status).toBe(201);
+    const { credential_id } = (await res.json()) as { credential_id: string };
+    expect(credential_id).toMatch(/^[a-z0-9-]+$/i);
+
+    const credential = await ctx.storage.items.get(credential_id);
+    expect(credential?.type).toBe("system.credential");
+    const props = credential?.properties as {
+      label: string;
+      kind: string;
+      api_token_config: { upstream_base_url: string };
+      secret_encrypted: string;
+    };
+    expect(props.label).toBe(VALID_API_TOKEN_BODY.label);
+    expect(props.kind).toBe("api_token");
+    expect(props.api_token_config).toEqual({
+      upstream_base_url: VALID_API_TOKEN_BODY.upstream_base_url,
+    });
+    expect(typeof props.secret_encrypted).toBe("string");
+    expect(props.secret_encrypted.length).toBeGreaterThan(0);
+    // Ciphertext must not contain the plaintext bearer anywhere.
+    expect(props.secret_encrypted).not.toContain(
+      VALID_API_TOKEN_BODY.api_token,
+    );
+
+    // Round-trips through the same HKDF domain the proxy reads.
+    const plaintext = decryptSecret(
+      props.secret_encrypted,
+      SECRET_INFO.connectionOauthToken,
+    );
+    expect(plaintext).toBe(VALID_API_TOKEN_BODY.api_token);
+  });
+
+  it("tenant_admin keys can create api_token credentials too", async () => {
+    const tenantAdminKey = await mintTenantAdminKey();
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: tenantAdminKey,
+      body: { ...VALID_API_TOKEN_BODY, label: "Todoist (tenant_admin)" },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("writes a credential.api_token.create audit row without leaking the token", async () => {
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: ctx.adminKey,
+      body: { ...VALID_API_TOKEN_BODY, label: "Audit test (api)" },
+    });
+    expect(res.status).toBe(201);
+    const { credential_id } = (await res.json()) as { credential_id: string };
+
+    const audits = await waitForAudit(
+      () =>
+        ctx.storage.audit.list({
+          action: "credential.api_token.create",
+        }),
+      (r) => r.data.some((row) => row.resource_id === credential_id),
+    );
+    const row = audits.data.find((r) => r.resource_id === credential_id);
+    expect(row).toBeTruthy();
+    expect(row?.details).toMatchObject({
+      label: "Audit test (api)",
+      upstream_base_url: VALID_API_TOKEN_BODY.upstream_base_url,
+    });
+    // The bearer must never appear in the audit details.
+    expect(JSON.stringify(row?.details ?? {})).not.toContain(
+      VALID_API_TOKEN_BODY.api_token,
+    );
+  });
+});
+
+describe("POST /credentials/api-token — validation", () => {
+  it("rejects malformed upstream_base_url with 400", async () => {
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: ctx.adminKey,
+      body: { ...VALID_API_TOKEN_BODY, upstream_base_url: "not-a-url" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects empty api_token with 400", async () => {
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: ctx.adminKey,
+      body: { ...VALID_API_TOKEN_BODY, api_token: "" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects missing label with 400", async () => {
+    const { label: _, ...incomplete } = VALID_API_TOKEN_BODY;
+    void _;
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: ctx.adminKey,
+      body: incomplete,
     });
     expect(res.status).toBe(400);
   });

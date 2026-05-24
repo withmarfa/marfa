@@ -12235,6 +12235,189 @@
         }
       }
     },
+    "/credentials/api-token": {
+      "post": {
+        "tags": [
+          "Credentials"
+        ],
+        "summary": "Create a static API-token credential",
+        "description": "Creates a `system.credential` of `kind: api_token` carrying an upstream service's API base URL + the user-supplied bearer token (encrypted at rest). The resulting credential id is passed as `credential_ref` on subsequent `POST /connections/install` calls.\n\nFor integrations whose upstream uses a static bearer (Todoist, Readwise, Raindrop, etc) rather than the OAuth dance. The connection proxy stamps the bearer transparently on every call; there is no refresh primitive — when the upstream rejects the token (401), the proxy surfaces 401 and emits a `system.activity` of severity `action_required` asking the operator to reinstall with a fresh token.\n\nThe bearer is encrypted server-side under the `connectionOauthToken` HKDF domain (AES-256-GCM) — same encryption domain that protects OAuth client secrets and access/refresh tokens. The plaintext is never returned by any read path.\n\nTenant-scoped: the credential is created in the calling key's tenant.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "upstream_base_url": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "format": "uri"
+                  },
+                  "api_token": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "label",
+                  "upstream_base_url",
+                  "api_token"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Credential created. Returns the new credential's id for use as `credential_ref` on install.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "credential_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "credential_id"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "validation_error",
+                            "missing_required_field"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an admin or tenant_admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "forbidden"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/system/runtime-credentials": {
       "post": {
         "tags": [
