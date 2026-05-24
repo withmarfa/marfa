@@ -60,6 +60,7 @@ const REACTIVE_RUN_INTEGRATIONS = [
   "mymehq.task-auto-archive",
   "google.calendar",
   "google.tasks",
+  "google.drive",
 ] as const;
 
 /**

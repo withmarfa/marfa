@@ -131,6 +131,8 @@ function resolveServiceBinding(
       return env.INTEGRATION_GOOGLE_CALENDAR;
     case "google.tasks":
       return env.INTEGRATION_GOOGLE_TASKS;
+    case "google.drive":
+      return env.INTEGRATION_GOOGLE_DRIVE;
     default:
       return undefined;
   }
