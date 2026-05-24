@@ -28,10 +28,34 @@ export interface ControlPlaneEnv {
   CLOUDFLARE_ACCOUNT_ID?: string;
 
   // ---- Bindings provisioned via wrangler.control.toml -----------------
-  /** Cloudflare Queue producer for verified inbound webhook deliveries.
-   *  Per-Integration Workers consume from this queue. Wired in PR 3 of
-   *  Layer 1 (binding) + PR 4 (real send). */
+  /**
+   * Legacy shared Cloudflare Queue producer for verified inbound webhook
+   * deliveries. Kept as the fallback path for `mymehq.github-webhooks`
+   * which still consumes from this queue. New inbound-webhook
+   * integrations bind their own per-integration producer below — the
+   * shared queue + envelope-filter model can't scale past a single
+   * consumer (Cloudflare Queues allow at most one consumer per queue;
+   * the runtime-sdk's envelope filter only fires after the message has
+   * already been delivered to that single consumer, so any other
+   * integration's messages would be silently filtered out).
+   *
+   * The route picks `WEBHOOK_RECEIPT_QUEUE_<NAME>` first when present,
+   * falling back to this shared binding otherwise.
+   */
   WEBHOOK_RECEIPT_QUEUE?: QueueProducer;
+  /**
+   * Per-integration inbound-webhook queue producers. One binding per
+   * integration with a `webhook` trigger. The route in `webhooks.ts`
+   * resolves the binding by `integration_name`. Adding a new
+   * inbound-webhook integration requires:
+   *   1. New `[[env.<env>.queues.producers]]` block in `wrangler.control.toml`.
+   *   2. New field on this interface (the resolver fans out via a name-keyed map).
+   *   3. New `[[env.<env>.queues.consumers]]` block on the per-Integration
+   *      Worker's wrangler.toml pointing at the same queue.
+   *   4. `provision.ts` mints the queue + DLQ.
+   */
+  WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX?: QueueProducer;
+  WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR?: QueueProducer;
   /** Reactive-run producer (the server-side bridge sends here too;
    *  the control plane keeps it bound for future use cases like
    *  re-broadcasting from the webhook flow). */

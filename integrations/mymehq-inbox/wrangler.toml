@@ -42,16 +42,23 @@ new_sqlite_classes = ["PerConnectionState"]
 # T-103: DLQ producer binding so the consumer wrapper can stamp
 # `_failure_reason` on permanent failures before they leave the
 # operator's peekable surface.
+#
+# T-247: consume from a per-integration webhook-receipt queue, NOT
+# the shared `myme-webhook-receipt-staging`. CF Queues allow only
+# one consumer per queue; `mymehq.github-webhooks` already owns the
+# shared queue's slot. The control plane routes by `integration_name`
+# to the matching producer binding (`WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX`
+# in wrangler.control.toml).
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
-queue = "myme-webhook-receipt-staging-dlq"
+queue = "myme-webhook-receipt-mymehq-inbox-staging-dlq"
 
 [[env.staging.queues.consumers]]
-queue = "myme-webhook-receipt-staging"
+queue = "myme-webhook-receipt-mymehq-inbox-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-webhook-receipt-staging-dlq"
+dead_letter_queue = "myme-webhook-receipt-mymehq-inbox-staging-dlq"
 
 # Secrets (`wrangler secret put --env staging`):
 #   - MYME_API_URL
@@ -76,11 +83,11 @@ new_sqlite_classes = ["PerConnectionState"]
 
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
-queue = "myme-webhook-receipt-prod-dlq"
+queue = "myme-webhook-receipt-mymehq-inbox-prod-dlq"
 
 [[env.prod.queues.consumers]]
-queue = "myme-webhook-receipt-prod"
+queue = "myme-webhook-receipt-mymehq-inbox-prod"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-webhook-receipt-prod-dlq"
+dead_letter_queue = "myme-webhook-receipt-mymehq-inbox-prod-dlq"

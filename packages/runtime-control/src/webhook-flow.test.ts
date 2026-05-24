@@ -324,6 +324,143 @@ describe("webhook receive flow", () => {
     }
   });
 
+  // T-247: per-integration webhook-receipt queue routing.
+
+  it("routes to the per-integration producer when one is bound (T-247)", async () => {
+    const shared = mockQueue();
+    const inbox = mockQueue();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockMymeFetch({
+      subscriptions: [
+        {
+          ...SUBSCRIPTION,
+          integration_name: "mymehq.inbox",
+        },
+      ],
+    });
+    try {
+      const env: ControlPlaneEnv = {
+        MYME_API_URL: "http://localhost:0",
+        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        WEBHOOK_RECEIPT_QUEUE: shared,
+        WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX: inbox,
+      };
+      const bodyBytes = new TextEncoder().encode('{"email":"x"}');
+      const bodyBuffer = bodyBytes.buffer.slice(
+        bodyBytes.byteOffset,
+        bodyBytes.byteOffset + bodyBytes.byteLength,
+      );
+      const sig = await sign(bodyBuffer, SECRET);
+      const app = buildApp();
+      const res = await app.request(
+        "/webhooks/inbound/conn_x",
+        {
+          method: "POST",
+          body: bodyBytes,
+          headers: {
+            "x-myme-signature": `sha256=${sig}`,
+            "x-myme-delivery-id": "msg_42",
+          },
+        },
+        env,
+      );
+      expect(res.status).toBe(202);
+      const body: { routed_via?: string } = await res.json();
+      expect(body.routed_via).toBe("dedicated");
+      // Dedicated producer was used, not the shared.
+      expect(inbox.calls).toHaveLength(1);
+      expect(shared.calls).toHaveLength(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("falls back to the shared queue when no dedicated binding exists (T-247)", async () => {
+    const shared = mockQueue();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockMymeFetch({
+      subscriptions: [
+        {
+          ...SUBSCRIPTION,
+          integration_name: "mymehq.github-webhooks",
+        },
+      ],
+    });
+    try {
+      const env: ControlPlaneEnv = {
+        MYME_API_URL: "http://localhost:0",
+        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        WEBHOOK_RECEIPT_QUEUE: shared,
+        // No WEBHOOK_RECEIPT_QUEUE_MYMEHQ_GITHUB_WEBHOOKS — fallback path.
+      };
+      const bodyBytes = new TextEncoder().encode('{"event":"push"}');
+      const bodyBuffer = bodyBytes.buffer.slice(
+        bodyBytes.byteOffset,
+        bodyBytes.byteOffset + bodyBytes.byteLength,
+      );
+      const sig = await sign(bodyBuffer, SECRET);
+      const app = buildApp();
+      const res = await app.request(
+        "/webhooks/inbound/conn_x",
+        {
+          method: "POST",
+          body: bodyBytes,
+          headers: {
+            "x-myme-signature": `sha256=${sig}`,
+            "x-myme-delivery-id": "gh_42",
+          },
+        },
+        env,
+      );
+      expect(res.status).toBe(202);
+      const body: { routed_via?: string } = await res.json();
+      expect(body.routed_via).toBe("shared");
+      expect(shared.calls).toHaveLength(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("returns 503 when neither the dedicated nor the shared binding is wired (T-247)", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockMymeFetch({
+      subscriptions: [
+        {
+          ...SUBSCRIPTION,
+          integration_name: "mymehq.inbox",
+        },
+      ],
+    });
+    try {
+      const env: ControlPlaneEnv = {
+        MYME_API_URL: "http://localhost:0",
+        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        // No queue bindings at all.
+      };
+      const bodyBytes = new TextEncoder().encode('{"email":"x"}');
+      const bodyBuffer = bodyBytes.buffer.slice(
+        bodyBytes.byteOffset,
+        bodyBytes.byteOffset + bodyBytes.byteLength,
+      );
+      const sig = await sign(bodyBuffer, SECRET);
+      const app = buildApp();
+      const res = await app.request(
+        "/webhooks/inbound/conn_x",
+        {
+          method: "POST",
+          body: bodyBytes,
+          headers: { "x-myme-signature": `sha256=${sig}` },
+        },
+        env,
+      );
+      expect(res.status).toBe(503);
+      const body: { error?: string } = await res.json();
+      expect(body.error).toBe("queue_unbound");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("rejects subscriptions with no integration_name (unrouteable)", async () => {
     const queue = mockQueue();
     const originalFetch = globalThis.fetch;

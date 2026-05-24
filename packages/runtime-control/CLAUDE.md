@@ -10,7 +10,7 @@ The Cloudflare Worker control plane for the hosted integrations substrate. Route
 - `src/myme-client.ts` — minimal HTTP client for calling back into Myme (`POST /system/runtime-credentials`, etc.) using the runtime broker key.
 - `src/cf-queues-pull.ts` — Cloudflare Queues pull/ack helper for the DLQ surfaces; gated on `CLOUDFLARE_QUEUES_API_TOKEN`.
 - `src/routes/`:
-  - `webhooks.ts` — `POST /webhooks/inbound/:connection_id`: verifies the signature via `@mymehq/webhooks`, looks up the subscription, enqueues onto `WEBHOOK_RECEIPT_QUEUE`. Returns 202 on accept.
+  - `webhooks.ts` — `POST /webhooks/inbound/:connection_id`: verifies the signature via `@mymehq/webhooks`, looks up the subscription, **routes to the per-integration webhook-receipt producer** (T-247; `WEBHOOK_RECEIPT_QUEUE_<INTEGRATION>` bindings keyed by `integration_name`, with the legacy shared `WEBHOOK_RECEIPT_QUEUE` as fallback for `mymehq.github-webhooks`). Returns 202 on accept; the response body's `routed_via` field surfaces whether the dispatch hit a dedicated or shared producer.
   - `lease.ts` — `POST /connections/:id/leased-tokens`: mints short-TTL bearers via the broker.
   - `verify.ts` — `GET /verify`: signature-verification probe surface (admin only).
   - `arm-schedule.ts` — `POST /schedules/arm`: enqueues a schedule message for a cron tick (used by the hosted-side scheduler).
