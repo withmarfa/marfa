@@ -1726,7 +1726,9 @@
                               "edges": {
                                 "type": "array",
                                 "items": {
-                                  "type": "object",
+                          (node:75285) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+        "type": "object",
                                   "properties": {
                                     "id": {
                                       "type": "string"
