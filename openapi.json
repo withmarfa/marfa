@@ -16759,7 +16759,7 @@
           "Connections"
         ],
         "summary": "Install an integration",
-        "description": "Server-side sibling of the browser consent flow at `POST /integrations/:id/install`. Skips the HTML consent screen — admin-only — so operators and tooling can install connections non-interactively. Body carries `integration_id` and an optional `label`. Returns the connection id, the seed runtime credential id, and the system.activity row id from the install pipeline. Same compensating-write pipeline as the HTML path; same audit trail.",
+        "description": "Server-side sibling of the browser consent flow at `POST /integrations/:id/install`. Skips the HTML consent screen — admin-only — so operators and tooling can install connections non-interactively. Body carries `integration_id`, an optional `label`, an optional `credential_ref`, and an optional `configuration` bag that seeds the new connection's `properties.configuration` (e.g. `upstream_base_url_override` for per-host upstream targeting). Returns the connection id, the seed runtime credential id, and the system.activity row id from the install pipeline. Same compensating-write pipeline as the HTML path; same audit trail.",
         "security": [
           {
             "bearerAuth": []
@@ -16779,6 +16779,12 @@
                   },
                   "credential_ref": {
                     "type": "string"
+                  },
+                  "configuration": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "nullable": true
+                    }
                   }
                 },
                 "required": [

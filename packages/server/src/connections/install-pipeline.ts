@@ -98,6 +98,28 @@ export interface InstallInput {
    * stays per-install — it's NOT reused. Only the provider credential is.
    */
   credentialRef?: string;
+  /**
+   * Optional initial `properties.configuration` seed for the new
+   * connection. The install-pipeline always creates the connection with
+   * an empty `configuration: {}`; this seed merges over that empty
+   * default, letting server-side install paths (admin install via
+   * `POST /connections/install`) pre-populate per-connection knobs that
+   * would otherwise require a follow-on `PATCH /items/:id` round-trip.
+   *
+   * T-254 motivating case: `upstream_base_url_override` so a
+   * connection sharing the shared google.* OAuth credential can point
+   * at a per-host upstream (e.g. `people.googleapis.com` for
+   * `google.contacts`). Without this seam, the override has to be
+   * patched onto the connection after install but before the OAuth
+   * dance — fragile.
+   *
+   * The bag is type-erased intentionally — the connection's
+   * `configuration` map is free-form JSON owned by each integration's
+   * install-time consent contract. The proxy + handlers validate the
+   * specific keys they consume; this seam doesn't try to schema-check
+   * the whole bag.
+   */
+  configuration?: Record<string, unknown>;
 }
 
 export interface InstallResult {
@@ -226,7 +248,10 @@ export async function performInstall(
     status: "active" as const,
     granted_at: now,
     integration_ref: input.integrationItemId,
-    configuration: {} as Record<string, unknown>,
+    // T-254: seed from optional install-time configuration; falls back
+    // to the empty default. The bag stays free-form — per-integration
+    // install contracts validate their own keys.
+    configuration: input.configuration ?? {},
     direction: manifest.direction,
     triggers: manifest.triggers,
     runtime_status: "healthy" as const,
