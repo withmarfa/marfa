@@ -142,6 +142,37 @@ ping thereafter). External validation harnesses should assert the
 returned channel matches the test account; mismatch → exit 1
 `account_isolation_breach`.
 
+## Pre-flight — the connected Google account MUST have a YouTube channel
+
+`channels.list?mine=true` returns `{ pageInfo: { totalResults: 0 } }`
+for any signed-in Google account that hasn't yet provisioned a
+YouTube channel. A Google account does NOT come with a YouTube
+channel by default; it's a separate resource the user creates via
+the YouTube web UI (typically auto-triggered by the first action
+that needs one — commenting, uploading, creating a playlist, etc.).
+
+When this happens the handler emits a `system.activity action_required`
+of `google-youtube: could not resolve the user's liked-videos playlist
+id from channels.list?mine=true` — the install is otherwise healthy,
+but no items will ever land. The fix is operator-side: open
+youtube.com signed in as the connected account → click any
+channel-creation CTA (e.g. "Create channel" on the avatar menu) →
+publish at least one playlist or comment to lock the channel in →
+re-trigger the sweep.
+
+The pre-flight applies to ALL `google.youtube` installs — flag it
+during install whenever the connected account is fresh. Verify by
+calling the proxy directly before arming the schedule:
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN_KEY" \
+  "$URL/connections/$CID/proxy/youtube/v3/channels?part=snippet,contentDetails&mine=true" \
+  | jq '.pageInfo.totalResults'
+```
+
+A return of `0` = no channel → block + flag → wait for the operator
+to create one. A return of `1` (or more) = good to go.
+
 ## Skip-on-unchanged playlist
 
 `syncUserPlaylists` records `pl.etag` per playlist on every sweep.

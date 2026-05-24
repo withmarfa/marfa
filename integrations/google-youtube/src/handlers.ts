@@ -630,8 +630,13 @@ async function syncSubscriptions(
     params.set("part", SUBSCRIPTIONS_PART);
     params.set("mine", "true");
     params.set("maxResults", String(PAGE_SIZE));
-    // Newest-first so the watermark break works.
-    params.set("order", "newest");
+    // No `order=newest` — YouTube Data API v3's `subscriptions.list`
+    // only accepts `alphabetical | relevance | unread`. The early-
+    // termination `watermark` break below stays defensive but won't
+    // actually fire in steady state because the list isn't time-
+    // ordered. Mapping-based dedup (`cursor.mappings.channels`) is
+    // what keeps the per-sweep work bounded — subscription churn is
+    // low (T-258).
     if (pageToken !== undefined) params.set("pageToken", pageToken);
     const data = await proxyJson<ListResponse<SubscriptionResource>>(
       ctx,
@@ -644,10 +649,13 @@ async function syncSubscriptions(
       const subscribedAt = sub.subscriberSnippet?.subscribedAt ?? "";
       const channelId = sub.snippet?.resourceId?.channelId ?? "";
       if (subscribedAt === "" || channelId === "") continue;
-      if (watermark !== null && subscribedAt <= watermark) {
-        stop = true;
-        break;
-      }
+      // Skip-if-watermark-stale rather than break-on-watermark-stale —
+      // YouTube doesn't time-order subscriptions.list, so we MUST walk
+      // every page and per-item filter (no early-termination
+      // short-circuit). Mapping-based dedup below keeps the upsert
+      // work bounded; this branch keeps the proxy traffic bounded
+      // too once a sub has been seen once (T-258).
+      if (watermark !== null && subscribedAt <= watermark) continue;
       if (highestSubscribedAt === null || subscribedAt > highestSubscribedAt) {
         highestSubscribedAt = subscribedAt;
       }
