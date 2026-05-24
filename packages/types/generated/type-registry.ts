@@ -179,6 +179,28 @@ const coreTask: TypeSchema = {
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
+const todoistTask: TypeSchema = {
+  id: "todoist.task",
+  label: "Todoist Task",
+  description: "A task on a Todoist project, captured with upstream fidelity. Mirrors Todoist's Sync API item resource closely so a round-trip preserves what Todoist considers authoritative (content, description, project_id, section_id, parent_id, labels, priority, due, child_order, completed, url, comment_count). For cross-app interop with non-Todoist consumers, the Todoist integration can also be configured to write to `core.task` instead, but the default and the fidelity choice is this type.",
+  version: 1,
+  fields: {
+    title: { type: "string", description: "Task title (maps to Todoist `content`).", required: true },
+    description: { type: "string", description: "Free-text description attached to the task (maps to Todoist `description`)." },
+    project_id: { type: "string", description: "Todoist project id the task lives on. Inbox project is the default when this field is unset." },
+    section_id: { type: "string", description: "Todoist section id within the project, when the task is grouped under a section." },
+    parent_id: { type: "string", description: "Parent task id when this task is a subtask (Todoist allows arbitrary nesting depth)." },
+    labels: { type: "array", description: "Label names attached to the task (maps to Todoist `labels`). Free-form strings.", items_type: "string" },
+    priority: { type: "integer", description: "Task priority (1 = no priority through 4 = urgent, matching Todoist's wire convention)." },
+    due: { type: "object", description: "Due date/time object. Carries any of `{ date, datetime, string, lang, is_recurring, timezone }`; `null` when the task has no due date." },
+    child_order: { type: "integer", description: "Stable sort order within the parent (maps to Todoist `child_order`)." },
+    completed: { type: "boolean", description: "Mirrors Todoist's `checked` flag. Closing a task in Myme (state transition to trashed) maps to Todoist's `/close` endpoint, which sets this to true upstream." },
+    url: { type: "url", description: "Stable HTTPS link to the task on the Todoist web UI." },
+    comment_count: { type: "integer", description: "Number of comments on the task at last sync (maps to Todoist `comment_count`)." },
+  },
+  display_hints: { title_field: "title", body_field: "description" },
+};
+
 const coreEntityPerson: TypeSchema = {
   id: "core.entity.person",
   parent: "core.entity",
@@ -634,6 +656,7 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMessage,
   coreNote,
   coreTask,
+  todoistTask,
   coreEntityPerson,
   coreEntityPlace,
   coreFileAudio,

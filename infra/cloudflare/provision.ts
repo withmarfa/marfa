@@ -62,6 +62,7 @@ const REACTIVE_RUN_INTEGRATIONS = [
   "google.tasks",
   "google.drive",
   "google.contacts",
+  "todoist.tasks",
 ] as const;
 
 /**

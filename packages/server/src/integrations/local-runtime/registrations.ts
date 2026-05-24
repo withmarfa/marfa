@@ -76,8 +76,10 @@ export async function loadInTreeRegistrations(options: {
     "google-calendar",
     "google-tasks",
     "google-contacts",
+    "google-drive",
     "task-auto-archive",
     "sync",
+    "todoist",
   ];
   const registrations: LocalIntegrationRegistration[] = [];
   for (const dir of dirs) {

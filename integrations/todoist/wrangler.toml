@@ -1,0 +1,127 @@
+#:schema node_modules/wrangler/config-schema.json
+# Per-Integration Worker for todoist.
+#
+# Two trigger types — schedule (10-minute incremental Sync API sweep)
+# and item-event (outbound reactive via REST + Sync commands). The
+# Worker consumes:
+#
+#   - a per-integration scheduled-poll queue
+#   - a per-integration reactive-run queue (T-233 — Cloudflare Queues
+#     only allow one consumer per queue; per-integration queues prevent
+#     silently-dropped messages addressed to non-consumer integrations)
+#
+# Deliberately NO webhook-receipt queue — Todoist supports webhooks
+# but they require a publicly-reachable URL and are out of scope for
+# this round (the manifest exposes schedule + item-event only).
+
+name = "myme-integration-todoist-tasks"
+main = "src/worker.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+# `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from env.
+
+[vars]
+INTEGRATION_NAME = "todoist.tasks"
+MANIFEST_CRON = "*/10 * * * *"
+ENVIRONMENT = "dev"
+
+[[durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# ---- Staging --------------------------------------------------------------
+[env.staging]
+name = "myme-integration-todoist-staging"
+
+[env.staging.vars]
+INTEGRATION_NAME = "todoist"
+MANIFEST_CRON = "*/10 * * * *"
+ENVIRONMENT = "staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# T-103: DLQ producer bindings — one per consumer queue family.
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-todoist-staging"
+
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "myme-scheduled-poll-todoist-staging-dlq"
+
+[[env.staging.queues.producers]]
+binding = "REACTIVE_RUN_DLQ_QUEUE"
+queue = "myme-reactive-run-todoist-staging-dlq"
+
+[[env.staging.queues.consumers]]
+queue = "myme-scheduled-poll-todoist-staging"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "myme-scheduled-poll-todoist-staging-dlq"
+
+# T-233 — per-integration reactive-run queue.
+[[env.staging.queues.consumers]]
+queue = "myme-reactive-run-todoist-staging"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 6
+dead_letter_queue = "myme-reactive-run-todoist-staging-dlq"
+
+# ---- Prod -----------------------------------------------------------------
+[env.prod]
+name = "myme-integration-todoist-prod"
+
+[env.prod.vars]
+INTEGRATION_NAME = "todoist"
+MANIFEST_CRON = "*/10 * * * *"
+ENVIRONMENT = "prod"
+
+[[env.prod.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.prod.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-todoist-prod"
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "myme-scheduled-poll-todoist-prod-dlq"
+
+[[env.prod.queues.producers]]
+binding = "REACTIVE_RUN_DLQ_QUEUE"
+queue = "myme-reactive-run-todoist-prod-dlq"
+
+[[env.prod.queues.consumers]]
+queue = "myme-scheduled-poll-todoist-prod"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "myme-scheduled-poll-todoist-prod-dlq"
+
+[[env.prod.queues.consumers]]
+queue = "myme-reactive-run-todoist-prod"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 6
+dead_letter_queue = "myme-reactive-run-todoist-prod-dlq"
+
+# Secrets (`wrangler secret put --env <env>`):
+#   - MYME_API_URL
+#   - MYME_RUNTIME_CONTROL_URL
+#   - MYME_RUNTIME_BROKER_KEY
