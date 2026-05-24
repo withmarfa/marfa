@@ -104,8 +104,14 @@ export const FILES_FIELDS = [
   "iconLink",
   "thumbnailLink",
   "md5Checksum",
-  "sha256Checksum",
-  "etag",
+  // NOTE: Drive v3 does NOT expose `etag` or `sha256Checksum` on the
+  // file resource — requesting them in a `fields` mask returns HTTP
+  // 400 `Invalid field selection`. Both are kept as TYPE fields on
+  // `google.drive.file.json` because the type doc treats them as
+  // "future fidelity" placeholders; the handler reads them
+  // optionally with `?.` so a missing field is harmless. Surfaced
+  // by the T-238 TS-harness when `files.list` 400'd on every cold-
+  // start sweep — patch lands inside PR #304.
 ].join(",");
 
 /**
