@@ -145,8 +145,48 @@ service = "myme-integration-google-tasks-staging"
 [[env.staging.services]]
 binding = "INTEGRATION_GOOGLE_DRIVE"
 service = "myme-integration-google-drive-staging"
+
+[[env.staging.services]]
 binding = "INTEGRATION_GOOGLE_CONTACTS"
 service = "myme-integration-google-contacts-staging"
+
+# ---- Prod service bindings -----------------------------------------------
+# Mirror the staging block above. Every entry in the dispatch switches
+# (`packages/runtime-control/src/routes/arm-schedule.ts`, `verify.ts`)
+# MUST have a corresponding binding here. The freshness test in
+# `packages/runtime-control/src/wrangler-control-config.test.ts`
+# parses this file with a strict TOML parser and asserts both invariants
+# (every dispatch entry → a binding in both envs; no duplicate `binding`
+# keys inside one `[[env.X.services]]` block — the failure mode that
+# silently dropped google.drive's staging binding pre-T-245).
+
+[[env.prod.services]]
+binding = "INTEGRATION_RSS_WATCHER"
+service = "myme-integration-rss-watcher-prod"
+
+[[env.prod.services]]
+binding = "INTEGRATION_GITHUB_WEBHOOKS"
+service = "myme-integration-github-webhooks-prod"
+
+[[env.prod.services]]
+binding = "INTEGRATION_TASK_AUTO_ARCHIVE"
+service = "myme-integration-task-auto-archive-prod"
+
+[[env.prod.services]]
+binding = "INTEGRATION_GOOGLE_CALENDAR"
+service = "myme-integration-google-calendar-prod"
+
+[[env.prod.services]]
+binding = "INTEGRATION_GOOGLE_TASKS"
+service = "myme-integration-google-tasks-prod"
+
+[[env.prod.services]]
+binding = "INTEGRATION_GOOGLE_DRIVE"
+service = "myme-integration-google-drive-prod"
+
+[[env.prod.services]]
+binding = "INTEGRATION_GOOGLE_CONTACTS"
+service = "myme-integration-google-contacts-prod"
 
 # ---------------------------------------------------------------------------
 # R2 — Layer 2 wires this for large inbound webhook bodies (>256KB).
