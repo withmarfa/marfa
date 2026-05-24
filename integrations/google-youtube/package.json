@@ -1,0 +1,26 @@
+{
+  "name": "@mymehq/integration-google-youtube",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Inbound YouTube (Data API v3) integration. Hourly schedule poll of liked videos, subscriptions, and user-created playlists. Reuses the Google OAuth provider credential via credential_ref.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@mymehq/runtime-sdk": "workspace:*",
+    "@mymehq/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "@mymehq/runtime-test": "workspace:*",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2",
+    "tsup": "^8.5.1"
+  }
+}

@@ -124,6 +124,8 @@ function resolveServiceBinding(
       return env.INTEGRATION_GOOGLE_DRIVE;
     case "google.contacts":
       return env.INTEGRATION_GOOGLE_CONTACTS;
+    case "google.youtube":
+      return env.INTEGRATION_GOOGLE_YOUTUBE;
     case "todoist.tasks":
       return env.INTEGRATION_TODOIST_TASKS;
     case "readwise.highlights":

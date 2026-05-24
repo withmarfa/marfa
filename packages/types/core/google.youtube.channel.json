@@ -1,0 +1,61 @@
+{
+  "id": "google.youtube.channel",
+  "label": "YouTube Channel",
+  "description": "A YouTube channel — surfaced when the connected user has subscribed to it OR when it owns a liked video / user playlist (T-249). Captures upstream-fidelity channel metadata from the YouTube Data API v3 `channels` resource. `subscribed_at` carries the time the connected user subscribed (when known); for channels that are merely the owner of a liked video this field is absent.",
+  "version": 1,
+  "fields": {
+    "channel_id": {
+      "type": "string",
+      "description": "YouTube channel id — the stable handle used in canonical channel URLs (`https://www.youtube.com/channel/<channel_id>`). The external id on the cursor mapping."
+    },
+    "title": {
+      "type": "string",
+      "description": "Channel display name (maps to `snippet.title`)."
+    },
+    "description": {
+      "type": "string",
+      "description": "Channel description / about text (maps to `snippet.description`)."
+    },
+    "custom_url": {
+      "type": "string",
+      "description": "Vanity URL slug when set (maps to `snippet.customUrl`)."
+    },
+    "published_at": {
+      "type": "string",
+      "description": "Channel creation timestamp (maps to `snippet.publishedAt`) — RFC 3339.",
+      "format": "datetime"
+    },
+    "thumbnail_url": {
+      "type": "string",
+      "description": "Best-available channel avatar URL — picks the highest-resolution variant present (`maxres > standard > high > medium > default`).",
+      "format": "url"
+    },
+    "subscriber_count": {
+      "type": "number",
+      "description": "Subscriber count at the time of last fetch (maps to `statistics.subscriberCount`, parsed to a number). May be hidden by the channel owner."
+    },
+    "video_count": {
+      "type": "number",
+      "description": "Public video count at the time of last fetch (maps to `statistics.videoCount`, parsed to a number)."
+    },
+    "view_count": {
+      "type": "number",
+      "description": "Channel-lifetime view count (maps to `statistics.viewCount`, parsed to a number)."
+    },
+    "subscribed_at": {
+      "type": "string",
+      "description": "Timestamp the connected user subscribed to this channel (maps to `subscriberSnippet.subscribedAt`). Absent when the channel was surfaced solely as the owner of a liked video / playlist rather than via a subscription.",
+      "format": "datetime"
+    },
+    "html_link": {
+      "type": "string",
+      "description": "Canonical channel URL on YouTube — `https://www.youtube.com/channel/<channel_id>`.",
+      "format": "url"
+    }
+  },
+  "required": ["channel_id", "title"],
+  "display_hints": {
+    "title_field": "title",
+    "body_field": "description"
+  }
+}
