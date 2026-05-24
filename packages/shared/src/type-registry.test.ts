@@ -15,7 +15,7 @@ import type { ItemState } from "@mymehq/types";
 import type { Item } from "./types.js";
 
 describe("TYPE_REGISTRY", () => {
-  it("contains 29 core types and 7 system types (TSC42 §4)", () => {
+  it("contains 31 core types and 7 system types (TSC42 §4)", () => {
     // T-231 added `google.calendar.event` as the 23rd core-bundled type
     // (the first publisher-namespaced type to ship in-tree).
     // T-236 added `google.tasks.task` as the 24th.
@@ -23,7 +23,8 @@ describe("TYPE_REGISTRY", () => {
     // T-238 added `google.drive.file` as the 26th.
     // T-241 added `todoist.task` as the 27th.
     // T-242 added `readwise.book` + `readwise.highlight` as the 28th + 29th.
-    expect(TYPE_REGISTRY.size).toBe(36);
+    // T-243 added `raindrop.raindrop` + `raindrop.collection` as the 30th + 31st.
+    expect(TYPE_REGISTRY.size).toBe(38);
     expect(TYPE_REGISTRY.has("google.calendar.event")).toBe(true);
     expect(TYPE_REGISTRY.has("google.tasks.task")).toBe(true);
     expect(TYPE_REGISTRY.has("google.contacts.contact")).toBe(true);
@@ -31,6 +32,8 @@ describe("TYPE_REGISTRY", () => {
     expect(TYPE_REGISTRY.has("todoist.task")).toBe(true);
     expect(TYPE_REGISTRY.has("readwise.book")).toBe(true);
     expect(TYPE_REGISTRY.has("readwise.highlight")).toBe(true);
+    expect(TYPE_REGISTRY.has("raindrop.raindrop")).toBe(true);
+    expect(TYPE_REGISTRY.has("raindrop.collection")).toBe(true);
     expect(TYPE_REGISTRY.has("system.device")).toBe(true);
     expect(TYPE_REGISTRY.has("system.credential")).toBe(true);
     expect(TYPE_REGISTRY.has("system.webhook")).toBe(true);

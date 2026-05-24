@@ -156,6 +156,51 @@ const coreNote: TypeSchema = {
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
+const raindropCollection: TypeSchema = {
+  id: "raindrop.collection",
+  label: "Raindrop Collection",
+  description: "A Raindrop collection — a folder that groups raindrops (bookmarks). Collections nest via `parent_id` chains. Source-of-truth for collection metadata; raindrops link back via `collection_id` and a `parent-of` edge.",
+  version: 1,
+  fields: {
+    title: { type: "string", description: "Collection name (maps to Raindrop `title`).", required: true },
+    slug: { type: "string", description: "URL-safe slug (maps to Raindrop `slug`)." },
+    parent_id: { type: "string", description: "External Raindrop id of the parent collection (when this collection is nested). Empty / unset at top level." },
+    count: { type: "integer", description: "Number of raindrops in this collection at last sync." },
+    cover: { type: "string", description: "Cover image URL (Raindrop ships one when set)." },
+    expanded: { type: "boolean", description: "Whether the collection is expanded in Raindrop's UI." },
+    view: { type: "enum", description: "Display mode in Raindrop's UI.", enum_values: ["list", "simple", "grid", "masonry"] },
+    color: { type: "string", description: "Operator-assigned colour (Raindrop ships free-form CSS strings)." },
+    public: { type: "boolean", description: "Whether the collection has a public URL." },
+    created: { type: "datetime", description: "Creation timestamp upstream." },
+    last_update: { type: "datetime", description: "Last-update timestamp upstream." },
+  },
+  display_hints: { title_field: "title" },
+};
+
+const raindropRaindrop: TypeSchema = {
+  id: "raindrop.raindrop",
+  label: "Raindrop Bookmark",
+  description: "A Raindrop bookmark — a saved link with title, excerpt, optional note, tags, and a parent collection. Maps onto the cross-app `core.bookmark` shape via `compatible_with`.",
+  version: 1,
+  fields: {
+    title: { type: "string", description: "Bookmark title (maps to Raindrop `title`).", required: true },
+    body: { type: "string", description: "Bookmark body — carries Raindrop's `note` so the type satisfies `core.bookmark.body` for cross-app consumers." },
+    url: { type: "url", description: "Target URL (maps to Raindrop `link`).", required: true },
+    excerpt: { type: "string", description: "Auto-generated excerpt from the linked page (maps to Raindrop `excerpt`)." },
+    note: { type: "string", description: "User's personal note (mirrors `body`; kept for upstream fidelity)." },
+    domain: { type: "string", description: "Host of the link (Raindrop pre-extracts this)." },
+    cover: { type: "url", description: "Cover image URL (Raindrop auto-extracts one when available)." },
+    raindrop_type: { type: "enum", description: "Raindrop's `type` field — what kind of content the link points at. Field-renamed to avoid shadowing Item's first-class `type` column.", enum_values: ["link", "article", "image", "video", "document", "audio"] },
+    tags: { type: "array", description: "Free-form tags (maps to Raindrop `tags`).", items_type: "string" },
+    created: { type: "datetime", description: "When the raindrop was saved upstream." },
+    last_update: { type: "datetime", description: "Last-update timestamp upstream." },
+    important: { type: "boolean", description: "Raindrop's `important` flag (operator-set; a starred / pinned marker)." },
+    collection_id: { type: "string", description: "External Raindrop id of the parent collection. Stamped alongside the typed `parent-of` edge so consumers can look up the collection without traversing edges." },
+    media: { type: "array", description: "Array of attached media objects `{ link, type }` (Raindrop carries one per attachment).", items_type: "object" },
+  },
+  display_hints: { title_field: "title", body_field: "excerpt" },
+};
+
 const readwiseBook: TypeSchema = {
   id: "readwise.book",
   label: "Readwise Book",
@@ -693,6 +738,8 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMedia,
   coreMessage,
   coreNote,
+  raindropCollection,
+  raindropRaindrop,
   readwiseBook,
   readwiseHighlight,
   coreTask,
