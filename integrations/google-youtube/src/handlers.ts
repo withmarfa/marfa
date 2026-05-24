@@ -623,20 +623,19 @@ async function syncSubscriptions(
   let pageToken: string | undefined;
   let upserted = 0;
   let highestSubscribedAt: string | null = null;
-  let stop = false;
 
-  for (let page = 0; page < MAX_PAGES_PER_SWEEP && !stop; page++) {
+  // No early-termination flag here — YouTube Data API v3's
+  // `subscriptions.list` doesn't expose time-ordering (`order` only
+  // accepts `alphabetical | relevance | unread`), so we walk every
+  // page every sweep. The per-item watermark skip below keeps the
+  // upsert work bounded; mapping-based dedup
+  // (`cursor.mappings.channels`) keeps repeated subscriptions cheap
+  // (T-258).
+  for (let page = 0; page < MAX_PAGES_PER_SWEEP; page++) {
     const params = new URLSearchParams();
     params.set("part", SUBSCRIPTIONS_PART);
     params.set("mine", "true");
     params.set("maxResults", String(PAGE_SIZE));
-    // No `order=newest` — YouTube Data API v3's `subscriptions.list`
-    // only accepts `alphabetical | relevance | unread`. The early-
-    // termination `watermark` break below stays defensive but won't
-    // actually fire in steady state because the list isn't time-
-    // ordered. Mapping-based dedup (`cursor.mappings.channels`) is
-    // what keeps the per-sweep work bounded — subscription churn is
-    // low (T-258).
     if (pageToken !== undefined) params.set("pageToken", pageToken);
     const data = await proxyJson<ListResponse<SubscriptionResource>>(
       ctx,
