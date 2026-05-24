@@ -796,12 +796,19 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
 async function createApiTokenCredential(opts?: {
   upstream_base_url?: string;
   api_token?: string;
+  auth_scheme?: string;
 }): Promise<string> {
   const cfg = {
     upstream_base_url: "https://upstream.test",
     api_token: "td-test-token-deadbeef",
     ...opts,
   };
+  const apiTokenConfig: Record<string, unknown> = {
+    upstream_base_url: cfg.upstream_base_url,
+  };
+  if (cfg.auth_scheme !== undefined) {
+    apiTokenConfig.auth_scheme = cfg.auth_scheme;
+  }
   const res = await request(ctx.app, "POST", "/items", {
     key: ctx.adminKey,
     body: {
@@ -809,7 +816,7 @@ async function createApiTokenCredential(opts?: {
       properties: {
         label: "test-api-token-cred",
         kind: "api_token",
-        api_token_config: { upstream_base_url: cfg.upstream_base_url },
+        api_token_config: apiTokenConfig,
         secret_encrypted: encryptSecret(
           cfg.api_token,
           SECRET_INFO.connectionOauthToken,
@@ -827,6 +834,7 @@ async function createApiTokenCredential(opts?: {
 async function createApiTokenConnection(opts?: {
   upstream_base_url?: string;
   api_token?: string;
+  auth_scheme?: string;
 }): Promise<string> {
   const credId = await createApiTokenCredential(opts);
   const res = await request(ctx.app, "POST", "/items", {
@@ -956,5 +964,106 @@ describe("POST /connections/:id/proxy/* — kind:api_token (T-241)", () => {
           ?.credential_kind,
       ).toBe("api_token");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// kind: api_token + auth_scheme (T-246)
+// ---------------------------------------------------------------------------
+
+describe("POST /connections/:id/proxy/* — kind:api_token auth_scheme (T-246)", () => {
+  it("stamps `Authorization: Token <key>` when auth_scheme is 'Token' (Readwise)", async () => {
+    const connectionId = await createApiTokenConnection({
+      upstream_base_url: "https://readwise.io",
+      api_token: "rw_static_token_xyz",
+      auth_scheme: "Token",
+    });
+
+    const fetchState = installFetchScript([
+      ({ url, init }) => {
+        expect(url).toBe("https://readwise.io/api/v2/export/");
+        const headers = init.headers as Record<string, string>;
+        expect(headers.Authorization).toBe("Token rw_static_token_xyz");
+        return jsonResponse(200, { results: [] });
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/connections/${connectionId}/proxy/api/v2/export/`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    expect(fetchState.calls).toBe(1);
+  });
+
+  it("stamps `Authorization: Bearer <key>` when auth_scheme is 'Bearer' (explicit default)", async () => {
+    const connectionId = await createApiTokenConnection({
+      api_token: "explicit_bearer",
+      auth_scheme: "Bearer",
+    });
+
+    installFetchScript([
+      ({ init }) => {
+        const headers = init.headers as Record<string, string>;
+        expect(headers.Authorization).toBe("Bearer explicit_bearer");
+        return jsonResponse(200, { ok: true });
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/connections/${connectionId}/proxy/anything`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("stamps `Authorization: Basic <key>` when auth_scheme is 'Basic'", async () => {
+    const connectionId = await createApiTokenConnection({
+      api_token: "preencoded_basic_token",
+      auth_scheme: "Basic",
+    });
+
+    installFetchScript([
+      ({ init }) => {
+        const headers = init.headers as Record<string, string>;
+        expect(headers.Authorization).toBe("Basic preencoded_basic_token");
+        return jsonResponse(200, { ok: true });
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/connections/${connectionId}/proxy/anything`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("defaults to Bearer when api_token_config carries no auth_scheme (backward-compat with T-241 PR1 credentials)", async () => {
+    const connectionId = await createApiTokenConnection({
+      api_token: "default_scheme_token",
+      // auth_scheme deliberately omitted — pre-T-246 credential shape.
+    });
+
+    installFetchScript([
+      ({ init }) => {
+        const headers = init.headers as Record<string, string>;
+        expect(headers.Authorization).toBe("Bearer default_scheme_token");
+        return jsonResponse(200, { ok: true });
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/connections/${connectionId}/proxy/anything`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
   });
 });

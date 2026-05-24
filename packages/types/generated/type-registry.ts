@@ -740,7 +740,7 @@ const systemCredential: TypeSchema = {
     scopes: { type: "array", description: "Granted scope strings", items_type: "string" },
     last_used_at: { type: "datetime", description: "Most recent use timestamp" },
     oauth_provider_config: { type: "object", description: "For kind: oauth_token — non-secret OAuth provider config: { upstream_base_url, oauth_token_url, oauth_client_id }. The secret companion lives under `secret_encrypted`." },
-    api_token_config: { type: "object", description: "For kind: api_token — non-secret upstream API config: { upstream_base_url }. The user-supplied bearer token lives under `secret_encrypted`." },
+    api_token_config: { type: "object", description: "For kind: api_token — non-secret upstream API config: { upstream_base_url, auth_scheme? }. `auth_scheme` is the HTTP Authorization scheme used to present the token; one of `Bearer` | `Token` | `Basic`, default `Bearer`. Readwise's REST API requires `Token <key>`; most others accept `Bearer`. The user-supplied secret lives under `secret_encrypted`." },
     secret_encrypted: { type: "string", description: "For kind: oauth_token — AES-256-GCM-encrypted client secret. For kind: api_token — AES-256-GCM-encrypted bearer token. Both encoded as base64-iv|base64-ciphertext|base64-tag, keyed via HKDF on the `connectionOauthToken` domain. Decrypted server-side only." },
   },
 };

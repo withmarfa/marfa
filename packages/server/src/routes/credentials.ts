@@ -63,6 +63,19 @@ const OAuthProviderCredentialResponseSchema = z.object({
   credential_id: z.string(),
 });
 
+/**
+ * Auth-header schemes the proxy can stamp on `kind:api_token` calls.
+ * Most modern APIs use `Bearer`; Readwise's REST API requires `Token`;
+ * `Basic` is included for completeness. Anything more exotic (query
+ * params, multi-header schemes) remains a future extension. T-246.
+ *
+ * No Zod default is applied — the field is genuinely optional on the
+ * wire so an omitted body matches the T-241 PR1 credential shape on
+ * disk (no `auth_scheme` field). The proxy's read path defaults to
+ * `Bearer` when the field is absent.
+ */
+const ApiTokenAuthSchemeSchema = z.enum(["Bearer", "Token", "Basic"]);
+
 const ApiTokenCredentialRequestSchema = z.object({
   label: z
     .string()
@@ -73,6 +86,14 @@ const ApiTokenCredentialRequestSchema = z.object({
     .string()
     .min(1, "api_token is required")
     .max(4096, "api_token must be 4096 characters or fewer"),
+  /**
+   * Optional HTTP Authorization scheme. Default `Bearer`. Set to
+   * `Token` for Readwise; `Basic` for upstreams that present the
+   * token as a basic-auth password. The proxy stamps
+   * `Authorization: <scheme> <api_token>` verbatim — no encoding
+   * applied (the operator pre-encodes if a Basic scheme needs it).
+   */
+  auth_scheme: ApiTokenAuthSchemeSchema.optional(),
 });
 
 const ApiTokenCredentialResponseSchema = z.object({
@@ -263,15 +284,24 @@ export function credentialRoutes(storage: Storage) {
       SECRET_INFO.connectionOauthToken,
     );
 
+    // Persist `auth_scheme` only when explicitly supplied — a missing
+    // field defaults to `Bearer` at proxy-read time. Keeps the shape
+    // backward-compatible with the api_token credentials minted under
+    // T-241 PR1 (no `auth_scheme` field on disk).
+    const apiTokenConfig: Record<string, unknown> = {
+      upstream_base_url: body.upstream_base_url,
+    };
+    if (body.auth_scheme !== undefined) {
+      apiTokenConfig.auth_scheme = body.auth_scheme;
+    }
+
     const credential = await storage.items.create(
       {
         type: "system.credential",
         properties: {
           label: body.label,
           kind: "api_token",
-          api_token_config: {
-            upstream_base_url: body.upstream_base_url,
-          },
+          api_token_config: apiTokenConfig,
           secret_encrypted,
         },
       },

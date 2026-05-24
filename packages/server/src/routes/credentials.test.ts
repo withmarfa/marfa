@@ -290,6 +290,51 @@ describe("POST /credentials/api-token — happy path", () => {
     expect(res.status).toBe(201);
   });
 
+  it("persists auth_scheme on api_token_config when supplied (T-246)", async () => {
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: ctx.adminKey,
+      body: {
+        ...VALID_API_TOKEN_BODY,
+        label: "Readwise (auth_scheme Token)",
+        upstream_base_url: "https://readwise.io",
+        auth_scheme: "Token",
+      },
+    });
+    expect(res.status).toBe(201);
+    const { credential_id } = (await res.json()) as { credential_id: string };
+    const credential = await ctx.storage.items.get(credential_id);
+    expect(
+      (credential?.properties as { api_token_config: Record<string, unknown> })
+        .api_token_config,
+    ).toEqual({
+      upstream_base_url: "https://readwise.io",
+      auth_scheme: "Token",
+    });
+  });
+
+  it("omits auth_scheme on api_token_config when not supplied — proxy falls back to Bearer", async () => {
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: ctx.adminKey,
+      body: { ...VALID_API_TOKEN_BODY, label: "Default scheme" },
+    });
+    expect(res.status).toBe(201);
+    const { credential_id } = (await res.json()) as { credential_id: string };
+    const credential = await ctx.storage.items.get(credential_id);
+    const cfg = (
+      credential?.properties as { api_token_config: Record<string, unknown> }
+    ).api_token_config;
+    expect(cfg).not.toHaveProperty("auth_scheme");
+    expect(cfg.upstream_base_url).toBe(VALID_API_TOKEN_BODY.upstream_base_url);
+  });
+
+  it("rejects unknown auth_scheme values with 400", async () => {
+    const res = await request(ctx.app, "POST", "/credentials/api-token", {
+      key: ctx.adminKey,
+      body: { ...VALID_API_TOKEN_BODY, auth_scheme: "Negotiate" },
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("writes a credential.api_token.create audit row without leaking the token", async () => {
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
       key: ctx.adminKey,
