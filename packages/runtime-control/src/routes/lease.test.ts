@@ -121,7 +121,7 @@ describe("POST /lease/:connection_id/runtime (T-260)", () => {
       env,
     );
     expect(res.status).toBe(503);
-    const json = (await res.json()) as { error: string };
+    const json = await res.json<{ error: string }>();
     expect(json.error).toBe("control_plane_misconfigured");
   });
 });
