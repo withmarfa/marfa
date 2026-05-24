@@ -385,6 +385,10 @@ The metadata layer's `extensions` map is a free-form JSON sidecar keyed by names
 
 Reserved namespaces are documented here so accidental general-purpose use ("just stash some stuff") doesn't conflict with platform semantics. Application-defined extensions should use namespaced keys that don't collide with reserved roots.
 
+## Per-connection upstream_base_url override (T-254)
+
+`connection.properties.configuration.upstream_base_url_override` is a per-connection knob the connection-proxy consults before falling back to the credential's `upstream_base_url`. Lets multiple integrations sharing one OAuth credential target different upstream hosts — e.g. `google.contacts` on `people.googleapis.com` while `google.calendar` / `drive` / `tasks` use the same credential row pointing at `www.googleapis.com`. Per-connection rather than per-credential because the override is part of the install-time decision, not the credential's identity. Malformed values (not parseable as a URL) fail loud with `OAUTH_PROXY_UPSTREAM_INVALID` rather than silently routing to the credential's host. Trust model is unchanged from the broader proxy gate — only tenant-admin can install / configure a connection.
+
 ## Tests
 
 `pnpm test` from the monorepo root, or `pnpm test:fresh-sqlite` / `pnpm test:pg` for the dialect matrices. Integration tests use `createTestContext()` from `src/test-utils.ts` — boots an in-process app against a `:memory:` SQLite or a throw-away `postgres:17` container.

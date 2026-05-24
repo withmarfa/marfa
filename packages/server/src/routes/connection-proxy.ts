@@ -214,6 +214,48 @@ async function readCredentialConfig(
 }
 
 /**
+ * T-254 — resolve the effective upstream base URL for a proxy call.
+ *
+ * Consults `connection.properties.configuration.upstream_base_url_override`
+ * first; falls back to the credential's `upstream_base_url`. Malformed
+ * overrides fail loud rather than silently falling back — a misconfigured
+ * connection should surface clearly, not silently route to the wrong host.
+ *
+ * Per-connection rather than per-credential so multiple integrations
+ * sharing one OAuth credential can target different upstream hosts. The
+ * canonical case: google.contacts uses `https://people.googleapis.com`
+ * while google.calendar / drive / tasks share the same Google OAuth
+ * credential with `https://www.googleapis.com`. Per-connection is the
+ * right scope because the override is part of the install-time decision,
+ * not the credential's identity.
+ */
+function resolveUpstreamBaseUrl(
+  connection: Item,
+  config: OAuthConfig | ApiTokenConfig,
+): string {
+  const configuration = (
+    connection.properties as {
+      configuration?: { upstream_base_url_override?: unknown };
+    }
+  ).configuration;
+  const override = configuration?.upstream_base_url_override;
+  if (typeof override === "string" && override.length > 0) {
+    try {
+      // URL constructor throws on invalid input — surface as a clear
+      // misconfiguration error rather than silently falling back.
+      new URL(override);
+    } catch {
+      throw new MymeError(
+        ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
+        `Connection ${connection.id}'s configuration.upstream_base_url_override is not a valid URL: '${override}'`,
+      );
+    }
+    return override;
+  }
+  return config.upstream_base_url;
+}
+
+/**
  * Allow-list of headers the proxy forwards to the upstream from the
  * caller's request. Most other headers are either irrelevant
  * (Host, Content-Length recomputed by fetch) or actively dangerous
@@ -685,6 +727,17 @@ export function connectionProxyRoutes(storage: Storage) {
 
     const config = await readCredentialConfig(storage, connection);
 
+    // T-254: per-connection override consulted before the credential's
+    // upstream_base_url. Lets multiple integrations sharing one OAuth
+    // credential target different upstream hosts (e.g. google.contacts
+    // on people.googleapis.com vs google.calendar/drive/tasks on
+    // www.googleapis.com sharing one google.* OAuth provider row).
+    // Per-connection; only tenant-admin can install / configure a
+    // connection, so the trust model is unchanged from
+    // POST /credentials/api-token already accepting an arbitrary
+    // upstream_base_url.
+    const effectiveBaseUrl = resolveUpstreamBaseUrl(connection, config);
+
     // Derive upstream URL: strip the route prefix from the request path
     // and prepend the configured upstream base URL.
     const prefix = `/connections/${connectionId}/proxy`;
@@ -693,9 +746,7 @@ export function connectionProxyRoutes(storage: Storage) {
       ? reqUrl.pathname.slice(prefix.length)
       : reqUrl.pathname;
     const upstreamUrl =
-      config.upstream_base_url.replace(/\/+$/, "") +
-      upstreamPath +
-      reqUrl.search;
+      effectiveBaseUrl.replace(/\/+$/, "") + upstreamPath + reqUrl.search;
 
     // Read body once — we may retry it after a refresh.
     const bodyBytes = await c.req.raw.arrayBuffer();

@@ -41,30 +41,28 @@ Three operationally significant points the handler has to honour:
   carries the etag the handler last saw; stale etag returns 409, the
   handler refetches and reapplies once.
 
-## Substrate gap — per-host `upstream_base_url`
+## Per-connection upstream_base_url override (T-254)
 
-[!] **People API is hosted at `people.googleapis.com`**, distinct from
-Calendar / Tasks which live under `www.googleapis.com`. The current
-substrate (`system.credential.upstream_base_url` is per-credential, not
-per-call) does not support per-host overrides on a shared credential.
-The integration ships expecting its connection's `credential_ref` to
-point at a People-API-specific OAuth provider credential row —
-`upstream_base_url: "https://people.googleapis.com"` — rather than
-reusing the google.calendar / google.tasks shared row.
+**People API is hosted at `people.googleapis.com`**, distinct from
+Calendar / Tasks / Drive which live under `www.googleapis.com`. T-254
+added `connection.properties.configuration.upstream_base_url_override`
+— a per-connection knob the connection-proxy consults before falling
+back to the credential's `upstream_base_url`. Multiple google.\*
+integrations can now share one OAuth credential row while targeting
+different upstream hosts.
 
 Operator setup (install-time):
 
-1. `POST /credentials/oauth-provider` with the SAME Web client id +
-   secret as the google.calendar shared credential, BUT with
-   `upstream_base_url: "https://people.googleapis.com"` and
-   `oauth_default_scope: "https://www.googleapis.com/auth/contacts"`.
-2. Pass the resulting credential id as `credential_ref` on
-   `POST /connections/install`.
+1. Reuse the existing google.\* shared `system.credential` row via
+   `credential_ref` on `POST /connections/install`. No second
+   credential, no parallel OAuth dance.
+2. Pass `configuration: { upstream_base_url_override: "https://people.googleapis.com" }`
+   on the same install body. The proxy uses the override on every
+   subsequent `POST /connections/:id/proxy/*` call.
 
-A follow-on substrate ticket should add a per-connection
-`upstream_base_url_override` on `connection.properties.configuration`
-so the credential row truly can be shared across every google.\*
-integration. That fix is out of T-237 scope.
+Malformed overrides fail loud with `422 oauth_proxy_upstream_invalid`
+rather than silently falling back — a misconfigured connection should
+surface clearly.
 
 ## Configuration
 
