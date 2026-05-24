@@ -71,6 +71,7 @@ export interface ControlPlaneEnv {
   INTEGRATION_GITHUB_WEBHOOKS?: ServiceBinding;
   INTEGRATION_TASK_AUTO_ARCHIVE?: ServiceBinding;
   INTEGRATION_GOOGLE_CALENDAR?: ServiceBinding;
+  INTEGRATION_GOOGLE_TASKS?: ServiceBinding;
 }
 
 /** Subset of Cloudflare's Fetcher binding (service binding) we use. */

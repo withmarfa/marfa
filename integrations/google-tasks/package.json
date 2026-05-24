@@ -1,0 +1,26 @@
+{
+  "name": "@mymehq/integration-google-tasks",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Bidirectional Google Tasks connector. Schedule trigger polls Tasks' tasks.list with the updatedMin watermark per task list; item-event trigger pushes Myme google.tasks.task / core.task changes back via the OAuth proxy. Reuses the Google OAuth provider credential staged for google.calendar via credential_ref.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@mymehq/runtime-sdk": "workspace:*",
+    "@mymehq/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "@mymehq/runtime-test": "workspace:*",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2",
+    "tsup": "^8.5.1"
+  }
+}
