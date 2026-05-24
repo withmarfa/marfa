@@ -16743,7 +16743,7 @@
             }
           },
           "404": {
-            "description": "Integration not found in this tenant scope.",
+            "description": "Integration not found. Matches both genuinely-missing manifest ids and ids that exist but resolve to a non-`system.integration` item.",
             "content": {
               "application/json": {
                 "schema": {
