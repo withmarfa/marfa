@@ -77,6 +77,7 @@ export async function loadInTreeRegistrations(options: {
     "google-tasks",
     "google-contacts",
     "google-drive",
+    "google-youtube",
     "task-auto-archive",
     "sync",
     "todoist",

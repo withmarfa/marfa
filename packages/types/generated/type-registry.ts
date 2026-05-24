@@ -550,6 +550,72 @@ const googleTasksTask: TypeSchema = {
   display_hints: { title_field: "title", body_field: "notes" },
 };
 
+const googleYoutubeChannel: TypeSchema = {
+  id: "google.youtube.channel",
+  label: "YouTube Channel",
+  description: "A YouTube channel — surfaced when the connected user has subscribed to it OR when it owns a liked video / user playlist (T-249). Captures upstream-fidelity channel metadata from the YouTube Data API v3 `channels` resource. `subscribed_at` carries the time the connected user subscribed (when known); for channels that are merely the owner of a liked video this field is absent.",
+  version: 1,
+  fields: {
+    channel_id: { type: "string", description: "YouTube channel id — the stable handle used in canonical channel URLs (`https://www.youtube.com/channel/<channel_id>`). The external id on the cursor mapping.", required: true },
+    title: { type: "string", description: "Channel display name (maps to `snippet.title`).", required: true },
+    description: { type: "string", description: "Channel description / about text (maps to `snippet.description`)." },
+    custom_url: { type: "string", description: "Vanity URL slug when set (maps to `snippet.customUrl`)." },
+    published_at: { type: "datetime", description: "Channel creation timestamp (maps to `snippet.publishedAt`) — RFC 3339." },
+    thumbnail_url: { type: "url", description: "Best-available channel avatar URL — picks the highest-resolution variant present (`maxres > standard > high > medium > default`)." },
+    subscriber_count: { type: "number", description: "Subscriber count at the time of last fetch (maps to `statistics.subscriberCount`, parsed to a number). May be hidden by the channel owner." },
+    video_count: { type: "number", description: "Public video count at the time of last fetch (maps to `statistics.videoCount`, parsed to a number)." },
+    view_count: { type: "number", description: "Channel-lifetime view count (maps to `statistics.viewCount`, parsed to a number)." },
+    subscribed_at: { type: "datetime", description: "Timestamp the connected user subscribed to this channel (maps to `subscriberSnippet.subscribedAt`). Absent when the channel was surfaced solely as the owner of a liked video / playlist rather than via a subscription." },
+    html_link: { type: "url", description: "Canonical channel URL on YouTube — `https://www.youtube.com/channel/<channel_id>`." },
+  },
+  display_hints: { title_field: "title", body_field: "description" },
+};
+
+const googleYoutubePlaylist: TypeSchema = {
+  id: "google.youtube.playlist",
+  label: "YouTube Playlist",
+  description: "A YouTube playlist created by the connected user (T-249). Captures upstream-fidelity playlist metadata from the YouTube Data API v3 `playlists` resource. The owning channel is wired via a `parent-of` edge (channel = source, playlist = target). When the connection's `materialise_playlists` configuration flag is true, the per-playlist video walk wires additional `parent-of` edges from this playlist to each member video.",
+  version: 1,
+  fields: {
+    playlist_id: { type: "string", description: "YouTube playlist id — used in canonical URLs (`https://www.youtube.com/playlist?list=<playlist_id>`). The external id on the cursor mapping.", required: true },
+    title: { type: "string", description: "Playlist title (maps to `snippet.title`).", required: true },
+    description: { type: "string", description: "Free-text playlist description (maps to `snippet.description`)." },
+    channel_id: { type: "string", description: "YouTube id of the owning channel (maps to `snippet.channelId`). The corresponding `google.youtube.channel` item is wired via a `parent-of` edge (channel = source, playlist = target)." },
+    item_count: { type: "number", description: "Number of videos in the playlist at the time of last fetch (maps to `contentDetails.itemCount`)." },
+    privacy_status: { type: "enum", description: "Playlist visibility (maps to `status.privacyStatus`).", enum_values: ["public", "unlisted", "private"] },
+    published_at: { type: "datetime", description: "Playlist creation timestamp (maps to `snippet.publishedAt`) — RFC 3339." },
+    thumbnail_url: { type: "url", description: "Best-available thumbnail URL — picks the highest-resolution variant present (`maxres > standard > high > medium > default`)." },
+    etag: { type: "string", description: "YouTube Data API change-detection token. Cached on the cursor's `playlist_etags` map; an unchanged etag skips the per-playlist video walk on the next sweep." },
+    html_link: { type: "url", description: "Canonical playlist URL on YouTube — `https://www.youtube.com/playlist?list=<playlist_id>`." },
+  },
+  display_hints: { title_field: "title", body_field: "description" },
+};
+
+const googleYoutubeVideo: TypeSchema = {
+  id: "google.youtube.video",
+  label: "YouTube Video",
+  description: "A YouTube video — liked by the connected user or surfaced via a walked user-created playlist (T-249). Mirrors the YouTube Data API v3 `videos` resource at upstream fidelity. `liked_at` is a property on the video (sourced from the liked-playlist item's `snippet.publishedAt`), NOT modelled as an edge.",
+  version: 1,
+  fields: {
+    video_id: { type: "string", description: "YouTube video id — the 11-character handle used in canonical watch URLs (`https://www.youtube.com/watch?v=<video_id>`). Used as the external id on the cursor mapping.", required: true },
+    title: { type: "string", description: "Video title (maps to `snippet.title`).", required: true },
+    description: { type: "string", description: "Free-text video description (maps to `snippet.description`)." },
+    channel_id: { type: "string", description: "YouTube id of the channel that owns this video (maps to `snippet.channelId`). The corresponding `google.youtube.channel` item is wired via a `parent-of` edge (channel = source, video = target)." },
+    channel_title: { type: "string", description: "Display name of the owning channel at the time of fetch (maps to `snippet.channelTitle`). Cached for display; not authoritative — the canonical name lives on the linked channel item." },
+    published_at: { type: "datetime", description: "Original publish timestamp from `snippet.publishedAt` — RFC 3339." },
+    liked_at: { type: "datetime", description: "Timestamp the connected user liked this video. Sourced from the liked-playlist item's `snippet.publishedAt`, which YouTube uses to record like-time on that magic playlist." },
+    duration_iso8601: { type: "string", description: "Video duration in ISO 8601 duration format (e.g. `PT4M13S`). Maps to `contentDetails.duration`." },
+    view_count: { type: "number", description: "View count at the time of last fetch (maps to `statistics.viewCount`, parsed to a number)." },
+    like_count: { type: "number", description: "Like count at the time of last fetch (maps to `statistics.likeCount`, parsed to a number). May be absent when the upstream has hidden it." },
+    thumbnail_url: { type: "url", description: "Best-available thumbnail URL — picks the highest-resolution variant present (`maxres > standard > high > medium > default`)." },
+    tags: { type: "array", description: "Free-form tags assigned by the uploader (maps to `snippet.tags`).", items_type: "string" },
+    category_id: { type: "string", description: "YouTube category id (maps to `snippet.categoryId`). Numeric string per the v3 API." },
+    default_audio_language: { type: "string", description: "BCP-47 language code for the video's default audio track (maps to `snippet.defaultAudioLanguage`)." },
+    html_link: { type: "url", description: "Canonical watch URL on YouTube — `https://www.youtube.com/watch?v=<video_id>`." },
+  },
+  display_hints: { title_field: "title", body_field: "description" },
+};
+
 const coreMediaAlbum: TypeSchema = {
   id: "core.media.album",
   parent: "core.media",
@@ -777,6 +843,9 @@ export const ALL_TYPES: TypeSchema[] = [
   googleContactsContact,
   googleDriveFile,
   googleTasksTask,
+  googleYoutubeChannel,
+  googleYoutubePlaylist,
+  googleYoutubeVideo,
   coreMediaAlbum,
   coreMediaArticle,
   coreMediaBook,

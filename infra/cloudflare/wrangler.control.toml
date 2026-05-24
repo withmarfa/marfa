@@ -177,6 +177,10 @@ binding = "INTEGRATION_GOOGLE_CONTACTS"
 service = "myme-integration-google-contacts-staging"
 
 [[env.staging.services]]
+binding = "INTEGRATION_GOOGLE_YOUTUBE"
+service = "myme-integration-google-youtube-staging"
+
+[[env.staging.services]]
 binding = "INTEGRATION_TODOIST_TASKS"
 service = "myme-integration-todoist-tasks-staging"
 
@@ -229,6 +233,10 @@ service = "myme-integration-google-drive-prod"
 [[env.prod.services]]
 binding = "INTEGRATION_GOOGLE_CONTACTS"
 service = "myme-integration-google-contacts-prod"
+
+[[env.prod.services]]
+binding = "INTEGRATION_GOOGLE_YOUTUBE"
+service = "myme-integration-google-youtube-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_TODOIST_TASKS"

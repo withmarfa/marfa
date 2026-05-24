@@ -1,0 +1,103 @@
+#:schema node_modules/wrangler/config-schema.json
+# Per-Integration Worker for google.youtube (YouTube Data API v3).
+#
+# Single trigger type — schedule (hourly sweep across likes,
+# subscriptions, and user-created playlists). One queue family —
+# scheduled-poll + DLQ. NO reactive-run queue (no item-event
+# trigger; this integration is inbound-only). NO webhook-receipt
+# queue (YouTube Data API has no push-notification surface for the
+# liked-videos / subscriptions / playlists collections used here).
+
+name = "myme-integration-google-youtube"
+main = "src/worker.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+INTEGRATION_NAME = "google.youtube"
+MANIFEST_CRON = "0 * * * *"
+ENVIRONMENT = "dev"
+
+[[durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+# ---- Staging --------------------------------------------------------------
+[env.staging]
+name = "myme-integration-google-youtube-staging"
+
+[env.staging.vars]
+INTEGRATION_NAME = "google.youtube"
+MANIFEST_CRON = "0 * * * *"
+ENVIRONMENT = "staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-google-youtube-staging"
+
+[[env.staging.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "myme-scheduled-poll-google-youtube-staging-dlq"
+
+[[env.staging.queues.consumers]]
+queue = "myme-scheduled-poll-google-youtube-staging"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "myme-scheduled-poll-google-youtube-staging-dlq"
+
+# ---- Prod -----------------------------------------------------------------
+[env.prod]
+name = "myme-integration-google-youtube-prod"
+
+[env.prod.vars]
+INTEGRATION_NAME = "google.youtube"
+MANIFEST_CRON = "0 * * * *"
+ENVIRONMENT = "prod"
+
+[[env.prod.durable_objects.bindings]]
+name = "PER_CONNECTION_STATE"
+class_name = "PerConnectionState"
+
+[[env.prod.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PerConnectionState"]
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_QUEUE"
+queue = "myme-scheduled-poll-google-youtube-prod"
+
+[[env.prod.queues.producers]]
+binding = "SCHEDULED_POLL_DLQ_QUEUE"
+queue = "myme-scheduled-poll-google-youtube-prod-dlq"
+
+[[env.prod.queues.consumers]]
+queue = "myme-scheduled-poll-google-youtube-prod"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 6
+dead_letter_queue = "myme-scheduled-poll-google-youtube-prod-dlq"
+
+# Secrets (`wrangler secret put --env <env>`):
+#   - MYME_API_URL
+#   - MYME_RUNTIME_CONTROL_URL
+#   - MYME_RUNTIME_BROKER_KEY
+#
+# Required for the queue consumer to mint per-Connection runtime
+# credentials via the control plane's `/lease/:connection_id/runtime`
+# broker. Without them the consumer throws on first dispatch and the
+# error surfaces only via console.error (T-255). Use the helper at
+# `infra/cloudflare/scripts/init-integration-worker-secrets.sh` to
+# set all three from your local secrets.env on first deploy.

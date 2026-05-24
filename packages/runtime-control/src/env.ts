@@ -98,6 +98,7 @@ export interface ControlPlaneEnv {
   INTEGRATION_GOOGLE_TASKS?: ServiceBinding;
   INTEGRATION_GOOGLE_DRIVE?: ServiceBinding;
   INTEGRATION_GOOGLE_CONTACTS?: ServiceBinding;
+  INTEGRATION_GOOGLE_YOUTUBE?: ServiceBinding;
   INTEGRATION_TODOIST_TASKS?: ServiceBinding;
   INTEGRATION_READWISE?: ServiceBinding;
   INTEGRATION_RAINDROP?: ServiceBinding;

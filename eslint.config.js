@@ -34,7 +34,7 @@ export default [
           // email-worker subpackage that contributes a vitest.config
           // through the `integrations/*/email-worker/vitest.config.ts`
           // allowDefaultProject glob).
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 41,
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 43,
         },
         tsconfigRootDir: import.meta.dirname,
       },
