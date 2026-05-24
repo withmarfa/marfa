@@ -156,6 +156,44 @@ const coreNote: TypeSchema = {
   merge_policy: { fields: { body: "keep_both_copies", notes: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
+const readwiseBook: TypeSchema = {
+  id: "readwise.book",
+  label: "Readwise Book",
+  description: "A source book / article / tweet / podcast in Readwise — the parent that highlights belong to. One row per Readwise `user_book_id`; matches Readwise's `/export/` book payload fields verbatim for upstream fidelity.",
+  version: 1,
+  fields: {
+    title: { type: "string", description: "Book / article / tweet title (maps to Readwise `title`).", required: true },
+    author: { type: "string", description: "Author name (maps to Readwise `author`)." },
+    category: { type: "enum", description: "Source category — books | articles | tweets | podcasts (maps to Readwise `category`).", enum_values: ["books", "articles", "tweets", "podcasts"] },
+    readwise_source: { type: "string", description: "How the highlight was imported — e.g. `kindle`, `instapaper`, `manual` (maps to Readwise `source`). Field-renamed to avoid shadowing the first-class `source` column on the items table." },
+    source_url: { type: "url", description: "Stable URL of the original source." },
+    cover_image_url: { type: "url", description: "Book / article cover image (maps to Readwise `cover_image_url`)." },
+    num_highlights: { type: "integer", description: "Number of highlights Readwise had captured for this source at sync time." },
+    updated: { type: "datetime", description: "Readwise `updated` timestamp — when the book metadata last changed upstream." },
+  },
+  display_hints: { title_field: "title" },
+};
+
+const readwiseHighlight: TypeSchema = {
+  id: "readwise.highlight",
+  label: "Readwise Highlight",
+  description: "A highlight / annotation captured in Readwise. The highlight text is the body; the user's personal `note` is an attached annotation. `compatible_with: core.note` because a highlight is structurally a note with a quoted body.",
+  version: 1,
+  fields: {
+    text: { type: "string", description: "Highlight body (the actual quoted text). Required; no separate title.", required: true },
+    note: { type: "string", description: "User's personal annotation on the highlight (maps to Readwise `note`)." },
+    location: { type: "integer", description: "Numerical location within the source (maps to Readwise `location` — meaning depends on `location_type`)." },
+    location_type: { type: "enum", description: "What `location` means — page | location (Kindle) | offset | order | time_offset (podcast) | none.", enum_values: ["page", "location", "offset", "order", "time_offset", "none"] },
+    color: { type: "string", description: "Highlight colour as reported by Readwise (e.g. `yellow`, `blue`)." },
+    tags: { type: "array", description: "Free-form tags attached to the highlight (maps to Readwise `tags`).", items_type: "string" },
+    highlighted_at: { type: "datetime", description: "When the user highlighted the source." },
+    updated: { type: "datetime", description: "Readwise `updated` timestamp — when the highlight last changed upstream." },
+    url: { type: "url", description: "Deep link to the highlight on readwise.io" },
+    book_id: { type: "string", description: "External Readwise `user_book_id` of the parent book. Read-only; persisted alongside the typed `parent-of` edge so consumers can look up the parent book without traversing edges." },
+  },
+  display_hints: { title_field: "text", body_field: "note" },
+};
+
 const coreTask: TypeSchema = {
   id: "core.task",
   label: "Task",
@@ -655,6 +693,8 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMedia,
   coreMessage,
   coreNote,
+  readwiseBook,
+  readwiseHighlight,
   coreTask,
   todoistTask,
   coreEntityPerson,
