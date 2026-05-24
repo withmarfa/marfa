@@ -1067,3 +1067,98 @@ describe("POST /connections/:id/proxy/* — kind:api_token auth_scheme (T-246)",
     expect(res.status).toBe(200);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T-254 — per-connection upstream_base_url override
+// ---------------------------------------------------------------------------
+
+describe("POST /connections/:id/proxy/* — upstream_base_url_override (T-254)", () => {
+  it("routes via connection.properties.configuration.upstream_base_url_override when set, ignoring the credential's upstream_base_url", async () => {
+    // Mint a credential whose upstream_base_url points at host A.
+    const credentialId = await createCredential({
+      upstream_base_url: "https://shared-host.test",
+    });
+
+    // Connect with credential_ref pointing at that credential, BUT set a
+    // per-connection override pointing at host B. The proxy MUST route to
+    // host B — that's the whole point of the override.
+    const connRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: "google.contacts",
+          credential_ref: credentialId,
+          configuration: {
+            upstream_base_url_override: "https://people.googleapis.com",
+          },
+        },
+      },
+    });
+    expect(connRes.status).toBe(201);
+    const connBody = (await connRes.json()) as ItemResponse;
+    const connectionId = connBody.item.id;
+    await seedToken(connectionId);
+
+    const fetchState = installFetchScript([
+      ({ url }) => {
+        // Override wins — request lands at people.googleapis.com, not
+        // shared-host.test (the credential's URL).
+        expect(url).toBe("https://people.googleapis.com/people/me");
+        return jsonResponse(200, { ok: true });
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/connections/${connectionId}/proxy/people/me`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    expect(fetchState.calls).toBe(1);
+  });
+
+  it("returns 422 OAUTH_PROXY_UPSTREAM_INVALID when override is malformed (fail loud, no silent fallback)", async () => {
+    const credentialId = await createCredential({
+      upstream_base_url: "https://shared-host.test",
+    });
+    const connRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: "google.contacts",
+          credential_ref: credentialId,
+          configuration: {
+            upstream_base_url_override: "not-a-url",
+          },
+        },
+      },
+    });
+    expect(connRes.status).toBe(201);
+    const connBody = (await connRes.json()) as ItemResponse;
+    const connectionId = connBody.item.id;
+    await seedToken(connectionId);
+
+    // No fetch should ever fire — the override is rejected before the
+    // upstream URL is built.
+    installFetchScript([]);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/connections/${connectionId}/proxy/people/me`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error?: { code?: string } };
+    expect(body.error?.code).toBe("oauth_proxy_upstream_invalid");
+  });
+});

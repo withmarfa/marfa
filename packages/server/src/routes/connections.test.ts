@@ -194,6 +194,36 @@ describe("POST /connections/install — happy path", () => {
     expect(props.integration_ref).toBe(integration.id);
   });
 
+  it("threads body.configuration onto the new connection's properties.configuration (T-254)", async () => {
+    // Install-time configuration seed — the connection's
+    // `configuration` bag is otherwise stamped as an empty object by
+    // the install-pipeline. T-254 routes the body field through the
+    // install-pipeline so server-side callers can populate per-
+    // connection knobs (e.g. `upstream_base_url_override`) in one
+    // round-trip instead of install + PATCH.
+    const integration = await createIntegration();
+    const res = await request(ctx.app, "POST", "/connections/install", {
+      key: ctx.adminKey,
+      body: {
+        integration_id: integration.id,
+        configuration: {
+          upstream_base_url_override: "https://people.googleapis.com",
+          custom_knob: 42,
+        },
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as InstallResponse;
+    const conn = await ctx.storage.items.get(body.connection_id, undefined);
+    const config = (
+      conn?.properties as { configuration?: Record<string, unknown> }
+    ).configuration;
+    expect(config).toMatchObject({
+      upstream_base_url_override: "https://people.googleapis.com",
+      custom_knob: 42,
+    });
+  });
+
   it("uses the explicit label on the seed credential when provided, falling back to manifest name + version otherwise", async () => {
     // The install pipeline stamps `label` onto the seed runtime credential
     // (install-pipeline.ts:198) rather than onto the connection's

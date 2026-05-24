@@ -70,6 +70,13 @@ const InstallRequestSchema = z.object({
    *  `google.calendar` + `google.tasks`) share one OAuth client config.
    *  Create such credentials via `POST /credentials/oauth-provider`. */
   credential_ref: z.string().optional(),
+  /** T-254 — optional seed for the new connection's
+   *  `properties.configuration` bag. Free-form per-integration knobs
+   *  (e.g. `upstream_base_url_override` for connections sharing one
+   *  OAuth credential across different upstream hosts). Merged over
+   *  the empty default at install time so callers don't need a
+   *  follow-on `PATCH /items/:id` round-trip. */
+  configuration: z.record(z.string(), z.unknown()).optional(),
 });
 
 const InstallResultSchema = z.object({
@@ -84,7 +91,7 @@ const installRoute = createRoute({
   tags: ["Connections"],
   summary: "Install an integration",
   description:
-    "Server-side sibling of the browser consent flow at `POST /integrations/:id/install`. Skips the HTML consent screen — admin-only — so operators and tooling can install connections non-interactively. Body carries `integration_id` and an optional `label`. Returns the connection id, the seed runtime credential id, and the system.activity row id from the install pipeline. Same compensating-write pipeline as the HTML path; same audit trail.",
+    "Server-side sibling of the browser consent flow at `POST /integrations/:id/install`. Skips the HTML consent screen — admin-only — so operators and tooling can install connections non-interactively. Body carries `integration_id`, an optional `label`, an optional `credential_ref`, and an optional `configuration` bag that seeds the new connection's `properties.configuration` (e.g. `upstream_base_url_override` for per-host upstream targeting). Returns the connection id, the seed runtime credential id, and the system.activity row id from the install pipeline. Same compensating-write pipeline as the HTML path; same audit trail.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -344,6 +351,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
       integration_id,
       label,
       credential_ref: credentialRef,
+      configuration,
     } = c.req.valid("json");
     const tenantId = apiKey.tenant_id ?? undefined;
     const clientIp = c.var.clientIp;
@@ -385,6 +393,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
       label: effectiveLabel,
       clientIp,
       ...(credentialRef !== undefined ? { credentialRef } : {}),
+      ...(configuration !== undefined ? { configuration } : {}),
     });
 
     // Best-effort: arm the schedule alarm if the manifest has a schedule
