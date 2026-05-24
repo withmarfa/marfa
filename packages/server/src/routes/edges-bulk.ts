@@ -82,6 +82,7 @@ const BulkEdgeResponseSchema = z.object({
 const edgesBulkRoute = createRoute({
   method: "post",
   path: "/bulk",
+  operationId: "bulkUpsertEdges",
   tags: ["Edges"],
   summary: "Bulk upsert edges",
   description:
