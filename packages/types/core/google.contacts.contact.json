@@ -1,0 +1,91 @@
+{
+  "id": "google.contacts.contact",
+  "label": "Google Contact",
+  "description": "A contact (person) from Google Contacts, captured with upstream fidelity. Mirrors the People API person resource — names, email addresses, phone numbers, postal addresses, organisations, biographies, etag — so a round-trip preserves what Google considers authoritative. For cross-app interop with non-Google consumers, the Google Contacts integration can also be configured to write to `core.entity.person` instead, but the default and the fidelity choice is this type.",
+  "version": 1,
+  "compatible_with": ["core.entity.person"],
+  "fields": {
+    "title": {
+      "type": "string",
+      "description": "Display name (maps to People API `names[0].displayName`). Falls back to a join of given+family names."
+    },
+    "given_name": {
+      "type": "string",
+      "description": "Given (first) name (maps to `names[0].givenName`)."
+    },
+    "family_name": {
+      "type": "string",
+      "description": "Family (last) name (maps to `names[0].familyName`)."
+    },
+    "middle_name": {
+      "type": "string",
+      "description": "Middle name (maps to `names[0].middleName`)."
+    },
+    "prefix": {
+      "type": "string",
+      "description": "Honorific prefix — Dr / Mr / Prof (maps to `names[0].honorificPrefix`)."
+    },
+    "suffix": {
+      "type": "string",
+      "description": "Honorific suffix — PhD / Jr / OBE (maps to `names[0].honorificSuffix`)."
+    },
+    "nickname": {
+      "type": "string",
+      "description": "Familiar name or alias (maps to `nicknames[0].value`)."
+    },
+    "emails": {
+      "type": "array",
+      "items_type": "string",
+      "description": "Email addresses. Each entry is a JSON-encoded object: `{ value, type, formattedType }`. Round-trips the full People API `emailAddresses` array."
+    },
+    "phones": {
+      "type": "array",
+      "items_type": "string",
+      "description": "Phone numbers. Each entry is a JSON-encoded object: `{ value, type, formattedType }`. Round-trips the full People API `phoneNumbers` array."
+    },
+    "addresses": {
+      "type": "array",
+      "items_type": "string",
+      "description": "Postal addresses. Each entry is a JSON-encoded object with the full People API `addresses` shape — `{ formattedValue, type, streetAddress, city, region, postalCode, country, countryCode }`."
+    },
+    "organization": {
+      "type": "string",
+      "description": "Primary employer / organisation name (maps to `organizations[0].name`)."
+    },
+    "job_title": {
+      "type": "string",
+      "description": "Job title within the primary organisation (maps to `organizations[0].title`)."
+    },
+    "department": {
+      "type": "string",
+      "description": "Department within the primary organisation (maps to `organizations[0].department`)."
+    },
+    "biography": {
+      "type": "string",
+      "description": "Free-text biography / notes about the contact (maps to `biographies[0].value`)."
+    },
+    "birthday": {
+      "type": "string",
+      "description": "Date of birth — ISO 8601 (YYYY-MM-DD or YYYY when year is unknown). Reconstructed from People API `birthdays[0].date.{year,month,day}`.",
+      "format": "date"
+    },
+    "photo_url": {
+      "type": "string",
+      "description": "Reference URL to the contact's photo (maps to `photos[0].url`). Stored as a URL only — no blob ingest in v1.",
+      "format": "url"
+    },
+    "etag": {
+      "type": "string",
+      "description": "People API change-detection token. Used as the content-hash key for echo suppression AND threaded into outbound updates as the `etag` field for optimistic-concurrency (stale etag → 409, handler refetches and reapplies)."
+    },
+    "resource_name": {
+      "type": "string",
+      "description": "Stable People API resource id — typically `people/c<digits>`. Used as the external_id on the cursor mapping."
+    }
+  },
+  "required": ["title"],
+  "display_hints": {
+    "title_field": "title",
+    "body_field": "biography"
+  }
+}
