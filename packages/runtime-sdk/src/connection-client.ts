@@ -216,6 +216,21 @@ export class ConnectionClient {
     return wrapper.item;
   }
 
+  /** POST /edges — create a typed edge between two items. Direction
+   *  is edge-type-specific — e.g. for `parent-of` the source is parent
+   *  and the target is child. Returns the server-assigned edge id.
+   *  The substrate enforces edge_permissions; the runtime credential
+   *  needs the edge_type in its `edge_permissions` map (see
+   *  manifest.permissions.edge). */
+  async createEdge(input: {
+    source_id: string;
+    target_id: string;
+    edge_type: string;
+    properties?: Record<string, unknown>;
+  }): Promise<{ id: string }> {
+    return this.request<{ id: string }>("POST", "/edges", input);
+  }
+
   /** POST/GET/PATCH/DELETE through the connection-proxy route, forwarding
    *  the runtime credential. Server's wildcard `/connections/:id/proxy/*`
    *  passes through to the upstream service with the connector's stored
