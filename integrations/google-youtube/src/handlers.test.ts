@@ -314,8 +314,7 @@ describe("google-youtube handleSchedule", () => {
           // else (`order=newest` → 400). Matcher asserts the param
           // is absent; a regression that re-adds it falls through to
           // the no-route 500.
-          match: (p) =>
-            p.includes("/subscriptions?") && !p.includes("order="),
+          match: (p) => p.includes("/subscriptions?") && !p.includes("order="),
           respond: () => jsonResponse(subscriptions),
         },
         {
