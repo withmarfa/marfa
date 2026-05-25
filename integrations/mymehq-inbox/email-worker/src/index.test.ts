@@ -27,7 +27,7 @@ function makeEmail(overrides: Partial<Email>): Email {
 describe("buildEnvelope", () => {
   it("constructs the wire shape from a fully-populated postal-mime parse", () => {
     const parsed = makeEmail({
-      from: { name: "August Cayzer", address: "august@cayzer.me" },
+      from: { name: "Test Sender", address: "sender@example.com" },
       to: [{ name: "", address: "capture@inbox.myme.so" }],
       subject: "Test capture",
       text: "Plain body",
@@ -70,13 +70,13 @@ describe("buildEnvelope", () => {
     });
 
     const envelope = buildEnvelope(
-      { from: "august@cayzer.me", to: "capture@inbox.myme.so" },
+      { from: "sender@example.com", to: "capture@inbox.myme.so" },
       parsed,
     );
 
     expect(envelope.from).toEqual({
-      address: "august@cayzer.me",
-      name: "August Cayzer",
+      address: "sender@example.com",
+      name: "Test Sender",
     });
     expect(envelope.to).toBe("capture@inbox.myme.so");
     expect(envelope.subject).toBe("Test capture");
@@ -178,7 +178,7 @@ describe("email() — Service-Binding dispatch (T-250)", () => {
   } {
     const bytes = new TextEncoder().encode(rawRfc822);
     return {
-      from: "august@cayzer.me",
+      from: "sender@example.com",
       to: "capture@inbox.myme.so",
       raw: new ReadableStream({
         start(controller) {
@@ -190,10 +190,10 @@ describe("email() — Service-Binding dispatch (T-250)", () => {
   }
 
   const RFC822 = [
-    "From: august@cayzer.me",
+    "From: sender@example.com",
     "To: capture@inbox.myme.so",
     "Subject: T-250 dispatch smoke",
-    "Message-ID: <t250-smoke@cayzer.me>",
+    "Message-ID: <t250-smoke@example.com>",
     "Date: Sun, 24 May 2026 20:00:00 +0000",
     "Content-Type: text/plain; charset=utf-8",
     "",
@@ -228,7 +228,7 @@ describe("email() — Service-Binding dispatch (T-250)", () => {
     // Headers: signature shape + delivery id from Message-ID
     expect(sent.headers.get("Content-Type")).toBe("application/json");
     expect(sent.headers.get("X-Myme-Delivery-Id")).toBe(
-      "<t250-smoke@cayzer.me>",
+      "<t250-smoke@example.com>",
     );
     expect(sent.headers.get("X-Myme-Signature")).toMatch(
       /^sha256=[0-9a-f]{64}$/,
@@ -236,7 +236,7 @@ describe("email() — Service-Binding dispatch (T-250)", () => {
     // Body: a parseable envelope with the expected subject
     const body = await sent.json<{ subject: string; message_id: string }>();
     expect(body.subject).toBe("T-250 dispatch smoke");
-    expect(body.message_id).toBe("<t250-smoke@cayzer.me>");
+    expect(body.message_id).toBe("<t250-smoke@example.com>");
   });
 
   it("ACKs (returns without throwing) when the binding rejects with a non-2xx", async () => {

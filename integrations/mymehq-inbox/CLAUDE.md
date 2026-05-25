@@ -14,7 +14,7 @@ Email Worker holds and the Myme server stores on the connection's
 ## Pipeline
 
 ```
-august@cayzer.me
+sender@example.com
       │ (SMTP)
       ▼
 inbox.myme.so (MX → Cloudflare)
@@ -154,5 +154,5 @@ Local validation does NOT require real DNS — the harness simulates
 the inbound by POSTing a signed payload directly to the staging
 server's `/runtime/webhook/:connection_id` endpoint, mimicking what
 the Email Worker would emit. The real end-to-end test (real DNS,
-real CF Email Routing, real email send from `august@cayzer.me`) is
+real CF Email Routing, real email send from a real sender mailbox) is
 done as the final stage of the T-244 validation log.
