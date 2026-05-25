@@ -23,14 +23,21 @@
  *     user's Drive (filtered by `trashed=false`). The harness
  *     against Oblix is small; production deployments would want a
  *     configurable initial-sync bound.
- *   - **Blob handling — metadata-only in v1.** Default
- *     `download_mode = "metadata"` reads file metadata into Myme
- *     `google.drive.file` items but does NOT download binary
- *     content. The `all-files` and `glob:<pattern>` modes are
- *     declared in `connection.properties.configuration` shape but
- *     **gated on a substrate addition**: ConnectionClient does not
- *     yet expose `uploadBlob`. Documented in
- *     `integrations/google-drive/CLAUDE.md`.
+ *   - **Blob handling — `metadata` and `all-files` modes.**
+ *     `download_mode = "metadata"` (the default) reads file metadata
+ *     into Myme `google.drive.file` items with `blob_ref` absent.
+ *     `download_mode = "all-files"` (T-239) downloads non-Google-native
+ *     files within the per-file size ceiling and uploads the bytes
+ *     into the Myme blob store via `ctx.myme.uploadBlob`; those land
+ *     as `core.file` with `properties.blob_ref = sha256:<hex>`.
+ *     Google-native types, oversize files, and per-file download
+ *     failures all fall back to `google.drive.file` (`blob_ref`
+ *     absent). `glob:<pattern>` is declared but still falls through
+ *     to `metadata` semantics — pattern grammar is a separate
+ *     follow-on. Configurable ceiling via
+ *     `connection.properties.configuration.max_file_size_bytes`
+ *     (default 25 MB; see `DEFAULT_MAX_FILE_SIZE_BYTES` in handlers
+ *     for the Worker-memory reasoning).
  *
  * OAuth uses the proxy mode. Drive v3 paths resolve under the
  * shared `https://www.googleapis.com` host (no per-credential
@@ -44,7 +51,7 @@ export const GOOGLE_DRIVE_MANIFEST: IntegrationManifest = {
   manifest_schema_version: "1.0.0",
   publisher: "google",
   description:
-    "Inbound-only sync from Google Drive into Myme. Seeds via files.list, incremental via changes.list with persisted pageToken cursor, push notifications via changes.watch with a renewal cron. v1 is metadata-only; all-files blob mode pending a substrate addition.",
+    "Inbound-only sync from Google Drive into Myme. Seeds via files.list, incremental via changes.list with persisted pageToken cursor, push notifications via changes.watch with a renewal cron. Supports `download_mode: metadata` (default — google.drive.file items) and `download_mode: all-files` (non-Google-native, within-ceiling files ingested as core.file with blob_ref).",
   // INBOUND-only in v1 — schema's "read" maps to inbound-only ingest.
   // Flipping to "both" is the outbound follow-on's first change
   // (manifest direction + handlers + tests). Documented in CLAUDE.md.

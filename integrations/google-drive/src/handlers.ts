@@ -18,12 +18,24 @@
  *     manifest; `handleItemEvent` is a defensive no-op that just
  *     filters self-events.
  *
- * **Blob handling — metadata-only in v1.** The `download_mode`
- * configuration field is declared but only the default `metadata`
- * mode is wired today. `all-files` and `glob:<pattern>` would
- * require a `ConnectionClient.uploadBlob` primitive that does not
- * yet exist on `@mymehq/runtime-sdk` — flagged as the v1.1 substrate
- * dependency in `CLAUDE.md`.
+ * **Blob handling — `metadata` and `all-files` modes.** The
+ * `download_mode` configuration field picks between:
+ *
+ *   - `metadata` (default) — items land as `google.drive.file` with
+ *     `blob_ref` absent. The Drive-side checksums (`md5`, `sha256`)
+ *     and file id are still captured as independent properties.
+ *   - `all-files` — downloadable files get their bytes ingested via
+ *     `ctx.myme.uploadBlob` (T-239). On success the item lands as
+ *     `core.file` with `properties.blob_ref = sha256:<hex>`.
+ *     Google-native types (`application/vnd.google-apps.*`),
+ *     files over the configurable size ceiling, and per-file
+ *     download failures all fall back to `google.drive.file` with
+ *     `blob_ref` absent. The activity log carries the reason.
+ *
+ * The programmatic invariant consumers rely on:
+ * `typeof item.properties.blob_ref === "string"` ⇔ bytes are
+ * fetchable via `GET /blobs/{blob_ref}`. `glob:<pattern>` is
+ * declared but not yet wired (separate ticket).
  */
 import {
   registerScheduleHandler,
@@ -81,15 +93,37 @@ interface ChannelState {
 
 interface ConnectionConfig {
   target_type: string;
-  /** `metadata` | `all-files` | `glob:<pattern>`. Only `metadata` is
-   *  wired in v1; the other values flow through and emit an
-   *  `action_required` note. Typed as `string` because `glob:<pattern>`
+  /** `metadata` (default) | `all-files` | `glob:<pattern>`.
+   *  `metadata` and `all-files` are both wired (T-239); `glob:<pattern>`
+   *  is declared but still falls through to `metadata` semantics
+   *  pending a separate ticket. Typed as `string` because `glob:`
    *  is open-ended. */
   download_mode: string;
+  /** Per-file size ceiling (bytes) for `all-files` mode. Files over
+   *  this skip the byte ingest and land as `google.drive.file`
+   *  without a `blob_ref`. Default 25 MB — see
+   *  `DEFAULT_MAX_FILE_SIZE_BYTES` below for the Worker-memory
+   *  reasoning. Server-side `MAX_BLOB_SIZE` (50 MB default) is the
+   *  upper bound from the other side. */
+  max_file_size_bytes: number;
   /** Set when an inbound webhook subscription has been minted at
    *  install time; enables push notifications. */
   inbound_webhook_url: string | null;
 }
+
+/**
+ * Per-file size ceiling for `all-files` ingest. 25 MB is the
+ * Worker-memory budget, not the server cap — the all-files path
+ * transiently holds the file twice (the `arrayBuffer()` from the
+ * proxy response, then again as the body passed to `uploadBlob`,
+ * which fetch consumes asynchronously). Peak ≈ 2 × file_size +
+ * handler state (~10 MB) + isolate baseline (~30 MB). A 25 MB cap
+ * keeps the transient peak under ~90 MB inside the 128 MB Workers
+ * isolate, with ~40 MB headroom for the rest of the run. Raising
+ * past 25 MB risks Worker OOM until the paired stream-accepting
+ * SDK overload + server-side streaming follow-up lands.
+ */
+export const DEFAULT_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 
 async function resolveConnectionConfig(
   ctx: ConnectionContext,
@@ -113,15 +147,24 @@ async function resolveConnectionConfig(
       cfg.inbound_webhook_url.length > 0
         ? cfg.inbound_webhook_url
         : null;
+    const maxFileSizeRaw = cfg.max_file_size_bytes;
+    const maxFileSize =
+      typeof maxFileSizeRaw === "number" &&
+      Number.isFinite(maxFileSizeRaw) &&
+      maxFileSizeRaw > 0
+        ? Math.floor(maxFileSizeRaw)
+        : DEFAULT_MAX_FILE_SIZE_BYTES;
     return {
       target_type: targetType,
       download_mode: downloadMode,
+      max_file_size_bytes: maxFileSize,
       inbound_webhook_url: inboundUrl,
     };
   } catch {
     return {
       target_type: DEFAULT_TARGET_TYPE,
       download_mode: "metadata",
+      max_file_size_bytes: DEFAULT_MAX_FILE_SIZE_BYTES,
       inbound_webhook_url: null,
     };
   }
@@ -190,6 +233,12 @@ export async function handleSchedule(
   let totalUpserted = 0;
   let totalSkippedEcho = 0;
   let totalTrashed = 0;
+  const blobOutcomes: BlobOutcomeCounts = {
+    files_with_blob: 0,
+    skipped_google_native: 0,
+    oversize: 0,
+    download_failed: 0,
+  };
 
   // Cold start: seed pageToken + initial files.list pass.
   if (!cursor.seeded || cursor.pageToken === null) {
@@ -221,6 +270,7 @@ export async function handleSchedule(
     totalUpserted += initial.upserted;
     totalSkippedEcho += initial.skipped;
     totalTrashed += initial.trashed;
+    addBlobOutcomes(blobOutcomes, initial.blobs);
     cursor.seeded = true;
   }
 
@@ -263,6 +313,7 @@ export async function handleSchedule(
       totalUpserted += result.upserted;
       totalSkippedEcho += result.skipped;
       totalTrashed += result.trashed;
+      addBlobOutcomes(blobOutcomes, result.blobs);
     }
 
     if (typeof payload.nextPageToken === "string") {
@@ -278,24 +329,89 @@ export async function handleSchedule(
   cursor.last_inbound_at = new Date().toISOString();
   await ctx.cursor.write(CURSOR_KEY, cursor);
 
+  const summary = formatRunSummary(
+    totalUpserted,
+    totalSkippedEcho,
+    totalTrashed,
+    config.download_mode,
+    blobOutcomes,
+  );
   await ctx.activity.emit({
     severity: "info",
-    summary: `google-drive inbound: upserted=${String(totalUpserted)} echo_skipped=${String(totalSkippedEcho)} trashed=${String(totalTrashed)}${config.download_mode !== "metadata" ? ` (download_mode=${config.download_mode} — METADATA-ONLY in v1; substrate gap)` : ""}`,
+    summary,
     detail: {
       upserted: totalUpserted,
       skipped_echo: totalSkippedEcho,
       trashed: totalTrashed,
       download_mode: config.download_mode,
+      ...blobOutcomes,
     },
   });
 
   return { ok: true };
 }
 
+function formatRunSummary(
+  upserted: number,
+  skippedEcho: number,
+  trashed: number,
+  downloadMode: string,
+  blobs: BlobOutcomeCounts,
+): string {
+  const base = `google-drive inbound: upserted=${String(upserted)} echo_skipped=${String(skippedEcho)} trashed=${String(trashed)}`;
+  if (downloadMode !== "all-files") return base;
+  const tail =
+    ` (download_mode=all-files: files_with_blob=${String(blobs.files_with_blob)}` +
+    ` skipped_google_native=${String(blobs.skipped_google_native)}` +
+    ` oversize=${String(blobs.oversize)}` +
+    ` download_failed=${String(blobs.download_failed)})`;
+  return base + tail;
+}
+
 interface SweepCounts {
   upserted: number;
   skipped: number;
   trashed: number;
+  blobs: BlobOutcomeCounts;
+}
+
+/**
+ * Per-run breakdown of `all-files` blob-ingest outcomes (T-239).
+ * - `files_with_blob` — bytes successfully uploaded; item lands as
+ *   `core.file` with `properties.blob_ref = sha256:<hex>`.
+ * - `skipped_google_native` — Google-native types
+ *   (`application/vnd.google-apps.*`) need export, not download.
+ *   Item lands as `google.drive.file`, `blob_ref` absent.
+ * - `oversize` — file exceeds the configured per-file ceiling.
+ *   Item lands as `google.drive.file`, `blob_ref` absent. Operator
+ *   may raise `max_file_size_bytes` if they want to ingest these.
+ * - `download_failed` — proxy non-2xx or network error. Item lands
+ *   as `google.drive.file`, `blob_ref` absent. Next sync retries.
+ */
+interface BlobOutcomeCounts {
+  files_with_blob: number;
+  skipped_google_native: number;
+  oversize: number;
+  download_failed: number;
+}
+
+function emptyBlobOutcomes(): BlobOutcomeCounts {
+  return {
+    files_with_blob: 0,
+    skipped_google_native: 0,
+    oversize: 0,
+    download_failed: 0,
+  };
+}
+
+function addBlobOutcomes(
+  into: BlobOutcomeCounts,
+  from: BlobOutcomeCounts,
+): void {
+  into.files_with_blob += from.files_with_blob;
+  into.skipped_google_native += from.skipped_google_native;
+  into.oversize += from.oversize;
+  into.download_failed += from.download_failed;
 }
 
 async function initialFilesListSweep(
@@ -306,6 +422,7 @@ async function initialFilesListSweep(
   let upserted = 0;
   let skipped = 0;
   const trashed = 0;
+  const blobs = emptyBlobOutcomes();
   let pageToken: string | undefined;
   let pages = 0;
 
@@ -326,7 +443,7 @@ async function initialFilesListSweep(
         summary: "google-drive: files.list fetch failed during seed",
         detail: { error: errorMessage(err) },
       });
-      return { upserted, skipped, trashed };
+      return { upserted, skipped, trashed, blobs };
     }
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
@@ -335,7 +452,7 @@ async function initialFilesListSweep(
         summary: `google-drive: files.list returned ${String(resp.status)} during seed`,
         detail: { status: resp.status, response_text: text.slice(0, 500) },
       });
-      return { upserted, skipped, trashed };
+      return { upserted, skipped, trashed, blobs };
     }
     let payload: FilesListResponse;
     try {
@@ -346,7 +463,7 @@ async function initialFilesListSweep(
         summary: "google-drive: files.list parse failed during seed",
         detail: { error: errorMessage(err) },
       });
-      return { upserted, skipped, trashed };
+      return { upserted, skipped, trashed, blobs };
     }
     for (const file of payload.files ?? []) {
       const hash = contentHashForFile(file);
@@ -354,7 +471,9 @@ async function initialFilesListSweep(
         skipped += 1;
         continue;
       }
-      const input = buildFileInput(file, config.target_type);
+      const blob = await ingestBlobIfNeeded(ctx, file, config);
+      tallyBlobOutcome(blobs, blob);
+      const input = buildFileInput(file, config.target_type, blob);
       try {
         const myme_id = cursor.mappings[file.id];
         if (myme_id !== undefined) {
@@ -380,7 +499,7 @@ async function initialFilesListSweep(
     pages += 1;
   }
 
-  return { upserted, skipped, trashed };
+  return { upserted, skipped, trashed, blobs };
 }
 
 async function applyChange(
@@ -391,7 +510,7 @@ async function applyChange(
 ): Promise<SweepCounts> {
   const fileId = change.fileId ?? change.file?.id;
   if (typeof fileId !== "string")
-    return { upserted: 0, skipped: 0, trashed: 0 };
+    return { upserted: 0, skipped: 0, trashed: 0, blobs: emptyBlobOutcomes() };
 
   const myme_id = cursor.mappings[fileId];
 
@@ -401,7 +520,12 @@ async function applyChange(
       try {
         await ctx.myme.transitionItem(myme_id, "trashed");
         Reflect.deleteProperty(cursor.mappings, fileId);
-        return { upserted: 0, skipped: 0, trashed: 1 };
+        return {
+          upserted: 0,
+          skipped: 0,
+          trashed: 1,
+          blobs: emptyBlobOutcomes(),
+        };
       } catch (err) {
         await ctx.activity.emit({
           severity: "action_required",
@@ -410,18 +534,22 @@ async function applyChange(
         });
       }
     }
-    return { upserted: 0, skipped: 0, trashed: 0 };
+    return { upserted: 0, skipped: 0, trashed: 0, blobs: emptyBlobOutcomes() };
   }
 
   const file = change.file;
-  if (file === undefined) return { upserted: 0, skipped: 0, trashed: 0 };
+  if (file === undefined)
+    return { upserted: 0, skipped: 0, trashed: 0, blobs: emptyBlobOutcomes() };
 
   const hash = contentHashForFile(file);
   if (await ctx.echo.shouldSkipReactive(fileId, hash)) {
-    return { upserted: 0, skipped: 1, trashed: 0 };
+    return { upserted: 0, skipped: 1, trashed: 0, blobs: emptyBlobOutcomes() };
   }
 
-  const input = buildFileInput(file, config.target_type);
+  const blobs = emptyBlobOutcomes();
+  const blob = await ingestBlobIfNeeded(ctx, file, config);
+  tallyBlobOutcome(blobs, blob);
+  const input = buildFileInput(file, config.target_type, blob);
   try {
     if (myme_id !== undefined) {
       await ctx.myme.updateItem(myme_id, input);
@@ -432,14 +560,14 @@ async function applyChange(
       });
       cursor.mappings[fileId] = created.id;
     }
-    return { upserted: 1, skipped: 0, trashed: 0 };
+    return { upserted: 1, skipped: 0, trashed: 0, blobs };
   } catch (err) {
     await ctx.activity.emit({
       severity: "action_required",
       summary: `google-drive: upsert failed for ${fileId}`,
       detail: { error: errorMessage(err) },
     });
-    return { upserted: 0, skipped: 0, trashed: 0 };
+    return { upserted: 0, skipped: 0, trashed: 0, blobs };
   }
 }
 
@@ -642,7 +770,181 @@ export function registerHandlers(): void {
   registerWebhookHandler(handleWebhook);
 }
 
-function buildFileInput(file: DriveFile, targetType: string): CreateItemInput {
+/**
+ * Outcome of attempting to ingest a Drive file's bytes into the
+ * Myme blob store (T-239). Drives both the per-run counters and the
+ * `targetType` decision in `buildFileInput` — `core.file` requires
+ * a `blob_ref`, so we only emit it on `ingested`; every other
+ * outcome routes to `google.drive.file` with `blob_ref` absent.
+ */
+type BlobIngestOutcome =
+  | { status: "ingested"; hash: string; size: number }
+  | { status: "skipped_metadata" }
+  | { status: "skipped_google_native" }
+  | { status: "skipped_oversize"; size: number; ceiling: number }
+  | { status: "download_failed"; reason: string };
+
+function tallyBlobOutcome(
+  counts: BlobOutcomeCounts,
+  outcome: BlobIngestOutcome,
+): void {
+  switch (outcome.status) {
+    case "ingested":
+      counts.files_with_blob += 1;
+      return;
+    case "skipped_google_native":
+      counts.skipped_google_native += 1;
+      return;
+    case "skipped_oversize":
+      counts.oversize += 1;
+      return;
+    case "download_failed":
+      counts.download_failed += 1;
+      return;
+    case "skipped_metadata":
+      return;
+  }
+}
+
+function isGoogleNativeMime(mimeType: string | undefined): boolean {
+  return (
+    typeof mimeType === "string" &&
+    mimeType.startsWith("application/vnd.google-apps.")
+  );
+}
+
+function parseDriveSize(raw: string | undefined): number | null {
+  if (typeof raw !== "string") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * Decide whether to ingest a Drive file's bytes into the Myme blob
+ * store, and (if so) do it. Pure metadata mode short-circuits to
+ * `skipped_metadata`. In all-files mode the path is:
+ *
+ *   1. Google-native files (`application/vnd.google-apps.*`) need
+ *      export, not download — return `skipped_google_native` and
+ *      emit no per-file activity (the roll-up summary counts them).
+ *   2. Files whose declared size exceeds the per-file ceiling
+ *      return `skipped_oversize` and emit a per-file `info` row so
+ *      the operator can see which files were skipped + why.
+ *   3. Files within ceiling: proxy `GET /drive/v3/files/{id}?alt=media`,
+ *      buffer the bytes, then `ctx.myme.uploadBlob({ content,
+ *      mime_type })`. On any proxy / network / SDK failure return
+ *      `download_failed` and emit a per-file `info` row. The next
+ *      schedule run will retry naturally — `info` rather than
+ *      `action_required` because transient failures don't require
+ *      operator intervention; we follow the neighbour-integration
+ *      convention (rss-watcher, task-auto-archive,
+ *      google-calendar) of reserving `action_required` for
+ *      operator-actionable failures (reauth, credential rejection).
+ */
+async function ingestBlobIfNeeded(
+  ctx: ConnectionContext,
+  file: DriveFile,
+  config: ConnectionConfig,
+): Promise<BlobIngestOutcome> {
+  if (config.download_mode !== "all-files") {
+    return { status: "skipped_metadata" };
+  }
+  if (isGoogleNativeMime(file.mimeType)) {
+    return { status: "skipped_google_native" };
+  }
+  const size = parseDriveSize(file.size);
+  if (size !== null && size > config.max_file_size_bytes) {
+    await ctx.activity.emit({
+      severity: "info",
+      summary: `google-drive: skipped oversize file ${file.id} (${String(size)} > ${String(config.max_file_size_bytes)} bytes)`,
+      detail: {
+        drive_file_id: file.id,
+        title: file.name,
+        size_bytes: size,
+        ceiling_bytes: config.max_file_size_bytes,
+      },
+    });
+    return {
+      status: "skipped_oversize",
+      size,
+      ceiling: config.max_file_size_bytes,
+    };
+  }
+  // Bytes pass via the OAuth proxy — same credential the rest of
+  // the integration uses; no separate plumbing needed.
+  const mimeType = file.mimeType ?? "application/octet-stream";
+  let resp: Response;
+  try {
+    resp = await ctx.myme.proxyRequest(
+      "GET",
+      `${DRIVE_API_BASE}/files/${file.id}?alt=media`,
+    );
+  } catch (err) {
+    return reportBlobDownloadFailure(
+      ctx,
+      file,
+      `proxy fetch failed: ${errorMessage(err)}`,
+    );
+  }
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    return reportBlobDownloadFailure(
+      ctx,
+      file,
+      `proxy returned ${String(resp.status)}: ${body.slice(0, 200)}`,
+    );
+  }
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await resp.arrayBuffer();
+  } catch (err) {
+    return reportBlobDownloadFailure(
+      ctx,
+      file,
+      `arrayBuffer parse failed: ${errorMessage(err)}`,
+    );
+  }
+  try {
+    const result = await ctx.myme.uploadBlob({
+      content: bytes,
+      mime_type: mimeType,
+    });
+    return {
+      status: "ingested",
+      hash: result.hash,
+      size: result.size,
+    };
+  } catch (err) {
+    return reportBlobDownloadFailure(
+      ctx,
+      file,
+      `uploadBlob failed: ${errorMessage(err)}`,
+    );
+  }
+}
+
+async function reportBlobDownloadFailure(
+  ctx: ConnectionContext,
+  file: DriveFile,
+  reason: string,
+): Promise<BlobIngestOutcome> {
+  await ctx.activity.emit({
+    severity: "info",
+    summary: `google-drive: download failed for ${file.id}; will retry on next sync`,
+    detail: {
+      drive_file_id: file.id,
+      title: file.name,
+      reason,
+    },
+  });
+  return { status: "download_failed", reason };
+}
+
+function buildFileInput(
+  file: DriveFile,
+  configuredTargetType: string,
+  blob: BlobIngestOutcome,
+): CreateItemInput {
   const properties: Record<string, unknown> = {
     title: file.name ?? "Untitled file",
     mime_type: file.mimeType ?? "application/octet-stream",
@@ -675,26 +977,26 @@ function buildFileInput(file: DriveFile, targetType: string): CreateItemInput {
     properties.sha256_checksum = file.sha256Checksum;
   if (file.etag !== undefined) properties.etag = file.etag;
 
-  if (targetType === "core.file") {
-    // core.file needs blob_ref + mime_type; without uploadBlob we
-    // can't populate blob_ref, so for core.file in metadata mode we
-    // synthesise a placeholder reference using sha256Checksum when
-    // present (callers know v1 is metadata-only).
-    if (typeof file.sha256Checksum === "string") {
-      properties.blob_ref = `sha256:${file.sha256Checksum}`;
-    } else if (typeof file.md5Checksum === "string") {
-      properties.blob_ref = `md5:${file.md5Checksum}`;
-    } else {
-      // Fall back to the drive id as a stable but non-content-addressed
-      // reference so the required field is satisfied; this signals
-      // "metadata-only mode" to a careful reader.
-      properties.blob_ref = `drive:${file.id}`;
-    }
+  // Type-routing: `blob_ref` means "bytes retrievable from the Myme
+  // blob store" (T-239). `core.file` requires it; `google.drive.file`
+  // accepts it as optional. We emit `core.file` only when bytes were
+  // successfully ingested; every other path routes to
+  // `google.drive.file` with `blob_ref` absent. The
+  // `configuredTargetType` is the operator's preferred default — we
+  // downgrade away from `core.file` rather than synthesise a fake
+  // `blob_ref` that doesn't resolve via `GET /blobs/{ref}`.
+  if (blob.status === "ingested") {
+    properties.blob_ref = blob.hash;
     if (file.webViewLink !== undefined) properties.url = file.webViewLink;
-    return { type: targetType, properties };
+    // Honour `core.file` when the bytes are real; otherwise prefer
+    // `google.drive.file` for the fuller fidelity (Drive-specific
+    // fields like `drive_file_id`, `web_view_link`).
+    const type =
+      configuredTargetType === "core.file" ? "core.file" : DEFAULT_TARGET_TYPE;
+    return { type, properties };
   }
 
-  return { type: targetType, properties };
+  return { type: DEFAULT_TARGET_TYPE, properties };
 }
 
 function contentHashForFile(file: DriveFile): string {
