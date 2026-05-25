@@ -152,3 +152,179 @@ describe("POST /connections/:id/oauth/start — cross-tenant credential guard (T
     expect(body.authorize_url).toContain("client_id=SAME-TENANT-CLIENT");
   });
 });
+
+describe("POST /connections/:id/oauth/start — credential authorize_extra_params (T-259)", () => {
+  async function seedConnection(opts: {
+    tenant_label: string;
+    authorize_extra_params?: Record<string, string>;
+  }): Promise<string> {
+    if (!ctx.storage.tenants) throw new Error("tenants store required");
+    const tenant = await ctx.storage.tenants.create(opts.tenant_label);
+    const cred = await ctx.storage.items.create(
+      {
+        type: "system.credential",
+        properties: {
+          label: "google-shared",
+          kind: "oauth_token",
+          oauth_provider_config: {
+            oauth_authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
+            oauth_token_url: "https://oauth2.googleapis.com/token",
+            oauth_client_id: "GOOGLE-CLIENT",
+            oauth_default_scope: "openid",
+            ...(opts.authorize_extra_params
+              ? { authorize_extra_params: opts.authorize_extra_params }
+              : {}),
+          },
+          secret_encrypted: encryptSecret(
+            "google-client-secret",
+            SECRET_INFO.connectionOauthToken,
+          ),
+        },
+      },
+      tenant.id,
+    );
+    const conn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: "google.calendar",
+          credential_ref: cred.id,
+        },
+      },
+      tenant.id,
+    );
+    return conn.id;
+  }
+
+  it("merges credential.authorize_extra_params into the authorize URL when caller passes no extra_params", async () => {
+    const connId = await seedConnection({
+      tenant_label: "t259-merge-defaults",
+      authorize_extra_params: {
+        access_type: "offline",
+        prompt: "consent",
+      },
+    });
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connId}/oauth/start`,
+      {
+        key: ctx.adminKey,
+        body: { redirect_uri: "http://localhost:0/callback" },
+      },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { authorize_url: string };
+    expect(body.authorize_url).toContain("access_type=offline");
+    expect(body.authorize_url).toContain("prompt=consent");
+  });
+
+  it("caller's extra_params overrides credential defaults per-key", async () => {
+    const connId = await seedConnection({
+      tenant_label: "t259-caller-overrides",
+      authorize_extra_params: {
+        access_type: "offline",
+        prompt: "consent",
+      },
+    });
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connId}/oauth/start`,
+      {
+        key: ctx.adminKey,
+        body: {
+          redirect_uri: "http://localhost:0/callback",
+          // Override `prompt`; leave `access_type` to the credential default.
+          extra_params: { prompt: "none" },
+        },
+      },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { authorize_url: string };
+    expect(body.authorize_url).toContain("access_type=offline"); // from credential
+    expect(body.authorize_url).toContain("prompt=none"); // caller wins
+    expect(body.authorize_url).not.toContain("prompt=consent");
+  });
+
+  it("absent authorize_extra_params on the credential leaves the URL clean", async () => {
+    const connId = await seedConnection({
+      tenant_label: "t259-no-defaults",
+    });
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connId}/oauth/start`,
+      {
+        key: ctx.adminKey,
+        body: { redirect_uri: "http://localhost:0/callback" },
+      },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { authorize_url: string };
+    expect(body.authorize_url).not.toContain("access_type=");
+    expect(body.authorize_url).not.toContain("prompt=");
+  });
+
+  it("malformed authorize_extra_params on the credential is ignored (not echoed verbatim)", async () => {
+    if (!ctx.storage.tenants) return;
+    const tenant = await ctx.storage.tenants.create("t259-malformed");
+    const cred = await ctx.storage.items.create(
+      {
+        type: "system.credential",
+        properties: {
+          label: "google-shared",
+          kind: "oauth_token",
+          oauth_provider_config: {
+            oauth_authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
+            oauth_token_url: "https://oauth2.googleapis.com/token",
+            oauth_client_id: "GOOGLE-CLIENT",
+            // Mixed types — only string values survive the filter.
+            authorize_extra_params: {
+              access_type: "offline",
+              valid_int_as_string: "1",
+              bad: 42 as unknown as string,
+              array_value: ["nope"] as unknown as string,
+            },
+          },
+          secret_encrypted: encryptSecret(
+            "google-client-secret",
+            SECRET_INFO.connectionOauthToken,
+          ),
+        },
+      },
+      tenant.id,
+    );
+    const conn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: "google.calendar",
+          credential_ref: cred.id,
+        },
+      },
+      tenant.id,
+    );
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${conn.id}/oauth/start`,
+      {
+        key: ctx.adminKey,
+        body: { redirect_uri: "http://localhost:0/callback" },
+      },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { authorize_url: string };
+    expect(body.authorize_url).toContain("access_type=offline");
+    expect(body.authorize_url).toContain("valid_int_as_string=1");
+    expect(body.authorize_url).not.toContain("bad=");
+    expect(body.authorize_url).not.toContain("array_value=");
+  });
+});

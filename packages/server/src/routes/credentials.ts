@@ -57,6 +57,17 @@ const OAuthProviderCredentialRequestSchema = z.object({
     .max(2048),
   upstream_base_url: z.url("upstream_base_url must be a URL").max(2048),
   oauth_default_scope: z.string().max(2048).optional(),
+  /**
+   * Provider-specific authorize-URL hints stamped on every
+   * `POST /connections/:id/oauth/start` for this credential — e.g.
+   * `{ access_type: "offline", prompt: "consent" }` for Google to
+   * guarantee a `refresh_token` on the code exchange. Merged with
+   * (and overridden by) the caller's `extra_params` on the start
+   * route. T-259.
+   */
+  authorize_extra_params: z
+    .record(z.string().max(64), z.string().max(2048))
+    .optional(),
 });
 
 const OAuthProviderCredentialResponseSchema = z.object({
@@ -247,6 +258,9 @@ export function credentialRoutes(storage: Storage) {
             upstream_base_url: body.upstream_base_url,
             ...(body.oauth_default_scope !== undefined
               ? { oauth_default_scope: body.oauth_default_scope }
+              : {}),
+            ...(body.authorize_extra_params !== undefined
+              ? { authorize_extra_params: body.authorize_extra_params }
               : {}),
           },
           secret_encrypted,
