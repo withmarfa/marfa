@@ -56,6 +56,7 @@ export interface ControlPlaneEnv {
    */
   WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX?: QueueProducer;
   WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR?: QueueProducer;
+  WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE?: QueueProducer;
   /** Reactive-run producer (the server-side bridge sends here too;
    *  the control plane keeps it bound for future use cases like
    *  re-broadcasting from the webhook flow). */

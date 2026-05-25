@@ -47,6 +47,8 @@ function pickDedicatedProducer(
       return env.WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX;
     case "google.calendar":
       return env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR;
+    case "google.drive":
+      return env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE;
     default:
       return undefined;
   }
@@ -60,7 +62,8 @@ function hasAnyWebhookProducer(env: ControlPlaneEnv): boolean {
   return (
     env.WEBHOOK_RECEIPT_QUEUE !== undefined ||
     env.WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX !== undefined ||
-    env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR !== undefined
+    env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR !== undefined ||
+    env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE !== undefined
   );
 }
 
