@@ -28,6 +28,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { IN_TREE_INTEGRATIONS } from "@mymehq/shared";
 import { validateManifest } from "../validate-manifest.js";
 import type { LocalIntegrationRegistration } from "./types.js";
 
@@ -70,20 +71,11 @@ export async function loadInTreeRegistrations(options: {
   integrationDirs?: string[];
 }): Promise<LocalIntegrationRegistration[]> {
   const dirs = options.integrationDirs ?? [
+    // `_template` is the scaffold — not in the registry (no real
+    // manifest), but kept in the loader's default list so the local
+    // runtime can boot a smoke shape against it.
     "_template",
-    "rss-watcher",
-    "github-webhooks",
-    "google-calendar",
-    "google-tasks",
-    "google-contacts",
-    "google-drive",
-    "google-youtube",
-    "task-auto-archive",
-    "sync",
-    "todoist",
-    "readwise",
-    "raindrop",
-    "mymehq-inbox",
+    ...IN_TREE_INTEGRATIONS.map((i) => i.dirName),
   ];
   const registrations: LocalIntegrationRegistration[] = [];
   for (const dir of dirs) {

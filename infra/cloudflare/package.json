@@ -12,6 +12,9 @@
     "provision:staging": "tsx provision.ts staging",
     "provision:prod": "tsx provision.ts prod"
   },
+  "dependencies": {
+    "@mymehq/shared": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.21.0",

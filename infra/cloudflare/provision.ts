@@ -38,6 +38,7 @@
  * not carry zone-edit; provision.ts prints clear instructions if asked
  * to do tunnel work and the scope is missing.
  */
+import { integrationsWithTrigger, scheduledPollSlugFor } from "@mymehq/shared";
 import { CloudflareClient } from "./cloudflare-api.js";
 
 type Env = "dev" | "staging" | "prod";
@@ -47,80 +48,39 @@ function isEnv(s: string): s is Env {
 }
 
 /**
- * T-233 — the set of in-tree integrations that consume reactive
- * `item-event` envelopes on the hosted substrate. Each entry gets its
- * own `myme-reactive-run-<integration>-<env>` queue (+ DLQ); the
- * server's `reactive-run-bridge` routes envelopes per `integration_name`
- * to the matching producer URL (env var
- * `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS`).
+ * Per-integration queue families are derived from the in-tree
+ * integration registry (`@mymehq/shared` → `IN_TREE_INTEGRATIONS`).
+ * Each integration declares its triggers; the registry filters into
+ * three families consumed below:
  *
- * Hardcoded rather than derived from `integrations/<name>/src/manifest.ts`
- * because the set is small + stable, and the alternative (TS-parse the
- * manifest source to find `triggers.item-event`) adds a script-side
- * build dependency this lean provisioner doesn't carry. Add an entry
- * whenever a new integration with an `item-event` trigger lands.
+ *   - **Reactive-run** (T-233): integrations with `item-event`
+ *     trigger get `myme-reactive-run-<slug>-<env>` (+ DLQ). The
+ *     server's `reactive-run-bridge` routes envelopes per
+ *     `integration_name` to the matching producer URL.
+ *   - **Webhook-receipt** (T-247): integrations with `webhook`
+ *     trigger AND a dedicated `webhookQueueBinding` get
+ *     `myme-webhook-receipt-<slug>-<env>` (+ DLQ). Integrations
+ *     without the binding stay on the legacy shared queue
+ *     (`mymehq.github-webhooks` today).
+ *   - **Scheduled-poll** (T-240): integrations with `schedule`
+ *     trigger get `myme-scheduled-poll-<slug>-<env>` (+ DLQ). The
+ *     slug uses `scheduledPollSlugFor()` to honour pre-existing
+ *     consumer-side naming conventions (some drop the publisher
+ *     prefix, some keep it).
  *
- * Hosted-only — `mymehq.sync` is local-only (no Cloudflare deploy), so
- * not in this list. `mymehq.github-webhooks` and `mymehq.rss-watcher`
- * have no `item-event` trigger.
+ * Slug for reactive-run + webhook-receipt mirrors the existing
+ * `queueSlug()` helper (`integration_name.replace('.','-')`); for
+ * scheduled-poll the registry's per-integration override wins.
  */
-const REACTIVE_RUN_INTEGRATIONS = [
-  "mymehq.task-auto-archive",
-  "google.calendar",
-  "google.tasks",
-  "google.drive",
-  "google.contacts",
-  "todoist.tasks",
-] as const;
-
-/**
- * T-247 — integrations whose manifest declares a `webhook` trigger and
- * which consume from a dedicated per-integration webhook-receipt queue
- * (one consumer per CF queue; see the `pickDedicatedProducer` switch
- * in `packages/runtime-control/src/routes/webhooks.ts`).
- *
- * `mymehq.github-webhooks` is intentionally absent: it still consumes
- * the legacy shared `myme-webhook-receipt-<env>` queue via the
- * fallback path in the resolver. Migrating it to a dedicated queue is
- * a follow-up that needs both a binding flip on the control plane and
- * a consumer-queue switch on the github-webhooks Worker side.
- */
-const WEBHOOK_RECEIVING_INTEGRATIONS = [
-  "mymehq.inbox",
-  "google.calendar",
-  "google.drive",
-] as const;
-
-/**
- * T-240 — integrations whose manifest declares a `schedule` trigger.
- * Each consumes its own dedicated scheduled-poll queue; the
- * provisioner mints both the queue and its DLQ.
- *
- * **Queue-slug shape is per-integration** because the existing
- * consumer-side `wrangler.toml` entries are inconsistent on whether
- * they keep the publisher prefix:
- *   - directory-named (no publisher prefix): rss-watcher,
- *     task-auto-archive, raindrop, readwise
- *   - manifest-named (dot replaced with hyphen): todoist-tasks,
- *     google-calendar, google-tasks, google-drive, google-contacts,
- *     google-youtube
- *
- * The slug here matches what the consumer wrangler.toml already
- * declares — anything else would mint queues no one listens on.
- * PR2 (T-261, manifest-driven derivation) normalises this.
- */
-const SCHEDULED_POLL_INTEGRATIONS = [
-  { name: "google.calendar", slug: "google-calendar" },
-  { name: "google.tasks", slug: "google-tasks" },
-  { name: "google.drive", slug: "google-drive" },
-  { name: "google.contacts", slug: "google-contacts" },
-  { name: "google.youtube", slug: "google-youtube" },
-  { name: "raindrop.bookmarks", slug: "raindrop" },
-  { name: "readwise.highlights", slug: "readwise" },
-  { name: "mymehq.rss-watcher", slug: "rss-watcher" },
-  { name: "mymehq.task-auto-archive", slug: "task-auto-archive" },
-  { name: "todoist.tasks", slug: "todoist-tasks" },
-] as const;
+const REACTIVE_RUN_INTEGRATIONS = integrationsWithTrigger("item-event").filter(
+  (i) => i.hasWorker,
+);
+const WEBHOOK_RECEIVING_INTEGRATIONS = integrationsWithTrigger(
+  "webhook",
+).filter((i) => i.hasWorker && i.webhookQueueBinding);
+const SCHEDULED_POLL_INTEGRATIONS = integrationsWithTrigger("schedule").filter(
+  (i) => i.hasWorker,
+);
 
 /**
  * Cloudflare Queue names must match `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`
@@ -169,26 +129,29 @@ async function provisionQueues(
   // a hyphen for the queue slug because Cloudflare Queues reject dot
   // characters in queue names.
   for (const integration of REACTIVE_RUN_INTEGRATIONS) {
-    const slug = queueSlug(integration);
+    const slug = queueSlug(integration.name);
     wanted.push(`myme-reactive-run-${slug}-${env}`);
     wanted.push(`myme-reactive-run-${slug}-${env}-dlq`);
   }
   // T-247 — per-integration webhook-receipt queues. Each integration
-  // with a `webhook` trigger gets its own queue + DLQ; the control
-  // plane's webhook route resolves a per-integration producer binding
-  // and writes verified deliveries there (single-consumer pattern).
+  // with a `webhook` trigger AND a dedicated binding gets its own
+  // queue + DLQ; the control plane's webhook route resolves a
+  // per-integration producer binding and writes verified deliveries
+  // there (single-consumer pattern). Webhook integrations without a
+  // binding (e.g. github-webhooks today) stay on the shared queue.
   for (const integration of WEBHOOK_RECEIVING_INTEGRATIONS) {
-    const slug = queueSlug(integration);
+    const slug = queueSlug(integration.name);
     wanted.push(`myme-webhook-receipt-${slug}-${env}`);
     wanted.push(`myme-webhook-receipt-${slug}-${env}-dlq`);
   }
   // T-240 — per-integration scheduled-poll queues. Each integration
   // with a `schedule` trigger gets its own queue + DLQ; the
   // integration's own Worker consumes from it on each cron tick. The
-  // slug here intentionally bypasses `queueSlug()` because some
-  // consumer wrangler.toml entries dropped the publisher prefix (see
-  // SCHEDULED_POLL_INTEGRATIONS comment for the inconsistency).
-  for (const { slug } of SCHEDULED_POLL_INTEGRATIONS) {
+  // slug honours the registry's per-integration `scheduledPollQueueSlug`
+  // override because some consumer wrangler.toml entries dropped the
+  // publisher prefix (see InTreeIntegration JSDoc for the history).
+  for (const integration of SCHEDULED_POLL_INTEGRATIONS) {
+    const slug = scheduledPollSlugFor(integration);
     wanted.push(`myme-scheduled-poll-${slug}-${env}`);
     wanted.push(`myme-scheduled-poll-${slug}-${env}-dlq`);
   }
@@ -365,11 +328,11 @@ async function main(): Promise<void> {
   // re-run.
   const reactiveRunUrls: Record<string, string> = {};
   for (const integration of REACTIVE_RUN_INTEGRATIONS) {
-    const queueName = `myme-reactive-run-${queueSlug(integration)}-${env}`;
+    const queueName = `myme-reactive-run-${queueSlug(integration.name)}-${env}`;
     const queueId = out.queues[queueName];
     if (!queueId) {
       console.warn(
-        `[reactive-urls] ! ${integration}: queue ${queueName} not provisioned; skipping URL entry`,
+        `[reactive-urls] ! ${integration.name}: queue ${queueName} not provisioned; skipping URL entry`,
       );
       continue;
     }
@@ -377,7 +340,7 @@ async function main(): Promise<void> {
     // the server's bridge resolver looks up against the envelope's
     // `integration_name` field. Queue NAME drops the dot for CF's
     // naming rule; the URL embeds the queue ID, not the name.
-    reactiveRunUrls[integration] =
+    reactiveRunUrls[integration.name] =
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/queues/${queueId}/messages`;
   }
   console.log("");

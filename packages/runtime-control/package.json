@@ -12,6 +12,7 @@
     "deploy": "wrangler deploy --config ../../infra/cloudflare/wrangler.control.toml"
   },
   "dependencies": {
+    "@mymehq/shared": "workspace:*",
     "@mymehq/webhooks": "workspace:*",
     "hono": "^4.7.5"
   },

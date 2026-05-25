@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { findIntegration } from "@mymehq/shared";
 import type { ControlPlaneEnv } from "../env.js";
 
 /**
@@ -101,40 +102,20 @@ export function registerArmScheduleRoute(
 }
 
 /**
- * Map a manifest-name to its service binding. The mapping is hard-
- * coded for the in-tree set; new integrations need an entry here AND
- * a binding in `wrangler.control.toml`.
+ * Map a manifest-name to its service binding via the in-tree
+ * integration registry (`@mymehq/shared` → `IN_TREE_INTEGRATIONS`).
+ * Adding a new integration means adding one registry entry — the
+ * dispatch here picks it up automatically. Marketplace integrations
+ * (out of the in-tree set) surface as `no_service_binding` (503) at
+ * the call site, same as before.
  */
 function resolveServiceBinding(
   env: ControlPlaneEnv,
   integrationName: string,
 ): { fetch(request: Request): Promise<Response> } | undefined {
-  switch (integrationName) {
-    case "mymehq.rss-watcher":
-      return env.INTEGRATION_RSS_WATCHER;
-    case "mymehq.github-webhooks":
-      return env.INTEGRATION_GITHUB_WEBHOOKS;
-    case "mymehq.task-auto-archive":
-      return env.INTEGRATION_TASK_AUTO_ARCHIVE;
-    case "google.calendar":
-      return env.INTEGRATION_GOOGLE_CALENDAR;
-    case "google.tasks":
-      return env.INTEGRATION_GOOGLE_TASKS;
-    case "google.drive":
-      return env.INTEGRATION_GOOGLE_DRIVE;
-    case "google.contacts":
-      return env.INTEGRATION_GOOGLE_CONTACTS;
-    case "google.youtube":
-      return env.INTEGRATION_GOOGLE_YOUTUBE;
-    case "todoist.tasks":
-      return env.INTEGRATION_TODOIST_TASKS;
-    case "readwise.highlights":
-      return env.INTEGRATION_READWISE;
-    case "raindrop.bookmarks":
-      return env.INTEGRATION_RAINDROP;
-    case "mymehq.inbox":
-      return env.INTEGRATION_MYMEHQ_INBOX;
-    default:
-      return undefined;
-  }
+  const entry = findIntegration(integrationName);
+  if (!entry?.serviceBinding) return undefined;
+  return (env as Record<string, unknown>)[entry.serviceBinding] as
+    | { fetch(request: Request): Promise<Response> }
+    | undefined;
 }
