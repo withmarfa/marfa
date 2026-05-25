@@ -23,6 +23,8 @@ import {
   type ItemResource,
   type ItemState,
   type ScheduleMessage,
+  type UploadBlobInput,
+  type UploadBlobResult,
 } from "@mymehq/runtime-sdk";
 import { handleSchedule, handleWebhook } from "./handlers.js";
 import { GOOGLE_DRIVE_MANIFEST } from "./manifest.js";
@@ -65,6 +67,12 @@ interface BuildOpts {
   proxyResponses: (() => Response)[];
 }
 
+interface CapturedUpload {
+  content: Uint8Array;
+  mime_type: string;
+  hash: string;
+}
+
 interface BuiltContext {
   ctx: ConnectionContext;
   emitted: CapturedActivity[];
@@ -72,6 +80,7 @@ interface BuiltContext {
   updated: { id: string; patch: Partial<CreateItemInput> }[];
   transitions: { id: string; to: ItemState }[];
   proxyCalls: ProxyCall[];
+  uploads: CapturedUpload[];
 }
 
 const CONNECTION_ID = "conn_gdrive_test";
@@ -83,6 +92,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
   const updated: { id: string; patch: Partial<CreateItemInput> }[] = [];
   const transitions: { id: string; to: ItemState }[] = [];
   const proxyCalls: ProxyCall[] = [];
+  const uploads: CapturedUpload[] = [];
   const items = new Map<string, ItemResource>();
   let proxyIdx = 0;
   let createdCount = 0;
@@ -133,6 +143,36 @@ function buildContext(opts: BuildOpts): BuiltContext {
       }
       return Promise.resolve(responder());
     },
+    uploadBlob: async (input: UploadBlobInput): Promise<UploadBlobResult> => {
+      const bytes =
+        input.content instanceof Uint8Array
+          ? input.content
+          : new Uint8Array(input.content);
+      // Deterministic content-addressed hash mirrors the server.
+      // Uses Web Crypto (SubtleCrypto) so this works in both the
+      // Node test runtime and the Workers production runtime —
+      // no Node-only `crypto.createHash` dependency.
+      // Copy into a fresh, plain ArrayBuffer view to satisfy
+      // SubtleCrypto's BufferSource (rejects SharedArrayBuffer-
+      // backed views in some TS lib configurations).
+      const copy = new Uint8Array(bytes.byteLength);
+      copy.set(bytes);
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", copy);
+      const hex = Array.from(new Uint8Array(digest), (b) =>
+        b.toString(16).padStart(2, "0"),
+      ).join("");
+      const hash = `sha256:${hex}`;
+      uploads.push({
+        content: new Uint8Array(bytes),
+        mime_type: input.mime_type,
+        hash,
+      });
+      return {
+        hash,
+        mime_type: input.mime_type,
+        size: bytes.byteLength,
+      };
+    },
   } as unknown as ConnectionClient;
 
   const ctx: ConnectionContext = {
@@ -147,7 +187,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
     }),
     cycle: null,
   };
-  return { ctx, emitted, created, updated, transitions, proxyCalls };
+  return { ctx, emitted, created, updated, transitions, proxyCalls, uploads };
 }
 
 const SCHEDULE_MSG = (): ScheduleMessage => ({
@@ -355,5 +395,339 @@ describe("google-drive handleWebhook", () => {
     expect(result).toEqual({ ok: true });
     expect(proxyCalls.length).toBeGreaterThanOrEqual(2);
     expect(proxyCalls[0]?.path).toMatch(/startPageToken/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// download_mode = "all-files" (T-239)
+//
+// Three byte-ingest outcomes coexist in one run: a PDF gets uploaded
+// + stamped as core.file with sha256 blob_ref; a Google-native file
+// is skipped silently with a run-summary counter; an oversize file is
+// skipped per-file. Both skip kinds emit `info` activity (no
+// action_required noise for "we couldn't fetch this"); per-file
+// download failures use the same `info` shape since the next sync
+// retries automatically.
+// ---------------------------------------------------------------------------
+
+const PDF_BYTES = new Uint8Array([
+  0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37,
+]);
+
+function binaryResponse(bytes: Uint8Array, contentType: string): Response {
+  // Cast to BodyInit; Workers / Node fetch both accept Uint8Array
+  // bodies at runtime, but some lib.dom configurations narrow
+  // BodyInit to a union that excludes the bare Uint8Array.
+  return new Response(bytes as unknown as BodyInit, {
+    status: 200,
+    headers: { "Content-Type": contentType },
+  });
+}
+
+function allFilesConnectionRecord(
+  ceiling: number = 25 * 1024 * 1024,
+): Partial<ItemResource> {
+  return {
+    id: CONNECTION_ID,
+    type: "system.connection",
+    properties: {
+      kind: "integration",
+      configuration: {
+        target_type: "google.drive.file",
+        download_mode: "all-files",
+        max_file_size_bytes: ceiling,
+      },
+    },
+  };
+}
+
+describe("google-drive handleSchedule — all-files mode (T-239)", () => {
+  it("uploads bytes for downloadable files and stamps blob_ref (default target_type = google.drive.file)", async () => {
+    const { ctx, created, uploads, emitted } = buildContext({
+      connectionRecord: allFilesConnectionRecord(),
+      proxyResponses: [
+        // startPageToken
+        () => jsonResponse({ startPageToken: "wp-1" }),
+        // files.list: one PDF
+        () =>
+          jsonResponse({
+            files: [
+              {
+                id: "drv-pdf",
+                name: "spec.pdf",
+                mimeType: "application/pdf",
+                size: "8",
+                modifiedTime: "2026-05-24T01:00:00.000Z",
+                md5Checksum: "md5-pdf",
+                webViewLink: "https://drive.google.com/file/d/drv-pdf/view",
+              },
+            ],
+          }),
+        // alt=media GET for drv-pdf (proxy download)
+        () => binaryResponse(PDF_BYTES, "application/pdf"),
+        // changes.list — empty
+        () => jsonResponse({ newStartPageToken: "wp-next", changes: [] }),
+      ],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toEqual({ ok: true });
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]!.mime_type).toBe("application/pdf");
+    expect(Array.from(uploads[0]!.content)).toEqual(Array.from(PDF_BYTES));
+
+    // Operator chose `google.drive.file` — they keep the
+    // upstream-fidelity type and `blob_ref` lands as an optional
+    // populated property. (Type-routing only downgrades on failure;
+    // it never upgrades against the configured preference.)
+    expect(created).toHaveLength(1);
+    expect(created[0]?.type).toBe("google.drive.file");
+    expect(created[0]?.properties?.blob_ref).toBe(uploads[0]!.hash);
+    expect(String(created[0]?.properties?.blob_ref)).toMatch(
+      /^sha256:[0-9a-f]{64}$/,
+    );
+    expect(created[0]?.properties?.mime_type).toBe("application/pdf");
+
+    // Run summary carries the per-mode counters.
+    const summary = emitted.find((a) =>
+      String(a.properties?.summary).includes("download_mode=all-files"),
+    );
+    expect(summary).toBeDefined();
+    expect(String(summary?.properties?.summary)).toContain("files_with_blob=1");
+    expect(String(summary?.properties?.summary)).toContain(
+      "skipped_google_native=0",
+    );
+    expect(String(summary?.properties?.summary)).toContain("oversize=0");
+    expect(String(summary?.properties?.summary)).toContain("download_failed=0");
+  });
+
+  it("emits core.file when operator configures target_type=core.file AND bytes ingested", async () => {
+    const { ctx, created, uploads } = buildContext({
+      connectionRecord: {
+        id: CONNECTION_ID,
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          configuration: {
+            target_type: "core.file",
+            download_mode: "all-files",
+          },
+        },
+      },
+      proxyResponses: [
+        () => jsonResponse({ startPageToken: "wp-1" }),
+        () =>
+          jsonResponse({
+            files: [
+              {
+                id: "drv-pdf2",
+                name: "essay.pdf",
+                mimeType: "application/pdf",
+                size: "8",
+                webViewLink: "https://drive.google.com/file/d/drv-pdf2/view",
+              },
+            ],
+          }),
+        () => binaryResponse(PDF_BYTES, "application/pdf"),
+        () => jsonResponse({ newStartPageToken: "wp-next", changes: [] }),
+      ],
+    });
+
+    await handleSchedule(ctx, SCHEDULE_MSG());
+
+    expect(uploads).toHaveLength(1);
+    expect(created).toHaveLength(1);
+    // Configured = core.file + bytes ingested → core.file with blob_ref +
+    // the cross-app `url` property pointing at the Drive web view.
+    expect(created[0]?.type).toBe("core.file");
+    expect(created[0]?.properties?.blob_ref).toBe(uploads[0]!.hash);
+    expect(created[0]?.properties?.url).toBe(
+      "https://drive.google.com/file/d/drv-pdf2/view",
+    );
+  });
+
+  it("skips Google-native files (no per-file activity; rolled into summary)", async () => {
+    const { ctx, created, uploads, emitted } = buildContext({
+      connectionRecord: allFilesConnectionRecord(),
+      proxyResponses: [
+        () => jsonResponse({ startPageToken: "wp-1" }),
+        () =>
+          jsonResponse({
+            files: [
+              {
+                id: "drv-doc",
+                name: "Spec.gdoc",
+                mimeType: "application/vnd.google-apps.document",
+                modifiedTime: "2026-05-24T01:00:00.000Z",
+              },
+            ],
+          }),
+        () => jsonResponse({ newStartPageToken: "wp-next", changes: [] }),
+      ],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toEqual({ ok: true });
+    expect(uploads).toHaveLength(0);
+
+    // The item lands as google.drive.file (no bytes → no blob_ref).
+    expect(created).toHaveLength(1);
+    expect(created[0]?.type).toBe("google.drive.file");
+    expect(created[0]?.properties?.blob_ref).toBeUndefined();
+
+    // No per-file activity for Google-native (it's a policy, not a failure).
+    const perFile = emitted.filter((a) =>
+      String(a.properties?.summary).includes("drv-doc"),
+    );
+    expect(perFile).toHaveLength(0);
+
+    // Roll-up summary counts it.
+    const summary = emitted.find((a) =>
+      String(a.properties?.summary).includes("download_mode=all-files"),
+    );
+    expect(String(summary?.properties?.summary)).toContain(
+      "skipped_google_native=1",
+    );
+    expect(String(summary?.properties?.summary)).toContain("files_with_blob=0");
+
+    // Severity stays at `info` — neighbour-integration convention reserves
+    // action_required for operator-actionable failures (reauth).
+    const actionRequired = emitted.filter(
+      (a) => a.properties?.severity === "action_required",
+    );
+    expect(actionRequired).toHaveLength(0);
+  });
+
+  it("skips oversize files at info severity with a per-file detail row", async () => {
+    const ceiling = 1024;
+    const { ctx, created, uploads, emitted } = buildContext({
+      connectionRecord: allFilesConnectionRecord(ceiling),
+      proxyResponses: [
+        () => jsonResponse({ startPageToken: "wp-1" }),
+        () =>
+          jsonResponse({
+            files: [
+              {
+                id: "drv-big",
+                name: "huge.bin",
+                mimeType: "application/octet-stream",
+                size: String(ceiling + 1),
+                modifiedTime: "2026-05-24T01:00:00.000Z",
+              },
+            ],
+          }),
+        () => jsonResponse({ newStartPageToken: "wp-next", changes: [] }),
+      ],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toEqual({ ok: true });
+    expect(uploads).toHaveLength(0);
+
+    expect(created).toHaveLength(1);
+    expect(created[0]?.type).toBe("google.drive.file");
+    expect(created[0]?.properties?.blob_ref).toBeUndefined();
+
+    // Per-file info row mentions the file id + ceiling.
+    const perFile = emitted.find((a) =>
+      String(a.properties?.summary).includes("oversize"),
+    );
+    expect(perFile).toBeDefined();
+    expect(perFile?.properties?.severity).toBe("info");
+    expect(String(perFile?.properties?.summary)).toContain("drv-big");
+    expect(perFile?.properties?.detail).toMatchObject({
+      drive_file_id: "drv-big",
+      ceiling_bytes: ceiling,
+    });
+
+    const summary = emitted.find((a) =>
+      String(a.properties?.summary).includes("download_mode=all-files"),
+    );
+    expect(String(summary?.properties?.summary)).toContain("oversize=1");
+
+    // No action_required row for an oversize file.
+    const actionRequired = emitted.filter(
+      (a) => a.properties?.severity === "action_required",
+    );
+    expect(actionRequired).toHaveLength(0);
+  });
+
+  it("falls back to google.drive.file on per-file download failure (info severity, retry next sync)", async () => {
+    const { ctx, created, uploads, emitted } = buildContext({
+      connectionRecord: allFilesConnectionRecord(),
+      proxyResponses: [
+        () => jsonResponse({ startPageToken: "wp-1" }),
+        () =>
+          jsonResponse({
+            files: [
+              {
+                id: "drv-flaky",
+                name: "flaky.bin",
+                mimeType: "application/octet-stream",
+                size: "16",
+                modifiedTime: "2026-05-24T01:00:00.000Z",
+              },
+            ],
+          }),
+        // alt=media returns 500
+        () => new Response("upstream borked", { status: 500 }),
+        () => jsonResponse({ newStartPageToken: "wp-next", changes: [] }),
+      ],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toEqual({ ok: true });
+    expect(uploads).toHaveLength(0);
+
+    expect(created).toHaveLength(1);
+    expect(created[0]?.type).toBe("google.drive.file");
+    expect(created[0]?.properties?.blob_ref).toBeUndefined();
+
+    const perFile = emitted.find((a) =>
+      String(a.properties?.summary).includes("download failed for drv-flaky"),
+    );
+    expect(perFile).toBeDefined();
+    expect(perFile?.properties?.severity).toBe("info");
+
+    const summary = emitted.find((a) =>
+      String(a.properties?.summary).includes("download_mode=all-files"),
+    );
+    expect(String(summary?.properties?.summary)).toContain("download_failed=1");
+  });
+
+  it("metadata mode (default) emits google.drive.file with blob_ref absent and no synthesised aliases", async () => {
+    // No connectionRecord override — defaults to metadata mode.
+    const { ctx, created, uploads } = buildContext({
+      proxyResponses: [
+        () => jsonResponse({ startPageToken: "wp-1" }),
+        () =>
+          jsonResponse({
+            files: [
+              {
+                id: "drv-md",
+                name: "doc.pdf",
+                mimeType: "application/pdf",
+                size: "100",
+                md5Checksum: "should-not-become-blob-ref",
+                sha256Checksum: "ditto",
+              },
+            ],
+          }),
+        () => jsonResponse({ newStartPageToken: "wp-next", changes: [] }),
+      ],
+    });
+
+    const result = await handleSchedule(ctx, SCHEDULE_MSG());
+    expect(result).toEqual({ ok: true });
+    expect(uploads).toHaveLength(0);
+
+    expect(created).toHaveLength(1);
+    expect(created[0]?.type).toBe("google.drive.file");
+    expect(created[0]?.properties?.blob_ref).toBeUndefined();
+    // The Drive-side checksums are still captured as independent properties.
+    expect(created[0]?.properties?.md5_checksum).toBe(
+      "should-not-become-blob-ref",
+    );
+    expect(created[0]?.properties?.sha256_checksum).toBe("ditto");
   });
 });
