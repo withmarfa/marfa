@@ -10,6 +10,18 @@ compatibility_flags = ["nodejs_compat"]
 # CLOUDFLARE_ACCOUNT_ID environment variable at deploy time, so no
 # operator's account is baked into the committed config. See
 # infra/cloudflare/README.md.
+#
+# This file carries `$<VAR>`-style template tokens for operator-specific
+# values (T-252) — never edit them inline. Deploy via
+# `infra/cloudflare/scripts/deploy-control.sh <env>`, which reads the
+# values from environment variables and renders a temp file before
+# invoking `wrangler deploy`. Required vars:
+#   - CLOUDFLARE_ACCOUNT_ID            (account that hosts the Worker)
+#   - CONTROL_PLANE_STAGING_KV_ID      (idempotency KV namespace id, staging)
+#   - CONTROL_PLANE_PROD_KV_ID         (idempotency KV namespace id, prod)
+#   - CONTROL_PLANE_STAGING_HOSTNAME   (e.g. runtime-staging.myme.so)
+#   - CONTROL_PLANE_PROD_HOSTNAME      (e.g. runtime.myme.so)
+#   - CONTROL_PLANE_ZONE               (zone hosting both hostnames, e.g. myme.so)
 
 # Default (dev) environment — bound to the cloudflared-tunnel hostname
 # the developer brings up with `cloudflared tunnel --url …`.
@@ -19,7 +31,7 @@ compatibility_flags = ["nodejs_compat"]
 ENVIRONMENT = "dev"
 # Worker runtime var (the DLQ HTTP-pull client reads it). Wrangler does not
 # expand env vars in [vars], so the operator fills this in before deploy.
-CLOUDFLARE_ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
+CLOUDFLARE_ACCOUNT_ID = "${CLOUDFLARE_ACCOUNT_ID}"
 
 # ---- Staging --------------------------------------------------------------
 # `routes` and `zone_name` below are operator-specific — replace the
@@ -28,23 +40,23 @@ CLOUDFLARE_ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
 [env.staging]
 name = "myme-runtime-control-staging"
 routes = [
-  { pattern = "runtime-staging.example.com/*", zone_name = "example.com" },
+  { pattern = "${CONTROL_PLANE_STAGING_HOSTNAME}/*", zone_name = "${CONTROL_PLANE_ZONE}" },
 ]
 
 [env.staging.vars]
 ENVIRONMENT = "staging"
-CLOUDFLARE_ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
+CLOUDFLARE_ACCOUNT_ID = "${CLOUDFLARE_ACCOUNT_ID}"
 
 # ---- Production -----------------------------------------------------------
 [env.prod]
 name = "myme-runtime-control-prod"
 routes = [
-  { pattern = "runtime.example.com/*", zone_name = "example.com" },
+  { pattern = "${CONTROL_PLANE_PROD_HOSTNAME}/*", zone_name = "${CONTROL_PLANE_ZONE}" },
 ]
 
 [env.prod.vars]
 ENVIRONMENT = "prod"
-CLOUDFLARE_ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
+CLOUDFLARE_ACCOUNT_ID = "${CLOUDFLARE_ACCOUNT_ID}"
 
 # ---------------------------------------------------------------------------
 # Queue producers — wired in PR 3 of Layer 1; scheduled-poll added by T-084.
@@ -124,11 +136,11 @@ queue = "myme-webhook-receipt-google-drive-prod"
 
 [[env.staging.kv_namespaces]]
 binding = "IDEMPOTENCY_KV"
-id = "REPLACE_WITH_STAGING_KV_ID"
+id = "${CONTROL_PLANE_STAGING_KV_ID}"
 
 [[env.prod.kv_namespaces]]
 binding = "IDEMPOTENCY_KV"
-id = "REPLACE_WITH_PROD_KV_ID"
+id = "${CONTROL_PLANE_PROD_KV_ID}"
 
 # ---------------------------------------------------------------------------
 # Service bindings — control plane → per-Integration Workers.
