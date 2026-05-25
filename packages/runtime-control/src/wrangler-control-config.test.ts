@@ -25,6 +25,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
+import { IN_TREE_INTEGRATIONS, integrationsWithTrigger } from "@mymehq/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -39,32 +40,16 @@ const WRANGLER_CONTROL_TOML_PATH = resolve(
 );
 
 /**
- * Canonical list of integrations the control plane's dispatch switches
- * (in `routes/arm-schedule.ts` + `routes/verify.ts`) know about. Mirror
- * the switch cases here so the test is the single source of truth for
- * "what bindings every env block must carry".
- *
- * Adding a new integration:
- *   1. Add a case to both switches.
- *   2. Add the field to `ControlPlaneEnv` (`env.ts`).
- *   3. Add an entry here.
- *   4. Add `[[env.staging.services]]` + `[[env.prod.services]]` blocks
- *      to `wrangler.control.toml`.
+ * Canonical list of `INTEGRATION_*` bindings the control plane's
+ * dispatch switches (in `routes/arm-schedule.ts` + `routes/verify.ts`)
+ * resolve. Derived from `IN_TREE_INTEGRATIONS` — every in-tree
+ * integration with a deployed Worker contributes its `serviceBinding`
+ * field, so adding a registry entry automatically extends the
+ * freshness check.
  */
-const DISPATCHED_INTEGRATIONS = [
-  "INTEGRATION_RSS_WATCHER",
-  "INTEGRATION_GITHUB_WEBHOOKS",
-  "INTEGRATION_TASK_AUTO_ARCHIVE",
-  "INTEGRATION_GOOGLE_CALENDAR",
-  "INTEGRATION_GOOGLE_TASKS",
-  "INTEGRATION_GOOGLE_DRIVE",
-  "INTEGRATION_GOOGLE_CONTACTS",
-  "INTEGRATION_GOOGLE_YOUTUBE",
-  "INTEGRATION_TODOIST_TASKS",
-  "INTEGRATION_READWISE",
-  "INTEGRATION_RAINDROP",
-  "INTEGRATION_MYMEHQ_INBOX",
-] as const;
+const DISPATCHED_INTEGRATIONS = IN_TREE_INTEGRATIONS.filter(
+  (i) => i.hasWorker && i.serviceBinding,
+).map((i) => i.serviceBinding!);
 
 interface ServiceBinding {
   binding: string;
@@ -105,20 +90,12 @@ interface WranglerControlConfig {
  *   - every producer in wrangler.control.toml has a matching switch
  *     case in the resolver.
  */
-const WEBHOOK_RECEIPT_PRODUCERS = [
-  {
-    binding: "WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX",
-    integration: "mymehq-inbox",
-  },
-  {
-    binding: "WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR",
-    integration: "google-calendar",
-  },
-  {
-    binding: "WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE",
-    integration: "google-drive",
-  },
-] as const;
+const WEBHOOK_RECEIPT_PRODUCERS = integrationsWithTrigger("webhook")
+  .filter((i) => i.webhookQueueBinding)
+  .map((i) => ({
+    binding: i.webhookQueueBinding!,
+    integration: i.dirName,
+  }));
 
 function loadConfig(): WranglerControlConfig {
   const text = readFileSync(WRANGLER_CONTROL_TOML_PATH, "utf8");

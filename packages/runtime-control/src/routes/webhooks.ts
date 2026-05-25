@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { ADAPTERS } from "@mymehq/webhooks";
+import { findIntegration, integrationsWithTrigger } from "@mymehq/shared";
 import type { ControlPlaneEnv } from "../env.js";
 import { MymeServerClient } from "../myme-client.js";
 
@@ -42,16 +43,11 @@ function pickDedicatedProducer(
   env: ControlPlaneEnv,
   integrationName: string,
 ): QueueProducer | undefined {
-  switch (integrationName) {
-    case "mymehq.inbox":
-      return env.WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX;
-    case "google.calendar":
-      return env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR;
-    case "google.drive":
-      return env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE;
-    default:
-      return undefined;
-  }
+  const entry = findIntegration(integrationName);
+  if (!entry?.webhookQueueBinding) return undefined;
+  return (env as Record<string, unknown>)[entry.webhookQueueBinding] as
+    | QueueProducer
+    | undefined;
 }
 
 /** True iff at least one webhook-receipt producer is bound. Used by
@@ -59,12 +55,14 @@ function pickDedicatedProducer(
  *  deployment (no queues at all) rather than letting the per-
  *  integration resolver surface the same error per-request later. */
 function hasAnyWebhookProducer(env: ControlPlaneEnv): boolean {
-  return (
-    env.WEBHOOK_RECEIPT_QUEUE !== undefined ||
-    env.WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX !== undefined ||
-    env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR !== undefined ||
-    env.WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE !== undefined
-  );
+  if (env.WEBHOOK_RECEIPT_QUEUE !== undefined) return true;
+  for (const entry of integrationsWithTrigger("webhook")) {
+    if (!entry.webhookQueueBinding) continue;
+    if ((env as Record<string, unknown>)[entry.webhookQueueBinding]) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

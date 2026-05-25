@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { findIntegration } from "@mymehq/shared";
 import type { ControlPlaneEnv } from "../env.js";
 import { MymeServerClient } from "../myme-client.js";
 
@@ -113,41 +114,19 @@ function buildVerifyEnvelope(args: {
   };
 }
 
-/** Map a manifest-name to its service binding. Mirrors the same switch
- *  in `arm-schedule.ts`; the bounded-set assumption is documented on
- *  `env.ts`. */
+/** Map a manifest-name to its service binding via the in-tree
+ *  integration registry (`@mymehq/shared` → `IN_TREE_INTEGRATIONS`).
+ *  Same data source as `arm-schedule.ts`. The bounded-set assumption
+ *  is documented on `env.ts`. */
 function resolveServiceBinding(
   env: ControlPlaneEnv,
   integrationName: string,
 ): { fetch(request: Request): Promise<Response> } | undefined {
-  switch (integrationName) {
-    case "mymehq.rss-watcher":
-      return env.INTEGRATION_RSS_WATCHER;
-    case "mymehq.github-webhooks":
-      return env.INTEGRATION_GITHUB_WEBHOOKS;
-    case "mymehq.task-auto-archive":
-      return env.INTEGRATION_TASK_AUTO_ARCHIVE;
-    case "google.calendar":
-      return env.INTEGRATION_GOOGLE_CALENDAR;
-    case "google.tasks":
-      return env.INTEGRATION_GOOGLE_TASKS;
-    case "google.drive":
-      return env.INTEGRATION_GOOGLE_DRIVE;
-    case "google.contacts":
-      return env.INTEGRATION_GOOGLE_CONTACTS;
-    case "google.youtube":
-      return env.INTEGRATION_GOOGLE_YOUTUBE;
-    case "todoist.tasks":
-      return env.INTEGRATION_TODOIST_TASKS;
-    case "readwise.highlights":
-      return env.INTEGRATION_READWISE;
-    case "raindrop.bookmarks":
-      return env.INTEGRATION_RAINDROP;
-    case "mymehq.inbox":
-      return env.INTEGRATION_MYMEHQ_INBOX;
-    default:
-      return undefined;
-  }
+  const entry = findIntegration(integrationName);
+  if (!entry?.serviceBinding) return undefined;
+  return (env as Record<string, unknown>)[entry.serviceBinding] as
+    | { fetch(request: Request): Promise<Response> }
+    | undefined;
 }
 
 export function registerVerifyRoute(
