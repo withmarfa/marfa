@@ -94,8 +94,8 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
   return { ctx, emitted, created };
 }
 
-const FROM_AUGUST = {
-  from: { address: "august@cayzer.me", name: "August Cayzer" },
+const FROM_SENDER = {
+  from: { address: "sender@example.com", name: "Test Sender" },
   to: "capture@inbox.myme.so",
   subject: "Read this later",
   text_body: "Interesting article: https://example.com/x",
@@ -114,7 +114,7 @@ const ENVELOPE_NO_BODY = {
 };
 
 const ENVELOPE_WITH_ATTACHMENTS = {
-  ...FROM_AUGUST,
+  ...FROM_SENDER,
   message_id: "<with-attachments@example.com>",
   attachments: [
     { filename: "report.pdf", mime_type: "application/pdf", size_bytes: 14523 },
@@ -158,14 +158,14 @@ describe("mymehq.inbox handler", () => {
     const { ctx, created, emitted } = buildContext();
     const result = await handleInboxWebhook(
       ctx,
-      makeWebhookMessage(FROM_AUGUST, "<CAabc123@mail.gmail.com>"),
+      makeWebhookMessage(FROM_SENDER, "<CAabc123@mail.gmail.com>"),
     );
     expect(result).toEqual({ ok: true });
     expect(created).toHaveLength(1);
     expect(created[0]!.type).toBe("mymehq.captured_email");
     expect(created[0]!.properties).toMatchObject({
-      from_address: "august@cayzer.me",
-      from_name: "August Cayzer",
+      from_address: "sender@example.com",
+      from_name: "Test Sender",
       to_address: "capture@inbox.myme.so",
       subject: "Read this later",
       text_body: "Interesting article: https://example.com/x",
@@ -184,7 +184,7 @@ describe("mymehq.inbox handler", () => {
     const { ctx, created, emitted } = buildContext();
     await handleInboxWebhook(
       ctx,
-      makeWebhookMessage(FROM_AUGUST, "<CAabc123@mail.gmail.com>"),
+      makeWebhookMessage(FROM_SENDER, "<CAabc123@mail.gmail.com>"),
     );
     expect(created).toHaveLength(1);
 
@@ -192,7 +192,7 @@ describe("mymehq.inbox handler", () => {
     // delivery id — handler dedupes on the envelope's message_id.
     await handleInboxWebhook(
       ctx,
-      makeWebhookMessage(FROM_AUGUST, "different-delivery-header"),
+      makeWebhookMessage(FROM_SENDER, "different-delivery-header"),
     );
     expect(created).toHaveLength(1);
     expect(emitted.at(-1)?.properties?.summary).toBe(
@@ -202,7 +202,7 @@ describe("mymehq.inbox handler", () => {
 
   it("falls back to header delivery id when Message-ID is absent", async () => {
     const { ctx, created } = buildContext();
-    const noMsgId = { ...FROM_AUGUST };
+    const noMsgId = { ...FROM_SENDER };
     delete (noMsgId as Record<string, unknown>).message_id;
     await handleInboxWebhook(
       ctx,
@@ -253,7 +253,7 @@ describe("mymehq.inbox handler", () => {
     const { ctx, created, emitted } = buildContext({ failCreate: true });
     const r1 = await handleInboxWebhook(
       ctx,
-      makeWebhookMessage(FROM_AUGUST, "<CAabc123@mail.gmail.com>"),
+      makeWebhookMessage(FROM_SENDER, "<CAabc123@mail.gmail.com>"),
     );
     expect(r1).toEqual({
       ok: false,
@@ -268,7 +268,7 @@ describe("mymehq.inbox handler", () => {
     // Retry should NOT dedupe — delivery wasn't recorded.
     const r2 = await handleInboxWebhook(
       ctx,
-      makeWebhookMessage(FROM_AUGUST, "<CAabc123@mail.gmail.com>"),
+      makeWebhookMessage(FROM_SENDER, "<CAabc123@mail.gmail.com>"),
     );
     expect(r2).toEqual({ ok: true });
     expect(created).toHaveLength(1);
@@ -278,7 +278,7 @@ describe("mymehq.inbox handler", () => {
     const { ctx, created } = buildContext();
     await handleInboxWebhook(
       ctx,
-      makeWebhookMessage(FROM_AUGUST, "<lower@example.com>", {
+      makeWebhookMessage(FROM_SENDER, "<lower@example.com>", {
         lowercase: true,
       }),
     );
@@ -307,7 +307,7 @@ describe("mymehq.inbox handler", () => {
 
     await handleInboxWebhook(
       ctx,
-      makeWebhookMessage(FROM_AUGUST, "<CAabc123@mail.gmail.com>"),
+      makeWebhookMessage(FROM_SENDER, "<CAabc123@mail.gmail.com>"),
     );
     const ring = (await ctx.cursor.read("delivery_ring")) as { ids: string[] };
     expect(ring.ids).toHaveLength(DELIVERY_RING_SIZE);
@@ -318,7 +318,7 @@ describe("mymehq.inbox handler", () => {
   it("buildCapturedEmail filters incomplete attachments", () => {
     const input = __internals.buildCapturedEmail(
       ENVELOPE_WITH_ATTACHMENTS,
-      "august@cayzer.me",
+      "sender@example.com",
       "capture@inbox.myme.so",
     );
     expect(input.properties?.attachments).toEqual([

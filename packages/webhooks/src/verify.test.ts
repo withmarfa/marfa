@@ -330,7 +330,7 @@ describe("verifyCloudflareEmail", () => {
 
   it("verifies a correctly-signed email envelope", async () => {
     const body = asBuffer(
-      '{"from":{"address":"august@cayzer.me"},"subject":"hi","text_body":"hello"}',
+      '{"from":{"address":"sender@example.com"},"subject":"hi","text_body":"hello"}',
     );
     const sig = await hmacHex(SECRET, body);
     const headers = new Headers({
