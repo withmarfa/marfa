@@ -8,9 +8,9 @@ export default defineConfig({
     // so we glob those specifically — avoids vitest tripping on
     // per-folder docs like `integrations/CLAUDE.md`.
     //
-    // T-244 adds the third glob — the mymehq.inbox integration ships
+    // T-244 adds the third glob — the withmarfa.inbox integration ships
     // a sibling Cloudflare Email Worker at
-    // `integrations/mymehq-inbox/email-worker/` with its own
+    // `integrations/withmarfa-inbox/email-worker/` with its own
     // vitest.config.ts, the only nested-workspace package today.
     projects: [
       "packages/*",

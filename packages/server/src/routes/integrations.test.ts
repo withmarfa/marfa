@@ -25,7 +25,7 @@ import {
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 
 const ORIGIN = "http://localhost:0";
@@ -47,7 +47,7 @@ function baseManifest(
     name: "acme.calendar-sync",
     version: "1.0.0",
     publisher: "Acme",
-    description: "Sync calendar events into Myme",
+    description: "Sync calendar events into Marfa",
     direction: "read",
     triggers: [
       { type: "schedule", config: { cron: "*/15 * * * *" } },

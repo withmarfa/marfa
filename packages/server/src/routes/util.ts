@@ -1,5 +1,5 @@
-import { filterExtensionsByPermission } from "@mymehq/shared";
-import type { ApiKey, Metadata } from "@mymehq/shared";
+import { filterExtensionsByPermission } from "@withmarfa/shared";
+import type { ApiKey, Metadata } from "@withmarfa/shared";
 
 export function parseIntParam(
   raw: string | undefined,

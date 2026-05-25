@@ -28,7 +28,7 @@ interface HostedContext {
 
 async function createHostedContext(): Promise<HostedContext> {
   const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
-  const tmpDir = mkdtempSync(join(tmpdir(), "myme-users-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-users-test-"));
   const blobPath = join(tmpDir, "blobs");
 
   let storage: Storage;

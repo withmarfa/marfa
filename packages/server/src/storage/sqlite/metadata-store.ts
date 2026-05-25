@@ -1,5 +1,5 @@
 import { eq, inArray, sql } from "drizzle-orm";
-import type { Metadata } from "@mymehq/shared";
+import type { Metadata } from "@withmarfa/shared";
 import type { MetadataStore } from "../interface.js";
 import { metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";

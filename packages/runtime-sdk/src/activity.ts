@@ -1,7 +1,7 @@
 /**
  * `system.activity` emission helper.
  *
- * The Myme server's existing `system.activity` type carries severity
+ * The Marfa server's existing `system.activity` type carries severity
  * (`info | warning | error | action_required`), summary, and optional
  * detail. The runtime SDK uses this to surface every operator-visible
  * state change (cursor advance failures, reauth required, hop budget

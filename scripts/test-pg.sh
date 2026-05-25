@@ -9,7 +9,7 @@
 #
 # Container name + port carry the invoking shell's PID so concurrent
 # test:pg runs across different worktrees / agents don't stomp on each
-# other's containers. Pre-PID this script hard-coded `myme-test-pg`
+# other's containers. Pre-PID this script hard-coded `marfa-test-pg`
 # and `55432`; two agents running test:pg simultaneously killed each
 # other's containers via the `docker rm -f` at start. With PID
 # suffixing each invocation owns its own container + port.
@@ -17,14 +17,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-CONTAINER_NAME="myme-test-pg-$$"
+CONTAINER_NAME="marfa-test-pg-$$"
 # Port: a deterministic-per-PID offset above 55432 so concurrent runs
 # don't collide on the host port either. Modulo keeps it in a sane
 # range (55432-56431); collisions across PIDs spaced exactly 1000 apart
 # are vanishingly unlikely in practice.
 PG_PORT=$((55432 + ($$ % 1000)))
-PG_USER="myme"
-PG_PASSWORD="myme"
+PG_USER="marfa"
+PG_PASSWORD="marfa"
 PG_DB="myme_test"
 
 if ! docker info >/dev/null 2>&1; then
@@ -86,14 +86,14 @@ echo "→ Running server tests (Postgres)"
 # Two PG URLs are exported:
 #   - DATABASE_URL — historical compat, points at ${PG_DB} (myme_test).
 #     The globalSetup uses it only as a fallback to derive the admin URL.
-#   - MYME_TEST_PG_ADMIN_URL — points at the `postgres` system DB so the
+#   - MARFA_TEST_PG_ADMIN_URL — points at the `postgres` system DB so the
 #     globalSetup can CREATE/DROP the test template + per-file clones.
 #     Required for the per-file template-database lifecycle that replaced
 #     the shared-DB + truncate-on-setup pattern (PR 1 of the May 2026 CI/test
 #     audit). See packages/server/src/storage/pg/test-template.ts.
 STORAGE_DIALECT=pg \
   DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/${PG_DB}" \
-  MYME_TEST_PG_ADMIN_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/postgres" \
+  MARFA_TEST_PG_ADMIN_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/postgres" \
   pnpm test
 
 echo "✓ test:pg passed"

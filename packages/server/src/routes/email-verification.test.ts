@@ -89,7 +89,7 @@ describe("Wave C PR2: verify-on-signup flow", () => {
             res.headers as Headers & { getSetCookie: () => string[] }
           ).getSetCookie()
         : [res.headers.get("set-cookie") ?? ""];
-    expect(cookies.some((c) => c.includes("myme.auth"))).toBe(false);
+    expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(false);
   });
 
   it("GET /auth/verify-email without token renders the pending state", async () => {
@@ -240,7 +240,7 @@ describe("Wave C PR2: verify-on-signup flow", () => {
             allowed.headers as Headers & { getSetCookie: () => string[] }
           ).getSetCookie()
         : [allowed.headers.get("set-cookie") ?? ""];
-    expect(cookies.some((c) => c.includes("myme.auth"))).toBe(true);
+    expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(true);
   });
 
   it("GET /auth/verify-email with bad token renders the failure state", async () => {

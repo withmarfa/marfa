@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Myme API",
+    "title": "Marfa API",
     "version": "4.2.0",
     "description": "Typed data layer for structured personal data"
   },
@@ -8460,7 +8460,7 @@
           "Types"
         ],
         "summary": "Register a custom type",
-        "description": "Registers a custom type at runtime. Identifier must namespace under one of `app.<app-name>.<type>`, `user.<type>`, or `<publisher>.<type>` — reserved roots (`core`, `system`, `myme`) reject with `400 reserved_namespace`. Bodies are validated; mismatched semver bumps (additive change submitted as major, etc.) reject with `400 version_bump_mismatch`. Child types may not redefine ancestor fields — `400 inheritance_violation`. Property names may not shadow first-class `Item` wire fields (`device`, `source_id`, `timestamp`, `version`, `schema_version`, `tier`, `state`, `capture_latitude`, `capture_longitude`, etc.) — `400 property_shadows_field`.\n\nAdmin keys bypass; non-admin credentials need the `metadata.types:write` scope, default-off for new keys. See [Authoring types](/concepts/authoring-types) for the rubric and error catalogue.",
+        "description": "Registers a custom type at runtime. Identifier must namespace under one of `app.<app-name>.<type>`, `user.<type>`, or `<publisher>.<type>` — reserved roots (`core`, `system`, `marfa`) reject with `400 reserved_namespace`. Bodies are validated; mismatched semver bumps (additive change submitted as major, etc.) reject with `400 version_bump_mismatch`. Child types may not redefine ancestor fields — `400 inheritance_violation`. Property names may not shadow first-class `Item` wire fields (`device`, `source_id`, `timestamp`, `version`, `schema_version`, `tier`, `state`, `capture_latitude`, `capture_longitude`, etc.) — `400 property_shadows_field`.\n\nAdmin keys bypass; non-admin credentials need the `metadata.types:write` scope, default-off for new keys. See [Authoring types](/concepts/authoring-types) for the rubric and error catalogue.",
         "security": [
           {
             "bearerAuth": []
@@ -12437,7 +12437,7 @@
           "System"
         ],
         "summary": "Issue a runtime credential",
-        "description": "Mints a short-lived API key scoped to a single connection. The runtime-control plane calls this to provision the credential a per-integration Worker presents when invoking Myme on the connection's behalf. The `api_key` field is returned **once**; subsequent reads omit it.",
+        "description": "Mints a short-lived API key scoped to a single connection. The runtime-control plane calls this to provision the credential a per-integration Worker presents when invoking Marfa on the connection's behalf. The `api_key` field is returned **once**; subsequent reads omit it.",
         "security": [
           {
             "bearerAuth": []
@@ -15013,7 +15013,7 @@
           "Export"
         ],
         "summary": "Export tenant data",
-        "description": "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON or a tar.gz archive. Filterable by `type`, `state`, `source`, `since` / `until`. NDJSON is the default — one JSON object per line, items first then edges then metadata, suitable for piping into another store or `jq`. `format=archive` produces a `myme-archive-v1.tar.gz` ingestible by `POST /admin/restore-archive` for tenant-to-tenant migrations.\n\nLong-running; the response keeps streaming until the filter is exhausted. Tenant-scoped — exports only what the caller can read. See [Bulk operations — archive restore](/api/bulk-operations#archive-restore) for the round-trip.",
+        "description": "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON or a tar.gz archive. Filterable by `type`, `state`, `source`, `since` / `until`. NDJSON is the default — one JSON object per line, items first then edges then metadata, suitable for piping into another store or `jq`. `format=archive` produces a `marfa-archive-v1.tar.gz` ingestible by `POST /admin/restore-archive` for tenant-to-tenant migrations.\n\nLong-running; the response keeps streaming until the filter is exhausted. Tenant-scoped — exports only what the caller can read. See [Bulk operations — archive restore](/api/bulk-operations#archive-restore) for the round-trip.",
         "security": [
           {
             "bearerAuth": []
@@ -15175,7 +15175,7 @@
           "Inbound Webhooks"
         ],
         "summary": "Register an inbound webhook subscription on a connection",
-        "description": "Registers an inbound-webhook subscription on an integration connection. External services (the connection's upstream) deliver events into Myme by POSTing to the public receipt URL the platform exposes per subscription. Signature verification uses the adapter named in `webhook_verification.method` on the connection's manifest — `hmac-sha256`, `slack`, `stripe`, or `github`.\n\nThe `secret` is returned **once** in the creation response — store it then; subsequent reads redact it. See [Inbound webhooks](/api/inbound-webhooks).",
+        "description": "Registers an inbound-webhook subscription on an integration connection. External services (the connection's upstream) deliver events into Marfa by POSTing to the public receipt URL the platform exposes per subscription. Signature verification uses the adapter named in `webhook_verification.method` on the connection's manifest — `hmac-sha256`, `slack`, `stripe`, or `github`.\n\nThe `secret` is returned **once** in the creation response — store it then; subsequent reads redact it. See [Inbound webhooks](/api/inbound-webhooks).",
         "security": [
           {
             "bearerAuth": []
@@ -16079,7 +16079,7 @@
           "Connection Leased Tokens"
         ],
         "summary": "Issue a leased token",
-        "description": "Mints a short-TTL bearer token an external service can use to call back into Myme directly, without holding the connection's full runtime credential. The capability must be declared on the connection's integration manifest with `oauth_requirements: leased`; capabilities not declared as leased reject with `422`.\n\nThe `lease_token` field is returned **once** in the creation response; subsequent reads omit it. See [Integrations — OAuth proxy and leased tokens](/concepts/integrations#oauth-proxy-and-leased-tokens).",
+        "description": "Mints a short-TTL bearer token an external service can use to call back into Marfa directly, without holding the connection's full runtime credential. The capability must be declared on the connection's integration manifest with `oauth_requirements: leased`; capabilities not declared as leased reject with `422`.\n\nThe `lease_token` field is returned **once** in the creation response; subsequent reads omit it. See [Integrations — OAuth proxy and leased tokens](/concepts/integrations#oauth-proxy-and-leased-tokens).",
         "security": [
           {
             "bearerAuth": []
@@ -18603,7 +18603,7 @@
           "Webhooks"
         ],
         "summary": "List webhook deliveries",
-        "description": "Returns recent delivery attempts for one subscription, newest first. Each entry carries the event id, the resolved URL, the response status, attempt count, and the next retry time (when retrying). Use to debug delivery failures and confirm that `X-Myme-Event-Id` deduplication is working on the receiver side.",
+        "description": "Returns recent delivery attempts for one subscription, newest first. Each entry carries the event id, the resolved URL, the response status, attempt count, and the next retry time (when retrying). Use to debug delivery failures and confirm that `X-Marfa-Event-Id` deduplication is working on the receiver side.",
         "security": [
           {
             "bearerAuth": []

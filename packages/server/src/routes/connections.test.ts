@@ -21,7 +21,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import { hashApiKey } from "../middleware/auth.js";
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 let ctx: TestContext;
 

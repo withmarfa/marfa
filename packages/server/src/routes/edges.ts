@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ErrorCode, MymeError, isValidId } from "@mymehq/shared";
+import { ErrorCode, MarfaError, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -53,7 +53,7 @@ function parseEdgeTypeFilter(
     .filter((p) => p.length > 0);
   if (parts.length === 0) return undefined;
   if (parts.length > MAX_EDGE_TYPE_FILTER) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
       `Too many edge types in filter (max ${String(MAX_EDGE_TYPE_FILTER)})`,
     );
@@ -272,10 +272,10 @@ export function edgeRoutes(storage: Storage) {
     requireAuth(c);
     const body = c.req.valid("json");
     if (!isValidId(body.source_id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid source_id");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid source_id");
     }
     if (!isValidId(body.target_id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid target_id");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid target_id");
     }
     const tenantId = c.get("apiKey")?.tenant_id;
 
@@ -283,7 +283,7 @@ export function edgeRoutes(storage: Storage) {
     // Admin keys bypass both via the helpers.
     const sourceItem = await storage.items.get(body.source_id, tenantId);
     if (!sourceItem) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.ITEM_NOT_FOUND,
         `Edge source item not found: ${body.source_id}`,
       );
@@ -331,7 +331,7 @@ export function edgeRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const existing = await storage.edges.get(id);
     if (!existing) {
-      throw new MymeError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
+      throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // Use getIncludingTrashed so edges whose source item is trashed
     // still run the source-type permission check. Previously
@@ -350,7 +350,7 @@ export function edgeRoutes(storage: Storage) {
     const bodyKeys = Object.keys(body as object);
     for (const k of bodyKeys) {
       if (k !== "properties") {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           `Edge ${k} is immutable after creation`,
         );
@@ -374,7 +374,7 @@ export function edgeRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
     const existing = await storage.edges.get(id);
     if (!existing) {
-      throw new MymeError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
+      throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // Use getIncludingTrashed so edges whose source item is trashed
     // still run the source-type permission check. Previously
@@ -499,12 +499,12 @@ export function itemEdgeListingRoutes(storage: Storage) {
     requireAuth(c);
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
     const tenantId = c.get("apiKey")?.tenant_id;
     const item = await storage.items.get(id, tenantId);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     const q = c.req.valid("query");
     const result = await storage.edges.listFromSource(id, {
@@ -519,12 +519,12 @@ export function itemEdgeListingRoutes(storage: Storage) {
     requireAuth(c);
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
     const tenantId = c.get("apiKey")?.tenant_id;
     const item = await storage.items.get(id, tenantId);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     const q = c.req.valid("query");
     const result = await storage.edges.listToTarget(id, {

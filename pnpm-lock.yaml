@@ -35,7 +35,7 @@ importers:
 
   infra/cloudflare:
     dependencies:
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
@@ -54,10 +54,10 @@ importers:
 
   integrations/_template:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
@@ -76,17 +76,17 @@ importers:
 
   integrations/github-webhooks:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -101,17 +101,17 @@ importers:
 
   integrations/google-calendar:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -126,17 +126,17 @@ importers:
 
   integrations/google-contacts:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -151,17 +151,17 @@ importers:
 
   integrations/google-drive:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -176,17 +176,17 @@ importers:
 
   integrations/google-tasks:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -201,17 +201,17 @@ importers:
 
   integrations/google-youtube:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -224,19 +224,19 @@ importers:
         specifier: ^4.1.2
         version: 4.1.2(@types/node@22.19.15)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@22.19.15)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.8.3))
 
-  integrations/mymehq-inbox:
+  integrations/withmarfa-inbox:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -249,7 +249,7 @@ importers:
         specifier: ^4.1.2
         version: 4.1.2(@types/node@22.19.15)(vite@8.0.3(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@22.19.15)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.8.3))
 
-  integrations/mymehq-inbox/email-worker:
+  integrations/withmarfa-inbox/email-worker:
     dependencies:
       postal-mime:
         specifier: ^2.5.1
@@ -267,17 +267,17 @@ importers:
 
   integrations/raindrop:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -292,17 +292,17 @@ importers:
 
   integrations/readwise:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -317,17 +317,17 @@ importers:
 
   integrations/rss-watcher:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -342,7 +342,7 @@ importers:
 
   integrations/sync:
     dependencies:
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
@@ -358,17 +358,17 @@ importers:
 
   integrations/task-auto-archive:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -383,17 +383,17 @@ importers:
 
   integrations/todoist:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../../packages/runtime-sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251201.0
         version: 4.20260501.1
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../../packages/runtime-test
       tsup:
@@ -408,10 +408,10 @@ importers:
 
   packages/runtime-control:
     dependencies:
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../shared
-      '@mymehq/webhooks':
+      '@withmarfa/webhooks':
         specifier: workspace:*
         version: link:../webhooks
       hono:
@@ -439,10 +439,10 @@ importers:
 
   packages/runtime-sdk:
     dependencies:
-      '@mymehq/sdk':
+      '@withmarfa/sdk':
         specifier: workspace:*
         version: link:../sdk
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../shared
       cron-parser:
@@ -464,7 +464,7 @@ importers:
 
   packages/runtime-test:
     dependencies:
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../runtime-sdk
     devDependencies:
@@ -483,11 +483,11 @@ importers:
 
   packages/sdk:
     dependencies:
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:
-      '@mymehq/server':
+      '@withmarfa/server':
         specifier: workspace:*
         version: link:../server
       '@types/node':
@@ -523,10 +523,10 @@ importers:
       '@libsql/client':
         specifier: ^0.17.3
         version: 0.17.3
-      '@mymehq/shared':
+      '@withmarfa/shared':
         specifier: workspace:*
         version: link:../shared
-      '@mymehq/webhooks':
+      '@withmarfa/webhooks':
         specifier: workspace:*
         version: link:../webhooks
       better-auth:
@@ -563,13 +563,13 @@ importers:
         specifier: ^7.24.8
         version: 7.24.8
     devDependencies:
-      '@mymehq/integration-sync':
+      '@withmarfa/integration-sync':
         specifier: workspace:*
         version: link:../../integrations/sync
-      '@mymehq/runtime-sdk':
+      '@withmarfa/runtime-sdk':
         specifier: workspace:*
         version: link:../runtime-sdk
-      '@mymehq/runtime-test':
+      '@withmarfa/runtime-test':
         specifier: workspace:*
         version: link:../runtime-test
       '@types/node':
@@ -603,7 +603,7 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@mymehq/types':
+      '@withmarfa/types':
         specifier: workspace:*
         version: link:../types
       '@types/node':

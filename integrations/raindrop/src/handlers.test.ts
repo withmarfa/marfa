@@ -21,7 +21,7 @@ import {
   type ItemResource,
   type ItemState,
   type ScheduleMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleSchedule, __internals } from "./handlers.js";
 
 interface InMemoryStorage {
@@ -110,7 +110,7 @@ function buildContext(opts: BuildOpts): BuiltState {
   const ctx: ConnectionContext = {
     connection_id: connectionId,
     integration_name: "raindrop.bookmarks",
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, {

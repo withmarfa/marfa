@@ -1,9 +1,9 @@
 {
-  "name": "@mymehq/runtime-sdk",
+  "name": "@withmarfa/runtime-sdk",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "SDK that Connections integrations import. Per-Connection Durable Object, typed handler API, ConnectionClient (wraps @mymehq/sdk), echo suppression, system.activity emission.",
+  "description": "SDK that Connections integrations import. Per-Connection Durable Object, typed handler API, ConnectionClient (wraps @withmarfa/sdk), echo suppression, system.activity emission.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -24,8 +24,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@mymehq/sdk": "workspace:*",
-    "@mymehq/shared": "workspace:*",
+    "@withmarfa/sdk": "workspace:*",
+    "@withmarfa/shared": "workspace:*",
     "cron-parser": "^5.5.0"
   },
   "devDependencies": {

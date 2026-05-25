@@ -252,7 +252,7 @@ describe("POST /items — platform-credential gate (TSC42 §3/§4)", () => {
     // with `type_permissions: { "system.connection": "write" }` could mint
     // system.connection rows because the admin-role bypass in
     // `checkTypeAccess` returned early before any platform check ran. The
-    // gate now fires for writes to `core.*` / `system.*` / `myme.*`
+    // gate now fires for writes to `core.*` / `system.*` / `marfa.*`
     // independent of role; reads are unrestricted.
     const tenantAdminKey = "myme_k1_test_non_platform_admin";
     await ctx.storage.keys.create(

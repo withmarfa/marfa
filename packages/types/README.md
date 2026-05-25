@@ -1,6 +1,6 @@
-# @mymehq/types
+# @withmarfa/types
 
-Canonical Myme type schemas. Owns the JSON source, the codegen, and the generated TypeScript registry that `@mymehq/shared` consumes.
+Canonical Marfa type schemas. Owns the JSON source, the codegen, and the generated TypeScript registry that `@withmarfa/shared` consumes.
 
 ## Layout
 

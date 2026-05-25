@@ -1,6 +1,6 @@
 import type { Context } from "hono";
-import { MymeError, ErrorCode } from "@mymehq/shared";
-import type { QuotaResource } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import type { QuotaResource } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 import type { AppEnv } from "./auth.js";
@@ -45,7 +45,7 @@ export async function enforceQuota(
 
   const current = await storage.tenantQuotas.count(tenantId, resource);
   if (current + increment > limit) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.QUOTA_EXCEEDED,
       `Tenant quota for ${resource} exceeded`,
       { resource, limit, current },
@@ -78,7 +78,7 @@ async function effectiveLimit(
     })();
     if (tenantLimit !== null && tenantLimit !== undefined) return tenantLimit;
   }
-  // Instance default — the env vars (`MYME_DEFAULT_QUOTA_*`) are parsed
+  // Instance default — the env vars (`MARFA_DEFAULT_QUOTA_*`) are parsed
   // once in config.ts; consume those values rather than re-reading
   // `process.env` here, so a single config source stays authoritative.
   return configDefault(resource, config);

@@ -1,4 +1,4 @@
--- Better Auth tables (auth_* prefix, isolated from myme's own users table).
+-- Better Auth tables (auth_* prefix, isolated from marfa's own users table).
 -- Owned by the better-auth library; schema mirrors what
 -- `npx @better-auth/cli generate` produces for the email + password core.
 -- Timestamps stored as TIMESTAMP to match Drizzle timestamp(mode:date)

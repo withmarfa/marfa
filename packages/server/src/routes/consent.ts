@@ -39,7 +39,7 @@
  * visually-styled checkboxes so submission shape doesn't change.
  */
 
-import type { ParsedScope } from "@mymehq/shared";
+import type { ParsedScope } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
 
@@ -262,7 +262,7 @@ export function renderConsentScreen(params: ConsentParams): string {
   const titleText = showDiff ? "Update access" : "Allow access";
   const ledeText = showDiff
     ? `<span class="client-name">${safeClient}</span> needs different permissions than before.`
-    : `<span class="client-name">${safeClient}</span> is asking to access your Myme space. Untick anything you'd rather not share.`;
+    : `<span class="client-name">${safeClient}</span> is asking to access your Marfa space. Untick anything you'd rather not share.`;
 
   // T-131 F2 inline error banner — survives across pages because the
   // POST handler 302s back to GET with `?error=...` on validation

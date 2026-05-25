@@ -3,10 +3,10 @@ import {
   getTypeSchema,
   registerTypeSchema,
   unregisterTypeSchema,
-  MymeError,
+  MarfaError,
   ErrorCode,
-} from "@mymehq/shared";
-import type { TypeSchema } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import type { TypeSchema } from "@withmarfa/shared";
 import { eq, sql } from "drizzle-orm";
 import type { TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
@@ -43,7 +43,7 @@ export class PgTypeStore implements TypeStore {
         (err.message.includes("duplicate key") ||
           err.message.includes("unique constraint"))
       ) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.TYPE_ALREADY_EXISTS,
           `Type "${schema.id}" already exists`,
         );

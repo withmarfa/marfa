@@ -1,6 +1,6 @@
 # google-contacts
 
-Bidirectional sync between Google Contacts (People API) and Myme.
+Bidirectional sync between Google Contacts (People API) and Marfa.
 Third instance of the `google.*` publisher family. Schedule-only on
 the inbound side because the People API does not publish a
 `channels.watch` surface for the `connections` collection.
@@ -108,7 +108,7 @@ People API does not accept a client-supplied id on `createContact`.
 The retry-safe rail is a `clientData` entry:
 
 ```
-clientData: [{ key: "myme-id", value: "<myme_item_id>" }]
+clientData: [{ key: "marfa-id", value: "<myme_item_id>" }]
 ```
 
 `clientData` is a free-form per-person key/value list exposed in the
@@ -122,7 +122,7 @@ proceeds.
 ## Tombstones
 
 `connections.list` surfaces deletions as `metadata.deleted === true`.
-Mapped Myme items transition to `trashed`; the mapping entry is
+Mapped Marfa items transition to `trashed`; the mapping entry is
 removed.
 
 ## Photo handling — reference only

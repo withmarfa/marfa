@@ -1,23 +1,23 @@
-# Myme
+# Marfa
 
 Typed data layer. This monorepo contains eight active workspace packages plus six in-tree Integrations and the Cloudflare infra package:
 
 **Core packages (`packages/`):**
 
-- **@mymehq/types** — JSON schemas for the core type set plus the validate/generate scripts that emit the TypeScript registries (`ALL_TYPES`, `ALL_EDGE_TYPES`, `ALL_SYSTEM_TYPES`). Consumed by `@mymehq/shared`; private (bundled into shared's dist, not published to npm).
-- **@mymehq/shared** — Wire types, Zod validation schemas, error codes, type registry consumer, ID utilities, the OAuth scope grammar parser, the `IntegrationManifestSchema`. The foundation imported by every other package.
-- **@mymehq/server** — Hono HTTP server exposing the Myme API (private, not published). Carries the data plane plus the Connections / OAuth / Better Auth surfaces.
-- **@mymehq/sdk** — TypeScript HTTP client (`@mymehq/sdk` and the `@mymehq/sdk/auth` subpath for the OAuth helpers — `MymeAuth`, PKCE helpers, token storages, `startDeviceFlow`).
-- **@mymehq/webhooks** — Cross-runtime inbound-webhook signature verification (HMAC-SHA256, Slack, Stripe, GitHub). Web Crypto only, so `runtime-control` (Workers) and `server` (Node) consume the same code.
-- **@mymehq/runtime-control** — Cloudflare Worker control plane. Verifies inbound webhook receipts, enqueues per-Integration messages, mediates the runtime-credential broker. Web-Crypto only; no Node APIs.
-- **@mymehq/runtime-sdk** — In-Worker SDK consumed by Integration Workers. Queue consumer, echo-suppression DO, manifest-typed handler scaffolding.
-- **@mymehq/runtime-test** — In-Worker test harness mirroring the runtime-sdk surface so Integrations can run unit tests in a `miniflare`-style fixture without booting a real Cloudflare Workers runtime.
+- **@withmarfa/types** — JSON schemas for the core type set plus the validate/generate scripts that emit the TypeScript registries (`ALL_TYPES`, `ALL_EDGE_TYPES`, `ALL_SYSTEM_TYPES`). Consumed by `@withmarfa/shared`; private (bundled into shared's dist, not published to npm).
+- **@withmarfa/shared** — Wire types, Zod validation schemas, error codes, type registry consumer, ID utilities, the OAuth scope grammar parser, the `IntegrationManifestSchema`. The foundation imported by every other package.
+- **@withmarfa/server** — Hono HTTP server exposing the Marfa API (private, not published). Carries the data plane plus the Connections / OAuth / Better Auth surfaces.
+- **@withmarfa/sdk** — TypeScript HTTP client (`@withmarfa/sdk` and the `@withmarfa/sdk/auth` subpath for the OAuth helpers — `MarfaAuth`, PKCE helpers, token storages, `startDeviceFlow`).
+- **@withmarfa/webhooks** — Cross-runtime inbound-webhook signature verification (HMAC-SHA256, Slack, Stripe, GitHub). Web Crypto only, so `runtime-control` (Workers) and `server` (Node) consume the same code.
+- **@withmarfa/runtime-control** — Cloudflare Worker control plane. Verifies inbound webhook receipts, enqueues per-Integration messages, mediates the runtime-credential broker. Web-Crypto only; no Node APIs.
+- **@withmarfa/runtime-sdk** — In-Worker SDK consumed by Integration Workers. Queue consumer, echo-suppression DO, manifest-typed handler scaffolding.
+- **@withmarfa/runtime-test** — In-Worker test harness mirroring the runtime-sdk surface so Integrations can run unit tests in a `miniflare`-style fixture without booting a real Cloudflare Workers runtime.
 
-**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copy-pastes), `rss-watcher`, `github-webhooks`, `google-calendar`, `sync` (the file-to-Myme bridge re-presented as a Connection — the agent itself lives in `mymehq/sync`), `task-auto-archive`. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`.
+**In-tree Integrations (`integrations/`):** `_template` (the scaffold every contributor copy-pastes), `rss-watcher`, `github-webhooks`, `google-calendar`, `sync` (the file-to-Marfa bridge re-presented as a Connection — the agent itself lives in `withmarfa/sync`), `task-auto-archive`. Each ships a Zod-canonical `manifest.ts` and a sibling `manifest.test.ts` that parses it through `IntegrationManifestSchema`.
 
 **Infra (`infra/`):** `cloudflare` — `wrangler.jsonc` + deploy script for the runtime-control Worker, the per-Integration Workers, and the shared Queues / KV / Containers bindings.
 
-`@mymehq/shared`, `@mymehq/sdk`, and `@mymehq/webhooks` publish to npm under the `@mymehq` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.
+`@withmarfa/shared`, `@withmarfa/sdk`, and `@withmarfa/webhooks` publish to npm under the `@withmarfa` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.
 
 ## Tech stack
 
@@ -56,11 +56,11 @@ Two layers coexist permanently and don't share credentials:
 - **Bearer tokens** (`myme_k1_*` API keys, `myme_at_*` OAuth access tokens) authenticate every API call to `/items`, `/edges`, etc. Hashed-on-storage; resolved by `middleware/auth.ts`.
 - **Better Auth session cookies** authenticate the human at the consent screen. The library is mounted at `/auth/*` via `app.on(["POST", "GET"], "/auth/*", ...)` after the explicit `/auth/clients`, `/auth/authorize`, `/auth/token`, `/auth/tokens` routes. Cookie is `HttpOnly + Secure + SameSite=Lax`, scoped to `/auth`. **It does not authenticate the data plane** — `/items` with only the cookie returns 401.
 
-Sign-up is gated by `MYME_AUTH_ALLOW_SIGNUP` (default `false`). Single-user self-hosted instances enable it for the initial admin sign-up only. Better Auth tables (`auth_user`, `auth_session`, `auth_account`, `auth_verification`) are isolated under the `auth_*` prefix and use Drizzle's timestamp-mode columns (Date round-trip), distinct from myme's TEXT-ISO convention elsewhere in the schema.
+Sign-up is gated by `MARFA_AUTH_ALLOW_SIGNUP` (default `false`). Single-user self-hosted instances enable it for the initial admin sign-up only. Better Auth tables (`auth_user`, `auth_session`, `auth_account`, `auth_verification`) are isolated under the `auth_*` prefix and use Drizzle's timestamp-mode columns (Date round-trip), distinct from marfa's TEXT-ISO convention elsewhere in the schema.
 
 Email verification is required (Wave C PR2). New accounts sign up successfully but `auth_user.email_verified` starts `false` and `requireEmailVerification: true` blocks sign-in until the user clicks a verification link. The grandfather migration `0042` (PG) / `0035` (SQLite) marks every account created before this PR as verified at deploy time so the flip doesn't lock them out. The verify-email surface lives at `/auth/verify-email`; the sign-up wrapper redirects to it after a successful sign-up.
 
-Sign-in methods land per workstream-1 plan: email + password (PR 1), passkey + magic link (PR 2), generic OIDC client / federated (PR 3), Myme as IdP via OIDC Provider plugin (PR 5).
+Sign-in methods land per workstream-1 plan: email + password (PR 1), passkey + magic link (PR 2), generic OIDC client / federated (PR 3), Marfa as IdP via OIDC Provider plugin (PR 5).
 
 User-app grants are stored as `system.connection` items with `kind: app`. The OAuth tables `oauth_codes` and `oauth_tokens` reference the item id via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE). The previous standalone `oauth_grants` table is dropped. The same `system.connection` type carries the other two kinds shipped by the Connections build: `integration` (a connected upstream service such as Google Calendar) and `tenant` (a relationship between two tenants).
 
@@ -89,10 +89,10 @@ The metadata-layer `extensions` map is otherwise free-form, but a handful of nam
 Three coupled subsystems shipped together as the Connections build (workstreams 1–3):
 
 - **Connection OAuth proxy** — `POST /connections/:id/proxy/*` forwards to the connection's configured upstream URL with `Authorization: Bearer <decrypted access_token>`. Refreshes on 401, single-flight refresh, refresh-token rotation, flips `runtime_status: reauth_required` on terminal failure.
-- **Connection leased tokens** — `/connections/:id/lease-tokens` issues short-TTL bearers that an upstream service can use to call back into Myme directly without holding the connection's full credential. Manifest-capability gated.
-- **Reactive run bridge + hop budget** — events published via `pubsub.publish` carry cycle-detection metadata (`originating_connection_id`, `hop_count`). The bridge fans out to subscribed connections; events whose `hop_count` exceeds the tenant's `max_event_hop_budget` are dropped and recorded as `system.activity` with `severity: error` so the user surface can show the loop detection. The Cloudflare control plane (`runtime-control`) verifies inbound webhook receipts, enqueues per-Integration Worker messages, and mediates the **runtime-credential broker** that mints a short-lived per-connection key the Worker uses for callbacks. Inbound webhook signature verification (HMAC-SHA256, Slack, Stripe, GitHub) lives in the shared `@mymehq/webhooks` package — Web Crypto only, so both `runtime-control` (Workers) and `packages/server` (Node) consume it without runtime drift.
+- **Connection leased tokens** — `/connections/:id/lease-tokens` issues short-TTL bearers that an upstream service can use to call back into Marfa directly without holding the connection's full credential. Manifest-capability gated.
+- **Reactive run bridge + hop budget** — events published via `pubsub.publish` carry cycle-detection metadata (`originating_connection_id`, `hop_count`). The bridge fans out to subscribed connections; events whose `hop_count` exceeds the tenant's `max_event_hop_budget` are dropped and recorded as `system.activity` with `severity: error` so the user surface can show the loop detection. The Cloudflare control plane (`runtime-control`) verifies inbound webhook receipts, enqueues per-Integration Worker messages, and mediates the **runtime-credential broker** that mints a short-lived per-connection key the Worker uses for callbacks. Inbound webhook signature verification (HMAC-SHA256, Slack, Stripe, GitHub) lives in the shared `@withmarfa/webhooks` package — Web Crypto only, so both `runtime-control` (Workers) and `packages/server` (Node) consume it without runtime drift.
 
-**Two substrates run integrations.** The Cloudflare path above is the `hosted` substrate. T-173 added the `local` substrate — a Node + pg-boss + `worker_thread` runtime bundled inside `@mymehq/server` for self-hosters who don't want a Cloudflare dependency. The two are exclusive per-deployment via `MYME_INTEGRATION_RUNTIME`; the handler authoring surface (`@mymehq/runtime-sdk`) is identical on both. Component map lives in `packages/server/CLAUDE.md` under "Local integrations runtime"; the operator-facing semantic parity sheet is at `mymehq/docs/concepts/runtime-substrates.mdx`.
+**Two substrates run integrations.** The Cloudflare path above is the `hosted` substrate. T-173 added the `local` substrate — a Node + pg-boss + `worker_thread` runtime bundled inside `@withmarfa/server` for self-hosters who don't want a Cloudflare dependency. The two are exclusive per-deployment via `MARFA_INTEGRATION_RUNTIME`; the handler authoring surface (`@withmarfa/runtime-sdk`) is identical on both. Component map lives in `packages/server/CLAUDE.md` under "Local integrations runtime"; the operator-facing semantic parity sheet is at `withmarfa/docs/concepts/runtime-substrates.mdx`.
 
 For the per-route specifics — including the OAuth bootstrap callback at `/oauth/callback/:provider` and the inbound webhook receipt URL pattern — see `packages/server/CLAUDE.md`.
 
@@ -103,7 +103,7 @@ Server package (not needed for shared or SDK development):
 - `PORT` — server port (default: 8600)
 - `STORAGE_DIALECT` — `sqlite` or `pg` (default: sqlite)
 - `DATABASE_URL` — Postgres connection string (required when dialect is pg)
-- `SQLITE_PATH` — database file path (default: `./data/myme.db`)
+- `SQLITE_PATH` — database file path (default: `./data/marfa.db`)
 - `BLOB_BACKEND` — `filesystem` or `s3` (default: filesystem)
 - `BLOB_PATH` — blob storage directory (default: `./data/blobs`)
 - `MAX_BLOB_SIZE` — maximum blob upload size in bytes (default: `52428800` / 50MB). Oversized uploads return HTTP 413 `blob_too_large`
@@ -113,15 +113,15 @@ Server package (not needed for shared or SDK development):
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
 - `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
-- `MYME_DEFAULT_QUOTA_ITEMS` / `MYME_DEFAULT_QUOTA_WEBHOOKS` / `MYME_DEFAULT_QUOTA_BLOBS` / `MYME_DEFAULT_QUOTA_STORAGE_BYTES` / `MYME_DEFAULT_QUOTA_RATE_PER_MINUTE` — T-052 default per-tenant ceilings. Unset = unlimited (no enforcement). Per-tenant overrides via `tenant_quotas` rows take precedence. Today `items`, `webhooks`, `blobs`, `storage_bytes`, and `rate_per_minute` enforcement are all wired (T-052 + Wave B Part 2 follow-on).
-- `MYME_RLS_ENFORCE` — when `true`, each tenant-bounded request is wrapped in a Drizzle transaction with `SET LOCAL ROLE myme_app` and `set_config('myme.tenant_id', $tenant, true)` so the per-table RLS policies actually filter queries (defense-in-depth beneath the application-layer scoping). **Default `true` from T-146** (was `false` pre-T-146); explicit opt-out is `MYME_RLS_ENFORCE=false`. SQLite is unaffected — the middleware skips when `storage.pgDb` is undefined regardless of this flag. Platform-admin keys (no tenant_id) and anonymous routes bypass the wrapper. Streaming responses (`/events`, `/export`) apply session-level RLS on a dedicated pool connection inside the route itself (T-146; see `storage/pg/streaming-rls.ts`) — they're exempt from the transaction wrapper but not from RLS.
+- `MARFA_DEFAULT_QUOTA_ITEMS` / `MARFA_DEFAULT_QUOTA_WEBHOOKS` / `MARFA_DEFAULT_QUOTA_BLOBS` / `MARFA_DEFAULT_QUOTA_STORAGE_BYTES` / `MARFA_DEFAULT_QUOTA_RATE_PER_MINUTE` — T-052 default per-tenant ceilings. Unset = unlimited (no enforcement). Per-tenant overrides via `tenant_quotas` rows take precedence. Today `items`, `webhooks`, `blobs`, `storage_bytes`, and `rate_per_minute` enforcement are all wired (T-052 + Wave B Part 2 follow-on).
+- `MARFA_RLS_ENFORCE` — when `true`, each tenant-bounded request is wrapped in a Drizzle transaction with `SET LOCAL ROLE myme_app` and `set_config('marfa.tenant_id', $tenant, true)` so the per-table RLS policies actually filter queries (defense-in-depth beneath the application-layer scoping). **Default `true` from T-146** (was `false` pre-T-146); explicit opt-out is `MARFA_RLS_ENFORCE=false`. SQLite is unaffected — the middleware skips when `storage.pgDb` is undefined regardless of this flag. Platform-admin keys (no tenant_id) and anonymous routes bypass the wrapper. Streaming responses (`/events`, `/export`) apply session-level RLS on a dedicated pool connection inside the route itself (T-146; see `storage/pg/streaming-rls.ts`) — they're exempt from the transaction wrapper but not from RLS.
 - `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000)
 - `RATE_LIMIT_ENABLED` — set to `false` to disable rate limiting entirely (on by default)
 - `ENABLE_HSTS` — `true` to add Strict-Transport-Security header (only behind TLS)
 - `TRUSTED_PROXY_CIDRS` — comma-separated CIDRs (e.g. `10.0.0.0/8,127.0.0.1/32`) for opt-in `x-forwarded-for` trust. Unset = ignore the header (recommended when no reverse proxy is in front). Malformed CIDRs throw at startup.
 - `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90). Tenant override: `TenantConfig.audit_retention_days` (T-050).
 - `AUDIT_CLEANUP_INTERVAL_MS` — audit cleanup interval in ms (default: 86400000)
-- `MYME_EVENT_LOG_RETENTION_HOURS` — hours an event_log entry survives before the cleanup job purges it (default: 168 / 7 days). Controls how far back an SSE client's `Last-Event-ID` can reach; older cursors receive a terminal `catchup_too_old` event. Tenant override: `TenantConfig.event_log_retention_hours` (T-050).
+- `MARFA_EVENT_LOG_RETENTION_HOURS` — hours an event_log entry survives before the cleanup job purges it (default: 168 / 7 days). Controls how far back an SSE client's `Last-Event-ID` can reach; older cursors receive a terminal `catchup_too_old` event. Tenant override: `TenantConfig.event_log_retention_hours` (T-050).
 - `VERSION_RECENT_DAYS` — version recent window in days (default: 30)
 - `VERSION_DAILY_SNAPSHOT_DAYS` — daily thinning window end in days (default: 90)
 - `VERSION_WEEKLY_SNAPSHOT_DAYS` — weekly thinning window end in days (default: 365)
@@ -131,25 +131,25 @@ Server package (not needed for shared or SDK development):
 - `TRASH_PURGE_INTERVAL_MS` — trash purge job interval in ms (default: 86400000)
 - `AUTH_SESSION_CLEANUP_INTERVAL_MS` — cadence (ms) for the better-auth session cleanup sweep that drops `auth_session` rows past their `expires_at` (default: 3600000 / 1h). Instance-wide, not tenant-scoped — Better Auth owns the TTL.
 - `ERROR_WEBHOOK_URL` — webhook URL for 500 error notifications (optional, debounced)
-- `MYME_ERROR_WEBHOOK_TIMEOUT_MS` — per-fetch timeout (ms) for error-webhook delivery (default: 5000). Tunable so a slow webhook endpoint can't stall the error path.
-- `MYME_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS` — per-account throttle (ms) on cancel-email emission from the deletion-guard middleware; stops a sign-in-attempt flood minting fresh cancel tokens + emails for a pending-deletion account (default: 3600000 / 1h; `0` disables).
-- `MYME_AUTH_BASE_URL` — issuer URL the better-auth instance is reached at (e.g. `http://localhost:<PORT>`). Drives cookie domains and the OAuth issuer field on the discovery doc. Defaults to `http://localhost:<PORT>`.
-- `MYME_AUTH_ALLOW_SIGNUP` — when `true`, enables the email + password sign-up endpoint at `/auth/sign-up/email`. Default `false` per the workstream-1 sign-up policy. Single-user self-hosted instances flip it on for the initial admin account, then back off.
-- `MYME_AUTH_SECRET` — shared secret for cookie signing. Required in production; falls back to a per-process ephemeral secret in dev.
-- `MYME_OIDC_PROVIDERS` — JSON array configuring federated sign-in providers (Google, GitHub, Authentik, etc.). Each entry: `{ providerId, clientId, clientSecret, discoveryUrl?, scopes? }`. Surfaces `Sign in with <providerId>` buttons on the sign-in page and exposes `/auth/sign-in/oauth2` + `/auth/oauth2/callback/<providerId>`. Empty array (default) means no federated providers.
-- `MYME_EMAIL_BACKEND` — `cloudflare | smtp | none`. Default `none` — email-dependent flows (forgot-password, magic-link, email-verify) return HTTP 503 with `email_transport_not_configured` until an operator picks a backend. The factory at `src/email/index.ts` constructs the transport at boot.
-- `MYME_EMAIL_FROM` — visible sender address. Default `Myme <hello@mail.myme.so>`. **For the Cloudflare backend the address MUST end in `@mail.myme.so`** — that's the verified Cloudflare Email sending domain. Apex `myme.so` has no DKIM key. The boot-time `senderDomainCheck` fails loud if this is misconfigured (skipped in `NODE_ENV=test`).
-- `MYME_EMAIL_REPLY_TO` — Reply-To header. Optional; recommend a monitored inbox so user replies don't bounce silently.
-- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account id (the `myme` org account). Required when `MYME_EMAIL_BACKEND=cloudflare`.
-- `CLOUDFLARE_EMAIL_API_TOKEN` — Cloudflare API token with "Send Email" permission on the myme account. Required when `MYME_EMAIL_BACKEND=cloudflare`. Distinct from the broader `CLOUDFLARE_API_TOKEN_MYME` user token — minted as a dedicated send-only token for least-privilege.
-- `MYME_SMTP_HOST` / `MYME_SMTP_PORT` / `MYME_SMTP_USER` / `MYME_SMTP_PASS` / `MYME_SMTP_SECURE` — SMTP backend config. Required when `MYME_EMAIL_BACKEND=smtp`. Default port `587`. `MYME_SMTP_SECURE=true` for implicit TLS (port 465); leave unset for STARTTLS on 587.
-- `MYME_INTEGRATION_RUNTIME` — `hosted | local`. **Default `local` from T-174** (was `hosted` in T-173). `local` boots the Node + pg-boss + `worker_thread` substrate inside the server process and mounts `POST /runtime/webhook/:connection_id` as the inbound webhook receipt. Requires `STORAGE_DIALECT=pg`; SQLite self-hosts must set this to `hosted` explicitly until they migrate. Hosted Myme deployments + any operator that wants the Cloudflare path sets the env var explicitly to `hosted`. Per-Connection state lives under the `connection.runtime` reserved extension namespace. See `packages/server/src/integrations/local-runtime/` and `mymehq/docs/concepts/runtime-substrates.mdx`.
-- `MYME_INTEGRATIONS_ROOT` — absolute path to the `integrations/` directory the local runtime loads `dist/local.js` entries from. Defaults to the in-tree directory resolved from the running bundle; set explicitly when the server runs outside the monorepo (packaged Docker image, etc.).
-- `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` — `hosted`-substrate only (T-233). JSON map of `integration_name → Cloudflare Queues producer URL`. Each integration that consumes reactive `item-event` dispatches has its own queue (Cloudflare Queues only allow one consumer per queue; the prior shared-queue shape silently dropped messages addressed to non-consumer integrations). Example: `{"google.calendar":"https://api.cloudflare.com/client/v4/accounts/.../queues/.../messages","mymehq.task-auto-archive":"https://..."}`. Unset → reactive-run bridge disabled. Malformed JSON / empty map → bridge disabled + loud error log. Unmapped integration at fanout → one-time `system.activity action_required` per integration per process lifetime, dispatch skipped.
-- `MYME_REACTIVE_RUN_SEND_TIMEOUT_MS` — per-fetch timeout (ms) for the `hosted`-substrate reactive-run bridge's Cloudflare Queues producer call (default: 5000). Tune up for realistic Queues latency. Only relevant when the bridge is wired (`CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` + `CLOUDFLARE_QUEUES_API_TOKEN` set).
-- `MYME_RUNTIME_CONTROL_URL` / `MYME_RUNTIME_BROKER_KEY` — `hosted`-substrate only: the Cloudflare runtime-control plane URL and the platform broker key the server presents to mint per-Connection runtime credentials. Read by `routes/connections.ts`; unset on `local`-substrate deployments.
+- `MARFA_ERROR_WEBHOOK_TIMEOUT_MS` — per-fetch timeout (ms) for error-webhook delivery (default: 5000). Tunable so a slow webhook endpoint can't stall the error path.
+- `MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS` — per-account throttle (ms) on cancel-email emission from the deletion-guard middleware; stops a sign-in-attempt flood minting fresh cancel tokens + emails for a pending-deletion account (default: 3600000 / 1h; `0` disables).
+- `MARFA_AUTH_BASE_URL` — issuer URL the better-auth instance is reached at (e.g. `http://localhost:<PORT>`). Drives cookie domains and the OAuth issuer field on the discovery doc. Defaults to `http://localhost:<PORT>`.
+- `MARFA_AUTH_ALLOW_SIGNUP` — when `true`, enables the email + password sign-up endpoint at `/auth/sign-up/email`. Default `false` per the workstream-1 sign-up policy. Single-user self-hosted instances flip it on for the initial admin account, then back off.
+- `MARFA_AUTH_SECRET` — shared secret for cookie signing. Required in production; falls back to a per-process ephemeral secret in dev.
+- `MARFA_OIDC_PROVIDERS` — JSON array configuring federated sign-in providers (Google, GitHub, Authentik, etc.). Each entry: `{ providerId, clientId, clientSecret, discoveryUrl?, scopes? }`. Surfaces `Sign in with <providerId>` buttons on the sign-in page and exposes `/auth/sign-in/oauth2` + `/auth/oauth2/callback/<providerId>`. Empty array (default) means no federated providers.
+- `MARFA_EMAIL_BACKEND` — `cloudflare | smtp | none`. Default `none` — email-dependent flows (forgot-password, magic-link, email-verify) return HTTP 503 with `email_transport_not_configured` until an operator picks a backend. The factory at `src/email/index.ts` constructs the transport at boot.
+- `MARFA_EMAIL_FROM` — visible sender address. Default `Marfa <hello@mail.marfa.so>`. **For the Cloudflare backend the address MUST end in `@mail.marfa.so`** — that's the verified Cloudflare Email sending domain. Apex `marfa.so` has no DKIM key. The boot-time `senderDomainCheck` fails loud if this is misconfigured (skipped in `NODE_ENV=test`).
+- `MARFA_EMAIL_REPLY_TO` — Reply-To header. Optional; recommend a monitored inbox so user replies don't bounce silently.
+- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account id (the `marfa` org account). Required when `MARFA_EMAIL_BACKEND=cloudflare`.
+- `CLOUDFLARE_EMAIL_API_TOKEN` — Cloudflare API token with "Send Email" permission on the marfa account. Required when `MARFA_EMAIL_BACKEND=cloudflare`. Distinct from the broader `CLOUDFLARE_API_TOKEN_MYME` user token — minted as a dedicated send-only token for least-privilege.
+- `MARFA_SMTP_HOST` / `MARFA_SMTP_PORT` / `MARFA_SMTP_USER` / `MARFA_SMTP_PASS` / `MARFA_SMTP_SECURE` — SMTP backend config. Required when `MARFA_EMAIL_BACKEND=smtp`. Default port `587`. `MARFA_SMTP_SECURE=true` for implicit TLS (port 465); leave unset for STARTTLS on 587.
+- `MARFA_INTEGRATION_RUNTIME` — `hosted | local`. **Default `local` from T-174** (was `hosted` in T-173). `local` boots the Node + pg-boss + `worker_thread` substrate inside the server process and mounts `POST /runtime/webhook/:connection_id` as the inbound webhook receipt. Requires `STORAGE_DIALECT=pg`; SQLite self-hosts must set this to `hosted` explicitly until they migrate. Hosted Marfa deployments + any operator that wants the Cloudflare path sets the env var explicitly to `hosted`. Per-Connection state lives under the `connection.runtime` reserved extension namespace. See `packages/server/src/integrations/local-runtime/` and `withmarfa/docs/concepts/runtime-substrates.mdx`.
+- `MARFA_INTEGRATIONS_ROOT` — absolute path to the `integrations/` directory the local runtime loads `dist/local.js` entries from. Defaults to the in-tree directory resolved from the running bundle; set explicitly when the server runs outside the monorepo (packaged Docker image, etc.).
+- `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` — `hosted`-substrate only (T-233). JSON map of `integration_name → Cloudflare Queues producer URL`. Each integration that consumes reactive `item-event` dispatches has its own queue (Cloudflare Queues only allow one consumer per queue; the prior shared-queue shape silently dropped messages addressed to non-consumer integrations). Example: `{"google.calendar":"https://api.cloudflare.com/client/v4/accounts/.../queues/.../messages","withmarfa.task-auto-archive":"https://..."}`. Unset → reactive-run bridge disabled. Malformed JSON / empty map → bridge disabled + loud error log. Unmapped integration at fanout → one-time `system.activity action_required` per integration per process lifetime, dispatch skipped.
+- `MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS` — per-fetch timeout (ms) for the `hosted`-substrate reactive-run bridge's Cloudflare Queues producer call (default: 5000). Tune up for realistic Queues latency. Only relevant when the bridge is wired (`CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` + `CLOUDFLARE_QUEUES_API_TOKEN` set).
+- `MARFA_RUNTIME_CONTROL_URL` / `MARFA_RUNTIME_BROKER_KEY` — `hosted`-substrate only: the Cloudflare runtime-control plane URL and the platform broker key the server presents to mint per-Connection runtime credentials. Read by `routes/connections.ts`; unset on `local`-substrate deployments.
 
-**Cloudflare Email Service setup.** The send domain `mail.myme.so` is onboarded via the Cloudflare dashboard ("Email Service → Sending → Onboard Domain"); CF auto-writes DKIM, SPF, MX, and DMARC records under `cf-bounce.mail.myme.so` to the `myme.so` zone. Domain onboarding is dashboard-only — there's no programmatic API for it as of the public-beta phase. Send-time errors from CF (suppressed recipients, validation failures) surface through structured logs; CF maintains its own internal suppression list, so the server holds no parallel `email_suppressions` state.
+**Cloudflare Email Service setup.** The send domain `mail.marfa.so` is onboarded via the Cloudflare dashboard ("Email Service → Sending → Onboard Domain"); CF auto-writes DKIM, SPF, MX, and DMARC records under `cf-bounce.mail.marfa.so` to the `marfa.so` zone. Domain onboarding is dashboard-only — there's no programmatic API for it as of the public-beta phase. Send-time errors from CF (suppressed recipients, validation failures) surface through structured logs; CF maintains its own internal suppression list, so the server holds no parallel `email_suppressions` state.
 
 ## Schema-enforcement levers (TSC42 §5)
 
@@ -163,7 +163,7 @@ Per-credential `enforcement_override` merges over the tenant default — setting
 
 ## Platform credentials (TSC42 §3/§4)
 
-The `is_platform: boolean` flag on `ApiKey` gates registration and writes of the reserved namespaces (`core.*`, `system.*`, `myme.*`). The seed value lives on the bootstrap admin credential created at server install; only an existing platform credential may mint another. Ordinary tenant admin/member keys default to `is_platform: false` and are rejected when they try to claim reserved namespaces.
+The `is_platform: boolean` flag on `ApiKey` gates registration and writes of the reserved namespaces (`core.*`, `system.*`, `marfa.*`). The seed value lives on the bootstrap admin credential created at server install; only an existing platform credential may mint another. Ordinary tenant admin/member keys default to `is_platform: false` and are rejected when they try to claim reserved namespaces.
 
 ## Database migrations
 
@@ -172,16 +172,16 @@ Drizzle migrations under `packages/server/drizzle/{pg,sqlite}/` are the schema s
 When changing schema:
 
 1. Update the Drizzle schema file(s) (`src/storage/pg/schema.ts` or `src/storage/sqlite/schema.ts`).
-2. Generate migrations: `pnpm --filter @mymehq/server run migrate:pg:generate` and `migrate:sqlite:generate`.
+2. Generate migrations: `pnpm --filter @withmarfa/server run migrate:pg:generate` and `migrate:sqlite:generate`.
 3. Review the generated SQL in `drizzle/pg/` and `drizzle/sqlite/`.
 4. Mirror the change into the bootstrap `SCHEMA_SQL` block in the corresponding `connection.ts` so fresh databases get it without the migrator.
-5. Run standalone migration on existing dbs: `pnpm --filter @mymehq/server run migrate`.
+5. Run standalone migration on existing dbs: `pnpm --filter @withmarfa/server run migrate`.
 
 FTS5 virtual tables stay inline in `sqlite/connection.ts` because Drizzle Kit can't express them. Don't add other inline DDL.
 
 ## OpenAPI
 
-Routes use `@hono/zod-openapi` with request/response schemas. The OpenAPI 3.1 spec is generated from the route definitions — not maintained manually. Run `pnpm --silent --filter @mymehq/server generate:openapi > openapi.json` to update the committed spec. The spec endpoint is available at `GET /openapi.json` on a running server.
+Routes use `@hono/zod-openapi` with request/response schemas. The OpenAPI 3.1 spec is generated from the route definitions — not maintained manually. Run `pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json` to update the committed spec. The spec endpoint is available at `GET /openapi.json` on a running server.
 
 When adding or modifying routes, use `createRoute()` with Zod schemas for request params, body, and responses. Streaming endpoints (SSE, NDJSON export) and HTML endpoints (OAuth consent) stay as plain Hono routes.
 
@@ -204,18 +204,18 @@ The `types-freshness`, `openapi-freshness`, and `schema-sql-freshness` CI jobs d
 - `packages/server/src/openapi/**` — OpenAPI generator
 - `packages/server/drizzle/{pg,sqlite}/**` — Drizzle migrations (drive `SCHEMA_SQL`)
 - `packages/server/scripts/generate-schema-sql.ts` — the `SCHEMA_SQL` generator
-- Any file touched by `pnpm --filter @mymehq/types generate`, `pnpm --silent --filter @mymehq/server generate:openapi`, or `pnpm --filter @mymehq/server schema-sql:generate`
+- Any file touched by `pnpm --filter @withmarfa/types generate`, `pnpm --silent --filter @withmarfa/server generate:openapi`, or `pnpm --filter @withmarfa/server schema-sql:generate`
 
-**Command** — run this from inside the `myme` repo after pushing your PR branch:
+**Command** — run this from inside the `marfa` repo after pushing your PR branch:
 
 ```bash
 gh workflow run ci.yml --ref <your-branch-name>
 gh run watch $(gh run list --workflow=ci.yml --branch=<your-branch-name> --limit=1 --json databaseId --jq '.[0].databaseId')
 ```
 
-If any of `types-freshness` / `openapi-freshness` / `schema-sql-freshness` fails, regenerate locally (`pnpm --filter @mymehq/types generate`, `pnpm --silent --filter @mymehq/server generate:openapi > openapi.json`, or `pnpm --filter @mymehq/server schema-sql:generate`), commit the delta, and re-run. Only merge once the relevant jobs are green.
+If any of `types-freshness` / `openapi-freshness` / `schema-sql-freshness` fails, regenerate locally (`pnpm --filter @withmarfa/types generate`, `pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json`, or `pnpm --filter @withmarfa/server schema-sql:generate`), commit the delta, and re-run. Only merge once the relevant jobs are green.
 
-**Why this exists.** Freshness jobs catch drift between generated artefacts and source files. They used to run on every PR push and were a major CI cost driver (~$5/month on the `myme` repo alone). Moving them to manual-trigger halves the PR-time bill; this rule is the tripwire that keeps the safety net effective.
+**Why this exists.** Freshness jobs catch drift between generated artefacts and source files. They used to run on every PR push and were a major CI cost driver (~$5/month on the `marfa` repo alone). Moving them to manual-trigger halves the PR-time bill; this rule is the tripwire that keeps the safety net effective.
 
 ## Before pushing
 
@@ -243,7 +243,7 @@ Per-target helpers for narrow runs:
 
 ## Error handling
 
-The base error class is `MymeError` (in `@mymehq/shared`). All structured errors use this class with an `ErrorCode` enum and corresponding HTTP status.
+The base error class is `MarfaError` (in `@withmarfa/shared`). All structured errors use this class with an `ErrorCode` enum and corresponding HTTP status.
 
 ## Type registration
 
@@ -277,7 +277,7 @@ Credentials carry three permission maps:
 
 Edge mutations dual-gate: the caller needs **both** write on the source item's type AND write on the edge type. Admin keys bypass both.
 
-OAuth scope grammar mirrors these: `<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`, `metadata.<subresource>:<verb>`. Scopes parse via `parseScope` in `@mymehq/shared`; the consent UI renders both the literal scope and a plain-English description sourced from each type's `description` field in `TYPE_REGISTRY` (with built-in fallbacks for metadata sub-resources). Today only `metadata.types:write` is enforced — gates `POST /types` for non-admin credentials. Admin keys bypass; OAuth tokens project the scope into a `metadata_permissions: { types: "write" }` map on the synthetic `ApiKey`.
+OAuth scope grammar mirrors these: `<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`, `metadata.<subresource>:<verb>`. Scopes parse via `parseScope` in `@withmarfa/shared`; the consent UI renders both the literal scope and a plain-English description sourced from each type's `description` field in `TYPE_REGISTRY` (with built-in fallbacks for metadata sub-resources). Today only `metadata.types:write` is enforced — gates `POST /types` for non-admin credentials. Admin keys bypass; OAuth tokens project the scope into a `metadata_permissions: { types: "write" }` map on the synthetic `ApiKey`.
 
 New keys default to `edge_permissions: {}` — edge access is opt-in; callers must grant explicitly.
 

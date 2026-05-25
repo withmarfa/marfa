@@ -38,9 +38,9 @@ export function renderAccountPendingDeletionEmail(
   input: AccountPendingDeletionRenderInput,
 ): RenderedEmail {
   const greeting = input.name?.trim() ? `Hi ${input.name.trim()}` : "Hi there";
-  const subject = "Your Myme account is scheduled for deletion";
+  const subject = "Your Marfa account is scheduled for deletion";
   const text = [
-    "Your Myme account is scheduled for deletion",
+    "Your Marfa account is scheduled for deletion",
     "",
     `${greeting},`,
     "",
@@ -59,7 +59,7 @@ export function renderAccountPendingDeletionEmail(
     "",
     input.url,
     "",
-    "— Myme",
+    "— Marfa",
   ].join("\n");
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -97,7 +97,7 @@ export function renderAccountPendingDeletionEmail(
 <p style="margin:8px 0 0 0;word-break:break-all;font-size:13px;color:${MUTED};">${escapeHtml(input.url)}</p>
 </td></tr>
 </table>
-<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Myme</p>
+<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Marfa</p>
 </td></tr>
 </table>
 </body>

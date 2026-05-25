@@ -3,11 +3,11 @@
  * credential.
  *
  * Workstream 3 Layer 1 PR 4. Called by the control-plane lease broker
- * (which authenticates against the Myme server using a long-lived
- * `MYME_RUNTIME_BROKER_KEY` carrying `is_platform: true`) to mint a
+ * (which authenticates against the Marfa server using a long-lived
+ * `MARFA_RUNTIME_BROKER_KEY` carrying `is_platform: true`) to mint a
  * short-TTL bearer for a specific Connection's runtime. The broker
  * caches the result on the per-Connection DO with TTL ≤ 5 min and
- * presents it on every Myme API call the integration's Worker makes.
+ * presents it on every Marfa API call the integration's Worker makes.
  *
  * The minted credential carries:
  *   - `is_runtime_credential: true`
@@ -30,7 +30,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -86,7 +86,7 @@ const createRuntimeCredentialRoute = createRoute({
   tags: ["System"],
   summary: "Issue a runtime credential",
   description:
-    "Mints a short-lived API key scoped to a single connection. The runtime-control plane calls this to provision the credential a per-integration Worker presents when invoking Myme on the connection's behalf. The `api_key` field is returned **once**; subsequent reads omit it.",
+    "Mints a short-lived API key scoped to a single connection. The runtime-control plane calls this to provision the credential a per-integration Worker presents when invoking Marfa on the connection's behalf. The `api_key` field is returned **once**; subsequent reads omit it.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -349,7 +349,7 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
   router.openapi(createRuntimeCredentialRoute, async (c) => {
     const apiKey = requireAuth(c);
     if (!apiKey.is_platform) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Runtime credential minting requires a platform credential (is_platform: true)",
       );
@@ -364,13 +364,13 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     // on every cache miss, so the gate is load-bearing.
     const connection = await storage.items.get(body.connection_id);
     if (connection?.type !== "system.connection") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.NOT_FOUND,
         `Connection ${body.connection_id} not found`,
       );
     }
     if (connection.state !== "active") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Connection ${body.connection_id} is ${connection.state}; cannot mint runtime credential`,
       );
@@ -434,7 +434,7 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
   router.openapi(verifyContextRoute, async (c) => {
     const apiKey = requireAuth(c);
     if (!apiKey.is_platform) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Verify context lookup requires a platform credential (is_platform: true)",
       );
@@ -442,13 +442,13 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     const { connection_id } = c.req.valid("param");
     const connection = await storage.items.get(connection_id);
     if (!connection) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONNECTION_NOT_FOUND,
         "Connection not found",
       );
     }
     if (connection.type !== "system.connection") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONNECTION_NOT_FOUND,
         "Item is not a system.connection",
       );
@@ -459,28 +459,28 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
       integration_ref?: string;
     };
     if (props.kind !== "integration") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Connection is not of kind `integration`",
         { kind: props.kind },
       );
     }
     if (connection.state !== "active" || props.status !== "active") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Connection is not active",
         { state: connection.state, status: props.status },
       );
     }
     if (!props.integration_ref) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Connection has no integration_ref",
       );
     }
     const integration = await storage.items.get(props.integration_ref);
     if (integration?.type !== "system.integration") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Connection's integration_ref does not resolve to a system.integration",
       );
@@ -489,7 +489,7 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
       integration.properties as { manifest_name?: string }
     ).manifest_name;
     if (typeof integrationName !== "string" || integrationName.length === 0) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Integration manifest is missing a name",
       );
@@ -507,7 +507,7 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
   router.openapi(dlqContextRoute, async (c) => {
     const apiKey = requireAuth(c);
     if (!apiKey.is_platform) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "DLQ context lookup requires a platform credential (is_platform: true)",
       );
@@ -515,13 +515,13 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     const { connection_id } = c.req.valid("param");
     const connection = await storage.items.get(connection_id);
     if (!connection) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONNECTION_NOT_FOUND,
         "Connection not found",
       );
     }
     if (connection.type !== "system.connection") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONNECTION_NOT_FOUND,
         "Item is not a system.connection",
       );
@@ -557,7 +557,7 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
   router.openapi(lookupInboundWebhooksRoute, async (c) => {
     const apiKey = requireAuth(c);
     if (!apiKey.is_platform) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Inbound webhook lookup requires a platform credential (is_platform: true)",
       );

@@ -1,7 +1,7 @@
 /**
  * T-040 part 2 — soak harness for the reactive-run bridge fanout.
  *
- * Drives realistic load against a deployed Myme instance: registers a
+ * Drives realistic load against a deployed Marfa instance: registers a
  * synthetic Integration manifest, installs ≥50 subscribing connections,
  * publishes a representative event burst, and captures publish-side
  * timings. The bridge's `[reactive-run-bridge]` log lines on the server
@@ -19,13 +19,13 @@
  *     "Reactive-run bridge started".
  *
  * Usage (against staging):
- *   MYME_API_URL=https://staging.myme.so \
- *   MYME_API_KEY=<admin-key> \
- *   pnpm --filter @mymehq/server tsx scripts/soak-fanout.ts \
+ *   MARFA_API_URL=https://staging.marfa.so \
+ *   MARFA_API_KEY=<admin-key> \
+ *   pnpm --filter @withmarfa/server tsx scripts/soak-fanout.ts \
  *     [--connections 50] [--events 100]
  *
  * Implementation note: this script uses raw `fetch` rather than depending
- * on `@mymehq/sdk` so it doesn't drag SDK build state into the server
+ * on `@withmarfa/sdk` so it doesn't drag SDK build state into the server
  * package's devDependencies. The wire shapes are stable; the explicit
  * fetch is honest about what's going on the wire.
  *
@@ -48,10 +48,10 @@ interface PublishSample {
 }
 
 function parseArgs(): SoakConfig {
-  const url = process.env.MYME_API_URL;
-  const key = process.env.MYME_API_KEY;
+  const url = process.env.MARFA_API_URL;
+  const key = process.env.MARFA_API_KEY;
   if (!url || !key) {
-    throw new Error("MYME_API_URL and MYME_API_KEY must be set");
+    throw new Error("MARFA_API_URL and MARFA_API_KEY must be set");
   }
   let connectionCount = 50;
   let eventCount = 100;
@@ -82,7 +82,7 @@ function syntheticManifest(name: string): Record<string, unknown> {
   return {
     name,
     version: "1.0.0",
-    publisher: "Myme",
+    publisher: "Marfa",
     description: "T-040 soak harness — synthetic subscriber",
     direction: "read",
     triggers: [{ type: "item-event" }],
@@ -138,7 +138,7 @@ async function main(): Promise<void> {
   const config = parseArgs();
   const startedAt = Date.now();
   // Manifest names follow `<publisher>.<lowercase-alphanumeric-hyphens>`;
-  // `myme` is a reserved root, so use `acme` for the synthetic publisher
+  // `marfa` is a reserved root, so use `acme` for the synthetic publisher
   // and lowercase the timestamp to satisfy the grammar.
   const runTag = `${new Date()
     .toISOString()
@@ -258,7 +258,7 @@ async function main(): Promise<void> {
   console.log("fanout to all subscribers is async after the publish returns.");
   console.log("");
   console.log("Inspect server logs (adapt the path/host for your deploy):");
-  console.log("  tail -200 /path/to/myme/logs/stderr.log \\");
+  console.log("  tail -200 /path/to/marfa/logs/stderr.log \\");
   console.log("    | grep -E '\\[reactive-run-bridge\\]'");
   console.log("");
   console.log("Look for:");
@@ -275,7 +275,7 @@ async function main(): Promise<void> {
     "  - 'loaded N subscription(s)' — confirms the bridge sees all installed connections",
   );
   console.log("");
-  console.log("Cloudflare dashboard → Queues → myme-reactive-run-staging:");
+  console.log("Cloudflare dashboard → Queues → marfa-reactive-run-staging:");
   console.log(
     `  - Messages received should be ~${String(config.eventCount * config.connectionCount)} after the burst`,
   );

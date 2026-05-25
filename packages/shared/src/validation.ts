@@ -117,7 +117,7 @@ export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
   "system",
   "app",
   "user",
-  "myme",
+  "marfa",
 ]);
 
 /**
@@ -160,7 +160,7 @@ export const RESERVED_HANDLE_WORDS: ReadonlySet<string> = new Set([
   "me",
   "we",
   "us",
-  "myme",
+  "marfa",
   // Future-reserved namespaces
   "sync",
   "data",
@@ -226,7 +226,7 @@ export function isValidHandle(value: string): boolean {
 /**
  * Returns true if the value is a syntactically valid type identifier under
  * the five-tier namespace grammar. Server-side enforcement of who can
- * register `core.*` / `system.*` / `myme.*` happens separately
+ * register `core.*` / `system.*` / `marfa.*` happens separately
  * (registration time; gated by the credential's is_platform flag).
  */
 export function isValidTypeIdentifier(value: string): boolean {
@@ -241,7 +241,7 @@ export function isValidTypeIdentifier(value: string): boolean {
     case "core":
     case "system":
     case "user":
-    case "myme":
+    case "marfa":
       // Subtypes allowed: core.entity.person is valid; system.* stays at
       // two segments operationally but the grammar accepts deeper paths
       // (server-side validation rejects deeper system registrations).

@@ -1,7 +1,7 @@
 {
   "id": "google.drive.file",
   "label": "Google Drive File",
-  "description": "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the integration reads files into Myme but does not write back. `compatible_with` falls through to `core.file` for cross-app consumers.",
+  "description": "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the integration reads files into Marfa but does not write back. `compatible_with` falls through to `core.file` for cross-app consumers.",
   "version": 1,
   "compatible_with": ["core.file"],
   "fields": {
@@ -43,7 +43,7 @@
     },
     "trashed": {
       "type": "boolean",
-      "description": "Drive `trashed` flag. Handler maps `trashed: true` to a Myme tombstone (state-trashed) rather than persisting the flag literally."
+      "description": "Drive `trashed` flag. Handler maps `trashed: true` to a Marfa tombstone (state-trashed) rather than persisting the flag literally."
     },
     "web_view_link": {
       "type": "string",
@@ -70,7 +70,7 @@
     },
     "blob_ref": {
       "type": "string",
-      "description": "Reference to the downloaded binary content as a Myme blob (`sha256:<hex>`). Present iff the bytes were successfully ingested into the Myme blob store — i.e. `connection.properties.configuration.download_mode` is `all-files` (or a matching glob), the file is downloadable (not a Google-native `application/vnd.google-apps.*` type), and the download stayed within the per-file size ceiling. Absent in metadata mode and whenever an all-files attempt was skipped or failed (the activity log carries the reason). Programmatic gate: `typeof blob_ref === \"string\"` means the bytes are retrievable via `GET /blobs/{blob_ref}`."
+      "description": "Reference to the downloaded binary content as a Marfa blob (`sha256:<hex>`). Present iff the bytes were successfully ingested into the Marfa blob store — i.e. `connection.properties.configuration.download_mode` is `all-files` (or a matching glob), the file is downloadable (not a Google-native `application/vnd.google-apps.*` type), and the download stayed within the per-file size ceiling. Absent in metadata mode and whenever an all-files attempt was skipped or failed (the activity log carries the reason). Programmatic gate: `typeof blob_ref === \"string\"` means the bytes are retrievable via `GET /blobs/{blob_ref}`."
     },
     "etag": {
       "type": "string",

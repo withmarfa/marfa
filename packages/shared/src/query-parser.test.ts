@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseFilter } from "./query-parser.js";
 import type { FilterExpression } from "./query-parser.js";
-import { ErrorCode, MymeError } from "./errors.js";
+import { ErrorCode, MarfaError } from "./errors.js";
 
 describe("parseFilter", () => {
   // ---------------------------------------------------------------------------
@@ -485,7 +485,7 @@ describe("parseFilter", () => {
   // Adversarial input — defense-in-depth tripwires. None of these are known
   // bugs; the assertions lock in the current parser contract so that a future
   // change weakening the parsers fails loudly. Assertions target the stable
-  // MymeError.code, never message text.
+  // MarfaError.code, never message text.
   // ---------------------------------------------------------------------------
 
   describe("adversarial input", () => {
@@ -496,8 +496,8 @@ describe("parseFilter", () => {
       } catch (e) {
         caught = e;
       }
-      expect(caught).toBeInstanceOf(MymeError);
-      expect((caught as MymeError).code).toBe(ErrorCode.VALIDATION_ERROR);
+      expect(caught).toBeInstanceOf(MarfaError);
+      expect((caught as MarfaError).code).toBe(ErrorCode.VALIDATION_ERROR);
     }
 
     it("rejects unterminated string literal with VALIDATION_ERROR", () => {

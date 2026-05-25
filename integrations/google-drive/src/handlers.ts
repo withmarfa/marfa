@@ -13,7 +13,7 @@
  *     schedule trigger with zero-downtime ordering (new channel
  *     first, then stop old) — same shape Calendar uses.
  *   - **Tombstones** — a `change.removed: true` or `file.trashed:
- *     true` surfaces as a Myme tombstone on the mapped item.
+ *     true` surfaces as a Marfa tombstone on the mapped item.
  *   - **No outbound writes in v1.** `direction: "inbound"` on the
  *     manifest; `handleItemEvent` is a defensive no-op that just
  *     filters self-events.
@@ -25,7 +25,7 @@
  *     `blob_ref` absent. The Drive-side checksums (`md5`, `sha256`)
  *     and file id are still captured as independent properties.
  *   - `all-files` — downloadable files get their bytes ingested via
- *     `ctx.myme.uploadBlob` (T-239). On success the item lands as
+ *     `ctx.marfa.uploadBlob` (T-239). On success the item lands as
  *     `core.file` with `properties.blob_ref = sha256:<hex>`.
  *     Google-native types (`application/vnd.google-apps.*`),
  *     files over the configurable size ceiling, and per-file
@@ -47,7 +47,7 @@ import {
   type WebhookHandlerInput,
   type HandlerResult,
   type CreateItemInput,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import {
   DRIVE_API_BASE,
   DEFAULT_TARGET_TYPE,
@@ -69,7 +69,7 @@ const FILES_PAGE_SIZE = 100;
 const INITIAL_SYNC_PAGE_LIMIT = 50;
 
 interface DriveCursor {
-  /** Drive file id → Myme item id. */
+  /** Drive file id → Marfa item id. */
   mappings: Record<string, string>;
   /** changes.list pageToken — opaque. */
   pageToken: string | null;
@@ -129,7 +129,7 @@ async function resolveConnectionConfig(
   ctx: ConnectionContext,
 ): Promise<ConnectionConfig> {
   try {
-    const connection = await ctx.myme.getItem(ctx.connection_id);
+    const connection = await ctx.marfa.getItem(ctx.connection_id);
     const props = connection?.properties as
       | { configuration?: Record<string, unknown> }
       | undefined;
@@ -242,7 +242,7 @@ export async function handleSchedule(
 
   // Cold start: seed pageToken + initial files.list pass.
   if (!cursor.seeded || cursor.pageToken === null) {
-    const tokenResp = await ctx.myme.proxyRequest(
+    const tokenResp = await ctx.marfa.proxyRequest(
       "GET",
       `${DRIVE_API_BASE}/changes/startPageToken`,
     );
@@ -288,7 +288,7 @@ export async function handleSchedule(
 
     let resp: Response;
     try {
-      resp = await ctx.myme.proxyRequest("GET", path);
+      resp = await ctx.marfa.proxyRequest("GET", path);
     } catch (err) {
       return reportFailure(ctx, "changes.list fetch failed", err, true);
     }
@@ -436,7 +436,7 @@ async function initialFilesListSweep(
 
     let resp: Response;
     try {
-      resp = await ctx.myme.proxyRequest("GET", path);
+      resp = await ctx.marfa.proxyRequest("GET", path);
     } catch (err) {
       await ctx.activity.emit({
         severity: "action_required",
@@ -477,9 +477,9 @@ async function initialFilesListSweep(
       try {
         const myme_id = cursor.mappings[file.id];
         if (myme_id !== undefined) {
-          await ctx.myme.updateItem(myme_id, input);
+          await ctx.marfa.updateItem(myme_id, input);
         } else {
-          const created = await ctx.myme.createItem({
+          const created = await ctx.marfa.createItem({
             ...input,
             source_id: file.id,
           });
@@ -518,7 +518,7 @@ async function applyChange(
   if (change.removed === true || change.file?.trashed === true) {
     if (myme_id !== undefined) {
       try {
-        await ctx.myme.transitionItem(myme_id, "trashed");
+        await ctx.marfa.transitionItem(myme_id, "trashed");
         Reflect.deleteProperty(cursor.mappings, fileId);
         return {
           upserted: 0,
@@ -552,9 +552,9 @@ async function applyChange(
   const input = buildFileInput(file, config.target_type, blob);
   try {
     if (myme_id !== undefined) {
-      await ctx.myme.updateItem(myme_id, input);
+      await ctx.marfa.updateItem(myme_id, input);
     } else {
-      const created = await ctx.myme.createItem({
+      const created = await ctx.marfa.createItem({
         ...input,
         source_id: fileId,
       });
@@ -624,7 +624,7 @@ async function createChannel(
   // if the cursor isn't seeded yet).
   let pageToken = cursor.pageToken;
   if (pageToken === null) {
-    const tokenResp = await ctx.myme.proxyRequest(
+    const tokenResp = await ctx.marfa.proxyRequest(
       "GET",
       `${DRIVE_API_BASE}/changes/startPageToken`,
     );
@@ -658,7 +658,7 @@ async function createChannel(
   const path = `${DRIVE_API_BASE}/changes/watch?${params.toString()}`;
   let resp: Response;
   try {
-    resp = await ctx.myme.proxyRequest("POST", path, body);
+    resp = await ctx.marfa.proxyRequest("POST", path, body);
   } catch (err) {
     await ctx.activity.emit({
       severity: "action_required",
@@ -703,7 +703,7 @@ async function stopChannel(
   channel: ChannelState,
 ): Promise<void> {
   try {
-    const resp = await ctx.myme.proxyRequest(
+    const resp = await ctx.marfa.proxyRequest(
       "POST",
       `${DRIVE_API_BASE}/channels/stop`,
       { id: channel.channel_id, resourceId: channel.resource_id },
@@ -772,7 +772,7 @@ export function registerHandlers(): void {
 
 /**
  * Outcome of attempting to ingest a Drive file's bytes into the
- * Myme blob store (T-239). Drives both the per-run counters and the
+ * Marfa blob store (T-239). Drives both the per-run counters and the
  * `targetType` decision in `buildFileInput` — `core.file` requires
  * a `blob_ref`, so we only emit it on `ingested`; every other
  * outcome routes to `google.drive.file` with `blob_ref` absent.
@@ -820,7 +820,7 @@ function parseDriveSize(raw: string | undefined): number | null {
 }
 
 /**
- * Decide whether to ingest a Drive file's bytes into the Myme blob
+ * Decide whether to ingest a Drive file's bytes into the Marfa blob
  * store, and (if so) do it. Pure metadata mode short-circuits to
  * `skipped_metadata`. In all-files mode the path is:
  *
@@ -831,7 +831,7 @@ function parseDriveSize(raw: string | undefined): number | null {
  *      return `skipped_oversize` and emit a per-file `info` row so
  *      the operator can see which files were skipped + why.
  *   3. Files within ceiling: proxy `GET /drive/v3/files/{id}?alt=media`,
- *      buffer the bytes, then `ctx.myme.uploadBlob({ content,
+ *      buffer the bytes, then `ctx.marfa.uploadBlob({ content,
  *      mime_type })`. On any proxy / network / SDK failure return
  *      `download_failed` and emit a per-file `info` row. The next
  *      schedule run will retry naturally — `info` rather than
@@ -875,7 +875,7 @@ async function ingestBlobIfNeeded(
   const mimeType = file.mimeType ?? "application/octet-stream";
   let resp: Response;
   try {
-    resp = await ctx.myme.proxyRequest(
+    resp = await ctx.marfa.proxyRequest(
       "GET",
       `${DRIVE_API_BASE}/files/${file.id}?alt=media`,
     );
@@ -905,7 +905,7 @@ async function ingestBlobIfNeeded(
     );
   }
   try {
-    const result = await ctx.myme.uploadBlob({
+    const result = await ctx.marfa.uploadBlob({
       content: bytes,
       mime_type: mimeType,
     });
@@ -977,7 +977,7 @@ function buildFileInput(
     properties.sha256_checksum = file.sha256Checksum;
   if (file.etag !== undefined) properties.etag = file.etag;
 
-  // Type-routing: `blob_ref` means "bytes retrievable from the Myme
+  // Type-routing: `blob_ref` means "bytes retrievable from the Marfa
   // blob store" (T-239). `core.file` requires it; `google.drive.file`
   // accepts it as optional. We emit `core.file` only when bytes were
   // successfully ingested; every other path routes to

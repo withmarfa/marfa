@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { IntegrationManifestSchema } from "@mymehq/shared";
+import { IntegrationManifestSchema } from "@withmarfa/shared";
 import { READWISE_MANIFEST } from "./manifest.js";
 
 describe("Readwise manifest", () => {

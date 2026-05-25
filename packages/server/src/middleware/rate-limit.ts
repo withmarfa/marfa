@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
 import { getClientIp } from "./client-ip.js";
 import type { CidrRange } from "./client-ip.js";
@@ -23,7 +23,7 @@ export interface RateLimitConfig {
   storage: Storage;
   /**
    * Per-tenant default ceiling, read from
-   * `MYME_DEFAULT_QUOTA_RATE_PER_MINUTE`. Falls back to "no
+   * `MARFA_DEFAULT_QUOTA_RATE_PER_MINUTE`. Falls back to "no
    * tenant-level cap" when undefined. Per-tenant overrides via the
    * tenant_quotas row take precedence.
    */
@@ -166,7 +166,7 @@ export function rateLimitMiddleware(
         (new Date(credentialResult.expires_at).getTime() - now) / 1000,
       );
       c.header("Retry-After", String(retryAfter));
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.RATE_LIMITED,
         `Rate limit exceeded. Try again in ${String(retryAfter)} seconds`,
       );
@@ -192,7 +192,7 @@ export function rateLimitMiddleware(
             (new Date(tenantResult.expires_at).getTime() - now) / 1000,
           );
           c.header("Retry-After", String(retryAfter));
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.RATE_LIMITED,
             `Tenant rate limit exceeded. Try again in ${String(retryAfter)} seconds`,
           );

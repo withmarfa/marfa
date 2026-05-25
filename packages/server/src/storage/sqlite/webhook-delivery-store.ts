@@ -1,6 +1,6 @@
 import { eq, desc, sql } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { WebhookDelivery } from "@mymehq/shared";
+import { generateId } from "@withmarfa/shared";
+import type { WebhookDelivery } from "@withmarfa/shared";
 import type {
   PendingWebhookDelivery,
   WebhookDeliveryStore,

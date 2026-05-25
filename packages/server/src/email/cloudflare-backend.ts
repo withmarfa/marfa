@@ -1,11 +1,11 @@
 /**
  * Cloudflare Email Service backend — production transactional email transport
- * for hosted Myme. REST API only — the Atlas server runs on Node, not in a
+ * for hosted Marfa. REST API only — the Atlas server runs on Node, not in a
  * Worker, so the `send_email` Worker binding isn't an option.
  *
  * Endpoint: `POST /client/v4/accounts/{account_id}/email/sending/send`.
  * Authentication: `Authorization: Bearer <CLOUDFLARE_EMAIL_API_TOKEN>` —
- * a token with the "Send Email" permission scoped to the myme account.
+ * a token with the "Send Email" permission scoped to the marfa account.
  *
  * # Idempotency
  *

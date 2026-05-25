@@ -1,5 +1,5 @@
 /**
- * Manifest for the mymehq.inbox email-capture integration.
+ * Manifest for the withmarfa.inbox email-capture integration.
  *
  * Substrate-shaped: no upstream API, no OAuth, no static token. The
  * substrate IS the upstream — Cloudflare Email Routing receives mail
@@ -9,38 +9,38 @@
  * shared HMAC key.
  *
  * Per-delivery flow:
- *   1. Email Routing matches `capture@inbox.myme.so` → Email Worker.
+ *   1. Email Routing matches `capture@inbox.marfa.so` → Email Worker.
  *   2. Worker parses MIME, builds a JSON envelope.
  *   3. Worker HMACs the body with the per-connection subscription
  *      secret (`WEBHOOK_SECRET` Worker secret).
- *   4. POST to `https://staging.myme.so/runtime/webhook/<connection_id>`
- *      with `X-Myme-Signature: sha256=<hex>` and
- *      `X-Myme-Delivery-Id: <Message-ID>`.
+ *   4. POST to `https://staging.marfa.so/runtime/webhook/<connection_id>`
+ *      with `X-Marfa-Signature: sha256=<hex>` and
+ *      `X-Marfa-Delivery-Id: <Message-ID>`.
  *   5. The server verifies via the `cloudflare-email` adapter,
  *      idempotency-checks on `(connection_id, Message-ID)`, enqueues
  *      a `WebhookMessage`.
  *   6. This handler parses the envelope, builds a
- *      `mymehq.captured_email` item with `source_id = Message-ID`.
+ *      `withmarfa.captured_email` item with `source_id = Message-ID`.
  *
  * Tenant routing (v1): single capture address. Multi-tenant routing
- * (e.g. `capture-<tenant_slug>@inbox.myme.so`) is a future ticket
- * once Myme onboards a second tenant.
+ * (e.g. `capture-<tenant_slug>@inbox.marfa.so`) is a future ticket
+ * once Marfa onboards a second tenant.
  *
  * Attachment blob upload is gated on T-239; v1 captures attachment
  * metadata only.
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const MYMEHQ_INBOX_MANIFEST: IntegrationManifest = {
-  name: "mymehq.inbox",
+  name: "withmarfa.inbox",
   version: "0.1.0",
   manifest_schema_version: "1.0.0",
-  publisher: "mymehq",
+  publisher: "withmarfa",
   description:
-    "Email-to-Myme capture. Receives emails sent to a Myme-managed address via Cloudflare Email Routing + Email Worker; lands each delivery as a `mymehq.captured_email` item.",
+    "Email-to-Marfa capture. Receives emails sent to a Marfa-managed address via Cloudflare Email Routing + Email Worker; lands each delivery as a `withmarfa.captured_email` item.",
   direction: "read",
   runtime_compatibility: ["hosted", "local"],
-  target_types: ["mymehq.captured_email"],
+  target_types: ["withmarfa.captured_email"],
   triggers: [{ type: "webhook" }],
   bidirectional_handling: {
     echo_ttl_seconds: 60,
@@ -67,5 +67,5 @@ export const DELIVERY_RING_SIZE = 1024;
 /** Header names emitted by the in-tree Email Worker. The verifier
  *  reads these; the handler reads these; tests use these. Keep in
  *  sync with `email-worker/src/index.ts`. */
-export const SIGNATURE_HEADER = "X-Myme-Signature";
-export const DELIVERY_ID_HEADER = "X-Myme-Delivery-Id";
+export const SIGNATURE_HEADER = "X-Marfa-Signature";
+export const DELIVERY_ID_HEADER = "X-Marfa-Delivery-Id";

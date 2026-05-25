@@ -27,9 +27,9 @@
  *      this sweep.
  *
  * Read-only on existing data; the manifest's `tombstone_mapping:
- * "ignore"` keeps Raindrop-side deletes out of Myme trash. The
+ * "ignore"` keeps Raindrop-side deletes out of Marfa trash. The
  * harness asserts only GETs reach Raindrop except CREATEs on the
- * synthetic `Myme Validation` collection.
+ * synthetic `Marfa Validation` collection.
  */
 import {
   registerScheduleHandler,
@@ -37,7 +37,7 @@ import {
   type ScheduleMessage,
   type HandlerResult,
   type CreateItemInput,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import {
   COLLECTIONS_PATH,
   COLLECTION_CHILDREN_PATH,
@@ -106,9 +106,9 @@ interface RaindropCursor {
    *  pulled; anything older was either captured in a previous sweep
    *  or pre-dates the integration's install. */
   last_created_at: string | null;
-  /** Raindrop _id (as string) → Myme item id. */
+  /** Raindrop _id (as string) → Marfa item id. */
   raindrop_mappings: Record<string, string>;
-  /** Collection _id (as string) → Myme item id. */
+  /** Collection _id (as string) → Marfa item id. */
   collection_mappings: Record<string, string>;
   /** Diagnostic. */
   last_collection_sweep_at: string | null;
@@ -258,9 +258,9 @@ export async function handleSchedule(
     const input = buildCollectionInput(c);
     try {
       if (existing !== undefined) {
-        await ctx.myme.updateItem(existing, input);
+        await ctx.marfa.updateItem(existing, input);
       } else {
-        const created = await ctx.myme.createItem({
+        const created = await ctx.marfa.createItem({
           ...input,
           source_id: key,
         });
@@ -288,13 +288,13 @@ export async function handleSchedule(
         ? c.parent.$id
         : undefined;
     if (typeof parentId !== "number") continue;
-    const childMyme = cursor.collection_mappings[String(id)];
-    const parentMyme = cursor.collection_mappings[String(parentId)];
-    if (childMyme === undefined || parentMyme === undefined) continue;
+    const childMarfa = cursor.collection_mappings[String(id)];
+    const parentMarfa = cursor.collection_mappings[String(parentId)];
+    if (childMarfa === undefined || parentMarfa === undefined) continue;
     try {
-      await ctx.myme.createEdge({
-        source_id: parentMyme,
-        target_id: childMyme,
+      await ctx.marfa.createEdge({
+        source_id: parentMarfa,
+        target_id: childMarfa,
         edge_type: "parent-of",
       });
       edgesCreated += 1;
@@ -324,7 +324,7 @@ export async function handleSchedule(
 
     let response: Response;
     try {
-      response = await ctx.myme.proxyRequest("GET", path);
+      response = await ctx.marfa.proxyRequest("GET", path);
     } catch (err) {
       return reportFailure(ctx, "raindrop /raindrops fetch failed", err, true);
     }
@@ -367,27 +367,27 @@ export async function handleSchedule(
       const key = String(r._id);
       const existing = cursor.raindrop_mappings[key];
       const input = buildRaindropInput(r);
-      let raindropMymeId: string;
+      let raindropMarfaId: string;
       try {
         if (existing !== undefined) {
-          await ctx.myme.updateItem(existing, input);
-          raindropMymeId = existing;
+          await ctx.marfa.updateItem(existing, input);
+          raindropMarfaId = existing;
         } else {
-          const createdItem = await ctx.myme.createItem({
+          const createdItem = await ctx.marfa.createItem({
             ...input,
             source_id: key,
           });
-          raindropMymeId = createdItem.id;
-          cursor.raindrop_mappings[key] = raindropMymeId;
+          raindropMarfaId = createdItem.id;
+          cursor.raindrop_mappings[key] = raindropMarfaId;
           // Edge to the parent collection on first write.
           const collectionId = r.collection?.$id ?? r.collectionId;
           if (typeof collectionId === "number") {
-            const parentMyme = cursor.collection_mappings[String(collectionId)];
-            if (parentMyme !== undefined) {
+            const parentMarfa = cursor.collection_mappings[String(collectionId)];
+            if (parentMarfa !== undefined) {
               try {
-                await ctx.myme.createEdge({
-                  source_id: parentMyme,
-                  target_id: raindropMymeId,
+                await ctx.marfa.createEdge({
+                  source_id: parentMarfa,
+                  target_id: raindropMarfaId,
                   edge_type: "parent-of",
                 });
                 edgesCreated += 1;
@@ -455,7 +455,7 @@ async function fetchCollections(
 ): Promise<CollectionsFetchOk | CollectionsFetchFail> {
   let response: Response;
   try {
-    response = await ctx.myme.proxyRequest("GET", path);
+    response = await ctx.marfa.proxyRequest("GET", path);
   } catch (err) {
     return {
       ok: false,

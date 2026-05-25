@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ParsedScope } from "@mymehq/shared";
+import type { ParsedScope } from "@withmarfa/shared";
 import {
   renderDevicePage,
   renderDeviceConsentScreen,
@@ -63,7 +63,7 @@ describe("renderDevicePage (Wave C PR4)", () => {
 
 describe("renderDeviceConsentScreen (Wave C PR4)", () => {
   const PARAMS = {
-    clientName: "myme CLI",
+    clientName: "marfa CLI",
     scopes: SCOPES,
     userCode: "ABCD-1234",
     descriptions: { "core.note": "Text you created." },
@@ -79,7 +79,7 @@ describe("renderDeviceConsentScreen (Wave C PR4)", () => {
 
   it("threads client name + user_code into the lede", () => {
     const html = renderDeviceConsentScreen(PARAMS);
-    expect(html).toContain('class="client-name">myme CLI');
+    expect(html).toContain('class="client-name">marfa CLI');
     expect(html).toContain("ABCD-1234");
   });
 

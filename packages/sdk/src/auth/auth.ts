@@ -12,15 +12,15 @@ import { discoverEndpoints } from "./discovery.js";
 import { normaliseIssuer } from "./issuer.js";
 
 /**
- * MymeAuth — owns the OAuth dance for browser apps signing into Myme.
+ * MarfaAuth — owns the OAuth dance for browser apps signing into Marfa.
  *
  * Flow:
- *   const auth = new MymeAuth({ issuer, clientId, redirectUri, scopes });
+ *   const auth = new MarfaAuth({ issuer, clientId, redirectUri, scopes });
  *   // On a "Sign in" click:
  *   window.location.href = await auth.buildAuthorizeUrl();
  *   // On the callback page:
  *   const provider = await auth.handleCallback(window.location.href);
- *   const client = new MymeClient({ url: issuer, tokenProvider: provider });
+ *   const client = new MarfaClient({ url: issuer, tokenProvider: provider });
  *
  * Restoration on page load: `await auth.restore()` returns a TokenProvider
  * if a session is in storage, null otherwise.
@@ -29,8 +29,8 @@ import { normaliseIssuer } from "./issuer.js";
  * persisted tokens; visible "session expired" UX is the caller's
  * responsibility (subscribe via provider.onSignOut).
  */
-export interface MymeAuthConfig {
-  /** Myme server URL — protocol + host (and port). */
+export interface MarfaAuthConfig {
+  /** Marfa server URL — protocol + host (and port). */
   issuer: string;
   /** OAuth client id, registered via POST /auth/oauth2/register (DCR). */
   clientId: string;
@@ -50,7 +50,7 @@ interface PendingState {
   redirectUri: string;
 }
 
-export class MymeAuth {
+export class MarfaAuth {
   private readonly issuer: string;
   private readonly clientId: string;
   private readonly redirectUri: string;
@@ -60,7 +60,7 @@ export class MymeAuth {
   private readonly pendingKey: string;
   private readonly tokensKey: string;
 
-  constructor(config: MymeAuthConfig) {
+  constructor(config: MarfaAuthConfig) {
     this.issuer = normaliseIssuer(config.issuer);
     this.clientId = config.clientId;
     this.redirectUri = config.redirectUri;
@@ -68,12 +68,12 @@ export class MymeAuth {
     this.storage = config.storage ?? defaultTokenStorage();
     this.fetch = config.fetch ?? globalThis.fetch.bind(globalThis);
 
-    // Storage key shape — origin + client_id keeps multiple Myme client
+    // Storage key shape — origin + client_id keeps multiple Marfa client
     // ids on the same origin distinct. Persisted state and the resulting
     // token bundle live under separate keys so we can clear them
     // independently.
-    this.pendingKey = `myme.auth.pending:${this.issuer}:${config.clientId}`;
-    this.tokensKey = `myme.auth.tokens:${this.issuer}:${config.clientId}`;
+    this.pendingKey = `marfa.auth.pending:${this.issuer}:${config.clientId}`;
+    this.tokensKey = `marfa.auth.tokens:${this.issuer}:${config.clientId}`;
   }
 
   /** Build the authorize URL and persist the PKCE verifier + state. */

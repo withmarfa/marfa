@@ -1,16 +1,16 @@
 #:schema node_modules/wrangler/config-schema.json
-# Per-Integration Worker for mymehq.github-webhooks.
+# Per-Integration Worker for withmarfa.github-webhooks.
 # Webhook-only integration — consumes the shared webhook-receipt queue
 # (it's the sole consumer for that queue on staging).
 
-name = "myme-integration-github-webhooks"
+name = "marfa-integration-github-webhooks"
 main = "src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 # `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from the env.
 
 [vars]
-INTEGRATION_NAME = "mymehq.github-webhooks"
+INTEGRATION_NAME = "withmarfa.github-webhooks"
 ENVIRONMENT = "dev"
 
 [[durable_objects.bindings]]
@@ -23,10 +23,10 @@ new_sqlite_classes = ["PerConnectionState"]
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
-name = "myme-integration-github-webhooks-staging"
+name = "marfa-integration-github-webhooks-staging"
 
 [env.staging.vars]
-INTEGRATION_NAME = "mymehq.github-webhooks"
+INTEGRATION_NAME = "withmarfa.github-webhooks"
 ENVIRONMENT = "staging"
 
 [[env.staging.durable_objects.bindings]]
@@ -42,16 +42,16 @@ new_sqlite_classes = ["PerConnectionState"]
 # operator's peekable surface.
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
-queue = "myme-webhook-receipt-staging-dlq"
+queue = "marfa-webhook-receipt-staging-dlq"
 
 [[env.staging.queues.consumers]]
-queue = "myme-webhook-receipt-staging"
+queue = "marfa-webhook-receipt-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-webhook-receipt-staging-dlq"
+dead_letter_queue = "marfa-webhook-receipt-staging-dlq"
 
 # Secrets (`wrangler secret put --env staging`):
-#   - MYME_API_URL
-#   - MYME_RUNTIME_CONTROL_URL
-#   - MYME_RUNTIME_BROKER_KEY
+#   - MARFA_API_URL
+#   - MARFA_RUNTIME_CONTROL_URL
+#   - MARFA_RUNTIME_BROKER_KEY

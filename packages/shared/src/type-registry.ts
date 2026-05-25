@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ALL_TYPES, ALL_SYSTEM_TYPES } from "@mymehq/types";
+import { ALL_TYPES, ALL_SYSTEM_TYPES } from "@withmarfa/types";
 import type {
   DisplayHints,
   FieldDefinition,
@@ -9,12 +9,12 @@ import type {
   MergeStrategy,
   TypeSchema,
   VersionPolicy,
-} from "@mymehq/types";
+} from "@withmarfa/types";
 import type { EnforcementSettings, TenantConfig } from "./types.js";
 import { isValidTypeIdentifier } from "./validation.js";
 
-// Re-export schema-shape types and ALL_TYPES so consumers of @mymehq/shared
-// don't need to reach into @mymehq/types directly.
+// Re-export schema-shape types and ALL_TYPES so consumers of @withmarfa/shared
+// don't need to reach into @withmarfa/types directly.
 export type {
   DisplayHints,
   FieldDefinition,
@@ -159,7 +159,7 @@ export function getTypeSchema(typeId: string): TypeSchema | undefined {
 /**
  * The five-tier namespace classification (TSC42 §3). The first segment of a
  * type identifier determines its tier; reserved roots (`core`, `system`,
- * `app`, `user`, `myme`) carry platform-defined semantics, anything else is a
+ * `app`, `user`, `marfa`) carry platform-defined semantics, anything else is a
  * publisher handle.
  */
 export type NamespaceTier =
@@ -168,14 +168,14 @@ export type NamespaceTier =
   | "app"
   | "user"
   | "publisher"
-  | "myme";
+  | "marfa";
 
 const RESERVED_ROOTS: ReadonlySet<string> = new Set([
   "core",
   "system",
   "app",
   "user",
-  "myme",
+  "marfa",
 ]);
 
 /** Returns true if the candidate is a reserved root prefix. */
@@ -185,7 +185,7 @@ export function isReservedRoot(candidate: string): boolean {
 
 /**
  * Classifies a type identifier into one of the five tiers (plus the
- * `myme` reserved-but-internal root). Falls back to `"publisher"` for any
+ * `marfa` reserved-but-internal root). Falls back to `"publisher"` for any
  * non-reserved first segment — the namespace grammar disambiguates by
  * structure: `<publisher>.<type>` is two segments, `<reserved>.<...>` follows
  * the tier-specific shape.
@@ -196,7 +196,7 @@ export function classifyNamespace(id: string): NamespaceTier {
   if (root === "system") return "system";
   if (root === "app") return "app";
   if (root === "user") return "user";
-  if (root === "myme") return "myme";
+  if (root === "marfa") return "marfa";
   return "publisher";
 }
 

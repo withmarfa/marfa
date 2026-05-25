@@ -38,13 +38,13 @@ export function renderVerifyEmailEmail(
 ): RenderedEmail {
   const expires = input.expiresInMinutes ?? 60;
   const greeting = input.name?.trim() ? `Hi ${input.name.trim()}` : "Hi there";
-  const subject = "Verify your email for Myme";
+  const subject = "Verify your email for Marfa";
   const text = [
-    "Verify your email for Myme",
+    "Verify your email for Marfa",
     "",
     `${greeting},`,
     "",
-    "Welcome to Myme. Please verify your email address by clicking the link below.",
+    "Welcome to Marfa. Please verify your email address by clicking the link below.",
     "",
     `This link expires in ${String(expires)} minutes.`,
     "",
@@ -52,7 +52,7 @@ export function renderVerifyEmailEmail(
     "",
     "If you didn't sign up, you can safely ignore this email.",
     "",
-    "— Myme",
+    "— Marfa",
   ].join("\n");
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -68,7 +68,7 @@ export function renderVerifyEmailEmail(
 <tr><td style="padding:32px;">
 <h1 style="margin:0 0 16px 0;font-size:20px;font-weight:600;color:${TEXT};">Verify your email</h1>
 <p style="margin:0 0 12px 0;color:${TEXT};">${escapeHtml(greeting)},</p>
-<p style="margin:0 0 24px 0;color:${MUTED};">Welcome to Myme. Please confirm your email address by clicking the button below. This link expires in ${String(expires)} minutes.</p>
+<p style="margin:0 0 24px 0;color:${MUTED};">Welcome to Marfa. Please confirm your email address by clicking the button below. This link expires in ${String(expires)} minutes.</p>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0">
 <tr><td style="border-radius:6px;background:${ACCENT};">
 <a href="${escapeAttr(input.url)}" style="display:inline-block;padding:12px 24px;color:#ffffff;text-decoration:none;font-weight:600;font-size:16px;line-height:20px;border-radius:6px;min-height:44px;box-sizing:border-box;">Verify email</a>
@@ -77,10 +77,10 @@ export function renderVerifyEmailEmail(
 <p style="margin:24px 0 0 0;color:${MUTED};font-size:14px;">Or paste this URL into your browser:</p>
 <p style="margin:8px 0 0 0;word-break:break-all;font-size:13px;color:${MUTED};">${escapeHtml(input.url)}</p>
 <hr style="margin:32px 0;border:0;border-top:1px solid ${BORDER};">
-<p style="margin:0;color:${MUTED};font-size:13px;">If you didn't sign up for Myme, you can safely ignore this email.</p>
+<p style="margin:0;color:${MUTED};font-size:13px;">If you didn't sign up for Marfa, you can safely ignore this email.</p>
 </td></tr>
 </table>
-<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Myme</p>
+<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Marfa</p>
 </td></tr>
 </table>
 </body>

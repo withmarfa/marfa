@@ -1,5 +1,5 @@
-import { ErrorCode, MymeError, getEdgeTypeSchema } from "@mymehq/shared";
-import type { Edge } from "@mymehq/shared";
+import { ErrorCode, MarfaError, getEdgeTypeSchema } from "@withmarfa/shared";
+import type { Edge } from "@withmarfa/shared";
 import type { EdgeStore } from "./interface.js";
 
 /**
@@ -31,7 +31,7 @@ export async function planCascadeDelete(
 
   async function walk(itemId: string, depth: number): Promise<void> {
     if (depth > MAX_DEPTH) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Cascade-delete depth limit (${String(MAX_DEPTH)}) exceeded — graph may contain a cycle`,
         { item_id: itemId },
@@ -66,7 +66,7 @@ export async function planCascadeDelete(
   await walk(rootItemId, 0);
 
   if (blockers.length > 0) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.EDGE_CONSTRAINT_VIOLATION,
       `Cannot delete item ${rootItemId}: blocked by ${String(blockers.length)} edge(s) with cascade_on_delete=block`,
       {

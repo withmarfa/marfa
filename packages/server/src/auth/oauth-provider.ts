@@ -6,7 +6,7 @@
  * `/auth/oauth2/*` via Better Auth's catch-all (basePath `/auth`).
  *
  * Three coupled pieces in this file:
- *   1. `buildAllowedScopes(...)`  — enumerates the Myme scope grammar
+ *   1. `buildAllowedScopes(...)`  — enumerates the Marfa scope grammar
  *       at instance-construction time from the type / edge registries
  *       so the plugin's allowlist accepts every concrete typed scope
  *       (`core.note:read`, `edge.parent-of:write`, …). Custom types
@@ -14,7 +14,7 @@
  *       (acceptable tradeoff; documented).
  *   2. `createOauthProviderConfig(...)` — returns the `OAuthOptions`
  *       passed to `oauthProvider({...})`. Wires:
- *         - opaque tokens hashed via Myme's existing `hashApiKey(t,salt)`
+ *         - opaque tokens hashed via Marfa's existing `hashApiKey(t,salt)`
  *           so the bearer middleware shares the same hash format
  *         - `myme_at_` prefix on access tokens (bearer-middleware contract)
  *         - `myme_rt_` prefix on refresh tokens
@@ -36,7 +36,7 @@
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { createAuthMiddleware } from "better-auth/api";
 import { createHmac } from "node:crypto";
-import { TYPE_REGISTRY, EDGE_TYPE_REGISTRY } from "@mymehq/shared";
+import { TYPE_REGISTRY, EDGE_TYPE_REGISTRY } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
 
@@ -60,7 +60,7 @@ interface HookCtxLite {
  * Reserved metadata sub-resources for the `metadata.<sub>:<verb>` scope
  * grammar. Currently only `types` is enforced (gates `POST /types`); the
  * list grows as new metadata-layer mutations land. Mirrors what
- * `parseScope` in `@mymehq/shared` recognises.
+ * `parseScope` in `@withmarfa/shared` recognises.
  */
 const METADATA_SUBRESOURCES = ["types"] as const;
 
@@ -163,7 +163,7 @@ function makeTokenHasher(salt: string) {
 }
 
 /**
- * Construct the @better-auth/oauth-provider plugin with Myme-specific
+ * Construct the @better-auth/oauth-provider plugin with Marfa-specific
  * configuration. Used as one entry in the better-auth `plugins: [...]`
  * array in `instance.ts`.
  */
@@ -172,7 +172,7 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
   const allowedScopes = buildAllowedScopes();
 
   return oauthProvider({
-    // ----- Page wiring (Myme-owned routes for both) -----
+    // ----- Page wiring (Marfa-owned routes for both) -----
     loginPage: "/auth/sign-in",
     consentPage: "/auth/authorize",
 
@@ -214,7 +214,7 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // cross-tenant leakage.
     //
     // The plugin's `postLogin` config wraps an OPTIONAL account-
-    // selection flow (multi-account UX); Myme has single-account-per-
+    // selection flow (multi-account UX); Marfa has single-account-per-
     // session, so `shouldRedirect` always returns false and the
     // `/auth/post-login` page is never hit. We only wire this block
     // for the `consentReferenceId` field.
@@ -240,7 +240,7 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // T-193: the plugin emits a WARN at construct time advising operators to
     // serve the issuer-suffixed discovery URL
     // (`/.well-known/oauth-authorization-server/auth` for our `/auth`
-    // basePath). Myme deliberately serves the bare-root variant
+    // basePath). Marfa deliberately serves the bare-root variant
     // (`/.well-known/oauth-authorization-server` — see `app.ts:450`) and
     // documents the partial RFC 8414 §3 deviation in
     // `packages/server/CLAUDE.md` under "Discovery doc issuer field". The
@@ -276,7 +276,7 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // scope-expansion to JWTs). The claims here surface on /oauth2/introspect
     // responses, which the bearer middleware does NOT call (it reads
     // `auth_oauth_access_token` directly + joins `system.connection`).
-    // Kept anyway so external resource servers introspecting Myme-issued
+    // Kept anyway so external resource servers introspecting Marfa-issued
     // tokens get a usable claim set.
     customAccessTokenClaims: ({ user, scopes, referenceId }) => {
       const claims: Record<string, unknown> = {
@@ -339,7 +339,7 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
  * the instance.ts wiring.
  *
  * **Why no after-hooks for projection / cascade / last_used_at?** Every
- * one of those flows is already owned by an explicit Myme-side handler
+ * one of those flows is already owned by an explicit Marfa-side handler
  * that does the work deterministically:
  *   - consent projection + audit: `POST /auth/authorize/decision`
  *     (`routes/auth-consent.ts`) handles it before proxying to
@@ -373,7 +373,7 @@ export function buildOauthProjectionPlugin(opts: {
   const { storage, apiKeySalt } = opts;
   const refreshHasher = apiKeySalt ? makeTokenHasher(apiKeySalt) : undefined;
   return {
-    id: "myme-oauth-projection" as const,
+    id: "marfa-oauth-projection" as const,
     hooks: {
       before: [
         ...(refreshHasher
@@ -438,7 +438,7 @@ export function buildOauthProjectionPlugin(opts: {
  * Why we don't also wire after-hooks for /oauth2/consent (projection),
  * /oauth2/revoke (cascade), /oauth2/token (last_used_at), /oauth2/end-
  * session (cascade): every one of those flows is owned by an explicit
- * Myme-side handler that does the work deterministically (consent →
+ * Marfa-side handler that does the work deterministically (consent →
  * `POST /auth/authorize/decision`; revoke → `/auth/grants/:id/revoke`
  * and `DELETE /auth/grants/:id`; last_used_at → bearer middleware on
  * the next authenticated request). Adding after-hooks would double-write

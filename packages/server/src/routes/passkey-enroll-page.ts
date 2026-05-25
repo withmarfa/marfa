@@ -9,7 +9,7 @@
  * without WebAuthn / not running in a secure context see a fallback
  * paragraph explaining the requirement instead of a non-functional
  * button. Capability detection is done by the browser-side script
- * (`MymePasskey.isSupported()`), which hides the button on
+ * (`MarfaPasskey.isSupported()`), which hides the button on
  * unsupported browsers — no server-side UA sniffing.
  *
  * Shape mirrors the rest of the auth surface — single H1, lede,
@@ -38,7 +38,7 @@ export function renderPasskeyEnrollPage(
 ): string {
   const safeEmail = escapeHtml(params.email);
 
-  // The page-level inline JS handles the click → MymePasskey.enroll()
+  // The page-level inline JS handles the click → MarfaPasskey.enroll()
   // round-trip and toggles status banners. Capability probe hides
   // the button entirely on unsupported browsers; we render a
   // fallback paragraph that's only visible in that case.
@@ -59,7 +59,7 @@ export function renderPasskeyEnrollPage(
   // supported. We do this in JS rather than server-side because UA
   // sniffing is unreliable; WebAuthn support depends on the actual
   // browser + secure-context.
-  if (!window.MymePasskey || !window.MymePasskey.isSupported()) {
+  if (!window.MarfaPasskey || !window.MarfaPasskey.isSupported()) {
     hide('passkey-button');
     show('passkey-unsupported');
     return;
@@ -71,7 +71,7 @@ export function renderPasskeyEnrollPage(
     clearStatus();
     btn.disabled = true;
     try {
-      await window.MymePasskey.enroll();
+      await window.MarfaPasskey.enroll();
       show('passkey-success');
     } catch (err) {
       setError((err && err.message) || 'Passkey enrolment failed.');

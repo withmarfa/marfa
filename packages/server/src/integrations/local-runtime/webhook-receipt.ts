@@ -3,12 +3,12 @@
  * the local runtime substrate (T-173).
  *
  * Replaces the Cloudflare runtime-control Worker's `/webhooks/inbound/:
- * connection_id` endpoint when `MYME_INTEGRATION_RUNTIME=local`. Same
+ * connection_id` endpoint when `MARFA_INTEGRATION_RUNTIME=local`. Same
  * verify-then-enqueue flow:
  *
  *   1. Resolve the connection's inbound webhook subscriptions.
  *   2. Verify the request against each subscription using
- *      `@mymehq/webhooks` (already Web-Crypto only — works unchanged in
+ *      `@withmarfa/webhooks` (already Web-Crypto only — works unchanged in
  *      Node).
  *   3. Look up the integration name from the connection's
  *      `integration_ref` → `system.integration` manifest.
@@ -24,8 +24,8 @@
  *   - 500 when the subscription has no resolvable integration name
  */
 import { Hono } from "hono";
-import { ADAPTERS, isVerificationMethod } from "@mymehq/webhooks";
-import type { ScheduleMessage, WebhookMessage } from "@mymehq/runtime-sdk";
+import { ADAPTERS, isVerificationMethod } from "@withmarfa/webhooks";
+import type { ScheduleMessage, WebhookMessage } from "@withmarfa/runtime-sdk";
 import { decryptSecret, SECRET_INFO } from "../../crypto/secret-encryption.js";
 import { validateManifest } from "../validate-manifest.js";
 import type { Storage } from "../../storage/interface.js";

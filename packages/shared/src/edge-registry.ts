@@ -1,13 +1,13 @@
-import { ALL_EDGE_TYPES } from "@mymehq/types";
+import { ALL_EDGE_TYPES } from "@withmarfa/types";
 import type {
   EdgeCardinality,
   EdgeCascade,
   EdgeTypeSchema,
-} from "@mymehq/types";
+} from "@withmarfa/types";
 import { isSubtypeOf, TYPE_REGISTRY } from "./type-registry.js";
 
-// Re-export types so consumers of @mymehq/shared can reach them without
-// depending on @mymehq/types directly.
+// Re-export types so consumers of @withmarfa/shared can reach them without
+// depending on @withmarfa/types directly.
 export type { EdgeCardinality, EdgeCascade, EdgeTypeSchema };
 export { ALL_EDGE_TYPES };
 
@@ -29,7 +29,7 @@ export function getEdgeTypeSchema(
 
 /**
  * Core edge types live in the edge-registry bootstrap array (shipped with
- * @mymehq/types). Everything else is custom and may be registered at runtime.
+ * @withmarfa/types). Everything else is custom and may be registered at runtime.
  */
 const CORE_EDGE_TYPE_IDS: ReadonlySet<string> = new Set(
   ALL_EDGE_TYPES.map((e) => e.id),

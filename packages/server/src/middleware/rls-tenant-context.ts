@@ -8,7 +8,7 @@ import type { AppEnv } from "./auth.js";
  * T-025 part 2: Postgres RLS request-level enforcement.
  *
  * Wraps each tenant-bounded request in a transaction with `SET LOCAL
- * ROLE myme_app` and `set_config('myme.tenant_id', $tenant, true)`,
+ * ROLE myme_app` and `set_config('marfa.tenant_id', $tenant, true)`,
  * then runs the downstream handler with that transaction stored on
  * `pgRequestContext` (AsyncLocalStorage). The Drizzle proxy
  * (`request-context.ts:wrapDbWithRequestContext`) consults the ALS
@@ -38,7 +38,7 @@ import type { AppEnv } from "./auth.js";
  *
  *   3. **RLS enabled, request has a tenant.** Wrap the handler in
  *      `db.transaction(...)` and set `SET LOCAL ROLE myme_app` +
- *      `myme.tenant_id`. Storage queries during the request flow
+ *      `marfa.tenant_id`. Storage queries during the request flow
  *      through the transaction's reserved connection. RLS policies
  *      filter every read/write to the session tenant.
  *
@@ -48,7 +48,7 @@ import type { AppEnv } from "./auth.js";
  * connection open for the same duration. They're exempted by URL
  * pattern HERE, but they are NOT bypass paths for RLS overall: T-146
  * closes the gap by applying session-level (`SET`, not `SET LOCAL`)
- * `myme.tenant_id` + `SET ROLE myme_app` on a dedicated pool
+ * `marfa.tenant_id` + `SET ROLE myme_app` on a dedicated pool
  * connection inside the route itself (see
  * `storage/pg/streaming-rls.ts`). The exemption keeps the long-lived
  * transaction model away from streams; it does not skip the DB-level
@@ -123,7 +123,7 @@ export function rlsTenantContextMiddleware(options: RlsMiddlewareOptions) {
       // therefore postgres-js-binding safe. The third arg `true`
       // makes it transaction-local (cleared at COMMIT/ROLLBACK).
       await tx.execute(
-        sql`SELECT set_config('myme.tenant_id', ${tenantId}, true)`,
+        sql`SELECT set_config('marfa.tenant_id', ${tenantId}, true)`,
       );
       // Role name is hardcoded (not user-controlled) — direct DDL is
       // safe; SET LOCAL ROLE doesn't accept parameters.

@@ -5,31 +5,31 @@ import {
 } from "./sender-domain-check.js";
 
 describe("checkSenderDomain", () => {
-  it("passes when Cloudflare backend uses a verified mail.myme.so address", () => {
+  it("passes when Cloudflare backend uses a verified mail.marfa.so address", () => {
     expect(() => {
       checkSenderDomain({
         backend: "cloudflare",
-        from: "Myme <hello@mail.myme.so>",
+        from: "Marfa <hello@mail.marfa.so>",
         skip: false,
       });
     }).not.toThrow();
   });
 
-  it("passes for a bare-address form ending in mail.myme.so", () => {
+  it("passes for a bare-address form ending in mail.marfa.so", () => {
     expect(() => {
       checkSenderDomain({
         backend: "cloudflare",
-        from: "noreply@mail.myme.so",
+        from: "noreply@mail.marfa.so",
         skip: false,
       });
     }).not.toThrow();
   });
 
-  it("throws SenderDomainMismatchError on apex myme.so for Cloudflare", () => {
+  it("throws SenderDomainMismatchError on apex marfa.so for Cloudflare", () => {
     expect(() => {
       checkSenderDomain({
         backend: "cloudflare",
-        from: "Myme <hello@myme.so>",
+        from: "Marfa <hello@marfa.so>",
         skip: false,
       });
     }).toThrow(SenderDomainMismatchError);

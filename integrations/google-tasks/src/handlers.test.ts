@@ -4,15 +4,15 @@
  * Same pattern as google-calendar's `handlers.test.ts`: build the
  * ConnectionContext inline against the SDK's exposed primitives
  * (`createCursorStore`, `createActivitySink`, `createEchoSuppression`),
- * mock `ctx.myme` entirely (no real HTTP).
+ * mock `ctx.marfa` entirely (no real HTTP).
  *
  * Coverage:
  *   - Schedule: discover task lists, sweep, upsert as the configured
  *     target type, advance per-list watermark.
- *   - Schedule: deleted=true → tombstone-map onto the existing Myme
+ *   - Schedule: deleted=true → tombstone-map onto the existing Marfa
  *     item.
  *   - Schedule: echo-suppressed task is skipped.
- *   - Item-event: outbound create injects the `[myme-id:…]` sentinel
+ *   - Item-event: outbound create injects the `[marfa-id:…]` sentinel
  *     into notes.
  *   - Item-event: idempotent recovery — sentinel-bearing existing
  *     task is found, mapping recorded, no fresh insert.
@@ -31,7 +31,7 @@ import {
   type ItemState,
   type ItemEventMessage,
   type ScheduleMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleItemEvent } from "./handlers.js";
 import { GOOGLE_TASKS_MANIFEST } from "./manifest.js";
 
@@ -147,7 +147,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
   const ctx: ConnectionContext = {
     connection_id: CONNECTION_ID,
     integration_name: GOOGLE_TASKS_MANIFEST.name,
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, CONNECTION_ID),
     echo: createEchoSuppression(storage, {
@@ -256,7 +256,7 @@ describe("google-tasks handleSchedule", () => {
     expect(String(lastActivity)).toMatch(/upserted=2/);
   });
 
-  it("trashes the mapped Myme item when an upstream task surfaces deleted=true", async () => {
+  it("trashes the mapped Marfa item when an upstream task surfaces deleted=true", async () => {
     const { ctx, transitions } = buildContext({
       proxyResponses: [
         () => jsonResponse({ items: [{ id: "list-primary" }] }),
@@ -299,12 +299,12 @@ describe("google-tasks handleSchedule", () => {
 });
 
 describe("google-tasks handleItemEvent — outbound create", () => {
-  it("scans for the [myme-id:…] sentinel; absent → POSTs with sentinel injected", async () => {
+  it("scans for the [marfa-id:…] sentinel; absent → POSTs with sentinel injected", async () => {
     const itemForEvent: ItemResource = {
       id: "mit_outbound",
       type: "google.tasks.task",
       state: "active",
-      properties: { title: "From Myme", notes: "Hello there" },
+      properties: { title: "From Marfa", notes: "Hello there" },
     } as ItemResource;
     const { ctx, proxyCalls } = buildContext({
       itemForEvent,
@@ -315,8 +315,8 @@ describe("google-tasks handleItemEvent — outbound create", () => {
         () =>
           jsonResponse({
             id: "task-id-new",
-            title: "From Myme",
-            notes: "Hello there\n\n[myme-id:mit_outbound]",
+            title: "From Marfa",
+            notes: "Hello there\n\n[marfa-id:mit_outbound]",
             etag: "etag-new",
             status: "needsAction",
           }),
@@ -332,8 +332,8 @@ describe("google-tasks handleItemEvent — outbound create", () => {
     // `encodeURIComponent` in the handler.
     expect(postCall?.path).toMatch(/\/tasks\/v1\/lists\/%40default\/tasks/);
     const sentBody = postCall?.body as { notes?: string; title?: string };
-    expect(sentBody.title).toBe("From Myme");
-    expect(sentBody.notes).toContain("[myme-id:mit_outbound]");
+    expect(sentBody.title).toBe("From Marfa");
+    expect(sentBody.notes).toContain("[marfa-id:mit_outbound]");
     expect(sentBody.notes).toContain("Hello there");
 
     const cursor = (await ctx.cursor.read("main")) as {
@@ -360,7 +360,7 @@ describe("google-tasks handleItemEvent — outbound create", () => {
               {
                 id: "task-already-there",
                 title: "Old",
-                notes: "stuff\n\n[myme-id:mit_recover]",
+                notes: "stuff\n\n[marfa-id:mit_recover]",
                 etag: "etag-existing",
                 status: "needsAction",
               },
@@ -379,7 +379,7 @@ describe("google-tasks handleItemEvent — outbound create", () => {
     expect(cursor.mappings["task-already-there"]).toBe("mit_recover");
   });
 
-  it("trashed Myme item → DELETE on the mapped list path", async () => {
+  it("trashed Marfa item → DELETE on the mapped list path", async () => {
     const itemForEvent: ItemResource = {
       id: "mit_trash",
       type: "google.tasks.task",

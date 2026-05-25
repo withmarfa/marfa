@@ -1,6 +1,6 @@
 # google-calendar
 
-Bidirectional sync between Google Calendar and Myme. First instance
+Bidirectional sync between Google Calendar and Marfa. First instance
 of the `google.*` publisher family; Google Tasks, Contacts, Drive
 will follow the same conventions.
 
@@ -93,11 +93,11 @@ the schedule handler uses (`events.list?syncToken=...`), and acks.
 ## Deterministic-id idempotency (T-020)
 
 Outbound new-event POST stamps a client-supplied `id` derived from
-the Myme item id (`SHA-256("myme:" + item.id)` → 64-char hex, which
+the Marfa item id (`SHA-256("marfa:" + item.id)` → 64-char hex, which
 is a subset of Calendar's base32hex alphabet). On Calendar's 409
 "conflict" response we GET the existing event for its current state
 and record the mapping idempotently. Result: at most one Calendar
-event per Myme item id, regardless of how many queue retries fire.
+event per Marfa item id, regardless of how many queue retries fire.
 
 ## All-day and timezone
 

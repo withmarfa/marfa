@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ParsedScope } from "@mymehq/shared";
+import type { ParsedScope } from "@withmarfa/shared";
 import { renderConsentScreen } from "./consent.js";
 
 /**
@@ -70,7 +70,7 @@ describe("renderConsentScreen — layout + form contract", () => {
     expect(html).toContain("Tasks and todos.");
   });
 
-  it("POSTs to the Myme decision handler with oauth_query + client_id hidden", () => {
+  it("POSTs to the Marfa decision handler with oauth_query + client_id hidden", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain(
       '<form method="POST" action="/auth/authorize/decision"',
@@ -235,7 +235,7 @@ describe("renderConsentScreen — re-consent diff", () => {
   it("changes the heading copy in the diff variant", () => {
     const flat = renderConsentScreen(PARAMS);
     expect(flat).toContain("Allow access");
-    expect(flat).toContain("asking to access your Myme space");
+    expect(flat).toContain("asking to access your Marfa space");
 
     const diff = renderConsentScreen({
       ...PARAMS,

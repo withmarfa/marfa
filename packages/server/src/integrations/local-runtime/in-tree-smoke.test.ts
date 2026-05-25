@@ -9,10 +9,10 @@
  *   - google-calendar (schedule + stub fetch — covers the bootstrap
  *     path; the deep handler logic is tested in the integration's own
  *     handlers.test.ts via the in-memory runtime-test harness)
- *   - task-auto-archive (schedule against the real test Myme server)
+ *   - task-auto-archive (schedule against the real test Marfa server)
  *
  * Each smoke loads the integration's compiled `dist/local.js`
- * (produced by `pnpm --filter @mymehq/integration-<name> build`),
+ * (produced by `pnpm --filter @withmarfa/integration-<name> build`),
  * registers handlers through `_resetHandlers` + `registerHandlers`,
  * drives one trigger via `supervisor.dispatchForTest`, and asserts
  * the expected outcome. The directDispatch seam keeps the smoke
@@ -40,7 +40,7 @@ import {
   type CursorStorageAdapter,
   type QueueMessage,
   type HandlerResult,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { createSupervisor } from "./supervisor.js";
 import { readConnectionRuntimeState } from "./pg-cursor-store.js";
 import type {
@@ -159,7 +159,7 @@ function makeDirectDispatch(
       ...(request.message.tenant_id !== undefined && {
         tenant_id: request.message.tenant_id,
       }),
-      myme: client,
+      marfa: client,
       cursor: createCursorStore(cursorAdapter),
       activity: createActivitySink(client, request.message.connection_id),
       echo: createEchoSuppression(cursorAdapter, request.echo),
@@ -350,7 +350,7 @@ describe("in-tree integration smokes against local runtime", () => {
 
     // Construct a minimal "issues opened" payload. The handler reads
     // body, headers (X-GitHub-Event + delivery id), and writes a
-    // core.bookmark via ctx.myme — the latter will fail against the
+    // core.bookmark via ctx.marfa — the latter will fail against the
     // stub apiUrl, so we expect a permanent failure rather than ok.
     // The smoke's purpose is to prove the substrate routes the
     // webhook envelope into the integration's handler at all; the
@@ -384,7 +384,7 @@ describe("in-tree integration smokes against local runtime", () => {
       } satisfies QueueMessage,
     });
 
-    // Either ok (if the handler tolerates the unreachable ctx.myme by
+    // Either ok (if the handler tolerates the unreachable ctx.marfa by
     // catching internally) or a permanent failure with a reason — both
     // exercise the routing layer. The smoke only asserts that a result
     // was returned at all.
@@ -407,7 +407,7 @@ describe("in-tree integration smokes against local runtime", () => {
       } satisfies QueueMessage,
     });
 
-    // The handler hits ctx.myme.listItems against the unreachable
+    // The handler hits ctx.marfa.listItems against the unreachable
     // apiUrl. Either it short-circuits gracefully (ok with zero
     // archives) or returns retry: true. Both exit the smoke without
     // throwing — the substrate routed the message into the handler.

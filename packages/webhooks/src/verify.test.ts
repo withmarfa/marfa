@@ -1,5 +1,5 @@
 /**
- * Adapter test suite for `@mymehq/webhooks`.
+ * Adapter test suite for `@withmarfa/webhooks`.
  *
  * Runs under Node's vitest (default environment) — Node 20+ exposes
  * Web Crypto natively as `globalThis.crypto.subtle`, so the same
@@ -70,7 +70,7 @@ describe("verification dispatch", () => {
   it("ADAPTERS table has an entry for every method", () => {
     // T-231 added `google-channel` for Google Workspace push
     // notifications (Calendar / Drive / Gmail). T-244 added
-    // `cloudflare-email` for the mymehq.inbox integration.
+    // `cloudflare-email` for the withmarfa.inbox integration.
     expect(Object.keys(ADAPTERS).sort()).toEqual([
       "cloudflare-email",
       "github",
@@ -91,8 +91,8 @@ describe("verifyHmacSha256", () => {
     const body = asBuffer('{"hello":"world"}');
     const sig = await hmacHex(SECRET, body);
     const headers = new Headers({
-      "x-myme-signature": `sha256=${sig}`,
-      "x-myme-delivery-id": "delivery_42",
+      "x-marfa-signature": `sha256=${sig}`,
+      "x-marfa-delivery-id": "delivery_42",
     });
     const r = await verifyHmacSha256(body, headers, SECRET);
     expect(r.verified).toBe(true);
@@ -102,7 +102,7 @@ describe("verifyHmacSha256", () => {
   it("accepts a bare hex signature without the sha256= prefix", async () => {
     const body = asBuffer("payload");
     const sig = await hmacHex(SECRET, body);
-    const headers = new Headers({ "x-myme-signature": sig });
+    const headers = new Headers({ "x-marfa-signature": sig });
     const r = await verifyHmacSha256(body, headers, SECRET);
     expect(r.verified).toBe(true);
   });
@@ -110,7 +110,7 @@ describe("verifyHmacSha256", () => {
   it("rejects a tampered body", async () => {
     const body = asBuffer('{"hello":"world"}');
     const sig = await hmacHex(SECRET, body);
-    const headers = new Headers({ "x-myme-signature": `sha256=${sig}` });
+    const headers = new Headers({ "x-marfa-signature": `sha256=${sig}` });
     const r = await verifyHmacSha256(
       asBuffer('{"hello":"WORLD"}'),
       headers,
@@ -127,7 +127,7 @@ describe("verifyHmacSha256", () => {
   });
 
   it("rejects a malformed (non-hex) signature", async () => {
-    const headers = new Headers({ "x-myme-signature": "sha256=NOTHEX!" });
+    const headers = new Headers({ "x-marfa-signature": "sha256=NOTHEX!" });
     const r = await verifyHmacSha256(asBuffer("x"), headers, SECRET);
     expect(r.verified).toBe(false);
     expect(r.reason).toBe("signature_format_invalid");
@@ -137,7 +137,7 @@ describe("verifyHmacSha256", () => {
     const body = asBuffer("hi");
     const sig = await hmacHex(SECRET, body);
     const headers = new Headers({
-      "x-myme-signature": `sha256=${sig.toUpperCase()}`,
+      "x-marfa-signature": `sha256=${sig.toUpperCase()}`,
     });
     const r = await verifyHmacSha256(body, headers, SECRET);
     expect(r.verified).toBe(true);
@@ -146,8 +146,8 @@ describe("verifyHmacSha256", () => {
   it("surfaces external_delivery_id even when verification fails", async () => {
     const body = asBuffer("x");
     const headers = new Headers({
-      "x-myme-signature": "sha256=00",
-      "x-myme-delivery-id": "still-attributable",
+      "x-marfa-signature": "sha256=00",
+      "x-marfa-delivery-id": "still-attributable",
     });
     const r = await verifyHmacSha256(body, headers, SECRET);
     expect(r.verified).toBe(false);
@@ -326,7 +326,7 @@ describe("verifyGitHub", () => {
 describe("verifyCloudflareEmail", () => {
   // The adapter delegates to verifyHmacSha256 verbatim — the test
   // surface mirrors the wire shape the Email Worker emits: JSON body
-  // signed with `X-Myme-Signature` + Message-ID as `X-Myme-Delivery-Id`.
+  // signed with `X-Marfa-Signature` + Message-ID as `X-Marfa-Delivery-Id`.
 
   it("verifies a correctly-signed email envelope", async () => {
     const body = asBuffer(
@@ -335,8 +335,8 @@ describe("verifyCloudflareEmail", () => {
     const sig = await hmacHex(SECRET, body);
     const headers = new Headers({
       "content-type": "application/json",
-      "x-myme-signature": `sha256=${sig}`,
-      "x-myme-delivery-id": "<CA+abc@mail.example.com>",
+      "x-marfa-signature": `sha256=${sig}`,
+      "x-marfa-delivery-id": "<CA+abc@mail.example.com>",
     });
     const r = await verifyCloudflareEmail(body, headers, SECRET);
     expect(r.verified).toBe(true);
@@ -346,7 +346,7 @@ describe("verifyCloudflareEmail", () => {
   it("rejects a payload signed with the wrong worker secret", async () => {
     const body = asBuffer('{"x":1}');
     const sig = await hmacHex("wrong-worker-secret", body);
-    const headers = new Headers({ "x-myme-signature": `sha256=${sig}` });
+    const headers = new Headers({ "x-marfa-signature": `sha256=${sig}` });
     const r = await verifyCloudflareEmail(body, headers, SECRET);
     expect(r.verified).toBe(false);
     expect(r.reason).toBe("signature_mismatch");
@@ -355,8 +355,8 @@ describe("verifyCloudflareEmail", () => {
   it("surfaces Message-ID as external_delivery_id even when verification fails", async () => {
     const body = asBuffer('{"x":1}');
     const headers = new Headers({
-      "x-myme-signature": "sha256=00",
-      "x-myme-delivery-id": "<replayed-message-id@example.com>",
+      "x-marfa-signature": "sha256=00",
+      "x-marfa-delivery-id": "<replayed-message-id@example.com>",
     });
     const r = await verifyCloudflareEmail(body, headers, SECRET);
     expect(r.verified).toBe(false);

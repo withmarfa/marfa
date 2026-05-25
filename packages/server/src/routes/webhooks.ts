@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireTenantAdmin } from "../middleware/auth.js";
 import { enforceQuota } from "../middleware/quota.js";
@@ -295,7 +295,7 @@ const listDeliveriesRoute = createRoute({
   tags: ["Webhooks"],
   summary: "List webhook deliveries",
   description:
-    "Returns recent delivery attempts for one subscription, newest first. Each entry carries the event id, the resolved URL, the response status, attempt count, and the next retry time (when retrying). Use to debug delivery failures and confirm that `X-Myme-Event-Id` deduplication is working on the receiver side.",
+    "Returns recent delivery attempts for one subscription, newest first. Each entry carries the event id, the resolved URL, the response status, attempt count, and the next retry time (when retrying). Use to debug delivery failures and confirm that `X-Marfa-Event-Id` deduplication is working on the receiver side.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -360,7 +360,7 @@ export function webhookRoutes(storage: Storage) {
     try {
       new URL(body.url);
     } catch {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "url must be a valid URL",
       );
@@ -369,7 +369,7 @@ export function webhookRoutes(storage: Storage) {
     // Validate event types against known set
     for (const event of body.events) {
       if (!VALID_EVENTS.has(event)) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           `Invalid event type "${event}". Valid types: ${[...VALID_EVENTS].join(", ")}`,
         );
@@ -425,7 +425,7 @@ export function webhookRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
     const webhook = await storage.outboundWebhooks.get(id, key.tenant_id);
     if (!webhook) {
-      throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
+      throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
     return c.json({ ...webhook, secret: redactSecret(webhook.secret) }, 200);
   });
@@ -441,7 +441,7 @@ export function webhookRoutes(storage: Storage) {
 
     const existing = await storage.outboundWebhooks.get(id, key.tenant_id);
     if (!existing) {
-      throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
+      throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
 
     // URL validation beyond what Zod handles
@@ -449,7 +449,7 @@ export function webhookRoutes(storage: Storage) {
       try {
         new URL(body.url);
       } catch {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           "url must be a valid URL",
         );
@@ -460,7 +460,7 @@ export function webhookRoutes(storage: Storage) {
     if (body.events !== undefined) {
       for (const event of body.events) {
         if (!VALID_EVENTS.has(event)) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.VALIDATION_ERROR,
             `Invalid event type: ${event}`,
           );
@@ -496,7 +496,7 @@ export function webhookRoutes(storage: Storage) {
 
     const existing = await storage.outboundWebhooks.get(id, key.tenant_id);
     if (!existing) {
-      throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
+      throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
 
     await storage.outboundWebhooks.delete(id);
@@ -522,7 +522,7 @@ export function webhookRoutes(storage: Storage) {
 
     const existing = await storage.outboundWebhooks.get(id, key.tenant_id);
     if (!existing) {
-      throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
+      throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
 
     const deliveries = await storage.outboundWebhookDeliveries.list(id, limit);

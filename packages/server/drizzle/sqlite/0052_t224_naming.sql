@@ -1,7 +1,7 @@
 -- T-224: naming-consistency pass.
 --
 -- (1) Rename the `workspace_admin` role to `tenant_admin`. The enum value
---     is renamed in @mymehq/shared (MymeRole); this realigns existing
+--     is renamed in @withmarfa/shared (MarfaRole); this realigns existing
 --     rows. The `role` column lives on both `users` (T-178 — projected
 --     onto OAuth bearer principals) and `api_keys`.
 -- (2) Rename the `outbound_webhook_deliveries.success` boolean column to

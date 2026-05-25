@@ -8,7 +8,7 @@ const debounceMap = new Map<string, number>();
 
 /** Fallback per-fetch delivery timeout (ms) when no explicit value is
  *  supplied. Production passes `AppConfig.errorWebhookTimeoutMs` (env
- *  `MYME_ERROR_WEBHOOK_TIMEOUT_MS`) through `createErrorHandler`, so the
+ *  `MARFA_ERROR_WEBHOOK_TIMEOUT_MS`) through `createErrorHandler`, so the
  *  operator-tunable value is the live one. */
 const DEFAULT_WEBHOOK_TIMEOUT_MS = 5_000;
 
@@ -49,7 +49,7 @@ export function notifyError(
       .replace("T", " ")
       .replace(/\.\d+Z$/, " UTC");
     const text = [
-      `\u26a0\ufe0f *Myme 500 Error* (${env})`,
+      `\u26a0\ufe0f *Marfa 500 Error* (${env})`,
       `\`${notification.method} ${notification.path}\` \u2014 ${time}`,
       notification.error,
       `Request: \`${notification.request_id}\``,

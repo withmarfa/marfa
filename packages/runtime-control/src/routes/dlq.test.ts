@@ -2,7 +2,7 @@
  * DLQ route tests (T-084).
  *
  * Stubs `globalThis.fetch` to mock both:
- *   - The Myme server `/system/connections/:id/dlq-context` lookup
+ *   - The Marfa server `/system/connections/:id/dlq-context` lookup
  *     (auth gate forwarding).
  *   - Cloudflare's HTTP-pull endpoints (list queues, pull, ack).
  *
@@ -89,7 +89,7 @@ function buildFetchHarness(opts: FetchHarnessOpts): typeof fetch {
         : input instanceof URL
           ? input.toString()
           : input.url;
-    // ---- Myme server: dlq-context ---------------------------------
+    // ---- Marfa server: dlq-context ---------------------------------
     if (url.includes("/system/connections/") && url.endsWith("/dlq-context")) {
       const status = opts.dlqContextStatus ?? 200;
       if (status !== 200) {
@@ -109,7 +109,7 @@ function buildFetchHarness(opts: FetchHarnessOpts): typeof fetch {
         connection_id: "conn_x",
         kind: "integration",
         state: "active",
-        integration_name: "mymehq.rss-watcher",
+        integration_name: "withmarfa.rss-watcher",
         tenant_id: null,
       };
       return Promise.resolve(
@@ -223,7 +223,7 @@ describe("POST /dlq/peek", () => {
   it("rejects unauthenticated callers", async () => {
     globalThis.fetch = buildFetchHarness({});
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
@@ -246,7 +246,7 @@ describe("POST /dlq/peek", () => {
       dlqContextErrorMessage: "platform required",
     });
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
@@ -270,16 +270,16 @@ describe("POST /dlq/peek", () => {
 
   it("filters pulled messages to those matching connection_id and surfaces cf_message_id", async () => {
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
     };
     globalThis.fetch = buildFetchHarness({
       queues: [
-        { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
-        { queue_id: "qid-sp", queue_name: "myme-scheduled-poll-dev-dlq" },
-        { queue_id: "qid-rr", queue_name: "myme-reactive-run-dev-dlq" },
+        { queue_id: "qid-wh", queue_name: "marfa-webhook-receipt-dev-dlq" },
+        { queue_id: "qid-sp", queue_name: "marfa-scheduled-poll-dev-dlq" },
+        { queue_id: "qid-rr", queue_name: "marfa-reactive-run-dev-dlq" },
       ],
       pullByQueueId: {
         "qid-wh": [
@@ -315,7 +315,7 @@ describe("POST /dlq/peek", () => {
 
   it("respects --since by dropping older messages and --limit by truncating", async () => {
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
@@ -324,7 +324,7 @@ describe("POST /dlq/peek", () => {
     const newTs = Date.parse("2026-05-08T00:00:00Z");
     globalThis.fetch = buildFetchHarness({
       queues: [
-        { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
+        { queue_id: "qid-wh", queue_name: "marfa-webhook-receipt-dev-dlq" },
       ],
       pullByQueueId: {
         "qid-wh": [
@@ -375,7 +375,7 @@ describe("POST /dlq/peek", () => {
   it("returns 503 when CLOUDFLARE_QUEUES_API_TOKEN is unset", async () => {
     globalThis.fetch = buildFetchHarness({});
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       // CLOUDFLARE_QUEUES_API_TOKEN intentionally omitted
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
@@ -399,14 +399,14 @@ describe("POST /dlq/peek", () => {
 
   it("flattens a structured `body._failure_reason` to '<class>: <message> (attempts: <n>)' (T-103)", async () => {
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
     };
     globalThis.fetch = buildFetchHarness({
       queues: [
-        { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
+        { queue_id: "qid-wh", queue_name: "marfa-webhook-receipt-dev-dlq" },
       ],
       pullByQueueId: {
         "qid-wh": [
@@ -449,14 +449,14 @@ describe("POST /dlq/peek", () => {
 
   it("still accepts the legacy string `body._failure_reason` (T-103 back-compat)", async () => {
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
     };
     globalThis.fetch = buildFetchHarness({
       queues: [
-        { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
+        { queue_id: "qid-wh", queue_name: "marfa-webhook-receipt-dev-dlq" },
       ],
       pullByQueueId: {
         "qid-wh": [
@@ -498,7 +498,7 @@ describe("POST /dlq/replay", () => {
     const ackCalls: { queueId: string; leaseIds: string[] }[] = [];
     const webhookProducer = mockProducer();
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
@@ -507,7 +507,7 @@ describe("POST /dlq/replay", () => {
     globalThis.fetch = buildFetchHarness({
       ackCalls,
       queues: [
-        { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
+        { queue_id: "qid-wh", queue_name: "marfa-webhook-receipt-dev-dlq" },
       ],
       pullByQueueId: {
         "qid-wh": [
@@ -545,7 +545,7 @@ describe("POST /dlq/replay", () => {
 
   it("narrows by message_ids and reports unknown ids as not_found", async () => {
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
@@ -553,7 +553,7 @@ describe("POST /dlq/replay", () => {
     };
     globalThis.fetch = buildFetchHarness({
       queues: [
-        { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
+        { queue_id: "qid-wh", queue_name: "marfa-webhook-receipt-dev-dlq" },
       ],
       pullByQueueId: {
         "qid-wh": [
@@ -588,7 +588,7 @@ describe("POST /dlq/replay", () => {
   it("reports send_failed without acking when the producer binding throws", async () => {
     const ackCalls: { queueId: string; leaseIds: string[] }[] = [];
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
@@ -597,7 +597,7 @@ describe("POST /dlq/replay", () => {
     globalThis.fetch = buildFetchHarness({
       ackCalls,
       queues: [
-        { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
+        { queue_id: "qid-wh", queue_name: "marfa-webhook-receipt-dev-dlq" },
       ],
       pullByQueueId: {
         "qid-wh": [mkMessage("mid-1", "lease-1", { connection_id: "conn_x" })],
@@ -626,7 +626,7 @@ describe("POST /dlq/replay", () => {
 
   it("reports ack_failed when send succeeds but ack throws (message duplicated)", async () => {
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
@@ -635,7 +635,7 @@ describe("POST /dlq/replay", () => {
     globalThis.fetch = buildFetchHarness({
       ackFailLeaseIds: new Set(["lease-1"]),
       queues: [
-        { queue_id: "qid-wh", queue_name: "myme-webhook-receipt-dev-dlq" },
+        { queue_id: "qid-wh", queue_name: "marfa-webhook-receipt-dev-dlq" },
       ],
       pullByQueueId: {
         "qid-wh": [mkMessage("mid-1", "lease-1", { connection_id: "conn_x" })],
@@ -664,7 +664,7 @@ describe("POST /dlq/replay", () => {
   it("rejects missing connection_id with 400", async () => {
     globalThis.fetch = buildFetchHarness({});
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",
@@ -689,7 +689,7 @@ describe("POST /dlq/replay", () => {
       dlqContextStatus: 401,
     });
     const env: ControlPlaneEnv = {
-      MYME_API_URL: "https://server.invalid",
+      MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
       CLOUDFLARE_ACCOUNT_ID: "acc",
       ENVIRONMENT: "dev",

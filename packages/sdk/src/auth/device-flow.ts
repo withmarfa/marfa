@@ -25,7 +25,7 @@ const DEFAULT_POLL_INTERVAL_MS = 5_000;
 const SLOW_DOWN_BUMP_MS = 5_000;
 
 export interface StartDeviceFlowConfig {
-  /** Myme server URL — protocol + host (and port). */
+  /** Marfa server URL — protocol + host (and port). */
   issuer: string;
   /** OAuth client id, registered via POST /auth/oauth2/register (DCR). */
   clientId: string;
@@ -53,7 +53,7 @@ export interface DeviceFlowHandle {
   /** Minimum seconds between polls. */
   interval: number;
   /** Block until the user approves on the server. Resolves with a
-   *  TokenProvider that can be passed straight into `MymeClient`.
+   *  TokenProvider that can be passed straight into `MarfaClient`.
    *  Rejects with OAuthError on denial / expiry / fatal error. */
   pollForToken(options?: { signal?: AbortSignal }): Promise<TokenProvider>;
 }
@@ -145,7 +145,7 @@ export async function startDeviceFlow(
         });
         if (res.ok) {
           const tokens = (await res.json()) as TokenResponse;
-          const storageKey = `myme.auth.tokens:${issuer}:${config.clientId}`;
+          const storageKey = `marfa.auth.tokens:${issuer}:${config.clientId}`;
           const provider = new StoredTokenProvider({
             issuer,
             clientId: config.clientId,
@@ -192,7 +192,7 @@ async function safeJson(res: Response): Promise<unknown> {
 
 /** Extract a string error code from a response body that might shape itself as
  *  `{ error: "code" }` (RFC 6749 / 8628 token endpoint), `{ error: { code: "..." } }`
- *  (Myme structured-error wrapper), or anything else (default to invalid_request). */
+ *  (Marfa structured-error wrapper), or anything else (default to invalid_request). */
 function extractErrorCode(body: Record<string, unknown>): string {
   const err = body.error;
   if (typeof err === "string") return err;

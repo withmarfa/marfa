@@ -2,7 +2,7 @@
  * Handler-level tests for the RSS Watcher integration.
  *
  * Builds ConnectionContext inline (the template's pattern) so the
- * Myme HTTP API doesn't need to be reachable. The connector's
+ * Marfa HTTP API doesn't need to be reachable. The connector's
  * outbound fetch (against the feed URL) is injected via
  * `createScheduleHandler({ fetch })` so no globalThis stubbing is
  * needed.
@@ -17,7 +17,7 @@ import {
   type CreateItemInput,
   type ItemResource,
   type ScheduleMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import {
   createScheduleHandler,
   DEFAULT_FEED_URL,
@@ -52,11 +52,11 @@ interface CapturedActivity {
 }
 
 interface BuildOptions {
-  /** Connection record returned by ctx.myme.getItem(connection_id).
+  /** Connection record returned by ctx.marfa.getItem(connection_id).
    *  Set to `undefined` to simulate the connection record being
    *  unavailable (handler should fall back to DEFAULT_FEED_URL). */
   connectionRecord?: Partial<ItemResource>;
-  /** When set, ctx.myme.createItem rejects with this error for the
+  /** When set, ctx.marfa.createItem rejects with this error for the
    *  first N calls before recovering. */
   createItemError?: { afterCalls?: number; error: Error };
 }
@@ -101,8 +101,8 @@ function buildContext(opts: BuildOptions = {}): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "mymehq.rss-watcher",
-    myme: client,
+    integration_name: "withmarfa.rss-watcher",
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
@@ -174,7 +174,7 @@ function urlToString(url: RequestInfo | URL): string {
 
 const SCHEDULE_MSG = (ms: number): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "mymehq.rss-watcher",
+  integration_name: "withmarfa.rss-watcher",
   connection_id: "conn_rss_test",
   scheduled_for_ms: ms,
 });

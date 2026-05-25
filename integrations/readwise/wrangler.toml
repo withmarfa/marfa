@@ -11,7 +11,7 @@
 # integration is inbound-only) and NO webhook-receipt queue (Readwise
 # offers no webhook surface).
 
-name = "myme-integration-readwise"
+name = "marfa-integration-readwise"
 main = "src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
@@ -32,7 +32,7 @@ new_sqlite_classes = ["PerConnectionState"]
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
-name = "myme-integration-readwise-staging"
+name = "marfa-integration-readwise-staging"
 
 [env.staging.vars]
 INTEGRATION_NAME = "readwise"
@@ -50,22 +50,22 @@ new_sqlite_classes = ["PerConnectionState"]
 # T-103: DLQ producer bindings.
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-readwise-staging"
+queue = "marfa-scheduled-poll-readwise-staging"
 
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-readwise-staging-dlq"
+queue = "marfa-scheduled-poll-readwise-staging-dlq"
 
 [[env.staging.queues.consumers]]
-queue = "myme-scheduled-poll-readwise-staging"
+queue = "marfa-scheduled-poll-readwise-staging"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-readwise-staging-dlq"
+dead_letter_queue = "marfa-scheduled-poll-readwise-staging-dlq"
 
 # ---- Prod -----------------------------------------------------------------
 [env.prod]
-name = "myme-integration-readwise-prod"
+name = "marfa-integration-readwise-prod"
 
 [env.prod.vars]
 INTEGRATION_NAME = "readwise"
@@ -82,20 +82,20 @@ new_sqlite_classes = ["PerConnectionState"]
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-readwise-prod"
+queue = "marfa-scheduled-poll-readwise-prod"
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-readwise-prod-dlq"
+queue = "marfa-scheduled-poll-readwise-prod-dlq"
 
 [[env.prod.queues.consumers]]
-queue = "myme-scheduled-poll-readwise-prod"
+queue = "marfa-scheduled-poll-readwise-prod"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-readwise-prod-dlq"
+dead_letter_queue = "marfa-scheduled-poll-readwise-prod-dlq"
 
 # Secrets (`wrangler secret put --env <env>`):
-#   - MYME_API_URL
-#   - MYME_RUNTIME_CONTROL_URL
-#   - MYME_RUNTIME_BROKER_KEY
+#   - MARFA_API_URL
+#   - MARFA_RUNTIME_CONTROL_URL
+#   - MARFA_RUNTIME_BROKER_KEY

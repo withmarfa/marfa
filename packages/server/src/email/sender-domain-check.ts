@@ -1,10 +1,10 @@
 /**
  * Sender-domain check — fails loud at boot if the configured
- * MYME_EMAIL_FROM doesn't end in a domain Cloudflare Email Service
+ * MARFA_EMAIL_FROM doesn't end in a domain Cloudflare Email Service
  * has DKIM-stamped.
  *
- * CF onboarding for `mail.myme.so` auto-provisions DKIM/SPF/MX/DMARC
- * records under `cf-bounce.mail.myme.so`. Sending from an unverified
+ * CF onboarding for `mail.marfa.so` auto-provisions DKIM/SPF/MX/DMARC
+ * records under `cf-bounce.mail.marfa.so`. Sending from an unverified
  * domain fails SPF on the receiving end and CF returns 4xx. Operator
  * memory is not the right place to bake that constraint in — the
  * boot guard makes the mistake unmissable.
@@ -13,7 +13,7 @@
  */
 import type { EmailBackend } from "./transport.js";
 
-const REQUIRED_DOMAIN_SUFFIX = "@mail.myme.so";
+const REQUIRED_DOMAIN_SUFFIX = "@mail.marfa.so";
 
 export interface SenderDomainCheckOptions {
   backend: EmailBackend;
@@ -27,10 +27,10 @@ export class SenderDomainMismatchError extends Error {
   readonly code = "SENDER_DOMAIN_MISMATCH";
   constructor(from: string) {
     super(
-      `MYME_EMAIL_FROM=${from} must end with ${REQUIRED_DOMAIN_SUFFIX} ` +
+      `MARFA_EMAIL_FROM=${from} must end with ${REQUIRED_DOMAIN_SUFFIX} ` +
         `for the Cloudflare Email backend (the verified send domain is ` +
-        `mail.myme.so; apex myme.so has no DKIM key, so emails would fail ` +
-        `SPF). Set MYME_EMAIL_FROM to a value ending in ${REQUIRED_DOMAIN_SUFFIX}.`,
+        `mail.marfa.so; apex marfa.so has no DKIM key, so emails would fail ` +
+        `SPF). Set MARFA_EMAIL_FROM to a value ending in ${REQUIRED_DOMAIN_SUFFIX}.`,
     );
   }
 }

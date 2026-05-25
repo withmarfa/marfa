@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { ControlPlaneEnv } from "../env.js";
-import { MymeServerClient } from "../myme-client.js";
+import { MarfaServerClient } from "../marfa-client.js";
 import {
   ackMessages,
   pullMessages,
@@ -65,20 +65,20 @@ function describeDlqQueues(env: ControlPlaneEnv): DlqQueueDescriptor[] {
   return [
     {
       family: "webhook-receipt",
-      dlqName: `myme-webhook-receipt-${envLabel}-dlq`,
-      mainName: `myme-webhook-receipt-${envLabel}`,
+      dlqName: `marfa-webhook-receipt-${envLabel}-dlq`,
+      mainName: `marfa-webhook-receipt-${envLabel}`,
       mainProducer: env.WEBHOOK_RECEIPT_QUEUE,
     },
     {
       family: "scheduled-poll",
-      dlqName: `myme-scheduled-poll-${envLabel}-dlq`,
-      mainName: `myme-scheduled-poll-${envLabel}`,
+      dlqName: `marfa-scheduled-poll-${envLabel}-dlq`,
+      mainName: `marfa-scheduled-poll-${envLabel}`,
       mainProducer: env.SCHEDULED_POLL_QUEUE,
     },
     {
       family: "reactive-run",
-      dlqName: `myme-reactive-run-${envLabel}-dlq`,
-      mainName: `myme-reactive-run-${envLabel}`,
+      dlqName: `marfa-reactive-run-${envLabel}-dlq`,
+      mainName: `marfa-reactive-run-${envLabel}`,
       mainProducer: env.REACTIVE_RUN_QUEUE,
     },
   ];
@@ -151,11 +151,11 @@ export function registerDlqRoutes(
   app: Hono<{ Bindings: ControlPlaneEnv }>,
 ): void {
   app.post("/dlq/peek", async (c) => {
-    if (!c.env.MYME_API_URL) {
+    if (!c.env.MARFA_API_URL) {
       return c.json(
         {
           error: "control_plane_misconfigured",
-          message: "MYME_API_URL must be set.",
+          message: "MARFA_API_URL must be set.",
         },
         503,
       );
@@ -186,8 +186,8 @@ export function registerDlqRoutes(
       return c.json({ error: "invalid_since" }, 400);
     }
 
-    const myme = new MymeServerClient(c.env.MYME_API_URL, "");
-    const ctx = await myme.getDlqContext(connectionId, operatorBearer);
+    const marfa = new MarfaServerClient(c.env.MARFA_API_URL, "");
+    const ctx = await marfa.getDlqContext(connectionId, operatorBearer);
     if (!ctx.ok) {
       const httpStatus =
         ctx.status === 401 ||
@@ -251,11 +251,11 @@ export function registerDlqRoutes(
   });
 
   app.post("/dlq/replay", async (c) => {
-    if (!c.env.MYME_API_URL) {
+    if (!c.env.MARFA_API_URL) {
       return c.json(
         {
           error: "control_plane_misconfigured",
-          message: "MYME_API_URL must be set.",
+          message: "MARFA_API_URL must be set.",
         },
         503,
       );
@@ -281,8 +281,8 @@ export function registerDlqRoutes(
         ? new Set(body.message_ids.filter((s) => typeof s === "string"))
         : null;
 
-    const myme = new MymeServerClient(c.env.MYME_API_URL, "");
-    const ctx = await myme.getDlqContext(connectionId, operatorBearer);
+    const marfa = new MarfaServerClient(c.env.MARFA_API_URL, "");
+    const ctx = await marfa.getDlqContext(connectionId, operatorBearer);
     if (!ctx.ok) {
       const httpStatus =
         ctx.status === 401 ||

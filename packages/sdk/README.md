@@ -1,17 +1,17 @@
-# @mymehq/sdk
+# @withmarfa/sdk
 
-TypeScript HTTP client for the [Myme](https://myme.so) API.
+TypeScript HTTP client for the [Marfa](https://marfa.so) API.
 
 ```bash
-pnpm add @mymehq/sdk
+pnpm add @withmarfa/sdk
 ```
 
 ```ts
-import { MymeClient } from "@mymehq/sdk";
+import { MarfaClient } from "@withmarfa/sdk";
 
-const client = new MymeClient({
-  url: "https://staging.myme.so",
-  apiKey: process.env.MYME_API_KEY,
+const client = new MarfaClient({
+  url: "https://staging.marfa.so",
+  apiKey: process.env.MARFA_API_KEY,
 });
 
 const note = await client.items.create({
@@ -22,9 +22,9 @@ const note = await client.items.create({
 
 ## Surface
 
-`client.{items,types,keys,edges,search,metadata,tenants,webhooks,connections,auth}` — one nested namespace per API surface. Methods return the unwrapped resource (e.g. `client.items.get` returns `Item`, not `{ item }`); errors throw typed `MymeError` subclasses (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).
+`client.{items,types,keys,edges,search,metadata,tenants,webhooks,connections,auth}` — one nested namespace per API surface. Methods return the unwrapped resource (e.g. `client.items.get` returns `Item`, not `{ item }`); errors throw typed `MarfaError` subclasses (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).
 
-The OAuth helpers (PKCE, device flow, token storages, `MymeAuth`) ship under the `@mymehq/sdk/auth` subpath.
+The OAuth helpers (PKCE, device flow, token storages, `MarfaAuth`) ship under the `@withmarfa/sdk/auth` subpath.
 
 ## Testing
 
@@ -91,8 +91,8 @@ Both fixtures share the same SQLite-backed in-process server. PG matrix coverage
 
 ## Build
 
-`tsup` produces `dist/index.js` (ESM) and `dist/index.d.ts`. `@mymehq/types` declarations are inlined into the shared `.d.ts` so consumers only need `@mymehq/sdk` and `@mymehq/shared`.
+`tsup` produces `dist/index.js` (ESM) and `dist/index.d.ts`. `@withmarfa/types` declarations are inlined into the shared `.d.ts` so consumers only need `@withmarfa/sdk` and `@withmarfa/shared`.
 
 ## Versioning
 
-Major bumps when `@mymehq/shared` major-bumps (every wire-shape change cascades). Minor bumps for additive SDK features. Patch for bug fixes. Tag pushes (`v*`) trigger the OIDC-published release workflow; the workflow skips packages whose version is already on npm so unbumped packages are no-ops.
+Major bumps when `@withmarfa/shared` major-bumps (every wire-shape change cascades). Minor bumps for additive SDK features. Patch for bug fixes. Tag pushes (`v*`) trigger the OIDC-published release workflow; the workflow skips packages whose version is already on npm so unbumped packages are no-ops.

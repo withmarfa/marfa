@@ -16,11 +16,11 @@
  * requires:
  *
  *   - `RESET ROLE` — drop the `myme_app` elevation.
- *   - `set_config('myme.tenant_id', '', false)` — clear the GUC the
+ *   - `set_config('marfa.tenant_id', '', false)` — clear the GUC the
  *     RLS policies read.
  *
  * Prepared statements survive untouched. RLS policies consult
- * `current_setting('myme.tenant_id')` at execute time, so a
+ * `current_setting('marfa.tenant_id')` at execute time, so a
  * statement compiled while the GUC held tenant A executes safely
  * once the GUC flips to tenant B (or clears) — the cache is value-
  * agnostic with respect to tenant context.
@@ -34,7 +34,7 @@
  *      it persists. This is the direct lock-in against a revert.
  *   2. **Role + tenant GUC are cleared on release.** The cleanup
  *      invariant must still hold — a connection returned to the pool
- *      cannot carry the `myme_app` role or a leaked `myme.tenant_id`.
+ *      cannot carry the `myme_app` role or a leaked `marfa.tenant_id`.
  *
  * Postgres-only — RLS is a PG feature.
  */
@@ -110,7 +110,7 @@ describe.skipIf(!isPg || !url)("streaming-rls cleanup (T-189)", () => {
         sql`SELECT current_user::text AS current_user`,
       )) as unknown as readonly { current_user: string }[];
       const midTenant = (await ctx.streamDb.execute(
-        sql`SELECT current_setting('myme.tenant_id', true) AS setting`,
+        sql`SELECT current_setting('marfa.tenant_id', true) AS setting`,
       )) as unknown as readonly { setting: string | null }[];
       expect(midRole[0]?.current_user).toBe("myme_app");
       expect(midTenant[0]?.setting).toBe(tenantId);
@@ -125,7 +125,7 @@ describe.skipIf(!isPg || !url)("streaming-rls cleanup (T-189)", () => {
       >`SELECT current_user::text`;
       const postTenant = await client<
         { setting: string | null }[]
-      >`SELECT current_setting('myme.tenant_id', true) AS setting`;
+      >`SELECT current_setting('marfa.tenant_id', true) AS setting`;
       expect(postRole[0]?.current_user).not.toBe("myme_app");
       expect(postTenant[0]?.setting ?? "").toBe("");
     } finally {

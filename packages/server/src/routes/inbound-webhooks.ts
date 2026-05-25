@@ -1,12 +1,12 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { randomBytes } from "node:crypto";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   generateId,
   type CreatedInboundWebhook,
   type InboundWebhook,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage, InboundWebhookRow } from "../storage/interface.js";
@@ -16,7 +16,7 @@ import {
   decryptSecret,
   SECRET_INFO,
 } from "../crypto/secret-encryption.js";
-import { ADAPTERS, isVerificationMethod } from "@mymehq/webhooks";
+import { ADAPTERS, isVerificationMethod } from "@withmarfa/webhooks";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -94,7 +94,7 @@ async function requireConnectionAccess(
   const tenantId = key.tenant_id ?? undefined;
   const connection = await storage.items.get(connectionId, tenantId);
   if (connection?.type !== "system.connection") {
-    throw new MymeError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found");
+    throw new MarfaError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found");
   }
   const isAdmin = key.role === "admin" || key.is_platform;
   // Same widening as `requireConnectionProxyAccess` in
@@ -104,7 +104,7 @@ async function requireConnectionAccess(
     key.source === `oauth:${connectionId}` ||
     (key.is_runtime_credential === true && key.connection_id === connectionId);
   if (!isAdmin && !isConnector) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Caller cannot manage inbound webhooks on this connection",
     );
@@ -159,7 +159,7 @@ const createInboundWebhookRoute = createRoute({
   tags: ["Inbound Webhooks"],
   summary: "Register an inbound webhook subscription on a connection",
   description:
-    "Registers an inbound-webhook subscription on an integration connection. External services (the connection's upstream) deliver events into Myme by POSTing to the public receipt URL the platform exposes per subscription. Signature verification uses the adapter named in `webhook_verification.method` on the connection's manifest — `hmac-sha256`, `slack`, `stripe`, or `github`.\n\nThe `secret` is returned **once** in the creation response — store it then; subsequent reads redact it. See [Inbound webhooks](/api/inbound-webhooks).",
+    "Registers an inbound-webhook subscription on an integration connection. External services (the connection's upstream) deliver events into Marfa by POSTing to the public receipt URL the platform exposes per subscription. Signature verification uses the adapter named in `webhook_verification.method` on the connection's manifest — `hmac-sha256`, `slack`, `stripe`, or `github`.\n\nThe `secret` is returned **once** in the creation response — store it then; subsequent reads redact it. See [Inbound webhooks](/api/inbound-webhooks).",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -474,7 +474,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
       tenantId,
     );
     if (subscription?.connection_id !== connectionId) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INBOUND_WEBHOOK_NOT_FOUND,
         "Inbound webhook subscription not found",
       );
@@ -499,14 +499,14 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
       tenantId,
     );
     if (subscription?.connection_id !== connectionId) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INBOUND_WEBHOOK_NOT_FOUND,
         "Inbound webhook subscription not found",
       );
     }
     const event = await storage.inboundWebhookEvents.get(event_id);
     if (event?.inbound_webhook_id !== webhook_id) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INBOUND_WEBHOOK_EVENT_NOT_FOUND,
         "Inbound webhook event not found",
       );
@@ -596,13 +596,13 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
     // receipt itself is public.
     const subscription = await storage.inboundWebhooks.getAny(id);
     if (!subscription) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INBOUND_WEBHOOK_NOT_FOUND,
         "Inbound webhook subscription not found",
       );
     }
     if (subscription.disabled) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INBOUND_WEBHOOK_DISABLED,
         "Inbound webhook subscription is disabled",
       );
@@ -612,7 +612,7 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
       // Defensive — the column was validated at write time, but if the
       // DB drifts (manual edit, post-restore corruption) we surface
       // 401 rather than crash.
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INBOUND_WEBHOOK_VERIFICATION_FAILED,
         `Unknown verification method: ${subscription.verification_method}`,
       );
@@ -621,7 +621,7 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
     // Read the raw body as ArrayBuffer — HMAC over altered bytes fails,
     // so any framework re-serialisation MUST NOT happen between the
     // bytes-on-the-wire and the verifier input. The verifier package
-    // (`@mymehq/webhooks`) takes ArrayBuffer natively (Web
+    // (`@withmarfa/webhooks`) takes ArrayBuffer natively (Web
     // Crypto's input type); we keep the same buffer for the JSON
     // payload column via TextDecoder.
     const rawBody = await c.req.raw.arrayBuffer();
@@ -633,10 +633,10 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
         SECRET_INFO.inboundWebhookSecret,
       );
     } catch {
-      // Decryption failure is corruption / wrong MYME_AUTH_SECRET. The
+      // Decryption failure is corruption / wrong MARFA_AUTH_SECRET. The
       // sender shouldn't see the internals; surface as an opaque
       // verification failure (and let operators see the audit row).
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INBOUND_WEBHOOK_VERIFICATION_FAILED,
         "Verification subsystem error",
       );
@@ -663,7 +663,7 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
     });
 
     if (!result.verified) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INBOUND_WEBHOOK_VERIFICATION_FAILED,
         result.reason ?? "Signature verification failed",
       );

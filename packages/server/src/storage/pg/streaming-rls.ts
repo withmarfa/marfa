@@ -14,11 +14,11 @@ import { pgRequestContext, type PgTxContext } from "./request-context.js";
  * This helper achieves the same DB-level tenant fence via a different
  * mechanism: it reserves one pool connection for the stream, issues
  * **session-level** (not `SET LOCAL`) `SET ROLE myme_app` plus
- * `set_config('myme.tenant_id', '<id>', false)`, and pins the
+ * `set_config('marfa.tenant_id', '<id>', false)`, and pins the
  * connection in the request-context ALS so the existing storage proxy
  * routes every read through it. On stream end (normal completion,
  * error, client disconnect, server shutdown) the helper resets the
- * session state — `RESET ROLE` plus clearing the `myme.tenant_id`
+ * session state — `RESET ROLE` plus clearing the `marfa.tenant_id`
  * GUC — and returns the connection to the pool. If the reset fails the
  * connection is destroyed instead so it never returns poisoned. The
  * scoped reset is the precise match for the cleanup invariant ("no
@@ -27,7 +27,7 @@ import { pgRequestContext, type PgTxContext } from "./request-context.js";
  * prepared statements while postgres.js retained their client-side
  * names, surfacing as `prepared statement "<name>" does not exist`
  * 500s on subsequent writes under concurrent SSE + write load (T-189).
- * RLS policies read `current_setting('myme.tenant_id')` at execute
+ * RLS policies read `current_setting('marfa.tenant_id')` at execute
  * time, not bind time, so cached statements are safe to survive the
  * reset.
  *
@@ -95,7 +95,7 @@ export async function acquireStreamRls(
     // Session-level (third arg `false` = not LOCAL). Persists for the
     // life of this reserved connection — including across any nested
     // transactions the storage layer opens internally.
-    await reserved`SELECT set_config('myme.tenant_id', ${tenantId}, false)`;
+    await reserved`SELECT set_config('marfa.tenant_id', ${tenantId}, false)`;
     // Role name is hardcoded — direct DDL is safe; SET ROLE doesn't
     // accept parameters.
     await reserved.unsafe(`SET ROLE myme_app`);
@@ -190,13 +190,13 @@ export async function withStreamRls<T>(
  * what was set in `acquireStreamRls`:
  *
  *   - `RESET ROLE` — back to the pool's default owner role.
- *   - `SELECT set_config('myme.tenant_id', '', false)` — empty the
- *     custom GUC. Plain `RESET myme.tenant_id` would also work but
+ *   - `SELECT set_config('marfa.tenant_id', '', false)` — empty the
+ *     custom GUC. Plain `RESET marfa.tenant_id` would also work but
  *     `set_config` matches the form used at acquire time and avoids
  *     surprising error semantics if the GUC was never set on this
  *     connection (idempotent on either path).
  *
- * RLS policies read `current_setting('myme.tenant_id')` at execute
+ * RLS policies read `current_setting('marfa.tenant_id')` at execute
  * time, not bind time, so any prepared statement compiled while the
  * session carried tenant A's GUC executes safely under tenant B once
  * the GUC flips — the cache is value-agnostic.
@@ -209,7 +209,7 @@ async function disposeReserved(
 ): Promise<void> {
   try {
     await reserved.unsafe(`RESET ROLE`);
-    await reserved`SELECT set_config('myme.tenant_id', '', false)`;
+    await reserved`SELECT set_config('marfa.tenant_id', '', false)`;
   } catch (err) {
     // Reset failed — connection is in an unknown state. Destroy
     // rather than return-to-pool. Log loud: silent connection

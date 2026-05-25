@@ -13,7 +13,7 @@ afterAll(async () => {
 });
 
 // Unique namespace per run — the edge-type registry is module-level in
-// @mymehq/shared and would leak across test files if they share a worker.
+// @withmarfa/shared and would leak across test files if they share a worker.
 const NS = `test.et-${Math.random().toString(36).slice(2, 8)}`;
 
 interface EdgeType {

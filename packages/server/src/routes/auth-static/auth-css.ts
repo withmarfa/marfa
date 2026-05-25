@@ -16,7 +16,7 @@
  */
 
 export const AUTH_CSS = `/*
- * Myme auth-page stylesheet.
+ * Marfa auth-page stylesheet.
  *
  * Single source of truth for CSS across every auth surface (sign-in,
  * sign-up, consent, device flow, email-verify, forgot-password,

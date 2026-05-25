@@ -1,4 +1,4 @@
-import type { TypeSchema, FieldDefinition } from "@mymehq/types";
+import type { TypeSchema, FieldDefinition } from "@withmarfa/types";
 
 /**
  * Classifies the diff between two type schemas (TSC42 §7).

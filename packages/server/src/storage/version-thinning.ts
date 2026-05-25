@@ -1,4 +1,4 @@
-import type { Version, VersionPolicy } from "@mymehq/shared";
+import type { Version, VersionPolicy } from "@withmarfa/shared";
 
 export interface ResolvedPolicy {
   recentDays: number;

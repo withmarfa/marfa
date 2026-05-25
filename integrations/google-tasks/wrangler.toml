@@ -16,7 +16,7 @@
 # channels.watch surface, no Pub/Sub, no inbound push notifications.
 # The schedule trigger is the only inbound rail.
 
-name = "myme-integration-google-tasks"
+name = "marfa-integration-google-tasks"
 main = "src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
@@ -37,7 +37,7 @@ new_sqlite_classes = ["PerConnectionState"]
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
-name = "myme-integration-google-tasks-staging"
+name = "marfa-integration-google-tasks-staging"
 
 [env.staging.vars]
 INTEGRATION_NAME = "google.tasks"
@@ -57,38 +57,38 @@ new_sqlite_classes = ["PerConnectionState"]
 # leave the operator's peekable surface.
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-google-tasks-staging"
+queue = "marfa-scheduled-poll-google-tasks-staging"
 
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-google-tasks-staging-dlq"
+queue = "marfa-scheduled-poll-google-tasks-staging-dlq"
 
 [[env.staging.queues.producers]]
 binding = "REACTIVE_RUN_DLQ_QUEUE"
-queue = "myme-reactive-run-google-tasks-staging-dlq"
+queue = "marfa-reactive-run-google-tasks-staging-dlq"
 
 [[env.staging.queues.consumers]]
-queue = "myme-scheduled-poll-google-tasks-staging"
+queue = "marfa-scheduled-poll-google-tasks-staging"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-google-tasks-staging-dlq"
+dead_letter_queue = "marfa-scheduled-poll-google-tasks-staging-dlq"
 
 # T-233 — per-integration reactive-run queue. Server routes envelopes
 # by `integration_name` to the matching queue URL via
 # `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS`.
 [[env.staging.queues.consumers]]
-queue = "myme-reactive-run-google-tasks-staging"
+queue = "marfa-reactive-run-google-tasks-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-reactive-run-google-tasks-staging-dlq"
+dead_letter_queue = "marfa-reactive-run-google-tasks-staging-dlq"
 
 # ---- Prod -----------------------------------------------------------------
 # Mirrors staging for the eventual production rollout. Keep in sync
 # with staging if you change queue topology.
 [env.prod]
-name = "myme-integration-google-tasks-prod"
+name = "marfa-integration-google-tasks-prod"
 
 [env.prod.vars]
 INTEGRATION_NAME = "google.tasks"
@@ -105,31 +105,31 @@ new_sqlite_classes = ["PerConnectionState"]
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-google-tasks-prod"
+queue = "marfa-scheduled-poll-google-tasks-prod"
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-google-tasks-prod-dlq"
+queue = "marfa-scheduled-poll-google-tasks-prod-dlq"
 
 [[env.prod.queues.producers]]
 binding = "REACTIVE_RUN_DLQ_QUEUE"
-queue = "myme-reactive-run-google-tasks-prod-dlq"
+queue = "marfa-reactive-run-google-tasks-prod-dlq"
 
 [[env.prod.queues.consumers]]
-queue = "myme-scheduled-poll-google-tasks-prod"
+queue = "marfa-scheduled-poll-google-tasks-prod"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-google-tasks-prod-dlq"
+dead_letter_queue = "marfa-scheduled-poll-google-tasks-prod-dlq"
 
 [[env.prod.queues.consumers]]
-queue = "myme-reactive-run-google-tasks-prod"
+queue = "marfa-reactive-run-google-tasks-prod"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-reactive-run-google-tasks-prod-dlq"
+dead_letter_queue = "marfa-reactive-run-google-tasks-prod-dlq"
 
 # Secrets (`wrangler secret put --env <env>`):
-#   - MYME_API_URL
-#   - MYME_RUNTIME_CONTROL_URL
-#   - MYME_RUNTIME_BROKER_KEY
+#   - MARFA_API_URL
+#   - MARFA_RUNTIME_CONTROL_URL
+#   - MARFA_RUNTIME_BROKER_KEY

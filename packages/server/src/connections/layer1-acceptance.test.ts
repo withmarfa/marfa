@@ -1,6 +1,6 @@
 /**
  * Layer 1 acceptance test — exercises the full vertical of the runtime
- * substrate against a real Myme server (in-process), demonstrating
+ * substrate against a real Marfa server (in-process), demonstrating
  * that the per-Integration handler → SDK → server round-trip works
  * end-to-end.
  *
@@ -23,8 +23,8 @@ import {
   ConnectionClient,
   createActivitySink,
   createCursorStore,
-} from "@mymehq/runtime-sdk";
-import { createInMemoryStorage } from "@mymehq/runtime-test";
+} from "@withmarfa/runtime-sdk";
+import { createInMemoryStorage } from "@withmarfa/runtime-test";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 

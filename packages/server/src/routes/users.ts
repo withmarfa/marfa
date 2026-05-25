@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   isValidHandle,
   isReservedHandle,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hashApiKey, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -148,7 +148,7 @@ const setHandleRoute = createRoute({
   tags: ["Auth"],
   summary: "Update the current user's handle",
   description:
-    "Claims or changes the handle on the authenticated user. The handle is the user's public identifier — the same string that namespaces published types as `<handle>.<type>`. Lowercase alphanumeric and hyphens, 3–32 characters, no leading/trailing hyphens, no consecutive hyphens.\n\nReserved roots (`core`, `system`, `app`, `user`, `myme`) and a list of structural words (`admin`, `api`, etc.) are rejected with `400 handle_reserved`. Case-insensitive collision with another user returns `409 conflict`. See [Handles and publishers](/concepts/handles-and-publishers).",
+    "Claims or changes the handle on the authenticated user. The handle is the user's public identifier — the same string that namespaces published types as `<handle>.<type>`. Lowercase alphanumeric and hyphens, 3–32 characters, no leading/trailing hyphens, no consecutive hyphens.\n\nReserved roots (`core`, `system`, `app`, `user`, `marfa`) and a list of structural words (`admin`, `api`, etc.) are rejected with `400 handle_reserved`. Case-insensitive collision with another user returns `409 conflict`. See [Handles and publishers](/concepts/handles-and-publishers).",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -273,7 +273,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     // Check if user already exists
     const existing = await userStore.getByProvider(provider, providerId);
     if (existing) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONFLICT,
         "User already exists for this provider",
       );
@@ -313,7 +313,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
 
     const user = await userStore.getByProvider(provider, providerId);
     if (!user) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "User not found");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "User not found");
     }
 
     // Find an active admin API key for this tenant
@@ -376,7 +376,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     const tenantId = apiKey.tenant_id;
 
     if (!tenantId) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.NOT_FOUND,
         "No tenant associated with this key",
       );
@@ -388,7 +388,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     ]);
 
     if (!tenant) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Tenant not found");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant not found");
     }
 
     return c.json({ user, tenant }, 200);
@@ -399,26 +399,26 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     const apiKey = requireAuth(c);
     const tenantId = apiKey.tenant_id;
     if (!tenantId) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.NOT_FOUND,
         "No tenant associated with this key",
       );
     }
     const user = await userStore.getByTenantId(tenantId);
     if (!user) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "User not found");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "User not found");
     }
     const { handle: rawHandle } = c.req.valid("json");
     const handle = rawHandle.toLowerCase();
     if (isReservedHandle(handle)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.HANDLE_RESERVED,
         `Handle "${handle}" is reserved`,
         { handle: rawHandle },
       );
     }
     if (!isValidHandle(handle)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid handle: lowercase alphanumeric + hyphens, 3-32 chars",
         { handle: rawHandle },
@@ -426,7 +426,7 @@ export function userAuthRoutes(storage: Storage, salt: string) {
     }
     const collision = await userStore.getByHandle(handle);
     if (collision && collision.id !== user.id) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONFLICT,
         `Handle "${handle}" is already claimed`,
         { handle },

@@ -12,7 +12,7 @@
  *     consent UI) to open in the user's browser.
  *
  *   - `GET /oauth/callback/:provider` (no auth — the provider's
- *     server-side redirect carries no Myme session): verifies the
+ *     server-side redirect carries no Marfa session): verifies the
  *     state, exchanges the `code` for tokens at the provider's
  *     token endpoint, encrypts + persists them in
  *     `storage.connectionOauthTokens`, then renders an HTML success
@@ -27,14 +27,14 @@
  * connectors use their own paths but share this route.
  *
  * Why this lives in routes/oauth-callback.ts (not in oauth.ts):
- * `oauth.ts` covers the Myme-as-IdP surface (Better Auth + the
+ * `oauth.ts` covers the Marfa-as-IdP surface (Better Auth + the
  * /auth/* routes for human sign-in + OAuth grants to apps). This
- * file covers Myme-as-OAuth-client (the connector's outbound OAuth
+ * file covers Marfa-as-OAuth-client (the connector's outbound OAuth
  * flow). Different concern, different file.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { Hono } from "hono";
-import { MymeError, ErrorCode, type Item } from "@mymehq/shared";
+import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -83,7 +83,7 @@ async function readAuthorizeConfig(
   const props = connection.properties as { credential_ref?: string };
   const credentialRef = props.credential_ref;
   if (!credentialRef) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
       "Connection has no credential_ref — cannot start OAuth flow",
     );
@@ -101,7 +101,7 @@ async function readAuthorizeConfig(
     connection.tenant_id ?? undefined,
   );
   if (credential?.type !== "system.credential") {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
       `Connection's credential_ref ${credentialRef} does not resolve to a system.credential item`,
     );
@@ -125,7 +125,7 @@ async function readAuthorizeConfig(
     typeof cfg.oauth_client_id !== "string" ||
     typeof credProps.secret_encrypted !== "string"
   ) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
       "Connection's credential is missing required OAuth provider config (kind:oauth_token + oauth_authorize_url + oauth_token_url + oauth_client_id + secret_encrypted)",
     );
@@ -324,7 +324,7 @@ export interface OAuthCallbackOptions {
  * request's `redirect_uri` must match one entry exactly (string equality
  * after both sides are URL-canonicalised — protocol, host, port, path).
  * Empty list = unenforced (dev / self-hosted convenience). Hosted
- * deployments MUST set this via `MYME_OAUTH_REDIRECT_ALLOWLIST` to close
+ * deployments MUST set this via `MARFA_OAUTH_REDIRECT_ALLOWLIST` to close
  * the open-redirect-via-OAuth class T-010 covers.
  */
 export interface OAuthStartOptions {
@@ -387,7 +387,7 @@ export function oauthStartRoutes(
     // the install pipeline mints connections as a platform-credential
     // operation, so OAuth bootstrap is similarly admin-only.
     if (!apiKey || (apiKey.role !== "admin" && !apiKey.is_platform)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "OAuth start requires admin or platform credential",
       );
@@ -395,7 +395,7 @@ export function oauthStartRoutes(
     const connectionId = c.req.param("id");
     const connection = await storage.items.get(connectionId);
     if (connection?.type !== "system.connection") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.ITEM_NOT_FOUND,
         `Connection ${connectionId} not found`,
       );
@@ -409,15 +409,15 @@ export function oauthStartRoutes(
       typeof body.redirect_uri !== "string" ||
       body.redirect_uri.length === 0
     ) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "redirect_uri is required",
       );
     }
     if (!isRedirectAllowed(body.redirect_uri, options.redirectUriAllowlist)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        `redirect_uri "${body.redirect_uri}" is not in MYME_OAUTH_REDIRECT_ALLOWLIST`,
+        `redirect_uri "${body.redirect_uri}" is not in MARFA_OAUTH_REDIRECT_ALLOWLIST`,
       );
     }
     const config = await readAuthorizeConfig(storage, connection);
@@ -483,7 +483,7 @@ export function oauthStartRoutes(
 
 /**
  * `GET /oauth/callback/:provider` — no auth. The provider's
- * redirect carries no Myme session; we trust the signed `state`
+ * redirect carries no Marfa session; we trust the signed `state`
  * param to recover the connection.
  *
  * Query params: `code`, `state`, optional `error` (RFC 6749 §4.1.2.1).

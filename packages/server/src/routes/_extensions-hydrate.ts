@@ -1,5 +1,5 @@
-import { filterExtensionsByPermission } from "@mymehq/shared";
-import type { ApiKey } from "@mymehq/shared";
+import { filterExtensionsByPermission } from "@withmarfa/shared";
+import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 
 /**

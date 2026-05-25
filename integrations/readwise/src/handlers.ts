@@ -15,7 +15,7 @@
  *   1. Read cursor; default `updated_after` to the far-past sentinel
  *      so the first run pulls everything.
  *   2. Call `GET /api/v2/export/?updatedAfter=<iso>` via
- *      `ctx.myme.proxyRequest`. Substrate stamps
+ *      `ctx.marfa.proxyRequest`. Substrate stamps
  *      `Authorization: Token <key>` (T-246).
  *   3. Iterate `payload.results` (books). For each book:
  *      - Upsert as `readwise.book` (source_id = user_book_id).
@@ -40,7 +40,7 @@ import {
   type ScheduleMessage,
   type HandlerResult,
   type CreateItemInput,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { EXPORT_PATH, UPDATED_AFTER_INITIAL } from "./manifest.js";
 
 const CURSOR_KEY = "main";
@@ -86,9 +86,9 @@ interface ExportResponse {
 interface ReadwiseCursor {
   /** ISO timestamp watermark; sent as `updatedAfter` on every poll. */
   updated_after: string;
-  /** readwise user_book_id (as string) → Myme item id. */
+  /** readwise user_book_id (as string) → Marfa item id. */
   book_mappings: Record<string, string>;
-  /** readwise highlight id (as string) → Myme item id. */
+  /** readwise highlight id (as string) → Marfa item id. */
   highlight_mappings: Record<string, string>;
   last_inbound_at: string | null;
 }
@@ -238,7 +238,7 @@ export async function handleSchedule(
 
     let response: Response;
     try {
-      response = await ctx.myme.proxyRequest("GET", path);
+      response = await ctx.marfa.proxyRequest("GET", path);
     } catch (err) {
       return reportFailure(ctx, "readwise /export fetch failed", err, true);
     }
@@ -263,26 +263,26 @@ export async function handleSchedule(
     for (const book of payload.results ?? []) {
       if (book.is_deleted === true) {
         // Read-only constraint: we never propagate Readwise deletes
-        // into Myme trash for highlights or books. tombstone_mapping
+        // into Marfa trash for highlights or books. tombstone_mapping
         // is `ignore` on the manifest. Skip the row.
         continue;
       }
       const bookKey = String(book.user_book_id);
-      const existingBookMymeId = cursor.book_mappings[bookKey];
-      let bookMymeId: string;
+      const existingBookMarfaId = cursor.book_mappings[bookKey];
+      let bookMarfaId: string;
 
       const bookInput = buildBookInput(book);
       try {
-        if (existingBookMymeId !== undefined) {
-          await ctx.myme.updateItem(existingBookMymeId, bookInput);
-          bookMymeId = existingBookMymeId;
+        if (existingBookMarfaId !== undefined) {
+          await ctx.marfa.updateItem(existingBookMarfaId, bookInput);
+          bookMarfaId = existingBookMarfaId;
         } else {
-          const created = await ctx.myme.createItem({
+          const created = await ctx.marfa.createItem({
             ...bookInput,
             source_id: bookKey,
           });
-          bookMymeId = created.id;
-          cursor.book_mappings[bookKey] = bookMymeId;
+          bookMarfaId = created.id;
+          cursor.book_mappings[bookKey] = bookMarfaId;
         }
         booksUpserted += 1;
       } catch (err) {
@@ -302,33 +302,33 @@ export async function handleSchedule(
           highlight,
           book.user_book_id,
         );
-        let highlightMymeId: string;
+        let highlightMarfaId: string;
         try {
           if (existingHighlight !== undefined) {
-            await ctx.myme.updateItem(existingHighlight, highlightInput);
-            highlightMymeId = existingHighlight;
+            await ctx.marfa.updateItem(existingHighlight, highlightInput);
+            highlightMarfaId = existingHighlight;
           } else {
-            const created = await ctx.myme.createItem({
+            const created = await ctx.marfa.createItem({
               ...highlightInput,
               source_id: highlightKey,
             });
-            highlightMymeId = created.id;
-            cursor.highlight_mappings[highlightKey] = highlightMymeId;
+            highlightMarfaId = created.id;
+            cursor.highlight_mappings[highlightKey] = highlightMarfaId;
             // Only create the parent-of edge on first write. On
             // subsequent updates the edge already exists; the SDK
             // would 409 / no-op anyway, but skipping is the cleaner
             // contract.
             try {
-              await ctx.myme.createEdge({
-                source_id: bookMymeId,
-                target_id: highlightMymeId,
+              await ctx.marfa.createEdge({
+                source_id: bookMarfaId,
+                target_id: highlightMarfaId,
                 edge_type: "parent-of",
               });
               edgesCreated += 1;
             } catch (err) {
               await ctx.activity.emit({
                 severity: "action_required",
-                summary: `readwise: failed to create parent-of edge ${bookMymeId} → ${highlightMymeId}`,
+                summary: `readwise: failed to create parent-of edge ${bookMarfaId} → ${highlightMarfaId}`,
                 detail: { error: errorMessage(err) },
               });
             }

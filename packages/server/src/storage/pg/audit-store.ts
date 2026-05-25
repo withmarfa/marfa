@@ -1,7 +1,7 @@
 import { eq, and, desc, lt, or, gte, lte, isNull, like } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { generateId } from "@mymehq/shared";
-import type { PaginatedResult } from "@mymehq/shared";
+import { generateId } from "@withmarfa/shared";
+import type { PaginatedResult } from "@withmarfa/shared";
 import type { AuditStore, AuditEntry } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";

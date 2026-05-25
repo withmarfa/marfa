@@ -33,10 +33,10 @@ describe("renderAuthLayout", () => {
 
   it("renders title verbatim into <title>", () => {
     const html = renderAuthLayout({
-      title: "Sign in to Myme",
+      title: "Sign in to Marfa",
       bodyHtml: "",
     });
-    expect(html).toContain("<title>Sign in to Myme</title>");
+    expect(html).toContain("<title>Sign in to Marfa</title>");
   });
 
   it("escapes HTML in title to prevent injection", () => {

@@ -3,7 +3,7 @@ import {
   isCoreType,
   registerEdgeTypeSchema,
   isCoreEdgeType,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
 import { PgItemStore } from "./item-store.js";

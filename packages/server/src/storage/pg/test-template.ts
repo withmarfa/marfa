@@ -58,18 +58,18 @@ export function withDatabase(url: string, dbName: string): string {
  * available (`postgres` by convention) so we can CREATE / DROP arbitrary
  * databases on the cluster.
  *
- * Reads MYME_TEST_PG_ADMIN_URL when set (test-pg.sh exports it). When
+ * Reads MARFA_TEST_PG_ADMIN_URL when set (test-pg.sh exports it). When
  * unset, derives it by swapping the DATABASE_URL's database segment to
  * `postgres`. Fails loud if neither is set — there's no reasonable
  * default for a test admin URL.
  */
 export function getAdminUrl(): string {
-  const explicit = process.env.MYME_TEST_PG_ADMIN_URL;
+  const explicit = process.env.MARFA_TEST_PG_ADMIN_URL;
   if (explicit) return explicit;
   const base = process.env.DATABASE_URL;
   if (!base) {
     throw new Error(
-      "PG test lifecycle requires MYME_TEST_PG_ADMIN_URL or DATABASE_URL to be set. Invoke via `pnpm test:pg` which sets both.",
+      "PG test lifecycle requires MARFA_TEST_PG_ADMIN_URL or DATABASE_URL to be set. Invoke via `pnpm test:pg` which sets both.",
     );
   }
   return withDatabase(base, "postgres");

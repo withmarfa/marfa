@@ -37,14 +37,14 @@ export function renderAccountDeleteCancelEmail(
   input: AccountDeleteCancelRenderInput,
 ): RenderedEmail {
   const greeting = input.name?.trim() ? `Hi ${input.name.trim()}` : "Hi there";
-  const subject = "Sign-in attempt on your Myme account scheduled for deletion";
+  const subject = "Sign-in attempt on your Marfa account scheduled for deletion";
   const deadline = input.deletionDate ?? "";
   const text = [
-    "Sign-in attempt on your Myme account",
+    "Sign-in attempt on your Marfa account",
     "",
     `${greeting},`,
     "",
-    "Someone tried to sign in to your Myme account just now. Your account is currently scheduled for deletion, so the sign-in did not go through.",
+    "Someone tried to sign in to your Marfa account just now. Your account is currently scheduled for deletion, so the sign-in did not go through.",
     "",
     deadline
       ? `If you'd like to keep your account, restore it before ${deadline} — clicking the link below cancels the deletion and you'll be able to sign in normally on the next attempt:`
@@ -54,7 +54,7 @@ export function renderAccountDeleteCancelEmail(
     "",
     "If that wasn't you, you can ignore this email — your account will be deleted on schedule and the sign-in attempt did not succeed.",
     "",
-    "— Myme",
+    "— Marfa",
   ]
     .filter((line, idx, arr) => !(line === "" && arr[idx - 1] === ""))
     .join("\n");
@@ -70,9 +70,9 @@ export function renderAccountDeleteCancelEmail(
 <tr><td align="center">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;width:100%;background:#ffffff;border:1px solid ${BORDER};border-radius:8px;">
 <tr><td style="padding:32px;">
-<h1 style="margin:0 0 16px 0;font-size:20px;font-weight:600;color:${TEXT};">Sign-in attempt on your Myme account</h1>
+<h1 style="margin:0 0 16px 0;font-size:20px;font-weight:600;color:${TEXT};">Sign-in attempt on your Marfa account</h1>
 <p style="margin:0 0 12px 0;color:${TEXT};">${escapeHtml(greeting)},</p>
-<p style="margin:0 0 16px 0;color:${MUTED};">Someone tried to sign in to your Myme account just now. Your account is currently scheduled for deletion${deadline ? ` on ${escapeHtml(deadline)}` : ""}, so the sign-in did not go through.</p>
+<p style="margin:0 0 16px 0;color:${MUTED};">Someone tried to sign in to your Marfa account just now. Your account is currently scheduled for deletion${deadline ? ` on ${escapeHtml(deadline)}` : ""}, so the sign-in did not go through.</p>
 <p style="margin:0 0 24px 0;color:${MUTED};">If you'd like to keep your account, restore it below. The deletion will be cancelled and you'll be able to sign in normally on the next attempt.</p>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0">
 <tr><td style="border-radius:6px;background:${ACCENT};">
@@ -85,7 +85,7 @@ export function renderAccountDeleteCancelEmail(
 <p style="margin:0;color:${MUTED};font-size:13px;">If that wasn't you, you can ignore this email — your account will be deleted on schedule and the sign-in attempt did not succeed.</p>
 </td></tr>
 </table>
-<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Myme</p>
+<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Marfa</p>
 </td></tr>
 </table>
 </body>

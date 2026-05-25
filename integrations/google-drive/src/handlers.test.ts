@@ -25,7 +25,7 @@ import {
   type ScheduleMessage,
   type UploadBlobInput,
   type UploadBlobResult,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleWebhook } from "./handlers.js";
 import { GOOGLE_DRIVE_MANIFEST } from "./manifest.js";
 
@@ -178,7 +178,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
   const ctx: ConnectionContext = {
     connection_id: CONNECTION_ID,
     integration_name: GOOGLE_DRIVE_MANIFEST.name,
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, CONNECTION_ID),
     echo: createEchoSuppression(storage, {
@@ -276,7 +276,7 @@ describe("google-drive handleSchedule — cold start", () => {
     expect(cursor.mappings.drv2).toBe("mit_2");
   });
 
-  it("trashes mapped Myme items when change.removed=true or change.file.trashed=true", async () => {
+  it("trashes mapped Marfa items when change.removed=true or change.file.trashed=true", async () => {
     const { ctx, transitions } = buildContext({
       proxyResponses: [
         () =>
@@ -313,7 +313,7 @@ describe("google-drive handleSchedule — cold start", () => {
 describe("google-drive handleSchedule — channel renewal", () => {
   it("creates a changes.watch channel on cold start when inbound_webhook_url is configured", async () => {
     const inboundUrl =
-      "https://staging.myme.so/runtime/webhook/conn_gdrive_test";
+      "https://staging.marfa.so/runtime/webhook/conn_gdrive_test";
     const { ctx, proxyCalls } = buildContext({
       connectionRecord: {
         id: CONNECTION_ID,

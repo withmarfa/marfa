@@ -1,5 +1,5 @@
 import { createMiddleware } from "hono/factory";
-import { generateId } from "@mymehq/shared";
+import { generateId } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
 
 // ---------------------------------------------------------------------------

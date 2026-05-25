@@ -1,10 +1,10 @@
 /**
  * Generate the OpenAPI spec from route definitions.
  *
- * Usage: pnpm --filter @mymehq/server run generate:openapi
+ * Usage: pnpm --filter @withmarfa/server run generate:openapi
  *
  * Outputs the OpenAPI JSON to stdout. Redirect to a file:
- *   pnpm --filter @mymehq/server run generate:openapi > openapi.json
+ *   pnpm --filter @withmarfa/server run generate:openapi > openapi.json
  */
 
 import { createSqliteStorage } from "../src/storage/sqlite/index.js";
@@ -17,7 +17,7 @@ const config: AppConfig = {
   storageDialect: "sqlite",
   sqlitePath: ":memory:",
   databaseUrl: "",
-  blobPath: "/tmp/myme-openapi-blobs",
+  blobPath: "/tmp/marfa-openapi-blobs",
   blobBackend: "fs",
   maxBlobSize: 50 * 1024 * 1024,
   s3Bucket: "",
@@ -54,17 +54,17 @@ const config: AppConfig = {
 };
 
 const storage = await createSqliteStorage(":memory:");
-const blobBackend = new FilesystemBlobBackend("/tmp/myme-openapi-blobs");
+const blobBackend = new FilesystemBlobBackend("/tmp/marfa-openapi-blobs");
 const app = createApp(storage, blobBackend, config);
 
 // `info.version` here is the API-contract version (the wire shape exposed
 // at /openapi.json), distinct from the deployed-build `version` reported on
 // `GET /`. Bumped on contract changes, not on every deploy. Aligned with
-// @mymehq/shared (which defines the wire types).
+// @withmarfa/shared (which defines the wire types).
 const spec = app.getOpenAPIDocument({
   openapi: "3.1.0",
   info: {
-    title: "Myme API",
+    title: "Marfa API",
     version: "4.2.0",
     description: "Typed data layer for structured personal data",
   },

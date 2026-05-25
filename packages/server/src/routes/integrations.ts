@@ -21,11 +21,11 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import type { MymeAuth } from "../auth/instance.js";
+import type { MarfaAuth } from "../auth/instance.js";
 import { resolveTenantIdForAuthUser } from "../auth/oauth-provider.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -213,7 +213,7 @@ function toResponse(item: {
 export function integrationRoutes(
   storage: Storage,
   salt: string,
-  auth?: MymeAuth,
+  auth?: MarfaAuth,
 ) {
   // Two routers mounted at the same prefix:
   //   - `apiRouter` carries the OpenAPI-registered JSON CRUD surface.
@@ -231,7 +231,7 @@ export function integrationRoutes(
   apiRouter.openapi(registerRoute, async (c) => {
     const apiKey = requireAuth(c);
     if (!apiKey.is_platform) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Integration registration requires a platform credential (is_platform: true)",
       );
@@ -240,7 +240,7 @@ export function integrationRoutes(
     const body = c.req.valid("json");
     const result = validateManifest(body.manifest);
     if (!result.ok) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Manifest validation failed",
         { errors: result.errors },
@@ -252,7 +252,7 @@ export function integrationRoutes(
     // the dedupe key per tenant. The items list filter keeps the check
     // cheap; a future PR could promote it to a partial unique index if
     // registration volume grows.
-    // Use the filter grammar in @mymehq/shared (ParseFilter) — `eq` is
+    // Use the filter grammar in @withmarfa/shared (ParseFilter) — `eq` is
     // the equality operator, not `=`.
     const existing = await storage.items.list({
       tenantId: apiKey.tenant_id,
@@ -261,7 +261,7 @@ export function integrationRoutes(
       limit: 1,
     });
     if (existing.data.length > 0) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONFLICT,
         `Integration ${manifest.name}@${manifest.version} is already registered`,
         {
@@ -341,7 +341,7 @@ export function integrationRoutes(
       includePlatformScoped: true,
     });
     if (item?.type !== "system.integration") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INTEGRATION_NOT_FOUND,
         "Integration not found",
       );
@@ -412,7 +412,7 @@ export function integrationRoutes(
     //     so the user lands back on the consent screen after signing
     //     in.
     if (c.req.header("authorization")) {
-      throw new MymeError(ErrorCode.UNAUTHORIZED, "Authentication required");
+      throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
     }
     const url = new URL(c.req.url);
     const returnTo = `${url.pathname}${url.search}`;
@@ -432,7 +432,7 @@ export function integrationRoutes(
       includePlatformScoped: true,
     });
     if (item?.type !== "system.integration") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INTEGRATION_NOT_FOUND,
         "Integration not found",
       );
@@ -455,7 +455,7 @@ export function integrationRoutes(
     if (credentialRefParam !== undefined && credentialRefParam.length > 0) {
       const cred = await storage.items.get(credentialRefParam, caller.tenantId);
       if (cred?.type !== "system.credential") {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.INVALID_REQUEST,
           `credential_ref ${credentialRefParam} does not resolve to a system.credential item in this tenant`,
           { credential_ref: credentialRefParam },
@@ -463,7 +463,7 @@ export function integrationRoutes(
       }
       const credProps = cred.properties as { kind?: string; label?: string };
       if (credProps.kind !== "oauth_token") {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.INVALID_REQUEST,
           `credential_ref ${credentialRefParam} resolves to a system.credential of kind '${String(credProps.kind)}'; expected 'oauth_token'`,
           { credential_ref: credentialRefParam, kind: credProps.kind },
@@ -497,7 +497,7 @@ export function integrationRoutes(
       includePlatformScoped: true,
     });
     if (item?.type !== "system.integration") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INTEGRATION_NOT_FOUND,
         "Integration not found",
       );

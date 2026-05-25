@@ -1,7 +1,7 @@
 # integrations/
 
 Per-Integration packages that implement the manifest contract from
-`@mymehq/shared/integration-manifest.ts`. Each subdirectory is a
+`@withmarfa/shared/integration-manifest.ts`. Each subdirectory is a
 self-contained npm workspace; the runtime substrate loads them
 through the patterns below.
 
@@ -21,10 +21,10 @@ upstream can reuse one OAuth credential (PR1 of T-231 wires this).
 
 ## Handler shape
 
-Three handler types, all imported from `@mymehq/runtime-sdk`:
+Three handler types, all imported from `@withmarfa/runtime-sdk`:
 
 - `registerScheduleHandler(handler)` — invoked on the manifest's cron.
-- `registerItemEventHandler(handler)` — invoked reactively on Myme
+- `registerItemEventHandler(handler)` — invoked reactively on Marfa
   item events of the manifest's `target_types`.
 - `registerWebhookHandler(handler)` — invoked when an inbound webhook
   arrives on the connection's subscription URL after the verification
@@ -32,7 +32,7 @@ Three handler types, all imported from `@mymehq/runtime-sdk`:
 
 All handlers receive a `ConnectionContext` first arg with:
 
-- `ctx.myme` — the connection-scoped client (stamps cycle metadata).
+- `ctx.marfa` — the connection-scoped client (stamps cycle metadata).
 - `ctx.cursor` — per-Connection state store (the
   `connection.runtime` reserved extension namespace under the hood).
 - `ctx.activity` — typed emitter for `system.activity` rows. Severity
@@ -62,7 +62,7 @@ that the substrate enforces, not the handler:
 - `lag_window_seconds` — how long after an outbound write to defer
   inbound reads of the same external id (stomp-race guard).
 - `tombstone_mapping` — `state-trashed` (cascading external delete →
-  Myme trash), `prompt-user` (action_required activity), or `ignore`.
+  Marfa trash), `prompt-user` (action_required activity), or `ignore`.
 - `partial_write_mode` — `all-or-nothing` rolls back local optimism
   on any per-item failure; `accept-partial` commits what succeeded.
 
@@ -74,7 +74,7 @@ config; it doesn't re-implement these primitives.
 Manifest declares `oauth_requirements: { <capability>: "proxy" | "leased" }`.
 Tokens are bootstrapped via the server's provider-agnostic
 `GET /oauth/callback/:provider` route — the integration handler never
-sees them directly. To call the upstream, use `ctx.myme.proxyRequest(method,
+sees them directly. To call the upstream, use `ctx.marfa.proxyRequest(method,
 path, body)` against the connection's proxy URL; the server stamps
 the bearer transparently and refreshes on 401.
 
@@ -118,7 +118,7 @@ The substrate seam mirrors the OAuth one: the bearer lives on a
 - **No OAuth dance** — there is no authorize URL, no callback. The
   user supplies the bearer at install time directly; the connection
   is immediately usable.
-- **Bearer stamped verbatim** — `ctx.myme.proxyRequest(...)` reads the
+- **Bearer stamped verbatim** — `ctx.marfa.proxyRequest(...)` reads the
   credential, decrypts the bearer, sets `Authorization: Bearer <token>`
   on every upstream call. No proactive refresh, no reactive refresh.
 - **401 → `action_required`** — when the upstream rejects the bearer,
@@ -138,7 +138,7 @@ To install a token-backed integration end-to-end:
    `{ connection_id }`. The connection is immediately active; no
    further consent step.
 3. Subsequent scheduled / reactive runs of the integration call
-   `ctx.myme.proxyRequest(...)`; the server stamps the bearer
+   `ctx.marfa.proxyRequest(...)`; the server stamps the bearer
    transparently.
 
 ## Worker-to-Worker calls use Service Bindings, not HTTP fetch (T-250)
@@ -162,9 +162,9 @@ the binding — only path, headers, and body reach the bound Worker.
 Convention: use `https://<binding-name-lowercase>` as the placeholder
 host so tests / logs make the binding shape obvious.
 
-The mymehq-inbox Email Worker is the canonical example —
-`integrations/mymehq-inbox/email-worker/wrangler.toml` declares
-`RUNTIME_CONTROL → myme-runtime-control-<env>`, and
+The withmarfa-inbox Email Worker is the canonical example —
+`integrations/withmarfa-inbox/email-worker/wrangler.toml` declares
+`RUNTIME_CONTROL → marfa-runtime-control-<env>`, and
 `src/index.ts` dispatches via
 `env.RUNTIME_CONTROL.fetch(...)` against
 `/webhooks/inbound/<CONNECTION_ID>`.
@@ -174,14 +174,14 @@ The mymehq-inbox Email Worker is the canonical example —
 Every per-Integration Worker needs three secrets set before the first
 queue dispatch will succeed:
 
-- `MYME_API_URL` — the deployed Myme API URL the in-Worker
+- `MARFA_API_URL` — the deployed Marfa API URL the in-Worker
   `ConnectionClient` calls back into.
-- `MYME_RUNTIME_CONTROL_URL` — the runtime-control Worker's URL,
+- `MARFA_RUNTIME_CONTROL_URL` — the runtime-control Worker's URL,
   where the consumer mints per-Connection runtime credentials via
   the `/lease/:connection_id/runtime` broker.
-- `MYME_RUNTIME_BROKER_KEY` — the platform broker key the consumer
+- `MARFA_RUNTIME_BROKER_KEY` — the platform broker key the consumer
   presents to that lease endpoint. Same value as the server's
-  `MYME_RUNTIME_BROKER_KEY` env.
+  `MARFA_RUNTIME_BROKER_KEY` env.
 
 Without these the queue consumer's `mintCredential()` throws on the
 first dispatch with a URL like `undefined/lease/<id>/runtime`. T-255
@@ -198,7 +198,7 @@ reads the three values from the calling shell's environment and runs
 
 ```bash
 # Source your per-machine secrets file first so the three env vars
-# (MYME_API_URL, MYME_RUNTIME_CONTROL_URL, MYME_RUNTIME_BROKER_KEY)
+# (MARFA_API_URL, MARFA_RUNTIME_CONTROL_URL, MARFA_RUNTIME_BROKER_KEY)
 # + CLOUDFLARE_API_TOKEN are exported.
 ./infra/cloudflare/scripts/init-integration-worker-secrets.sh \
   integrations/google-contacts staging
@@ -210,7 +210,7 @@ secrets as a reminder.
 
 ## Substrate parity
 
-`@mymehq/server`'s `MYME_INTEGRATION_RUNTIME` env var picks the
+`@withmarfa/server`'s `MARFA_INTEGRATION_RUNTIME` env var picks the
 substrate at deployment time: `hosted` (Cloudflare Workers + Queues
 
 - Durable Objects) or `local` (in-process Node + pg-boss +
@@ -222,10 +222,10 @@ substrate at deployment time: `hosted` (Cloudflare Workers + Queues
 * `tsup.config.ts` emits `dist/local.js` for the local substrate.
 * The hosted substrate consumes `src/worker.ts` directly via
   `wrangler` at deploy time.
-* `@mymehq/runtime-sdk` and `@mymehq/shared` MUST stay external in
+* `@withmarfa/runtime-sdk` and `@withmarfa/shared` MUST stay external in
   every bundle that loads integrations alongside them — the handler
   `REGISTRY` and shared registries are module-singleton state.
-* The smoke at `pnpm --filter @mymehq/server run smoke:worker-entry`
+* The smoke at `pnpm --filter @withmarfa/server run smoke:worker-entry`
   guards both invariants at build time.
 
 ## In-tree integrations

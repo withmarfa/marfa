@@ -1,6 +1,6 @@
-# @mymehq/types
+# @withmarfa/types
 
-JSON schemas for the platform-shipped type set, plus the codegen that produces TypeScript registries from them. Private package — bundled into `@mymehq/shared`'s dist via `noExternal`, not published separately.
+JSON schemas for the platform-shipped type set, plus the codegen that produces TypeScript registries from them. Private package — bundled into `@withmarfa/shared`'s dist via `noExternal`, not published separately.
 
 ## Layout
 
@@ -13,17 +13,17 @@ JSON schemas for the platform-shipped type set, plus the codegen that produces T
 
 ## Authoring rules
 
-- **JSON-first.** Add a new field by editing `core/<type>.json`, then run `pnpm --filter @mymehq/types generate`. Don't hand-edit `generated/*`.
+- **JSON-first.** Add a new field by editing `core/<type>.json`, then run `pnpm --filter @withmarfa/types generate`. Don't hand-edit `generated/*`.
 - **Inheritance is single-parent, additive-only.** A child type may add fields; it cannot redefine fields from its parent chain. Resolved fields and merge policies are computed during codegen.
-- **No field name may shadow a first-class `Item` wire field.** A handful of field names (`device`, `source_id`, `timestamp`, `version`, `schema_version`, `tier`, `state`, `capture_latitude`, `capture_longitude`, and the structural keys `id`, `type`, `tenant_id`, `properties`, `created_at`, `updated_at`, `source`) are top-level columns on the `items` table and carry Myme-wide meaning. Custom-type schemas — both in-tree and runtime-registered — cannot redeclare these. Letting a property reuse one of these names produces ambiguous data: two values under the same key, with no way to tell which is authoritative. The build-time check lives in `scripts/generate.ts`; the runtime check lives in `validateTypeSchema` in `packages/shared/src/type-registry.ts` and surfaces as `400 property_shadows_field` on `POST /types`. Authoritative list: `RESERVED_ITEM_FIELDS` in `packages/shared/src/type-registry.ts`, kept in sync with the `Item` interface in `packages/shared/src/types.ts` via a freshness test.
+- **No field name may shadow a first-class `Item` wire field.** A handful of field names (`device`, `source_id`, `timestamp`, `version`, `schema_version`, `tier`, `state`, `capture_latitude`, `capture_longitude`, and the structural keys `id`, `type`, `tenant_id`, `properties`, `created_at`, `updated_at`, `source`) are top-level columns on the `items` table and carry Marfa-wide meaning. Custom-type schemas — both in-tree and runtime-registered — cannot redeclare these. Letting a property reuse one of these names produces ambiguous data: two values under the same key, with no way to tell which is authoritative. The build-time check lives in `scripts/generate.ts`; the runtime check lives in `validateTypeSchema` in `packages/shared/src/type-registry.ts` and surfaces as `400 property_shadows_field` on `POST /types`. Authoritative list: `RESERVED_ITEM_FIELDS` in `packages/shared/src/type-registry.ts`, kept in sync with the `Item` interface in `packages/shared/src/types.ts` via a freshness test.
 - **`_deferred: true`** marks a JSON file that should NOT be emitted into the runtime registry. Reserved for stubs we want to ship later.
 - **`compatible_with`** — TSC42 §3 structural-superset declaration. Server validates at registration; the codegen passes the field through verbatim.
-- **`system.*` types** carry the operational restrictions in their JSON (the description names them); the runtime applies the lifecycle/search/tier overrides via `SYSTEM_TYPE_IDS` in `@mymehq/shared/type-registry.ts`.
+- **`system.*` types** carry the operational restrictions in their JSON (the description names them); the runtime applies the lifecycle/search/tier overrides via `SYSTEM_TYPE_IDS` in `@withmarfa/shared/type-registry.ts`.
 
 ## Codegen
 
-`pnpm --filter @mymehq/types generate`. Output is deterministic — same input → byte-identical output. The CI freshness check regenerates and diffs against the committed `generated/*` files.
+`pnpm --filter @withmarfa/types generate`. Output is deterministic — same input → byte-identical output. The CI freshness check regenerates and diffs against the committed `generated/*` files.
 
 ## Build
 
-`tsup` builds `dist/index.js` and `dist/index.d.ts` from `src/index.ts`, which re-exports the schema-types and generated registries. `@mymehq/shared` imports from this dist (workspace dependency); the inline-types-dts step pulls the declarations into shared's published types.
+`tsup` builds `dist/index.js` and `dist/index.d.ts` from `src/index.ts`, which re-exports the schema-types and generated registries. `@withmarfa/shared` imports from this dist (workspace dependency); the inline-types-dts step pulls the declarations into shared's published types.

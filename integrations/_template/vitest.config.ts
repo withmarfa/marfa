@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    name: "@mymehq/integration-template",
+    name: "@withmarfa/integration-template",
     include: ["src/**/*.test.ts"],
   },
 });

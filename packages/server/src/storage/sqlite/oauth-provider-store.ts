@@ -8,7 +8,7 @@
  */
 
 import { eq, and, desc, sql } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
+import { generateId } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type {
   CreateClientInput,

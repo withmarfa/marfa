@@ -1,18 +1,18 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   ErrorCode,
-  MymeError,
+  MarfaError,
   isCoreEdgeType,
   registerEdgeTypeSchema,
   unregisterEdgeTypeSchema,
   isValidTypeIdentifier,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type {
   EdgeCardinality,
   EdgeCascade,
   EdgeTypeSchema,
   FieldDefinition,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -196,7 +196,7 @@ export function edgeTypeRoutes(storage: Storage) {
     // expectation that "can't redefine a core type" is a 409, not
     // a 400 shape check.
     if (isCoreEdgeType(body.id)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONFLICT,
         `${body.id} is a core edge type and cannot be redefined`,
       );
@@ -204,7 +204,7 @@ export function edgeTypeRoutes(storage: Storage) {
     if (!isValidTypeIdentifier(body.id) && !body.id.includes("-")) {
       // Custom edge types use `<app>.<kebab-name>` shape; kebab is allowed
       // because core types like `parent-of` set the precedent.
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid edge-type identifier",
       );
@@ -214,7 +214,7 @@ export function edgeTypeRoutes(storage: Storage) {
     // drop it — that's lenient but invites clients to believe it worked.
     const rawBody = await c.req.json<Record<string, unknown>>();
     if ("extends" in rawBody) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Custom edge types do not support `extends`",
       );
@@ -252,7 +252,7 @@ export function edgeTypeRoutes(storage: Storage) {
     // Core types are always available from the in-memory registry; merge
     // custom types from storage. Use listEdgeTypes from shared for the
     // unified view (loads both).
-    const { listEdgeTypes } = await import("@mymehq/shared");
+    const { listEdgeTypes } = await import("@withmarfa/shared");
     return c.json({ edge_types: listEdgeTypes() }, 200);
   });
 
@@ -260,14 +260,14 @@ export function edgeTypeRoutes(storage: Storage) {
     requireAdmin(c);
     const { id } = c.req.valid("param");
     if (isCoreEdgeType(id)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `${id} is a core edge type and cannot be deleted`,
       );
     }
     const existing = await storage.edgeTypes.get(id);
     if (!existing) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.EDGE_TYPE_NOT_FOUND,
         `Edge type ${id} not found`,
       );

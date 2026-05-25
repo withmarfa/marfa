@@ -5,15 +5,15 @@
  *
  * Usage:
  *
- *   const harness = createTestHarness({ integrationName: "myme.template" });
+ *   const harness = createTestHarness({ integrationName: "marfa.template" });
  *   harness.connection("conn_1").send({ kind: "schedule", ... });
  *   const outcome = await harness.consume();
  *   const cursor = await harness.connection("conn_1").storage.get("cursor:main");
  *
- * The harness does NOT mock the Myme HTTP API — that's intentional.
- * Integration tests that exercise the round-trip against Myme should
- * point a real Myme server at the harness via the `apiUrl` parameter
- * (typically a fresh-sqlite test instance from `@mymehq/server`).
+ * The harness does NOT mock the Marfa HTTP API — that's intentional.
+ * Integration tests that exercise the round-trip against Marfa should
+ * point a real Marfa server at the harness via the `apiUrl` parameter
+ * (typically a fresh-sqlite test instance from `@withmarfa/server`).
  * Pure-handler tests can pass a stub `mintCredential` callback that
  * returns a static credential and a fetch shim.
  */
@@ -23,7 +23,7 @@ import {
   type CursorStorageAdapter,
   type QueueMessage,
   type RuntimeCredential,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import {
   createInMemoryStorage,
   type InMemoryStorage,

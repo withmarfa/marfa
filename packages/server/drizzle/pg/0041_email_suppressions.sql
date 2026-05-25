@@ -25,5 +25,5 @@ DROP POLICY IF EXISTS "email_suppressions_tenant_isolation" ON "email_suppressio
 --> statement-breakpoint
 CREATE POLICY "email_suppressions_tenant_isolation" ON "email_suppressions"
   FOR ALL TO "myme_app"
-  USING (tenant_id = current_setting('myme.tenant_id', true)
+  USING (tenant_id = current_setting('marfa.tenant_id', true)
          OR tenant_id = '');

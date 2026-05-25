@@ -38,10 +38,10 @@ pick_port() {
 }
 
 PG_PORT="$(pick_port)"
-PG_USER="myme"
-PG_PASSWORD="myme"
+PG_USER="marfa"
+PG_PASSWORD="marfa"
 PG_DB="myme_schema_dump"
-CONTAINER_NAME="myme-schema-dump-pg-${PG_PORT}"
+CONTAINER_NAME="marfa-schema-dump-pg-${PG_PORT}"
 
 cleanup() {
   docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true

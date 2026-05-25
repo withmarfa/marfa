@@ -192,7 +192,7 @@ export function renderSignInPage(params: SignInPageParams): string {
     var el = document.getElementById('passkey-error');
     if (el) { el.textContent = msg; show('passkey-error'); }
   }
-  if (!window.MymePasskey || !window.MymePasskey.isSupported()) return;
+  if (!window.MarfaPasskey || !window.MarfaPasskey.isSupported()) return;
   show('passkey-block');
   var btn = document.getElementById('passkey-signin');
   if (!btn) return;
@@ -200,7 +200,7 @@ export function renderSignInPage(params: SignInPageParams): string {
     hide('passkey-error');
     btn.disabled = true;
     try {
-      await window.MymePasskey.signIn();
+      await window.MarfaPasskey.signIn();
       window.location.assign(${JSON.stringify(params.returnTo).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")});
     } catch (err) {
       setError((err && err.message) || 'Passkey sign-in failed.');
@@ -211,7 +211,7 @@ export function renderSignInPage(params: SignInPageParams): string {
   `.trim();
 
   const bodyHtml = `
-    <h1>Sign in to Myme</h1>
+    <h1>Sign in to Marfa</h1>
     ${errorBanner}
     ${successBanner}
     ${tabsHtml}
@@ -224,7 +224,7 @@ export function renderSignInPage(params: SignInPageParams): string {
   `;
 
   return renderAuthLayout({
-    title: "Sign in to Myme",
+    title: "Sign in to Marfa",
     bodyHtml,
   });
 }

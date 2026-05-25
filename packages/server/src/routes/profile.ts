@@ -1,6 +1,6 @@
 // system.profile is a virtual type — no items-table row, served entirely
 // from the `users` table joined to `auth_user` for the canonical email.
-// The wire shape is defined in @mymehq/shared (`Profile`,
+// The wire shape is defined in @withmarfa/shared (`Profile`,
 // `UpdateProfileInput`) and validated by the Zod schemas below.
 //
 // T-074. Apps consume profile data through `/oauth/userinfo` gated on
@@ -17,11 +17,11 @@
 import { createHash } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   isValidHandle,
   isReservedHandle,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import { enforceQuota } from "../middleware/quota.js";
@@ -377,21 +377,21 @@ export function profileRoutes(
   async function resolveOwnProfile(c: Parameters<typeof requireAuth>[0]) {
     const apiKey = requireAuth(c);
     if (!storage.users) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.NOT_FOUND,
         "Profile is unavailable on instances running in keys mode",
       );
     }
     const tenantId = apiKey.tenant_id;
     if (!tenantId) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.NOT_FOUND,
         "No profile bound to this credential",
       );
     }
     const user = await storage.users.getByTenantId(tenantId);
     if (!user) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.NOT_FOUND,
         "No profile bound to this credential",
       );
@@ -414,7 +414,7 @@ export function profileRoutes(
     if (!storage.users) {
       // resolveOwnProfile already threw for this case; the redundant
       // guard satisfies TypeScript's flow analysis below.
-      throw new MymeError(ErrorCode.NOT_FOUND, "Profile unavailable");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Profile unavailable");
     }
     const userStore = storage.users;
     const body = c.req.valid("json");
@@ -425,14 +425,14 @@ export function profileRoutes(
     if (body.username !== undefined) {
       const handle = body.username.toLowerCase();
       if (isReservedHandle(handle)) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.HANDLE_RESERVED,
           `Handle "${handle}" is reserved`,
           { handle: body.username },
         );
       }
       if (!isValidHandle(handle)) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           "Invalid handle: lowercase alphanumeric + hyphens, 3-32 chars",
           { handle: body.username },
@@ -443,7 +443,7 @@ export function profileRoutes(
       if (handle !== user.handle) {
         const collision = await userStore.getByHandle(handle);
         if (collision && collision.id !== user.id) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.CONFLICT,
             `Handle "${handle}" is already claimed`,
             { handle },
@@ -501,14 +501,14 @@ export function profileRoutes(
   router.openapi(setAvatarRoute, async (c) => {
     const { user } = await resolveOwnProfile(c);
     if (!storage.users) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Profile unavailable");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Profile unavailable");
     }
     const userStore = storage.users;
 
     // Pre-buffer Content-Length check — same pattern as /blobs.
     const declaredLength = Number(c.req.header("Content-Length"));
     if (Number.isFinite(declaredLength) && declaredLength > maxBlobSize) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.BLOB_TOO_LARGE,
         `Avatar exceeds maximum size of ${String(maxBlobSize)} bytes`,
       );
@@ -523,7 +523,7 @@ export function profileRoutes(
       const formData = await c.req.formData();
       const file = formData.get("file");
       if (!(file instanceof File)) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           "Missing 'file' in multipart upload",
         );
@@ -536,16 +536,16 @@ export function profileRoutes(
     }
 
     if (data.length === 0) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Empty avatar");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Empty avatar");
     }
     if (data.length > maxBlobSize) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.BLOB_TOO_LARGE,
         `Avatar exceeds maximum size of ${String(maxBlobSize)} bytes`,
       );
     }
     if (!ALLOWED_AVATAR_MIME.has(mimeType)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Unsupported avatar MIME type: ${mimeType}. Allowed: ${Array.from(ALLOWED_AVATAR_MIME).join(", ")}`,
       );
@@ -593,7 +593,7 @@ export function profileRoutes(
   router.openapi(deleteAvatarRoute, async (c) => {
     const { user } = await resolveOwnProfile(c);
     if (!storage.users) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Profile unavailable");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Profile unavailable");
     }
     const userStore = storage.users;
     const updatedUser = await userStore.updateProfile(user.id, {
@@ -623,14 +623,14 @@ export function profileRoutes(
     const filename = c.req.param("filename");
     const username = filename.replace(/\.svg$/, "").toLowerCase();
     if (!username) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Missing username");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Missing username");
     }
     // Defense in depth — never render arbitrary input. The handle
     // grammar already covers this for valid users; for the placeholder
     // we relax to "alphanumeric + hyphens up to 64 chars" so call sites
     // can pre-render before a user has finished sign-up.
     if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(username)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid username");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid username");
     }
     const svg = renderPlaceholderSvg(username);
     return new Response(svg, {

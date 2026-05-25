@@ -34,9 +34,9 @@ export function renderResetPasswordEmail(
 ): RenderedEmail {
   const expires = input.expiresInMinutes ?? 60;
   const greeting = input.name?.trim() ? `Hi ${input.name.trim()}` : "Hi there";
-  const subject = "Reset your password for Myme";
+  const subject = "Reset your password for Marfa";
   const text = [
-    "Reset your password for Myme",
+    "Reset your password for Marfa",
     "",
     `${greeting},`,
     "",
@@ -48,7 +48,7 @@ export function renderResetPasswordEmail(
     "",
     "If you didn't request this, you can safely ignore this email — your current password will keep working.",
     "",
-    "— Myme",
+    "— Marfa",
   ].join("\n");
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -76,7 +76,7 @@ export function renderResetPasswordEmail(
 <p style="margin:0;color:${MUTED};font-size:13px;">If you didn't request this, you can safely ignore this email — your current password will keep working.</p>
 </td></tr>
 </table>
-<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Myme</p>
+<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Marfa</p>
 </td></tr>
 </table>
 </body>

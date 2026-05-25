@@ -2,15 +2,15 @@
  * OpenAPI helpers — shared factory and reusable schema components.
  *
  * Each route file uses createOpenAPIRouter() to get an OpenAPIHono instance
- * with validation errors mapped to the existing MymeError format.
+ * with validation errors mapped to the existing MarfaError format.
  */
 
 import { OpenAPIHono, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 
 /**
  * Create an OpenAPIHono router with the defaultHook configured to throw
- * MymeError on validation failure, preserving the existing error response format.
+ * MarfaError on validation failure, preserving the existing error response format.
  */
 export function createOpenAPIRouter<
   T extends Record<string, unknown>,
@@ -28,14 +28,14 @@ export function createOpenAPIRouter<
         );
         if (missingField) {
           const field = missingField.path.join(".");
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.MISSING_REQUIRED_FIELD,
             `${field} is required`,
             { field },
           );
         }
 
-        throw new MymeError(ErrorCode.VALIDATION_ERROR, "Validation failed", {
+        throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Validation failed", {
           errors: result.error.issues.map((i) => ({
             path: i.path.join("."),
             message: i.message,

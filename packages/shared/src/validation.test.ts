@@ -355,7 +355,7 @@ describe("isValidHandle", () => {
     expect(isValidHandle("system")).toBe(false);
     expect(isValidHandle("app")).toBe(false);
     expect(isValidHandle("user")).toBe(false);
-    expect(isValidHandle("myme")).toBe(false);
+    expect(isValidHandle("marfa")).toBe(false);
   });
 
   it("rejects reserved structural words", () => {
@@ -401,7 +401,7 @@ describe("isReservedHandle", () => {
     expect(isReservedHandle("system")).toBe(true);
     expect(isReservedHandle("app")).toBe(true);
     expect(isReservedHandle("user")).toBe(true);
-    expect(isReservedHandle("myme")).toBe(true);
+    expect(isReservedHandle("marfa")).toBe(true);
   });
 
   it("returns true for reserved structural and brand words", () => {

@@ -1,7 +1,7 @@
-// Myme types — the wire format for the Myme API.
+// Marfa types — the wire format for the Marfa API.
 // These interfaces define what goes over the network between server and clients.
 
-import type { ItemState, MergePolicy } from "@mymehq/types";
+import type { ItemState, MergePolicy } from "@withmarfa/types";
 
 /** Valid item states as a readonly array, useful for validation. */
 export const ITEM_STATES: readonly ItemState[] = [
@@ -41,10 +41,10 @@ export const TIERS: readonly Tier[] = ["library", "feed"] as const;
  * - `member` — non-admin credential. Bound by `type_permissions` /
  *   `edge_permissions` / `extension_permissions` / `metadata_permissions`.
  */
-export type MymeRole = "admin" | "tenant_admin" | "member";
+export type MarfaRole = "admin" | "tenant_admin" | "member";
 
 /** Valid role values as a readonly array, useful for validation. */
-export const MYME_ROLES: readonly MymeRole[] = [
+export const MARFA_ROLES: readonly MarfaRole[] = [
   "admin",
   "tenant_admin",
   "member",
@@ -60,7 +60,7 @@ export type ExtensionPermission = "read" | "write";
 // Core types
 // ---------------------------------------------------------------------------
 
-/** A Myme item — the fundamental data record. */
+/** A Marfa item — the fundamental data record. */
 export interface Item {
   id: string;
   type: string;
@@ -228,10 +228,10 @@ export interface ApiKey {
   label: string;
   /** Human-readable display name stamped onto items this credential writes. */
   source: string;
-  role: MymeRole;
+  role: MarfaRole;
   /**
    * Platform-credential gate (TSC42 §3/§4). When `true`, the credential may
-   * register and write `core.*`, `system.*`, and `myme.*` types. The first
+   * register and write `core.*`, `system.*`, and `marfa.*` types. The first
    * credential created at server install is the seed platform credential;
    * only an existing platform credential may mint another. Defaults to
    * `false` for ordinary tenant admin and member keys.
@@ -301,7 +301,7 @@ export interface ApiKey {
 export interface CreateKeyInput {
   label: string;
   source: string;
-  role: MymeRole;
+  role: MarfaRole;
   default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
@@ -542,7 +542,7 @@ export interface WebhookDelivery {
 /**
  * Inbound webhook subscription — workstream 2 PR 5.
  *
- * Inbound webhooks are external services posting into Myme via
+ * Inbound webhooks are external services posting into Marfa via
  * `POST /webhooks/inbound/:id`. Each subscription belongs to a
  * `system.connection` of kind `integration` and stamps
  * its verification method (read from the Integration manifest) at
@@ -929,7 +929,7 @@ export interface EnforcementSettings {
 
 /**
  * Per-tenant resource quotas (T-052). Empty / missing limits fall back to
- * the instance defaults from env (`MYME_DEFAULT_QUOTA_*`). Quotas are
+ * the instance defaults from env (`MARFA_DEFAULT_QUOTA_*`). Quotas are
  * platform-admin-managed via `GET/PUT /admin/tenants/:id/quotas`; tenant-
  * own reads land via `GET /tenants/me/quotas` (tenant_admin or admin).
  *
@@ -1022,7 +1022,7 @@ export interface User {
    */
   handle: string | null;
   /** T-074: FK to `auth_user.id` (Better Auth). Canonical bridge from
-   *  authentication identity to Myme profile. NULL only on legacy rows
+   *  authentication identity to Marfa profile. NULL only on legacy rows
    *  the grandfather migration couldn't match (no `auth_user` row with
    *  the same email at migration time). */
   auth_user_id: string | null;
@@ -1031,7 +1031,7 @@ export interface User {
    *  elevates via SQL until a real provisioning UI lands. The role
    *  gates admin-shaped routes (`requireTenantAdmin`, `requireAdmin`)
    *  whether the request arrives via API key or OAuth bearer. */
-  role: MymeRole;
+  role: MarfaRole;
   created_at: string;
   updated_at: string;
 }

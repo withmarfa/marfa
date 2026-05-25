@@ -7,11 +7,11 @@ import {
 
 /**
  * Failures here indicate corruption or operator misconfiguration (e.g.
- * MYME_AUTH_SECRET rotated mid-flight without re-encrypting stored
+ * MARFA_AUTH_SECRET rotated mid-flight without re-encrypting stored
  * ciphertexts). They are not user-facing API errors — the calling route
  * handler should surface a generic 500 / "internal error" rather than
  * forwarding the message. We throw a plain Error to keep this module
- * free of @mymehq/shared coupling beyond what's strictly necessary.
+ * free of @withmarfa/shared coupling beyond what's strictly necessary.
  */
 class SecretCryptoError extends Error {
   constructor(message: string) {
@@ -26,9 +26,9 @@ class SecretCryptoError extends Error {
  * access/refresh tokens, etc). Workstream 2 PR 5 introduces this for
  * inbound webhook secrets; PR 6 reuses it for OAuth tokens.
  *
- * The key is derived from `MYME_AUTH_SECRET` via HKDF-SHA256, with a
+ * The key is derived from `MARFA_AUTH_SECRET` via HKDF-SHA256, with a
  * caller-supplied `info` string that scopes derivations: rotating
- * `MYME_AUTH_SECRET` invalidates ALL stored ciphertexts (callers must
+ * `MARFA_AUTH_SECRET` invalidates ALL stored ciphertexts (callers must
  * re-encrypt as part of a key rotation runbook — flagged as a backlog
  * item alongside this PR).
  *
@@ -42,17 +42,17 @@ class SecretCryptoError extends Error {
  * strings going in and out of the DB layer.
  */
 
-const SALT = Buffer.from("myme-secret-encryption", "utf8");
+const SALT = Buffer.from("marfa-secret-encryption", "utf8");
 const KEY_LENGTH_BYTES = 32; // AES-256
 const IV_LENGTH_BYTES = 12; // GCM standard
 const TAG_LENGTH_BYTES = 16;
 
 function getMasterSecret(): Buffer {
-  const raw = process.env.MYME_AUTH_SECRET;
+  const raw = process.env.MARFA_AUTH_SECRET;
   if (raw && raw.length >= 16) return Buffer.from(raw, "utf8");
   // Dev-only fallback: derive a stable per-process secret. Never write
   // to disk under this fallback in production — the loadConfig() path
-  // already enforces presence of MYME_AUTH_SECRET when NODE_ENV is
+  // already enforces presence of MARFA_AUTH_SECRET when NODE_ENV is
   // production, but encryption operations remain deterministic across
   // a single process so tests don't need to set the env var explicitly.
   devFallbackSecret ??= randomBytes(32);
@@ -94,7 +94,7 @@ export function encryptSecret(plaintext: string, info: string): string {
 
 /**
  * Decrypt a hex-encoded ciphertext produced by `encryptSecret(..., info)`.
- * Throws a MymeError with code INTERNAL_ERROR on tag-mismatch or malformed
+ * Throws a MarfaError with code INTERNAL_ERROR on tag-mismatch or malformed
  * input — callers should treat any error as a fatal corruption signal,
  * not a recoverable condition.
  */
@@ -149,7 +149,7 @@ export const SECRET_INFO = {
    * sync agent re-presentation is the first consumer.
    *
    * The plaintext key continues to live on the local machine that
-   * uses it (e.g. `~/.myme/sync.connection.json` for the sync agent);
+   * uses it (e.g. `~/.marfa/sync.connection.json` for the sync agent);
    * the encrypted copy on the server is for record-keeping and a
    * future self-service refresh flow. Different domain than
    * `connectionOauthToken` so a future operator audit can

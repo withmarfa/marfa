@@ -28,11 +28,11 @@
  * install + uninstall routes that already live under that prefix.
  */
 import { Hono } from "hono";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireTenantAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import type { Item } from "@mymehq/shared";
+import type { Item } from "@withmarfa/shared";
 import { setNoStore } from "./no-store.js";
 
 // ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ export function renderGoogleCalendarPicker(
   </head>
   <body>
     <h1>Configure Google Calendar</h1>
-    <p class="lede">Pick which calendars Myme should sync, and where new events should land when you create them in Myme.</p>
+    <p class="lede">Pick which calendars Marfa should sync, and where new events should land when you create them in Marfa.</p>
     <form method="post" action="">
       <table>
         <thead>
@@ -165,9 +165,9 @@ export function renderGoogleCalendarPicker(
           ${calendarRows}
         </tbody>
       </table>
-      <p class="hint">Tick the calendars you want Myme to read. Pick one (a radio) as the destination for events you create in Myme.</p>
+      <p class="hint">Tick the calendars you want Marfa to read. Pick one (a radio) as the destination for events you create in Marfa.</p>
 
-      <label class="target-type" for="target_type">Write events into Myme as</label>
+      <label class="target-type" for="target_type">Write events into Marfa as</label>
       <select name="target_type" id="target_type">
         ${targetTypeOptions}
       </select>
@@ -268,7 +268,7 @@ export function parseConfigurePayload(
   if (typeof targetType !== "string" || targetType.length === 0) {
     return {
       ok: false,
-      error: "Pick a target type for events written into Myme.",
+      error: "Pick a target type for events written into Marfa.",
     };
   }
   if (!validTargetTypes.has(targetType)) {
@@ -358,7 +358,7 @@ export function connectionConfigureRoutes(
 
     const connection = await storage.items.get(id, tenantId);
     if (connection?.type !== "system.connection") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONNECTION_NOT_FOUND,
         `Connection ${id} not found`,
         { connection_id: id },
@@ -451,7 +451,7 @@ export function connectionConfigureRoutes(
 
     const connection = await storage.items.get(id, tenantId);
     if (connection?.type !== "system.connection") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONNECTION_NOT_FOUND,
         `Connection ${id} not found`,
         { connection_id: id },

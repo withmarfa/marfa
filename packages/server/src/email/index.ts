@@ -1,6 +1,6 @@
 /**
  * Email transport factory. Constructs the right backend per
- * `MYME_EMAIL_BACKEND` config, applies the sender-domain check for
+ * `MARFA_EMAIL_BACKEND` config, applies the sender-domain check for
  * the Cloudflare backend, and returns the transport ready to use.
  *
  * Called once at boot in `index.ts` and threaded into auth + any
@@ -43,7 +43,7 @@ export async function createEmailTransport(
     case "cloudflare": {
       if (!config.cloudflare?.accountId || !config.cloudflare.apiToken) {
         throw new Error(
-          "MYME_EMAIL_BACKEND=cloudflare requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN to be set",
+          "MARFA_EMAIL_BACKEND=cloudflare requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN to be set",
         );
       }
       const { createCloudflareTransport } =
@@ -55,7 +55,7 @@ export async function createEmailTransport(
     case "smtp": {
       if (!config.smtp?.host) {
         throw new Error(
-          "MYME_EMAIL_BACKEND=smtp requires MYME_SMTP_HOST to be set",
+          "MARFA_EMAIL_BACKEND=smtp requires MARFA_SMTP_HOST to be set",
         );
       }
       const { createSmtpTransport } = await import("./smtp-backend.js");

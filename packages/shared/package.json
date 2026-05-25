@@ -1,5 +1,5 @@
 {
-  "name": "@mymehq/shared",
+  "name": "@withmarfa/shared",
   "version": "7.0.0",
   "type": "module",
   "publishConfig": {
@@ -28,7 +28,7 @@
     "uuidv7": "^1.2.1"
   },
   "devDependencies": {
-    "@mymehq/types": "workspace:*",
+    "@withmarfa/types": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",

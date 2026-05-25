@@ -1,6 +1,6 @@
 /**
  * Single source of truth for issuer-URL normalisation. The storage keys
- * in `MymeAuth` (`myme.auth.tokens:<origin>:<client>`) and the discovery
+ * in `MarfaAuth` (`marfa.auth.tokens:<origin>:<client>`) and the discovery
  * cache key in `discovery.ts` must agree on what "the same issuer" means,
  * or the cache misses and storage gets sharded by accident.
  *

@@ -8,7 +8,7 @@
  *      helper. The helper consumes the three queue families declared in
  *      `wrangler.toml` and dispatches by manifest name.
  */
-import { createIntegrationWorker } from "@mymehq/runtime-sdk/cloudflare";
+import { createIntegrationWorker } from "@withmarfa/runtime-sdk/cloudflare";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
 import { GOOGLE_CALENDAR_MANIFEST } from "./manifest.js";
 

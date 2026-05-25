@@ -22,14 +22,14 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   generateId,
   isValidTimestamp,
   isValidTypeIdentifier,
   ITEM_STATES,
-} from "@mymehq/shared";
-import type { ItemState, Item } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import type { ItemState, Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAdmin,
@@ -542,7 +542,7 @@ async function processBulkItem(
     }
     return { index, outcome: "created", id: created.id };
   } catch (err) {
-    if (err instanceof MymeError) {
+    if (err instanceof MarfaError) {
       return {
         index,
         outcome: "errored",
@@ -571,7 +571,7 @@ export function bulkRoutes(storage: Storage) {
     const emitEvents = body.emit_events ?? false;
 
     if (items.length > MAX_BULK_ITEMS) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Maximum ${String(MAX_BULK_ITEMS)} items per call`,
         { cap: MAX_BULK_ITEMS, provided: items.length },
@@ -600,7 +600,7 @@ export function bulkRoutes(storage: Storage) {
     if (atomic) {
       for (const [i, raw] of items.entries()) {
         if (!isValidTypeIdentifier(raw.type)) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.BULK_ATOMIC_ROLLBACK,
             `Bulk upsert rolled back on item ${String(i)}`,
             {
@@ -611,7 +611,7 @@ export function bulkRoutes(storage: Storage) {
           );
         }
         if (raw.timestamp !== undefined && !isValidTimestamp(raw.timestamp)) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.BULK_ATOMIC_ROLLBACK,
             `Bulk upsert rolled back on item ${String(i)}`,
             {
@@ -636,7 +636,7 @@ export function bulkRoutes(storage: Storage) {
           // In atomic mode a single failure aborts the whole batch. Throw
           // so runInTransaction rolls back; carry the failure context out
           // via the error details.
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.BULK_ATOMIC_ROLLBACK,
             `Bulk upsert rolled back on item ${String(i)}`,
             {
@@ -715,7 +715,7 @@ export function bulkRoutes(storage: Storage) {
     if (action === "purge") {
       requireAdmin(c);
       if (body.confirm !== "PURGE") {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.BULK_CONFIRMATION_REQUIRED,
           'Purge requires { "confirm": "PURGE" }',
         );
@@ -727,7 +727,7 @@ export function bulkRoutes(storage: Storage) {
     // Validate filter fields up-front so a caller with a bad filter gets
     // a 400 before any matching happens.
     if (filter.type && !isValidTypeIdentifier(filter.type)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Invalid type identifier: ${filter.type}`,
       );
@@ -736,13 +736,13 @@ export function bulkRoutes(storage: Storage) {
       filter.state &&
       !(ITEM_STATES as readonly string[]).includes(filter.state)
     ) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Invalid state: ${filter.state}`,
       );
     }
     if (action === "update_timestamp" && !isValidTimestamp(body.timestamp)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "timestamp must be an ISO 8601 string",
       );
@@ -751,7 +751,7 @@ export function bulkRoutes(storage: Storage) {
       const addCount = body.add?.length ?? 0;
       const removeCount = body.remove?.length ?? 0;
       if (addCount === 0 && removeCount === 0) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           "update_tags requires at least one of `add` or `remove`",
         );
@@ -795,7 +795,7 @@ export function bulkRoutes(storage: Storage) {
     } while (cursor);
 
     if (matched.length > cap) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.BULK_CAP_EXCEEDED,
         `Bulk action matched more than ${String(cap)} items`,
         { matched: matched.length, cap },
@@ -870,7 +870,7 @@ export function bulkRoutes(storage: Storage) {
     const id = c.req.valid("param").id;
     const job = await storage.bulkActionJobs.getById(id);
     if (!job) {
-      throw new MymeError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
+      throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
     }
     assertJobAuth(c, job);
     return c.json(jobRowToEnvelope(job), 200);
@@ -882,7 +882,7 @@ export function bulkRoutes(storage: Storage) {
     const id = c.req.valid("param").id;
     const existing = await storage.bulkActionJobs.getById(id);
     if (!existing) {
-      throw new MymeError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
+      throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
     }
     assertJobAuth(c, existing);
     await storage.bulkActionJobs.cancel(id, new Date().toISOString());
@@ -903,13 +903,13 @@ export function bulkRoutes(storage: Storage) {
 function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   const apiKey = c.get("apiKey");
   if (!apiKey) {
-    throw new MymeError(ErrorCode.UNAUTHORIZED, "Missing credential");
+    throw new MarfaError(ErrorCode.UNAUTHORIZED, "Missing credential");
   }
   // Admin (platform-admin or tenant-admin with no tenant scope on the
   // job) bypasses the credential check.
   if (apiKey.role === "admin") return;
   if (job.api_key_id && apiKey.id === job.api_key_id) return;
-  throw new MymeError(
+  throw new MarfaError(
     ErrorCode.FORBIDDEN,
     "This job belongs to a different credential",
   );

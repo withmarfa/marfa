@@ -79,7 +79,7 @@ if (
       }
     })();
   } else {
-    const path = process.env.SQLITE_PATH ?? "./data/myme.db";
+    const path = process.env.SQLITE_PATH ?? "./data/marfa.db";
     void (async () => {
       try {
         await runSqliteMigrations(path);

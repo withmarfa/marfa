@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TYPE_REGISTRY } from "@mymehq/shared";
-import type { TypeSchema } from "@mymehq/shared";
+import { TYPE_REGISTRY } from "@withmarfa/shared";
+import type { TypeSchema } from "@withmarfa/shared";
 import { resolveMergePolicy } from "./policy.js";
 
 function makeRegistry(schemas: TypeSchema[]): Map<string, TypeSchema> {

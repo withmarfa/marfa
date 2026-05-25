@@ -19,7 +19,7 @@
  *
  * Queue-id resolution: the pull/ack endpoints take queue *id* (UUID),
  * not queue *name*. Names are env-suffixed
- * (e.g. `myme-webhook-receipt-staging-dlq`); ids are stable. We
+ * (e.g. `marfa-webhook-receipt-staging-dlq`); ids are stable. We
  * resolve once per Worker instance via `GET /accounts/:id/queues`
  * and cache in a module-level `Map`. Cache misses (e.g. after a
  * re-provision) refresh transparently.

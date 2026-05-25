@@ -3,14 +3,14 @@ import { Readable, PassThrough } from "node:stream";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   isValidTypeIdentifier,
   ITEM_STATES,
-} from "@mymehq/shared";
-import type { ItemState } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import type { ItemState } from "@withmarfa/shared";
 import * as tar from "tar-stream";
-import type { ApiKey } from "@mymehq/shared";
+import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -63,7 +63,7 @@ function resolveExportTenant(
   // Tenant-bound caller — own tenant wins.
   if (callerTenant) {
     if (targetParam !== undefined && targetParam !== callerTenant) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Cannot export another tenant's data — target_tenant_id must match caller's tenant_id (or be omitted).",
       );
@@ -90,7 +90,7 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export tenant data",
   description:
-    "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON or a tar.gz archive. Filterable by `type`, `state`, `source`, `since` / `until`. NDJSON is the default — one JSON object per line, items first then edges then metadata, suitable for piping into another store or `jq`. `format=archive` produces a `myme-archive-v1.tar.gz` ingestible by `POST /admin/restore-archive` for tenant-to-tenant migrations.\n\nLong-running; the response keeps streaming until the filter is exhausted. Tenant-scoped — exports only what the caller can read. See [Bulk operations — archive restore](/api/bulk-operations#archive-restore) for the round-trip.",
+    "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON or a tar.gz archive. Filterable by `type`, `state`, `source`, `since` / `until`. NDJSON is the default — one JSON object per line, items first then edges then metadata, suitable for piping into another store or `jq`. `format=archive` produces a `marfa-archive-v1.tar.gz` ingestible by `POST /admin/restore-archive` for tenant-to-tenant migrations.\n\nLong-running; the response keeps streaming until the filter is exhausted. Tenant-scoped — exports only what the caller can read. See [Bulk operations — archive restore](/api/bulk-operations#archive-restore) for the round-trip.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -196,7 +196,7 @@ export function exportRoutes(
 
     const type = query.type;
     if (type && !isValidTypeIdentifier(type)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
       );
@@ -204,7 +204,7 @@ export function exportRoutes(
 
     const state = query.state as ItemState | undefined;
     if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Invalid state: ${state}`,
       );
@@ -219,7 +219,7 @@ export function exportRoutes(
 
     // T-146: when the caller has a tenant_id and RLS enforcement is on,
     // pin a dedicated pool connection for the stream and apply
-    // session-level `SET ROLE myme_app` + `myme.tenant_id`. Storage
+    // session-level `SET ROLE myme_app` + `marfa.tenant_id`. Storage
     // reads inside the stream then flow through that connection and
     // are RLS-filtered at the DB layer. Tenant-less callers (platform
     // admin / single-tenant self-host) and SQLite skip — same
@@ -319,11 +319,11 @@ async function handleArchiveExport(
 ): Promise<Response> {
   const type = c.req.query("type");
   if (type && !isValidTypeIdentifier(type)) {
-    throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
+    throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
   }
   const state = c.req.query("state") as ItemState | undefined;
   if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-    throw new MymeError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${state}`);
+    throw new MarfaError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${state}`);
   }
   const since = c.req.query("since");
   const until = c.req.query("until");
@@ -407,7 +407,7 @@ async function handleArchiveExport(
   // target_tenant_id; null for single-tenant self-hosts.
   const manifest: ArchiveManifest = {
     version: 1,
-    format: "myme-archive-v1",
+    format: "marfa-archive-v1",
     created_at: new Date().toISOString(),
     tenant_id: tenantId ?? null,
     item_count: lines.length,
@@ -452,7 +452,7 @@ async function handleArchiveExport(
     status: 200,
     headers: {
       "Content-Type": "application/gzip",
-      "Content-Disposition": `attachment; filename="myme-export-${date}.tar.gz"`,
+      "Content-Disposition": `attachment; filename="marfa-export-${date}.tar.gz"`,
     },
   });
 }

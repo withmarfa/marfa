@@ -16,9 +16,9 @@ export default [
             "packages/*/vitest.config.ts",
             "integrations/*/tsup.config.ts",
             "integrations/*/vitest.config.ts",
-            // T-244: the mymehq.inbox integration ships a nested
+            // T-244: the withmarfa.inbox integration ships a nested
             // Cloudflare Email Worker as its own workspace package
-            // (`integrations/mymehq-inbox/email-worker/`). Its
+            // (`integrations/withmarfa-inbox/email-worker/`). Its
             // vitest.config.ts also falls through to the default
             // project.
             "integrations/*/email-worker/vitest.config.ts",
@@ -29,7 +29,7 @@ export default [
           // eslint configs). Bumped to 30 in T-236 (google-tasks),
           // then 32 in T-237 (google-contacts), then 34 in T-241
           // (todoist), then 36 in T-242 (readwise), then 38 in T-243
-          // (raindrop), then 41 in T-244 (mymehq.inbox — adds the
+          // (raindrop), then 41 in T-244 (withmarfa.inbox — adds the
           // integration's tsup + vitest configs PLUS a sibling
           // email-worker subpackage that contributes a vitest.config
           // through the `integrations/*/email-worker/vitest.config.ts`

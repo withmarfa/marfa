@@ -1,5 +1,5 @@
 {
-  "name": "@mymehq/sdk",
+  "name": "@withmarfa/sdk",
   "version": "7.0.0",
   "type": "module",
   "publishConfig": {
@@ -26,10 +26,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@mymehq/shared": "workspace:*"
+    "@withmarfa/shared": "workspace:*"
   },
   "devDependencies": {
-    "@mymehq/server": "workspace:*",
+    "@withmarfa/server": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2"

@@ -25,7 +25,7 @@ import type {
   WorkerDispatchRequest,
 } from "./types.js";
 
-const tempRoot = mkdtempSync(join(tmpdir(), "myme-executor-test-"));
+const tempRoot = mkdtempSync(join(tmpdir(), "marfa-executor-test-"));
 
 afterAll(() => {
   rmSync(tempRoot, { recursive: true, force: true });

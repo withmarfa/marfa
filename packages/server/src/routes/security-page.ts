@@ -167,7 +167,7 @@ export function renderSecurityPage(params: SecurityPageParams): string {
 
   const bodyHtml = `
     <h1>Security</h1>
-    <p class="lede">Manage who has access to your Myme account.</p>
+    <p class="lede">Manage who has access to your Marfa account.</p>
     <p class="lede">Signed in as <strong>${safeEmail}</strong>.</p>
 
     ${noticeHtml}

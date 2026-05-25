@@ -1,13 +1,13 @@
 name: Sync openapi.json to docs
 
-# Copies the canonical openapi.json from mymehq/myme to mymehq/docs whenever
+# Copies the canonical openapi.json from withmarfa/marfa to withmarfa/docs whenever
 # it changes on main. Opens (or updates) a pull request on a stable branch
 # `sync/openapi-spec` in the docs repo — never commits directly. Re-runs with
 # no spec change are a no-op: peter-evans/create-pull-request does not open
 # empty PRs and does not push an empty commit.
 #
 # Auth: requires a fine-grained PAT stored as the `DOCS_SYNC_TOKEN` repo
-# secret. Scope: repository `mymehq/docs`, permissions `Contents: write` and
+# secret. Scope: repository `withmarfa/docs`, permissions `Contents: write` and
 # `Pull requests: write`.
 
 on:
@@ -23,18 +23,18 @@ concurrency:
 
 jobs:
   sync:
-    name: Sync openapi.json to mymehq/docs
+    name: Sync openapi.json to withmarfa/docs
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
     steps:
-      - name: Checkout myme (source of truth)
+      - name: Checkout marfa (source of truth)
         uses: actions/checkout@v6
 
-      - name: Checkout mymehq/docs
+      - name: Checkout withmarfa/docs
         uses: actions/checkout@v6
         with:
-          repository: mymehq/docs
+          repository: withmarfa/docs
           token: ${{ secrets.DOCS_SYNC_TOKEN }}
           path: docs-repo
           ref: main
@@ -49,10 +49,10 @@ jobs:
           token: ${{ secrets.DOCS_SYNC_TOKEN }}
           branch: sync/openapi-spec
           delete-branch: true
-          commit-message: "chore: sync openapi.json from myme"
-          title: "chore: sync openapi.json from myme"
+          commit-message: "chore: sync openapi.json from marfa"
+          title: "chore: sync openapi.json from marfa"
           body: |
-            Automated sync of `openapi.json` from mymehq/myme.
+            Automated sync of `openapi.json` from withmarfa/marfa.
 
             Source commit: `${{ github.sha }}`
             Triggered by workflow run ${{ github.run_id }}.

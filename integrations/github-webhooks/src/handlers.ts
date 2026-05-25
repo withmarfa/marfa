@@ -24,7 +24,7 @@ import {
   type WebhookHandlerInput,
   type HandlerResult,
   type CreateItemInput,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { DELIVERY_RING_SIZE } from "./manifest.js";
 
 const CURSOR_KEY = "delivery_ring";
@@ -122,7 +122,7 @@ export async function handleGithubWebhook(
   }
 
   try {
-    const created = await ctx.myme.createItem(bookmark);
+    const created = await ctx.marfa.createItem(bookmark);
     await ctx.activity.emit({
       severity: "info",
       summary: `github-webhooks: created ${event ?? "unknown"} bookmark ${created.id}`,
@@ -138,7 +138,7 @@ export async function handleGithubWebhook(
       summary: `github-webhooks: failed to create ${event ?? "unknown"} bookmark`,
       detail: { error: errorMessage(err), delivery_id: deliveryId },
     });
-    // Retry on Myme-side failures; the delivery is not yet
+    // Retry on Marfa-side failures; the delivery is not yet
     // recorded so the next attempt re-tries.
     return { ok: false, retry: true, reason: "create_failed" };
   }

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { Tenant, TenantConfig, TenantStatus } from "@mymehq/shared";
+import { generateId } from "@withmarfa/shared";
+import type { Tenant, TenantConfig, TenantStatus } from "@withmarfa/shared";
 import type { TenantStore } from "../interface.js";
 import { tenants } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";

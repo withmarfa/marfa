@@ -1,4 +1,4 @@
-# @mymehq/runtime-sdk
+# @withmarfa/runtime-sdk
 
 The SDK that Connection integrations import. Provides the handler-registration API, per-Connection state primitives, the connection-scoped client, echo suppression, and the dispatch glue both runtime substrates call into. Private package — workspace-only.
 
@@ -6,10 +6,10 @@ The SDK that Connection integrations import. Provides the handler-registration A
 
 Two exported entries (T-172 split):
 
-- **`@mymehq/runtime-sdk`** (root) — substrate-agnostic surface. Imported by integration handler modules and by both substrates. No dependency on `@cloudflare/workers-types` runtime symbols — handler code written against this entry is portable across substrates.
-- **`@mymehq/runtime-sdk/cloudflare`** — Cloudflare-specific bootstrap. `createIntegrationWorker`, the `PerConnectionState` Durable Object class, the DO storage proxy, the worker entry. Imported only by the hosted-substrate per-Integration Workers.
+- **`@withmarfa/runtime-sdk`** (root) — substrate-agnostic surface. Imported by integration handler modules and by both substrates. No dependency on `@cloudflare/workers-types` runtime symbols — handler code written against this entry is portable across substrates.
+- **`@withmarfa/runtime-sdk/cloudflare`** — Cloudflare-specific bootstrap. `createIntegrationWorker`, the `PerConnectionState` Durable Object class, the DO storage proxy, the worker entry. Imported only by the hosted-substrate per-Integration Workers.
 
-The split is the contract the Node-local runtime (`@mymehq/server/src/integrations/local-runtime/`) leaned on: the local substrate imports the root entry and supplies its own concrete state / dispatch wiring, without dragging Workers-runtime types into the Node server bundle.
+The split is the contract the Node-local runtime (`@withmarfa/server/src/integrations/local-runtime/`) leaned on: the local substrate imports the root entry and supplies its own concrete state / dispatch wiring, without dragging Workers-runtime types into the Node server bundle.
 
 Inside `src/`:
 
@@ -17,7 +17,7 @@ Inside `src/`:
 - `cloudflare/index.ts` — re-exports the Cloudflare bootstrap (`createIntegrationWorker`), the `PerConnectionState` DO class, the worker entry shim.
 - `handlers.ts` — handler `REGISTRY` and `dispatchMessage`. Module-singleton state — both substrates resolve to the same instance via shared's `noExternal` rule (see "Module singleton" below).
 - `per-connection-state.ts` — `PerConnectionStateCore`: the substrate-agnostic cursor / idempotency / recent-errors / next-run-at machinery. The Cloudflare DO subclasses it to add Workers-specific storage; the local substrate consumes it via the executor's in-memory adapter.
-- `connection-client.ts` — `ConnectionClient`: thin wrapper over `@mymehq/sdk` that stamps the cycle-metadata headers (`X-Myme-Cycle-Origin`, `X-Myme-Cycle-Hop`) and the connection's runtime credential.
+- `connection-client.ts` — `ConnectionClient`: thin wrapper over `@withmarfa/sdk` that stamps the cycle-metadata headers (`X-Marfa-Cycle-Origin`, `X-Marfa-Cycle-Hop`) and the connection's runtime credential.
 - `connection-context.ts` — `ConnectionContext`: the object passed into every handler invocation. Holds the client, cursor, activity emitter, dispatch metadata.
 - `cron.ts` — cron-expression resolution (`cron-parser`) for schedule handlers.
 - `cursor-store.ts` — cursor-window primitives.
@@ -27,13 +27,13 @@ Inside `src/`:
 
 ## Authoring rules
 
-- **Module singleton — both packages externalised.** `@mymehq/runtime-sdk` MUST be marked external in any bundle that loads integrations alongside it (the server bundle, the per-Integration Workers, the worker-entry script). The handler `REGISTRY` in `handlers.ts` is module-level state — if duplicated across the boundary the dispatch lookup silently misses. The same constraint applies to `@mymehq/shared` (the type / edge / zod-schema caches). The smoke at `pnpm --filter @mymehq/server run smoke:worker-entry` is the build-time tripwire.
+- **Module singleton — both packages externalised.** `@withmarfa/runtime-sdk` MUST be marked external in any bundle that loads integrations alongside it (the server bundle, the per-Integration Workers, the worker-entry script). The handler `REGISTRY` in `handlers.ts` is module-level state — if duplicated across the boundary the dispatch lookup silently misses. The same constraint applies to `@withmarfa/shared` (the type / edge / zod-schema caches). The smoke at `pnpm --filter @withmarfa/server run smoke:worker-entry` is the build-time tripwire.
 - **Substrate-agnostic by default.** New surface goes in the root entry unless it genuinely needs Workers types or runtime symbols. If it needs Cloudflare, it lives under `src/cloudflare/`.
 - **No `console.log`.** Handlers emit through `system.activity` (severity-tagged) via the `activity.ts` helpers; the substrate aggregates and persists.
 
 ## Build
 
-`tsup` produces both entry points: `dist/index.{js,d.ts}` and `dist/cloudflare/index.{js,d.ts}`. The package is consumed via the workspace link during dev and via the published `@mymehq/sdk` floor at release time (it depends on the SDK and `@mymehq/shared`).
+`tsup` produces both entry points: `dist/index.{js,d.ts}` and `dist/cloudflare/index.{js,d.ts}`. The package is consumed via the workspace link during dev and via the published `@withmarfa/sdk` floor at release time (it depends on the SDK and `@withmarfa/shared`).
 
 ## Testing
 

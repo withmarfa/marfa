@@ -24,8 +24,8 @@
  *
  * Outbound idempotency-on-retry: People API does NOT accept a
  * client-supplied id on `createContact`. The handler stores the
- * Myme item id in a `clientData` entry on the person —
- * `{ key: "myme-id", value: "<itemId>" }` — and on retry searches
+ * Marfa item id in a `clientData` entry on the person —
+ * `{ key: "marfa-id", value: "<itemId>" }` — and on retry searches
  * the connections list for an existing person carrying that
  * clientData marker before issuing a fresh insert.
  */
@@ -38,7 +38,7 @@ import {
   type HandlerResult,
   type CreateItemInput,
   type ItemResource,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import {
   PEOPLE_API_BASE,
   PERSON_FIELDS,
@@ -54,12 +54,12 @@ const PAGE_SIZE = 200;
 /** Hard cap on idempotency-search pages. */
 const SENTINEL_SEARCH_PAGE_LIMIT = 6;
 
-/** clientData key used to thread the Myme item id onto a created
+/** clientData key used to thread the Marfa item id onto a created
  *  contact for idempotency-on-retry recovery. */
-const MYME_ID_CLIENT_DATA_KEY = "myme-id";
+const MARFA_ID_CLIENT_DATA_KEY = "marfa-id";
 
 interface ContactsCursor {
-  /** People API `resourceName` (e.g. `people/c123`) -> Myme item id. */
+  /** People API `resourceName` (e.g. `people/c123`) -> Marfa item id. */
   mappings: Record<string, string>;
   /** Opaque syncToken. Null on cold start AND after a 410. */
   syncToken: string | null;
@@ -75,7 +75,7 @@ async function resolveConnectionConfig(
   ctx: ConnectionContext,
 ): Promise<ConnectionConfig> {
   try {
-    const connection = await ctx.myme.getItem(ctx.connection_id);
+    const connection = await ctx.marfa.getItem(ctx.connection_id);
     const props = connection?.properties as
       | { configuration?: Record<string, unknown> }
       | undefined;
@@ -209,7 +209,7 @@ export async function handleSchedule(
 
     let response: Response;
     try {
-      response = await ctx.myme.proxyRequest("GET", path);
+      response = await ctx.marfa.proxyRequest("GET", path);
     } catch (err) {
       return reportFailure(
         ctx,
@@ -259,7 +259,7 @@ export async function handleSchedule(
       if (person.metadata?.deleted === true) {
         if (myme_id !== undefined) {
           try {
-            await ctx.myme.transitionItem(myme_id, "trashed");
+            await ctx.marfa.transitionItem(myme_id, "trashed");
             trashed += 1;
             Reflect.deleteProperty(cursor.mappings, resourceName);
           } catch (err) {
@@ -282,9 +282,9 @@ export async function handleSchedule(
       const input = buildPersonInput(person, config.target_type);
       try {
         if (myme_id !== undefined) {
-          await ctx.myme.updateItem(myme_id, input);
+          await ctx.marfa.updateItem(myme_id, input);
         } else {
-          const created = await ctx.myme.createItem({
+          const created = await ctx.marfa.createItem({
             ...input,
             source_id: resourceName,
           });
@@ -346,7 +346,7 @@ export async function handleItemEvent(
     last_inbound_at: null,
   };
 
-  const item = await ctx.myme.getItem(message.item_id);
+  const item = await ctx.marfa.getItem(message.item_id);
   if (item === null) {
     return ackHandledIfMappedAsDelete(ctx, cursor, message.item_id);
   }
@@ -360,7 +360,7 @@ export async function handleItemEvent(
   if (item.state === "trashed") {
     if (externalId !== null) {
       const path = `${PEOPLE_API_BASE}/${encodeResourceName(externalId)}:deleteContact`;
-      const resp = await ctx.myme.proxyRequest("DELETE", path);
+      const resp = await ctx.marfa.proxyRequest("DELETE", path);
       if (!resp.ok && resp.status !== 404 && resp.status !== 410) {
         return reportOutboundFailure(ctx, "DELETE", externalId, resp);
       }
@@ -375,7 +375,7 @@ export async function handleItemEvent(
   }
 
   if (externalId === null) {
-    const existing = await findExistingByMymeIdMarker(ctx, item.id);
+    const existing = await findExistingByMarfaIdMarker(ctx, item.id);
     if (existing !== null) {
       cursor.mappings[existing.resourceName] = item.id;
       await ctx.echo.trackOutboundWrite(
@@ -385,15 +385,15 @@ export async function handleItemEvent(
       await ctx.cursor.write(CURSOR_KEY, cursor);
       await ctx.activity.emit({
         severity: "info",
-        summary: `google-contacts outbound: idempotent recovery for Myme item ${item.id}`,
+        summary: `google-contacts outbound: idempotent recovery for Marfa item ${item.id}`,
       });
       return { ok: true };
     }
 
     const payload = buildPeoplePayload(item);
-    payload.clientData = [{ key: MYME_ID_CLIENT_DATA_KEY, value: item.id }];
+    payload.clientData = [{ key: MARFA_ID_CLIENT_DATA_KEY, value: item.id }];
     const postPath = `${PEOPLE_API_BASE}/people:createContact?personFields=${encodeURIComponent(PERSON_FIELDS)}`;
-    const resp = await ctx.myme.proxyRequest("POST", postPath, payload);
+    const resp = await ctx.marfa.proxyRequest("POST", postPath, payload);
     if (!resp.ok) {
       return reportOutboundFailure(ctx, "POST", "(new)", resp);
     }
@@ -428,11 +428,11 @@ async function updateContactWithRefetchOnStaleEtag(
     payload.etag = props.etag;
   }
   const path = `${PEOPLE_API_BASE}/${encodeResourceName(externalId)}:updateContact?updatePersonFields=${encodeURIComponent(UPDATE_PERSON_FIELDS)}&personFields=${encodeURIComponent(PERSON_FIELDS)}`;
-  const resp = await ctx.myme.proxyRequest("PATCH", path, payload);
+  const resp = await ctx.marfa.proxyRequest("PATCH", path, payload);
 
   if (resp.status === 409 && attemptCount === 0) {
     const getPath = `${PEOPLE_API_BASE}/${encodeResourceName(externalId)}?personFields=${encodeURIComponent(PERSON_FIELDS)}`;
-    const getResp = await ctx.myme.proxyRequest("GET", getPath);
+    const getResp = await ctx.marfa.proxyRequest("GET", getPath);
     if (!getResp.ok) {
       return reportOutboundFailure(ctx, "GET (after 409)", externalId, getResp);
     }
@@ -467,7 +467,7 @@ export function registerHandlers(): void {
   registerItemEventHandler(handleItemEvent);
 }
 
-async function findExistingByMymeIdMarker(
+async function findExistingByMarfaIdMarker(
   ctx: ConnectionContext,
   mymeItemId: string,
 ): Promise<PersonResource | null> {
@@ -481,7 +481,7 @@ async function findExistingByMymeIdMarker(
     const path = `${PEOPLE_API_BASE}/people/me/connections?${params.toString()}`;
     let resp: Response;
     try {
-      resp = await ctx.myme.proxyRequest("GET", path);
+      resp = await ctx.marfa.proxyRequest("GET", path);
     } catch {
       return null;
     }
@@ -497,7 +497,7 @@ async function findExistingByMymeIdMarker(
       if (
         Array.isArray(cd) &&
         cd.some(
-          (e) => e.key === MYME_ID_CLIENT_DATA_KEY && e.value === mymeItemId,
+          (e) => e.key === MARFA_ID_CLIENT_DATA_KEY && e.value === mymeItemId,
         )
       ) {
         return person;
@@ -726,7 +726,7 @@ async function ackHandledIfMappedAsDelete(
   const externalId = findExternalIdFor(cursor, myme_id);
   if (externalId === null) return { ok: true };
   const path = `${PEOPLE_API_BASE}/${encodeResourceName(externalId)}:deleteContact`;
-  const resp = await ctx.myme.proxyRequest("DELETE", path);
+  const resp = await ctx.marfa.proxyRequest("DELETE", path);
   if (!resp.ok && resp.status !== 404 && resp.status !== 410) {
     return reportOutboundFailure(ctx, "DELETE", externalId, resp);
   }

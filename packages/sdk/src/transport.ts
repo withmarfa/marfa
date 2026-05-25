@@ -1,6 +1,6 @@
-import type { ConflictResponse, ErrorResponse } from "@mymehq/shared";
+import type { ConflictResponse, ErrorResponse } from "@withmarfa/shared";
 import {
-  MymeError,
+  MarfaError,
   NotFoundError,
   ValidationError,
   UnauthorizedError,
@@ -8,7 +8,7 @@ import {
 } from "./errors.js";
 
 /** Minimal TokenProvider shape — keeps this transport file independent
- *  of the @mymehq/sdk/auth subpath so the data root doesn't drag the
+ *  of the @withmarfa/sdk/auth subpath so the data root doesn't drag the
  *  auth bundle into headless consumers. */
 interface TokenProviderLike {
   getAccessToken(): Promise<string>;
@@ -40,7 +40,7 @@ export class HttpTransport {
     this.tokenProvider = config.tokenProvider;
     if (!this.apiKey && !this.tokenProvider) {
       throw new Error(
-        "MymeClient requires either { apiKey } or { tokenProvider }",
+        "MarfaClient requires either { apiKey } or { tokenProvider }",
       );
     }
     this.fetch = config.fetch ?? globalThis.fetch.bind(globalThis);
@@ -52,9 +52,9 @@ export class HttpTransport {
   private async getAuthHeader(): Promise<string> {
     if (this.apiKey) return `Bearer ${this.apiKey}`;
     if (!this.tokenProvider) {
-      throw new MymeError(
+      throw new MarfaError(
         "configuration_error",
-        "MymeClient has no apiKey or tokenProvider — this should be unreachable",
+        "MarfaClient has no apiKey or tokenProvider — this should be unreachable",
         0,
       );
     }
@@ -88,11 +88,11 @@ export class HttpTransport {
    * internally so this sibling exists to thread it back out.
    *
    * Error behaviour matches {@link request}: non-2xx responses throw the
-   * appropriate typed `MymeError` subclass via `throwForError`, never
+   * appropriate typed `MarfaError` subclass via `throwForError`, never
    * resolve. 204 No Content resolves with `data: undefined as T` and
    * `status: 204`.
    *
-   * Internal — not part of the public SDK surface. The exported `MymeClient`
+   * Internal — not part of the public SDK surface. The exported `MarfaClient`
    * keeps callers at the namespace-method level (`client.items.upsert`,
    * etc.) so the transport's status-passing remains an implementation
    * detail.
@@ -196,7 +196,7 @@ export class HttpTransport {
       return await this.fetch(url, init);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        throw new MymeError(
+        throw new MarfaError(
           "timeout",
           `Request to ${path} timed out after ${String(effectiveTimeoutMs)}ms`,
           0,
@@ -205,7 +205,7 @@ export class HttpTransport {
         );
       }
       const reason = err instanceof Error ? err.message : String(err);
-      throw new MymeError(
+      throw new MarfaError(
         "network_error",
         `Network request to ${path} failed: ${reason}`,
         0,
@@ -222,7 +222,7 @@ export class HttpTransport {
       return (await response.json()) as T;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      throw new MymeError(
+      throw new MarfaError(
         "parse_error",
         `Failed to parse response body as JSON (HTTP ${String(response.status)}): ${reason}`,
         0,
@@ -264,7 +264,7 @@ export class HttpTransport {
     // Server-supplied code, passed through to preserve specificity
     // (bulk_cap_exceeded, edge_not_found, reset_disabled, …). Typed
     // subclasses fall back to their canonical code when the server
-    // omits one; the generic MymeError path surfaces "unknown" in that
+    // omits one; the generic MarfaError path surfaces "unknown" in that
     // case to preserve the shape tested in transport.test.ts.
     const serverCode = errObj?.code;
 
@@ -278,7 +278,7 @@ export class HttpTransport {
       case 404:
         throw new NotFoundError(message, details, serverCode);
       default:
-        throw new MymeError(serverCode ?? "unknown", message, status, details);
+        throw new MarfaError(serverCode ?? "unknown", message, status, details);
     }
   }
 }

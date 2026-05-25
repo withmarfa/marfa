@@ -31,7 +31,7 @@ interface Ctx {
 
 async function makeStorage(): Promise<Ctx> {
   const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
-  const tmpDir = mkdtempSync(join(tmpdir(), "myme-grandfather-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-grandfather-test-"));
   let storage: Storage;
   let pgCleanup: (() => Promise<void>) | undefined;
   if (dialect === "pg") {

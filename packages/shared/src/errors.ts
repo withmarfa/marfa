@@ -1,6 +1,6 @@
 import type { ErrorResponse } from "./types.js";
 
-/** All error codes used across the Myme API. */
+/** All error codes used across the Marfa API. */
 export enum ErrorCode {
   NOT_FOUND = "not_found",
   ITEM_NOT_FOUND = "item_not_found",
@@ -24,7 +24,7 @@ export enum ErrorCode {
    * emit the flat RFC error shape (`{ error: "invalid_request", ... }`)
    * directly for spec compliance; this enum entry exists so non-OAuth
    * call sites that want a generic "the request itself is malformed"
-   * code can throw a `MymeError` instead of leaning on `VALIDATION_ERROR`
+   * code can throw a `MarfaError` instead of leaning on `VALIDATION_ERROR`
    * (which is reserved for body-shape failures).
    */
   INVALID_REQUEST = "invalid_request",
@@ -215,7 +215,7 @@ export enum ErrorCode {
   // Email transport (Wave C PR1)
   // ---------------------------------------------------------------------
   /**
-   * The server has no email backend configured (`MYME_EMAIL_BACKEND`
+   * The server has no email backend configured (`MARFA_EMAIL_BACKEND`
    * unset or `none`) but a flow that depends on outbound email was
    * invoked (forgot-password, magic-link, email-verify). Operators
    * configure a backend to enable these flows; the alternative is a
@@ -333,7 +333,7 @@ export function httpStatus(code: ErrorCode): number {
  * Structured error with code, HTTP status, and optional details.
  * Used throughout the server and SDK for consistent error handling.
  */
-export class MymeError extends Error {
+export class MarfaError extends Error {
   readonly code: ErrorCode;
   readonly status: number;
   readonly details?: Record<string, unknown>;
@@ -344,7 +344,7 @@ export class MymeError extends Error {
     details?: Record<string, unknown>,
   ) {
     super(message);
-    this.name = "MymeError";
+    this.name = "MarfaError";
     this.code = code;
     this.status = STATUS_MAP[code];
     this.details = details;

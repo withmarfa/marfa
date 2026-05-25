@@ -6,7 +6,7 @@ import type {
   MergePolicy,
   MergeStrategy,
   Tier,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { HttpTransport } from "./transport.js";
 import { ConflictError } from "./errors.js";
 

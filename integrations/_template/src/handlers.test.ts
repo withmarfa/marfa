@@ -5,7 +5,7 @@
  * tests build a ConnectionContext from in-memory pieces and assert the
  * observable side effects (cursor advanced, activity emitted).
  *
- * The full @mymehq/runtime-test harness ships in PR 5; this test
+ * The full @withmarfa/runtime-test harness ships in PR 5; this test
  * builds the context inline because the helpers it needs are tiny.
  */
 import { describe, it, expect } from "vitest";
@@ -16,7 +16,7 @@ import {
   type ConnectionContext,
   type ConnectionClient,
   type CreateItemInput,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleWebhook, handleItemEvent } from "./handlers.js";
 
 interface InMemoryStorage {
@@ -59,8 +59,8 @@ function buildContext(connectionId = "conn_template_test"): {
   } as unknown as ConnectionClient;
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "myme.template",
-    myme: client,
+    integration_name: "marfa.template",
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
@@ -74,7 +74,7 @@ describe("template integration handlers", () => {
     const { ctx, emitted } = buildContext();
     const result = await handleSchedule(ctx, {
       kind: "schedule",
-      integration_name: "myme.template",
+      integration_name: "marfa.template",
       connection_id: "conn_template_test",
       scheduled_for_ms: 1_700_000_000_000,
     });
@@ -94,13 +94,13 @@ describe("template integration handlers", () => {
     const { ctx } = buildContext();
     await handleSchedule(ctx, {
       kind: "schedule",
-      integration_name: "myme.template",
+      integration_name: "marfa.template",
       connection_id: "conn_template_test",
       scheduled_for_ms: 1_700_000_000_000,
     });
     await handleSchedule(ctx, {
       kind: "schedule",
-      integration_name: "myme.template",
+      integration_name: "marfa.template",
       connection_id: "conn_template_test",
       scheduled_for_ms: 1_700_000_300_000,
     });
@@ -125,7 +125,7 @@ describe("template integration handlers", () => {
     const { ctx, emitted } = buildContext();
     await handleItemEvent(ctx, {
       kind: "item-event",
-      integration_name: "myme.template",
+      integration_name: "marfa.template",
       connection_id: "conn_template_test",
       event_type: "updated",
       item_id: "item_1",

@@ -1,11 +1,11 @@
 /**
- * ConnectionClient — a thin Myme HTTP client scoped to a single
+ * ConnectionClient — a thin Marfa HTTP client scoped to a single
  * Connection's runtime credential.
  *
- * Wraps the global `fetch` rather than @mymehq/sdk's MymeClient
+ * Wraps the global `fetch` rather than @withmarfa/sdk's MarfaClient
  * because:
  *   1. The runtime-sdk runs on Cloudflare Workers (no Node Buffer);
- *      MymeClient pulls in HTTP machinery designed for Node.
+ *      MarfaClient pulls in HTTP machinery designed for Node.
  *   2. We want refresh-on-401 to live here so the underlying API is
  *      stateless from the integration's point of view — the client
  *      transparently calls the lease broker again when the cached
@@ -24,17 +24,17 @@ import {
 
 /**
  * Headers that propagate the cycle metadata from a connector reaction
- * back to the Myme server (T-039). Mirror the server's
+ * back to the Marfa server (T-039). Mirror the server's
  * `middleware/cycle.ts:CYCLE_HEADERS` constant. Cross-package contract —
  * change in lockstep.
  */
 export const CYCLE_HEADERS = {
-  ORIGIN: "X-Myme-Cycle-Origin",
-  HOP: "X-Myme-Cycle-Hop",
+  ORIGIN: "X-Marfa-Cycle-Origin",
+  HOP: "X-Marfa-Cycle-Hop",
 } as const;
 
 export interface ConnectionClientOptions {
-  /** Base URL of the Myme server (e.g. `https://myme.so`). */
+  /** Base URL of the Marfa server (e.g. `https://marfa.so`). */
   apiUrl: string;
   /** Initial runtime credential. The client refreshes via
    *  `refreshCredential` on 401. */
@@ -49,8 +49,8 @@ export interface ConnectionClientOptions {
    * Parent cycle metadata for this run (T-039). When the connector is
    * reacting to an `ItemEventMessage`, pass `message.cycle`. When it's
    * a fresh schedule / webhook trigger (or any other non-reactive
-   * source), pass `null`. The client stamps `X-Myme-Cycle-Origin` /
-   * `X-Myme-Cycle-Hop` on every mutating request, computing the next
+   * source), pass `null`. The client stamps `X-Marfa-Cycle-Origin` /
+   * `X-Marfa-Cycle-Hop` on every mutating request, computing the next
    * hop via `nextHopMetadata(cycleParent, connection_id)`.
    *
    * **Always the parent**, never pre-incremented. The client computes
@@ -139,8 +139,8 @@ export class ConnectionClient {
   private readonly fetchImpl: typeof fetch;
   /**
    * Parent cycle metadata for this run, captured at construction time
-   * (T-039). The client stamps `X-Myme-Cycle-Origin` /
-   * `X-Myme-Cycle-Hop` on every mutating request via
+   * (T-039). The client stamps `X-Marfa-Cycle-Origin` /
+   * `X-Marfa-Cycle-Hop` on every mutating request via
    * `nextHopMetadata(this.cycleParent, this.credential.connection_id)`.
    * `null` for handlers triggered by schedule / webhook (fresh chain
    * head); set to `message.cycle` for handlers triggered by an
@@ -181,7 +181,7 @@ export class ConnectionClient {
       // the bare ItemResource. Pre-fix every handler that read
       // `item.id` / `item.properties.<x>` saw `undefined` (visible
       // during T-236's hosted Marfa walkthrough — the outbound task
-      // landed on Google with `title: null` and `notes: "[myme-id:undefined]"`).
+      // landed on Google with `title: null` and `notes: "[marfa-id:undefined]"`).
       const wrapped = await this.request<{ item: ItemResource } | ItemResource>(
         "GET",
         `/items/${id}`,
@@ -191,7 +191,7 @@ export class ConnectionClient {
       }
       return wrapped as ItemResource;
     } catch (err) {
-      if (err instanceof MymeApiError && err.status === 404) return null;
+      if (err instanceof MarfaApiError && err.status === 404) return null;
       throw err;
     }
   }
@@ -336,7 +336,7 @@ export class ConnectionClient {
   }
 
   /**
-   * Upload bytes as a content-addressed Myme blob (T-239). Forwards
+   * Upload bytes as a content-addressed Marfa blob (T-239). Forwards
    * to the server's `POST /blobs` route using this connection's
    * runtime credential — tenant scoping, dedup, and per-tenant
    * `blobs` + `storage_bytes` quotas are enforced server-side. The
@@ -406,7 +406,7 @@ export class ConnectionClient {
    * `request` (JSON body) and `uploadBlob` (raw bytes body). The
    * caller controls `contentType` + `body`; this helper just stamps
    * the bearer, optionally adds cycle headers, retries once on 401,
-   * and surfaces non-2xx as `MymeApiError`.
+   * and surfaces non-2xx as `MarfaApiError`.
    */
   private async fetchJson<T>(
     method: string,
@@ -443,15 +443,15 @@ export class ConnectionClient {
     let res = await doFetch();
     if (res.status === 401) {
       // Single-flight refresh: cache miss / expired. Refresh and retry
-      // exactly once; persistent 401 surfaces as MymeApiError.
+      // exactly once; persistent 401 surfaces as MarfaApiError.
       this.credential = await this.refreshCredential();
       res = await doFetch();
     }
 
     if (!res.ok) {
       const text = await res.text();
-      throw new MymeApiError(
-        `Myme API ${String(res.status)} ${res.statusText} ${method} ${path}: ${text}`,
+      throw new MarfaApiError(
+        `Marfa API ${String(res.status)} ${res.statusText} ${method} ${path}: ${text}`,
         res.status,
       );
     }
@@ -464,7 +464,7 @@ export class ConnectionClient {
  * Coerce a caller-supplied `content` value into a `BodyInit` the
  * Workers / Node `fetch` accepts as a raw-bytes body. Rejects
  * anything that isn't bytes — strings, streams, nulls all surface a
- * clear `MymeApiError` at the SDK boundary rather than being
+ * clear `MarfaApiError` at the SDK boundary rather than being
  * silently misinterpreted by `fetch`.
  *
  * Returned shape:
@@ -476,7 +476,7 @@ export class ConnectionClient {
 function toUploadBytes(content: UploadBlobInput["content"]): Uint8Array {
   if (content instanceof Uint8Array) return content;
   if (content instanceof ArrayBuffer) return new Uint8Array(content);
-  throw new MymeApiError(
+  throw new MarfaApiError(
     `uploadBlob: content must be Uint8Array, ArrayBuffer, or Buffer (got ${describeContent(content)})`,
     0,
   );
@@ -494,11 +494,11 @@ function describeContent(content: unknown): string {
   return typeof content;
 }
 
-export class MymeApiError extends Error {
+export class MarfaApiError extends Error {
   readonly status: number;
   constructor(message: string, status: number) {
     super(message);
     this.status = status;
-    this.name = "MymeApiError";
+    this.name = "MarfaApiError";
   }
 }

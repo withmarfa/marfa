@@ -19,11 +19,11 @@ export interface WebhookVerifyResult {
 }
 
 export interface VerifyWebhookSignatureInput {
-  /** The `X-Myme-Signature` header value as received. */
+  /** The `X-Marfa-Signature` header value as received. */
   header: string | null | undefined;
   /** The raw HTTP request body, exactly as received (pre-JSON-parse). */
   rawBody: string;
-  /** The webhook secret shared with the Myme server. */
+  /** The webhook secret shared with the Marfa server. */
   secret: string;
   /**
    * Maximum age (seconds in the past) to accept. Default 300 (5 min).
@@ -46,8 +46,8 @@ export interface VerifyWebhookSignatureInput {
 const STRIPE_HEADER_RE = /^t=(\d+),v1=([0-9a-f]+)$/;
 
 /**
- * Verify a webhook signature produced by the Myme server. The server
- * emits `X-Myme-Signature: t=<unix>,v1=<hex-sha256>` where the HMAC
+ * Verify a webhook signature produced by the Marfa server. The server
+ * emits `X-Marfa-Signature: t=<unix>,v1=<hex-sha256>` where the HMAC
  * signs `<timestamp>.<raw-body>`.
  *
  * Pass the raw body string exactly as received (before JSON.parse) and

@@ -39,7 +39,7 @@
  * the upgrade flow on purpose.
  */
 import { randomBytes } from "node:crypto";
-import { ErrorCode, MymeError, type IntegrationManifest } from "@mymehq/shared";
+import { ErrorCode, MarfaError, type IntegrationManifest } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 
@@ -196,7 +196,7 @@ export async function performInstall(
       input.tenantId,
     );
     if (candidate?.type !== "system.credential") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INVALID_REQUEST,
         `credential_ref ${input.credentialRef} does not resolve to a system.credential item in this tenant`,
         { credential_ref: input.credentialRef },
@@ -208,7 +208,7 @@ export async function performInstall(
     // upstream_base_url + an encrypted secret; the connection-proxy
     // branches at request time on `kind`.
     if (credProps.kind !== "oauth_token" && credProps.kind !== "api_token") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INVALID_REQUEST,
         `credential_ref ${input.credentialRef} resolves to a system.credential of kind '${String(credProps.kind)}'; expected 'oauth_token' or 'api_token'`,
         { credential_ref: input.credentialRef, kind: credProps.kind },

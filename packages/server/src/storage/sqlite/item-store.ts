@@ -22,10 +22,10 @@ import {
   validateProperties,
   validateTransition,
   parseFilter,
-  MymeError,
+  MarfaError,
   ErrorCode,
   SYSTEM_DEFAULT_STATE,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import { resolveMergePolicy } from "../policy.js";
 import { filterToSqlConditions } from "../filter-sql.js";
 import type {
@@ -35,7 +35,7 @@ import type {
   ConflictResponse,
   ItemState,
   PaginatedResult,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { ItemStore, ItemFilters, ItemGetOptions } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { detectConflict } from "../conflict.js";
@@ -95,7 +95,7 @@ export class SqliteItemStore implements ItemStore {
   async create(input: CreateItemInput, tenantId?: string): Promise<Item> {
     const id = input.id ?? generateId();
     if (input.id && !isValidId(input.id)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
     }
 
     // Validate properties against type schema if registered; accept unknown types
@@ -104,7 +104,7 @@ export class SqliteItemStore implements ItemStore {
     if (typeSchema && Object.keys(input.properties).length > 0) {
       const validation = validateProperties(input.type, input.properties);
       if (!validation.success) {
-        throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
+        throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
           errors: validation.errors,
         });
       }
@@ -126,7 +126,7 @@ export class SqliteItemStore implements ItemStore {
           .where(and(...dedupConditions))
           .get();
         if (existing) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.DUPLICATE_SOURCE,
             `Item with source=${input.source} source_id=${input.source_id} already exists`,
             { existing_id: existing.id },
@@ -454,10 +454,10 @@ export class SqliteItemStore implements ItemStore {
     return await this.db.transaction(async (tx) => {
       const row = await tx.select().from(items).where(whereClause).get();
       if (!row) {
-        throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+        throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
       }
       if (row.state === "trashed") {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.INVALID_TRANSITION,
           "Cannot update trashed item",
         );
@@ -532,7 +532,7 @@ export class SqliteItemStore implements ItemStore {
           await tx.update(items).set(setClause).where(whereClause).run();
         } catch (err) {
           if (isSourceDedupViolation(err)) {
-            throw new MymeError(
+            throw new MarfaError(
               ErrorCode.SOURCE_ID_CONFLICT,
               `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? "unknown"}"`,
               { source: row.source, source_id: input.source_id },
@@ -614,7 +614,7 @@ export class SqliteItemStore implements ItemStore {
         await tx.update(items).set(mergeSet).where(whereClause).run();
       } catch (err) {
         if (isSourceDedupViolation(err)) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.SOURCE_ID_CONFLICT,
             `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? "unknown"}"`,
             { source: row.source, source_id: input.source_id },
@@ -642,7 +642,7 @@ export class SqliteItemStore implements ItemStore {
   async delete(id: string, tenantId?: string): Promise<void> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     await this.db
@@ -657,10 +657,10 @@ export class SqliteItemStore implements ItemStore {
   async purge(id: string, tenantId?: string): Promise<void> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     if (row.state !== "trashed") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Only trashed items can be purged",
       );
@@ -736,10 +736,10 @@ export class SqliteItemStore implements ItemStore {
   async restore(id: string, tenantId?: string): Promise<Item> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     if (row.state !== "trashed") {
-      throw new MymeError(ErrorCode.INVALID_TRANSITION, "Item is not trashed");
+      throw new MarfaError(ErrorCode.INVALID_TRANSITION, "Item is not trashed");
     }
 
     const now = new Date().toISOString();
@@ -761,12 +761,12 @@ export class SqliteItemStore implements ItemStore {
   ): Promise<Item> {
     const row = await this.getRaw(id, tenantId);
     if (!row) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     const error = validateTransition(row.type, row.state, state);
     if (error) {
-      throw new MymeError(ErrorCode.INVALID_TRANSITION, error);
+      throw new MarfaError(ErrorCode.INVALID_TRANSITION, error);
     }
 
     // State transitions always create a version snapshot

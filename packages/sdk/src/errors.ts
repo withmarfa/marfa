@@ -1,11 +1,11 @@
-import type { ConflictSnapshot } from "@mymehq/shared";
+import type { ConflictSnapshot } from "@withmarfa/shared";
 
 /**
  * Base error thrown from every SDK HTTP failure path. Consumers catch on
  * this class or one of its typed subclasses (`NotFoundError`,
  * `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).
  *
- * Deliberately distinct from the `MymeError` in `@mymehq/shared`. The
+ * Deliberately distinct from the `MarfaError` in `@withmarfa/shared`. The
  * shared version is constructed server-side from an `ErrorCode` enum and
  * derives its HTTP status through an internal map; this SDK version is
  * constructed from an error response on the wire, so `code` is an opaque
@@ -14,7 +14,7 @@ import type { ConflictSnapshot } from "@mymehq/shared";
  * actually returned. The two classes serve symmetrical but distinct
  * roles; do not try to unify them.
  */
-export class MymeError extends Error {
+export class MarfaError extends Error {
   readonly code: string;
   readonly status: number;
   readonly details?: Record<string, unknown>;
@@ -27,7 +27,7 @@ export class MymeError extends Error {
     cause?: unknown,
   ) {
     super(message, cause !== undefined ? { cause } : undefined);
-    this.name = "MymeError";
+    this.name = "MarfaError";
     this.code = code;
     this.status = status;
     this.details = details;
@@ -43,7 +43,7 @@ export class MymeError extends Error {
  * `code` field. When the server omits a code, the canonical value for
  * the status family is used as a fallback.
  */
-export class NotFoundError extends MymeError {
+export class NotFoundError extends MarfaError {
   constructor(
     message: string,
     details?: Record<string, unknown>,
@@ -54,7 +54,7 @@ export class NotFoundError extends MymeError {
   }
 }
 
-export class ValidationError extends MymeError {
+export class ValidationError extends MarfaError {
   constructor(
     message: string,
     details?: Record<string, unknown>,
@@ -65,7 +65,7 @@ export class ValidationError extends MymeError {
   }
 }
 
-export class UnauthorizedError extends MymeError {
+export class UnauthorizedError extends MarfaError {
   constructor(
     message: string,
     details?: Record<string, unknown>,
@@ -76,7 +76,7 @@ export class UnauthorizedError extends MymeError {
   }
 }
 
-export class ForbiddenError extends MymeError {
+export class ForbiddenError extends MarfaError {
   constructor(
     message: string,
     details?: Record<string, unknown>,
@@ -87,7 +87,7 @@ export class ForbiddenError extends MymeError {
   }
 }
 
-export class ConflictError extends MymeError {
+export class ConflictError extends MarfaError {
   readonly current: ConflictSnapshot;
   readonly ancestor: ConflictSnapshot;
   readonly conflictingFields: string[];
@@ -114,7 +114,7 @@ export class ConflictError extends MymeError {
  * The envelope carries the partial-count state; the SDK surfaces it
  * via this error subclass so callers can react explicitly.
  */
-export class BulkJobCancelledError extends MymeError {
+export class BulkJobCancelledError extends MarfaError {
   readonly jobId: string;
   readonly processed: number;
   readonly succeeded: number;
@@ -144,7 +144,7 @@ export class BulkJobCancelledError extends MymeError {
  * problem). The `error` field on the envelope carries the underlying
  * reason; surfaced via this subclass.
  */
-export class BulkJobFailedError extends MymeError {
+export class BulkJobFailedError extends MarfaError {
   readonly jobId: string;
   readonly reason: string;
   constructor(args: { jobId: string; reason: string }) {

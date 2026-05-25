@@ -2,15 +2,15 @@
  * T-144 multi-hop integration test.
  *
  * The pre-existing `cycle-attribution.test.ts` covers individual hops
- * (a single inbound `X-Myme-Cycle-*` header pair → published event
+ * (a single inbound `X-Marfa-Cycle-*` header pair → published event
  * carries the right origin / hop count). What it does not cover is a
  * full closed loop where the chain is conn-A → conn-B → conn-A → … and
  * the budget gate eventually trips. T-144 calls for that end-to-end
  * coverage in a single integration test.
  *
  * The test drives the loop by issuing successive `POST /items` requests
- * with mounting `X-Myme-Cycle-Hop` values under a fixed
- * `X-Myme-Cycle-Origin`, alternating an `X-Myme-Connector-Tag` (purely
+ * with mounting `X-Marfa-Cycle-Hop` values under a fixed
+ * `X-Marfa-Cycle-Origin`, alternating an `X-Marfa-Connector-Tag` (purely
  * informational — connection identity for the test reader; the server
  * resolves cycle metadata from headers regardless). Each step asserts
  * the emitted event's cycle stamp; the final overflow step asserts the
@@ -110,8 +110,8 @@ describe("cycle multi-hop A→B→A→… loop (T-144)", () => {
       const res = await request(ctx.app, "POST", "/items", {
         key: ctx.adminKey,
         headers: {
-          "X-Myme-Cycle-Origin": origin,
-          "X-Myme-Cycle-Hop": String(hop),
+          "X-Marfa-Cycle-Origin": origin,
+          "X-Marfa-Cycle-Hop": String(hop),
         },
         body: {
           type: "core.task",
@@ -139,8 +139,8 @@ describe("cycle multi-hop A→B→A→… loop (T-144)", () => {
     const overflowRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       headers: {
-        "X-Myme-Cycle-Origin": origin,
-        "X-Myme-Cycle-Hop": String(overflowHop),
+        "X-Marfa-Cycle-Origin": origin,
+        "X-Marfa-Cycle-Hop": String(overflowHop),
       },
       body: {
         type: "core.task",

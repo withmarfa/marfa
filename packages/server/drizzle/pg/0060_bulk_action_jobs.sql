@@ -60,5 +60,5 @@ DROP POLICY IF EXISTS "bulk_action_jobs_tenant_isolation" ON "bulk_action_jobs";
 --> statement-breakpoint
 CREATE POLICY "bulk_action_jobs_tenant_isolation" ON "bulk_action_jobs"
   FOR ALL TO "myme_app"
-  USING (tenant_id = current_setting('myme.tenant_id', true)
+  USING (tenant_id = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);

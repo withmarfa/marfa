@@ -55,7 +55,7 @@
     },
     "deleted": {
       "type": "boolean",
-      "description": "Tasks API `deleted` flag (surfaces when `showDeleted=true` is passed on the list). Handler maps a true value to a Myme tombstone (state-trashed) rather than persisting the flag literally."
+      "description": "Tasks API `deleted` flag (surfaces when `showDeleted=true` is passed on the list). Handler maps a true value to a Marfa tombstone (state-trashed) rather than persisting the flag literally."
     }
   },
   "required": ["title"],

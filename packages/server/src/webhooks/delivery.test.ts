@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
-import type { Item, Webhook, WebhookDelivery } from "@mymehq/shared";
+import type { Item, Webhook, WebhookDelivery } from "@withmarfa/shared";
 import type {
   PendingWebhookDelivery,
   WebhookDeliveryStore,
@@ -298,7 +298,7 @@ describe("WebhookPoller retry behaviour", () => {
     ]);
   });
 
-  it("emits a Stripe-style X-Myme-Signature header signed over timestamp.body", async () => {
+  it("emits a Stripe-style X-Marfa-Signature header signed over timestamp.body", async () => {
     const captured: { header: string | null; body: string } = {
       header: null,
       body: "",
@@ -306,7 +306,7 @@ describe("WebhookPoller retry behaviour", () => {
     const fetchSpy = vi.fn(
       (_url: string | URL, init?: RequestInit): Promise<Response> => {
         const headers = new Headers(init?.headers);
-        captured.header = headers.get("x-myme-signature");
+        captured.header = headers.get("x-marfa-signature");
         const b = init?.body;
         captured.body = typeof b === "string" ? b : "";
         return Promise.resolve(new Response(null, { status: 200 }));
@@ -552,7 +552,7 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
     const fetchSpy = vi.fn(
       (_url: string | URL, init?: RequestInit): Promise<Response> => {
         const h = new Headers(init?.headers);
-        const sig = h.get("x-myme-signature");
+        const sig = h.get("x-marfa-signature");
         if (sig) captured.headers.push(sig);
         return Promise.resolve(new Response(null, { status: 200 }));
       },

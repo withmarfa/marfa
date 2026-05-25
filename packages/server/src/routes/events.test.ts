@@ -215,7 +215,7 @@ describe("GET /events — catchup_too_old", () => {
   });
 });
 
-describe("MYME_EVENT_LOG_RETENTION_HOURS parser", () => {
+describe("MARFA_EVENT_LOG_RETENTION_HOURS parser", () => {
   it("defaults to 168 when unset or empty", () => {
     expect(parseEventLogRetentionHours(undefined)).toBe(168);
     expect(parseEventLogRetentionHours("")).toBe(168);

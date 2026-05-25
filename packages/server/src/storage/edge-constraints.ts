@@ -1,10 +1,10 @@
 import {
   ErrorCode,
-  MymeError,
+  MarfaError,
   getEdgeTypeSchema,
   satisfiesEdgeConstraint,
-} from "@mymehq/shared";
-import type { Edge, EdgeTypeSchema } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import type { Edge, EdgeTypeSchema } from "@withmarfa/shared";
 import type { EdgeStore, ItemStore } from "./interface.js";
 
 /**
@@ -32,7 +32,7 @@ export interface EdgeProposal {
  * 7. Cycles rejected for parent-of and supersedes, considering proposed edges
  *    as part of the graph.
  *
- * Throws `MymeError` on the first failure encountered in input order, matching
+ * Throws `MarfaError` on the first failure encountered in input order, matching
  * the sequential-validation behaviour the single-edge entry point exposed.
  * Returns the resolved edge-type schemas in input order.
  *
@@ -56,13 +56,13 @@ export async function assertEdgesCanBeCreated(
   for (const p of proposals) {
     const schema = getEdgeTypeSchema(p.edge_type);
     if (!schema) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.EDGE_TYPE_NOT_FOUND,
         `Unknown edge type: ${p.edge_type}`,
       );
     }
     if (p.source_id === p.target_id) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge source and target must be different items`,
         { edge_type: p.edge_type },
@@ -82,19 +82,19 @@ export async function assertEdgesCanBeCreated(
     const source = itemMap.get(p.source_id);
     const target = itemMap.get(p.target_id);
     if (!source) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.ITEM_NOT_FOUND,
         `Edge source item not found: ${p.source_id}`,
       );
     }
     if (!target) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.ITEM_NOT_FOUND,
         `Edge target item not found: ${p.target_id}`,
       );
     }
     if (!satisfiesEdgeConstraint(source.type, schema.source_type_constraints)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge "${p.edge_type}" does not allow source type "${source.type}"`,
         {
@@ -105,7 +105,7 @@ export async function assertEdgesCanBeCreated(
       );
     }
     if (!satisfiesEdgeConstraint(target.type, schema.target_type_constraints)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge "${p.edge_type}" does not allow target type "${target.type}"`,
         {
@@ -177,7 +177,7 @@ export async function assertEdgesCanBeCreated(
     // Exact duplicate — in-batch repeat or existing DB row.
     const dupKey = `${p.source_id}|${p.target_id}|${p.edge_type}`;
     if (seen.has(dupKey) || existsSet.has(dupKey)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge "${p.edge_type}" already exists between these items`,
         {
@@ -202,14 +202,14 @@ export async function assertEdgesCanBeCreated(
     switch (schema.cardinality) {
       case "one-to-one": {
         if (totalSource > 0) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.EDGE_CONSTRAINT_VIOLATION,
             `Edge "${p.edge_type}" is one-to-one; source already has one outbound edge of this type`,
             { edge_type: p.edge_type, source_id: p.source_id },
           );
         }
         if (totalTarget > 0) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.EDGE_CONSTRAINT_VIOLATION,
             `Edge "${p.edge_type}" is one-to-one; target already has one inbound edge of this type`,
             { edge_type: p.edge_type, target_id: p.target_id },
@@ -219,7 +219,7 @@ export async function assertEdgesCanBeCreated(
       }
       case "one-to-many": {
         if (totalTarget > 0) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.EDGE_CONSTRAINT_VIOLATION,
             `Edge "${p.edge_type}" is one-to-many on the target side; target already has an inbound edge of this type`,
             { edge_type: p.edge_type, target_id: p.target_id },
@@ -229,7 +229,7 @@ export async function assertEdgesCanBeCreated(
       }
       case "many-to-one": {
         if (totalSource > 0) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.EDGE_CONSTRAINT_VIOLATION,
             `Edge "${p.edge_type}" is many-to-one on the source side; source already has an outbound edge of this type`,
             { edge_type: p.edge_type, source_id: p.source_id },
@@ -256,7 +256,7 @@ export async function assertEdgesCanBeCreated(
           pending,
         )
       ) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.EDGE_CYCLE,
           `Edge "${p.edge_type}" would close a cycle`,
           {

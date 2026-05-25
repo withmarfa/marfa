@@ -48,7 +48,7 @@ async function dumpSchema(client: Client): Promise<SchemaRow[]> {
   }));
 }
 
-const workDir = mkdtempSync(join(tmpdir(), "myme-schema-sql-test-"));
+const workDir = mkdtempSync(join(tmpdir(), "marfa-schema-sql-test-"));
 afterAll(() => {
   rmSync(workDir, { recursive: true, force: true });
 });

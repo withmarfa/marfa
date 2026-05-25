@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { eq, and, sql } from "drizzle-orm";
-import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
+import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import type {
   Webhook,
   CreateWebhookInput,
   UpdateWebhookInput,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type { WebhookStore } from "../interface.js";
 import { outboundWebhooks } from "./schema.js";
@@ -92,7 +92,7 @@ export class SqliteWebhookStore implements WebhookStore {
       .where(eq(outboundWebhooks.id, id))
       .get();
     if (!row) {
-      throw new MymeError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
+      throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
     return rowToWebhook(row);
   }

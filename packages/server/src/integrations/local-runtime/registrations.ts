@@ -28,7 +28,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { IN_TREE_INTEGRATIONS } from "@mymehq/shared";
+import { IN_TREE_INTEGRATIONS } from "@withmarfa/shared";
 import { validateManifest } from "../validate-manifest.js";
 import type { LocalIntegrationRegistration } from "./types.js";
 

@@ -15,7 +15,7 @@
  * if the integration runs every minute.
  */
 import { randomBytes } from "node:crypto";
-import type { RuntimeCredential } from "@mymehq/runtime-sdk";
+import type { RuntimeCredential } from "@withmarfa/runtime-sdk";
 import { hashApiKey } from "../../middleware/auth.js";
 import type { Storage } from "../../storage/interface.js";
 

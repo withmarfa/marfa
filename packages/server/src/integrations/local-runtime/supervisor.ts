@@ -32,7 +32,7 @@ import {
   type FailureReason,
   type HandlerResult,
   type QueueMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import type { Storage } from "../../storage/interface.js";
 import { mintLocalRuntimeCredential } from "./credentials.js";
 import type { Executor } from "./executor.js";
@@ -51,8 +51,8 @@ import type {
 import { fanOutSchedule } from "./walker.js";
 import type { PgBoss } from "./pg-boss-types.js";
 
-const QUEUE_NAME = "myme.integrations.local";
-const SCHEDULE_PREFIX = "myme.integrations.local.schedule:";
+const QUEUE_NAME = "marfa.integrations.local";
+const SCHEDULE_PREFIX = "marfa.integrations.local.schedule:";
 
 export interface SupervisorConfig {
   apiUrl: string;

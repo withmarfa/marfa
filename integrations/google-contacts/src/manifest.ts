@@ -28,7 +28,7 @@
  *     surfaces as 409; the handler refetches and reapplies.
  *
  * OAuth uses the proxy mode (`oauth_requirements: { contacts: "proxy" }`).
- * Tokens flow through `ctx.myme.proxyRequest` against
+ * Tokens flow through `ctx.marfa.proxyRequest` against
  * `https://people.googleapis.com`; the server stamps the bearer
  * transparently and refreshes on 401.
  *
@@ -39,7 +39,7 @@
  * etc.) is deliberately not requested; that collection is read-only
  * via the People API anyway and out of scope for v1.
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const GOOGLE_CONTACTS_MANIFEST: IntegrationManifest = {
   name: "google.contacts",
@@ -47,7 +47,7 @@ export const GOOGLE_CONTACTS_MANIFEST: IntegrationManifest = {
   manifest_schema_version: "1.0.0",
   publisher: "google",
   description:
-    "Bidirectional sync between Google Contacts (People API) and Myme. Polls connections.list on a 10-minute schedule with syncToken incremental cursor and writes Myme-side mutations back via OAuth proxy with etag-based concurrency.",
+    "Bidirectional sync between Google Contacts (People API) and Marfa. Polls connections.list on a 10-minute schedule with syncToken incremental cursor and writes Marfa-side mutations back via OAuth proxy with etag-based concurrency.",
   direction: "both",
   runtime_compatibility: ["hosted", "local"],
   // `google.contacts.contact` is the upstream-fidelity type (full

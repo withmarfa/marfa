@@ -21,7 +21,7 @@ import {
   tryStartReactiveRunBridge,
   __test_internals,
 } from "./reactive-run-bridge.js";
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 import { publish } from "../pubsub.js";
 
 let ctx: TestContext;

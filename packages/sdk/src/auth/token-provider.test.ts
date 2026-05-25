@@ -17,7 +17,7 @@ interface FetchCall {
 
 const ISSUER = "http://example.test:8602";
 const CLIENT_ID = "test-client";
-const STORAGE_KEY = `myme.auth.tokens:${ISSUER}:${CLIENT_ID}`;
+const STORAGE_KEY = `marfa.auth.tokens:${ISSUER}:${CLIENT_ID}`;
 const TOKEN_ENDPOINT = `${ISSUER}/auth/oauth2/token`;
 const AUTHORIZE_ENDPOINT = `${ISSUER}/auth/oauth2/authorize`;
 const DEVICE_ENDPOINT = `${ISSUER}/auth/device`;

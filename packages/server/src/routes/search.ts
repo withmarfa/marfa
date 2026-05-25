@@ -1,13 +1,13 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   ITEM_STATES,
   isValidTypeIdentifier,
   resolveEnforcement,
   getSourceFilter,
-} from "@mymehq/shared";
-import type { ItemState } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import type { ItemState } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -94,7 +94,7 @@ export function searchRoutes(storage: Storage) {
 
     // Business logic validation beyond Zod
     if (type && !isValidTypeIdentifier(type)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
       );

@@ -52,8 +52,8 @@ describe("renderPasskeyEnrollPage", () => {
   it("includes the inline click handler script", () => {
     const html = renderPasskeyEnrollPage({ email: "alice@example.com" });
     // Script body lives inline (it needs to bind to the button by id),
-    // but its execution depends on `MymePasskey` from the static file.
-    expect(html).toContain("MymePasskey.enroll");
+    // but its execution depends on `MarfaPasskey` from the static file.
+    expect(html).toContain("MarfaPasskey.enroll");
     expect(html).toContain("isSupported");
   });
 });
@@ -81,7 +81,7 @@ describe("GET /auth/static/passkey.js", () => {
     expect(res.headers.get("cache-control")).toBe("public, max-age=3600");
     expect(res.headers.get("etag")).toMatch(/^"[0-9a-f]{40}"$/);
     const body = await res.text();
-    expect(body).toContain("MymePasskey");
+    expect(body).toContain("MarfaPasskey");
     expect(body).toContain("isSupported");
   });
 

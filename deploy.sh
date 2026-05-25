@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Myme deploy script
+# Marfa deploy script
 #
-# Deploys the Myme server to a remote host over SSH: git pull + build +
+# Deploys the Marfa server to a remote host over SSH: git pull + build +
 # migrate + restart. Manages one or more launchd-supervised service
 # instances that share a single source tree (SERVICE_DIR).
 #
@@ -29,7 +29,7 @@ fi
 
 # --- Configuration (all via environment) ---
 DEPLOY_HOST="${DEPLOY_HOST:-}"
-SERVICE_DIR="${SERVICE_DIR:-\$HOME/myme}"
+SERVICE_DIR="${SERVICE_DIR:-\$HOME/marfa}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 
 # SSH hardening — cap any single ssh invocation at ~45s instead of waiting
@@ -77,7 +77,7 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Environment:"
       echo "  DEPLOY_HOST               SSH host (required; or pass via --host)"
-      echo "  SERVICE_DIR               Source tree on the host (default: \$HOME/myme)"
+      echo "  SERVICE_DIR               Source tree on the host (default: \$HOME/marfa)"
       echo "  REPO_BRANCH               Branch to deploy (default: main)"
       echo "  DEPLOY_SERVICE_NAMES      Comma-separated service names (required)"
       echo "  DEPLOY_SERVICE_LABELS     Comma-separated launchd labels (required)"
@@ -141,7 +141,7 @@ run_migrations() {
     local name="${SERVICE_NAMES[$i]}"
     local url="${SERVICE_DBS[$i]}"
     echo "  Migrating $name DB..."
-    if ! remote "STORAGE_DIALECT=pg DATABASE_URL='$url' pnpm --filter @mymehq/server migrate"; then
+    if ! remote "STORAGE_DIALECT=pg DATABASE_URL='$url' pnpm --filter @withmarfa/server migrate"; then
       echo -e "  ${RED}$name migration failed${NC}"
       return 1
     fi
@@ -163,7 +163,7 @@ health_check() {
   return 1
 }
 
-echo -e "${GREEN}Deploying Myme to $DEPLOY_HOST${NC}"
+echo -e "${GREEN}Deploying Marfa to $DEPLOY_HOST${NC}"
 echo ""
 
 # --- Step 1: Pre-flight checks ---

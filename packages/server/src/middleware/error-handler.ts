@@ -16,7 +16,7 @@ function jsonResponse(
   return new Response(JSON.stringify(body), { status, headers });
 }
 
-function isMymeError(err: unknown): err is {
+function isMarfaError(err: unknown): err is {
   code: string;
   status: number;
   message: string;
@@ -37,7 +37,7 @@ export function createErrorHandler(config: {
   errorWebhookTimeoutMs?: number;
 }): ErrorHandler<AppEnv> {
   return (err, c) => {
-    if (isMymeError(err)) {
+    if (isMarfaError(err)) {
       const error: Record<string, unknown> = {
         code: err.code,
         message: err.message,

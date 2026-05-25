@@ -2,7 +2,7 @@
 # Control-plane Worker for the Connections runtime.
 # See ../infra/cloudflare/README.md for provisioning + deploy steps.
 
-name = "myme-runtime-control"
+name = "marfa-runtime-control"
 main = "../../packages/runtime-control/src/index.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
@@ -19,9 +19,9 @@ compatibility_flags = ["nodejs_compat"]
 #   - CLOUDFLARE_ACCOUNT_ID            (account that hosts the Worker)
 #   - CONTROL_PLANE_STAGING_KV_ID      (idempotency KV namespace id, staging)
 #   - CONTROL_PLANE_PROD_KV_ID         (idempotency KV namespace id, prod)
-#   - CONTROL_PLANE_STAGING_HOSTNAME   (e.g. runtime-staging.myme.so)
-#   - CONTROL_PLANE_PROD_HOSTNAME      (e.g. runtime.myme.so)
-#   - CONTROL_PLANE_ZONE               (zone hosting both hostnames, e.g. myme.so)
+#   - CONTROL_PLANE_STAGING_HOSTNAME   (e.g. runtime-staging.marfa.so)
+#   - CONTROL_PLANE_PROD_HOSTNAME      (e.g. runtime.marfa.so)
+#   - CONTROL_PLANE_ZONE               (zone hosting both hostnames, e.g. marfa.so)
 
 # Default (dev) environment — bound to the cloudflared-tunnel hostname
 # the developer brings up with `cloudflared tunnel --url …`.
@@ -38,7 +38,7 @@ CLOUDFLARE_ACCOUNT_ID = "${CLOUDFLARE_ACCOUNT_ID}"
 # example hostnames with the domain/zone you deploy under, or remove the
 # `routes` block and bind the Worker to a *.workers.dev subdomain.
 [env.staging]
-name = "myme-runtime-control-staging"
+name = "marfa-runtime-control-staging"
 routes = [
   { pattern = "${CONTROL_PLANE_STAGING_HOSTNAME}/*", zone_name = "${CONTROL_PLANE_ZONE}" },
 ]
@@ -49,7 +49,7 @@ CLOUDFLARE_ACCOUNT_ID = "${CLOUDFLARE_ACCOUNT_ID}"
 
 # ---- Production -----------------------------------------------------------
 [env.prod]
-name = "myme-runtime-control-prod"
+name = "marfa-runtime-control-prod"
 routes = [
   { pattern = "${CONTROL_PLANE_PROD_HOSTNAME}/*", zone_name = "${CONTROL_PLANE_ZONE}" },
 ]
@@ -65,22 +65,22 @@ CLOUDFLARE_ACCOUNT_ID = "${CLOUDFLARE_ACCOUNT_ID}"
 # reactive-run      — produced by the server-side reactive-run-bridge;
 #                     consumed by per-Integration Workers
 # scheduled-poll    — bound for DLQ replay (T-084). When an operator
-#                     replays a `myme-scheduled-poll-<env>-dlq` message,
+#                     replays a `marfa-scheduled-poll-<env>-dlq` message,
 #                     it gets re-enqueued onto this main queue. Not used
 #                     on hot paths today.
 # ---------------------------------------------------------------------------
 
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE"
-queue = "myme-webhook-receipt-staging"
+queue = "marfa-webhook-receipt-staging"
 
 [[env.staging.queues.producers]]
 binding = "REACTIVE_RUN_QUEUE"
-queue = "myme-reactive-run-staging"
+queue = "marfa-reactive-run-staging"
 
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-staging"
+queue = "marfa-scheduled-poll-staging"
 
 # T-247 — per-integration webhook-receipt queue producers. The route
 # in `webhooks.ts` resolves the binding by `integration_name`. Each
@@ -89,44 +89,44 @@ queue = "myme-scheduled-poll-staging"
 # pointing at the same queue.
 #
 # The shared `WEBHOOK_RECEIPT_QUEUE` above stays as the fallback for
-# `mymehq.github-webhooks` until it migrates onto its own queue.
+# `withmarfa.github-webhooks` until it migrates onto its own queue.
 
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX"
-queue = "myme-webhook-receipt-mymehq-inbox-staging"
+queue = "marfa-webhook-receipt-withmarfa-inbox-staging"
 
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR"
-queue = "myme-webhook-receipt-google-calendar-staging"
+queue = "marfa-webhook-receipt-google-calendar-staging"
 
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE"
-queue = "myme-webhook-receipt-google-drive-staging"
+queue = "marfa-webhook-receipt-google-drive-staging"
 
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE"
-queue = "myme-webhook-receipt-prod"
+queue = "marfa-webhook-receipt-prod"
 
 [[env.prod.queues.producers]]
 binding = "REACTIVE_RUN_QUEUE"
-queue = "myme-reactive-run-prod"
+queue = "marfa-reactive-run-prod"
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-prod"
+queue = "marfa-scheduled-poll-prod"
 
 # T-247 — prod mirror of the per-integration webhook-receipt producers.
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX"
-queue = "myme-webhook-receipt-mymehq-inbox-prod"
+queue = "marfa-webhook-receipt-withmarfa-inbox-prod"
 
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR"
-queue = "myme-webhook-receipt-google-calendar-prod"
+queue = "marfa-webhook-receipt-google-calendar-prod"
 
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE"
-queue = "myme-webhook-receipt-google-drive-prod"
+queue = "marfa-webhook-receipt-google-drive-prod"
 
 # ---------------------------------------------------------------------------
 # KV — short-lived idempotency cache used by the control plane to
@@ -152,7 +152,7 @@ id = "${CONTROL_PLANE_PROD_KV_ID}"
 # `resolveServiceBinding` switch (`arm-schedule.ts`, `verify.ts`).
 #
 # In-tree integrations without a deployed Worker today
-# (`_template`, `mymehq.sync`) intentionally have NO service binding.
+# (`_template`, `withmarfa.sync`) intentionally have NO service binding.
 # The verify route surfaces `no_service_binding` (503) for those —
 # wiring them up requires the integration to first ship its own
 # `wrangler.toml` and pass `wrangler deploy`.
@@ -170,51 +170,51 @@ id = "${CONTROL_PLANE_PROD_KV_ID}"
 
 [[env.staging.services]]
 binding = "INTEGRATION_RSS_WATCHER"
-service = "myme-integration-rss-watcher-staging"
+service = "marfa-integration-rss-watcher-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_GITHUB_WEBHOOKS"
-service = "myme-integration-github-webhooks-staging"
+service = "marfa-integration-github-webhooks-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_TASK_AUTO_ARCHIVE"
-service = "myme-integration-task-auto-archive-staging"
+service = "marfa-integration-task-auto-archive-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_GOOGLE_CALENDAR"
-service = "myme-integration-google-calendar-staging"
+service = "marfa-integration-google-calendar-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_GOOGLE_TASKS"
-service = "myme-integration-google-tasks-staging"
+service = "marfa-integration-google-tasks-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_GOOGLE_DRIVE"
-service = "myme-integration-google-drive-staging"
+service = "marfa-integration-google-drive-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_GOOGLE_CONTACTS"
-service = "myme-integration-google-contacts-staging"
+service = "marfa-integration-google-contacts-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_GOOGLE_YOUTUBE"
-service = "myme-integration-google-youtube-staging"
+service = "marfa-integration-google-youtube-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_TODOIST_TASKS"
-service = "myme-integration-todoist-tasks-staging"
+service = "marfa-integration-todoist-tasks-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_READWISE"
-service = "myme-integration-readwise-staging"
+service = "marfa-integration-readwise-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_RAINDROP"
-service = "myme-integration-raindrop-staging"
+service = "marfa-integration-raindrop-staging"
 
 [[env.staging.services]]
 binding = "INTEGRATION_MYMEHQ_INBOX"
-service = "myme-integration-mymehq-inbox-staging"
+service = "marfa-integration-withmarfa-inbox-staging"
 
 # ---- Prod service bindings -----------------------------------------------
 # Mirror the staging block above. Every entry in the dispatch switches
@@ -228,58 +228,58 @@ service = "myme-integration-mymehq-inbox-staging"
 
 [[env.prod.services]]
 binding = "INTEGRATION_RSS_WATCHER"
-service = "myme-integration-rss-watcher-prod"
+service = "marfa-integration-rss-watcher-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_GITHUB_WEBHOOKS"
-service = "myme-integration-github-webhooks-prod"
+service = "marfa-integration-github-webhooks-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_TASK_AUTO_ARCHIVE"
-service = "myme-integration-task-auto-archive-prod"
+service = "marfa-integration-task-auto-archive-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_GOOGLE_CALENDAR"
-service = "myme-integration-google-calendar-prod"
+service = "marfa-integration-google-calendar-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_GOOGLE_TASKS"
-service = "myme-integration-google-tasks-prod"
+service = "marfa-integration-google-tasks-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_GOOGLE_DRIVE"
-service = "myme-integration-google-drive-prod"
+service = "marfa-integration-google-drive-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_GOOGLE_CONTACTS"
-service = "myme-integration-google-contacts-prod"
+service = "marfa-integration-google-contacts-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_GOOGLE_YOUTUBE"
-service = "myme-integration-google-youtube-prod"
+service = "marfa-integration-google-youtube-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_TODOIST_TASKS"
-service = "myme-integration-todoist-tasks-prod"
+service = "marfa-integration-todoist-tasks-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_READWISE"
-service = "myme-integration-readwise-prod"
+service = "marfa-integration-readwise-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_RAINDROP"
-service = "myme-integration-raindrop-prod"
+service = "marfa-integration-raindrop-prod"
 
 [[env.prod.services]]
 binding = "INTEGRATION_MYMEHQ_INBOX"
-service = "myme-integration-mymehq-inbox-prod"
+service = "marfa-integration-withmarfa-inbox-prod"
 
 # ---------------------------------------------------------------------------
 # R2 — Layer 2 wires this for large inbound webhook bodies (>256KB).
 #
 # Secrets (set via `wrangler secret put` per env):
-#   - MYME_API_URL              (every env)
-#   - MYME_RUNTIME_BROKER_KEY   (PR 4 — server-issued long-lived key the
+#   - MARFA_API_URL              (every env)
+#   - MARFA_RUNTIME_BROKER_KEY   (PR 4 — server-issued long-lived key the
 #                                control plane uses to mint per-Connection
 #                                runtime credentials)
 #   - CLOUDFLARE_QUEUES_API_TOKEN (T-084 — account-scoped CF API token

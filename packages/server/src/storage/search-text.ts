@@ -1,7 +1,7 @@
 import {
   getSearchableStringFields,
   isFieldSearchableExcluded,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 
 /**
  * The four core search fields. Both dialects index these as named

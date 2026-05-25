@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createHmac } from "node:crypto";
-import { MymeClient } from "./client.js";
+import { MarfaClient } from "./client.js";
 import { ValidationError } from "./errors.js";
 import {
   createHostedModeFixture,
@@ -112,7 +112,7 @@ describe("client.auth.account — hosted-mode round-trip (T-123)", () => {
     // path doesn't exercise the SDK, so the bearer-via-fresh-key path
     // is the right shape for SDK round-trip coverage.
     const recoveryKey = await mintFreshBearer(fixture);
-    const recoveryClient = new MymeClient({
+    const recoveryClient = new MarfaClient({
       url: "http://localhost",
       apiKey: recoveryKey,
       fetch: fixture.fetch,

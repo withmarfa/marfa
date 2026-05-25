@@ -2,8 +2,8 @@
  * Email transport — pluggable interface for outbound transactional email.
  *
  * Three backends ship in-tree (`cloudflare`, `smtp`, `none`), selected by
- * `MYME_EMAIL_BACKEND`. Backends are constructed once at boot in
- * `index.ts` and threaded into `createMymeAuth` and any route that sends
+ * `MARFA_EMAIL_BACKEND`. Backends are constructed once at boot in
+ * `index.ts` and threaded into `createMarfaAuth` and any route that sends
  * email (forgot-password, email-verify, magic-link).
  *
  * Contract:
@@ -23,7 +23,7 @@
 
 /**
  * Outbound email payload. Fields are deliberately minimal — every
- * transactional email Myme sends fits this shape today (forgot-password,
+ * transactional email Marfa sends fits this shape today (forgot-password,
  * magic-link, email-verify). If a future need pulls in attachments or
  * scheduling, add explicit optional fields rather than widening this
  * type unbounded.
@@ -31,7 +31,7 @@
 export interface EmailMessage {
   /** Single recipient. Transactional pattern — no batching. */
   to: string;
-  /** Subject line. Should be specific (e.g. `Reset your password for Myme`),
+  /** Subject line. Should be specific (e.g. `Reset your password for Marfa`),
    *  not generic ("Action required"). */
   subject: string;
   /** Mandatory HTML body. Mobile-first design — 16px body min, single
@@ -42,7 +42,7 @@ export interface EmailMessage {
    *  always supply one. */
   text?: string;
   /** Optional override for the per-message Reply-To. When omitted the
-   *  transport uses the configured `MYME_EMAIL_REPLY_TO`. */
+   *  transport uses the configured `MARFA_EMAIL_REPLY_TO`. */
   replyTo?: string;
   /**
    * Mandatory idempotency key. Format `<event-type>/<entity-id>` (e.g.

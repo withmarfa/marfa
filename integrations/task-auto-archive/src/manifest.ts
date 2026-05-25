@@ -1,7 +1,7 @@
 /**
  * Manifest for the Task Auto-Archive test integration.
  *
- * Reactive intra-Myme connector. Archives `core.task` items older
+ * Reactive intra-Marfa connector. Archives `core.task` items older
  * than `archive_after_days` (configuration field, default 30).
  *
  * Two triggers fire the same sweep function:
@@ -12,16 +12,16 @@
  *     item events touch the type.
  *
  * `archived` is the lifecycle target (verified against
- * SYSTEM_TRANSITIONS in @mymehq/shared — `active → archived` is
+ * SYSTEM_TRANSITIONS in @withmarfa/shared — `active → archived` is
  * allowed for non-system types like core.task).
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const TASK_AUTO_ARCHIVE_MANIFEST: IntegrationManifest = {
-  name: "mymehq.task-auto-archive",
+  name: "withmarfa.task-auto-archive",
   version: "0.1.0",
   manifest_schema_version: "1.0.0",
-  publisher: "mymehq",
+  publisher: "withmarfa",
   description:
     "Archives core.task items older than N days (configurable per-install).",
   direction: "write",

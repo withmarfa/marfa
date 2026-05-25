@@ -24,7 +24,7 @@ describe("SqliteStorage.runInTransaction (T-071)", () => {
   let storage: Storage;
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), "myme-tx-test-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "marfa-tx-test-"));
     storage = await createSqliteStorage(join(tmpDir, "tx.db"));
   });
 

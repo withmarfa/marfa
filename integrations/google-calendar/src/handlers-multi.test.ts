@@ -33,7 +33,7 @@ import {
   type ItemState,
   type ItemEventMessage,
   type ScheduleMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleItemEvent } from "./handlers.js";
 
 interface InMemoryStorage {
@@ -70,9 +70,9 @@ interface CapturedActivity {
 }
 
 interface BuildOpts {
-  /** ctx.myme.getItem(connection_id) returns this. */
+  /** ctx.marfa.getItem(connection_id) returns this. */
   connectionRecord: Partial<ItemResource>;
-  /** ctx.myme.getItem(item_id) for any non-connection id. */
+  /** ctx.marfa.getItem(item_id) for any non-connection id. */
   itemForEvent?: ItemResource | null;
   proxyResponses: (() => Response)[];
 }
@@ -136,7 +136,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
   const ctx: ConnectionContext = {
     connection_id: connectionId,
     integration_name: "google.calendar",
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, {

@@ -1,18 +1,18 @@
 /**
  * Shared types for the local integrations runtime substrate (T-173).
  *
- * The substrate boots when `MYME_INTEGRATION_RUNTIME=local` and replaces
+ * The substrate boots when `MARFA_INTEGRATION_RUNTIME=local` and replaces
  * the Cloudflare side of the dispatch loop (Workers + Queues + Durable
  * Objects + KV) with a Node-bundled equivalent backed by Postgres
  * (pg-boss) and `worker_thread` per-Integration handler pools. The
- * authoring surface (`@mymehq/runtime-sdk`) is unchanged — integrations
+ * authoring surface (`@withmarfa/runtime-sdk`) is unchanged — integrations
  * import the same primitives and run on either substrate.
  */
 import type {
   HandlerResult,
   QueueMessage,
   RuntimeCredential,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 
 /**
  * An integration registered with the local runtime supervisor. Built by

@@ -25,10 +25,10 @@
  *     configurable initial-sync bound.
  *   - **Blob handling — `metadata` and `all-files` modes.**
  *     `download_mode = "metadata"` (the default) reads file metadata
- *     into Myme `google.drive.file` items with `blob_ref` absent.
+ *     into Marfa `google.drive.file` items with `blob_ref` absent.
  *     `download_mode = "all-files"` (T-239) downloads non-Google-native
  *     files within the per-file size ceiling and uploads the bytes
- *     into the Myme blob store via `ctx.myme.uploadBlob`; those land
+ *     into the Marfa blob store via `ctx.marfa.uploadBlob`; those land
  *     as `core.file` with `properties.blob_ref = sha256:<hex>`.
  *     Google-native types, oversize files, and per-file download
  *     failures all fall back to `google.drive.file` (`blob_ref`
@@ -43,7 +43,7 @@
  * shared `https://www.googleapis.com` host (no per-credential
  * `upstream_base_url` override needed, unlike Contacts).
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const GOOGLE_DRIVE_MANIFEST: IntegrationManifest = {
   name: "google.drive",
@@ -51,7 +51,7 @@ export const GOOGLE_DRIVE_MANIFEST: IntegrationManifest = {
   manifest_schema_version: "1.0.0",
   publisher: "google",
   description:
-    "Inbound-only sync from Google Drive into Myme. Seeds via files.list, incremental via changes.list with persisted pageToken cursor, push notifications via changes.watch with a renewal cron. Supports `download_mode: metadata` (default — google.drive.file items) and `download_mode: all-files` (non-Google-native, within-ceiling files ingested as core.file with blob_ref).",
+    "Inbound-only sync from Google Drive into Marfa. Seeds via files.list, incremental via changes.list with persisted pageToken cursor, push notifications via changes.watch with a renewal cron. Supports `download_mode: metadata` (default — google.drive.file items) and `download_mode: all-files` (non-Google-native, within-ceiling files ingested as core.file with blob_ref).",
   // INBOUND-only in v1 — schema's "read" maps to inbound-only ingest.
   // Flipping to "both" is the outbound follow-on's first change
   // (manifest direction + handlers + tests). Documented in CLAUDE.md.
@@ -77,7 +77,7 @@ export const GOOGLE_DRIVE_MANIFEST: IntegrationManifest = {
   oauth_requirements: { drive: "proxy" },
   // Drive push notifications use the same shared-secret-header echo
   // shape as Calendar (X-Goog-Channel-Token verified by the
-  // google-channel adapter in @mymehq/webhooks).
+  // google-channel adapter in @withmarfa/webhooks).
   webhook_verification: { method: "google-channel" },
   permissions: {
     extension: { "connection.runtime": "write" },

@@ -7,21 +7,21 @@ import {
   createSqliteStorage,
   FilesystemBlobBackend,
   BulkActionWorker,
-} from "@mymehq/server";
-import { MymeClient } from "./client.js";
+} from "@withmarfa/server";
+import { MarfaClient } from "./client.js";
 import {
   ConflictError,
   NotFoundError,
   UnauthorizedError,
   ValidationError,
 } from "./errors.js";
-import type { Item } from "@mymehq/shared";
+import type { Item } from "@withmarfa/shared";
 
 // ---------------------------------------------------------------------------
 // Test setup: create a real Hono app, bootstrap an admin key, create SDK client
 // ---------------------------------------------------------------------------
 
-let client: MymeClient;
+let client: MarfaClient;
 let testFetchFn: typeof globalThis.fetch;
 let adminKey: string;
 let cleanup: () => void;
@@ -45,7 +45,7 @@ function createTestFetch(app: {
 }
 
 beforeAll(async () => {
-  const tmpDir = mkdtempSync(join(tmpdir(), "myme-sdk-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-sdk-test-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(storage, blobBackend, {
@@ -104,7 +104,7 @@ beforeAll(async () => {
   const { key } = (await bootstrapRes.json()) as { key: string };
   adminKey = key;
 
-  client = new MymeClient({
+  client = new MarfaClient({
     url: "http://localhost",
     apiKey: key,
     fetch: testFetch,
@@ -532,11 +532,11 @@ describe("items.update expectedVersion", () => {
   }
 
   function newClient(): {
-    client: MymeClient;
+    client: MarfaClient;
     calls: { method: string; path: string }[];
   } {
     const { fetch, calls } = instrumentFetch();
-    const c = new MymeClient({
+    const c = new MarfaClient({
       url: "http://localhost",
       apiKey: adminKey,
       fetch,
@@ -880,7 +880,7 @@ describe("keys", () => {
     await client.keys.revoke(id);
 
     // Revoked key should no longer authenticate
-    const revokedClient = new MymeClient({
+    const revokedClient = new MarfaClient({
       url: "http://localhost",
       apiKey: key,
       fetch: testFetchFn,
@@ -937,7 +937,7 @@ describe("keys", () => {
 
 describe("error handling", () => {
   it("throws UnauthorizedError with bad key", async () => {
-    const badClient = new MymeClient({
+    const badClient = new MarfaClient({
       url: "http://localhost",
       apiKey: "myme_k1_invalid",
       fetch: testFetchFn,
@@ -1294,7 +1294,7 @@ describe("items.createWithAttachments", () => {
       }
       return testFetchFn(input, init);
     };
-    const c = new MymeClient({
+    const c = new MarfaClient({
       url: "http://localhost",
       apiKey: adminKey,
       fetch: wrapped,
@@ -1453,11 +1453,11 @@ describe("items.createWithAttachments", () => {
     expect(targets).toEqual([extraTarget.id, result.host.id].sort());
   });
 
-  it("explicit host id collision throws — `mode: create_only` skip becomes a MymeError", async () => {
+  it("explicit host id collision throws — `mode: create_only` skip becomes a MarfaError", async () => {
     // Seed an item with an explicit id, then try to use the same id as
     // the host id in createWithAttachments. The bulk call returns
     // `outcome: "skipped"` for the host; the helper must surface that
-    // as a thrown MymeError rather than silently returning the
+    // as a thrown MarfaError rather than silently returning the
     // pre-existing item.
     const seedId = "01900000-0000-7000-8000-deadbeef0200";
     await client.items.create({

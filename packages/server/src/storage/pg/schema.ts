@@ -356,7 +356,7 @@ export const inboundWebhooks = pgTable(
     // The external service's id for this subscription. Retained for
     // operator correlation; not unique.
     external_service_id: text("external_service_id"),
-    // AES-256-GCM(secret) under HKDF(MYME_AUTH_SECRET,
+    // AES-256-GCM(secret) under HKDF(MARFA_AUTH_SECRET,
     // "inbound-webhook-secrets"). Per-row IV is stored in the first 12
     // bytes of the ciphertext — see crypto/secret-encryption.ts.
     secret_encrypted: text("secret_encrypted").notNull(),
@@ -585,7 +585,7 @@ export const bulkActionJobs = pgTable(
 //
 // Composite PK on (family, window_key) keeps the two consumer surfaces
 // in one physical table without risk of key collisions across families.
-// `expires_at` is TEXT/ISO to stay consistent with the rest of myme's
+// `expires_at` is TEXT/ISO to stay consistent with the rest of marfa's
 // timestamp convention; lexicographic comparison works for cutoff sweeps.
 export const rateLimitWindows = pgTable(
   "rate_limit_windows",
@@ -666,7 +666,7 @@ export const eventLog = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// Better Auth tables (auth_* prefix, isolated from myme's own users table)
+// Better Auth tables (auth_* prefix, isolated from marfa's own users table)
 //
 // These are owned and managed by the better-auth library; the schema mirrors
 // what `npx @better-auth/cli generate` produces, hand-translated to Drizzle
@@ -675,7 +675,7 @@ export const eventLog = pgTable(
 
 // Timestamp columns use `timestamp({ mode: "date" })` so the better-auth
 // Drizzle adapter — which forwards JS Date objects — can round-trip.
-// This deviates from myme's TEXT-ISO convention but stays localised
+// This deviates from marfa's TEXT-ISO convention but stays localised
 // to the auth_* island.
 export const auth_user = pgTable(
   "auth_user",
@@ -824,7 +824,7 @@ export const auth_oauth_client = pgTable(
     public: boolean("public"),
     type: text("type"),
     requirePKCE: boolean("require_pkce"),
-    /** Tenant binding from `clientReference` (Myme: tenant_id). */
+    /** Tenant binding from `clientReference` (Marfa: tenant_id). */
     referenceId: text("reference_id"),
     /** JSON object — additional client metadata */
     metadata: jsonb("metadata"),

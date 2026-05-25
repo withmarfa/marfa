@@ -11,7 +11,7 @@ import type {
   MergeStrategy,
   TypeSchema,
   VersionPolicy,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 
 export type TypeRegistry = ReadonlyMap<string, TypeSchema>;
 

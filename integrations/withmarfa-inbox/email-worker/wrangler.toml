@@ -1,13 +1,13 @@
 #:schema node_modules/wrangler/config-schema.json
-# Cloudflare Email Worker — companion to the mymehq.inbox integration.
+# Cloudflare Email Worker — companion to the withmarfa.inbox integration.
 #
-# Email Routing on `inbox.myme.so` is configured to forward
-# `capture@inbox.myme.so` → this Worker. The Worker:
+# Email Routing on `inbox.marfa.so` is configured to forward
+# `capture@inbox.marfa.so` → this Worker. The Worker:
 #   1. Parses MIME via postal-mime.
 #   2. Builds a JSON envelope matching the type schema of
-#      `mymehq.captured_email`.
+#      `withmarfa.captured_email`.
 #   3. HMAC-SHA256 signs the body with `WEBHOOK_SECRET` (= the
-#      per-connection subscription secret on the Myme server).
+#      per-connection subscription secret on the Marfa server).
 #   4. Dispatches via a Cloudflare Worker Service Binding
 #      (`env.RUNTIME_CONTROL.fetch(...)`) at path
 #      `/webhooks/inbound/:connection_id`. No edge / HTTP fetch — the
@@ -20,10 +20,10 @@
 #                     Service-Binding path (one Email Worker per
 #                     Connection in the v1 single-tenant shape).
 #   - WEBHOOK_SECRET  matches the subscription's encrypted secret on
-#                     the Myme server.
+#                     the Marfa server.
 #
 # Service Bindings (configured per-env below):
-#   - RUNTIME_CONTROL → myme-runtime-control-<env>. Replaces the
+#   - RUNTIME_CONTROL → marfa-runtime-control-<env>. Replaces the
 #                       prior `WEBHOOK_URL` HTTP-fetch path. No DNS,
 #                       no TLS, no edge involved.
 #
@@ -32,7 +32,7 @@
 # from CF Email Routing's at-least-once delivery + the receiver-side
 # Message-ID idempotency.
 
-name = "myme-mymehq-inbox-email-worker"
+name = "marfa-withmarfa-inbox-email-worker"
 main = "src/index.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
@@ -42,22 +42,22 @@ ENVIRONMENT = "dev"
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
-name = "myme-mymehq-inbox-email-worker-staging"
+name = "marfa-withmarfa-inbox-email-worker-staging"
 
 [env.staging.vars]
 ENVIRONMENT = "staging"
 
 [[env.staging.services]]
 binding = "RUNTIME_CONTROL"
-service = "myme-runtime-control-staging"
+service = "marfa-runtime-control-staging"
 
 # ---- Production -----------------------------------------------------------
 [env.prod]
-name = "myme-mymehq-inbox-email-worker-prod"
+name = "marfa-withmarfa-inbox-email-worker-prod"
 
 [env.prod.vars]
 ENVIRONMENT = "prod"
 
 [[env.prod.services]]
 binding = "RUNTIME_CONTROL"
-service = "myme-runtime-control-prod"
+service = "marfa-runtime-control-prod"

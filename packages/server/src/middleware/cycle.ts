@@ -14,13 +14,13 @@ import type { AppEnv } from "./auth.js";
  * `connection_id`. The middleware below reads them off the request and
  * resolves `c.var.cycle` for the rest of the handler.
  *
- * Header values are strings on the wire. `X-Myme-Cycle-Hop` is parsed
+ * Header values are strings on the wire. `X-Marfa-Cycle-Hop` is parsed
  * via `Number(...)` (decimal); a malformed value falls back to the chain-
  * head shape rather than rejecting the request — the cycle metadata is
  * advisory (the hop budget is enforced at publish time regardless).
  */
-const CYCLE_ORIGIN_HEADER = "x-myme-cycle-origin";
-const CYCLE_HOP_HEADER = "x-myme-cycle-hop";
+const CYCLE_ORIGIN_HEADER = "x-marfa-cycle-origin";
+const CYCLE_HOP_HEADER = "x-marfa-cycle-hop";
 
 /**
  * Maximum hop count we accept off the wire. The hop budget is enforced
@@ -36,7 +36,7 @@ const MAX_PARSED_HOP_COUNT = Number.MAX_SAFE_INTEGER;
 
 /**
  * Try to derive the chain-head `originatingConnectionId` from the
- * caller's api key when no `X-Myme-Cycle-Origin` header is present.
+ * caller's api key when no `X-Marfa-Cycle-Origin` header is present.
  * Two shapes carry connection identity today:
  *
  *   1. **Runtime credentials** — `apiKey.connection_id` is a typed
@@ -51,7 +51,7 @@ const MAX_PARSED_HOP_COUNT = Number.MAX_SAFE_INTEGER;
  * resulting cycle is the human sentinel.
  */
 function originFromApiKey(
-  apiKey: import("@mymehq/shared").ApiKey | undefined,
+  apiKey: import("@withmarfa/shared").ApiKey | undefined,
 ): string | null {
   if (!apiKey) return null;
   if (typeof apiKey.connection_id === "string" && apiKey.connection_id !== "") {
@@ -76,8 +76,8 @@ function originFromApiKey(
  *
  * Resolution order:
  *
- *   1. **Headers present** — both `X-Myme-Cycle-Origin` and
- *      `X-Myme-Cycle-Hop` carry the parent's cycle. Stamp the resolved
+ *   1. **Headers present** — both `X-Marfa-Cycle-Origin` and
+ *      `X-Marfa-Cycle-Hop` carry the parent's cycle. Stamp the resolved
  *      pair on `c.var.cycle`. The next-hop computation is the SDK's
  *      job (it called `nextHopMetadata(parent, currentConnectionId)`
  *      to produce these values); the server treats them as the
@@ -159,6 +159,6 @@ function resolveCycle(c: Context<AppEnv>): {
  * middleware — kept in one place to avoid drift.
  */
 export const CYCLE_HEADERS = {
-  ORIGIN: "X-Myme-Cycle-Origin",
-  HOP: "X-Myme-Cycle-Hop",
+  ORIGIN: "X-Marfa-Cycle-Origin",
+  HOP: "X-Marfa-Cycle-Hop",
 } as const;

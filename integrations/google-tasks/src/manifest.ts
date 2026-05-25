@@ -21,7 +21,7 @@
  *     mode) in a second integration.
  *
  * OAuth uses the proxy mode (`oauth_requirements: { tasks: "proxy" }`).
- * Tokens flow through `ctx.myme.proxyRequest` against
+ * Tokens flow through `ctx.marfa.proxyRequest` against
  * `https://tasks.googleapis.com`; the server stamps the bearer
  * transparently and refreshes on 401.
  *
@@ -30,7 +30,7 @@
  * the user owns. `tasks.readonly` would block outbound; the granular
  * `tasks.write` scope does not exist in Google's catalog.
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const GOOGLE_TASKS_MANIFEST: IntegrationManifest = {
   name: "google.tasks",
@@ -38,7 +38,7 @@ export const GOOGLE_TASKS_MANIFEST: IntegrationManifest = {
   manifest_schema_version: "1.0.0",
   publisher: "google",
   description:
-    "Bidirectional sync between Google Tasks and Myme. Polls every task list under the connected account on a 10-minute schedule and writes Myme-side mutations back via OAuth proxy.",
+    "Bidirectional sync between Google Tasks and Marfa. Polls every task list under the connected account on a 10-minute schedule and writes Marfa-side mutations back via OAuth proxy.",
   direction: "both",
   runtime_compatibility: ["hosted", "local"],
   // `google.tasks.task` is the upstream-fidelity type (full Tasks

@@ -2,7 +2,7 @@
  * Shared Worker bootstrap for per-Integration Workers. Wires:
  *
  *   1. The queue handler — Cloudflare delivers batches from the
- *      shared `myme-{webhook-receipt,scheduled-poll,reactive-run}`
+ *      shared `marfa-{webhook-receipt,scheduled-poll,reactive-run}`
  *      queues, this helper builds `ConsumerEnvironment` and calls
  *      `consumeBatch`.
  *   2. The fetch handler — routes `POST /arm-schedule?connection_id=X`
@@ -29,19 +29,19 @@ import { verifyHandler } from "../verify-handler.js";
 export interface IntegrationWorkerEnv extends PerConnectionAlarmEnv {
   /** DO namespace for `PerConnectionState`. */
   PER_CONNECTION_STATE: DurableObjectNamespace;
-  /** Base URL of the Myme server (e.g. `https://staging.myme.so`). */
-  MYME_API_URL: string;
+  /** Base URL of the Marfa server (e.g. `https://staging.marfa.so`). */
+  MARFA_API_URL: string;
   /**
    * Base URL of the runtime-control Worker. The lease broker hangs
-   * off `${MYME_RUNTIME_CONTROL_URL}/lease/:connection_id/runtime`.
+   * off `${MARFA_RUNTIME_CONTROL_URL}/lease/:connection_id/runtime`.
    */
-  MYME_RUNTIME_CONTROL_URL: string;
+  MARFA_RUNTIME_CONTROL_URL: string;
   /**
    * Long-lived broker key (`is_platform: true` admin) the Worker
    * presents to the control plane to mint per-Connection runtime
    * credentials. Never leaves the Worker.
    */
-  MYME_RUNTIME_BROKER_KEY: string;
+  MARFA_RUNTIME_BROKER_KEY: string;
   /**
    * Optional DLQ producer bindings (T-103). Wire whichever DLQ queues
    * the Worker's main consumers spill into; the wrapper routes by
@@ -83,12 +83,12 @@ async function mintCredentialViaBroker(
   env: IntegrationWorkerEnv,
   connectionId: string,
 ): Promise<RuntimeCredential> {
-  const url = `${env.MYME_RUNTIME_CONTROL_URL}/lease/${connectionId}/runtime`;
+  const url = `${env.MARFA_RUNTIME_CONTROL_URL}/lease/${connectionId}/runtime`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${env.MYME_RUNTIME_BROKER_KEY}`,
+      authorization: `Bearer ${env.MARFA_RUNTIME_BROKER_KEY}`,
     },
   });
   if (!res.ok) {
@@ -116,7 +116,7 @@ export function buildConsumerEnv(
   config: IntegrationWorkerConfig,
 ): ConsumerEnvironment {
   return {
-    apiUrl: env.MYME_API_URL,
+    apiUrl: env.MARFA_API_URL,
     integrationName: config.integrationName,
     echo: config.echo,
     storageFor(connectionId: string) {
@@ -187,7 +187,7 @@ export function createIntegrationWorker<
       // verify route. Reuses the same ConsumerEnvironment the queue
       // consumer builds so the handler runs against the real per-
       // Connection runtime credential and writes through the same
-      // Myme client — verify is real-handler, real-writes.
+      // Marfa client — verify is real-handler, real-writes.
       if (url.pathname === "/verify" && request.method === "POST") {
         const consumerEnv = buildConsumerEnv(env, config);
         return verifyHandler(consumerEnv, request);

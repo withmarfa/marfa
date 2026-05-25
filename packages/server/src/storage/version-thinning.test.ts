@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { Version } from "@mymehq/shared";
+import type { Version } from "@withmarfa/shared";
 import {
   computeVersionsToDelete,
   resolvePolicy,

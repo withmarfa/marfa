@@ -28,8 +28,8 @@
  * (`middleware/tenant-suspension.ts`); platform admins bypass.
  */
 import { createRoute, z } from "@hono/zod-openapi";
-import { ErrorCode, MymeError } from "@mymehq/shared";
-import type { ApiKey } from "@mymehq/shared";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -447,11 +447,11 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     requireAdmin(c);
     const { id } = c.req.valid("param");
     if (!storage.tenants) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Tenant store not available");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
     }
     const tenant = await storage.tenants.get(id);
     if (!tenant) {
-      throw new MymeError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
     }
 
     const quota = await storage.tenantQuotas.get(id);
@@ -475,11 +475,11 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     const actor = requireAdmin(c);
     const { id } = c.req.valid("param");
     if (!storage.tenants) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Tenant store not available");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
     }
     const updated = await storage.tenants.suspend(id);
     if (!updated) {
-      throw new MymeError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
     }
     // Drop the per-instance status cache so the next gated write reads
     // the fresh `suspended` value instead of waiting out the 5s TTL.
@@ -503,11 +503,11 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     const actor = requireAdmin(c);
     const { id } = c.req.valid("param");
     if (!storage.tenants) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Tenant store not available");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
     }
     const updated = await storage.tenants.unsuspend(id);
     if (!updated) {
-      throw new MymeError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
     }
     evictTenantStatus(id);
     void storage.audit.log({
@@ -529,11 +529,11 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     requireAdmin(c);
     const { id } = c.req.valid("param");
     if (!storage.tenants) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Tenant store not available");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
     }
     const tenant = await storage.tenants.get(id);
     if (!tenant) {
-      throw new MymeError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
     }
 
     // Per-tenant stats. `items.stats(tenantId)` returns a state→count
@@ -573,11 +573,11 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     requireAdmin(c);
     const { id } = c.req.valid("param");
     if (!storage.tenants) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Tenant store not available");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Tenant store not available");
     }
     const tenant = await storage.tenants.get(id);
     if (!tenant) {
-      throw new MymeError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
     }
     const keys = await storage.keys.listForTenant(id);
     return c.json({ data: keys.map(apiKeySummary) }, 200);

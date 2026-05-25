@@ -2,7 +2,7 @@
 --
 -- Two new tables. inbound_webhooks holds the per-Connection subscription
 -- (one row per external service the connector listens to). secret_encrypted
--- stores AES-256-GCM(secret) under HKDF(MYME_AUTH_SECRET) — verification
+-- stores AES-256-GCM(secret) under HKDF(MARFA_AUTH_SECRET) — verification
 -- requires the raw secret server-side, so a one-way hash isn't usable
 -- (the same primitive PR 6 reuses for OAuth tokens).
 --

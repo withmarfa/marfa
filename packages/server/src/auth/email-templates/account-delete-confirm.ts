@@ -31,13 +31,13 @@ export function renderAccountDeleteConfirmEmail(
 ): RenderedEmail {
   const expires = input.expiresInMinutes ?? 60;
   const greeting = input.name?.trim() ? `Hi ${input.name.trim()}` : "Hi there";
-  const subject = "Confirm your Myme account deletion";
+  const subject = "Confirm your Marfa account deletion";
   const text = [
-    "Confirm your Myme account deletion",
+    "Confirm your Marfa account deletion",
     "",
     `${greeting},`,
     "",
-    "We received a request to delete your Myme account. To confirm, click the link below.",
+    "We received a request to delete your Marfa account. To confirm, click the link below.",
     "",
     `This link expires in ${String(expires)} minutes.`,
     "",
@@ -45,7 +45,7 @@ export function renderAccountDeleteConfirmEmail(
     "",
     "If you didn't request this, ignore this email — your account stays active.",
     "",
-    "— Myme",
+    "— Marfa",
   ].join("\n");
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -61,7 +61,7 @@ export function renderAccountDeleteConfirmEmail(
 <tr><td style="padding:32px;">
 <h1 style="margin:0 0 16px 0;font-size:20px;font-weight:600;color:${TEXT};">Confirm account deletion</h1>
 <p style="margin:0 0 12px 0;color:${TEXT};">${escapeHtml(greeting)},</p>
-<p style="margin:0 0 24px 0;color:${MUTED};">We received a request to delete your Myme account. Click the button below to confirm. This link expires in ${String(expires)} minutes.</p>
+<p style="margin:0 0 24px 0;color:${MUTED};">We received a request to delete your Marfa account. Click the button below to confirm. This link expires in ${String(expires)} minutes.</p>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0">
 <tr><td style="border-radius:6px;background:${ACCENT};">
 <a href="${escapeAttr(input.url)}" style="display:inline-block;padding:12px 24px;color:#ffffff;text-decoration:none;font-weight:600;font-size:16px;line-height:20px;border-radius:6px;min-height:44px;box-sizing:border-box;">Confirm deletion</a>
@@ -73,7 +73,7 @@ export function renderAccountDeleteConfirmEmail(
 <p style="margin:0;color:${MUTED};font-size:13px;">If you didn't request deletion, ignore this email — your account stays active.</p>
 </td></tr>
 </table>
-<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Myme</p>
+<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Marfa</p>
 </td></tr>
 </table>
 </body>

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { IntegrationManifestSchema } from "@mymehq/shared";
+import { IntegrationManifestSchema } from "@withmarfa/shared";
 import { MYMEHQ_INBOX_MANIFEST } from "./manifest.js";
 
-describe("mymehq.inbox manifest", () => {
+describe("withmarfa.inbox manifest", () => {
   it("validates against IntegrationManifestSchema", () => {
     const result = IntegrationManifestSchema.safeParse(MYMEHQ_INBOX_MANIFEST);
     if (!result.success) {
@@ -20,9 +20,9 @@ describe("mymehq.inbox manifest", () => {
     );
   });
 
-  it("targets mymehq.captured_email, read-only, no OAuth, no token", () => {
+  it("targets withmarfa.captured_email, read-only, no OAuth, no token", () => {
     expect(MYMEHQ_INBOX_MANIFEST.target_types).toEqual([
-      "mymehq.captured_email",
+      "withmarfa.captured_email",
     ]);
     expect(MYMEHQ_INBOX_MANIFEST.direction).toBe("read");
     expect(MYMEHQ_INBOX_MANIFEST.oauth_requirements).toEqual({});

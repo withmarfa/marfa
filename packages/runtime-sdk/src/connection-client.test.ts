@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ConnectionClient, MymeApiError } from "./connection-client.js";
+import { ConnectionClient, MarfaApiError } from "./connection-client.js";
 import type { RuntimeCredential } from "./types.js";
 
 const CRED: RuntimeCredential = {
@@ -34,8 +34,8 @@ function makeFetch(
       url: req.url,
       method: req.method,
       authorization: req.headers.get("Authorization") ?? undefined,
-      cycleOrigin: req.headers.get("X-Myme-Cycle-Origin") ?? undefined,
-      cycleHop: req.headers.get("X-Myme-Cycle-Hop") ?? undefined,
+      cycleOrigin: req.headers.get("X-Marfa-Cycle-Origin") ?? undefined,
+      cycleHop: req.headers.get("X-Marfa-Cycle-Hop") ?? undefined,
     });
     const responder = responses[i++];
     if (!responder) {
@@ -102,7 +102,7 @@ describe("ConnectionClient", () => {
     expect(captured[1]!.authorization).toBe("Bearer myme_k1_refreshed");
   });
 
-  it("surfaces persistent 401 as MymeApiError after one refresh", async () => {
+  it("surfaces persistent 401 as MarfaApiError after one refresh", async () => {
     const captured: Captured[] = [];
     const client = new ConnectionClient({
       apiUrl: "https://api.example.com",
@@ -118,7 +118,7 @@ describe("ConnectionClient", () => {
     });
     await expect(
       client.createItem({ type: "core.note" }),
-    ).rejects.toBeInstanceOf(MymeApiError);
+    ).rejects.toBeInstanceOf(MarfaApiError);
   });
 
   it("getItem returns null on 404 instead of throwing", async () => {
@@ -259,7 +259,7 @@ describe("ConnectionClient", () => {
 });
 
 describe("ConnectionClient cycle headers (T-039)", () => {
-  it("stamps X-Myme-Cycle-Origin / X-Myme-Cycle-Hop on createItem when cycleParent is the parent", async () => {
+  it("stamps X-Marfa-Cycle-Origin / X-Marfa-Cycle-Hop on createItem when cycleParent is the parent", async () => {
     const captured: Captured[] = [];
     const client = new ConnectionClient({
       apiUrl: "https://api.example.com",
@@ -468,7 +468,7 @@ describe("ConnectionClient — server-response unwrap", () => {
 //
 // The SDK forwards raw bytes to the server's `POST /blobs` route using the
 // connection's runtime credential. Server-side concerns (tenant scoping, R2
-// keying, dedup, quota enforcement) are covered in @mymehq/server's blob
+// keying, dedup, quota enforcement) are covered in @withmarfa/server's blob
 // tests. These cover the SDK contract: input shapes, headers + body bytes,
 // 401-refresh single-flight, error surfacing, boundary rejection.
 // ---------------------------------------------------------------------------
@@ -505,8 +505,8 @@ function makeUploadFetch(
       method,
       authorization: headers.get("Authorization") ?? undefined,
       contentType: headers.get("Content-Type") ?? undefined,
-      cycleOrigin: headers.get("X-Myme-Cycle-Origin") ?? undefined,
-      cycleHop: headers.get("X-Myme-Cycle-Hop") ?? undefined,
+      cycleOrigin: headers.get("X-Marfa-Cycle-Origin") ?? undefined,
+      cycleHop: headers.get("X-Marfa-Cycle-Hop") ?? undefined,
       bodyBytes,
     });
     const responder = responses[i++];
@@ -627,7 +627,7 @@ describe("ConnectionClient.uploadBlob (T-239)", () => {
     expect(result.hash).toBe("sha256:abc");
   });
 
-  it("surfaces persistent 401 as MymeApiError after one refresh attempt", async () => {
+  it("surfaces persistent 401 as MarfaApiError after one refresh attempt", async () => {
     const captured: CapturedUpload[] = [];
     const client = new ConnectionClient({
       apiUrl: "https://api.example.com",
@@ -646,8 +646,8 @@ describe("ConnectionClient.uploadBlob (T-239)", () => {
       .uploadBlob({ content: PDF_BYTES, mime_type: "application/pdf" })
       .then(() => null)
       .catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(MymeApiError);
-    expect((err as MymeApiError).status).toBe(401);
+    expect(err).toBeInstanceOf(MarfaApiError);
+    expect((err as MarfaApiError).status).toBe(401);
   });
 
   it("surfaces 413 blob_too_large with the server body in the message", async () => {
@@ -674,8 +674,8 @@ describe("ConnectionClient.uploadBlob (T-239)", () => {
       .uploadBlob({ content: PDF_BYTES, mime_type: "application/pdf" })
       .then(() => null)
       .catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(MymeApiError);
-    expect((err as MymeApiError).status).toBe(413);
+    expect(err).toBeInstanceOf(MarfaApiError);
+    expect((err as MarfaApiError).status).toBe(413);
     expect((err as Error).message).toContain("blob_too_large");
   });
 
@@ -695,7 +695,7 @@ describe("ConnectionClient.uploadBlob (T-239)", () => {
       })
       .then(() => null)
       .catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(MymeApiError);
+    expect(err).toBeInstanceOf(MarfaApiError);
     expect((err as Error).message).toContain("uploadBlob");
     expect(captured).toHaveLength(0);
   });
@@ -714,7 +714,7 @@ describe("ConnectionClient.uploadBlob (T-239)", () => {
         content: null as unknown as Uint8Array,
         mime_type: "application/octet-stream",
       }),
-    ).rejects.toBeInstanceOf(MymeApiError);
+    ).rejects.toBeInstanceOf(MarfaApiError);
     expect(captured).toHaveLength(0);
   });
 
@@ -739,7 +739,7 @@ describe("ConnectionClient.uploadBlob (T-239)", () => {
         content: stream as unknown as Uint8Array,
         mime_type: "application/pdf",
       }),
-    ).rejects.toBeInstanceOf(MymeApiError);
+    ).rejects.toBeInstanceOf(MarfaApiError);
     expect(captured).toHaveLength(0);
   });
 });

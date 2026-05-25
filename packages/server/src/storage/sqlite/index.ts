@@ -35,7 +35,7 @@ import {
   isCoreEdgeType,
   registerTypeSchema,
   isCoreType,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 
 export async function createSqliteStorage(
   sqlitePath: string,

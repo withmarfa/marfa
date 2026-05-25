@@ -2,7 +2,7 @@
  * Worker-side unit tests for the envelope-builder, signing path, and
  * Service-Binding dispatch shape (T-250). End-to-end (real MIME →
  * real CF Email Routing → real bound Worker) lives in the validation
- * harness at `_local/validate-mymehq-inbox.ts`; this file covers the
+ * harness at `_local/validate-withmarfa-inbox.ts`; this file covers the
  * pure functions + the dispatch contract.
  */
 import { describe, it, expect, vi } from "vitest";
@@ -28,7 +28,7 @@ describe("buildEnvelope", () => {
   it("constructs the wire shape from a fully-populated postal-mime parse", () => {
     const parsed = makeEmail({
       from: { name: "Test Sender", address: "sender@example.com" },
-      to: [{ name: "", address: "capture@inbox.myme.so" }],
+      to: [{ name: "", address: "capture@inbox.marfa.so" }],
       subject: "Test capture",
       text: "Plain body",
       html: "<p>Plain body</p>",
@@ -70,7 +70,7 @@ describe("buildEnvelope", () => {
     });
 
     const envelope = buildEnvelope(
-      { from: "sender@example.com", to: "capture@inbox.myme.so" },
+      { from: "sender@example.com", to: "capture@inbox.marfa.so" },
       parsed,
     );
 
@@ -78,7 +78,7 @@ describe("buildEnvelope", () => {
       address: "sender@example.com",
       name: "Test Sender",
     });
-    expect(envelope.to).toBe("capture@inbox.myme.so");
+    expect(envelope.to).toBe("capture@inbox.marfa.so");
     expect(envelope.subject).toBe("Test capture");
     expect(envelope.text_body).toBe("Plain body");
     expect(envelope.html_body).toBe("<p>Plain body</p>");
@@ -101,7 +101,7 @@ describe("buildEnvelope", () => {
   it("falls back to message.from when postal-mime's from is absent", () => {
     const parsed = makeEmail({ subject: "Subj" });
     const envelope = buildEnvelope(
-      { from: "Someone@EXAMPLE.com", to: "capture@inbox.myme.so" },
+      { from: "Someone@EXAMPLE.com", to: "capture@inbox.marfa.so" },
       parsed,
     );
     // Lower-cased
@@ -179,7 +179,7 @@ describe("email() — Service-Binding dispatch (T-250)", () => {
     const bytes = new TextEncoder().encode(rawRfc822);
     return {
       from: "sender@example.com",
-      to: "capture@inbox.myme.so",
+      to: "capture@inbox.marfa.so",
       raw: new ReadableStream({
         start(controller) {
           controller.enqueue(bytes);
@@ -191,7 +191,7 @@ describe("email() — Service-Binding dispatch (T-250)", () => {
 
   const RFC822 = [
     "From: sender@example.com",
-    "To: capture@inbox.myme.so",
+    "To: capture@inbox.marfa.so",
     "Subject: T-250 dispatch smoke",
     "Message-ID: <t250-smoke@example.com>",
     "Date: Sun, 24 May 2026 20:00:00 +0000",
@@ -227,10 +227,10 @@ describe("email() — Service-Binding dispatch (T-250)", () => {
     expect(sent.method).toBe("POST");
     // Headers: signature shape + delivery id from Message-ID
     expect(sent.headers.get("Content-Type")).toBe("application/json");
-    expect(sent.headers.get("X-Myme-Delivery-Id")).toBe(
+    expect(sent.headers.get("X-Marfa-Delivery-Id")).toBe(
       "<t250-smoke@example.com>",
     );
-    expect(sent.headers.get("X-Myme-Signature")).toMatch(
+    expect(sent.headers.get("X-Marfa-Signature")).toMatch(
       /^sha256=[0-9a-f]{64}$/,
     );
     // Body: a parseable envelope with the expected subject

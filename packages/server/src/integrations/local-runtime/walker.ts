@@ -21,7 +21,7 @@
  * cardinality.
  */
 import type { Storage } from "../../storage/interface.js";
-import type { ScheduleMessage } from "@mymehq/runtime-sdk";
+import type { ScheduleMessage } from "@withmarfa/runtime-sdk";
 import { validateManifest } from "../validate-manifest.js";
 import type { LocalRuntime, SchedulerEnvelope } from "./types.js";
 

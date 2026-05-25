@@ -7,7 +7,7 @@
  *   3. Export a default `{ fetch, queue, scheduled }` built from the SDK
  *      helper. Two queue families: scheduled-poll + reactive-run.
  */
-import { createIntegrationWorker } from "@mymehq/runtime-sdk/cloudflare";
+import { createIntegrationWorker } from "@withmarfa/runtime-sdk/cloudflare";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
 import { GOOGLE_CONTACTS_MANIFEST } from "./manifest.js";
 

@@ -44,7 +44,7 @@
  * row works without a T-254 per-connection
  * `upstream_base_url_override`.
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const GOOGLE_YOUTUBE_MANIFEST: IntegrationManifest = {
   name: "google.youtube",

@@ -19,11 +19,11 @@ import { randomBytes } from "node:crypto";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { and, desc, eq, like } from "drizzle-orm";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import type { MymeAuth } from "../auth/instance.js";
-import type { EmailTransport as MymeEmailTransport } from "../email/transport.js";
+import type { MarfaAuth } from "../auth/instance.js";
+import type { EmailTransport as MarfaEmailTransport } from "../email/transport.js";
 import { renderAccountDeleteConfirmEmail } from "../auth/email-templates/account-delete-confirm.js";
 import { renderAccountPendingDeletionEmail } from "../auth/email-templates/account-pending-deletion.js";
 import { renderAuthLayout } from "./auth-layout.js";
@@ -54,7 +54,7 @@ function newToken(): string {
 async function resolveAuthUserId(
   c: Context<AppEnv>,
   storage: Storage,
-  auth: MymeAuth | undefined,
+  auth: MarfaAuth | undefined,
 ): Promise<string | null> {
   // Bearer first.
   const apiKey = c.get("apiKey");
@@ -72,8 +72,8 @@ async function resolveAuthUserId(
 
 export function authAccountRoutes(
   storage: Storage,
-  auth: MymeAuth | undefined,
-  emailTransport: MymeEmailTransport | undefined,
+  auth: MarfaAuth | undefined,
+  emailTransport: MarfaEmailTransport | undefined,
   baseURL: string,
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
@@ -92,7 +92,7 @@ export function authAccountRoutes(
   router.post("/account/delete", async (c) => {
     const authUserId = await resolveAuthUserId(c, storage, auth);
     if (!authUserId) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "Account deletion requires an authenticated caller",
       );
@@ -240,7 +240,7 @@ export function authAccountRoutes(
   router.post("/account/delete/cancel", async (c) => {
     const authUserId = await resolveAuthUserId(c, storage, auth);
     if (!authUserId) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "Account cancel requires an authenticated caller",
       );
@@ -651,7 +651,7 @@ function renderAlreadyDeletedPage(): string {
     bodyHtml: `
       <h1>Account permanently deleted</h1>
       <div class="banner banner--error" role="alert">Your account has already been permanently deleted, and we couldn't cancel the deletion.</div>
-      <p class="aux">If you'd like to use Myme again, you can <a href="/auth/sign-up">create a new account</a>.</p>
+      <p class="aux">If you'd like to use Marfa again, you can <a href="/auth/sign-up">create a new account</a>.</p>
     `,
   });
 }

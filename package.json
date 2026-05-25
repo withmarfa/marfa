@@ -1,5 +1,5 @@
 {
-  "name": "@myme/root",
+  "name": "@marfa/root",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.32.1",
@@ -16,7 +16,7 @@
     "test:related": "vitest run --related",
     "test:fresh-sqlite": "bash scripts/test-fresh-sqlite.sh",
     "test:pg": "bash scripts/test-pg.sh",
-    "test:full": "pnpm build && pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:fresh-sqlite && pnpm test:pg && pnpm --filter @mymehq/server run smoke:worker-entry",
+    "test:full": "pnpm build && pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:fresh-sqlite && pnpm test:pg && pnpm --filter @withmarfa/server run smoke:worker-entry",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

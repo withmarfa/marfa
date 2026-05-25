@@ -21,7 +21,7 @@ import type {
   EdgeTypeSchema,
   Profile,
   UpdateProfileInput,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type {
   TypeSchema,
   ErrorResponse,
@@ -33,13 +33,13 @@ import type {
   ConnectionUninstallResult,
   PreviewEventRequest,
   PreviewEventResult,
-} from "@mymehq/shared";
-import { generateId } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import { generateId } from "@withmarfa/shared";
 import { HttpTransport } from "./transport.js";
 import {
   BulkJobCancelledError,
   BulkJobFailedError,
-  MymeError,
+  MarfaError,
   NotFoundError,
   ValidationError,
   UnauthorizedError,
@@ -58,7 +58,7 @@ import { pollUntilTerminal } from "./poll.js";
 // ---------------------------------------------------------------------------
 
 /** Minimal token provider shape — full interface lives in
- *  @mymehq/sdk/auth. Kept loose here so the data root doesn't depend
+ *  @withmarfa/sdk/auth. Kept loose here so the data root doesn't depend
  *  on the auth subpath. */
 interface TokenProviderLike {
   getAccessToken(): Promise<string>;
@@ -494,7 +494,7 @@ export interface BulkActionJob {
 // Client
 // ---------------------------------------------------------------------------
 
-export class MymeClient {
+export class MarfaClient {
   private readonly transport: HttpTransport;
   private readonly defaultConflictStrategy: ConflictStrategy;
   private readonly defaultOnConflictAutoMerge?: ConflictAutoMergeListener;
@@ -749,7 +749,7 @@ export class MymeClient {
           try {
             return await this.blobs.upload(att.blob, att.mimeType);
           } catch (err) {
-            throw new MymeError(
+            throw new MarfaError(
               "blob_upload_failed",
               `createWithAttachments: blob upload failed for attachments[${String(idx)}] (type=${att.type}): ${err instanceof Error ? err.message : String(err)}`,
               502,
@@ -775,7 +775,7 @@ export class MymeClient {
           // is guaranteed populated when we reach this point.
           const upload = uploadResults[idx];
           if (!upload) {
-            throw new MymeError(
+            throw new MarfaError(
               "internal_error",
               `createWithAttachments: upload result missing for attachments[${String(idx)}]`,
               500,
@@ -814,13 +814,13 @@ export class MymeClient {
       // Distil the bulk result into typed { host, attachments } using
       // the minted ids as the join key. Bulk returns one entry per input
       // item; on the atomic happy path every outcome is `"created"`.
-      // Errored AND skipped entries surface as a MymeError — the helper
+      // Errored AND skipped entries surface as a MarfaError — the helper
       // guarantees a fresh create on every call, so any non-created
       // outcome (typically a `create_only` collision on a caller-supplied
       // `input.item.id`) is a programming error rather than success.
       const errored = bulkResult.results.find((r) => r.outcome === "errored");
       if (errored) {
-        throw new MymeError(
+        throw new MarfaError(
           errored.error?.code ?? "bulk_failed",
           `createWithAttachments: bulk write failed at index ${String(errored.index)}: ${errored.error?.message ?? errored.reason ?? "unknown"}`,
           400,
@@ -828,7 +828,7 @@ export class MymeClient {
       }
       const skipped = bulkResult.results.find((r) => r.outcome === "skipped");
       if (skipped) {
-        throw new MymeError(
+        throw new MarfaError(
           "duplicate_id",
           `createWithAttachments: bulk write skipped at index ${String(skipped.index)} (reason: ${skipped.reason ?? "unknown"}). The helper requires fresh ids — if you passed an explicit \`item.id\`, it must not already exist.`,
           409,
@@ -844,7 +844,7 @@ export class MymeClient {
       );
       const [host, ...attachments] = hydrated;
       if (!host) {
-        throw new MymeError(
+        throw new MarfaError(
           "internal_error",
           "createWithAttachments: host hydration returned no item",
           500,
@@ -858,7 +858,7 @@ export class MymeClient {
      * Apply one action to every item matching a filter. Six actions
      * discriminated on `action`. Purge is admin-only and requires
      * `confirm: "PURGE"` — the SDK throws a `bulk_confirmation_required`
-     * `MymeError` client-side if you forget, matching the server's 400.
+     * `MarfaError` client-side if you forget, matching the server's 400.
      *
      * Non-admin callers see their match set narrowed to writable types
      * for every action except `purge`, which hard-403s.
@@ -874,7 +874,7 @@ export class MymeClient {
         // bulk_confirmation_required so both error paths feel the same.
         const confirm = (input as { confirm?: string }).confirm;
         if (confirm !== "PURGE") {
-          throw new MymeError(
+          throw new MarfaError(
             "bulk_confirmation_required",
             "bulkAction({ action: 'purge' }) requires confirm: 'PURGE'",
             400,
@@ -920,7 +920,7 @@ export class MymeClient {
         });
       }
       if (!final.result) {
-        throw new MymeError(
+        throw new MarfaError(
           "internal_error",
           `Bulk action job ${final.id} reached terminal status '${final.status}' but carried no result envelope`,
           0,
@@ -943,7 +943,7 @@ export class MymeClient {
       if (input.action === "purge") {
         const confirm = (input as { confirm?: string }).confirm;
         if (confirm !== "PURGE") {
-          throw new MymeError(
+          throw new MarfaError(
             "bulk_confirmation_required",
             "bulkAction({ action: 'purge' }) requires confirm: 'PURGE'",
             400,
@@ -951,7 +951,7 @@ export class MymeClient {
         }
       }
       if (input.dry_run === true) {
-        throw new MymeError(
+        throw new MarfaError(
           "invalid_request",
           "bulkActionAsync does not support dry_run; use bulkAction({ dry_run: true }) for the synchronous dry-run path",
           400,
@@ -965,7 +965,7 @@ export class MymeClient {
         );
       // Server returns 202 for the async path; defensive check.
       if (status !== 202) {
-        throw new MymeError(
+        throw new MarfaError(
           "internal_error",
           `Expected 202 from bulk_action async path, got ${String(status)}`,
           status,
@@ -1871,7 +1871,7 @@ export class MymeClient {
       case 404:
         throw new NotFoundError(message, details);
       default:
-        throw new MymeError(
+        throw new MarfaError(
           errObj?.code ?? "unknown",
           message,
           status,

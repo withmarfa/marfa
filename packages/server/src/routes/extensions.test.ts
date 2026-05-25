@@ -208,7 +208,7 @@ describe("PUT /items/:id/extensions/:namespace", () => {
   it("rejects reserved namespace write from non-admin with 403", async () => {
     const itemId = await createItem();
 
-    for (const namespace of ["core", "myme", "system"]) {
+    for (const namespace of ["core", "marfa", "system"]) {
       const res = await request(
         ctx.app,
         "PUT",
@@ -269,7 +269,7 @@ describe("DELETE /items/:id/extensions/:namespace", () => {
   it("rejects reserved namespace delete from non-admin with 403", async () => {
     const itemId = await createItem();
 
-    for (const namespace of ["core", "myme", "system"]) {
+    for (const namespace of ["core", "marfa", "system"]) {
       const res = await request(
         ctx.app,
         "DELETE",

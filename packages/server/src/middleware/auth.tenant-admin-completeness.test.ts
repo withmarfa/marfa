@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import type { ApiKey } from "@mymehq/shared";
+import type { ApiKey } from "@withmarfa/shared";
 import { checkTypeAccess, computeTypeFilter, hashApiKey } from "./auth.js";
 import {
   createTestContext,

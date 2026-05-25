@@ -11,15 +11,15 @@
 #   - the shared reactive-run queue (envelope-routed by integration_name)
 #   - a per-integration webhook-receipt queue (Google's push
 #     notifications carry only headers — verified via the
-#     `google-channel` adapter in `@mymehq/webhooks`)
+#     `google-channel` adapter in `@withmarfa/webhooks`)
 #
-# Per-integration webhook queue (not the shared `myme-webhook-receipt`
+# Per-integration webhook queue (not the shared `marfa-webhook-receipt`
 # that github-webhooks owns) because Cloudflare Queues only permit a
 # single consumer per queue — github-webhooks already owns the shared
 # one. The control plane's webhook receipt route routes by integration
 # name and produces onto the per-integration queue.
 
-name = "myme-integration-google-calendar"
+name = "marfa-integration-google-calendar"
 main = "src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
@@ -40,7 +40,7 @@ new_sqlite_classes = ["PerConnectionState"]
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
-name = "myme-integration-google-calendar-staging"
+name = "marfa-integration-google-calendar-staging"
 
 [env.staging.vars]
 INTEGRATION_NAME = "google.calendar"
@@ -60,26 +60,26 @@ new_sqlite_classes = ["PerConnectionState"]
 # leave the operator's peekable surface.
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-google-calendar-staging"
+queue = "marfa-scheduled-poll-google-calendar-staging"
 
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-google-calendar-staging-dlq"
+queue = "marfa-scheduled-poll-google-calendar-staging-dlq"
 
 [[env.staging.queues.producers]]
 binding = "REACTIVE_RUN_DLQ_QUEUE"
-queue = "myme-reactive-run-google-calendar-staging-dlq"
+queue = "marfa-reactive-run-google-calendar-staging-dlq"
 
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
-queue = "myme-webhook-receipt-google-calendar-staging-dlq"
+queue = "marfa-webhook-receipt-google-calendar-staging-dlq"
 
 [[env.staging.queues.consumers]]
-queue = "myme-scheduled-poll-google-calendar-staging"
+queue = "marfa-scheduled-poll-google-calendar-staging"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-google-calendar-staging-dlq"
+dead_letter_queue = "marfa-scheduled-poll-google-calendar-staging-dlq"
 
 # T-233 — per-integration reactive-run queue. Each integration with an
 # item-event trigger gets its own queue (Cloudflare Queues only allow
@@ -87,24 +87,24 @@ dead_letter_queue = "myme-scheduled-poll-google-calendar-staging-dlq"
 # `integration_name` to the matching queue URL via
 # `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS`.
 [[env.staging.queues.consumers]]
-queue = "myme-reactive-run-google-calendar-staging"
+queue = "marfa-reactive-run-google-calendar-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-reactive-run-google-calendar-staging-dlq"
+dead_letter_queue = "marfa-reactive-run-google-calendar-staging-dlq"
 
 [[env.staging.queues.consumers]]
-queue = "myme-webhook-receipt-google-calendar-staging"
+queue = "marfa-webhook-receipt-google-calendar-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-webhook-receipt-google-calendar-staging-dlq"
+dead_letter_queue = "marfa-webhook-receipt-google-calendar-staging-dlq"
 
 # ---- Prod -----------------------------------------------------------------
 # Mirrors staging for the eventual production rollout. Keep in sync
 # with staging if you change queue topology.
 [env.prod]
-name = "myme-integration-google-calendar-prod"
+name = "marfa-integration-google-calendar-prod"
 
 [env.prod.vars]
 INTEGRATION_NAME = "google.calendar"
@@ -121,44 +121,44 @@ new_sqlite_classes = ["PerConnectionState"]
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-google-calendar-prod"
+queue = "marfa-scheduled-poll-google-calendar-prod"
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-google-calendar-prod-dlq"
+queue = "marfa-scheduled-poll-google-calendar-prod-dlq"
 
 [[env.prod.queues.producers]]
 binding = "REACTIVE_RUN_DLQ_QUEUE"
-queue = "myme-reactive-run-google-calendar-prod-dlq"
+queue = "marfa-reactive-run-google-calendar-prod-dlq"
 
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
-queue = "myme-webhook-receipt-google-calendar-prod-dlq"
+queue = "marfa-webhook-receipt-google-calendar-prod-dlq"
 
 [[env.prod.queues.consumers]]
-queue = "myme-scheduled-poll-google-calendar-prod"
+queue = "marfa-scheduled-poll-google-calendar-prod"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-google-calendar-prod-dlq"
+dead_letter_queue = "marfa-scheduled-poll-google-calendar-prod-dlq"
 
 # T-233 — see staging block above for the per-integration reactive-run
 # rationale. Prod queues are provisioned by `pnpm provision prod`.
 [[env.prod.queues.consumers]]
-queue = "myme-reactive-run-google-calendar-prod"
+queue = "marfa-reactive-run-google-calendar-prod"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-reactive-run-google-calendar-prod-dlq"
+dead_letter_queue = "marfa-reactive-run-google-calendar-prod-dlq"
 
 [[env.prod.queues.consumers]]
-queue = "myme-webhook-receipt-google-calendar-prod"
+queue = "marfa-webhook-receipt-google-calendar-prod"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-webhook-receipt-google-calendar-prod-dlq"
+dead_letter_queue = "marfa-webhook-receipt-google-calendar-prod-dlq"
 
 # Secrets (`wrangler secret put --env <env>`):
-#   - MYME_API_URL
-#   - MYME_RUNTIME_CONTROL_URL
-#   - MYME_RUNTIME_BROKER_KEY
+#   - MARFA_API_URL
+#   - MARFA_RUNTIME_CONTROL_URL
+#   - MARFA_RUNTIME_BROKER_KEY

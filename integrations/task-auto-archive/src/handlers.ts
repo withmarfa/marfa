@@ -46,7 +46,7 @@ import {
   type ItemEventMessage,
   type HandlerResult,
   type ItemResource,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { DEFAULT_ARCHIVE_AFTER_DAYS } from "./manifest.js";
 
 export const PAGE_SIZE = 200;
@@ -108,7 +108,7 @@ async function runSweep(
 
   outer: while (pages < MAX_PAGES_PER_TICK) {
     pages += 1;
-    const page = await ctx.myme.listItems({
+    const page = await ctx.marfa.listItems({
       type: "core.task",
       state: "active",
       sort: "created_at",
@@ -140,7 +140,7 @@ async function runSweep(
   let archived = 0;
   for (const id of dueIds) {
     try {
-      await ctx.myme.transitionItem(id, "archived");
+      await ctx.marfa.transitionItem(id, "archived");
       archived += 1;
     } catch (err) {
       await ctx.activity.emit({
@@ -185,7 +185,7 @@ async function resolveArchiveAfterDays(
   ctx: ConnectionContext,
 ): Promise<number> {
   try {
-    const connection = await ctx.myme.getItem(ctx.connection_id);
+    const connection = await ctx.marfa.getItem(ctx.connection_id);
     const props = connection?.properties as
       | { configuration?: unknown }
       | undefined;

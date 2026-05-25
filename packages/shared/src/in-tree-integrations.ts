@@ -21,7 +21,7 @@
  * sibling parses the manifest through `IntegrationManifestSchema`,
  * which catches manifest-shape drift independently.
  *
- * For npm consumers of `@mymehq/shared` this is implementation
+ * For npm consumers of `@withmarfa/shared` this is implementation
  * detail; the tree-shaker drops the table for any consumer that
  * doesn't reference `IN_TREE_INTEGRATIONS` or its helpers.
  */
@@ -44,7 +44,7 @@ export interface InTreeIntegration {
    *  `triggers` array — kept in sync by review. */
   triggers: readonly IntegrationTriggerType[];
   /** True when the integration deploys as a Cloudflare Worker (hosted
-   *  substrate). False for local-only integrations like `mymehq.sync`. */
+   *  substrate). False for local-only integrations like `withmarfa.sync`. */
   hasWorker: boolean;
   /** `ControlPlaneEnv` field for the Service Binding the control
    *  plane uses to call `/arm-schedule` and `/verify` on this
@@ -54,7 +54,7 @@ export interface InTreeIntegration {
    *  webhook-receipt queue producer. Set only when this integration
    *  consumes from its own queue; undefined means it uses the legacy
    *  shared `WEBHOOK_RECEIPT_QUEUE` (currently just
-   *  `mymehq.github-webhooks`). */
+   *  `withmarfa.github-webhooks`). */
   webhookQueueBinding?: string;
   /** Override for the scheduled-poll queue slug. Defaults to
    *  `dirName` for integrations declaring a `schedule` trigger. The
@@ -66,14 +66,14 @@ export interface InTreeIntegration {
 
 export const IN_TREE_INTEGRATIONS: readonly InTreeIntegration[] = [
   {
-    name: "mymehq.rss-watcher",
+    name: "withmarfa.rss-watcher",
     dirName: "rss-watcher",
     triggers: ["schedule"],
     hasWorker: true,
     serviceBinding: "INTEGRATION_RSS_WATCHER",
   },
   {
-    name: "mymehq.github-webhooks",
+    name: "withmarfa.github-webhooks",
     dirName: "github-webhooks",
     triggers: ["webhook"],
     hasWorker: true,
@@ -83,7 +83,7 @@ export const IN_TREE_INTEGRATIONS: readonly InTreeIntegration[] = [
     // (consumer-side queue switch + drain of the shared queue).
   },
   {
-    name: "mymehq.task-auto-archive",
+    name: "withmarfa.task-auto-archive",
     dirName: "task-auto-archive",
     triggers: ["item-event", "schedule"],
     hasWorker: true,
@@ -149,15 +149,15 @@ export const IN_TREE_INTEGRATIONS: readonly InTreeIntegration[] = [
     serviceBinding: "INTEGRATION_RAINDROP",
   },
   {
-    name: "mymehq.inbox",
-    dirName: "mymehq-inbox",
+    name: "withmarfa.inbox",
+    dirName: "withmarfa-inbox",
     triggers: ["webhook"],
     hasWorker: true,
     serviceBinding: "INTEGRATION_MYMEHQ_INBOX",
     webhookQueueBinding: "WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX",
   },
   {
-    name: "mymehq.sync",
+    name: "withmarfa.sync",
     dirName: "sync",
     triggers: ["manual"],
     hasWorker: false,

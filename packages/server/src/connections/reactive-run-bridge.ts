@@ -84,7 +84,7 @@ const COOLDOWN_MS = 60_000;
 const MAX_COOLDOWN_MS = 5 * 60_000;
 /** Fallback per-fetch send timeout when no `sendTimeoutMs` is supplied
  *  (test harnesses that build a partial `BridgeConfig`). Production wires
- *  `AppConfig.reactiveRunSendTimeoutMs` (env `MYME_REACTIVE_RUN_SEND_TIMEOUT_MS`)
+ *  `AppConfig.reactiveRunSendTimeoutMs` (env `MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS`)
  *  through `index.ts`, so the operator-tunable value is the live one. */
 const DEFAULT_SEND_TIMEOUT_MS = 5_000;
 
@@ -126,7 +126,7 @@ export interface BridgeConfig {
    * Per-fetch timeout in milliseconds for the queue producer call. A slow
    * Cloudflare Queues endpoint would otherwise stall the bridge while
    * fanning out (T-013). Production wires this from
-   * `AppConfig.reactiveRunSendTimeoutMs` (env `MYME_REACTIVE_RUN_SEND_TIMEOUT_MS`);
+   * `AppConfig.reactiveRunSendTimeoutMs` (env `MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS`);
    * unset falls back to `DEFAULT_SEND_TIMEOUT_MS`. On timeout the failure
    * is logged and surfaced as `system.activity` of severity error, then
    * fanout continues to the next subscriber.

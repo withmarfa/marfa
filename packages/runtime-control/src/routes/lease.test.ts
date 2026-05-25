@@ -11,7 +11,7 @@
  * "write" }` and surfaced the gap.
  *
  * The test patches `globalThis.fetch` to capture the body the broker
- * POSTs to Myme's `/system/runtime-credentials` endpoint, then asserts
+ * POSTs to Marfa's `/system/runtime-credentials` endpoint, then asserts
  * all three permission maps are present and wildcard-write.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -24,7 +24,7 @@ interface FetchCall {
   body: unknown;
 }
 
-function mockMymeFetch(captured: FetchCall[]): typeof fetch {
+function mockMarfaFetch(captured: FetchCall[]): typeof fetch {
   return ((input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === "string"
@@ -60,8 +60,8 @@ function mockMymeFetch(captured: FetchCall[]): typeof fetch {
 
 function buildTestEnv(): ControlPlaneEnv {
   return {
-    MYME_API_URL: "https://staging.test",
-    MYME_RUNTIME_BROKER_KEY: "broker-key-test",
+    MARFA_API_URL: "https://staging.test",
+    MARFA_RUNTIME_BROKER_KEY: "broker-key-test",
   } as unknown as ControlPlaneEnv;
 }
 
@@ -76,7 +76,7 @@ describe("POST /lease/:connection_id/runtime (T-260)", () => {
 
   it("mints with wildcard write on type_permissions, edge_permissions, AND extension_permissions", async () => {
     const captured: FetchCall[] = [];
-    globalThis.fetch = mockMymeFetch(captured);
+    globalThis.fetch = mockMarfaFetch(captured);
     const app = buildApp();
     const env = buildTestEnv();
 
@@ -106,10 +106,10 @@ describe("POST /lease/:connection_id/runtime (T-260)", () => {
     expect(body.extension_permissions).toEqual({ "*": "write" });
   });
 
-  it("returns 503 when MYME_API_URL is unset", async () => {
+  it("returns 503 when MARFA_API_URL is unset", async () => {
     const app = buildApp();
     const env = {
-      MYME_RUNTIME_BROKER_KEY: "broker-key-test",
+      MARFA_RUNTIME_BROKER_KEY: "broker-key-test",
     } as unknown as ControlPlaneEnv;
     const res = await app.request(
       "/lease/conn_x/runtime",

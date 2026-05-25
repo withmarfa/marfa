@@ -427,7 +427,7 @@ export async function createTestContext(
   overrides?: Partial<AppConfig>,
 ): Promise<TestContext> {
   const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
-  const tmpDir = mkdtempSync(join(tmpdir(), "myme-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
   const blobPath = join(tmpDir, "blobs");
 
   // T-178: thread `authMode` through to storage construction so tests

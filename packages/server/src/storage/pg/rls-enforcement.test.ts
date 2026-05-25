@@ -7,7 +7,7 @@
  * Two test surfaces:
  *
  *   1. **Direct DB-layer.** Open a Drizzle transaction, run `SET
- *      LOCAL ROLE myme_app; SELECT set_config('myme.tenant_id',
+ *      LOCAL ROLE myme_app; SELECT set_config('marfa.tenant_id',
  *      tenantA, true)`, then issue an *unscoped* `SELECT * FROM
  *      items` (no WHERE clause). RLS must filter to tenant A's rows.
  *      This proves the policies bite the role even when the
@@ -69,7 +69,7 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
       const pgDb = (ctx.storage as unknown as { pgDb: PgDb }).pgDb;
       const seenIdsForA = await pgDb.transaction(async (tx) => {
         await tx.execute(
-          sql`SELECT set_config('myme.tenant_id', ${tenantA}, true)`,
+          sql`SELECT set_config('marfa.tenant_id', ${tenantA}, true)`,
         );
         await tx.execute(sql`SET LOCAL ROLE myme_app`);
         // Use the row-level helper so we hit the policy.
@@ -85,7 +85,7 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
       // And the symmetric case for tenant B.
       const seenIdsForB = await pgDb.transaction(async (tx) => {
         await tx.execute(
-          sql`SELECT set_config('myme.tenant_id', ${tenantB}, true)`,
+          sql`SELECT set_config('marfa.tenant_id', ${tenantB}, true)`,
         );
         await tx.execute(sql`SET LOCAL ROLE myme_app`);
         const rows = await tx.execute<{ id: string; tenant_id: string }>(
@@ -102,7 +102,7 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
       const pgDb = (ctx.storage as unknown as { pgDb: PgDb }).pgDb;
 
       await pgDb.transaction(async (tx) => {
-        await tx.execute(sql`SELECT set_config('myme.tenant_id', 'x', true)`);
+        await tx.execute(sql`SELECT set_config('marfa.tenant_id', 'x', true)`);
         await tx.execute(sql`SET LOCAL ROLE myme_app`);
       });
 
@@ -110,10 +110,10 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
       // owner role. A bare SELECT current_setting reads the setting
       // — empty string after `SET LOCAL` is cleared.
       const rows = await pgDb.execute<{ role: string; tenant: string }>(
-        sql`SELECT current_user::text AS role, current_setting('myme.tenant_id', true) AS tenant`,
+        sql`SELECT current_user::text AS role, current_setting('marfa.tenant_id', true) AS tenant`,
       );
       expect(rows[0]?.role).not.toBe("myme_app");
-      // current_setting('myme.tenant_id', true) is per-session for
+      // current_setting('marfa.tenant_id', true) is per-session for
       // anything outside a SET LOCAL, but inside the txn we set
       // LOCAL — at this point the setting is cleared.
       expect(rows[0]?.tenant ?? "").toBe("");

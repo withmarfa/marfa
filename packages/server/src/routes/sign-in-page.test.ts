@@ -284,7 +284,7 @@ describe("GET /auth/sign-in", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     const html = await res.text();
-    expect(html).toContain("Sign in to Myme");
+    expect(html).toContain("Sign in to Marfa");
     expect(html).toContain('action="/auth/sign-in"');
   });
 
@@ -576,7 +576,7 @@ describe("POST /auth/sign-in (form wrapper)", () => {
             res.headers as Headers & { getSetCookie: () => string[] }
           ).getSetCookie()
         : [res.headers.get("set-cookie") ?? ""];
-    expect(cookies.some((c) => c.includes("myme.auth"))).toBe(true);
+    expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(true);
   });
 
   it("rejects an off-origin return_to (open-redirect guard, defence in depth)", async () => {
@@ -656,7 +656,7 @@ describe("POST /auth/sign-in (form wrapper)", () => {
             }
           ).getSetCookie()
         : [res.headers.get("set-cookie") ?? ""];
-    expect(cookies.some((c) => c.includes("myme.auth"))).toBe(true);
+    expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(true);
   });
 
   it("succeeds when browser sends Origin: null (privacy-strict referrer policy)", async () => {
@@ -704,7 +704,7 @@ describe("POST /auth/sign-in (form wrapper)", () => {
             res.headers as Headers & { getSetCookie: () => string[] }
           ).getSetCookie()
         : [res.headers.get("set-cookie") ?? ""];
-    expect(cookies.some((c) => c.includes("myme.auth"))).toBe(true);
+    expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(true);
   });
 
   it("succeeds when browser omits the Origin header entirely", async () => {

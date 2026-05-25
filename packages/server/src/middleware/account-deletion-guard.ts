@@ -39,7 +39,7 @@
  *
  * **Token reuse + cooldown.** Reusing the existing valid token bounds
  * the worst-case to one fresh email per account per cooldown window
- * (default 1h, env override `MYME_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS`).
+ * (default 1h, env override `MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS`).
  * The cooldown map is in-memory; multi-instance deployments get at
  * most N × one-email-per-cooldown-window globally.
  */
@@ -48,7 +48,7 @@ import { randomBytes } from "node:crypto";
 import { and, desc, eq, gt, like } from "drizzle-orm";
 import type { AppEnv } from "./auth.js";
 import type { Storage } from "../storage/interface.js";
-import type { EmailTransport as MymeEmailTransport } from "../email/transport.js";
+import type { EmailTransport as MarfaEmailTransport } from "../email/transport.js";
 import { renderAccountDeleteCancelEmail } from "../auth/email-templates/account-delete-cancel.js";
 
 const TARGET_PATHS = new Set([
@@ -62,7 +62,7 @@ const CANCEL_IDENTIFIER_PREFIX = "account-cancel:";
 /**
  * Default per-account cooldown on the cancel-email send (1h).
  *
- * Override via env: `MYME_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS`. Accepts
+ * Override via env: `MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS`. Accepts
  * any non-negative integer milliseconds. **`0` means "no cooldown"** —
  * every sign-in attempt fires a fresh email send. Useful for tests +
  * rare operator-debug scenarios; in production this restores the
@@ -72,7 +72,7 @@ const CANCEL_IDENTIFIER_PREFIX = "account-cancel:";
 const DEFAULT_CANCEL_EMAIL_COOLDOWN_MS = 60 * 60 * 1000;
 
 function resolveCooldownMs(): number {
-  const raw = process.env.MYME_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS;
+  const raw = process.env.MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS;
   if (!raw) return DEFAULT_CANCEL_EMAIL_COOLDOWN_MS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 0
@@ -82,7 +82,7 @@ function resolveCooldownMs(): number {
 
 export function accountDeletionGuardMiddleware(
   storage: Storage,
-  emailTransport: MymeEmailTransport | undefined,
+  emailTransport: MarfaEmailTransport | undefined,
   baseURL: string,
 ) {
   // In-memory per-account cooldown on cancel-email sends. Closed-over

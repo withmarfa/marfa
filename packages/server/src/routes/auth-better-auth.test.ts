@@ -10,7 +10,7 @@ import type { TestContext } from "../test-utils.js";
  * Smoke tests for the better-auth integration mounted at /auth/*.
  *
  * Coverage:
- *   - sign-up enabled vs disabled gating (MYME_AUTH_ALLOW_SIGNUP)
+ *   - sign-up enabled vs disabled gating (MARFA_AUTH_ALLOW_SIGNUP)
  *   - sign-in with email + password
  *   - session cookie is HttpOnly + Secure + SameSite=Lax + path=/auth
  *   - session cookie does NOT authenticate API calls (the data plane
@@ -53,7 +53,7 @@ async function signIn(
 }
 
 describe("better-auth /auth/* surface", () => {
-  it("allows email + password sign-up when MYME_AUTH_ALLOW_SIGNUP=true", async () => {
+  it("allows email + password sign-up when MARFA_AUTH_ALLOW_SIGNUP=true", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const res = await signUp(ctx, "alice@example.com", "correct horse battery");
     expect(res.status).toBe(200);
@@ -61,7 +61,7 @@ describe("better-auth /auth/* surface", () => {
     expect(body.user?.email).toBe("alice@example.com");
   });
 
-  it("rejects email + password sign-up when MYME_AUTH_ALLOW_SIGNUP=false", async () => {
+  it("rejects email + password sign-up when MARFA_AUTH_ALLOW_SIGNUP=false", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
     const res = await signUp(ctx, "bob@example.com", "correct horse battery");
     // better-auth returns 403 when sign-up is disabled.
@@ -382,7 +382,7 @@ describe("better-auth /auth/* surface", () => {
     expect(body.issuer).toBe(`${base}/auth`);
 
     // Every absolute-URL field starts with the configured base. If the
-    // deployment is missing MYME_AUTH_BASE_URL the server falls back to
+    // deployment is missing MARFA_AUTH_BASE_URL the server falls back to
     // `http://localhost:<port>`, which the host header then rewrites to
     // the internal hostname. Asserting the prefix here catches that
     // regression.

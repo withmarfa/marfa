@@ -7,7 +7,7 @@
  *         the control-plane lease broker (cached on the per-Connection
  *         DO with TTL ≤ 5 min).
  *      b. Builds the ConnectionContext (cursor, activity, echo,
- *         myme client).
+ *         marfa client).
  *      c. Dispatches the message via `dispatchMessage`.
  *   2. Translates the HandlerResult:
  *      - { ok: true } → ack the message
@@ -52,7 +52,7 @@ export interface DlqProducer {
 }
 
 export interface ConsumerEnvironment {
-  /** Base URL of the Myme server. */
+  /** Base URL of the Marfa server. */
   apiUrl: string;
   /** Per-Connection storage adapter — usually obtained by stubbing
    *  the integration Worker's DO via
@@ -114,7 +114,7 @@ export async function buildConnectionContext(
 ): Promise<ConnectionContext> {
   const credential = await env.mintCredential(message.connection_id);
   // T-039: thread the parent cycle into the ConnectionClient so every
-  // mutating call back into Myme stamps the cycle headers. Schedule /
+  // mutating call back into Marfa stamps the cycle headers. Schedule /
   // webhook handlers start a fresh chain (cycleParent: null —
   // `nextHopMetadata` sees it and stamps the connector as the chain
   // head); item-event handlers inherit the parent's cycle from the
@@ -131,7 +131,7 @@ export async function buildConnectionContext(
     connection_id: message.connection_id,
     integration_name: message.integration_name,
     tenant_id: message.tenant_id,
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, message.connection_id),
     echo: createEchoSuppression(storage, env.echo),
@@ -289,14 +289,14 @@ export async function consumeBatch(
         err instanceof Error ? err.constructor.name || "Error" : "unknown";
       thrownMessage = err instanceof Error ? err.message : String(err);
       // T-255: surface the throw via console.error. The activity-emit
-      // backstop below relies on a working ConnectionClient (Myme
+      // backstop below relies on a working ConnectionClient (Marfa
       // reachable + runtime credential mintable); when the throw is a
       // mint / credential-bootstrap failure, the backstop fails too and
       // the message gets retried + DLQ'd in silence. console.error here
       // is the only operator-visible signal in that degraded mode —
       // wrangler tail / Cloudflare logs surface it before the retry
       // ladder consumes the message. Keeps the existing activity-emit
-      // path for the healthy-Myme case where it still works.
+      // path for the healthy-Marfa case where it still works.
       console.error(
         `[runtime-sdk:consumeBatch] dispatch threw on ${message.kind} for connection ${message.connection_id} (integration=${message.integration_name}, attempts=${String(msg.attempts)}): ${thrownClassName}: ${thrownMessage}`,
       );

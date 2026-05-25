@@ -1,10 +1,10 @@
 /**
  * Handler-level tests for the Google Calendar bidirectional integration.
  *
- * Builds ConnectionContext inline. Mocks ctx.myme entirely (no
+ * Builds ConnectionContext inline. Mocks ctx.marfa entirely (no
  * real HTTP). Tests cover:
  *   - Inbound: events.list response → core.event upsert + cursor advance
- *   - Inbound: cancelled event → trashed transition on the mapped Myme item
+ *   - Inbound: cancelled event → trashed transition on the mapped Marfa item
  *   - Inbound: echo-suppressed event → no upsert, counted as skipped
  *   - Inbound: 410 syncToken invalidation → cursor reset
  *   - Outbound: created core.event → POST to Calendar + mapping recorded
@@ -26,7 +26,7 @@ import {
   type ItemState,
   type ItemEventMessage,
   type ScheduleMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleItemEvent } from "./handlers.js";
 
 interface InMemoryStorage {
@@ -63,9 +63,9 @@ interface ProxyCall {
 }
 
 interface BuildOpts {
-  /** ctx.myme.getItem(connection_id) returns this. */
+  /** ctx.marfa.getItem(connection_id) returns this. */
   connectionRecord?: Partial<ItemResource>;
-  /** ctx.myme.getItem(otherId) returns this when called for an
+  /** ctx.marfa.getItem(otherId) returns this when called for an
    *  item-event handler. */
   itemForEvent?: ItemResource | null;
   /** Sequenced proxy responses (in call order). */
@@ -131,7 +131,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
   const ctx: ConnectionContext = {
     connection_id: connectionId,
     integration_name: "google.calendar",
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, {
@@ -241,7 +241,7 @@ describe("Google Calendar handlers — inbound (schedule)", () => {
     expect(proxyCalls[1]!.path).toMatch(/syncToken=sync_after_first_pull/);
   });
 
-  it("trashes the matching Myme item when Calendar marks the event cancelled", async () => {
+  it("trashes the matching Marfa item when Calendar marks the event cancelled", async () => {
     const { ctx, transitions } = buildContext({
       proxyResponses: [
         () => jsonResponse(SAMPLE_INBOUND),
@@ -287,7 +287,7 @@ describe("Google Calendar handlers — inbound (schedule)", () => {
               {
                 id: "gevt_3",
                 etag: "etag_3",
-                summary: "Recently created from Myme",
+                summary: "Recently created from Marfa",
                 start: { dateTime: "2026-05-06T18:00:00Z" },
                 end: { dateTime: "2026-05-06T21:00:00Z" },
               },
@@ -312,7 +312,7 @@ describe("Google Calendar handlers — outbound (item-event)", () => {
       type: "core.event",
       state: "active",
       properties: {
-        title: "New Myme event",
+        title: "New Marfa event",
         starts_at: "2026-06-01T10:00:00Z",
         ends_at: "2026-06-01T11:00:00Z",
       },
@@ -406,7 +406,7 @@ describe("Google Calendar handlers — outbound (item-event)", () => {
   });
 
   it("derives the same deterministic id across retries (T-020)", async () => {
-    // Sanity check: two invocations for the same Myme item id MUST
+    // Sanity check: two invocations for the same Marfa item id MUST
     // stamp the same Calendar id, otherwise the 409 idempotency
     // path can't fire.
     const item: ItemResource = {
@@ -455,7 +455,7 @@ describe("Google Calendar handlers — outbound (item-event)", () => {
     expect(proxyCalls[0]!.path).toMatch(/events\/gevt_existing$/);
   });
 
-  it("DELETEs the mapped Calendar event when the Myme item is trashed", async () => {
+  it("DELETEs the mapped Calendar event when the Marfa item is trashed", async () => {
     const item: ItemResource = {
       id: "mit_trashed",
       type: "core.event",

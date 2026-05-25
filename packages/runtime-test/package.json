@@ -1,5 +1,5 @@
 {
-  "name": "@mymehq/runtime-test",
+  "name": "@withmarfa/runtime-test",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -20,7 +20,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@mymehq/runtime-sdk": "workspace:*"
+    "@withmarfa/runtime-sdk": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251201.0",

@@ -70,7 +70,7 @@ export async function createConnection(
   //
   // RLS (T-025) — the per-table `myme_app` role + CRUD grants + tenant-
   // isolation policies are part of SCHEMA_SQL (migrations 0035 / 0037 /
-  // 0040). Activation is gated by `MYME_RLS_ENFORCE=true`, wired via the
+  // 0040). Activation is gated by `MARFA_RLS_ENFORCE=true`, wired via the
   // per-request context proxy + `rls-tenant-context.ts` middleware. With
   // the flag unset (the default) all queries fall through to the unwrapped
   // base instance and run as the connection owner — RLS bypassed by virtue

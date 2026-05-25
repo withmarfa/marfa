@@ -5,7 +5,7 @@
  * The transaction-based RLS middleware exempts streaming routes by URL
  * prefix because a long-lived transaction would pin a pool connection.
  * T-146 closes that gap by applying session-level `SET ROLE myme_app`
- * + `myme.tenant_id` on a dedicated pool connection for each stream
+ * + `marfa.tenant_id` on a dedicated pool connection for each stream
  * (see `storage/pg/streaming-rls.ts`). This test verifies that
  * defence-in-depth bites: a tenant A credential cannot read tenant B
  * items through any streaming surface, even with broad

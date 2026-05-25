@@ -9,13 +9,13 @@
 #   ./infra/cloudflare/scripts/deploy-control.sh <staging|prod> [extra wrangler args]
 #
 # Required env (operator-specific):
-#   - CLOUDFLARE_API_TOKEN              (myme-account token; same one the wrangler-myme helper sets)
+#   - CLOUDFLARE_API_TOKEN              (marfa-account token; same one the wrangler-marfa helper sets)
 #   - CLOUDFLARE_ACCOUNT_ID             (account hosting the Worker)
 #   - CONTROL_PLANE_STAGING_KV_ID       (idempotency KV namespace id, staging)
 #   - CONTROL_PLANE_PROD_KV_ID          (idempotency KV namespace id, prod)
-#   - CONTROL_PLANE_STAGING_HOSTNAME    (e.g. runtime-staging.myme.so)
-#   - CONTROL_PLANE_PROD_HOSTNAME       (e.g. runtime.myme.so)
-#   - CONTROL_PLANE_ZONE                (zone hosting both, e.g. myme.so)
+#   - CONTROL_PLANE_STAGING_HOSTNAME    (e.g. runtime-staging.marfa.so)
+#   - CONTROL_PLANE_PROD_HOSTNAME       (e.g. runtime.marfa.so)
+#   - CONTROL_PLANE_ZONE                (zone hosting both, e.g. marfa.so)
 #
 # Example invocation from an operator shell that already sources the
 # per-machine secrets file:
@@ -27,7 +27,7 @@
 #   2. Renders wrangler.control.toml → a temp file with `${VAR}` tokens
 #      substituted by the env values (envsubst-equivalent).
 #   3. Pre-builds the runtime-control Worker's workspace deps via
-#      `pnpm --filter @mymehq/runtime-control... --if-present build`
+#      `pnpm --filter @withmarfa/runtime-control... --if-present build`
 #      (per scripts/deploy-worker.sh — keeps the bundled dist fresh
 #      across workspace changes).
 #   4. Runs `wrangler deploy --config <temp> --env <env>` with any extra
@@ -116,9 +116,9 @@ grep -E '^name|^\[env\.[a-z]+\]|routes|kv_namespaces|account_id|CLOUDFLARE_ACCOU
 # Pre-build workspace deps so the bundle picks up fresh dist artefacts —
 # mirrors scripts/deploy-worker.sh's T-251 behaviour. runtime-control
 # itself has no `build` script (bundled via wrangler), so this only
-# rebuilds upstream deps (@mymehq/shared, @mymehq/webhooks).
-echo "→ Pre-building workspace deps for @mymehq/runtime-control"
-pnpm --filter "@mymehq/runtime-control..." --if-present build
+# rebuilds upstream deps (@withmarfa/shared, @withmarfa/webhooks).
+echo "→ Pre-building workspace deps for @withmarfa/runtime-control"
+pnpm --filter "@withmarfa/runtime-control..." --if-present build
 
 echo "→ wrangler deploy --config <rendered> --env $ENV_NAME"
 # Not `exec` — exec replaces the shell process, which would bypass

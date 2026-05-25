@@ -4,7 +4,7 @@
 #   - name (matches the integration name from its manifest)
 #   - main (path into the integration's own src/)
 #   - durable_objects.bindings (DO class shipped from
-#     @mymehq/runtime-sdk, namespaced per Worker)
+#     @withmarfa/runtime-sdk, namespaced per Worker)
 #   - queues.consumers (subscribe to the slice of webhook-receipt /
 #     scheduled-poll / reactive-run that envelope-routes by integration
 #     name)
@@ -13,7 +13,7 @@
 # share the same Cloudflare account but no other state — every call
 # between them goes through the public HTTPS surface.
 
-name = "myme-integration-EXAMPLE"
+name = "marfa-integration-EXAMPLE"
 main = "../../integrations/EXAMPLE/src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
@@ -24,7 +24,7 @@ INTEGRATION_NAME = "EXAMPLE"
 ENVIRONMENT = "dev"
 
 # ---- Durable Object: per-Connection state --------------------------------
-# The DO class lives in @mymehq/runtime-sdk; each integration namespaces
+# The DO class lives in @withmarfa/runtime-sdk; each integration namespaces
 # it locally. The class_name must match the export from the SDK.
 # (PR 2 wires this binding.)
 #
@@ -49,34 +49,34 @@ ENVIRONMENT = "dev"
 # replay, where the existing consumer picks them up normally.
 #
 # [[queues.consumers]]
-# queue = "myme-webhook-receipt"
+# queue = "marfa-webhook-receipt"
 # max_batch_size = 10
 # max_batch_timeout = 5
 # max_retries = 6
-# dead_letter_queue = "myme-webhook-receipt-dlq"
+# dead_letter_queue = "marfa-webhook-receipt-dlq"
 #
 # [[queues.consumers]]
-# queue = "myme-scheduled-poll"
+# queue = "marfa-scheduled-poll"
 # max_batch_size = 5
 # max_batch_timeout = 30
 #
 # [[queues.consumers]]
-# queue = "myme-reactive-run"
+# queue = "marfa-reactive-run"
 # max_batch_size = 10
 # max_batch_timeout = 5
 
 # ---- Staging / Prod ------------------------------------------------------
 [env.staging]
-name = "myme-integration-EXAMPLE-staging"
+name = "marfa-integration-EXAMPLE-staging"
 [env.staging.vars]
 ENVIRONMENT = "staging"
 
 [env.prod]
-name = "myme-integration-EXAMPLE-prod"
+name = "marfa-integration-EXAMPLE-prod"
 [env.prod.vars]
 ENVIRONMENT = "prod"
 
 # Secrets (set via `wrangler secret put` per env):
-#   - MYME_API_URL           (every env; the runtime credential is
+#   - MARFA_API_URL           (every env; the runtime credential is
 #                              fetched per-message from the control
 #                              plane's lease broker, never bound here)

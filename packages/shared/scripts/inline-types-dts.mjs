@@ -1,14 +1,14 @@
-// Post-build: inline @mymehq/types declarations into dist/index.d.ts.
+// Post-build: inline @withmarfa/types declarations into dist/index.d.ts.
 //
-// tsup's noExternal bundles @mymehq/types into the JS output, but its dts
-// emitter leaves the import/re-export of "@mymehq/types" intact. Because
-// @mymehq/types is `private` and never published, npm consumers of
-// @mymehq/shared resolve those declarations to `any` under skipLibCheck.
+// tsup's noExternal bundles @withmarfa/types into the JS output, but its dts
+// emitter leaves the import/re-export of "@withmarfa/types" intact. Because
+// @withmarfa/types is `private` and never published, npm consumers of
+// @withmarfa/shared resolve those declarations to `any` under skipLibCheck.
 //
-// This script reads the pre-built @mymehq/types dist/index.d.ts, strips its
+// This script reads the pre-built @withmarfa/types dist/index.d.ts, strips its
 // trailing export clause, and splices its declarations into the shared
-// package's dist/index.d.ts in place of the "@mymehq/types" import. The
-// re-export clause is rewritten to drop the `from '@mymehq/types'` suffix.
+// package's dist/index.d.ts in place of the "@withmarfa/types" import. The
+// re-export clause is rewritten to drop the `from '@withmarfa/types'` suffix.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -21,7 +21,7 @@ const typesDts = resolve(here, "../../types/dist/index.d.ts");
 const sharedContent = readFileSync(sharedDts, "utf8");
 const typesContent = readFileSync(typesDts, "utf8");
 
-const EXTERNAL = "@mymehq/types";
+const EXTERNAL = "@withmarfa/types";
 
 if (!sharedContent.includes(EXTERNAL)) {
   console.log(`[inline-types-dts] ${sharedDts} already inlined, nothing to do`);
@@ -34,10 +34,10 @@ const typesDeclarations = typesContent
   .replace(/\nexport \{[\s\S]*?\};\s*$/m, "\n")
   .trimEnd();
 
-// Match the single "import { ... } from '@mymehq/types';" line.
-const importRe = /^import \{([^}]+)\} from ['"]@mymehq\/types['"];\s*$/m;
-// Match the single "export { ... } from '@mymehq/types';" line.
-const reexportRe = /^export \{([^}]+)\} from ['"]@mymehq\/types['"];\s*$/m;
+// Match the single "import { ... } from '@withmarfa/types';" line.
+const importRe = /^import \{([^}]+)\} from ['"]@withmarfa\/types['"];\s*$/m;
+// Match the single "export { ... } from '@withmarfa/types';" line.
+const reexportRe = /^export \{([^}]+)\} from ['"]@withmarfa\/types['"];\s*$/m;
 
 const importMatch = sharedContent.match(importRe);
 const reexportMatch = sharedContent.match(reexportRe);

@@ -1,5 +1,5 @@
--- T-122: rename the in-tree sync integration manifest from mymehq.sync-agent
--- to mymehq.sync. The name lives in the `properties` JSON column (TEXT,
+-- T-122: rename the in-tree sync integration manifest from withmarfa.sync-agent
+-- to withmarfa.sync. The name lives in the `properties` JSON column (TEXT,
 -- cast to jsonb for JSON ops) on system.integration items and on
 -- system.connection items that reference the integration. UPDATE in
 -- place to preserve integration + connection row identity; items synced
@@ -17,10 +17,10 @@ SET properties = jsonb_set(
   jsonb_set(
     properties::jsonb,
     '{manifest_name}',
-    '"mymehq.sync"'::jsonb
+    '"withmarfa.sync"'::jsonb
   ),
   '{manifest,name}',
-  '"mymehq.sync"'::jsonb
+  '"withmarfa.sync"'::jsonb
 )::text
 WHERE type IN ('system.integration', 'system.connection')
-  AND (properties::jsonb)->>'manifest_name' = 'mymehq.sync-agent';
+  AND (properties::jsonb)->>'manifest_name' = 'withmarfa.sync-agent';

@@ -42,7 +42,7 @@ export interface AppConfig {
   enableHsts: boolean;
   /**
    * T-025 part 1: when `true`, the application connects to Postgres as
-   * the `myme_app` role with `SET LOCAL myme.tenant_id = '<id>'` per
+   * the `myme_app` role with `SET LOCAL marfa.tenant_id = '<id>'` per
    * request, so RLS policies enforce tenant isolation at the DB layer
    * (defense-in-depth beneath the application-layer scoping). Default
    * `false` keeps existing single-tenant self-hosts unchanged.
@@ -87,33 +87,33 @@ export interface AppConfig {
   authSessionCleanupIntervalMs?: number;
   /** T-116: grace window between `auth.account.delete_confirmed` and the
    *  hard-delete cascade. `0` disables the purger entirely. Env override
-   *  `MYME_ACCOUNT_DELETION_GRACE_DAYS`. Default 30. */
+   *  `MARFA_ACCOUNT_DELETION_GRACE_DAYS`. Default 30. */
   accountDeletionGraceDays?: number;
   /** T-116: cadence (ms) for the pending-delete purger sweep. Env
-   *  override `MYME_ACCOUNT_DELETION_PURGE_INTERVAL_MS`. Default 1h. */
+   *  override `MARFA_ACCOUNT_DELETION_PURGE_INTERVAL_MS`. Default 1h. */
   accountDeletionPurgeIntervalMs?: number;
   /** T-026: cadence (ms) for the `rate_limit_windows` GC sweep that drops
    *  rows past their `expires_at`. Default 3_600_000 (1h); env override
-   *  `MYME_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
+   *  `MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
    *  applies the 1h fallback when unset. */
   rateLimitCleanupIntervalMs?: number;
   /** T-218: how long a terminal `bulk_action_jobs` row survives before
    *  the GC sweep drops it. Counted against `finished_at`. Default
-   *  7 days; env override `MYME_BULK_ACTION_JOB_RETENTION_MS`. Set to
+   *  7 days; env override `MARFA_BULK_ACTION_JOB_RETENTION_MS`. Set to
    *  `0` to disable the sweep entirely (the table grows unbounded). */
   bulkActionJobRetentionMs?: number;
   /** T-218: cadence (ms) for the `bulk_action_jobs` GC sweep. Default
-   *  3_600_000 (1h); env override `MYME_BULK_ACTION_JOB_GC_INTERVAL_MS`. */
+   *  3_600_000 (1h); env override `MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS`. */
   bulkActionJobGcIntervalMs?: number;
   errorWebhookUrl: string;
   /** Per-fetch timeout (ms) for error-webhook delivery in
    *  `middleware/error-notifier.ts`. Env override
-   *  `MYME_ERROR_WEBHOOK_TIMEOUT_MS`. Default 5000. Optional on the type
+   *  `MARFA_ERROR_WEBHOOK_TIMEOUT_MS`. Default 5000. Optional on the type
    *  so test contexts constructing `AppConfig` literals don't have to
    *  supply it; `loadConfig` always populates it. */
   errorWebhookTimeoutMs?: number;
   /** Per-fetch timeout (ms) for the reactive-run bridge's Cloudflare
-   *  Queues producer call. Env override `MYME_REACTIVE_RUN_SEND_TIMEOUT_MS`.
+   *  Queues producer call. Env override `MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS`.
    *  Default 5000. Threaded into `BridgeConfig.sendTimeoutMs` at bridge
    *  construction so operators can tune it for real Queues latency.
    *  Optional on the type for the same reason as `errorWebhookTimeoutMs`. */
@@ -123,7 +123,7 @@ export interface AppConfig {
   trustedProxyCidrs: CidrRange[];
   /** Allow-list of `redirect_uri` values accepted by the connector OAuth
    *  bootstrap (`POST /connections/:id/oauth/start`). Comma-separated
-   *  via `MYME_OAUTH_REDIRECT_ALLOWLIST`. Empty list disables enforcement
+   *  via `MARFA_OAUTH_REDIRECT_ALLOWLIST`. Empty list disables enforcement
    *  — convenient for self-hosted dev but an open-redirect risk in
    *  hosted mode (T-010), so production deployments must set this. */
   oauthRedirectAllowlist: string[];
@@ -145,7 +145,7 @@ export interface AppConfig {
    *  hook (env-driven config never sets it). */
   authRequireEmailVerification?: boolean;
   /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
-   *  into the generic-oauth plugin. Parsed from the `MYME_OIDC_PROVIDERS`
+   *  into the generic-oauth plugin. Parsed from the `MARFA_OIDC_PROVIDERS`
    *  env var (JSON array of `{ providerId, clientId, clientSecret,
    *  discoveryUrl?, scopes? }`). */
   oidcProviders: OidcProviderConfig[];
@@ -166,7 +166,7 @@ export interface AppConfig {
   /**
    * T-052 default per-tenant quota ceilings. NULL = unlimited (no
    * enforcement). Each is read from a corresponding env var
-   * (`MYME_DEFAULT_QUOTA_*`); per-tenant overrides via
+   * (`MARFA_DEFAULT_QUOTA_*`); per-tenant overrides via
    * `tenant_quotas` rows take precedence. Optional on the type so
    * existing test contexts continue to compile.
    */
@@ -183,10 +183,10 @@ export interface AppConfig {
    *   return `email_transport_not_configured` until an operator picks
    *   a backend. The factory + boot guard at `src/email/index.ts`
    *   constructs the right transport at startup.
-   * - `emailFrom` — visible sender, e.g. `Myme <hello@mail.myme.so>`.
-   *   For the Cloudflare backend the domain MUST end in `@mail.myme.so`
+   * - `emailFrom` — visible sender, e.g. `Marfa <hello@mail.marfa.so>`.
+   *   For the Cloudflare backend the domain MUST end in `@mail.marfa.so`
    *   (the verified Cloudflare Email sending domain) —
-   *   `senderDomainCheck` enforces this at boot. Apex `myme.so` has
+   *   `senderDomainCheck` enforces this at boot. Apex `marfa.so` has
    *   no DKIM and would fail SPF.
    * - `emailReplyTo` — monitored Reply-To. Optional; recommend a
    *   real inbox so user replies don't bounce silently.
@@ -215,7 +215,7 @@ export interface AppConfig {
    *
    * Default flipped to `"local"` in T-174 so fresh self-host
    * `docker compose up` works without a Cloudflare account. Hosted
-   * Myme deployments + any operator that wants the Cloudflare path
+   * Marfa deployments + any operator that wants the Cloudflare path
    * sets the env var explicitly to `"hosted"`.
    *
    * Optional on the type so test contexts constructing `AppConfig`
@@ -238,7 +238,7 @@ const DEFAULT_SALT = "dev-salt-change-in-production";
 const DEFAULT_EVENT_LOG_RETENTION_HOURS = 168;
 
 /**
- * Parses `MYME_EVENT_LOG_RETENTION_HOURS`. Unset → default (168 / 7 days).
+ * Parses `MARFA_EVENT_LOG_RETENTION_HOURS`. Unset → default (168 / 7 days).
  * Non-positive, non-integer, or unparseable values log a warning and fall
  * back to the default rather than throwing — cleanup is belt-and-braces
  * and we'd rather run the server with sensible retention than fail boot.
@@ -266,7 +266,7 @@ export function parseEventLogRetentionHours(raw: string | undefined): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
     console.warn(
-      `Invalid MYME_EVENT_LOG_RETENTION_HOURS=${raw}, falling back to ${String(DEFAULT_EVENT_LOG_RETENTION_HOURS)}`,
+      `Invalid MARFA_EVENT_LOG_RETENTION_HOURS=${raw}, falling back to ${String(DEFAULT_EVENT_LOG_RETENTION_HOURS)}`,
     );
     return DEFAULT_EVENT_LOG_RETENTION_HOURS;
   }
@@ -296,7 +296,7 @@ export function loadConfig(): AppConfig {
   return {
     port,
     storageDialect: process.env.STORAGE_DIALECT === "pg" ? "pg" : "sqlite",
-    sqlitePath: process.env.SQLITE_PATH ?? "./data/myme.db",
+    sqlitePath: process.env.SQLITE_PATH ?? "./data/marfa.db",
     databaseUrl: process.env.DATABASE_URL ?? "",
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
@@ -317,17 +317,17 @@ export function loadConfig(): AppConfig {
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
     // T-146: default flipped from `false` to `true`. RLS now enforces
-    // by default; explicit opt-out is `MYME_RLS_ENFORCE=false`. The
+    // by default; explicit opt-out is `MARFA_RLS_ENFORCE=false`. The
     // SQLite dialect is unaffected — the middleware skips when
     // `storage.pgDb` is undefined regardless of this flag.
-    rlsEnforce: process.env.MYME_RLS_ENFORCE !== "false",
+    rlsEnforce: process.env.MARFA_RLS_ENFORCE !== "false",
     auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
     auditCleanupIntervalMs: envNumber(
       process.env.AUDIT_CLEANUP_INTERVAL_MS,
       86_400_000,
     ),
     eventLogRetentionHours: parseEventLogRetentionHours(
-      process.env.MYME_EVENT_LOG_RETENTION_HOURS,
+      process.env.MARFA_EVENT_LOG_RETENTION_HOURS,
     ),
     versionThinningIntervalMs: envNumber(
       process.env.VERSION_THINNING_INTERVAL_MS,
@@ -353,78 +353,78 @@ export function loadConfig(): AppConfig {
       3_600_000,
     ),
     accountDeletionGraceDays: envNumber(
-      process.env.MYME_ACCOUNT_DELETION_GRACE_DAYS,
+      process.env.MARFA_ACCOUNT_DELETION_GRACE_DAYS,
       30,
     ),
     accountDeletionPurgeIntervalMs: envNumber(
-      process.env.MYME_ACCOUNT_DELETION_PURGE_INTERVAL_MS,
+      process.env.MARFA_ACCOUNT_DELETION_PURGE_INTERVAL_MS,
       3_600_000,
     ),
     rateLimitCleanupIntervalMs: envNumber(
-      process.env.MYME_RATE_LIMIT_CLEANUP_INTERVAL_MS,
+      process.env.MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS,
       3_600_000,
     ),
     bulkActionJobRetentionMs: envNumber(
-      process.env.MYME_BULK_ACTION_JOB_RETENTION_MS,
+      process.env.MARFA_BULK_ACTION_JOB_RETENTION_MS,
       7 * 24 * 3_600_000,
     ),
     bulkActionJobGcIntervalMs: envNumber(
-      process.env.MYME_BULK_ACTION_JOB_GC_INTERVAL_MS,
+      process.env.MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS,
       3_600_000,
     ),
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
     errorWebhookTimeoutMs: envNumber(
-      process.env.MYME_ERROR_WEBHOOK_TIMEOUT_MS,
+      process.env.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,
       5000,
     ),
     reactiveRunSendTimeoutMs: envNumber(
-      process.env.MYME_REACTIVE_RUN_SEND_TIMEOUT_MS,
+      process.env.MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS,
       5000,
     ),
     // Parse + validate at startup. Malformed CIDRs throw — we want bad
     // config to surface immediately, not silently degrade.
     trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),
     oauthRedirectAllowlist: parseOauthRedirectAllowlist(
-      process.env.MYME_OAUTH_REDIRECT_ALLOWLIST,
+      process.env.MARFA_OAUTH_REDIRECT_ALLOWLIST,
     ),
     authBaseUrl:
-      process.env.MYME_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
-    authAllowSignup: process.env.MYME_AUTH_ALLOW_SIGNUP === "true",
-    authSecret: process.env.MYME_AUTH_SECRET ?? "",
-    oidcProviders: parseOidcProviders(process.env.MYME_OIDC_PROVIDERS),
+      process.env.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
+    authAllowSignup: process.env.MARFA_AUTH_ALLOW_SIGNUP === "true",
+    authSecret: process.env.MARFA_AUTH_SECRET ?? "",
+    oidcProviders: parseOidcProviders(process.env.MARFA_OIDC_PROVIDERS),
     rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
     rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
-    defaultQuotaItems: parseQuotaEnv(process.env.MYME_DEFAULT_QUOTA_ITEMS),
+    defaultQuotaItems: parseQuotaEnv(process.env.MARFA_DEFAULT_QUOTA_ITEMS),
     defaultQuotaWebhooks: parseQuotaEnv(
-      process.env.MYME_DEFAULT_QUOTA_WEBHOOKS,
+      process.env.MARFA_DEFAULT_QUOTA_WEBHOOKS,
     ),
-    defaultQuotaBlobs: parseQuotaEnv(process.env.MYME_DEFAULT_QUOTA_BLOBS),
+    defaultQuotaBlobs: parseQuotaEnv(process.env.MARFA_DEFAULT_QUOTA_BLOBS),
     defaultQuotaStorageBytes: parseQuotaEnv(
-      process.env.MYME_DEFAULT_QUOTA_STORAGE_BYTES,
+      process.env.MARFA_DEFAULT_QUOTA_STORAGE_BYTES,
     ),
     defaultQuotaRatePerMinute: parseQuotaEnv(
-      process.env.MYME_DEFAULT_QUOTA_RATE_PER_MINUTE,
+      process.env.MARFA_DEFAULT_QUOTA_RATE_PER_MINUTE,
     ),
-    emailBackend: parseEmailBackend(process.env.MYME_EMAIL_BACKEND),
-    emailFrom: process.env.MYME_EMAIL_FROM ?? "",
-    emailReplyTo: process.env.MYME_EMAIL_REPLY_TO ?? "",
+    emailBackend: parseEmailBackend(process.env.MARFA_EMAIL_BACKEND),
+    emailFrom: process.env.MARFA_EMAIL_FROM ?? "",
+    emailReplyTo: process.env.MARFA_EMAIL_REPLY_TO ?? "",
     cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
     cloudflareEmailApiToken: process.env.CLOUDFLARE_EMAIL_API_TOKEN ?? "",
-    smtpHost: process.env.MYME_SMTP_HOST ?? "",
-    smtpPort: envNumber(process.env.MYME_SMTP_PORT, 587),
-    smtpUser: process.env.MYME_SMTP_USER ?? "",
-    smtpPass: process.env.MYME_SMTP_PASS ?? "",
-    smtpSecure: process.env.MYME_SMTP_SECURE === "true",
+    smtpHost: process.env.MARFA_SMTP_HOST ?? "",
+    smtpPort: envNumber(process.env.MARFA_SMTP_PORT, 587),
+    smtpUser: process.env.MARFA_SMTP_USER ?? "",
+    smtpPass: process.env.MARFA_SMTP_PASS ?? "",
+    smtpSecure: process.env.MARFA_SMTP_SECURE === "true",
     integrationRuntime: parseIntegrationRuntime(
-      process.env.MYME_INTEGRATION_RUNTIME,
+      process.env.MARFA_INTEGRATION_RUNTIME,
     ),
   };
 }
 
 /**
- * Parse `MYME_INTEGRATION_RUNTIME` (T-173 + T-174). Unset → `"local"` —
+ * Parse `MARFA_INTEGRATION_RUNTIME` (T-173 + T-174). Unset → `"local"` —
  * fresh self-hosters using `docker compose up` pick up the Node
- * substrate without needing a Cloudflare account. Hosted Myme + any
+ * substrate without needing a Cloudflare account. Hosted Marfa + any
  * deployment that wants the Cloudflare path sets the env var
  * explicitly to `"hosted"`. Unknown values warn and fall back to the
  * default so a typo doesn't silently start the wrong substrate.
@@ -432,7 +432,7 @@ export function loadConfig(): AppConfig {
  * Operator action when migrating from T-173 (default was `"hosted"`)
  * to T-174 (default is `"local"`): if your deployment relied on the
  * Cloudflare-side runtime AND your config did not set
- * `MYME_INTEGRATION_RUNTIME` explicitly, set it to `"hosted"` before
+ * `MARFA_INTEGRATION_RUNTIME` explicitly, set it to `"hosted"` before
  * the upgrade. Existing Atlas plists / Cloudflare Containers configs
  * that already set the var explicitly are unaffected.
  */
@@ -442,7 +442,7 @@ export function parseIntegrationRuntime(
   if (raw === "hosted" || raw === "local") return raw;
   if (raw && raw.length > 0) {
     console.warn(
-      `Unknown MYME_INTEGRATION_RUNTIME=${raw}; falling back to "local". ` +
+      `Unknown MARFA_INTEGRATION_RUNTIME=${raw}; falling back to "local". ` +
         `Legal values: hosted | local.`,
     );
   }
@@ -450,7 +450,7 @@ export function parseIntegrationRuntime(
 }
 
 /**
- * Parses `MYME_EMAIL_BACKEND`. Unset / unknown → `none` (the
+ * Parses `MARFA_EMAIL_BACKEND`. Unset / unknown → `none` (the
  * fail-loud-on-send default). Legal values: `cloudflare | smtp | none`.
  */
 function parseEmailBackend(
@@ -459,7 +459,7 @@ function parseEmailBackend(
   if (raw === "cloudflare" || raw === "smtp" || raw === "none") return raw;
   if (raw && raw.length > 0) {
     console.warn(
-      `Unknown MYME_EMAIL_BACKEND=${raw}; falling back to "none". ` +
+      `Unknown MARFA_EMAIL_BACKEND=${raw}; falling back to "none". ` +
         `Legal values: cloudflare | smtp | none.`,
     );
   }
@@ -467,7 +467,7 @@ function parseEmailBackend(
 }
 
 /**
- * Parse `MYME_OAUTH_REDIRECT_ALLOWLIST` — comma-separated list of
+ * Parse `MARFA_OAUTH_REDIRECT_ALLOWLIST` — comma-separated list of
  * fully-qualified `redirect_uri` values accepted by the connector OAuth
  * bootstrap. Whitespace between entries is tolerated. Empty / unset
  * means "no allow-list" (validation is bypassed; see oauth-callback.ts).
@@ -486,7 +486,7 @@ function parseOidcProviders(raw: string | undefined): OidcProviderConfig[] {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) {
       console.warn(
-        "MYME_OIDC_PROVIDERS must be a JSON array, falling back to no federated providers",
+        "MARFA_OIDC_PROVIDERS must be a JSON array, falling back to no federated providers",
       );
       return [];
     }
@@ -514,14 +514,14 @@ function parseOidcProviders(raw: string | undefined): OidcProviderConfig[] {
         });
       } else {
         console.warn(
-          "MYME_OIDC_PROVIDERS entry missing providerId/clientId/clientSecret, skipping",
+          "MARFA_OIDC_PROVIDERS entry missing providerId/clientId/clientSecret, skipping",
         );
       }
     }
     return out;
   } catch {
     console.warn(
-      "MYME_OIDC_PROVIDERS is not valid JSON, falling back to no federated providers",
+      "MARFA_OIDC_PROVIDERS is not valid JSON, falling back to no federated providers",
     );
     return [];
   }

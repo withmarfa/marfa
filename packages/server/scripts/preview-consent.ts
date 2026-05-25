@@ -13,12 +13,12 @@
  *
  * Not committed-runtime code; not exercised by tests.
  *
- *   pnpm --filter @mymehq/server tsx scripts/preview-consent.ts
+ *   pnpm --filter @withmarfa/server tsx scripts/preview-consent.ts
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { ParsedScope } from "@mymehq/shared";
+import type { ParsedScope } from "@withmarfa/shared";
 import { renderConsentScreen } from "../src/routes/consent.js";
 import { buildScopeDescriptions } from "../src/routes/auth-consent.js";
 import { AUTH_CSS } from "../src/routes/auth-static/auth-css.js";
@@ -70,7 +70,7 @@ const FIXTURES: {
   },
   {
     name: "02-cli-minimal-fresh.html",
-    clientName: "Myme CLI",
+    clientName: "Marfa CLI",
     scopes: [
       {
         kind: "oidc",

@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
+import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireTypeAccess } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -127,7 +127,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
   router.openapi(restoreItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     requireAuth(c);
@@ -139,7 +139,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // normal trashed-is-invisible filter.
     const pending = await storage.items.getIncludingTrashed(id, tenantId);
     if (!pending) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     requireTypeAccess(c, pending.type, "write");
     const restored = await storage.items.restore(id, tenantId);
@@ -171,7 +171,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
   router.openapi(transitionItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const body = c.req.valid("json");
@@ -183,7 +183,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     const tenantId = c.get("apiKey")?.tenant_id;
     const item = await storage.items.get(id, tenantId);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
     requireTypeAccess(c, item.type, "write");
     const updated = await storage.items.transition(id, state, tenantId);

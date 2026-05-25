@@ -1,7 +1,7 @@
 /**
  * tsup config for the local-runtime entry. Produces `dist/local.js`
  * which the server's local-runtime supervisor loads on boot
- * (`@mymehq/server`'s `loadInTreeRegistrations`). The Cloudflare-side
+ * (`@withmarfa/server`'s `loadInTreeRegistrations`). The Cloudflare-side
  * worker.ts is built by wrangler at deploy time and doesn't need this
  * config.
  */
@@ -13,5 +13,5 @@ export default defineConfig({
   target: "node20",
   dts: false,
   clean: true,
-  external: ["@mymehq/runtime-sdk", "@mymehq/shared"],
+  external: ["@withmarfa/runtime-sdk", "@withmarfa/shared"],
 });

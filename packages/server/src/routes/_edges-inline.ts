@@ -1,4 +1,4 @@
-import { ErrorCode, MymeError, isValidId } from "@mymehq/shared";
+import { ErrorCode, MarfaError, isValidId } from "@withmarfa/shared";
 
 import type { Storage } from "../storage/interface.js";
 
@@ -27,13 +27,13 @@ export async function applyInlineEdges(
     await storage.edges.deleteBySource(itemId, edgeType);
     for (const target of targets) {
       if (!isValidId(target)) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.INVALID_ID,
           `Invalid target id in edges.${edgeType}: ${target}`,
         );
       }
       if (target === itemId) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.EDGE_CONSTRAINT_VIOLATION,
           `Edge source and target must be different items`,
           { edge_type: edgeType },

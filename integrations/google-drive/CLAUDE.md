@@ -3,7 +3,7 @@
 Inbound-only Google Drive (v3 API) integration. Fourth instance of
 the `google.*` publisher family. Two ingest modes: `metadata`
 (default — file metadata only) and `all-files` (T-239 — bytes
-ingested into the Myme blob store and stamped as `blob_ref` on
+ingested into the Marfa blob store and stamped as `blob_ref` on
 `core.file` items). `glob:<pattern>` is declared but still falls
 through to `metadata` semantics pending a separate follow-on.
 
@@ -125,7 +125,7 @@ Two modes, picked via `connection.properties.configuration.download_mode`:
   configured ceiling, the handler proxies
   `GET /drive/v3/files/{id}?alt=media` to download the bytes,
   buffers them in the Worker, then calls
-  `ctx.myme.uploadBlob({ content, mime_type })` (T-239). On
+  `ctx.marfa.uploadBlob({ content, mime_type })` (T-239). On
   success the item lands as `core.file` with
   `properties.blob_ref = sha256:<hex>` — a real, retrievable
   blob ref.
@@ -182,7 +182,7 @@ Outbound writes to Drive are explicitly out of scope. The manifest's
 `direction: "inbound"` reflects that. The outbound follow-on needs
 to address:
 
-- Destination folder picking (where do new Myme `google.drive.file`
+- Destination folder picking (where do new Marfa `google.drive.file`
   items land — root? a designated folder? a per-tenant folder
   configured at install?).
 - MIME conversion (Google Docs / Sheets / Slides have native types

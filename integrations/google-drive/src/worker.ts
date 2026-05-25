@@ -5,7 +5,7 @@
  * families: scheduled-poll, reactive-run (defensive; direction is
  * inbound), webhook-receipt.
  */
-import { createIntegrationWorker } from "@mymehq/runtime-sdk/cloudflare";
+import { createIntegrationWorker } from "@withmarfa/runtime-sdk/cloudflare";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
 import { GOOGLE_DRIVE_MANIFEST } from "./manifest.js";
 

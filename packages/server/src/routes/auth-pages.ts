@@ -2,14 +2,14 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   parseScope,
   expandWildcardScopes,
   isValidHandle,
   isReservedHandle,
   TYPE_REGISTRY,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -18,9 +18,9 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type {
-  MymeAuth,
-  MymeAuthSession,
-  MymeAuthSessionUser,
+  MarfaAuth,
+  MarfaAuthSession,
+  MarfaAuthSessionUser,
 } from "../auth/instance.js";
 import {
   renderSignInPage,
@@ -100,7 +100,7 @@ function sha256(input: string): string {
  * code-flow consent's `projectGrantOnConsent`). F3-equivalent treatment:
  * status flips to "active" + `revoked_at` is cleared on re-consent.
  *
- * `tenantId` resolves from the consenting Better Auth user's myme `users`
+ * `tenantId` resolves from the consenting Better Auth user's marfa `users`
  * row in hosted mode; in single-tenant mode (no `users` store) the grant
  * is stamped tenant-less. Hosted mode without a provisioned tenant for the
  * authenticated user refuses outright — the OAuth flow can't honour a
@@ -108,10 +108,10 @@ function sha256(input: string): string {
  */
 async function createUserAppGrant(
   storage: Storage,
-  consentingUser: MymeAuthSessionUser,
+  consentingUser: MarfaAuthSessionUser,
   clientId: string,
   scopes: string[],
-  source: "myme/oauth/authorize" | "myme/oauth/device",
+  source: "marfa/oauth/authorize" | "marfa/oauth/device",
 ): Promise<{ id: string; created: boolean }> {
   // T-144: cycle metadata flows through `cycleRequestContext` (set by
   // `cycleMiddleware`) — `publish()` reads it automatically. The
@@ -123,9 +123,9 @@ async function createUserAppGrant(
     const user = await storage.users.getByAuthUserId(consentingUser.id);
     tenantId = user?.tenant_id;
     if (!tenantId) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
-        "No Myme tenant is provisioned for this account; complete onboarding first",
+        "No Marfa tenant is provisioned for this account; complete onboarding first",
       );
     }
   }
@@ -216,7 +216,7 @@ async function createUserAppGrant(
 export function authRoutes(
   storage: Storage,
   salt: string,
-  auth?: MymeAuth,
+  auth?: MarfaAuth,
   oidcSigner?: OidcSigner,
 ): Hono<AppEnv> {
   // `salt` is consumed by the device-flow terminal step (hashes
@@ -252,12 +252,12 @@ export function authRoutes(
    */
   async function requireConsentSession(
     c: Context<AppEnv>,
-  ): Promise<{ kind: "session"; session: MymeAuthSession } | Response> {
+  ): Promise<{ kind: "session"; session: MarfaAuthSession } | Response> {
     if (!auth) {
       // Better-auth isn't mounted on this instance. Without an identity
       // layer the consent screen can't authenticate a user — refuse
       // outright rather than silently accept.
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "Consent flow requires the better-auth identity layer to be configured",
       );
@@ -301,7 +301,7 @@ export function authRoutes(
     // fall through and return every tenant's grants.
     const isAdmin = key.role === "admin" || key.is_platform;
     if (!isAdmin && !key.tenant_id) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Tenant scope required for this credential",
       );
@@ -343,7 +343,7 @@ export function authRoutes(
     const key = requireAuth(c);
     const isAdmin = key.role === "admin" || key.is_platform;
     if (!isAdmin && !key.tenant_id) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Tenant scope required for this credential",
       );
@@ -352,11 +352,11 @@ export function authRoutes(
     const id = c.req.param("id");
     const item = await storage.items.get(id, tenantId);
     if (item?.type !== "system.connection") {
-      throw new MymeError(ErrorCode.OAUTH_GRANT_NOT_FOUND, "Grant not found");
+      throw new MarfaError(ErrorCode.OAUTH_GRANT_NOT_FOUND, "Grant not found");
     }
     const props = item.properties;
     if (props.kind !== "app") {
-      throw new MymeError(ErrorCode.OAUTH_GRANT_NOT_FOUND, "Grant not found");
+      throw new MarfaError(ErrorCode.OAUTH_GRANT_NOT_FOUND, "Grant not found");
     }
     const now = new Date().toISOString();
     await storage.items.update(
@@ -384,7 +384,7 @@ export function authRoutes(
     // T-131: emit the audit row. Fire-and-forget (audit failures must
     // never break the user-facing revoke flow). Pre-T-131 this row was
     // listed in CLAUDE.md as "out-of-scope today" — T-131 is what gave us
-    // a clean emission seam (the explicit Myme handler, not the plugin
+    // a clean emission seam (the explicit Marfa handler, not the plugin
     // hook which fires from a token-in-hand context without client_id).
     void storage.audit.log({
       tenant_id: tenantId ?? null,
@@ -425,7 +425,7 @@ export function authRoutes(
 
     // Two paths feed `return_to`:
     //
-    //  1. Explicit `return_to` query param. Set by Myme's own
+    //  1. Explicit `return_to` query param. Set by Marfa's own
     //     `requireConsentSession` redirect (the well-behaved
     //    consent-gate path).
     //  2. Bare OAuth params on the URL (`response_type`, `client_id`,
@@ -458,7 +458,7 @@ export function authRoutes(
 
   router.post("/sign-in", async (c) => {
     if (!auth) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "Sign-in requires the better-auth identity layer to be configured",
       );
@@ -594,14 +594,14 @@ export function authRoutes(
 
   router.post("/sign-in/provider/:id", async (c) => {
     if (!auth) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "OIDC sign-in requires the better-auth identity layer to be configured",
       );
     }
     const providerId = c.req.param("id");
     if (!auth.oidcProviderIds.includes(providerId)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.NOT_FOUND,
         `Unknown OIDC provider: ${providerId}`,
       );
@@ -666,7 +666,7 @@ export function authRoutes(
 
   router.get("/sign-up", (c) => {
     if (!auth?.allowSignup) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Not found");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
     }
     const url = new URL(c.req.url);
     const returnTo = validateReturnTo(url.searchParams.get("return_to"));
@@ -677,13 +677,13 @@ export function authRoutes(
 
   router.post("/sign-up", async (c) => {
     if (!auth) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "Sign-up requires the better-auth identity layer to be configured",
       );
     }
     if (!auth.allowSignup) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Not found");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
     }
 
     const formData = await c.req.formData();
@@ -759,7 +759,7 @@ export function authRoutes(
     const response = await auth.handler(upstream);
 
     if (response.ok) {
-      // T-074: provision the Myme tenant + users row atomically with the
+      // T-074: provision the Marfa tenant + users row atomically with the
       // Better Auth account. Reads the new auth_user.id from the
       // upstream response body. Better Auth returns 200 with
       // `{ token, user: { id, email, ... } }` on success — `token` may
@@ -788,7 +788,7 @@ export function authRoutes(
           // `requireEmailVerification: true`, Better Auth's
           // generic-duplicate-response shape returns the existing
           // user's id (the no-enumeration invariant). If that user
-          // already has a Myme `users` row we skip provisioning —
+          // already has a Marfa `users` row we skip provisioning —
           // they're a returning duplicate and the verify-email page is
           // the right next stop. The handle they typed in this attempt
           // is silently ignored (no-op) since they've already claimed
@@ -929,7 +929,7 @@ export function authRoutes(
 
   router.get("/verify-email", async (c) => {
     if (!auth) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "Email verification requires the better-auth identity layer to be configured",
       );
@@ -1026,7 +1026,7 @@ export function authRoutes(
 
   router.post("/verify-email/resend", async (c) => {
     if (!auth) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "Email verification requires the better-auth identity layer to be configured",
       );
@@ -1117,7 +1117,7 @@ export function authRoutes(
 
   router.post("/forgot-password", async (c) => {
     if (!auth) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "Password reset requires the better-auth identity layer to be configured",
       );
@@ -1191,7 +1191,7 @@ export function authRoutes(
 
   router.get("/reset-password", (c) => {
     if (!auth) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "Password reset requires the better-auth identity layer to be configured",
       );
@@ -1212,7 +1212,7 @@ export function authRoutes(
 
   router.post("/reset-password", async (c) => {
     if (!auth) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         "Password reset requires the better-auth identity layer to be configured",
       );
@@ -1565,7 +1565,7 @@ export function authRoutes(
   //
   // Passkey sign-in (the auth side of the same plugin) is exposed
   // as a button on `/auth/sign-in` that calls
-  // `MymePasskey.signIn()` from the same static script.
+  // `MarfaPasskey.signIn()` from the same static script.
 
   router.get("/passkey/enroll", async (c) => {
     const gated = await requireConsentSession(c);
@@ -1592,7 +1592,7 @@ export function authRoutes(
   //   - POST /auth/device/consent  — approve/deny submission.
 
   // Shared device-flow init handler. Reachable from JSON callers (the
-  // Myme CLI / SDK shape) and from RFC 8628 §3.1 form-encoded callers
+  // Marfa CLI / SDK shape) and from RFC 8628 §3.1 form-encoded callers
   // (the protocol-canonical shape, T-190). Both produce the same
   // device-code envelope.
   const initDeviceFlow = async (
@@ -1602,7 +1602,7 @@ export function authRoutes(
   ): Promise<Response> => {
     const scope = rawScope.trim();
     if (!clientId || !scope) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "client_id and scope are required",
       );
@@ -1611,7 +1611,7 @@ export function authRoutes(
     // table to the plugin's `auth_oauth_client` table.
     const client = await storage.oauthProvider?.getClient(clientId);
     if (!client) {
-      throw new MymeError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
+      throw new MarfaError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
     }
     // Validate every requested scope against the registry. Reject
     // outright on any unknown scope so we don't store a code that
@@ -1620,7 +1620,7 @@ export function authRoutes(
     const expanded = expandWildcardScopes(requestedScopes, knownTypes);
     const parsed = expanded.map(parseScope).filter((s) => s !== null);
     if (parsed.length === 0) {
-      throw new MymeError(ErrorCode.INVALID_SCOPE, "No valid scopes requested");
+      throw new MarfaError(ErrorCode.INVALID_SCOPE, "No valid scopes requested");
     }
 
     const deviceCodeRaw = generateToken(DEVICE_CODE_PREFIX);
@@ -1655,14 +1655,14 @@ export function authRoutes(
     const contentType = c.req.header("content-type") ?? "";
 
     // -------------------- JSON init --------------------
-    // Myme's own CLI / SDK use this shape; not RFC-mandated but
+    // Marfa's own CLI / SDK use this shape; not RFC-mandated but
     // operationally convenient.
     if (contentType.includes("application/json")) {
       let body: { client_id?: unknown; scope?: unknown };
       try {
         body = await c.req.json();
       } catch {
-        throw new MymeError(ErrorCode.VALIDATION_ERROR, "JSON body required");
+        throw new MarfaError(ErrorCode.VALIDATION_ERROR, "JSON body required");
       }
       const clientId =
         typeof body.client_id === "string" ? body.client_id : null;
@@ -1676,7 +1676,7 @@ export function authRoutes(
     //   1. **Init** — RFC 8628 §3.1. Body carries `client_id` (+
     //      `scope`). Any client following the spec literally lands
     //      here.
-    //   2. **User-code submission** — Myme's verification form. Body
+    //   2. **User-code submission** — Marfa's verification form. Body
     //      carries `user_code`.
     //
     // Disambiguate by inspecting the body. A request with neither
@@ -1774,7 +1774,7 @@ export function authRoutes(
     // T-131: client lookup migrated to plugin tables.
     const client = await storage.oauthProvider?.getClient(row.client_id);
     if (!client) {
-      throw new MymeError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
+      throw new MarfaError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
     }
 
     // Render the same consent template as /auth/authorize. The submit
@@ -1824,14 +1824,14 @@ export function authRoutes(
         : "";
     const decision = formData.get("decision");
     if (!userCode || (decision !== "approve" && decision !== "deny")) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "user_code and decision are required",
       );
     }
     const row = await storage.oauth.findDeviceCodeByUserCode(userCode);
     if (!row) {
-      throw new MymeError(ErrorCode.NOT_FOUND, "Unknown user_code");
+      throw new MarfaError(ErrorCode.NOT_FOUND, "Unknown user_code");
     }
     if (row.status !== "pending") {
       return c.redirect(
@@ -1857,7 +1857,7 @@ export function authRoutes(
       sessionResult.session.user,
       row.client_id,
       row.scopes,
-      "myme/oauth/device",
+      "marfa/oauth/device",
     );
     const ok = await storage.oauth.approveDeviceCode(row.id, grant.id);
     if (!ok) {

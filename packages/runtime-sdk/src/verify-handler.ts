@@ -12,7 +12,7 @@
  * once.
  *
  * Persistence is real — verify executes against the connection's actual
- * runtime credential and writes through the same Myme API the
+ * runtime credential and writes through the same Marfa API the
  * production queue path does. There is no dry-run mode (preview-event
  * already covers static envelope rendering).
  */

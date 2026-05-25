@@ -35,7 +35,7 @@ afterAll(async () => {
 });
 
 function makePaths(): MigrationPaths & { dir: string } {
-  const dir = mkdtempSync(join(tmpdir(), "myme-sync-migration-"));
+  const dir = mkdtempSync(join(tmpdir(), "marfa-sync-migration-"));
   return {
     dir,
     sync_json_path: join(dir, "sync.json"),
@@ -63,12 +63,12 @@ describe("migrateSyncJsonToConnection", () => {
 
       const pointer = report.pointer!;
 
-      // System.integration exists with manifest_name = mymehq.sync.
+      // System.integration exists with manifest_name = withmarfa.sync.
       const integration = await ctx.storage.items.get(pointer.integration_id);
       expect(integration?.type).toBe("system.integration");
       expect(
         (integration?.properties as { manifest_name?: string }).manifest_name,
-      ).toBe("mymehq.sync");
+      ).toBe("withmarfa.sync");
 
       // System.credential is kind: api_key with secret_encrypted that
       // round-trips through decryptSecret under apiKeyCredential domain.

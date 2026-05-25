@@ -5,7 +5,7 @@
  * the server's local runtime substrate via
  * `integrations/_template/dist/local.js` at boot — the substrate
  * `await import()`s this module inside each `worker_thread` so the
- * thread's `@mymehq/runtime-sdk` handler registry is seeded.
+ * thread's `@withmarfa/runtime-sdk` handler registry is seeded.
  *
  * Same handler module the Worker entry uses; only the substrate-side
  * wiring differs.

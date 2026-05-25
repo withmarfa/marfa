@@ -1,4 +1,4 @@
-# Myme
+# Marfa
 
 A typed data layer for structured personal data. Store, query, and sync items with custom type schemas, content-addressed blob storage, full-text search, and real-time events.
 
@@ -6,22 +6,22 @@ A typed data layer for structured personal data. Store, query, and sync items wi
 
 | Package                                                 | Description                                                            |
 | ------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [`@mymehq/types`](./packages/types)                     | Core type + edge JSON schemas; emits the runtime registries            |
-| [`@mymehq/shared`](./packages/shared)                   | Wire types, Zod validation schemas, error codes                        |
-| [`@mymehq/server`](./packages/server)                   | Hono HTTP server with SQLite and Postgres support                      |
-| [`@mymehq/sdk`](./packages/sdk)                         | TypeScript HTTP client                                                 |
-| [`@mymehq/webhooks`](./packages/webhooks)               | Cross-runtime inbound-webhook signature verification (Web Crypto only) |
-| [`@mymehq/runtime-control`](./packages/runtime-control) | Cloudflare Worker control plane for the hosted integrations substrate  |
-| [`@mymehq/runtime-sdk`](./packages/runtime-sdk)         | In-Worker SDK consumed by Integration Workers                          |
-| [`@mymehq/runtime-test`](./packages/runtime-test)       | In-Worker test harness mirroring `runtime-sdk`                         |
+| [`@withmarfa/types`](./packages/types)                     | Core type + edge JSON schemas; emits the runtime registries            |
+| [`@withmarfa/shared`](./packages/shared)                   | Wire types, Zod validation schemas, error codes                        |
+| [`@withmarfa/server`](./packages/server)                   | Hono HTTP server with SQLite and Postgres support                      |
+| [`@withmarfa/sdk`](./packages/sdk)                         | TypeScript HTTP client                                                 |
+| [`@withmarfa/webhooks`](./packages/webhooks)               | Cross-runtime inbound-webhook signature verification (Web Crypto only) |
+| [`@withmarfa/runtime-control`](./packages/runtime-control) | Cloudflare Worker control plane for the hosted integrations substrate  |
+| [`@withmarfa/runtime-sdk`](./packages/runtime-sdk)         | In-Worker SDK consumed by Integration Workers                          |
+| [`@withmarfa/runtime-test`](./packages/runtime-test)       | In-Worker test harness mirroring `runtime-sdk`                         |
 
-`@mymehq/shared`, `@mymehq/sdk`, and `@mymehq/webhooks` publish to npm; the rest stay private.
+`@withmarfa/shared`, `@withmarfa/sdk`, and `@withmarfa/webhooks` publish to npm; the rest stay private.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/mymehq/myme.git
-cd myme
+git clone https://github.com/withmarfa/marfa.git
+cd marfa
 pnpm install
 pnpm test
 ```
@@ -39,8 +39,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full development guide and [CLA
 
 - Architecture, conventions, and workflow rules: [`CLAUDE.md`](./CLAUDE.md)
 - Contributor guide: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
-- Self-hosting and deployment: <https://docs.myme.so/self-hosting>
-- Product docs and guides: <https://docs.myme.so>
+- Self-hosting and deployment: <https://docs.marfa.so/self-hosting>
+- Product docs and guides: <https://docs.marfa.so>
 
 ## License
 

@@ -3,7 +3,7 @@
 // SCHEMA_SQL is the fresh-database bootstrap path. It runs every server
 // boot via createConnection() and must stay in sync with the Drizzle
 // migrations under drizzle/<dialect>/. To refresh, run:
-//   pnpm --filter @mymehq/server schema-sql:generate
+//   pnpm --filter @withmarfa/server schema-sql:generate
 // (or implicitly via migrate:<dialect>:generate when a new migration lands).
 //
 // Hand-edits to this file will be overwritten on the next regen and will
@@ -1363,81 +1363,81 @@ $$;
 ALTER TABLE public.api_keys ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS api_keys_tenant_isolation ON public.api_keys;
-CREATE POLICY api_keys_tenant_isolation ON public.api_keys TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY api_keys_tenant_isolation ON public.api_keys TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS audit_log_tenant_isolation ON public.audit_log;
-CREATE POLICY audit_log_tenant_isolation ON public.audit_log TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY audit_log_tenant_isolation ON public.audit_log TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.blobs ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS blobs_tenant_isolation ON public.blobs;
-CREATE POLICY blobs_tenant_isolation ON public.blobs TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id = ''::text)));
+CREATE POLICY blobs_tenant_isolation ON public.blobs TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id = ''::text)));
 
 ALTER TABLE public.bulk_action_jobs ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS bulk_action_jobs_tenant_isolation ON public.bulk_action_jobs;
-CREATE POLICY bulk_action_jobs_tenant_isolation ON public.bulk_action_jobs TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY bulk_action_jobs_tenant_isolation ON public.bulk_action_jobs TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.connection_leased_tokens ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS connection_leased_tokens_tenant_isolation ON public.connection_leased_tokens;
-CREATE POLICY connection_leased_tokens_tenant_isolation ON public.connection_leased_tokens TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY connection_leased_tokens_tenant_isolation ON public.connection_leased_tokens TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.connection_oauth_tokens ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS connection_oauth_tokens_tenant_isolation ON public.connection_oauth_tokens;
-CREATE POLICY connection_oauth_tokens_tenant_isolation ON public.connection_oauth_tokens TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY connection_oauth_tokens_tenant_isolation ON public.connection_oauth_tokens TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.custom_edge_types ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS custom_edge_types_tenant_isolation ON public.custom_edge_types;
-CREATE POLICY custom_edge_types_tenant_isolation ON public.custom_edge_types TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY custom_edge_types_tenant_isolation ON public.custom_edge_types TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.custom_types ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS custom_types_tenant_isolation ON public.custom_types;
-CREATE POLICY custom_types_tenant_isolation ON public.custom_types TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY custom_types_tenant_isolation ON public.custom_types TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.edges ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS edges_tenant_isolation ON public.edges;
-CREATE POLICY edges_tenant_isolation ON public.edges TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY edges_tenant_isolation ON public.edges TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.event_log ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS event_log_tenant_isolation ON public.event_log;
-CREATE POLICY event_log_tenant_isolation ON public.event_log TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY event_log_tenant_isolation ON public.event_log TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.inbound_webhooks ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS inbound_webhooks_tenant_isolation ON public.inbound_webhooks;
-CREATE POLICY inbound_webhooks_tenant_isolation ON public.inbound_webhooks TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY inbound_webhooks_tenant_isolation ON public.inbound_webhooks TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS items_tenant_isolation ON public.items;
-CREATE POLICY items_tenant_isolation ON public.items TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY items_tenant_isolation ON public.items TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.metadata ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS metadata_tenant_isolation ON public.metadata;
 CREATE POLICY metadata_tenant_isolation ON public.metadata TO myme_app USING ((EXISTS ( SELECT 1
    FROM public.items
-  WHERE ((items.id = metadata.item_id) AND ((items.tenant_id = current_setting('myme.tenant_id'::text, true)) OR (items.tenant_id IS NULL))))));
+  WHERE ((items.id = metadata.item_id) AND ((items.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (items.tenant_id IS NULL))))));
 
 ALTER TABLE public.outbound_webhooks ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS outbound_webhooks_tenant_isolation ON public.outbound_webhooks;
-CREATE POLICY outbound_webhooks_tenant_isolation ON public.outbound_webhooks TO myme_app USING (((tenant_id = current_setting('myme.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY outbound_webhooks_tenant_isolation ON public.outbound_webhooks TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.versions ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS versions_tenant_isolation ON public.versions;
 CREATE POLICY versions_tenant_isolation ON public.versions TO myme_app USING ((EXISTS ( SELECT 1
    FROM public.items
-  WHERE ((items.id = versions.item_id) AND ((items.tenant_id = current_setting('myme.tenant_id'::text, true)) OR (items.tenant_id IS NULL))))));
+  WHERE ((items.id = versions.item_id) AND ((items.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (items.tenant_id IS NULL))))));
 
 -- Table grants on the myme_app role (T-145; see role block above).
 -- Schema-qualified (\`public.x\`) so the grants resolve regardless of

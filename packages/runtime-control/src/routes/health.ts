@@ -19,7 +19,7 @@ export function registerHealthRoute(
       service: "runtime-control",
       version,
       environment: c.env.ENVIRONMENT ?? "unknown",
-      myme_api_url_configured: Boolean(c.env.MYME_API_URL),
+      myme_api_url_configured: Boolean(c.env.MARFA_API_URL),
     };
     return c.json(body);
   });

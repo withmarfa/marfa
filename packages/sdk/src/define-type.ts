@@ -1,7 +1,7 @@
-import type { TypeSchema } from "@mymehq/shared";
+import type { TypeSchema } from "@withmarfa/shared";
 
 /**
- * Authoring helper for declaring custom Myme types in TypeScript (TSC42 §7).
+ * Authoring helper for declaring custom Marfa types in TypeScript (TSC42 §7).
  *
  * The function is a no-op at runtime — it returns its input unchanged. Its
  * value is at the type level: `defineType` constrains the argument to a
@@ -12,7 +12,7 @@ import type { TypeSchema } from "@mymehq/shared";
  * Example:
  *
  * ```ts
- * import { defineType } from "@mymehq/sdk";
+ * import { defineType } from "@withmarfa/sdk";
  *
  * export const acmeDeal = defineType({
  *   id: "acme.deal",

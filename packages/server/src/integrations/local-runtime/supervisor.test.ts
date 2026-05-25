@@ -24,7 +24,7 @@ import {
   type ConnectionContext,
   type HandlerResult,
   type ScheduleMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { createSupervisor } from "./supervisor.js";
 import type {
   LocalIntegrationRegistration,
@@ -35,14 +35,14 @@ import {
   CONNECTION_RUNTIME_NAMESPACE,
   readConnectionRuntimeState,
 } from "./pg-cursor-store.js";
-import { dispatchMessage } from "@mymehq/runtime-sdk";
+import { dispatchMessage } from "@withmarfa/runtime-sdk";
 import {
   ConnectionClient,
   createActivitySink,
   createCursorStore,
   createEchoSuppression,
   type CursorStorageAdapter,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 
 let ctx: TestContext;
 
@@ -174,7 +174,7 @@ function buildRegistration(
         ...(request.message.tenant_id !== undefined && {
           tenant_id: request.message.tenant_id,
         }),
-        myme: client,
+        marfa: client,
         cursor: createCursorStore(cursorAdapter),
         activity: createActivitySink(client, request.message.connection_id),
         echo: createEchoSuppression(cursorAdapter, request.echo),

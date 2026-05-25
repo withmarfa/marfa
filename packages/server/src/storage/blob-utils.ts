@@ -1,4 +1,4 @@
-import { isValidBlobHash } from "@mymehq/shared";
+import { isValidBlobHash } from "@withmarfa/shared";
 
 /**
  * Recursively scan a value tree for blob hashes (`sha256:...`).

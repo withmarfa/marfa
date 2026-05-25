@@ -20,14 +20,14 @@
  * skipped. Re-running is safe.
  *
  * Usage:
- *   pnpm --filter @mymehq/server migrate:oauth-to-credential
- *   pnpm --filter @mymehq/server tsx src/scripts/deprecated/migrate-oauth-to-credential.ts --dialect=sqlite
- *   pnpm --filter @mymehq/server tsx src/scripts/deprecated/migrate-oauth-to-credential.ts --dialect=pg
+ *   pnpm --filter @withmarfa/server migrate:oauth-to-credential
+ *   pnpm --filter @withmarfa/server tsx src/scripts/deprecated/migrate-oauth-to-credential.ts --dialect=sqlite
+ *   pnpm --filter @withmarfa/server tsx src/scripts/deprecated/migrate-oauth-to-credential.ts --dialect=pg
  *
  * Environment:
- *   - SQLITE_PATH (sqlite default ./data/myme.db)
+ *   - SQLITE_PATH (sqlite default ./data/marfa.db)
  *   - DATABASE_URL (pg required)
- *   - MYME_AUTH_SECRET (required for encryption — same key the server uses)
+ *   - MARFA_AUTH_SECRET (required for encryption — same key the server uses)
  */
 import { encryptSecret, SECRET_INFO } from "../../crypto/secret-encryption.js";
 import type { Storage } from "../../storage/interface.js";
@@ -262,7 +262,7 @@ async function main(): Promise<void> {
   } else {
     const { createSqliteStorage } =
       await import("../../storage/sqlite/index.js");
-    const path = process.env.SQLITE_PATH ?? "./data/myme.db";
+    const path = process.env.SQLITE_PATH ?? "./data/marfa.db";
     storage = await createSqliteStorage(path);
   }
 

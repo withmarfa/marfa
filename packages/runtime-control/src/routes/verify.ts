@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import { findIntegration } from "@mymehq/shared";
+import { findIntegration } from "@withmarfa/shared";
 import type { ControlPlaneEnv } from "../env.js";
-import { MymeServerClient } from "../myme-client.js";
+import { MarfaServerClient } from "../marfa-client.js";
 
 /**
  * Synchronous verify-route (T-082).
@@ -115,7 +115,7 @@ function buildVerifyEnvelope(args: {
 }
 
 /** Map a manifest-name to its service binding via the in-tree
- *  integration registry (`@mymehq/shared` → `IN_TREE_INTEGRATIONS`).
+ *  integration registry (`@withmarfa/shared` → `IN_TREE_INTEGRATIONS`).
  *  Same data source as `arm-schedule.ts`. The bounded-set assumption
  *  is documented on `env.ts`. */
 function resolveServiceBinding(
@@ -135,11 +135,11 @@ export function registerVerifyRoute(
   app.post("/connections/:connection_id/verify", async (c) => {
     const connectionId = c.req.param("connection_id");
 
-    if (!c.env.MYME_API_URL) {
+    if (!c.env.MARFA_API_URL) {
       return c.json(
         {
           error: "control_plane_misconfigured",
-          message: "MYME_API_URL must be set.",
+          message: "MARFA_API_URL must be set.",
         },
         503,
       );
@@ -177,8 +177,8 @@ export function registerVerifyRoute(
       return c.json({ error: "missing_event_field", field: "event_type" }, 400);
     }
 
-    const myme = new MymeServerClient(
-      c.env.MYME_API_URL,
+    const marfa = new MarfaServerClient(
+      c.env.MARFA_API_URL,
       // Broker key is unused on the verify path — the verify-context +
       // activity polling calls go through the operator's bearer so the
       // server's is_platform gate enforces against the operator, not the
@@ -189,7 +189,7 @@ export function registerVerifyRoute(
 
     // 1. Validate connection exists, kind=integration, status=active +
     //    enforce is_platform: true (the verify-context endpoint gates).
-    const ctxResult = await myme.getVerifyContext(connectionId, operatorBearer);
+    const ctxResult = await marfa.getVerifyContext(connectionId, operatorBearer);
     if (!ctxResult.ok) {
       // Forward the upstream status (401/403/404/400) verbatim. Anything
       // else is treated as a 502 — runtime-control couldn't talk to its
@@ -298,7 +298,7 @@ export function registerVerifyRoute(
     //    activity sink lagged.
     let activity: ActivityRow[];
     try {
-      const rows = await myme.listActivitySince(
+      const rows = await marfa.listActivitySince(
         connectionId,
         dispatchTimestampIso,
         operatorBearer,

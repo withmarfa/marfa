@@ -19,10 +19,10 @@
 #   ./init-integration-worker-secrets.sh integrations/google-contacts staging
 #
 # Required environment:
-#   MYME_API_URL              e.g. https://staging.myme.so
-#   MYME_RUNTIME_CONTROL_URL  e.g. https://runtime-staging.myme.so
-#   MYME_RUNTIME_BROKER_KEY   the broker key from the server's
-#                             `MYME_RUNTIME_BROKER_KEY` env (same value
+#   MARFA_API_URL              e.g. https://staging.marfa.so
+#   MARFA_RUNTIME_CONTROL_URL  e.g. https://runtime-staging.marfa.so
+#   MARFA_RUNTIME_BROKER_KEY   the broker key from the server's
+#                             `MARFA_RUNTIME_BROKER_KEY` env (same value
 #                             — the integration Worker presents it when
 #                             calling the broker to mint per-Connection
 #                             runtime credentials).
@@ -51,7 +51,7 @@ if [[ ! -f "$INTEGRATION_DIR/wrangler.toml" ]]; then
 fi
 
 missing=()
-for var in MYME_API_URL MYME_RUNTIME_CONTROL_URL MYME_RUNTIME_BROKER_KEY CLOUDFLARE_API_TOKEN; do
+for var in MARFA_API_URL MARFA_RUNTIME_CONTROL_URL MARFA_RUNTIME_BROKER_KEY CLOUDFLARE_API_TOKEN; do
   if [[ -z "${!var:-}" ]]; then
     missing+=("$var")
   fi
@@ -71,7 +71,7 @@ fi
 echo "→ Setting 3 broker / API secrets on $INTEGRATION_DIR (env=$ENV_NAME)"
 cd "$INTEGRATION_DIR"
 
-for var in MYME_API_URL MYME_RUNTIME_CONTROL_URL MYME_RUNTIME_BROKER_KEY; do
+for var in MARFA_API_URL MARFA_RUNTIME_CONTROL_URL MARFA_RUNTIME_BROKER_KEY; do
   echo "  - $var"
   echo "${!var}" | wrangler secret put "$var" --env "$ENV_NAME" >/dev/null
 done

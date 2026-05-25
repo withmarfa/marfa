@@ -3,8 +3,8 @@ import { checkConfigOnce, _resetConfigCheckForTests } from "./index.js";
 import type { ControlPlaneEnv } from "./env.js";
 
 const BASE_ENV: ControlPlaneEnv = {
-  MYME_API_URL: "http://localhost:8602",
-  MYME_RUNTIME_BROKER_KEY: "myme_k1_broker_test",
+  MARFA_API_URL: "http://localhost:8602",
+  MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker_test",
   ENVIRONMENT: "test",
 };
 

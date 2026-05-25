@@ -1,14 +1,14 @@
 import { Hono } from "hono";
 import type { ControlPlaneEnv } from "../env.js";
-import { MymeServerClient } from "../myme-client.js";
+import { MarfaServerClient } from "../marfa-client.js";
 
 /**
  * Lease broker.
  *
  *   POST /lease/:connection_id/runtime
  *     Mints (or refreshes) the per-Connection runtime credential by
- *     calling Myme's `/system/runtime-credentials` endpoint. The
- *     control plane authenticates with MYME_RUNTIME_BROKER_KEY (a
+ *     calling Marfa's `/system/runtime-credentials` endpoint. The
+ *     control plane authenticates with MARFA_RUNTIME_BROKER_KEY (a
  *     long-lived `is_platform: true` key bound as a secret).
  *
  *     Layer 1 PR 4 ships this endpoint with manifest-derived
@@ -19,7 +19,7 @@ import { MymeServerClient } from "../myme-client.js";
  *     broker isn't hit on the hot path.
  *
  *   POST /lease/:connection_id/oauth/:capability_id
- *     Stub for Layer 2 — proxies a leased-token request to Myme's
+ *     Stub for Layer 2 — proxies a leased-token request to Marfa's
  *     existing `/connections/:id/lease-token` route. Layer 2 wires
  *     the install-time manifest persistence that captures
  *     `oauth_requirements.<capability_id> === "leased"`; until then
@@ -31,18 +31,18 @@ export function registerLeaseRoutes(
   app.post("/lease/:connection_id/runtime", async (c) => {
     const connectionId = c.req.param("connection_id");
     const env = c.env;
-    if (!env.MYME_API_URL || !env.MYME_RUNTIME_BROKER_KEY) {
+    if (!env.MARFA_API_URL || !env.MARFA_RUNTIME_BROKER_KEY) {
       return c.json(
         {
           error: "control_plane_misconfigured",
-          message: "MYME_API_URL and MYME_RUNTIME_BROKER_KEY must both be set.",
+          message: "MARFA_API_URL and MARFA_RUNTIME_BROKER_KEY must both be set.",
         },
         503,
       );
     }
-    const myme = new MymeServerClient(
-      env.MYME_API_URL,
-      env.MYME_RUNTIME_BROKER_KEY,
+    const marfa = new MarfaServerClient(
+      env.MARFA_API_URL,
+      env.MARFA_RUNTIME_BROKER_KEY,
     );
 
     let body: { label?: string; source?: string; ttl_seconds?: number };
@@ -63,7 +63,7 @@ export function registerLeaseRoutes(
 
     let minted;
     try {
-      minted = await myme.mintRuntimeCredential({
+      minted = await marfa.mintRuntimeCredential({
         connection_id: connectionId,
         label,
         source,

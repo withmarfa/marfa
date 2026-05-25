@@ -1,6 +1,6 @@
 import { safeJsonParse } from "../json-utils.js";
 import { and, eq, isNull, lt, or } from "drizzle-orm";
-import { generateId, MymeError, ErrorCode } from "@mymehq/shared";
+import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import type {
   ApiKey,
   CreateKeyInput,
@@ -10,7 +10,7 @@ import type {
   MetadataPermission,
   Tier,
   TypePermission,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { KeyStore } from "../interface.js";
 import { apiKeys } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -80,7 +80,7 @@ export class SqliteKeyStore implements KeyStore {
       )
       .get();
     if (collision) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONFLICT,
         `Source display name "${input.source}" is already in use for this tenant`,
         { source: input.source },
@@ -140,7 +140,7 @@ export class SqliteKeyStore implements KeyStore {
       )
       .get();
     if (collision) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONFLICT,
         `Source display name "${input.source}" is already in use for this tenant`,
         { source: input.source },
@@ -239,7 +239,7 @@ export class SqliteKeyStore implements KeyStore {
       .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
       .get();
     if (!existing) {
-      throw new MymeError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
+      throw new MarfaError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
     }
 
     const patch: Partial<typeof apiKeys.$inferInsert> = {};
@@ -266,7 +266,7 @@ export class SqliteKeyStore implements KeyStore {
       .get();
     if (!refreshed) {
       // Shouldn't happen — existence was confirmed above. Defensive.
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.NOT_FOUND,
         `Key ${id} disappeared mid-update`,
       );

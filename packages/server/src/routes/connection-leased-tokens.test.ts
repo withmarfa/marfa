@@ -6,7 +6,7 @@ import type {
   CreatedConnectionLeasedToken,
   ConnectionLeasedToken,
   LeaseTokenIntrospection,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
