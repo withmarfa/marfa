@@ -87,6 +87,10 @@ queue = "myme-webhook-receipt-mymehq-inbox-staging"
 binding = "WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR"
 queue = "myme-webhook-receipt-google-calendar-staging"
 
+[[env.staging.queues.producers]]
+binding = "WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE"
+queue = "myme-webhook-receipt-google-drive-staging"
+
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE"
 queue = "myme-webhook-receipt-prod"
@@ -107,6 +111,10 @@ queue = "myme-webhook-receipt-mymehq-inbox-prod"
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR"
 queue = "myme-webhook-receipt-google-calendar-prod"
+
+[[env.prod.queues.producers]]
+binding = "WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE"
+queue = "myme-webhook-receipt-google-drive-prod"
 
 # ---------------------------------------------------------------------------
 # KV — short-lived idempotency cache used by the control plane to
