@@ -43,6 +43,12 @@ pnpm format:check     # check formatting without writing
 pnpm generate:openapi # generate OpenAPI spec from route definitions
 ```
 
+## Worktree workflow
+
+Long-lived worktrees that rebase `main` and pick up new workspace packages need a fresh `pnpm install` before they can build. `pnpm install --frozen-lockfile` is a near-instant no-op when the lockfile hash hasn't changed, so the per-package `node_modules/.bin/` symlinks for the newly-added packages never get linked — the first `pnpm run build` then fails with `sh: tsup: command not found` from inside the affected package.
+
+`pnpm-workspace.yaml` sets `verifyDepsBeforeRun: error` to catch this: pnpm compares the `workspacePackagePatterns` recorded in `node_modules/.modules.yaml` against the current workspace set and fast-fails with `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` before any script runs. When you see that error, run `pnpm install` (plain — not `--frozen-lockfile`) and retry. Don't bypass with `--no-verify` or by working around the build — the state change is real and the install is the right fix.
+
 ## Authentication model
 
 Two layers coexist permanently and don't share credentials:
