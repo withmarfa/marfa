@@ -107,6 +107,31 @@ export interface ListItemsPage {
  *  `core.task` auto-archive handler hits `archived`. */
 export type ItemState = "active" | "archived" | "trashed";
 
+/** Input to `ConnectionClient.uploadBlob` (T-239). Bytes-only in v1;
+ *  pass a `ReadableStream` and the SDK rejects at the boundary
+ *  (server-side streaming is a paired follow-up). */
+export interface UploadBlobInput {
+  /** Raw bytes. Workers handlers typically pass `Uint8Array` (e.g.
+   *  `new Uint8Array(await response.arrayBuffer())`) or `ArrayBuffer`
+   *  directly. Node's `Buffer` satisfies `Uint8Array` structurally
+   *  and is accepted as the test-path input. */
+  content: Uint8Array | ArrayBuffer;
+  /** Wire-level MIME type. Stamped as `Content-Type` on the request
+   *  and round-tripped on the response. */
+  mime_type: string;
+}
+
+/** Response from `ConnectionClient.uploadBlob` (T-239). Mirrors the
+ *  server's `POST /blobs` wire shape exactly — no envelope. Stamp
+ *  `properties.blob_ref = result.hash` directly on item writes. */
+export interface UploadBlobResult {
+  /** Content-addressed reference: `sha256:<hex>`. Stable across
+   *  re-uploads of the same bytes (server-side dedup). */
+  hash: string;
+  mime_type: string;
+  size: number;
+}
+
 export class ConnectionClient {
   private credential: RuntimeCredential;
   private readonly apiUrl: string;
@@ -310,6 +335,41 @@ export class ConnectionClient {
     );
   }
 
+  /**
+   * Upload bytes as a content-addressed Myme blob (T-239). Forwards
+   * to the server's `POST /blobs` route using this connection's
+   * runtime credential — tenant scoping, dedup, and per-tenant
+   * `blobs` + `storage_bytes` quotas are enforced server-side. The
+   * returned `hash` is the canonical `sha256:<hex>` reference: stamp
+   * it onto item properties (e.g. `properties.blob_ref` on
+   * `core.file`) on a subsequent `createItem` / `updateItem`.
+   *
+   * **Bytes only in v1.** `ReadableStream` is rejected at the SDK
+   * boundary because the server-side route currently buffers via
+   * `c.req.arrayBuffer()` anyway — a stream input would mislead
+   * callers into assuming back-pressure. Worker memory is the real
+   * ceiling; pair with a per-handler size cap (Drive uses 25 MB).
+   * Lifting that ceiling requires paired server-side streaming +
+   * a stream-accepting overload — flagged as a follow-up.
+   *
+   * **No cycle headers.** `POST /blobs` doesn't publish events
+   * through `pubsub.publish`, so the cycle metadata serves no
+   * purpose on this route — it's a storage write, not an
+   * event-emitting mutation.
+   */
+  async uploadBlob(input: UploadBlobInput): Promise<UploadBlobResult> {
+    const body = toUploadBytes(input.content);
+    return this.fetchJson<UploadBlobResult>("POST", "/blobs", {
+      contentType: input.mime_type,
+      // `Uint8Array` is a valid `BufferSource` and the Workers /
+      // Node fetch runtime accepts it as a body, but lib.dom's
+      // `BodyInit` declaration excludes it in some TS configurations
+      // — the cast keeps the call sites honest without widening the
+      // wire-level contract.
+      body: body as unknown as BodyInit,
+    });
+  }
+
   /** The currently-cached credential. Exposed for the per-Connection
    *  DO to persist into the runtime_credential_cached slot. */
   getCredential(): RuntimeCredential {
@@ -323,7 +383,6 @@ export class ConnectionClient {
     path: string,
     body?: unknown,
   ): Promise<T> {
-    const url = `${this.apiUrl}${path}`;
     // T-039: stamp cycle headers on mutating requests so the server's
     // `cycleMiddleware` can resolve `c.var.cycle` and the resulting
     // publishes carry attribution. Read-only verbs (GET/HEAD/OPTIONS)
@@ -335,8 +394,32 @@ export class ConnectionClient {
     // run is one logical hop"; per-request increments would conflate
     // an N-call handler with an N-deep chain.
     const isMutating = method !== "GET" && method !== "HEAD";
+    return this.fetchJson<T>(method, path, {
+      contentType: body !== undefined ? "application/json" : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      stampCycle: isMutating,
+    });
+  }
+
+  /**
+   * Single-flight 401-refresh + JSON-response decoder. Shared by
+   * `request` (JSON body) and `uploadBlob` (raw bytes body). The
+   * caller controls `contentType` + `body`; this helper just stamps
+   * the bearer, optionally adds cycle headers, retries once on 401,
+   * and surfaces non-2xx as `MymeApiError`.
+   */
+  private async fetchJson<T>(
+    method: string,
+    path: string,
+    init: {
+      contentType?: string;
+      body?: BodyInit;
+      stampCycle?: boolean;
+    },
+  ): Promise<T> {
+    const url = `${this.apiUrl}${path}`;
     const cycleHeaders: Record<string, string> = {};
-    if (isMutating) {
+    if (init.stampCycle === true) {
       const next = nextHopMetadata(
         this.cycleParent,
         this.credential.connection_id,
@@ -349,10 +432,12 @@ export class ConnectionClient {
         method,
         headers: {
           Authorization: `Bearer ${this.credential.api_key}`,
-          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...(init.contentType !== undefined
+            ? { "Content-Type": init.contentType }
+            : {}),
           ...cycleHeaders,
         },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body: init.body,
       });
 
     let res = await doFetch();
@@ -373,6 +458,40 @@ export class ConnectionClient {
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
+}
+
+/**
+ * Coerce a caller-supplied `content` value into a `BodyInit` the
+ * Workers / Node `fetch` accepts as a raw-bytes body. Rejects
+ * anything that isn't bytes — strings, streams, nulls all surface a
+ * clear `MymeApiError` at the SDK boundary rather than being
+ * silently misinterpreted by `fetch`.
+ *
+ * Returned shape:
+ * - `Buffer` (Node) passes through (it is also a `Uint8Array` at
+ *   runtime, but `Buffer.from(buf.buffer, ...)` would copy unnecessarily).
+ * - `Uint8Array` passes through.
+ * - `ArrayBuffer` wraps in a `Uint8Array` view.
+ */
+function toUploadBytes(content: UploadBlobInput["content"]): Uint8Array {
+  if (content instanceof Uint8Array) return content;
+  if (content instanceof ArrayBuffer) return new Uint8Array(content);
+  throw new MymeApiError(
+    `uploadBlob: content must be Uint8Array, ArrayBuffer, or Buffer (got ${describeContent(content)})`,
+    0,
+  );
+}
+
+function describeContent(content: unknown): string {
+  if (content === null) return "null";
+  if (content === undefined) return "undefined";
+  if (typeof content === "string") return "string";
+  if (typeof content === "object") {
+    const ctor = (content as { constructor?: { name?: string } }).constructor
+      ?.name;
+    return ctor ?? "object";
+  }
+  return typeof content;
 }
 
 export class MymeApiError extends Error {

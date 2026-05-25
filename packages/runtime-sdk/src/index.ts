@@ -36,6 +36,8 @@ export type {
   ItemState,
   ListItemsQuery,
   ListItemsPage,
+  UploadBlobInput,
+  UploadBlobResult,
 } from "./connection-client.js";
 
 export { createCursorStore } from "./cursor-store.js";

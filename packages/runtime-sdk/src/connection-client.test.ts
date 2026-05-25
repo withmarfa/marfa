@@ -462,3 +462,284 @@ describe("ConnectionClient — server-response unwrap", () => {
     expect(captured[0]!.method).toBe("PATCH");
   });
 });
+
+// ---------------------------------------------------------------------------
+// ConnectionClient.uploadBlob (T-239)
+//
+// The SDK forwards raw bytes to the server's `POST /blobs` route using the
+// connection's runtime credential. Server-side concerns (tenant scoping, R2
+// keying, dedup, quota enforcement) are covered in @mymehq/server's blob
+// tests. These cover the SDK contract: input shapes, headers + body bytes,
+// 401-refresh single-flight, error surfacing, boundary rejection.
+// ---------------------------------------------------------------------------
+
+interface CapturedUpload {
+  url: string;
+  method: string;
+  authorization?: string;
+  contentType?: string;
+  cycleOrigin?: string;
+  cycleHop?: string;
+  bodyBytes: Uint8Array;
+}
+
+function makeUploadFetch(
+  responses: (() => Response)[],
+  captured: CapturedUpload[],
+): typeof fetch {
+  let i = 0;
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    const method = (init?.method ?? "GET").toUpperCase();
+    const headers = new Headers(init?.headers);
+    const bodyBytes = init?.body
+      ? new Uint8Array(await new Response(init.body).arrayBuffer())
+      : new Uint8Array(0);
+    captured.push({
+      url,
+      method,
+      authorization: headers.get("Authorization") ?? undefined,
+      contentType: headers.get("Content-Type") ?? undefined,
+      cycleOrigin: headers.get("X-Myme-Cycle-Origin") ?? undefined,
+      cycleHop: headers.get("X-Myme-Cycle-Hop") ?? undefined,
+      bodyBytes,
+    });
+    const responder = responses[i++];
+    if (!responder) return new Response("no responder", { status: 500 });
+    return responder();
+  }) as typeof fetch;
+}
+
+describe("ConnectionClient.uploadBlob (T-239)", () => {
+  const PDF_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e]);
+  const okResponse = () =>
+    new Response(
+      JSON.stringify({
+        hash: "sha256:abc",
+        mime_type: "application/pdf",
+        size: PDF_BYTES.length,
+      }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+
+  it("POSTs raw bytes to /blobs with Content-Type matching the input mime", async () => {
+    const captured: CapturedUpload[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeUploadFetch([okResponse], captured),
+    });
+
+    const result = await client.uploadBlob({
+      content: PDF_BYTES,
+      mime_type: "application/pdf",
+    });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.url).toBe("https://api.example.com/blobs");
+    expect(captured[0]!.method).toBe("POST");
+    expect(captured[0]!.authorization).toBe("Bearer myme_k1_initial");
+    expect(captured[0]!.contentType).toBe("application/pdf");
+    // No cycle headers on /blobs — it doesn't publish events.
+    expect(captured[0]!.cycleOrigin).toBeUndefined();
+    expect(captured[0]!.cycleHop).toBeUndefined();
+    expect(Array.from(captured[0]!.bodyBytes)).toEqual(Array.from(PDF_BYTES));
+    expect(result).toEqual({
+      hash: "sha256:abc",
+      mime_type: "application/pdf",
+      size: PDF_BYTES.length,
+    });
+  });
+
+  it("accepts an ArrayBuffer and forwards the bytes exactly", async () => {
+    const captured: CapturedUpload[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeUploadFetch([okResponse], captured),
+    });
+
+    // Construct an ArrayBuffer that doesn't share storage with the Uint8Array.
+    const ab = new ArrayBuffer(PDF_BYTES.length);
+    new Uint8Array(ab).set(PDF_BYTES);
+
+    await client.uploadBlob({ content: ab, mime_type: "application/pdf" });
+
+    expect(Array.from(captured[0]!.bodyBytes)).toEqual(Array.from(PDF_BYTES));
+  });
+
+  it("accepts a Uint8Array view over a larger buffer (subarray)", async () => {
+    // Buffer.from(...) in the Node test path returns a Uint8Array view;
+    // covering the subarray case verifies we don't accidentally send the
+    // full backing ArrayBuffer.
+    const captured: CapturedUpload[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeUploadFetch([okResponse], captured),
+    });
+
+    const backing = new Uint8Array(64);
+    backing.set(PDF_BYTES, 16);
+    const view = backing.subarray(16, 16 + PDF_BYTES.length);
+
+    await client.uploadBlob({ content: view, mime_type: "application/pdf" });
+
+    expect(Array.from(captured[0]!.bodyBytes)).toEqual(Array.from(PDF_BYTES));
+  });
+
+  it("refreshes the credential on 401 and retries the upload once", async () => {
+    const captured: CapturedUpload[] = [];
+    let refreshes = 0;
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => {
+        refreshes++;
+        return Promise.resolve(REFRESHED);
+      },
+      fetch: makeUploadFetch(
+        [() => new Response("", { status: 401 }), okResponse],
+        captured,
+      ),
+    });
+
+    const result = await client.uploadBlob({
+      content: PDF_BYTES,
+      mime_type: "application/pdf",
+    });
+
+    expect(refreshes).toBe(1);
+    expect(captured).toHaveLength(2);
+    expect(captured[0]!.authorization).toBe("Bearer myme_k1_initial");
+    expect(captured[1]!.authorization).toBe("Bearer myme_k1_refreshed");
+    // Body bytes are re-sent on the retry (full content, not a stream that
+    // would have drained).
+    expect(Array.from(captured[1]!.bodyBytes)).toEqual(Array.from(PDF_BYTES));
+    expect(result.hash).toBe("sha256:abc");
+  });
+
+  it("surfaces persistent 401 as MymeApiError after one refresh attempt", async () => {
+    const captured: CapturedUpload[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeUploadFetch(
+        [
+          () => new Response("", { status: 401 }),
+          () => new Response("still denied", { status: 401 }),
+        ],
+        captured,
+      ),
+    });
+
+    const err = await client
+      .uploadBlob({ content: PDF_BYTES, mime_type: "application/pdf" })
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MymeApiError);
+    expect((err as MymeApiError).status).toBe(401);
+  });
+
+  it("surfaces 413 blob_too_large with the server body in the message", async () => {
+    const captured: CapturedUpload[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeUploadFetch(
+        [
+          () =>
+            new Response(
+              JSON.stringify({
+                error: { code: "blob_too_large", message: "exceeds 50 MB" },
+              }),
+              { status: 413 },
+            ),
+        ],
+        captured,
+      ),
+    });
+
+    const err = await client
+      .uploadBlob({ content: PDF_BYTES, mime_type: "application/pdf" })
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MymeApiError);
+    expect((err as MymeApiError).status).toBe(413);
+    expect((err as Error).message).toContain("blob_too_large");
+  });
+
+  it("rejects string input at the SDK boundary before issuing the request", async () => {
+    const captured: CapturedUpload[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeUploadFetch([okResponse], captured),
+    });
+
+    const err = await client
+      .uploadBlob({
+        content: "raw text" as unknown as Uint8Array,
+        mime_type: "text/plain",
+      })
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MymeApiError);
+    expect((err as Error).message).toContain("uploadBlob");
+    expect(captured).toHaveLength(0);
+  });
+
+  it("rejects null input at the SDK boundary", async () => {
+    const captured: CapturedUpload[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeUploadFetch([okResponse], captured),
+    });
+
+    await expect(
+      client.uploadBlob({
+        content: null as unknown as Uint8Array,
+        mime_type: "application/octet-stream",
+      }),
+    ).rejects.toBeInstanceOf(MymeApiError);
+    expect(captured).toHaveLength(0);
+  });
+
+  it("rejects a ReadableStream input at the SDK boundary (bytes-only in v1)", async () => {
+    const captured: CapturedUpload[] = [];
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeUploadFetch([okResponse], captured),
+    });
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(PDF_BYTES);
+        controller.close();
+      },
+    });
+
+    await expect(
+      client.uploadBlob({
+        content: stream as unknown as Uint8Array,
+        mime_type: "application/pdf",
+      }),
+    ).rejects.toBeInstanceOf(MymeApiError);
+    expect(captured).toHaveLength(0);
+  });
+});
