@@ -59,6 +59,13 @@ interface OAuthAuthorizeConfig {
   /** Comma-separated default scopes to request when the start request
    *  doesn't override. */
   oauth_default_scope: string | null;
+  /** Provider-specific authorize-URL hints baked into the credential
+   *  (T-259) — e.g. `{ access_type: "offline", prompt: "consent" }` for
+   *  Google to guarantee a `refresh_token` on the code exchange.
+   *  Merged into the authorize URL on `/oauth/start`; the caller's
+   *  `extra_params` overrides per-key. `null` when the credential has
+   *  no defaults declared. */
+  authorize_extra_params: Record<string, string> | null;
 }
 
 /**
@@ -106,6 +113,7 @@ async function readAuthorizeConfig(
       oauth_token_url?: string;
       oauth_client_id?: string;
       oauth_default_scope?: string;
+      authorize_extra_params?: Record<string, string>;
     };
     secret_encrypted?: string;
   };
@@ -122,6 +130,22 @@ async function readAuthorizeConfig(
       "Connection's credential is missing required OAuth provider config (kind:oauth_token + oauth_authorize_url + oauth_token_url + oauth_client_id + secret_encrypted)",
     );
   }
+  // T-259 — defensively validate the shape (Record<string, string>) so a
+  // malformed JSON value on the credential row doesn't poison the
+  // authorize URL with `undefined`-stringified values. Anything that
+  // isn't a plain object of string→string is treated as absent.
+  let authorize_extra_params: Record<string, string> | null = null;
+  if (
+    cfg.authorize_extra_params &&
+    typeof cfg.authorize_extra_params === "object" &&
+    !Array.isArray(cfg.authorize_extra_params)
+  ) {
+    const filtered: Record<string, string> = {};
+    for (const [k, v] of Object.entries(cfg.authorize_extra_params)) {
+      if (typeof v === "string") filtered[k] = v;
+    }
+    if (Object.keys(filtered).length > 0) authorize_extra_params = filtered;
+  }
   return {
     oauth_authorize_url: cfg.oauth_authorize_url,
     oauth_token_url: cfg.oauth_token_url,
@@ -131,6 +155,7 @@ async function readAuthorizeConfig(
       SECRET_INFO.connectionOauthToken,
     ),
     oauth_default_scope: cfg.oauth_default_scope ?? null,
+    authorize_extra_params,
   };
 }
 
@@ -421,6 +446,17 @@ export function oauthStartRoutes(
       code_challenge_method: "S256",
     });
     if (scope.length > 0) params.set("scope", scope);
+    // T-259 — credential-baked defaults FIRST, caller's override SECOND.
+    // The latter wins per-key (each `params.set` overwrites). This lets
+    // a Google credential carry `access_type=offline` + `prompt=consent`
+    // by default so every consumer (install pipeline, manual curl,
+    // future re-auth flows) gets the refresh-token-bearing dance
+    // without having to remember the params.
+    if (config.authorize_extra_params) {
+      for (const [k, v] of Object.entries(config.authorize_extra_params)) {
+        params.set(k, v);
+      }
+    }
     if (
       typeof body.extra_params === "object" &&
       body.extra_params !== null &&
