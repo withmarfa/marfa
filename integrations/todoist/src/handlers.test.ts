@@ -427,7 +427,10 @@ describe("Todoist handlers — outbound (item-event)", () => {
   });
 
   it("updates an existing mapped task via REST POST /api/v1/tasks/{id}", async () => {
-    const item = MARFA_TASK("itm_beta", { title: "Updated title", priority: 4 });
+    const item = MARFA_TASK("itm_beta", {
+      title: "Updated title",
+      priority: 4,
+    });
     const { ctx, jsonCalls } = buildContext({
       itemForEvent: item,
       proxyJsonResponses: [

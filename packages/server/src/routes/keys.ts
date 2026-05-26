@@ -428,7 +428,10 @@ export function keyRoutes(storage: Storage, salt: string) {
     if (key.role === "tenant_admin" && key.tenant_id) {
       const target = await storage.keys.get(id);
       if (target?.tenant_id !== key.tenant_id) {
-        throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
+        throw new MarfaError(
+          ErrorCode.API_KEY_NOT_FOUND,
+          `Key ${id} not found`,
+        );
       }
     }
 

@@ -4,8 +4,8 @@ A typed data layer for structured personal data. Store, query, and sync items wi
 
 ## Packages
 
-| Package                                                 | Description                                                            |
-| ------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Package                                                    | Description                                                            |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------- |
 | [`@withmarfa/types`](./packages/types)                     | Core type + edge JSON schemas; emits the runtime registries            |
 | [`@withmarfa/shared`](./packages/shared)                   | Wire types, Zod validation schemas, error codes                        |
 | [`@withmarfa/server`](./packages/server)                   | Hono HTTP server with SQLite and Postgres support                      |

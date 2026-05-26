@@ -1491,7 +1491,9 @@ function errorMessage(err: unknown): string {
  * exposes the same API as `globalThis.crypto`, so this works under
  * the Vitest fixture too.
  */
-async function deriveDeterministicCalendarId(marfa_id: string): Promise<string> {
+async function deriveDeterministicCalendarId(
+  marfa_id: string,
+): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(`marfa:${marfa_id}`);
   const digest = await globalThis.crypto.subtle.digest("SHA-256", data);

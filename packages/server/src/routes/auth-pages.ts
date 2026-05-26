@@ -1620,7 +1620,10 @@ export function authRoutes(
     const expanded = expandWildcardScopes(requestedScopes, knownTypes);
     const parsed = expanded.map(parseScope).filter((s) => s !== null);
     if (parsed.length === 0) {
-      throw new MarfaError(ErrorCode.INVALID_SCOPE, "No valid scopes requested");
+      throw new MarfaError(
+        ErrorCode.INVALID_SCOPE,
+        "No valid scopes requested",
+      );
     }
 
     const deviceCodeRaw = generateToken(DEVICE_CODE_PREFIX);

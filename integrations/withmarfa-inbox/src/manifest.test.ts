@@ -4,7 +4,9 @@ import { WITHMARFA_INBOX_MANIFEST } from "./manifest.js";
 
 describe("withmarfa.inbox manifest", () => {
   it("validates against IntegrationManifestSchema", () => {
-    const result = IntegrationManifestSchema.safeParse(WITHMARFA_INBOX_MANIFEST);
+    const result = IntegrationManifestSchema.safeParse(
+      WITHMARFA_INBOX_MANIFEST,
+    );
     if (!result.success) {
       throw new Error(
         `manifest failed schema validation: ${JSON.stringify(result.error.issues, null, 2)}`,

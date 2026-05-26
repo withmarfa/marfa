@@ -35,7 +35,8 @@ export function registerLeaseRoutes(
       return c.json(
         {
           error: "control_plane_misconfigured",
-          message: "MARFA_API_URL and MARFA_RUNTIME_BROKER_KEY must both be set.",
+          message:
+            "MARFA_API_URL and MARFA_RUNTIME_BROKER_KEY must both be set.",
         },
         503,
       );

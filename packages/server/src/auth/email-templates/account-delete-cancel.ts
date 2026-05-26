@@ -37,7 +37,8 @@ export function renderAccountDeleteCancelEmail(
   input: AccountDeleteCancelRenderInput,
 ): RenderedEmail {
   const greeting = input.name?.trim() ? `Hi ${input.name.trim()}` : "Hi there";
-  const subject = "Sign-in attempt on your Marfa account scheduled for deletion";
+  const subject =
+    "Sign-in attempt on your Marfa account scheduled for deletion";
   const deadline = input.deletionDate ?? "";
   const text = [
     "Sign-in attempt on your Marfa account",

@@ -382,7 +382,8 @@ export async function handleSchedule(
           // Edge to the parent collection on first write.
           const collectionId = r.collection?.$id ?? r.collectionId;
           if (typeof collectionId === "number") {
-            const parentMarfa = cursor.collection_mappings[String(collectionId)];
+            const parentMarfa =
+              cursor.collection_mappings[String(collectionId)];
             if (parentMarfa !== undefined) {
               try {
                 await ctx.marfa.createEdge({

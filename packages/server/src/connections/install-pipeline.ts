@@ -39,7 +39,11 @@
  * the upgrade flow on purpose.
  */
 import { randomBytes } from "node:crypto";
-import { ErrorCode, MarfaError, type IntegrationManifest } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  type IntegrationManifest,
+} from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 

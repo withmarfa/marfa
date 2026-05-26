@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
-import { MarfaError, ErrorCode, generateId, type Item } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  generateId,
+  type Item,
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -641,7 +646,10 @@ async function requireConnectionProxyAccess(
   const tenantId = key.tenant_id ?? undefined;
   const connection = await storage.items.get(connectionId, tenantId);
   if (connection?.type !== "system.connection") {
-    throw new MarfaError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found");
+    throw new MarfaError(
+      ErrorCode.CONNECTION_NOT_FOUND,
+      "Connection not found",
+    );
   }
   const isAdmin = key.role === "admin" || key.is_platform;
   // Two connector-credential shapes accept here:

@@ -94,7 +94,10 @@ async function requireConnectionAccess(
   const tenantId = key.tenant_id ?? undefined;
   const connection = await storage.items.get(connectionId, tenantId);
   if (connection?.type !== "system.connection") {
-    throw new MarfaError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found");
+    throw new MarfaError(
+      ErrorCode.CONNECTION_NOT_FOUND,
+      "Connection not found",
+    );
   }
   const isAdmin = key.role === "admin" || key.is_platform;
   // Same widening as `requireConnectionProxyAccess` in

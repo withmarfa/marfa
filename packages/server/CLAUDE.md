@@ -182,7 +182,7 @@ The OAuth-protocol surface is owned by [@better-auth/oauth-provider](https://www
 | `POST /auth/oauth2/token`                                   | `authorization_code`, `refresh_token`, `client_credentials` — refresh rotation built in |
 | `POST /auth/oauth2/userinfo`                                | OIDC userinfo                                                                           |
 | `POST /auth/oauth2/revoke`                                  | RFC 7009                                                                                |
-| `POST /auth/oauth2/introspect`                              | RFC 7662 — new for Marfa                                                                 |
+| `POST /auth/oauth2/introspect`                              | RFC 7662 — new for Marfa                                                                |
 | `POST /auth/oauth2/register`                                | RFC 7591 DCR (public — `allowUnauthenticatedClientRegistration: true`)                  |
 | `GET /.well-known/oauth-authorization-server`               | RFC 8414 (re-published at root via plugin's exportable helper)                          |
 | `GET /.well-known/openid-configuration`                     | OIDC discovery (re-published at root via plugin's exportable helper)                    |

@@ -25,7 +25,10 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
-import { IN_TREE_INTEGRATIONS, integrationsWithTrigger } from "@withmarfa/shared";
+import {
+  IN_TREE_INTEGRATIONS,
+  integrationsWithTrigger,
+} from "@withmarfa/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

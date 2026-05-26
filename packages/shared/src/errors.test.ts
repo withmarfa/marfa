@@ -96,9 +96,13 @@ describe("MarfaError", () => {
   });
 
   it("includes details in error response when present", () => {
-    const err = new MarfaError(ErrorCode.VERSION_CONFLICT, "Conflict detected", {
-      version: 3,
-    });
+    const err = new MarfaError(
+      ErrorCode.VERSION_CONFLICT,
+      "Conflict detected",
+      {
+        version: 3,
+      },
+    );
     expect(err.toResponse()).toEqual({
       error: {
         code: "version_conflict",

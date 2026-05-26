@@ -864,7 +864,11 @@ async function materialisePlaylistVideos(
         }
         upserted += 1;
         // playlist parent-of video edge (optional, only on materialise).
-        const ok = await safeCreateParentEdge(ctx, playlistMarfaId, videoMarfaId);
+        const ok = await safeCreateParentEdge(
+          ctx,
+          playlistMarfaId,
+          videoMarfaId,
+        );
         if (ok) edges += 1;
         // Also wire the owning-channel edge if we don't already have it.
         const channelId = v.snippet?.channelId;

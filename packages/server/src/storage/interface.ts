@@ -731,7 +731,9 @@ export interface TenantStore {
    * at the scale we're targeting.
    */
   list(): Promise<Tenant[]>;
-  getConfig(id: string): Promise<import("@withmarfa/shared").TenantConfig | null>;
+  getConfig(
+    id: string,
+  ): Promise<import("@withmarfa/shared").TenantConfig | null>;
   updateConfig(
     id: string,
     config: import("@withmarfa/shared").TenantConfig,
@@ -750,7 +752,9 @@ export interface TenantStore {
    * tenants as `active` — the credential's own tenant_id mismatch is
    * handled separately by the standard auth flow).
    */
-  getStatus(id: string): Promise<import("@withmarfa/shared").TenantStatus | null>;
+  getStatus(
+    id: string,
+  ): Promise<import("@withmarfa/shared").TenantStatus | null>;
 }
 
 /**
@@ -759,7 +763,9 @@ export interface TenantStore {
  */
 export interface TenantQuotaStore {
   /** Returns the per-tenant ceilings; null when no row exists (use env defaults). */
-  get(tenantId: string): Promise<import("@withmarfa/shared").TenantQuota | null>;
+  get(
+    tenantId: string,
+  ): Promise<import("@withmarfa/shared").TenantQuota | null>;
   /** Upserts ceilings. Pass null on a field to clear it (revert to env default). */
   set(
     tenantId: string,

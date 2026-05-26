@@ -189,7 +189,10 @@ export function registerVerifyRoute(
 
     // 1. Validate connection exists, kind=integration, status=active +
     //    enforce is_platform: true (the verify-context endpoint gates).
-    const ctxResult = await marfa.getVerifyContext(connectionId, operatorBearer);
+    const ctxResult = await marfa.getVerifyContext(
+      connectionId,
+      operatorBearer,
+    );
     if (!ctxResult.ok) {
       // Forward the upstream status (401/403/404/400) verbatim. Anything
       // else is treated as a 502 — runtime-control couldn't talk to its

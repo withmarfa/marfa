@@ -411,7 +411,9 @@ const edgeLines: string[] = [];
 edgeLines.push(
   "// Auto-generated from core/edges/*.json — do not edit manually.",
 );
-edgeLines.push("// Run `pnpm --filter @withmarfa/types generate` to regenerate.");
+edgeLines.push(
+  "// Run `pnpm --filter @withmarfa/types generate` to regenerate.",
+);
 edgeLines.push("");
 edgeLines.push('import type { EdgeTypeSchema } from "../src/schema-types.js";');
 edgeLines.push("");
