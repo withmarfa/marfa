@@ -1,6 +1,6 @@
 {
   "name": "@withmarfa/runtime-control",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Cloudflare Worker — Connections runtime control plane (inbound webhook router, lease broker, install callbacks).",

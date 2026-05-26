@@ -1,6 +1,6 @@
 {
   "name": "@withmarfa/runtime-sdk",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "SDK that Connections integrations import. Per-Connection Durable Object, typed handler API, ConnectionClient (wraps @withmarfa/sdk), echo suppression, system.activity emission.",

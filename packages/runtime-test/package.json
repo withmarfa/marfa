@@ -1,6 +1,6 @@
 {
   "name": "@withmarfa/runtime-test",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "In-memory mocks of Cloudflare runtime primitives (DO storage + alarms, Queues, KV) for unit-testing Connections integrations without a Worker runtime.",
