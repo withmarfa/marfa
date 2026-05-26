@@ -12,7 +12,7 @@ import type {
   CreateWebhookInput,
   UpdateWebhookInput,
   InboundWebhookEvent,
-  MymeRole,
+  MarfaRole,
   PaginatedResult,
   SearchResult,
   ConflictResponse,
@@ -21,9 +21,9 @@ import type {
   Tenant,
   Edge,
   CreateEdgeInput,
-} from "@mymehq/shared";
-import type { EdgeTypeSchema, TypeSchema } from "@mymehq/shared";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import type { EdgeTypeSchema, TypeSchema } from "@withmarfa/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 
 // ---------------------------------------------------------------------------
 // Filter types
@@ -114,7 +114,7 @@ export function decodeCursor(cursor: string): CursorPayload {
     }
     return parsed;
   } catch {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
       "Invalid pagination cursor",
     );
@@ -560,7 +560,7 @@ export interface InboundWebhookEventStore {
 
 /**
  * Row shape persisted in `connection_oauth_tokens`. Tokens are stored
- * encrypted under HKDF(MYME_AUTH_SECRET, "connection-oauth-tokens"); the
+ * encrypted under HKDF(MARFA_AUTH_SECRET, "connection-oauth-tokens"); the
  * proxy route decrypts at request time. `previous_refresh_hash` is the
  * SHA-256 (hex) of the most recent rotated-out refresh token, kept for
  * forensic logging — active replay enforcement is the upstream's
@@ -683,12 +683,12 @@ export interface UserStore {
     handle?: string;
     /** Optional: bind to a Better Auth `auth_user.id`. Stamped at sign-up
      *  time; legacy `POST /auth/signup` leaves it null. T-074: this is the
-     *  canonical bridge between Better Auth identity and the Myme profile. */
+     *  canonical bridge between Better Auth identity and the Marfa profile. */
     auth_user_id?: string;
     /** T-178: optional role on creation. No route surfaces this — sign-up
      *  flows default to `member`. Tests and the operator's escape hatch
      *  (`setRole`) use it. */
-    role?: MymeRole;
+    role?: MarfaRole;
   }): Promise<User>;
   getById(id: string): Promise<User | null>;
   /** T-074: lookup by Better Auth `auth_user.id`. Replaces the previous
@@ -705,7 +705,7 @@ export interface UserStore {
    *  current operator elevates via SQL (or via this method from a script).
    *  A real provisioning API (`my platform users set-role` etc.) lands
    *  when a second user shows up. */
-  setRole(id: string, role: MymeRole): Promise<User>;
+  setRole(id: string, role: MarfaRole): Promise<User>;
   /** T-074: update the editable profile fields (first/last name, bio,
    *  avatar blob hash). Stamps `updated_at`. `undefined` keys are
    *  untouched; `null` clears the column. */
@@ -731,10 +731,12 @@ export interface TenantStore {
    * at the scale we're targeting.
    */
   list(): Promise<Tenant[]>;
-  getConfig(id: string): Promise<import("@mymehq/shared").TenantConfig | null>;
+  getConfig(
+    id: string,
+  ): Promise<import("@withmarfa/shared").TenantConfig | null>;
   updateConfig(
     id: string,
-    config: import("@mymehq/shared").TenantConfig,
+    config: import("@withmarfa/shared").TenantConfig,
   ): Promise<void>;
   /**
    * T-117: flip tenant status. `suspend` blocks future writes at the auth
@@ -750,7 +752,9 @@ export interface TenantStore {
    * tenants as `active` — the credential's own tenant_id mismatch is
    * handled separately by the standard auth flow).
    */
-  getStatus(id: string): Promise<import("@mymehq/shared").TenantStatus | null>;
+  getStatus(
+    id: string,
+  ): Promise<import("@withmarfa/shared").TenantStatus | null>;
 }
 
 /**
@@ -759,7 +763,9 @@ export interface TenantStore {
  */
 export interface TenantQuotaStore {
   /** Returns the per-tenant ceilings; null when no row exists (use env defaults). */
-  get(tenantId: string): Promise<import("@mymehq/shared").TenantQuota | null>;
+  get(
+    tenantId: string,
+  ): Promise<import("@withmarfa/shared").TenantQuota | null>;
   /** Upserts ceilings. Pass null on a field to clear it (revert to env default). */
   set(
     tenantId: string,
@@ -770,11 +776,11 @@ export interface TenantQuotaStore {
       storage_bytes_limit?: number | null;
       rate_per_minute_limit?: number | null;
     },
-  ): Promise<import("@mymehq/shared").TenantQuota>;
+  ): Promise<import("@withmarfa/shared").TenantQuota>;
   /** Returns the current count for a resource within a tenant. */
   count(
     tenantId: string,
-    resource: import("@mymehq/shared").QuotaResource,
+    resource: import("@withmarfa/shared").QuotaResource,
   ): Promise<number>;
 }
 
@@ -800,19 +806,19 @@ export interface OAuthStore {
     scope: string;
     expiresAt: string;
     intervalSeconds: number;
-  }): Promise<import("@mymehq/shared").OAuthDeviceCode>;
+  }): Promise<import("@withmarfa/shared").OAuthDeviceCode>;
 
   /** Lookup by SHA-256 of the device_code. Used by the polling endpoint.
    *  Returns null if the row doesn't exist; expired rows are returned
    *  with `status: "pending"` (caller checks `expires_at` to decide). */
   findDeviceCodeByHash(
     hash: string,
-  ): Promise<import("@mymehq/shared").OAuthDeviceCode | null>;
+  ): Promise<import("@withmarfa/shared").OAuthDeviceCode | null>;
 
   /** Lookup by user_code. Used by the verification page. */
   findDeviceCodeByUserCode(
     userCode: string,
-  ): Promise<import("@mymehq/shared").OAuthDeviceCode | null>;
+  ): Promise<import("@withmarfa/shared").OAuthDeviceCode | null>;
 
   /** Stamp `last_polled_at`. Used by the polling endpoint to detect
    *  `slow_down` (client polled inside the interval window). */
@@ -892,12 +898,12 @@ export interface OauthClientRow {
   clientId: string;
   name: string | null;
   redirectUris: string[];
-  /** Tenant binding from `clientReference` (Myme: tenant_id). */
+  /** Tenant binding from `clientReference` (Marfa: tenant_id). */
   referenceId: string | null;
 }
 
 /**
- * T-158: input to `OauthProviderStore.createClient`, used by Myme's
+ * T-158: input to `OauthProviderStore.createClient`, used by Marfa's
  * `POST /auth/oauth2/register` override (which fronts the plugin's DCR
  * endpoint — see `routes/oauth-register.ts`).
  *
@@ -915,8 +921,8 @@ export interface OauthClientRow {
  *    `response_types`, etc.). Postgres coerces those to comma-joined
  *    strings on write; on read, the plugin's `schemaToOAuth` calls
  *    `scopes?.join(" ")` on a string → `TypeError`, surfaced as HTTP 500.
- *    The Myme schema is intentionally `text` (JSON-encoded string), not
- *    `text[]` — Myme's own `mintTokenPair` write path uses
+ *    The Marfa schema is intentionally `text` (JSON-encoded string), not
+ *    `text[]` — Marfa's own `mintTokenPair` write path uses
  *    `JSON.stringify` and the read helpers (`getClient`,
  *    `validateAccessToken`) `safeJsonParse` on the way back out. The
  *    plugin DCR is the only Better-Auth-internal writer to
@@ -1044,11 +1050,11 @@ export interface OauthProviderStore {
    *  so the bearer middleware resolves them uniformly. */
   mintTokenPair(input: MintTokenPairInput): Promise<void>;
   /** T-158: insert a row into `auth_oauth_client` with JSON-encoded
-   *  string[] columns matching the rest of Myme's write paths (see
+   *  string[] columns matching the rest of Marfa's write paths (see
    *  `CreateClientInput` for the upstream-bug context). Used exclusively
-   *  by the Myme-owned `POST /auth/oauth2/register` route in
+   *  by the Marfa-owned `POST /auth/oauth2/register` route in
    *  `routes/oauth-register.ts`; the plugin's own DCR endpoint is NOT
-   *  exercised on Myme deployments. */
+   *  exercised on Marfa deployments. */
   createClient(input: CreateClientInput): Promise<CreateClientResult>;
   /** T-158: existence check on `(clientId)` for the registration route
    *  to surface a clean 409 instead of a Postgres unique-violation. */
@@ -1558,7 +1564,7 @@ export type BulkActionJobStatus =
   | "cancelled";
 
 /** Server-side row shape for a `bulk_action_jobs` entry. The SDK-facing
- *  envelope (`BulkActionJob` in `@mymehq/sdk/client`) is a strict subset
+ *  envelope (`BulkActionJob` in `@withmarfa/sdk/client`) is a strict subset
  *  — fields like `matched_ids`, `worker_id`, `worker_heartbeat_at`,
  *  `api_key_id`, and the original `input` are server-internal. */
 export interface BulkActionJobRow {

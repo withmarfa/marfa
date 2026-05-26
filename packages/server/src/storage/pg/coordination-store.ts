@@ -22,7 +22,7 @@ export class PgCoordinationStore implements CoordinationStore {
     name: string,
     fn: () => Promise<T>,
   ): Promise<T | undefined> {
-    const key = `myme:${name}`;
+    const key = `marfa:${name}`;
     const conn = await this.client.reserve();
     try {
       const rows = await conn<{ acquired: boolean }[]>`

@@ -6,7 +6,7 @@
  *   2. Re-export PerConnectionState so the DO binding resolves.
  *   3. Export a default `{ fetch, queue }` built from the SDK helper.
  */
-import { createIntegrationWorker } from "@mymehq/runtime-sdk/cloudflare";
+import { createIntegrationWorker } from "@withmarfa/runtime-sdk/cloudflare";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
 import { RSS_WATCHER_MANIFEST } from "./manifest.js";
 

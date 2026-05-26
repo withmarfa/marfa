@@ -1,4 +1,4 @@
-// Schema shape — describes how a Myme type schema is structured.
+// Schema shape — describes how a Marfa type schema is structured.
 // Data (the core type JSON files) lives alongside; generated output wires them together.
 
 /**
@@ -98,7 +98,7 @@ export interface MergePolicy {
   default?: MergeStrategy;
 }
 
-/** A complete type schema — the data contract for a Myme type. */
+/** A complete type schema — the data contract for a Marfa type. */
 export interface TypeSchema {
   id: string;
   parent?: string;

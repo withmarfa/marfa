@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { findIntegration } from "@mymehq/shared";
+import { findIntegration } from "@withmarfa/shared";
 import type { ControlPlaneEnv } from "../env.js";
 
 /**
@@ -13,7 +13,7 @@ import type { ControlPlaneEnv } from "../env.js";
  *     DO. Used by the server's install pipeline at install time, and
  *     can be retried by an operator if the install-time arm dropped.
  *
- *     Authenticates with the `MYME_RUNTIME_BROKER_KEY` (same gate as
+ *     Authenticates with the `MARFA_RUNTIME_BROKER_KEY` (same gate as
  *     `/lease/...`) so only the server can arm schedules.
  *
  *     Bounded-set assumption: each in-tree integration has a service
@@ -27,17 +27,17 @@ export function registerArmScheduleRoute(
   app.post("/connections/:connection_id/arm-schedule", async (c) => {
     const connectionId = c.req.param("connection_id");
 
-    if (!c.env.MYME_RUNTIME_BROKER_KEY) {
+    if (!c.env.MARFA_RUNTIME_BROKER_KEY) {
       return c.json(
         {
           error: "control_plane_misconfigured",
-          message: "MYME_RUNTIME_BROKER_KEY must be set.",
+          message: "MARFA_RUNTIME_BROKER_KEY must be set.",
         },
         503,
       );
     }
     const auth = c.req.header("authorization");
-    if (auth !== `Bearer ${c.env.MYME_RUNTIME_BROKER_KEY}`) {
+    if (auth !== `Bearer ${c.env.MARFA_RUNTIME_BROKER_KEY}`) {
       return c.json({ error: "unauthorized" }, 401);
     }
 
@@ -103,7 +103,7 @@ export function registerArmScheduleRoute(
 
 /**
  * Map a manifest-name to its service binding via the in-tree
- * integration registry (`@mymehq/shared` → `IN_TREE_INTEGRATIONS`).
+ * integration registry (`@withmarfa/shared` → `IN_TREE_INTEGRATIONS`).
  * Adding a new integration means adding one registry entry — the
  * dispatch here picks it up automatically. Marketplace integrations
  * (out of the in-tree set) surface as `no_service_binding` (503) at

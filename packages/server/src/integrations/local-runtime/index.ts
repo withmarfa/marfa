@@ -1,7 +1,7 @@
 /**
  * Local integrations runtime — public entry point (T-173).
  *
- * Boots when `MYME_INTEGRATION_RUNTIME=local`; replaces the Cloudflare
+ * Boots when `MARFA_INTEGRATION_RUNTIME=local`; replaces the Cloudflare
  * substrate (Workers + Queues + Durable Objects + KV) with an in-process
  * Node equivalent backed by Postgres (`pg-boss` for cron + queue) and
  * `worker_thread` per-Integration handler pools.
@@ -63,7 +63,7 @@ export interface LocalRuntimeBundle {
 export interface StartLocalRuntimeOptions {
   storage: Storage;
   config: AppConfig;
-  /** Public Myme API URL the in-thread `ConnectionClient` hits.
+  /** Public Marfa API URL the in-thread `ConnectionClient` hits.
    *  Defaults to `http://localhost:<config.port>` if unset. */
   apiUrl?: string;
   /** Production deployments pass the in-tree integration registrations
@@ -85,7 +85,7 @@ export interface StartLocalRuntimeOptions {
  * `"hosted"` to opt out.
  *
  * Throws when `STORAGE_DIALECT=sqlite` is paired with
- * `MYME_INTEGRATION_RUNTIME=local`: the local substrate requires
+ * `MARFA_INTEGRATION_RUNTIME=local`: the local substrate requires
  * Postgres (advisory locks + pg-boss schema). SQLite self-host must
  * stay on hosted until they switch to PG.
  */
@@ -96,8 +96,8 @@ export async function tryStartLocalIntegrationRuntime(
   if ((config.integrationRuntime ?? "local") !== "local") return null;
   if (config.storageDialect !== "pg") {
     throw new Error(
-      "MYME_INTEGRATION_RUNTIME=local requires STORAGE_DIALECT=pg. " +
-        "SQLite self-hosts must keep MYME_INTEGRATION_RUNTIME=hosted until they migrate to Postgres.",
+      "MARFA_INTEGRATION_RUNTIME=local requires STORAGE_DIALECT=pg. " +
+        "SQLite self-hosts must keep MARFA_INTEGRATION_RUNTIME=hosted until they migrate to Postgres.",
     );
   }
 

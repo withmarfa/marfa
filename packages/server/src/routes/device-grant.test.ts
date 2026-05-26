@@ -165,7 +165,7 @@ describe("POST /auth/device — initiate", () => {
     const clientId = await createClient(ctx);
     const result = await initiate(ctx, clientId, "core.note:read");
 
-    expect(result.device_code).toMatch(/^myme_dc_/);
+    expect(result.device_code).toMatch(/^marfa_dc_/);
     expect(result.user_code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
     expect(result.verification_uri).toMatch(/\/auth\/device$/);
     // T-096: complete URI must carry the issued user_code (URL-encoded
@@ -237,7 +237,7 @@ describe("POST /auth/device — initiate", () => {
       expires_in: number;
       interval: number;
     };
-    expect(body.device_code).toMatch(/^myme_dc_/);
+    expect(body.device_code).toMatch(/^marfa_dc_/);
     expect(body.user_code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
     expect(body.verification_uri).toMatch(/\/auth\/device$/);
     expect(body.expires_in).toBe(600);
@@ -471,8 +471,8 @@ describe("POST /auth/device/consent — approve / deny", () => {
     // Polling now returns the access token.
     const poll = await pollToken(ctx, initResult.device_code, clientId);
     expect(poll.status).toBe(200);
-    expect(poll.body.access_token).toMatch(/^myme_at_/);
-    expect(poll.body.refresh_token).toMatch(/^myme_rt_/);
+    expect(poll.body.access_token).toMatch(/^marfa_at_/);
+    expect(poll.body.refresh_token).toMatch(/^marfa_rt_/);
   });
 
   it("F16: approve emits auth.grant.created audit row with source='device'", async () => {
@@ -654,7 +654,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
   it("returns invalid_grant for an unknown device_code", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await createClient(ctx);
-    const poll = await pollToken(ctx, "myme_dc_unknown", clientId);
+    const poll = await pollToken(ctx, "marfa_dc_unknown", clientId);
     expect(poll.status).toBe(400);
     expect(poll.body.error).toBe("invalid_grant");
   });
@@ -680,7 +680,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
         },
         body: new URLSearchParams({
           grant_type: "authorization_code",
-          device_code: "myme_dc_x",
+          device_code: "marfa_dc_x",
           client_id: "x",
         }).toString(),
       }),

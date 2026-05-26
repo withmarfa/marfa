@@ -23,7 +23,7 @@ async function mintTenantAdmin(
   tenantId: string,
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `myme_k1_blob_test_${suffix}`;
+  const raw = `marfa_k1_blob_test_${suffix}`;
   await ctx.storage.keys.create(
     {
       label,

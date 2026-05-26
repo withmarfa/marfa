@@ -37,7 +37,7 @@ import {
   type ScheduleMessage,
   type HandlerResult,
   type CreateItemInput,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import {
   YOUTUBE_API_BASE,
   DEFAULT_TARGET_TYPE,
@@ -73,11 +73,11 @@ export interface YoutubeCursor {
    *  skip re-walking unchanged playlists. */
   playlist_etags: Record<string, string>;
   mappings: {
-    /** YouTube video id -> Myme item id. */
+    /** YouTube video id -> Marfa item id. */
     videos: Record<string, string>;
-    /** YouTube channel id -> Myme item id. */
+    /** YouTube channel id -> Marfa item id. */
     channels: Record<string, string>;
-    /** YouTube playlist id -> Myme item id. */
+    /** YouTube playlist id -> Marfa item id. */
     playlists: Record<string, string>;
   };
   /** Diagnostic — last successful sweep timestamp. */
@@ -105,7 +105,7 @@ async function resolveConnectionConfig(
   ctx: ConnectionContext,
 ): Promise<ConnectionConfig> {
   try {
-    const connection = await ctx.myme.getItem(ctx.connection_id);
+    const connection = await ctx.marfa.getItem(ctx.connection_id);
     const props = connection?.properties as
       | { configuration?: Record<string, unknown> }
       | undefined;
@@ -393,7 +393,7 @@ function chunk<T>(arr: T[], n: number): T[][] {
 }
 
 async function proxyJson<T>(ctx: ConnectionContext, path: string): Promise<T> {
-  const resp = await ctx.myme.proxyRequest("GET", path);
+  const resp = await ctx.marfa.proxyRequest("GET", path);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new Error(
@@ -403,8 +403,8 @@ async function proxyJson<T>(ctx: ConnectionContext, path: string): Promise<T> {
   return (await resp.json()) as T;
 }
 
-/** Wire an upstream channel as a `google.youtube.channel` Myme item,
- *  reusing the cursor mapping if present. Returns the Myme item id. */
+/** Wire an upstream channel as a `google.youtube.channel` Marfa item,
+ *  reusing the cursor mapping if present. Returns the Marfa item id. */
 async function ensureChannel(
   ctx: ConnectionContext,
   cursor: YoutubeCursor,
@@ -425,7 +425,7 @@ async function ensureChannel(
     const channel = data.items?.[0];
     if (!channel) return null;
     const input = buildChannelInput(channel);
-    const created = await ctx.myme.createItem({
+    const created = await ctx.marfa.createItem({
       ...input,
       source_id: channel.id,
     });
@@ -443,13 +443,13 @@ async function ensureChannel(
 
 async function safeCreateParentEdge(
   ctx: ConnectionContext,
-  parentMyme: string,
-  childMyme: string,
+  parentMarfa: string,
+  childMarfa: string,
 ): Promise<boolean> {
   try {
-    await ctx.myme.createEdge({
-      source_id: parentMyme,
-      target_id: childMyme,
+    await ctx.marfa.createEdge({
+      source_id: parentMarfa,
+      target_id: childMarfa,
       edge_type: "parent-of",
     });
     return true;
@@ -567,28 +567,28 @@ async function syncLikedVideos(
       const input = buildVideoInput(v, config.target_type, likedAt);
       try {
         const existing = cursor.mappings.videos[v.id];
-        let videoMymeId: string;
+        let videoMarfaId: string;
         if (existing !== undefined) {
-          await ctx.myme.updateItem(existing, input);
-          videoMymeId = existing;
+          await ctx.marfa.updateItem(existing, input);
+          videoMarfaId = existing;
         } else {
-          const created = await ctx.myme.createItem({
+          const created = await ctx.marfa.createItem({
             ...input,
             source_id: v.id,
           });
-          videoMymeId = created.id;
-          cursor.mappings.videos[v.id] = videoMymeId;
+          videoMarfaId = created.id;
+          cursor.mappings.videos[v.id] = videoMarfaId;
         }
         upserted += 1;
         // Wire channel parent-of video edge.
         const channelId = v.snippet?.channelId;
         if (typeof channelId === "string" && channelId.length > 0) {
-          const channelMyme = await ensureChannel(ctx, cursor, channelId);
-          if (channelMyme !== null) {
+          const channelMarfa = await ensureChannel(ctx, cursor, channelId);
+          if (channelMarfa !== null) {
             const ok = await safeCreateParentEdge(
               ctx,
-              channelMyme,
-              videoMymeId,
+              channelMarfa,
+              videoMarfaId,
             );
             if (ok) edges += 1;
           }
@@ -674,9 +674,9 @@ async function syncSubscriptions(
         const input = buildChannelInput(channel, subscribedAt);
         const existing = cursor.mappings.channels[channelId];
         if (existing !== undefined) {
-          await ctx.myme.updateItem(existing, input);
+          await ctx.marfa.updateItem(existing, input);
         } else {
-          const created = await ctx.myme.createItem({
+          const created = await ctx.marfa.createItem({
             ...input,
             source_id: channelId,
           });
@@ -736,19 +736,19 @@ async function syncUserPlaylists(
       const priorEtag = cursor.playlist_etags[pl.id];
       const etagChanged = priorEtag !== pl.etag;
       const input = buildPlaylistInput(pl);
-      let playlistMymeId: string;
+      let playlistMarfaId: string;
       try {
         const existing = cursor.mappings.playlists[pl.id];
         if (existing !== undefined) {
-          await ctx.myme.updateItem(existing, input);
-          playlistMymeId = existing;
+          await ctx.marfa.updateItem(existing, input);
+          playlistMarfaId = existing;
         } else {
-          const created = await ctx.myme.createItem({
+          const created = await ctx.marfa.createItem({
             ...input,
             source_id: pl.id,
           });
-          playlistMymeId = created.id;
-          cursor.mappings.playlists[pl.id] = playlistMymeId;
+          playlistMarfaId = created.id;
+          cursor.mappings.playlists[pl.id] = playlistMarfaId;
         }
         upserted += 1;
         if (typeof pl.etag === "string") {
@@ -766,12 +766,12 @@ async function syncUserPlaylists(
       // Wire channel parent-of playlist (owning channel).
       const channelId = pl.snippet?.channelId;
       if (typeof channelId === "string" && channelId.length > 0) {
-        const channelMyme = await ensureChannel(ctx, cursor, channelId);
-        if (channelMyme !== null) {
+        const channelMarfa = await ensureChannel(ctx, cursor, channelId);
+        if (channelMarfa !== null) {
           const ok = await safeCreateParentEdge(
             ctx,
-            channelMyme,
-            playlistMymeId,
+            channelMarfa,
+            playlistMarfaId,
           );
           if (ok) edges += 1;
         }
@@ -784,7 +784,7 @@ async function syncUserPlaylists(
           cursor,
           config,
           pl.id,
-          playlistMymeId,
+          playlistMarfaId,
         );
         videos_materialised += walked.upserted;
         edges += walked.edges;
@@ -808,7 +808,7 @@ async function materialisePlaylistVideos(
   cursor: YoutubeCursor,
   config: ConnectionConfig,
   playlistId: string,
-  playlistMymeId: string,
+  playlistMarfaId: string,
 ): Promise<MaterialiseResult> {
   let pageToken: string | undefined;
   const videoIds: string[] = [];
@@ -850,31 +850,35 @@ async function materialisePlaylistVideos(
       const input = buildVideoInput(v, config.target_type);
       try {
         const existing = cursor.mappings.videos[v.id];
-        let videoMymeId: string;
+        let videoMarfaId: string;
         if (existing !== undefined) {
-          await ctx.myme.updateItem(existing, input);
-          videoMymeId = existing;
+          await ctx.marfa.updateItem(existing, input);
+          videoMarfaId = existing;
         } else {
-          const created = await ctx.myme.createItem({
+          const created = await ctx.marfa.createItem({
             ...input,
             source_id: v.id,
           });
-          videoMymeId = created.id;
-          cursor.mappings.videos[v.id] = videoMymeId;
+          videoMarfaId = created.id;
+          cursor.mappings.videos[v.id] = videoMarfaId;
         }
         upserted += 1;
         // playlist parent-of video edge (optional, only on materialise).
-        const ok = await safeCreateParentEdge(ctx, playlistMymeId, videoMymeId);
+        const ok = await safeCreateParentEdge(
+          ctx,
+          playlistMarfaId,
+          videoMarfaId,
+        );
         if (ok) edges += 1;
         // Also wire the owning-channel edge if we don't already have it.
         const channelId = v.snippet?.channelId;
         if (typeof channelId === "string" && channelId.length > 0) {
-          const channelMyme = await ensureChannel(ctx, cursor, channelId);
-          if (channelMyme !== null) {
+          const channelMarfa = await ensureChannel(ctx, cursor, channelId);
+          if (channelMarfa !== null) {
             const cok = await safeCreateParentEdge(
               ctx,
-              channelMyme,
-              videoMymeId,
+              channelMarfa,
+              videoMarfaId,
             );
             if (cok) edges += 1;
           }

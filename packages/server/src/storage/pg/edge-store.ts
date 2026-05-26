@@ -1,6 +1,6 @@
 import { eq, and, or, desc, inArray, lt, sql, count } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { Edge, CreateEdgeInput, PaginatedResult } from "@mymehq/shared";
+import { generateId } from "@withmarfa/shared";
+import type { Edge, CreateEdgeInput, PaginatedResult } from "@withmarfa/shared";
 import type { EdgeStore, EdgeListFilters } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { rowToEdge } from "../edge-constraints.js";

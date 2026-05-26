@@ -8,7 +8,7 @@
  * literals, the SDK now reads the canonical metadata doc on first use and
  * caches the result for the process lifetime.
  *
- * `discoverEndpoints(issuer)` is called by `MymeAuth`, `StoredTokenProvider`,
+ * `discoverEndpoints(issuer)` is called by `MarfaAuth`, `StoredTokenProvider`,
  * and `startDeviceFlow`. A module-scope promise cache de-duplicates
  * concurrent first-calls on app boot — three OAuth-touching code paths
  * collide on the same `.well-known` fetch.

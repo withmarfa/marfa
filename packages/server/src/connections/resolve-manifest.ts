@@ -21,8 +21,8 @@
  *   - `MISSING_REQUIRED_FIELD` — `integration_ref` not set or doesn't
  *     resolve to a `system.integration` item.
  */
-import { MymeError, ErrorCode } from "@mymehq/shared";
-import type { IntegrationManifest } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
 
@@ -48,7 +48,7 @@ export async function resolveConnectionManifest(
 ): Promise<ResolvedManifest> {
   const connection = await storage.items.get(connectionId, tenantId);
   if (connection?.type !== "system.connection") {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.NOT_FOUND,
       `Connection ${connectionId} not found`,
     );
@@ -57,7 +57,7 @@ export async function resolveConnectionManifest(
   const props = connection.properties as ConnectionProperties;
   const integrationRef = props.integration_ref;
   if (!integrationRef) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.MISSING_REQUIRED_FIELD,
       `Connection ${connectionId} has no integration_ref. Install the connection via /integrations/:id/install.`,
       { field: "integration_ref" },
@@ -66,7 +66,7 @@ export async function resolveConnectionManifest(
 
   const integration = await storage.items.get(integrationRef, tenantId);
   if (integration?.type !== "system.integration") {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.MISSING_REQUIRED_FIELD,
       `Connection ${connectionId} has integration_ref '${integrationRef}' but no matching system.integration item exists.`,
       { field: "integration_ref" },
@@ -76,7 +76,7 @@ export async function resolveConnectionManifest(
   const intProps = integration.properties as IntegrationProperties;
   const result = validateManifest(intProps.manifest);
   if (!result.ok) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
       `Persisted manifest for integration ${integrationRef} failed validation`,
       { errors: result.errors },

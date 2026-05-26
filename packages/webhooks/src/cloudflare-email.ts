@@ -1,15 +1,15 @@
 /**
  * Cloudflare Email Routing → Email Worker → webhook verifier (T-244).
  *
- * The Cloudflare Email Worker that backs `mymehq.inbox` receives an
+ * The Cloudflare Email Worker that backs `withmarfa.inbox` receives an
  * inbound email via Email Routing, parses MIME via `postal-mime`, then
  * POSTs a JSON envelope to the staging server's webhook receipt
  * endpoint. The wire shape:
  *
- *   X-Myme-Signature:    sha256=<hex>     HMAC-SHA256 of the raw body
+ *   X-Marfa-Signature:    sha256=<hex>     HMAC-SHA256 of the raw body
  *                                          against the per-connection
  *                                          subscription secret.
- *   X-Myme-Delivery-Id:  <message-id>     RFC 5322 Message-ID (or a
+ *   X-Marfa-Delivery-Id:  <message-id>     RFC 5322 Message-ID (or a
  *                                          UUID4 fallback). Used as the
  *                                          idempotency key — a duplicate
  *                                          delivery of the same email

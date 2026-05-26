@@ -6,7 +6,7 @@
  * issue/PR becomes a `core.bookmark` item.
  *
  * HMAC-SHA256 verification via the `github` adapter (server-side
- * verifier in @mymehq/server inbound-webhooks subsystem).
+ * verifier in @withmarfa/server inbound-webhooks subsystem).
  *
  * Idempotency is defence-in-depth: the server's
  * `external_delivery_id` UNIQUE constraint catches duplicates
@@ -14,13 +14,13 @@
  * recently-seen `X-GitHub-Delivery` IDs in a bounded ring on the
  * cursor store. Both are intentional.
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const GITHUB_WEBHOOKS_MANIFEST: IntegrationManifest = {
-  name: "mymehq.github-webhooks",
+  name: "withmarfa.github-webhooks",
   version: "0.1.0",
   manifest_schema_version: "1.0.0",
-  publisher: "mymehq",
+  publisher: "withmarfa",
   description:
     "Receives GitHub webhook deliveries (issues, pull_request) and creates a core.bookmark per opened item.",
   direction: "read",

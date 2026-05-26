@@ -1,4 +1,4 @@
-import type { Edge } from "@mymehq/shared";
+import type { Edge } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 
 /**

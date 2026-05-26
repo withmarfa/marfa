@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import { ADAPTERS } from "@mymehq/webhooks";
-import { findIntegration, integrationsWithTrigger } from "@mymehq/shared";
+import { ADAPTERS } from "@withmarfa/webhooks";
+import { findIntegration, integrationsWithTrigger } from "@withmarfa/shared";
 import type { ControlPlaneEnv } from "../env.js";
-import { MymeServerClient } from "../myme-client.js";
+import { MarfaServerClient } from "../marfa-client.js";
 
 /** Slim shape — mirror of the `QueueProducer` shape in env.ts. */
 interface QueueProducer {
@@ -68,12 +68,12 @@ function hasAnyWebhookProducer(env: ControlPlaneEnv): boolean {
 /**
  * Inbound webhook receiver.
  *
- *   1. Resolve subscription configs by `connection_id` from the Myme
+ *   1. Resolve subscription configs by `connection_id` from the Marfa
  *      server (the broker key authenticates the lookup).
  *   2. Verify the delivery against each subscription's adapter; the
  *      first that passes wins. T-009 lifted all four supported methods
  *      (HMAC-SHA256, Slack, Stripe, GitHub) into the control plane;
- *      T-035 consolidated them into `@mymehq/webhooks` so the
+ *      T-035 consolidated them into `@withmarfa/webhooks` so the
  *      Worker control plane and the Node-side server share one
  *      Web-Crypto implementation. The previously-stubbed `custom`
  *      method was dropped in T-011.
@@ -100,11 +100,12 @@ export function registerWebhookRoutes(
       return c.json({ error: "missing_connection_id" }, 400);
     }
     const env = c.env;
-    if (!env.MYME_API_URL || !env.MYME_RUNTIME_BROKER_KEY) {
+    if (!env.MARFA_API_URL || !env.MARFA_RUNTIME_BROKER_KEY) {
       return c.json(
         {
           error: "control_plane_misconfigured",
-          message: "MYME_API_URL and MYME_RUNTIME_BROKER_KEY must both be set.",
+          message:
+            "MARFA_API_URL and MARFA_RUNTIME_BROKER_KEY must both be set.",
         },
         503,
       );
@@ -126,15 +127,15 @@ export function registerWebhookRoutes(
       );
     }
     const rawBody = await c.req.arrayBuffer();
-    const myme = new MymeServerClient(
-      env.MYME_API_URL,
-      env.MYME_RUNTIME_BROKER_KEY,
+    const marfa = new MarfaServerClient(
+      env.MARFA_API_URL,
+      env.MARFA_RUNTIME_BROKER_KEY,
     );
 
     let subscriptions;
     try {
       subscriptions =
-        await myme.lookupInboundWebhookSubscriptions(connectionId);
+        await marfa.lookupInboundWebhookSubscriptions(connectionId);
     } catch (err) {
       return c.json(
         {
@@ -153,7 +154,7 @@ export function registerWebhookRoutes(
 
     // Try each subscription; first that verifies wins. Most connections
     // have exactly one subscription so the loop usually runs once. The
-    // `ADAPTERS` table from `@mymehq/webhooks` covers all four
+    // `ADAPTERS` table from `@withmarfa/webhooks` covers all four
     // supported methods — unknown methods (shouldn't happen post-T-011
     // since the manifest schema rejects them) get a clear error.
     let matched: {

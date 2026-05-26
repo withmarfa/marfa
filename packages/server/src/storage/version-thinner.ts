@@ -1,4 +1,4 @@
-import { getTypeSchema } from "@mymehq/shared";
+import { getTypeSchema } from "@withmarfa/shared";
 import type { CoordinationStore, VersionStore } from "./interface.js";
 import {
   computeVersionsToDelete,

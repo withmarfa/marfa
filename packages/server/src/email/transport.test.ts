@@ -7,7 +7,7 @@ describe("createEmailTransport", () => {
   it("returns a NoneTransport when backend=none", async () => {
     const transport = await createEmailTransport({
       backend: "none",
-      from: "Myme <hello@mail.myme.so>",
+      from: "Marfa <hello@mail.marfa.so>",
     });
     expect(transport.backend).toBe("none");
     expect(transport).toBeInstanceOf(NoneTransport);
@@ -16,7 +16,7 @@ describe("createEmailTransport", () => {
   it("NoneTransport.send always fails with email_transport_not_configured", async () => {
     const transport = await createEmailTransport({
       backend: "none",
-      from: "Myme <hello@mail.myme.so>",
+      from: "Marfa <hello@mail.marfa.so>",
     });
     const result = await transport.send({
       to: "test@example.com",
@@ -35,7 +35,7 @@ describe("createEmailTransport", () => {
     await expect(
       createEmailTransport({
         backend: "cloudflare",
-        from: "Myme <hello@mail.myme.so>",
+        from: "Marfa <hello@mail.marfa.so>",
         cloudflare: { accountId: "", apiToken: "tok" },
       }),
     ).rejects.toThrow("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN");
@@ -45,7 +45,7 @@ describe("createEmailTransport", () => {
     await expect(
       createEmailTransport({
         backend: "cloudflare",
-        from: "Myme <hello@mail.myme.so>",
+        from: "Marfa <hello@mail.marfa.so>",
         cloudflare: { accountId: "acct", apiToken: "" },
       }),
     ).rejects.toThrow("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN");
@@ -54,7 +54,7 @@ describe("createEmailTransport", () => {
   it("builds a CloudflareTransport when both creds present", async () => {
     const transport = await createEmailTransport({
       backend: "cloudflare",
-      from: "Myme <hello@mail.myme.so>",
+      from: "Marfa <hello@mail.marfa.so>",
       cloudflare: { accountId: "acct_123", apiToken: "tok_456" },
     });
     expect(transport.backend).toBe("cloudflare");
@@ -64,9 +64,9 @@ describe("createEmailTransport", () => {
     await expect(
       createEmailTransport({
         backend: "smtp",
-        from: "Myme <hello@mail.myme.so>",
+        from: "Marfa <hello@mail.marfa.so>",
       }),
-    ).rejects.toThrow("MYME_SMTP_HOST");
+    ).rejects.toThrow("MARFA_SMTP_HOST");
   });
 
   // Note: sender-domain check skips when NODE_ENV is "test", so the
@@ -74,7 +74,7 @@ describe("createEmailTransport", () => {
   // sender-domain-check.test.ts directly.
   it("skips sender-domain check in NODE_ENV=test", async () => {
     expect(process.env.NODE_ENV).toBe("test");
-    // Cloudflare backend with a non-mail.myme.so from would otherwise
+    // Cloudflare backend with a non-mail.marfa.so from would otherwise
     // throw SenderDomainMismatchError. In test env it just throws on
     // the missing creds, not on the domain.
     await expect(

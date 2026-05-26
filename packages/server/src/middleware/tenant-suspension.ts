@@ -41,8 +41,8 @@
  * just after a suspend lands, which the next request catches.
  */
 import { createMiddleware } from "hono/factory";
-import { MymeError, ErrorCode } from "@mymehq/shared";
-import type { TenantStatus } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import type { TenantStatus } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import type { AppEnv } from "./auth.js";
 
@@ -131,7 +131,7 @@ export function tenantSuspensionMiddleware(storage: Storage) {
     }
 
     if (entry.status === "suspended") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.TENANT_SUSPENDED,
         "This tenant is suspended; writes are not accepted. Contact your operator.",
       );

@@ -25,7 +25,10 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
-import { IN_TREE_INTEGRATIONS, integrationsWithTrigger } from "@mymehq/shared";
+import {
+  IN_TREE_INTEGRATIONS,
+  integrationsWithTrigger,
+} from "@withmarfa/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -135,14 +138,14 @@ describe("wrangler.control.toml — structural freshness (T-245)", () => {
     for (const entry of services) {
       expect(entry.service).toMatch(/-staging$/);
       // Cross-check: binding `INTEGRATION_GOOGLE_DRIVE` should target
-      // `myme-integration-google-drive-staging`, etc. The mapping is
+      // `marfa-integration-google-drive-staging`, etc. The mapping is
       // deterministic: BINDING_NAME → kebab-case under the
-      // `myme-integration-` prefix.
+      // `marfa-integration-` prefix.
       const expectedSlug = entry.binding
         .replace(/^INTEGRATION_/, "")
         .toLowerCase()
         .replace(/_/g, "-");
-      expect(entry.service).toBe(`myme-integration-${expectedSlug}-staging`);
+      expect(entry.service).toBe(`marfa-integration-${expectedSlug}-staging`);
     }
   });
 
@@ -155,7 +158,7 @@ describe("wrangler.control.toml — structural freshness (T-245)", () => {
         .replace(/^INTEGRATION_/, "")
         .toLowerCase()
         .replace(/_/g, "-");
-      expect(entry.service).toBe(`myme-integration-${expectedSlug}-prod`);
+      expect(entry.service).toBe(`marfa-integration-${expectedSlug}-prod`);
     }
   });
 
@@ -167,10 +170,10 @@ describe("wrangler.control.toml — structural freshness (T-245)", () => {
       for (const expected of WEBHOOK_RECEIPT_PRODUCERS) {
         expect(bindings).toContain(expected.binding);
         // Queue name follows the deterministic
-        // `myme-webhook-receipt-<integration-slug>-<env>` shape.
+        // `marfa-webhook-receipt-<integration-slug>-<env>` shape.
         const producer = producers.find((p) => p.binding === expected.binding);
         expect(producer?.queue).toBe(
-          `myme-webhook-receipt-${expected.integration}-${env}`,
+          `marfa-webhook-receipt-${expected.integration}-${env}`,
         );
       }
     }

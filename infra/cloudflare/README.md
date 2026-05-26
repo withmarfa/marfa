@@ -4,8 +4,8 @@ Scripts and templates for the Connections runtime substrate. The runtime stack i
 
 ## Layout
 
-- `wrangler.control.toml` — control-plane Worker config (`@mymehq/runtime-control`). One Worker per env: `dev` (default), `staging`, `prod`. Carries `REPLACE_WITH_*` placeholders (account-id var, route hostnames, KV namespace ids) and example domains — fill these in for your own account before deploying. `account_id` itself is intentionally absent; Wrangler reads it from `CLOUDFLARE_ACCOUNT_ID` in the environment.
-- `wrangler.integration.template.toml` — copy this into each `integrations/<name>/` once Layer 3 starts. Defaults to per-env (`dev`/`staging`/`prod`) Worker names that follow `myme-integration-<name>[-env]`.
+- `wrangler.control.toml` — control-plane Worker config (`@withmarfa/runtime-control`). One Worker per env: `dev` (default), `staging`, `prod`. Carries `REPLACE_WITH_*` placeholders (account-id var, route hostnames, KV namespace ids) and example domains — fill these in for your own account before deploying. `account_id` itself is intentionally absent; Wrangler reads it from `CLOUDFLARE_ACCOUNT_ID` in the environment.
+- `wrangler.integration.template.toml` — copy this into each `integrations/<name>/` once Layer 3 starts. Defaults to per-env (`dev`/`staging`/`prod`) Worker names that follow `marfa-integration-<name>[-env]`.
 - `provision.ts` — idempotent script that creates Queues, KV namespaces, R2 buckets via the Cloudflare REST API. Run once per env; safe to re-run.
 - `tunnel.config.example.yml` — local-dev tunnel template. Copy to `tunnel.config.yml` (gitignored), fill in tunnel UUID + handle.
 - `cloudflare-api.ts` — thin REST client used by `provision.ts`. No third-party deps.
@@ -24,17 +24,17 @@ If your account-scoped token does not carry zone-edit permission, named-tunnel D
 ## Provision an environment
 
 ```sh
-pnpm --filter @mymehq/infra-cloudflare provision dev
-pnpm --filter @mymehq/infra-cloudflare provision staging
-pnpm --filter @mymehq/infra-cloudflare provision prod
+pnpm --filter @withmarfa/infra-cloudflare provision dev
+pnpm --filter @withmarfa/infra-cloudflare provision staging
+pnpm --filter @withmarfa/infra-cloudflare provision prod
 ```
 
 Each run creates (idempotent — checks existence first):
 
-- 6 Queues per env: `myme-{webhook-receipt,scheduled-poll,reactive-run}-<env>` plus `-dlq` siblings.
+- 6 Queues per env: `marfa-{webhook-receipt,scheduled-poll,reactive-run}-<env>` plus `-dlq` siblings.
 - 1 HTTP-pull consumer on each of the 3 central DLQs (required by the runtime-control DLQ peek/replay routes — see "DLQ peek operator surface" below).
-- 1 KV namespace per env: `myme-control-idempotency-<env>` for the control plane's short-lived idempotency cache.
-- 1 R2 bucket per env: `myme-runtime-payloads-<env>` for inbound webhook bodies > 256KB.
+- 1 KV namespace per env: `marfa-control-idempotency-<env>` for the control plane's short-lived idempotency cache.
+- 1 R2 bucket per env: `marfa-runtime-payloads-<env>` for inbound webhook bodies > 256KB.
 
 The script prints resource IDs at the end — paste these into the relevant `wrangler.*.toml` bindings (PR 3 wires the Queues + KV bindings; Layer 2 wires R2).
 
@@ -42,12 +42,12 @@ The script prints resource IDs at the end — paste these into the relevant `wra
 
 After provisioning resources, set the per-environment secrets the Workers consume. Secrets are write-only via Wrangler and persist across redeploys; you do not need to re-run these unless rotating.
 
-### Control-plane Worker (`@mymehq/runtime-control`)
+### Control-plane Worker (`@withmarfa/runtime-control`)
 
 ```sh
 # Per env: dev | staging | prod. Replace <env> below.
-wrangler secret put MYME_API_URL --env <env>
-wrangler secret put MYME_RUNTIME_BROKER_KEY --env <env>
+wrangler secret put MARFA_API_URL --env <env>
+wrangler secret put MARFA_RUNTIME_BROKER_KEY --env <env>
 wrangler secret put CLOUDFLARE_QUEUES_API_TOKEN --env <env>
 ```
 
@@ -57,9 +57,9 @@ The control plane logs a structured WARN at fetch-handler boot (cold start) if `
 
 ## Local-dev loop
 
-1. `pnpm --filter @mymehq/runtime-control dev` — boots the control plane on `localhost:8787` via `wrangler dev`.
+1. `pnpm --filter @withmarfa/runtime-control dev` — boots the control plane on `localhost:8787` via `wrangler dev`.
 2. In a second terminal, `cloudflared tunnel --url http://localhost:8787` — assigns a `*.trycloudflare.com` URL.
-3. Configure the Myme server's per-Connection `inbound_webhook` row to deliver to the tunnel URL.
+3. Configure the Marfa server's per-Connection `inbound_webhook` row to deliver to the tunnel URL.
 4. Trigger a webhook from the upstream service; the control plane verifies and (eventually — PR 3) enqueues onto the local-mode queue.
 
 For a stable hostname, use the named-tunnel flow in `tunnel.config.example.yml`.
@@ -70,10 +70,10 @@ Once provisioning has run and bindings are in `wrangler.*.toml`:
 
 ```sh
 # Control plane
-pnpm --filter @mymehq/runtime-control deploy --env staging
+pnpm --filter @withmarfa/runtime-control deploy --env staging
 
 # A specific integration (Layer 3)
-pnpm --filter @mymehq/integration-<name> deploy --env staging
+pnpm --filter @withmarfa/integration-<name> deploy --env staging
 ```
 
 Production deploys are gated on the orchestrator. Do not push to prod from a feature branch.
@@ -83,10 +83,10 @@ Production deploys are gated on the orchestrator. Do not push to prod from a fea
 The runtime-control Worker exposes `/dlq/peek` and `/dlq/replay` for operator inspection of DLQ messages (consumed via `my connections logs --dlq <id>` and `my connections replay-dlq <id>`). Two requirements beyond the routine deploy:
 
 1. **`CLOUDFLARE_QUEUES_API_TOKEN` set on the Worker** — see "Required secrets" above. The Worker logs a WARN at boot when this is missing.
-2. **HTTP-pull consumers registered on each central DLQ.** The 3 per-kind DLQs (`myme-{webhook-receipt,scheduled-poll,reactive-run}-<env>-dlq`) need an `http_pull` consumer for the CF Queues HTTP-pull API to work. `provision.ts` enables this idempotently — re-running provision is the cleanest path. Manual fallback (when re-running provision isn't appropriate):
+2. **HTTP-pull consumers registered on each central DLQ.** The 3 per-kind DLQs (`marfa-{webhook-receipt,scheduled-poll,reactive-run}-<env>-dlq`) need an `http_pull` consumer for the CF Queues HTTP-pull API to work. `provision.ts` enables this idempotently — re-running provision is the cleanest path. Manual fallback (when re-running provision isn't appropriate):
 
    ```sh
-   for q in myme-webhook-receipt-<env>-dlq myme-scheduled-poll-<env>-dlq myme-reactive-run-<env>-dlq; do
+   for q in marfa-webhook-receipt-<env>-dlq marfa-scheduled-poll-<env>-dlq marfa-reactive-run-<env>-dlq; do
      wrangler queues consumer http add "$q"
    done
    ```

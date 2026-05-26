@@ -28,9 +28,9 @@ function makeBaseEnv(): IntegrationWorkerEnv {
   return {
     PER_CONNECTION_STATE: {} as IntegrationWorkerEnv["PER_CONNECTION_STATE"],
     INTEGRATION_NAME: "demo",
-    MYME_API_URL: "https://server.invalid",
-    MYME_RUNTIME_CONTROL_URL: "https://control.invalid",
-    MYME_RUNTIME_BROKER_KEY: "broker_key",
+    MARFA_API_URL: "https://server.invalid",
+    MARFA_RUNTIME_CONTROL_URL: "https://control.invalid",
+    MARFA_RUNTIME_BROKER_KEY: "broker_key",
   };
 }
 

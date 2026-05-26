@@ -14,7 +14,7 @@
  *   - **No client-supplied IDs on insert.** Calendar's T-020 SHA-256-
  *     deterministic-id idempotency does not work on Tasks (Google
  *     rejects client `id` on `tasks.insert`). The idempotency rail
- *     here is a sentinel string in `notes` ("[myme-id:<itemId>]"); the
+ *     here is a sentinel string in `notes` ("[marfa-id:<itemId>]"); the
  *     handler scans the target list for an existing task carrying the
  *     sentinel before issuing a fresh insert, so a retry mid-handler
  *     recovers the mapping rather than creating a duplicate.
@@ -24,7 +24,7 @@
  *     (`GET /users/@me/lists`).
  *   - For each task list, call `tasks.list?updatedMin=<watermark>&showDeleted=true&showHidden=true`.
  *   - For each returned task:
- *       - `deleted: true` → trash the matching Myme item (tombstone-map).
+ *       - `deleted: true` → trash the matching Marfa item (tombstone-map).
  *       - Otherwise compute `(external_id, content_hash)`. If
  *         echo.shouldSkipReactive(...) → skip (we wrote this ourselves
  *         recently).
@@ -33,11 +33,11 @@
  *     so the next poll catches the boundary edits without re-reading
  *     everything.
  *
- * ITEM-EVENT (outbound, fires on Myme target-type mutations):
+ * ITEM-EVENT (outbound, fires on Marfa target-type mutations):
  *   - Defensive self-event filter against `cycle`.
  *   - If we're inside the lag window for this external_id, defer.
  *   - For created items: search the target list for the
- *     `[myme-id:<itemId>]` sentinel. If found, record the mapping
+ *     `[marfa-id:<itemId>]` sentinel. If found, record the mapping
  *     idempotently (handler retry recovery). Else POST to `tasks.insert`.
  *   - For updated items: PATCH the Tasks resource referenced by the
  *     mapping.
@@ -55,7 +55,7 @@ import {
   type HandlerResult,
   type CreateItemInput,
   type ItemResource,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { TASKS_API_BASE, DEFAULT_TARGET_TYPE } from "./manifest.js";
 
 const CURSOR_KEY = "main";
@@ -81,7 +81,7 @@ const SENTINEL_SEARCH_PAGE_LIMIT = 4;
 const DEFAULT_TASK_LIST_ID = "@default";
 
 interface TasksCursor {
-  /** Map of Tasks `task.id` → Myme item id. Flat shape — the per-list
+  /** Map of Tasks `task.id` → Marfa item id. Flat shape — the per-list
    *  context lives alongside in `mapping_lists`. */
   mappings: Record<string, string>;
   /** Per-task task list id, so updates and deletes route back to the
@@ -114,7 +114,7 @@ async function resolveConnectionConfig(
   ctx: ConnectionContext,
 ): Promise<ConnectionConfig> {
   try {
-    const connection = await ctx.myme.getItem(ctx.connection_id);
+    const connection = await ctx.marfa.getItem(ctx.connection_id);
     const props = connection?.properties as
       | { configuration?: Record<string, unknown> }
       | undefined;
@@ -239,7 +239,7 @@ export async function handleSchedule(
 
       let response: Response;
       try {
-        response = await ctx.myme.proxyRequest("GET", path);
+        response = await ctx.marfa.proxyRequest("GET", path);
       } catch (err) {
         await ctx.activity.emit({
           severity: "action_required",
@@ -281,11 +281,11 @@ export async function handleSchedule(
           }
         }
 
-        const myme_id = cursor.mappings[task.id];
+        const marfa_id = cursor.mappings[task.id];
         if (task.deleted === true) {
-          if (myme_id !== undefined) {
+          if (marfa_id !== undefined) {
             try {
-              await ctx.myme.transitionItem(myme_id, "trashed");
+              await ctx.marfa.transitionItem(marfa_id, "trashed");
               trashed += 1;
               Reflect.deleteProperty(cursor.mappings, task.id);
               Reflect.deleteProperty(cursor.mapping_lists, task.id);
@@ -308,10 +308,10 @@ export async function handleSchedule(
 
         const input = buildTaskInput(task, config.target_type, listId);
         try {
-          if (myme_id !== undefined) {
-            await ctx.myme.updateItem(myme_id, input);
+          if (marfa_id !== undefined) {
+            await ctx.marfa.updateItem(marfa_id, input);
           } else {
-            const created = await ctx.myme.createItem({
+            const created = await ctx.marfa.createItem({
               ...input,
               source_id: task.id,
             });
@@ -377,7 +377,7 @@ async function discoverTaskLists(
     const path = `${TASKS_API_BASE}/users/@me/lists?${params.toString()}`;
     let resp: Response;
     try {
-      resp = await ctx.myme.proxyRequest("GET", path);
+      resp = await ctx.marfa.proxyRequest("GET", path);
     } catch (err) {
       await ctx.activity.emit({
         severity: "action_required",
@@ -435,7 +435,7 @@ export async function handleItemEvent(
     last_inbound_at: null,
   };
 
-  const item = await ctx.myme.getItem(message.item_id);
+  const item = await ctx.marfa.getItem(message.item_id);
   if (item === null) {
     return ackHandledIfMappedAsDelete(ctx, cursor, message.item_id);
   }
@@ -454,7 +454,7 @@ export async function handleItemEvent(
   if (item.state === "trashed") {
     if (externalId !== null) {
       const path = `${TASKS_API_BASE}/lists/${encodeURIComponent(mappedListId)}/tasks/${encodeURIComponent(externalId)}`;
-      const resp = await ctx.myme.proxyRequest("DELETE", path);
+      const resp = await ctx.marfa.proxyRequest("DELETE", path);
       if (!resp.ok && resp.status !== 404 && resp.status !== 410) {
         return reportOutboundFailure(ctx, "DELETE", externalId, resp);
       }
@@ -473,8 +473,8 @@ export async function handleItemEvent(
 
   if (externalId === null) {
     const writeListId = config.default_write_task_list_id;
-    const sentinel = `[myme-id:${item.id}]`;
-    const existing = await findExistingByMymeIdSentinel(
+    const sentinel = `[marfa-id:${item.id}]`;
+    const existing = await findExistingByMarfaIdSentinel(
       ctx,
       writeListId,
       sentinel,
@@ -489,14 +489,14 @@ export async function handleItemEvent(
       await ctx.cursor.write(CURSOR_KEY, cursor);
       await ctx.activity.emit({
         severity: "info",
-        summary: `google-tasks outbound: idempotent recovery on ${writeListId} for Myme item ${item.id}`,
+        summary: `google-tasks outbound: idempotent recovery on ${writeListId} for Marfa item ${item.id}`,
       });
       return { ok: true };
     }
 
     const payloadWithSentinel = injectSentinel(tasksPayload, sentinel);
     const postPath = `${TASKS_API_BASE}/lists/${encodeURIComponent(writeListId)}/tasks`;
-    const resp = await ctx.myme.proxyRequest(
+    const resp = await ctx.marfa.proxyRequest(
       "POST",
       postPath,
       payloadWithSentinel,
@@ -517,7 +517,7 @@ export async function handleItemEvent(
   }
 
   const path = `${TASKS_API_BASE}/lists/${encodeURIComponent(mappedListId)}/tasks/${encodeURIComponent(externalId)}`;
-  const resp = await ctx.myme.proxyRequest("PATCH", path, tasksPayload);
+  const resp = await ctx.marfa.proxyRequest("PATCH", path, tasksPayload);
   if (!resp.ok) {
     return reportOutboundFailure(ctx, "PATCH", externalId, resp);
   }
@@ -537,13 +537,13 @@ export function registerHandlers(): void {
 
 /**
  * Scan the target list for an existing task whose `notes` carry the
- * `[myme-id:<itemId>]` sentinel. Used to recover the mapping after a
+ * `[marfa-id:<itemId>]` sentinel. Used to recover the mapping after a
  * mid-handler crash that wrote to Google but failed to persist the
  * cursor delta — the sentinel is the only deterministic, retry-safe
  * way to find the prior insert because Tasks API rejects client-
  * supplied `id` values.
  */
-async function findExistingByMymeIdSentinel(
+async function findExistingByMarfaIdSentinel(
   ctx: ConnectionContext,
   listId: string,
   sentinel: string,
@@ -559,7 +559,7 @@ async function findExistingByMymeIdSentinel(
     const path = `${TASKS_API_BASE}/lists/${encodeURIComponent(listId)}/tasks?${params.toString()}`;
     let resp: Response;
     try {
-      resp = await ctx.myme.proxyRequest("GET", path);
+      resp = await ctx.marfa.proxyRequest("GET", path);
     } catch {
       return null;
     }
@@ -630,7 +630,7 @@ function buildTaskInput(
 
 function stripSentinel(notes: string): string {
   return notes
-    .replace(/\n*\[myme-id:[^\]]+\]\n*/g, "\n")
+    .replace(/\n*\[marfa-id:[^\]]+\]\n*/g, "\n")
     .replace(/^\n+|\n+$/g, "");
 }
 
@@ -672,10 +672,10 @@ function buildTasksPayload(item: ItemResource): Record<string, unknown> {
 
 function findExternalIdFor(
   cursor: TasksCursor,
-  myme_id: string,
+  marfa_id: string,
 ): string | null {
   for (const [ext, m] of Object.entries(cursor.mappings)) {
-    if (m === myme_id) return ext;
+    if (m === marfa_id) return ext;
   }
   return null;
 }
@@ -683,13 +683,13 @@ function findExternalIdFor(
 async function ackHandledIfMappedAsDelete(
   ctx: ConnectionContext,
   cursor: TasksCursor,
-  myme_id: string,
+  marfa_id: string,
 ): Promise<HandlerResult> {
-  const externalId = findExternalIdFor(cursor, myme_id);
+  const externalId = findExternalIdFor(cursor, marfa_id);
   if (externalId === null) return { ok: true };
   const listId = cursor.mapping_lists[externalId] ?? DEFAULT_TASK_LIST_ID;
   const path = `${TASKS_API_BASE}/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(externalId)}`;
-  const resp = await ctx.myme.proxyRequest("DELETE", path);
+  const resp = await ctx.marfa.proxyRequest("DELETE", path);
   if (!resp.ok && resp.status !== 404 && resp.status !== 410) {
     return reportOutboundFailure(ctx, "DELETE", externalId, resp);
   }

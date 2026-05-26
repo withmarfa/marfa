@@ -9,7 +9,7 @@
  * at install time via `POST /credentials/api-token`; the proxy stamps
  * it transparently on every upstream call.
  *
- * Both inbound (poll Sync API → upsert Myme items) and outbound
+ * Both inbound (poll Sync API → upsert Marfa items) and outbound
  * (item-event on the target type → push to Todoist via REST + Sync
  * commands) are wired through one connector:
  *
@@ -18,7 +18,7 @@
  *     incremental delta of items + temp_id_mapping for any commands
  *     issued. Cursor persists `sync_token` for the next call.
  *   - **Outbound create** — `POST /api/v1/sync` with one `item_add`
- *     command carrying `temp_id = SHA-256("myme:<item.id>")` (T-020
+ *     command carrying `temp_id = SHA-256("marfa:<item.id>")` (T-020
  *     deterministic-id rail) and a deterministic `uuid` for
  *     command-level idempotency. The Sync response's
  *     `temp_id_mapping` resolves the server-side id.
@@ -35,7 +35,7 @@
  * lag window 600s, state-trashed tombstones, accept-partial writes) —
  * the substrate primitives behave identically across upstreams.
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const TODOIST_MANIFEST: IntegrationManifest = {
   name: "todoist.tasks",
@@ -43,7 +43,7 @@ export const TODOIST_MANIFEST: IntegrationManifest = {
   manifest_schema_version: "1.1.0",
   publisher: "todoist",
   description:
-    "Bidirectional sync between Todoist and Myme. Polls Todoist's Sync API for incremental task changes on a 10-minute schedule and writes Myme-side mutations back via the REST API + Sync commands. First instance of the token-credential install seam.",
+    "Bidirectional sync between Todoist and Marfa. Polls Todoist's Sync API for incremental task changes on a 10-minute schedule and writes Marfa-side mutations back via the REST API + Sync commands. First instance of the token-credential install seam.",
   direction: "both",
   runtime_compatibility: ["hosted", "local"],
   // `todoist.task` is the upstream-fidelity type (full Todoist field
@@ -81,7 +81,7 @@ export const INTEGRATION_NAME = TODOIST_MANIFEST.name;
 export const SYNC_TOKEN_INITIAL = "*";
 
 /** Resource types we ask for on every Sync call. Items only — projects
- *  / labels / sections aren't materialised as Myme items in this
+ *  / labels / sections aren't materialised as Marfa items in this
  *  iteration. */
 export const SYNC_RESOURCE_TYPES = ["items"] as const;
 

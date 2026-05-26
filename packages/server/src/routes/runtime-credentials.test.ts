@@ -64,7 +64,7 @@ describe("POST /system/runtime-credentials", () => {
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as RuntimeCredentialResponse;
-    expect(body.api_key).toMatch(/^myme_k1_/);
+    expect(body.api_key).toMatch(/^marfa_k1_/);
     expect(body.connection_id).toBe(connectionId);
     expect(body.id).toBeDefined();
     expect(body.expires_at).toBeDefined();
@@ -106,7 +106,7 @@ describe("POST /system/runtime-credentials", () => {
     // Mint a non-platform admin key first. The connection_id is irrelevant —
     // the is_platform gate runs before any connection lookup.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const memberRaw = `myme_k1_runtime_member_${suffix}`;
+    const memberRaw = `marfa_k1_runtime_member_${suffix}`;
     await ctx.storage.keys.create(
       {
         label: `member-${suffix}`,
@@ -261,7 +261,7 @@ describe("connection.runtime extension gate", () => {
 
   it("ordinary credential without is_runtime_credential CANNOT write the namespace", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const ordinaryRaw = `myme_k1_ordinary_${suffix}`;
+    const ordinaryRaw = `marfa_k1_ordinary_${suffix}`;
     await ctx.storage.keys.create(
       {
         label: `ordinary-${suffix}`,
@@ -407,7 +407,7 @@ describe("GET /system/connections/:id/verify-context", () => {
     const id = await buildActiveIntegrationConnection(integrationName);
 
     const suffix = Math.random().toString(36).slice(2, 10);
-    const memberRaw = `myme_k1_verify_member_${suffix}`;
+    const memberRaw = `marfa_k1_verify_member_${suffix}`;
     await ctx.storage.keys.create(
       {
         label: `verify-member-${suffix}`,
@@ -644,7 +644,7 @@ describe("GET /system/connections/:id/dlq-context", () => {
       undefined,
     );
     const suffix = Math.random().toString(36).slice(2, 10);
-    const memberRaw = `myme_k1_dlq_member_${suffix}`;
+    const memberRaw = `marfa_k1_dlq_member_${suffix}`;
     await ctx.storage.keys.create(
       {
         label: `dlq-member-${suffix}`,

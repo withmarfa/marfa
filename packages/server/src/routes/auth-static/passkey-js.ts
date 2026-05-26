@@ -6,7 +6,7 @@
  * (same pattern as `auth-css.ts`) so tsup bundles it into `dist/`
  * without a separate static-asset copy step.
  *
- * The script exposes a single global `MymePasskey` with `enroll()` +
+ * The script exposes a single global `MarfaPasskey` with `enroll()` +
  * `signIn()` async functions. The pages wire onClick handlers that
  * call them and toggle status banners on success / failure.
  *
@@ -167,6 +167,6 @@ export const PASSKEY_JS = `(function () {
     return await verifyRes.json();
   }
 
-  window.MymePasskey = { enroll: enroll, signIn: signIn, isSupported: isSupported };
+  window.MarfaPasskey = { enroll: enroll, signIn: signIn, isSupported: isSupported };
 })();
 `;

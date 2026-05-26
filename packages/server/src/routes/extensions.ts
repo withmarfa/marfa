@@ -6,19 +6,19 @@
  * This coupling is intentional — the key label IS the namespace identity.
  * Additional access can be granted via extension_permissions on the key.
  *
- * Reserved namespaces (core, myme, system) cannot be written to by non-admin keys.
+ * Reserved namespaces (core, marfa, system) cannot be written to by non-admin keys.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   isValidId,
   resolveExtensionPermission,
   filterExtensionsByPermission,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 
-const RESERVED_NAMESPACES = new Set(["core", "myme", "system"]);
+const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
 
 /** Workstream 3 Layer 1 PR 4: the `connection.runtime` namespace is
  *  reserved for the per-Connection runtime credential's hot state.
@@ -295,14 +295,14 @@ export function extensionRoutes(storage: Storage) {
     requireAuth(c);
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const apiKey = c.get("apiKey");
     const tid = apiKey?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     const extensions = await storage.metadata.getExtensions(id);
@@ -321,14 +321,14 @@ export function extensionRoutes(storage: Storage) {
     requireAuth(c);
     const { id, namespace } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const apiKey = c.get("apiKey");
     const tid = apiKey?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     const perm =
@@ -340,7 +340,7 @@ export function extensionRoutes(storage: Storage) {
             apiKey?.label ?? "",
           );
     if (perm === "none") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `No read access to extension namespace "${namespace}"`,
       );
@@ -357,14 +357,14 @@ export function extensionRoutes(storage: Storage) {
     requireAuth(c);
     const { id, namespace } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const apiKey = c.get("apiKey");
     const tid = apiKey?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     // Workstream 3 Layer 1 PR 4: connection.runtime is the runtime
@@ -374,19 +374,19 @@ export function extensionRoutes(storage: Storage) {
     // runtime state in the UI without corrupting it.
     if (namespace === RUNTIME_NAMESPACE) {
       if (!apiKey?.is_runtime_credential) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.FORBIDDEN,
           `Namespace "${RUNTIME_NAMESPACE}" is writable only by runtime credentials`,
         );
       }
       if (apiKey.connection_id !== id) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.FORBIDDEN,
           `Runtime credential for connection ${apiKey.connection_id ?? "unset"} cannot write the runtime namespace of connection ${id}`,
         );
       }
     } else if (RESERVED_NAMESPACES.has(namespace) && apiKey?.role !== "admin") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Namespace "${namespace}" is reserved`,
       );
@@ -405,7 +405,7 @@ export function extensionRoutes(storage: Storage) {
               apiKey?.label ?? "",
             );
       if (perm !== "write") {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.FORBIDDEN,
           `No write access to extension namespace "${namespace}"`,
         );
@@ -417,7 +417,7 @@ export function extensionRoutes(storage: Storage) {
     // Enforce extension data size limit (100KB per namespace)
     const serialized = JSON.stringify(body);
     if (serialized.length > 102_400) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Extension data exceeds maximum size of 100KB",
       );
@@ -442,14 +442,14 @@ export function extensionRoutes(storage: Storage) {
     requireAuth(c);
     const { id, namespace } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const apiKey = c.get("apiKey");
     const tid = apiKey?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
     // Workstream 3 Layer 1 PR 4: same gate as setExtensionRoute — only
@@ -457,19 +457,19 @@ export function extensionRoutes(storage: Storage) {
     // connection.runtime namespace; admins read-only.
     if (namespace === RUNTIME_NAMESPACE) {
       if (!apiKey?.is_runtime_credential) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.FORBIDDEN,
           `Namespace "${RUNTIME_NAMESPACE}" is writable only by runtime credentials`,
         );
       }
       if (apiKey.connection_id !== id) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.FORBIDDEN,
           `Runtime credential for connection ${apiKey.connection_id ?? "unset"} cannot delete the runtime namespace of connection ${id}`,
         );
       }
     } else if (RESERVED_NAMESPACES.has(namespace) && apiKey?.role !== "admin") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Namespace "${namespace}" is reserved`,
       );
@@ -483,7 +483,7 @@ export function extensionRoutes(storage: Storage) {
           apiKey?.label ?? "",
         );
         if (perm !== "write") {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.FORBIDDEN,
             `No write access to extension namespace "${namespace}"`,
           );

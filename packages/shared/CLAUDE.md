@@ -1,14 +1,14 @@
-# @mymehq/shared
+# @withmarfa/shared
 
 Wire types, runtime validation, error codes, ID utilities, and the type registry consumer. Imported by both server and SDK; the foundation everything else builds on.
 
 Contents (`src/`):
 
 - `types.ts` — every wire type that crosses the network. `Item`, `CreateItemInput`, `UpdateItemInput`, `ApiKey`, `TenantConfig`, `User`, `Edge`, `EnforcementSettings`, `Tier`, `ItemState`. Source of truth — server schemas and SDK signatures derive from these. Wire-shape changes start here.
-- `errors.ts` — `MymeError` + the `ErrorCode` enum. Add new codes here; the HTTP status map at the bottom keeps the wire shape stable.
+- `errors.ts` — `MarfaError` + the `ErrorCode` enum. Add new codes here; the HTTP status map at the bottom keeps the wire shape stable.
 - `validation.ts` — pure shape validators that don't need the registry: `isValidId`, `isValidTimestamp`, `isValidTypeIdentifier` (TSC42 §3 namespace grammar), `isValidHandle` (TSC42 §8), `isValidEmail`, `isValidUrl`. Synchronous and side-effect-free.
 - `ids.ts` — `generateId` (UUIDv7) and helpers.
-- `type-registry.ts` — the in-memory `TYPE_REGISTRY` (seeded with `ALL_TYPES` + `ALL_SYSTEM_TYPES` from `@mymehq/types`); namespace classifiers (`classifyNamespace`, `isCoreType`, `isSystemType`, etc.); `validateTypeSchema` (registration validation incl. inheritance and `compatible_with` checks); `validateProperties`; `validateTransition` (lifecycle gate, with system.\* override); enforcement helpers (`resolveEnforcement`, `isTypeInStrictMode`, `getSourceAllowlist`, `getSourceFilter`).
+- `type-registry.ts` — the in-memory `TYPE_REGISTRY` (seeded with `ALL_TYPES` + `ALL_SYSTEM_TYPES` from `@withmarfa/types`); namespace classifiers (`classifyNamespace`, `isCoreType`, `isSystemType`, etc.); `validateTypeSchema` (registration validation incl. inheritance and `compatible_with` checks); `validateProperties`; `validateTransition` (lifecycle gate, with system.\* override); enforcement helpers (`resolveEnforcement`, `isTypeInStrictMode`, `getSourceAllowlist`, `getSourceFilter`).
 - `diff-type-schemas.ts` — `diffTypeSchemas` (TSC42 §7) classifies a registration diff as `noop | patch | minor | major`; `isValidVersionBump` encodes the integer-version semantics.
 - `edge-registry.ts` — same shape as type-registry, for edge types.
 - `scopes.ts` — OAuth scope grammar (`<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`); `parseScope`, `scopesToTypePermissions`, etc.
@@ -22,7 +22,7 @@ Contents (`src/`):
 
 ## Build
 
-`tsup` builds `dist/index.js` (ESM) and `dist/index.d.ts`. The post-build `inline-types-dts.mjs` script inlines `@mymehq/types` declarations into the dist `.d.ts` so external SDK consumers don't need to install `@mymehq/types` separately.
+`tsup` builds `dist/index.js` (ESM) and `dist/index.d.ts`. The post-build `inline-types-dts.mjs` script inlines `@withmarfa/types` declarations into the dist `.d.ts` so external SDK consumers don't need to install `@withmarfa/types` separately.
 
 ## Testing
 

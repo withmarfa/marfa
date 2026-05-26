@@ -1,15 +1,15 @@
 /**
- * T-158: Myme-owned Dynamic Client Registration endpoint.
+ * T-158: Marfa-owned Dynamic Client Registration endpoint.
  *
  * Fronts the @better-auth/oauth-provider plugin's `/auth/oauth2/register`
- * endpoint with our own handler. The Myme handler is mounted BEFORE the
+ * endpoint with our own handler. The Marfa handler is mounted BEFORE the
  * better-auth catch-all (in `app.ts`), so Hono's registration-order
  * dispatch hands DCR requests to us; the plugin's own DCR endpoint
  * never runs.
  *
  * **Why we override.** Two upstream constraints in
  * `@better-auth/oauth-provider@1.6.9` make the plugin's DCR unfit for
- * Myme's device-flow surface:
+ * Marfa's device-flow surface:
  *
  *   1. The plugin's DCR body schema hardcodes a Zod enum that accepts
  *      only `authorization_code`, `client_credentials`, `refresh_token`
@@ -22,12 +22,12 @@
  *      `dist/index.mjs:434`) sets `supportsArrays: true` when the
  *      provider is `"pg"`. The adapter then passes JS arrays
  *      (`scopes`, `redirect_uris`, `grant_types`, `response_types`,
- *      `contacts`) straight into the `text` columns Myme's PG schema
+ *      `contacts`) straight into the `text` columns Marfa's PG schema
  *      declares. Postgres coerces the arrays to comma-joined strings
  *      on write; on read, the plugin's `schemaToOAuth` calls
  *      `scopes?.join(" ")` on a string and surfaces a `TypeError` as
- *      HTTP 500 to the DCR caller. The Myme schema is intentionally
- *      `text` (JSON-encoded string) — Myme's own writes (`mintTokenPair`
+ *      HTTP 500 to the DCR caller. The Marfa schema is intentionally
+ *      `text` (JSON-encoded string) — Marfa's own writes (`mintTokenPair`
  *      in the OauthProvider stores) JSON-stringify on the way in and
  *      `safeJsonParse` on the way out. The plugin's DCR was the only
  *      Better-Auth-internal writer to `auth_oauth_client`, so routing
@@ -35,7 +35,7 @@
  *
  * The handler mirrors the plugin's DCR response shape (RFC 7591 §3.2.1)
  * and stores the row via `storage.oauthProvider.createClient` — same
- * JSON-encoding convention as the rest of Myme's auth writes. Down-
+ * JSON-encoding convention as the rest of Marfa's auth writes. Down-
  * stream consumers (`/auth/authorize`, the device-flow handlers,
  * `getClient` reads) are unchanged: they only need the JSON-encoded
  * column shape we now write consistently.
@@ -44,7 +44,7 @@
  *   - 201 with credentials for `grant_types: ["authorization_code"]`
  *     (gap 3 — no plugin path → no 500).
  *   - 201 with credentials for `grant_types: ["urn:...device_code"]`
- *     (gap 2 — Myme's Zod accepts the URN).
+ *     (gap 2 — Marfa's Zod accepts the URN).
  *
  * (Gap 1 — `device_code` in `grant_types_supported` and the
  * `device_authorization_endpoint` field — is handled separately by the
@@ -56,7 +56,7 @@ import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "@hono/zod-openapi";
 import type { AppEnv } from "../middleware/auth.js";
-import type { MymeAuth } from "../auth/instance.js";
+import type { MarfaAuth } from "../auth/instance.js";
 import type { OauthProviderStore, Storage } from "../storage/interface.js";
 import {
   buildAllowedScopes,
@@ -68,7 +68,7 @@ import { log } from "../middleware/logger.js";
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 /**
- * Grants the Myme route accepts at request-validation time.
+ * Grants the Marfa route accepts at request-validation time.
  *
  * The plugin's own three (`authorization_code`, `client_credentials`,
  * `refresh_token`) plus the device-code URN. Refresh-token grants are
@@ -78,7 +78,7 @@ const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
  * Note that the @better-auth/oauth-provider plugin's
  * `/auth/oauth2/token` endpoint still only knows how to dispatch the
  * first three (verified at `dist/index.mjs:300-318`). Device-code
- * exchange targets the Myme-owned `POST /auth/device/token` route in
+ * exchange targets the Marfa-owned `POST /auth/device/token` route in
  * `routes/oauth.ts:1549-1750`, not the plugin's `/oauth2/token`. The
  * discovery doc advertises both endpoints accordingly.
  */
@@ -175,7 +175,7 @@ function isLoopbackHost(host: string): boolean {
 export function oauthRegisterRoutes(
   storage: Storage,
   oauthProvider: OauthProviderStore,
-  auth: MymeAuth | undefined,
+  auth: MarfaAuth | undefined,
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
   const allowedScopes = new Set(buildAllowedScopes());
@@ -242,7 +242,7 @@ export function oauthRegisterRoutes(
     }
 
     // `client_credentials` requires an authenticated registration per
-    // RFC 7591 §3.2.1. Myme's DCR is unauthenticated (single-user self-
+    // RFC 7591 §3.2.1. Marfa's DCR is unauthenticated (single-user self-
     // hosts + public SDK clients), so we reject `client_credentials`
     // outright — matches the plugin's behaviour at `dist/index.mjs:1197`.
     if (grantTypes.includes("client_credentials")) {

@@ -41,7 +41,7 @@ import { isValidTypeIdentifier } from "./validation.js";
  *                      manifest declares this trigger; PR 5's inbound
  *                      webhook subscription consumes the manifest's
  *                      verification declaration.
- *   - **item-event** — a Myme item changes. The connector subscribes via
+ *   - **item-event** — a Marfa item changes. The connector subscribes via
  *                      the item-event bus (workstream 3 wires the
  *                      runtime); cycle-detection metadata (PR 8)
  *                      protects against A→B→A loops.
@@ -63,7 +63,7 @@ const SemverSchema = z.string().regex(SEMVER_RE, {
 /**
  * Manifest `name` follows TSC42 §3 publisher-namespaced grammar — same
  * shape as a publisher type identifier (e.g. `acme.calendar-sync`). This
- * keeps the marketplace dedupe key stable, matches the rest of Myme's
+ * keeps the marketplace dedupe key stable, matches the rest of Marfa's
  * identifier conventions, and lets the server reuse `isValidTypeIdentifier`
  * for the format check. The Design Direction doc names "publisher" as a
  * first-class concept (lines 44–46, 120) but doesn't constrain the
@@ -134,9 +134,9 @@ const BidirectionalHandlingSchema = z.object({
   lag_window_seconds: z.number().int().positive().default(60),
   /**
    * Tombstone mapping — what happens when the external service deletes
-   * something Myme has locally.
+   * something Marfa has locally.
    *   - `state-trashed` (default for read-only Connections): set
-   *     `state: trashed` on the Myme item.
+   *     `state: trashed` on the Marfa item.
    *   - `prompt-user`   (default for read-write Connections): emit a
    *     `system.activity` with `severity: action_required` letting the
    *     user resolve.

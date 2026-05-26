@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createHmac } from "node:crypto";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import type { CreatedInboundWebhook, InboundWebhook } from "@mymehq/shared";
+import type { CreatedInboundWebhook, InboundWebhook } from "@withmarfa/shared";
 
 let ctx: TestContext;
 /** Registered system.integration id pointing at VALID_MANIFEST. Resolved
@@ -306,8 +306,8 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const body = '{"event":"thing.created"}';
     const sig = hmacHex(sub.secret, body);
     const res = await postRaw(`/webhooks/inbound/${sub.id}`, body, {
-      "X-Myme-Signature": `sha256=${sig}`,
-      "X-Myme-Delivery-Id": "delivery-1",
+      "X-Marfa-Signature": `sha256=${sig}`,
+      "X-Marfa-Delivery-Id": "delivery-1",
     });
     expect(res.status).toBe(200);
   });
@@ -318,8 +318,8 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const body = '{"event":"thing.created"}';
     const sig = hmacHex(sub.secret, body);
     const headers = {
-      "X-Myme-Signature": `sha256=${sig}`,
-      "X-Myme-Delivery-Id": "delivery-dup",
+      "X-Marfa-Signature": `sha256=${sig}`,
+      "X-Marfa-Delivery-Id": "delivery-dup",
     };
     const first = await postRaw(`/webhooks/inbound/${sub.id}`, body, headers);
     const second = await postRaw(`/webhooks/inbound/${sub.id}`, body, headers);
@@ -349,8 +349,8 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const sig = hmacHex(sub.secret, body);
     const tampered = '{"event":"PWNED"}';
     const res = await postRaw(`/webhooks/inbound/${sub.id}`, tampered, {
-      "X-Myme-Signature": `sha256=${sig}`,
-      "X-Myme-Delivery-Id": "delivery-tampered",
+      "X-Marfa-Signature": `sha256=${sig}`,
+      "X-Marfa-Delivery-Id": "delivery-tampered",
     });
     expect(res.status).toBe(401);
 
@@ -379,7 +379,7 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const res = await postRaw(
       "/webhooks/inbound/0192abc1-2345-7000-8000-000000000000",
       "{}",
-      { "X-Myme-Signature": "sha256=00" },
+      { "X-Marfa-Signature": "sha256=00" },
     );
     expect(res.status).toBe(404);
   });
@@ -393,7 +393,7 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const body = '{"x":1}';
     const sig = hmacHex(sub.secret, body);
     const res = await postRaw(`/webhooks/inbound/${sub.id}`, body, {
-      "X-Myme-Signature": `sha256=${sig}`,
+      "X-Marfa-Signature": `sha256=${sig}`,
     });
     expect(res.status).toBe(410);
   });
@@ -404,8 +404,8 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     const body = '{"event":"x"}';
     const sig = hmacHex(sub.secret, body);
     const res = await postRaw(`/webhooks/inbound/${sub.id}`, body, {
-      "X-Myme-Signature": `sha256=${sig}`,
-      "X-Myme-Delivery-Id": "delivery-pending",
+      "X-Marfa-Signature": `sha256=${sig}`,
+      "X-Marfa-Delivery-Id": "delivery-pending",
     });
     expect(res.status).toBe(200);
 
@@ -447,8 +447,8 @@ describe("POST /connections/:id/inbound-webhooks/:webhook_id/deliveries/:event_i
     const body = '{"event":"x"}';
     const sig = hmacHex(sub.secret, body);
     await postRaw(`/webhooks/inbound/${sub.id}`, body, {
-      "X-Myme-Signature": `sha256=${sig}`,
-      "X-Myme-Delivery-Id": "delivery-for-retry",
+      "X-Marfa-Signature": `sha256=${sig}`,
+      "X-Marfa-Delivery-Id": "delivery-for-retry",
     });
 
     // Manually mark the row as DLQ via storage to simulate exhausted retries.

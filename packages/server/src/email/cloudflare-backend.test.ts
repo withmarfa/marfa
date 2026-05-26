@@ -52,8 +52,8 @@ describe("CloudflareTransport", () => {
     const transport = new CloudflareTransport({
       accountId: "acct_123",
       apiToken: "tok_456",
-      from: "Myme <hello@mail.myme.so>",
-      replyTo: "support@mail.myme.so",
+      from: "Marfa <hello@mail.marfa.so>",
+      replyTo: "support@mail.marfa.so",
       fetchImpl,
     });
 
@@ -73,12 +73,12 @@ describe("CloudflareTransport", () => {
     expect(headers["Content-Type"]).toBe("application/json");
 
     expect(getBody(args)).toEqual({
-      from: "Myme <hello@mail.myme.so>",
+      from: "Marfa <hello@mail.marfa.so>",
       to: "alice@gmail.com",
       subject: "Reset your password",
       html: "<p>Click the link</p>",
       text: "Click the link",
-      reply_to: "support@mail.myme.so",
+      reply_to: "support@mail.marfa.so",
     });
   });
 
@@ -91,7 +91,7 @@ describe("CloudflareTransport", () => {
     const transport = new CloudflareTransport({
       accountId: "acct_123",
       apiToken: "tok_456",
-      from: "hello@mail.myme.so",
+      from: "hello@mail.marfa.so",
       fetchImpl,
     });
 
@@ -113,14 +113,14 @@ describe("CloudflareTransport", () => {
     const transport = new CloudflareTransport({
       accountId: "acct_123",
       apiToken: "tok_456",
-      from: "hello@mail.myme.so",
-      replyTo: "default@mail.myme.so",
+      from: "hello@mail.marfa.so",
+      replyTo: "default@mail.marfa.so",
       fetchImpl,
     });
 
-    await transport.send(makeMessage({ replyTo: "override@mail.myme.so" }));
+    await transport.send(makeMessage({ replyTo: "override@mail.marfa.so" }));
     const body = getBody(getCall(fetchImpl, 0));
-    expect(body.reply_to).toBe("override@mail.myme.so");
+    expect(body.reply_to).toBe("override@mail.marfa.so");
   });
 
   it("returns retryable: false on 200 with non-empty permanent_bounces", async () => {
@@ -137,7 +137,7 @@ describe("CloudflareTransport", () => {
     const transport = new CloudflareTransport({
       accountId: "acct",
       apiToken: "tok",
-      from: "hello@mail.myme.so",
+      from: "hello@mail.marfa.so",
       fetchImpl,
     });
 
@@ -167,7 +167,7 @@ describe("CloudflareTransport", () => {
     const transport = new CloudflareTransport({
       accountId: "acct",
       apiToken: "tok",
-      from: "hello@mail.myme.so",
+      from: "hello@mail.marfa.so",
       fetchImpl,
     });
 
@@ -192,7 +192,7 @@ describe("CloudflareTransport", () => {
     const transport = new CloudflareTransport({
       accountId: "acct",
       apiToken: "tok",
-      from: "hello@mail.myme.so",
+      from: "hello@mail.marfa.so",
       fetchImpl,
     });
 
@@ -217,7 +217,7 @@ describe("CloudflareTransport", () => {
     const transport = new CloudflareTransport({
       accountId: "acct",
       apiToken: "tok",
-      from: "hello@mail.myme.so",
+      from: "hello@mail.marfa.so",
       fetchImpl,
     });
 
@@ -231,7 +231,7 @@ describe("CloudflareTransport", () => {
     const transport = new CloudflareTransport({
       accountId: "acct",
       apiToken: "tok",
-      from: "hello@mail.myme.so",
+      from: "hello@mail.marfa.so",
       fetchImpl,
     });
 
@@ -247,7 +247,7 @@ describe("CloudflareTransport", () => {
     const transport = new CloudflareTransport({
       accountId: "acct",
       apiToken: "tok",
-      from: "hello@mail.myme.so",
+      from: "hello@mail.marfa.so",
       fetchImpl: vi.fn(),
     });
 
@@ -267,7 +267,7 @@ describe("CloudflareTransport", () => {
     const transport = new CloudflareTransport({
       accountId: "acct",
       apiToken: "tok",
-      from: "hello@mail.myme.so",
+      from: "hello@mail.marfa.so",
       fetchImpl,
     });
 

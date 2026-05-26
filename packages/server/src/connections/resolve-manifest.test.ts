@@ -10,8 +10,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { resolveConnectionManifest } from "./resolve-manifest.js";
-import type { IntegrationManifest } from "@mymehq/shared";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -110,8 +110,8 @@ describe("resolveConnectionManifest", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(MymeError);
-    expect((thrown as MymeError).code).toBe(ErrorCode.NOT_FOUND);
+    expect(thrown).toBeInstanceOf(MarfaError);
+    expect((thrown as MarfaError).code).toBe(ErrorCode.NOT_FOUND);
   });
 
   it("throws MISSING_REQUIRED_FIELD when the connection has no integration_ref (T-022)", async () => {
@@ -122,8 +122,8 @@ describe("resolveConnectionManifest", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(MymeError);
-    expect((thrown as MymeError).code).toBe(ErrorCode.MISSING_REQUIRED_FIELD);
+    expect(thrown).toBeInstanceOf(MarfaError);
+    expect((thrown as MarfaError).code).toBe(ErrorCode.MISSING_REQUIRED_FIELD);
   });
 
   it("throws MISSING_REQUIRED_FIELD when integration_ref doesn't resolve (T-022)", async () => {
@@ -134,8 +134,8 @@ describe("resolveConnectionManifest", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(MymeError);
-    expect((thrown as MymeError).code).toBe(ErrorCode.MISSING_REQUIRED_FIELD);
+    expect(thrown).toBeInstanceOf(MarfaError);
+    expect((thrown as MarfaError).code).toBe(ErrorCode.MISSING_REQUIRED_FIELD);
   });
 
   it("throws VALIDATION_ERROR when persisted manifest is invalid", async () => {
@@ -165,7 +165,7 @@ describe("resolveConnectionManifest", () => {
     } catch (err) {
       thrown = err;
     }
-    expect(thrown).toBeInstanceOf(MymeError);
-    expect((thrown as MymeError).code).toBe(ErrorCode.VALIDATION_ERROR);
+    expect(thrown).toBeInstanceOf(MarfaError);
+    expect((thrown as MarfaError).code).toBe(ErrorCode.VALIDATION_ERROR);
   });
 });

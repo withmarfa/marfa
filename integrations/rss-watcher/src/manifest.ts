@@ -1,18 +1,18 @@
 /**
  * Manifest for the RSS Watcher test integration.
  *
- * Typed against `IntegrationManifestSchema` from @mymehq/shared so a
+ * Typed against `IntegrationManifestSchema` from @withmarfa/shared so a
  * schema drift in the contract surfaces here at compile time. The
  * schema-validation test in `manifest.test.ts` parses the constant
  * through the Zod schema at runtime — belt-and-braces.
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const RSS_WATCHER_MANIFEST: IntegrationManifest = {
-  name: "mymehq.rss-watcher",
+  name: "withmarfa.rss-watcher",
   version: "0.1.0",
   manifest_schema_version: "1.0.0",
-  publisher: "mymehq",
+  publisher: "withmarfa",
   description:
     "Polls an Atom or RSS feed on a schedule and creates a core.bookmark per new entry. Read-only.",
   direction: "read",

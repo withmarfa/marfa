@@ -41,8 +41,8 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 ```
 {
   last_created_at: string | null,
-  raindrop_mappings: Record<raindrop_id, myme_id>,
-  collection_mappings: Record<collection_id, myme_id>,
+  raindrop_mappings: Record<raindrop_id, marfa_id>,
+  collection_mappings: Record<collection_id, marfa_id>,
   last_collection_sweep_at: string | null,
   last_inbound_at: string | null
 }
@@ -75,7 +75,7 @@ Two edge patterns, both `parent-of`:
 2. **Raindrop → containing collection**: the collection is the
    parent. Built on first raindrop write.
 
-Both flow through `ctx.myme.createEdge` (T-242 SDK addition).
+Both flow through `ctx.marfa.createEdge` (T-242 SDK addition).
 Idempotent in the sense that duplicate edges return 409 / no-op from
 the substrate; the handler swallows those silently.
 
@@ -83,11 +83,11 @@ the substrate; the handler swallows those silently.
 
 The harness asserts:
 
-- **Pre-flight invariant** — `GET /rest/v1/raindrops/0?search=#myme-validation`
+- **Pre-flight invariant** — `GET /rest/v1/raindrops/0?search=#marfa-validation`
   returns zero items. Otherwise stale test data from a prior run
   exists, and the harness aborts.
-- **CREATE only against synthetic data** — a `Myme Validation`
-  collection + raindrops tagged `myme-validation`. Every created id
+- **CREATE only against synthetic data** — a `Marfa Validation`
+  collection + raindrops tagged `marfa-validation`. Every created id
   is recorded in a `DESTRUCTIVE_OK` allowlist (Set<string>).
 - **DELETE gated** — every DELETE checks the id against the allowlist;
   any unrecognised id throws and aborts the run.

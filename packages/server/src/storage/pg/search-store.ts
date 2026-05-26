@@ -1,5 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
-import { parseFilter, type SearchResult } from "@mymehq/shared";
+import { parseFilter, type SearchResult } from "@withmarfa/shared";
 import { sql } from "drizzle-orm";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { filterToRawSql } from "../filter-sql.js";

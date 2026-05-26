@@ -108,7 +108,7 @@ describe("OauthProviderStore.findRefreshTokenGrantKey (T-131 follow-on)", () => 
     // directly via the storage helper using a hash we KNOW won't match,
     // confirming null return.
     const hash = createHmac("sha256", TEST_API_KEY_SALT)
-      .update("myme_rt_nonexistent")
+      .update("marfa_rt_nonexistent")
       .digest("hex");
     const got = await ctx.storage.oauthProvider?.findRefreshTokenGrantKey(hash);
     // Sanity: bogus hash returns null.

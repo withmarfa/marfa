@@ -1,5 +1,5 @@
 // Auto-generated from core/*.json — do not edit manually.
-// Run `pnpm --filter @mymehq/types generate` to regenerate.
+// Run `pnpm --filter @withmarfa/types generate` to regenerate.
 
 import type { TypeSchema } from "../src/schema-types.js";
 
@@ -141,20 +141,20 @@ const coreMessage: TypeSchema = {
   merge_policy: { fields: { body: "keep_both_copies" }, default: "last_writer_wins" },
 };
 
-const mymehqCapturedEmail: TypeSchema = {
-  id: "mymehq.captured_email",
+const withmarfaCapturedEmail: TypeSchema = {
+  id: "withmarfa.captured_email",
   label: "Captured Email",
-  description: "An email captured by the mymehq.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Maps onto `core.note` via `compatible_with` so cross-app readers see a title + body without knowing the captured-email shape. Attachment blob upload is gated on T-239; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
+  description: "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Maps onto `core.note` via `compatible_with` so cross-app readers see a title + body without knowing the captured-email shape. Attachment blob upload is gated on T-239; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
   version: 1,
   fields: {
     from_address: { type: "string", description: "RFC 5321 envelope sender address, lower-cased (the `From:` header's address part).", required: true },
     from_name: { type: "string", description: "Display name from the `From:` header, if present." },
-    to_address: { type: "string", description: "Address the email was delivered to (the connection's capture address — e.g. `capture@inbox.myme.so`).", required: true },
+    to_address: { type: "string", description: "Address the email was delivered to (the connection's capture address — e.g. `capture@inbox.marfa.so`).", required: true },
     subject: { type: "string", description: "RFC 5322 `Subject:` header. Empty string when absent." },
     text_body: { type: "string", description: "Plain-text body. Either the `text/plain` MIME part directly, or downgraded from `text/html` when only HTML is present." },
     body: { type: "string", description: "Mirror of `text_body` — kept so `core.note.body` satisfies the `compatible_with` contract for cross-app readers." },
     html_body: { type: "string", description: "HTML body (`text/html` MIME part). Captured verbatim; not sanitised on storage." },
-    sent_at: { type: "datetime", description: "RFC 5322 `Date:` header, parsed to ISO 8601. The upstream-fidelity timestamp; distinct from Myme's `created_at` which stamps the inbound-receipt time." },
+    sent_at: { type: "datetime", description: "RFC 5322 `Date:` header, parsed to ISO 8601. The upstream-fidelity timestamp; distinct from Marfa's `created_at` which stamps the inbound-receipt time." },
     message_id: { type: "string", description: "RFC 5322 `Message-ID:` header (with the angle brackets). Used as the inbound-webhook `external_delivery_id` so a re-delivered email resolves to the same item. Mirrored to `source_id` at write time." },
     in_reply_to: { type: "string", description: "RFC 5322 `In-Reply-To:` header. Sets up thread inference for follow-up replies on the same conversation." },
     references: { type: "array", description: "RFC 5322 `References:` header, split on whitespace. Each entry a Message-ID of an ancestor in the conversation thread.", items_type: "string" },
@@ -300,7 +300,7 @@ const todoistTask: TypeSchema = {
     priority: { type: "integer", description: "Task priority (1 = no priority through 4 = urgent, matching Todoist's wire convention)." },
     due: { type: "object", description: "Due date/time object. Carries any of `{ date, datetime, string, lang, is_recurring, timezone }`; `null` when the task has no due date." },
     child_order: { type: "integer", description: "Stable sort order within the parent (maps to Todoist `child_order`)." },
-    completed: { type: "boolean", description: "Mirrors Todoist's `checked` flag. Closing a task in Myme (state transition to trashed) maps to Todoist's `/close` endpoint, which sets this to true upstream." },
+    completed: { type: "boolean", description: "Mirrors Todoist's `checked` flag. Closing a task in Marfa (state transition to trashed) maps to Todoist's `/close` endpoint, which sets this to true upstream." },
     url: { type: "url", description: "Stable HTTPS link to the task on the Todoist web UI." },
     comment_count: { type: "integer", description: "Number of comments on the task at last sync (maps to Todoist `comment_count`)." },
   },
@@ -505,7 +505,7 @@ const googleContactsContact: TypeSchema = {
 const googleDriveFile: TypeSchema = {
   id: "google.drive.file",
   label: "Google Drive File",
-  description: "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the integration reads files into Myme but does not write back. `compatible_with` falls through to `core.file` for cross-app consumers.",
+  description: "A file on Google Drive, captured with upstream fidelity. Mirrors the Drive v3 file resource closely so a round-trip preserves what Drive considers authoritative (id, name, mimeType, size, ownership, parents, links, checksums). Direction is inbound-only in v1 — the integration reads files into Marfa but does not write back. `compatible_with` falls through to `core.file` for cross-app consumers.",
   version: 1,
   fields: {
     title: { type: "string", description: "File name (maps to Drive `name`).", required: true },
@@ -516,13 +516,13 @@ const googleDriveFile: TypeSchema = {
     modified_at_drive: { type: "datetime", description: "Drive-side modified timestamp (maps to Drive `modifiedTime`). Used for incremental ordering when changes.list cursor is absent." },
     owners: { type: "array", description: "Owner email addresses (each entry is the `emailAddress` of an owner from Drive's `owners` array).", items_type: "string" },
     parents: { type: "array", description: "Parent folder ids (maps to Drive `parents`).", items_type: "string" },
-    trashed: { type: "boolean", description: "Drive `trashed` flag. Handler maps `trashed: true` to a Myme tombstone (state-trashed) rather than persisting the flag literally." },
+    trashed: { type: "boolean", description: "Drive `trashed` flag. Handler maps `trashed: true` to a Marfa tombstone (state-trashed) rather than persisting the flag literally." },
     web_view_link: { type: "url", description: "Stable HTTPS URL to view the file in the Drive web UI (maps to Drive `webViewLink`)." },
     icon_link: { type: "url", description: "URL to a small icon for the file's type (maps to Drive `iconLink`)." },
     thumbnail_link: { type: "url", description: "URL to a short-lived thumbnail (maps to Drive `thumbnailLink`). Stored as a URL only; not downloaded." },
     md5_checksum: { type: "string", description: "MD5 checksum of the file content (maps to Drive `md5Checksum`). Available for binary file types; absent for native Google formats." },
     sha256_checksum: { type: "string", description: "SHA-256 checksum where Drive provides it (`sha256Checksum`; recent addition to the v3 API)." },
-    blob_ref: { type: "string", description: "Reference to the downloaded binary content as a Myme blob (`sha256:<hex>`). Present iff the bytes were successfully ingested into the Myme blob store — i.e. `connection.properties.configuration.download_mode` is `all-files` (or a matching glob), the file is downloadable (not a Google-native `application/vnd.google-apps.*` type), and the download stayed within the per-file size ceiling. Absent in metadata mode and whenever an all-files attempt was skipped or failed (the activity log carries the reason). Programmatic gate: `typeof blob_ref === \"string\"` means the bytes are retrievable via `GET /blobs/{blob_ref}`." },
+    blob_ref: { type: "string", description: "Reference to the downloaded binary content as a Marfa blob (`sha256:<hex>`). Present iff the bytes were successfully ingested into the Marfa blob store — i.e. `connection.properties.configuration.download_mode` is `all-files` (or a matching glob), the file is downloadable (not a Google-native `application/vnd.google-apps.*` type), and the download stayed within the per-file size ceiling. Absent in metadata mode and whenever an all-files attempt was skipped or failed (the activity log carries the reason). Programmatic gate: `typeof blob_ref === \"string\"` means the bytes are retrievable via `GET /blobs/{blob_ref}`." },
     etag: { type: "string", description: "Drive's change-detection token (Drive returns ETag-style hashes on most responses). Used as the content-hash key for echo suppression." },
   },
   display_hints: { title_field: "title" },
@@ -545,7 +545,7 @@ const googleTasksTask: TypeSchema = {
     etag: { type: "string", description: "Tasks API change-detection token. Used as the content-hash key for echo suppression." },
     source_task_list_id: { type: "string", description: "ID of the Google Tasks list this task lives on. Set on inbound items so per-list mappings round-trip; outbound writes derive the target list from this field or fall back to the connection's configured default." },
     hidden: { type: "boolean", description: "Tasks API `hidden` flag. Set true by Google when a completed task is hidden from the default view; round-tripped for fidelity." },
-    deleted: { type: "boolean", description: "Tasks API `deleted` flag (surfaces when `showDeleted=true` is passed on the list). Handler maps a true value to a Myme tombstone (state-trashed) rather than persisting the flag literally." },
+    deleted: { type: "boolean", description: "Tasks API `deleted` flag (surfaces when `showDeleted=true` is passed on the list). Handler maps a true value to a Marfa tombstone (state-trashed) rather than persisting the flag literally." },
   },
   display_hints: { title_field: "title", body_field: "notes" },
 };
@@ -826,7 +826,7 @@ export const ALL_TYPES: TypeSchema[] = [
   coreHighlight,
   coreMedia,
   coreMessage,
-  mymehqCapturedEmail,
+  withmarfaCapturedEmail,
   coreNote,
   raindropCollection,
   raindropRaindrop,
@@ -885,7 +885,7 @@ const systemApp: TypeSchema = {
 const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
-  description: "An approved relationship between this Myme tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorised — workstream 1), `integration` (a hosted/local connector that reads or writes Myme on the user's behalf — workstream 2), and `tenant` (cross-tenant access — future). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (no client write path in WS2 — runtime executor lands in WS3).",
+  description: "An approved relationship between this Marfa tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorised — workstream 1), `integration` (a hosted/local connector that reads or writes Marfa on the user's behalf — workstream 2), and `tenant` (cross-tenant access — future). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (no client write path in WS2 — runtime executor lands in WS3).",
   version: 1,
   fields: {
     kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "integration", "tenant"] },

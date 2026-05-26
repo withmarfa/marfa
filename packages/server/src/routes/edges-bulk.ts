@@ -3,7 +3,7 @@
  *
  * Parallel to `POST /items/bulk`: caller provides an explicit list of edges
  * to create or upsert; server returns per-edge outcomes plus aggregate
- * counts. Used by mode-transition flows (Local → Myme, iCloud → Myme) to
+ * counts. Used by mode-transition flows (Local → Marfa, iCloud → Marfa) to
  * migrate edges in a second pass after items.bulk lands — items.bulk's
  * inline `edges` block only handles edges whose source and target both live
  * inside a single batch, which is not the case during multi-batch tenant
@@ -18,8 +18,8 @@
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
-import type { Edge } from "@mymehq/shared";
+import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
+import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -250,7 +250,7 @@ async function processBulkEdge(
       created,
     };
   } catch (err) {
-    if (err instanceof MymeError) {
+    if (err instanceof MarfaError) {
       return {
         result: {
           index,
@@ -280,7 +280,7 @@ export function edgesBulkRoutes(storage: Storage) {
     const emitEvents = body.emit_events ?? false;
 
     if (rawEdges.length > MAX_BULK_EDGES) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Maximum ${String(MAX_BULK_EDGES)} edges per call`,
         { cap: MAX_BULK_EDGES, provided: rawEdges.length },
@@ -306,7 +306,7 @@ export function edgesBulkRoutes(storage: Storage) {
     if (atomic) {
       for (const [i, raw] of rawEdges.entries()) {
         if (!isValidId(raw.source_id)) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.BULK_ATOMIC_ROLLBACK,
             `Bulk edges rolled back on edge ${String(i)}`,
             {
@@ -317,7 +317,7 @@ export function edgesBulkRoutes(storage: Storage) {
           );
         }
         if (!isValidId(raw.target_id)) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.BULK_ATOMIC_ROLLBACK,
             `Bulk edges rolled back on edge ${String(i)}`,
             {
@@ -354,7 +354,7 @@ export function edgesBulkRoutes(storage: Storage) {
           existingByTriple,
         });
         if (atomic && result.outcome === "errored") {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.BULK_ATOMIC_ROLLBACK,
             `Bulk edges rolled back on edge ${String(i)}`,
             {

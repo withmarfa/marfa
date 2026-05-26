@@ -7,7 +7,7 @@
  * will follow. The publisher namespace is `google`; the integration
  * identifier is `google.calendar`.
  *
- * Both inbound (poll Calendar → upsert Myme items) and outbound
+ * Both inbound (poll Calendar → upsert Marfa items) and outbound
  * (item-event on the target type → push to Calendar via OAuth proxy)
  * are wired through one connector. All four `bidirectional_handling`
  * fields are exercised:
@@ -19,7 +19,7 @@
  *     of a recent same-id outbound are deferred to avoid stomp races.
  *   - `tombstone_mapping: "state-trashed"` — Calendar event with
  *     `status: "cancelled"` triggers a transition-to-trashed on the
- *     Myme item; trashing a Myme item triggers a Calendar DELETE.
+ *     Marfa item; trashing a Marfa item triggers a Calendar DELETE.
  *   - `partial_write_mode: "accept-partial"` — an outbound batch with
  *     a failing event still commits the others; each failure surfaces
  *     as a `system.activity`.
@@ -41,7 +41,7 @@
  * See `RECOMMENDED_OAUTH_SCOPES` below for the canonical list consumed
  * by the install flow.
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   name: "google.calendar",
@@ -49,7 +49,7 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   manifest_schema_version: "1.0.0",
   publisher: "google",
   description:
-    "Bidirectional sync between Google Calendar and Myme. Reads events from calendars the user picks at install and writes Myme-side mutations back via OAuth proxy.",
+    "Bidirectional sync between Google Calendar and Marfa. Reads events from calendars the user picks at install and writes Marfa-side mutations back via OAuth proxy.",
   direction: "both",
   runtime_compatibility: ["hosted", "local"],
   // `google.calendar.event` is the upstream-fidelity type (full Calendar
@@ -79,7 +79,7 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   oauth_requirements: { calendar: "proxy" },
   // Google Calendar push notifications carry no body and verify by
   // shared-secret header echo (X-Goog-Channel-Token). The
-  // `google-channel` adapter in `@mymehq/webhooks` matches the channel
+  // `google-channel` adapter in `@withmarfa/webhooks` matches the channel
   // token against the per-Connection inbound-webhook subscription
   // secret captured at install time.
   webhook_verification: { method: "google-channel" },

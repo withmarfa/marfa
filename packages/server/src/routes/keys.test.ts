@@ -168,10 +168,10 @@ describe("bootstrap sentinel", () => {
       // pg.cleanup leaks here intentionally — `freshApp` doesn't have
       // a returned-cleanup contract with its callers; the leaked clone
       // is mopped up by the next test-run's dropStaleClones pass.
-      const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-pg-"));
+      const tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-pg-"));
       blobPath = join(tmpDir, "blobs");
     } else {
-      const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-"));
+      const tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-"));
       storage = await createSqliteStorage(join(tmpDir, "test.db"));
       blobPath = join(tmpDir, "blobs");
     }
@@ -440,7 +440,7 @@ describe("bootstrap sentinel", () => {
       // 0000 → latest and several DROP/ALTER migrations error against
       // tables / objects the bootstrap shape never had. Post-fix the runner
       // sees stamped rows and short-circuits.
-      const tmpDir = mkdtempSync(join(tmpdir(), "myme-bootstrap-migrate-"));
+      const tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-migrate-"));
       const dbPath = join(tmpDir, "bootstrap-then-migrate.db");
       const storage = await createSqliteStorage(dbPath);
       const before = (await storage.__sqliteAll(

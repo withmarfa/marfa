@@ -11,7 +11,7 @@ interface PersistedTokens {
   scope: string;
 }
 
-/** TokenProvider gives MymeClient an access token for every request. */
+/** TokenProvider gives MarfaClient an access token for every request. */
 export interface TokenProvider {
   /** Returns a non-expired access token. Refreshes proactively if < 60s
    *  remain on the current one. Single-flight: concurrent callers await
@@ -39,7 +39,7 @@ export interface TokenProviderConfig {
   fetch?: typeof globalThis.fetch;
   /** Pre-resolved OAuth endpoints. When omitted, `refresh()` discovers
    *  them lazily via `/.well-known/oauth-authorization-server` on first
-   *  call. Callers that have already discovered (e.g. `MymeAuth` after
+   *  call. Callers that have already discovered (e.g. `MarfaAuth` after
    *  `handleCallback`) pass them in to skip a redundant fetch. */
   endpoints?: Endpoints;
 }

@@ -11,7 +11,7 @@
  *      `MODULE_NOT_FOUND`. Fixed by listing `worker-entry` as a named
  *      tsup entry in `packages/server/tsup.config.ts`.
  *
- *   2. `@mymehq/runtime-sdk` (and `@mymehq/shared`) duplicated across
+ *   2. `@withmarfa/runtime-sdk` (and `@withmarfa/shared`) duplicated across
  *      the server bundle vs the integration's externalised bundle —
  *      the integration's `registerScheduleHandler` writes to one copy
  *      of the module-singleton `REGISTRY`; the worker-entry's
@@ -163,17 +163,17 @@ try {
   const request = {
     apiUrl: `http://127.0.0.1:${STUB_PORT}`,
     credential: {
-      api_key: "myme_k1_smoke",
+      api_key: "marfa_k1_smoke",
       expires_at: new Date(Date.now() + 60_000).toISOString(),
       connection_id: "smoke-connection-id",
     },
     message: {
       kind: "schedule",
-      integration_name: "myme.template",
+      integration_name: "marfa.template",
       connection_id: "smoke-connection-id",
       scheduled_for_ms: Date.now(),
     },
-    integrationName: "myme.template",
+    integrationName: "marfa.template",
     echo: { echo_ttl_seconds: 60, lag_window_seconds: 60 },
     hopBudget: 5,
     cursorSnapshot: {},
@@ -210,7 +210,7 @@ try {
   if (!response.result.ok) {
     fail(
       `worker dispatch returned not-ok: ${JSON.stringify(response.result)}. ` +
-        `If reason is "no_schedule_handler_registered", @mymehq/runtime-sdk is ` +
+        `If reason is "no_schedule_handler_registered", @withmarfa/runtime-sdk is ` +
         `duplicated across the server bundle and the integration bundle — check ` +
         `the "external" clause in packages/server/tsup.config.ts.`,
     );

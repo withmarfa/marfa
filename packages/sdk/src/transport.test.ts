@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { HttpTransport } from "./transport.js";
 import {
   ForbiddenError,
-  MymeError,
+  MarfaError,
   NotFoundError,
   UnauthorizedError,
   ValidationError,
@@ -14,10 +14,10 @@ import {
 // mock fetch via TransportConfig.fetch; no server is booted.
 //
 // These tests pin the SDK's wrapped-error contract: timeouts, network
-// failures, and body-parse failures all surface as `MymeError` with a
+// failures, and body-parse failures all surface as `MarfaError` with a
 // stable `code`, `status: 0`, and the original platform error preserved
 // on `err.cause`. Server-reported errors (4xx/5xx with a JSON body) map
-// to `MymeError` with the real HTTP status and the server's `error.code`.
+// to `MarfaError` with the real HTTP status and the server's `error.code`.
 // ---------------------------------------------------------------------------
 
 function makeJsonResponse(
@@ -71,7 +71,7 @@ describe("HttpTransport — timeout wiring", () => {
     const start = Date.now();
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
-        err instanceof MymeError &&
+        err instanceof MarfaError &&
         err.code === "timeout" &&
         err.status === 0 &&
         err.cause instanceof DOMException &&
@@ -84,7 +84,7 @@ describe("HttpTransport — timeout wiring", () => {
 });
 
 describe("HttpTransport — network errors", () => {
-  it("wraps a rejected fetch in MymeError with code='network_error' and preserves the original on err.cause", async () => {
+  it("wraps a rejected fetch in MarfaError with code='network_error' and preserves the original on err.cause", async () => {
     const networkError = new TypeError("fetch failed");
     const mockFetch = vi.fn().mockRejectedValue(networkError);
     const transport = makeTransport(
@@ -93,7 +93,7 @@ describe("HttpTransport — network errors", () => {
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
-        err instanceof MymeError &&
+        err instanceof MarfaError &&
         err.code === "network_error" &&
         err.status === 0 &&
         err.cause === networkError,
@@ -103,7 +103,7 @@ describe("HttpTransport — network errors", () => {
 });
 
 describe("HttpTransport — error-body mapping", () => {
-  it("maps 5xx responses to MymeError with status, code, and message preserved", async () => {
+  it("maps 5xx responses to MarfaError with status, code, and message preserved", async () => {
     const mockFetch = vi.fn().mockResolvedValue(
       makeJsonResponse(503, {
         error: { code: "service_unavailable", message: "down" },
@@ -115,7 +115,7 @@ describe("HttpTransport — error-body mapping", () => {
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
-        err instanceof MymeError &&
+        err instanceof MarfaError &&
         err.status === 503 &&
         err.code === "service_unavailable" &&
         err.message === "down",
@@ -131,7 +131,7 @@ describe("HttpTransport — error-body mapping", () => {
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
-        err instanceof MymeError &&
+        err instanceof MarfaError &&
         err.status === 500 &&
         err.code === "unknown" &&
         err.message === "HTTP 500",
@@ -266,7 +266,7 @@ describe("HttpTransport — typed error subclasses preserve server code", () => 
 });
 
 describe("HttpTransport — body-parse failures", () => {
-  it("wraps a malformed JSON error body in MymeError with code='parse_error' and records the real HTTP status in details", async () => {
+  it("wraps a malformed JSON error body in MarfaError with code='parse_error' and records the real HTTP status in details", async () => {
     const mockFetch = vi.fn().mockResolvedValue(
       new Response("<html>internal error</html>", {
         status: 500,
@@ -279,7 +279,7 @@ describe("HttpTransport — body-parse failures", () => {
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
-        err instanceof MymeError &&
+        err instanceof MarfaError &&
         err.code === "parse_error" &&
         err.status === 0 &&
         err.cause instanceof SyntaxError &&
@@ -287,7 +287,7 @@ describe("HttpTransport — body-parse failures", () => {
     );
   });
 
-  it("wraps a non-JSON 200 body in MymeError with code='parse_error' and records the real HTTP status in details", async () => {
+  it("wraps a non-JSON 200 body in MarfaError with code='parse_error' and records the real HTTP status in details", async () => {
     const mockFetch = vi.fn().mockResolvedValue(
       new Response("plain text", {
         status: 200,
@@ -300,7 +300,7 @@ describe("HttpTransport — body-parse failures", () => {
 
     await expect(transport.request("GET", "/items")).rejects.toSatisfy(
       (err: unknown) =>
-        err instanceof MymeError &&
+        err instanceof MarfaError &&
         err.code === "parse_error" &&
         err.status === 0 &&
         err.cause instanceof SyntaxError &&
@@ -365,7 +365,7 @@ describe("HttpTransport — requestWithStatus", () => {
     expect(result.data).toBeUndefined();
   });
 
-  it("4xx responses throw the typed MymeError subclass — never resolve", async () => {
+  it("4xx responses throw the typed MarfaError subclass — never resolve", async () => {
     const mockFetch = vi.fn().mockResolvedValue(
       makeJsonResponse(404, {
         error: { code: "not_found", message: "x" },
@@ -408,7 +408,7 @@ describe("HttpTransport — no silent retry", () => {
     );
 
     await expect(transport.request("GET", "/items")).rejects.toBeInstanceOf(
-      MymeError,
+      MarfaError,
     );
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
@@ -428,7 +428,7 @@ describe("HttpTransport — no silent retry", () => {
     );
 
     await expect(transport.request("GET", "/items")).rejects.toBeInstanceOf(
-      MymeError,
+      MarfaError,
     );
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });

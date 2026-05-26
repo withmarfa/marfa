@@ -1,6 +1,6 @@
 /**
  * Single-shot benchmark for hydrated GET /items/:id latency.
- * Usage: pnpm --filter @mymehq/server tsx scripts/bench-hydration.ts
+ * Usage: pnpm --filter @withmarfa/server tsx scripts/bench-hydration.ts
  */
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -54,7 +54,7 @@ async function main(): Promise<void> {
     rateLimitWindowMs: 60_000,
     oauthRedirectAllowlist: [],
   });
-  const raw = "myme_k1_bench";
+  const raw = "marfa_k1_bench";
   await storage.keys.create(
     {
       label: "b",

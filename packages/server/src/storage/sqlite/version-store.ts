@@ -1,6 +1,6 @@
 import { eq, and, asc, desc, inArray, sql } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { Version } from "@mymehq/shared";
+import { generateId } from "@withmarfa/shared";
+import type { Version } from "@withmarfa/shared";
 import type { VersionStore } from "../interface.js";
 import { versions } from "./schema.js";
 import { items } from "./schema.js";

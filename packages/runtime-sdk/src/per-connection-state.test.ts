@@ -8,7 +8,7 @@ function makeCore(): PerConnectionStateCore {
 }
 
 const CRED: RuntimeCredential = {
-  api_key: "myme_k1_test",
+  api_key: "marfa_k1_test",
   expires_at: new Date(Date.now() + 60_000).toISOString(),
   connection_id: "conn_1",
 };

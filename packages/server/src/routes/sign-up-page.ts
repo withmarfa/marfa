@@ -7,7 +7,7 @@
  * a 302 redirect.
  *
  * Conditional surface — the GET handler returns 404 when
- * `MYME_AUTH_ALLOW_SIGNUP=false`. Single-user self-hosted instances
+ * `MARFA_AUTH_ALLOW_SIGNUP=false`. Single-user self-hosted instances
  * flip the flag on for the initial admin account, then back off.
  *
  * autoSignIn is enabled in the Better Auth instance config, so a
@@ -67,7 +67,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
   const signInHref = `/auth/sign-in?${escapeHtml(buildQuery({ return_to: params.returnTo }))}`;
 
   const bodyHtml = `
-    <h1>Create your Myme account</h1>
+    <h1>Create your Marfa account</h1>
     ${errorBanner}
     <form method="POST" action="/auth/sign-up" class="form" novalidate>
       <input type="hidden" name="return_to" value="${safeReturnTo}">
@@ -101,7 +101,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
                spellcheck="false"
                aria-required="true"
                aria-describedby="username-hint">
-        <span id="username-hint" class="field__hint">Lowercase letters, numbers, hyphens. 3–32 characters. Public — used as your handle on Myme.</span>
+        <span id="username-hint" class="field__hint">Lowercase letters, numbers, hyphens. 3–32 characters. Public — used as your handle on Marfa.</span>
       </label>
       <label class="field">
         <span class="field__label">Password</span>
@@ -129,7 +129,7 @@ export function renderSignUpPage(params: SignUpPageParams): string {
   `;
 
   return renderAuthLayout({
-    title: "Create your Myme account",
+    title: "Create your Marfa account",
     bodyHtml,
   });
 }

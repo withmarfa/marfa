@@ -109,7 +109,7 @@ describe("GET /auth/sign-up", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     const html = await res.text();
-    expect(html).toContain("Create your Myme account");
+    expect(html).toContain("Create your Marfa account");
   });
 
   it("returns 404 when allowSignup=false", async () => {
@@ -283,7 +283,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
             res.headers as Headers & { getSetCookie: () => string[] }
           ).getSetCookie()
         : [res.headers.get("set-cookie") ?? ""];
-    expect(cookies.some((c) => c.includes("myme.auth"))).toBe(false);
+    expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(false);
   });
 
   it("Wave C PR2: duplicate sign-up follows the generic-duplicate-response path (no email enumeration)", async () => {
@@ -417,7 +417,7 @@ interface HostedSignUpContext {
 
 async function createHostedSignUpContext(): Promise<HostedSignUpContext> {
   const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
-  const tmpDir = mkdtempSync(join(tmpdir(), "myme-signup-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-signup-test-"));
   const blobPath = join(tmpDir, "blobs");
 
   let storage: Storage;

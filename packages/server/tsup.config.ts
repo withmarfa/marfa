@@ -10,5 +10,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   target: "node20",
-  external: ["@mymehq/runtime-sdk", "@mymehq/shared"],
+  external: ["@withmarfa/runtime-sdk", "@withmarfa/shared"],
 });

@@ -6,7 +6,7 @@ import type {
   CreatedConnectionLeasedToken,
   ConnectionLeasedToken,
   LeaseTokenIntrospection,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
@@ -117,7 +117,7 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
     expect(body.capability_id).toBe("drive.upload");
     expect(body.connection_id).toBe(connectionId);
     expect(typeof body.lease_token).toBe("string");
-    expect(body.lease_token).toMatch(/^myme_lt_/);
+    expect(body.lease_token).toMatch(/^marfa_lt_/);
     // Plaintext is not stored — the storage row holds a SHA-256 hash.
     const row = await ctx.storage.connectionLeasedTokens.get(body.id);
     expect(row).not.toBeNull();
@@ -257,7 +257,7 @@ describe("connector runtime credential — integration: source (T-018)", () => {
     const connectionId = await createConnection();
     // Mint a runtime credential exactly like the install pipeline does:
     // source = `integration:<connectionId>`, connection_id stamped.
-    const rawKey = `myme_k1_runtime_test_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `marfa_k1_runtime_test_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.createRuntimeCredential(
       {
@@ -293,7 +293,7 @@ describe("connector runtime credential — integration: source (T-018)", () => {
     const connectionB = await createConnection();
 
     // Runtime credential bound to connection A.
-    const rawKey = `myme_k1_runtime_otherconn_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `marfa_k1_runtime_otherconn_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.createRuntimeCredential(
       {
@@ -395,7 +395,7 @@ describe("POST /lease-tokens/validate", () => {
 
   it("returns active=false for an unknown bearer", async () => {
     const res = await request(ctx.app, "POST", "/lease-tokens/validate", {
-      body: { lease_token: "myme_lt_does_not_exist" },
+      body: { lease_token: "marfa_lt_does_not_exist" },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as LeaseTokenIntrospection;

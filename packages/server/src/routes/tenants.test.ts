@@ -33,7 +33,7 @@ interface HostedContext {
 
 async function createHostedContext(): Promise<HostedContext> {
   const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
-  const tmpDir = mkdtempSync(join(tmpdir(), "myme-tenants-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-tenants-test-"));
   const blobPath = join(tmpDir, "blobs");
 
   let storage: Storage;
@@ -90,7 +90,7 @@ async function createHostedContext(): Promise<HostedContext> {
   });
 
   const suffix = Math.random().toString(36).slice(2, 10);
-  const tenantAdminKey = `myme_k1_tenant_cfg_${suffix}`;
+  const tenantAdminKey = `marfa_k1_tenant_cfg_${suffix}`;
 
   // Create the tenant row first (required for FK under hosted-mode pg).
   const tenant = await storage.tenants!.create();

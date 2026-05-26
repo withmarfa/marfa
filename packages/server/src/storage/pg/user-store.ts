@@ -1,6 +1,6 @@
 import { eq, and } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { MymeRole, User } from "@mymehq/shared";
+import { generateId } from "@withmarfa/shared";
+import type { MarfaRole, User } from "@withmarfa/shared";
 import type { UserStore, UpdateProfileInput } from "../interface.js";
 import { users, auth_user } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -34,7 +34,7 @@ export class PgUserStore implements UserStore {
     tenant_id: string;
     handle?: string;
     auth_user_id?: string;
-    role?: MymeRole;
+    role?: MarfaRole;
   }): Promise<User> {
     const now = new Date().toISOString();
     const row = {
@@ -57,7 +57,7 @@ export class PgUserStore implements UserStore {
     return rowToUser(row);
   }
 
-  async setRole(id: string, role: MymeRole): Promise<User> {
+  async setRole(id: string, role: MarfaRole): Promise<User> {
     const now = new Date().toISOString();
     await this.db
       .update(users)

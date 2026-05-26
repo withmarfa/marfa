@@ -1,16 +1,16 @@
 /**
- * `@mymehq/runtime-sdk` — substrate-agnostic public surface.
+ * `@withmarfa/runtime-sdk` — substrate-agnostic public surface.
  *
  * Imported by integration handler modules (`integrations/<name>/src/handlers.ts`)
  * and by both substrates (Cloudflare per-Integration Workers via
- * `@mymehq/runtime-sdk/cloudflare`; the local-runtime supervisor inside
- * `@mymehq/server`). This entry has no dependency on
+ * `@withmarfa/runtime-sdk/cloudflare`; the local-runtime supervisor inside
+ * `@withmarfa/server`). This entry has no dependency on
  * `@cloudflare/workers-types` runtime symbols — handler code written
  * against it is portable across substrates.
  *
  * The Cloudflare-specific bootstrap (`createIntegrationWorker`,
  * `PerConnectionState` Durable Object, the DO storage proxy) lives at
- * `@mymehq/runtime-sdk/cloudflare`.
+ * `@withmarfa/runtime-sdk/cloudflare`.
  */
 export { PerConnectionStateCore } from "./per-connection-state.js";
 export type { PerConnectionInternalState } from "./per-connection-state.js";
@@ -28,7 +28,7 @@ export type {
   ItemEventHandler,
 } from "./handlers.js";
 
-export { ConnectionClient, MymeApiError } from "./connection-client.js";
+export { ConnectionClient, MarfaApiError } from "./connection-client.js";
 export type {
   ConnectionClientOptions,
   CreateItemInput,

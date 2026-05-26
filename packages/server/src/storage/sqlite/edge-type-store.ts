@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
-import { ErrorCode, MymeError } from "@mymehq/shared";
-import type { EdgeTypeSchema } from "@mymehq/shared";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import type { EdgeTypeSchema } from "@withmarfa/shared";
 import type { EdgeTypeStore } from "../interface.js";
 import { customEdgeTypes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -32,7 +32,7 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
   ): Promise<EdgeTypeSchema> {
     const existing = await this.get(schema.id);
     if (existing) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CONFLICT,
         `Edge type ${schema.id} already exists`,
         { edge_type: schema.id },

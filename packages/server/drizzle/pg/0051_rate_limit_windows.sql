@@ -15,14 +15,14 @@ CREATE INDEX IF NOT EXISTS "idx_rate_limit_windows_expires_at"
 -- rate-limit middleware can write to it even when RLS is enforced.
 -- The middleware currently runs BEFORE the RLS role-switch wrapper
 -- so the GRANT isn't strictly required today, but keeping the table
--- under `myme_app`'s explicit permission list future-proofs against
+-- under `marfa_app`'s explicit permission list future-proofs against
 -- middleware re-ordering and matches the pattern for tenant_quotas /
 -- email_suppressions. DO block makes the GRANT idempotent on fresh
 -- and migrated databases alike.
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'myme_app') THEN
-    GRANT SELECT, INSERT, UPDATE, DELETE ON "rate_limit_windows" TO "myme_app";
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'marfa_app') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON "rate_limit_windows" TO "marfa_app";
   END IF;
 END
 $$;

@@ -24,7 +24,7 @@
  * Runs in CI on every PR (see `.github/workflows/ci.yml` —
  * `sqlite-migrations-lint` job).
  *
- * Run manually: `pnpm --filter @mymehq/server lint:sqlite-migrations`
+ * Run manually: `pnpm --filter @withmarfa/server lint:sqlite-migrations`
  */
 
 import { readdirSync, readFileSync } from "node:fs";

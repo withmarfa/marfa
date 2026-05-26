@@ -2,7 +2,7 @@
 --
 -- The users table grows the profile fields (first_name, last_name, bio,
 -- avatar_blob_hash) plus a Better Auth FK (auth_user_id) that becomes the
--- canonical bridge between the auth identity and the Myme profile.
+-- canonical bridge between the auth identity and the Marfa profile.
 --
 -- The previous user/auth split kept a `email` column on `users` AND on
 -- `auth_user`. That was the shadow-copy hazard the wave plan called out:

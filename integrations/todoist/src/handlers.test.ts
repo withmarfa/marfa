@@ -1,12 +1,12 @@
 /**
  * Handler-level tests for the Todoist bidirectional integration.
  *
- * Builds ConnectionContext inline. Mocks ctx.myme entirely (no real
+ * Builds ConnectionContext inline. Mocks ctx.marfa entirely (no real
  * HTTP). Tests cover:
  *   - Inbound: Sync API first-run response → todoist.task upsert +
  *     sync_token advance + mapping record.
  *   - Inbound: subsequent run uses persisted sync_token (incremental).
- *   - Inbound: is_deleted / checked items trash the mapped Myme item.
+ *   - Inbound: is_deleted / checked items trash the mapped Marfa item.
  *   - Inbound: echo-suppressed item skipped, counted in summary.
  *   - Outbound: trashed item → REST /tasks/{id}/close + mapping clear.
  *   - Outbound: update path → REST POST /tasks/{id} body subset.
@@ -27,7 +27,7 @@ import {
   type ItemState,
   type ItemEventMessage,
   type ScheduleMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleItemEvent, __internals } from "./handlers.js";
 
 interface InMemoryStorage {
@@ -70,9 +70,9 @@ interface JsonCall {
 }
 
 interface BuildOpts {
-  /** ctx.myme.getItem(connection_id) returns this. */
+  /** ctx.marfa.getItem(connection_id) returns this. */
   connectionRecord?: Partial<ItemResource>;
-  /** ctx.myme.getItem(otherId) returns this. */
+  /** ctx.marfa.getItem(otherId) returns this. */
   itemForEvent?: ItemResource | null;
   /** Sequenced proxyRequestForm responses (form-encoded). */
   proxyFormResponses?: (() => Response)[];
@@ -159,7 +159,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
   const ctx: ConnectionContext = {
     connection_id: connectionId,
     integration_name: "todoist.tasks",
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, {
@@ -281,7 +281,7 @@ describe("Todoist handlers — inbound (schedule)", () => {
     expect(formCalls[1]!.formFields.sync_token).toBe("sync_after_first_pull");
   });
 
-  it("trashes the mapped Myme item when Todoist marks the task is_deleted", async () => {
+  it("trashes the mapped Marfa item when Todoist marks the task is_deleted", async () => {
     const { ctx, transitions } = buildContext({
       proxyFormResponses: [
         () => jsonResponse(SAMPLE_INBOUND),
@@ -297,7 +297,7 @@ describe("Todoist handlers — inbound (schedule)", () => {
     expect(transitions).toEqual([{ id: "mit_1", to: "trashed" }]);
   });
 
-  it("trashes the mapped Myme item when Todoist marks the task checked (completed)", async () => {
+  it("trashes the mapped Marfa item when Todoist marks the task checked (completed)", async () => {
     const { ctx, transitions } = buildContext({
       proxyFormResponses: [
         () => jsonResponse(SAMPLE_INBOUND),
@@ -313,7 +313,7 @@ describe("Todoist handlers — inbound (schedule)", () => {
     expect(transitions).toEqual([{ id: "mit_2", to: "trashed" }]);
   });
 
-  it("strips the [myme-id:...] sentinel from description on inbound", async () => {
+  it("strips the [marfa-id:...] sentinel from description on inbound", async () => {
     const { ctx, created } = buildContext({
       proxyFormResponses: [
         () =>
@@ -322,8 +322,8 @@ describe("Todoist handlers — inbound (schedule)", () => {
             items: [
               {
                 id: "td_with_sentinel",
-                content: "Task we created from Myme",
-                description: "My real notes\n\n[myme-id:itm_alpha]",
+                content: "Task we created from Marfa",
+                description: "My real notes\n\n[marfa-id:itm_alpha]",
               },
             ],
           }),
@@ -338,7 +338,7 @@ describe("Todoist handlers — inbound (schedule)", () => {
 // Outbound — item-event handler
 // ---------------------------------------------------------------------------
 
-const MYME_TASK = (
+const MARFA_TASK = (
   id: string,
   overrides: Partial<{
     title: string;
@@ -352,7 +352,7 @@ const MYME_TASK = (
   type: "todoist.task",
   state: overrides.state ?? "active",
   properties: {
-    title: overrides.title ?? "New Myme task",
+    title: overrides.title ?? "New Marfa task",
     ...(overrides.description !== undefined
       ? { description: overrides.description }
       : {}),
@@ -365,7 +365,7 @@ const MYME_TASK = (
 
 describe("Todoist handlers — outbound (item-event)", () => {
   it("creates a Todoist task via Sync API item_add with deterministic temp_id + uuid", async () => {
-    const item = MYME_TASK("itm_alpha", {
+    const item = MARFA_TASK("itm_alpha", {
       title: "Send the contract",
       description: "Notes about the contract",
       priority: 3,
@@ -404,7 +404,7 @@ describe("Todoist handlers — outbound (item-event)", () => {
     });
     expect(commands[0]!.args.content).toBe("Send the contract");
     expect(commands[0]!.args.description).toMatch(/Notes about the contract/);
-    expect(commands[0]!.args.description).toMatch(/\[myme-id:itm_alpha\]/);
+    expect(commands[0]!.args.description).toMatch(/\[marfa-id:itm_alpha\]/);
     expect(commands[0]!.args.priority).toBe(3);
 
     const cursor = (await ctx.cursor.read("main")) as {
@@ -415,7 +415,7 @@ describe("Todoist handlers — outbound (item-event)", () => {
     expect(cursor.mappings.td_9001).toBe("itm_alpha");
   });
 
-  it("retrying with the same Myme item id reproduces the same temp_id + uuid (T-020 idempotency rail)", async () => {
+  it("retrying with the same Marfa item id reproduces the same temp_id + uuid (T-020 idempotency rail)", async () => {
     const first = await __internals.deriveTempId("itm_idem");
     const second = await __internals.deriveTempId("itm_idem");
     const firstUuid = await __internals.deriveCommandUuid("itm_idem");
@@ -427,7 +427,10 @@ describe("Todoist handlers — outbound (item-event)", () => {
   });
 
   it("updates an existing mapped task via REST POST /api/v1/tasks/{id}", async () => {
-    const item = MYME_TASK("itm_beta", { title: "Updated title", priority: 4 });
+    const item = MARFA_TASK("itm_beta", {
+      title: "Updated title",
+      priority: 4,
+    });
     const { ctx, jsonCalls } = buildContext({
       itemForEvent: item,
       proxyJsonResponses: [
@@ -459,7 +462,7 @@ describe("Todoist handlers — outbound (item-event)", () => {
     });
   });
 
-  it("trashing a Myme task closes the upstream Todoist task and clears the mapping", async () => {
+  it("trashing a Marfa task closes the upstream Todoist task and clears the mapping", async () => {
     const item: ItemResource = {
       id: "itm_gamma",
       type: "todoist.task",
@@ -490,7 +493,7 @@ describe("Todoist handlers — outbound (item-event)", () => {
   });
 
   it("defers with retry=true when the external_id is in the lag window", async () => {
-    const item = MYME_TASK("itm_delta", { title: "Recently echoed" });
+    const item = MARFA_TASK("itm_delta", { title: "Recently echoed" });
     const { ctx } = buildContext({ itemForEvent: item });
     await ctx.cursor.write("main", {
       sync_token: "*",
@@ -509,7 +512,7 @@ describe("Todoist handlers — outbound (item-event)", () => {
   });
 
   it("returns retry=true on REST 5xx during update", async () => {
-    const item = MYME_TASK("itm_epsilon", { title: "Service down" });
+    const item = MARFA_TASK("itm_epsilon", { title: "Service down" });
     const { ctx } = buildContext({
       itemForEvent: item,
       proxyJsonResponses: [
@@ -527,7 +530,7 @@ describe("Todoist handlers — outbound (item-event)", () => {
   });
 
   it("4xx on update surfaces accept-partial (ok=true) with action_required activity", async () => {
-    const item = MYME_TASK("itm_zeta", { title: "Bad payload" });
+    const item = MARFA_TASK("itm_zeta", { title: "Bad payload" });
     const { ctx, emitted } = buildContext({
       itemForEvent: item,
       proxyJsonResponses: [
@@ -551,7 +554,7 @@ describe("Todoist handlers — outbound (item-event)", () => {
 
   it("ignores self-events (cycle's originating_connection_id === ctx.connection_id)", async () => {
     const { ctx, jsonCalls, formCalls } = buildContext({
-      itemForEvent: MYME_TASK("itm_self"),
+      itemForEvent: MARFA_TASK("itm_self"),
     });
     const result = await handleItemEvent(
       ctx,
@@ -568,21 +571,21 @@ describe("Todoist handlers — outbound (item-event)", () => {
 // ---------------------------------------------------------------------------
 
 describe("Todoist internals", () => {
-  it("stripSentinel removes the [myme-id:...] line and trims whitespace", () => {
+  it("stripSentinel removes the [marfa-id:...] line and trims whitespace", () => {
     const stripped = __internals.stripSentinel(
-      "Real notes\nMore notes\n\n[myme-id:abc-123]",
+      "Real notes\nMore notes\n\n[marfa-id:abc-123]",
     );
     expect(stripped).toBe("Real notes\nMore notes");
   });
 
   it("appendSentinel adds the sentinel line to a description", () => {
     const out = __internals.appendSentinel("notes", "itm_x");
-    expect(out).toBe("notes\n\n[myme-id:itm_x]");
+    expect(out).toBe("notes\n\n[marfa-id:itm_x]");
   });
 
   it("appendSentinel preserves description when input is empty", () => {
     const out = __internals.appendSentinel("", "itm_y");
-    expect(out).toBe("[myme-id:itm_y]");
+    expect(out).toBe("[marfa-id:itm_y]");
   });
 
   it("buildItemInput translates a Todoist item into a todoist.task input", () => {

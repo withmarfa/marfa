@@ -4,7 +4,7 @@
 -- present but no live consumer filtered on it across any canonical repo.
 -- The integration / automation provenance question it tried to answer is
 -- already covered by `source` (Spotify-integration items carry
--- `source: mymehq.spotify`; manually-created items carry whatever the
+-- `source: withmarfa.spotify`; manually-created items carry whatever the
 -- credential's source is). Re-introducing later via a single nullable
 -- column is cheap if a real consumer appears.
 --

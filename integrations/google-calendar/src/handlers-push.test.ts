@@ -35,7 +35,7 @@ import {
   type ItemState,
   type ScheduleMessage,
   type WebhookHandlerInput,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleWebhook } from "./handlers.js";
 
 interface InMemoryStorage {
@@ -125,7 +125,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
   const ctx: ConnectionContext = {
     connection_id: connectionId,
     integration_name: "google.calendar",
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, {
@@ -150,7 +150,7 @@ function multiCalConnectionWithWebhook(
         default_write_calendar_id: selectedCalendarIds[0] ?? "primary",
         target_type: "google.calendar.event",
         inbound_webhook_url:
-          "https://staging.myme.so/webhooks/inbound/conn_gcal_push",
+          "https://staging.marfa.so/webhooks/inbound/conn_gcal_push",
       },
     },
   };
@@ -221,7 +221,7 @@ describe("handleSchedule — channel create on first run", () => {
     };
     expect(watchBody.type).toBe("webhook");
     expect(watchBody.address).toBe(
-      "https://staging.myme.so/webhooks/inbound/conn_gcal_push",
+      "https://staging.marfa.so/webhooks/inbound/conn_gcal_push",
     );
     expect(typeof watchBody.token).toBe("string");
     expect(watchBody.token.length).toBe(64); // 32 bytes hex

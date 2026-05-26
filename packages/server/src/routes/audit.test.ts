@@ -313,7 +313,7 @@ describe("GET /audit", () => {
     // GET /audit, assert it sees only tenant-A rows. Verifies the
     // `tenant_id: callerTenantId` line in the route handler hasn't
     // regressed back to the pre-T-041 unfiltered shape.
-    const tenantAKey = "myme_k1_test_tenant_a_admin";
+    const tenantAKey = "marfa_k1_test_tenant_a_admin";
     await ctx.storage.keys.create(
       {
         label: "tenant-a-admin",

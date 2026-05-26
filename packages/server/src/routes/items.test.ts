@@ -252,9 +252,9 @@ describe("POST /items — platform-credential gate (TSC42 §3/§4)", () => {
     // with `type_permissions: { "system.connection": "write" }` could mint
     // system.connection rows because the admin-role bypass in
     // `checkTypeAccess` returned early before any platform check ran. The
-    // gate now fires for writes to `core.*` / `system.*` / `myme.*`
+    // gate now fires for writes to `core.*` / `system.*` / `marfa.*`
     // independent of role; reads are unrestricted.
-    const tenantAdminKey = "myme_k1_test_non_platform_admin";
+    const tenantAdminKey = "marfa_k1_test_non_platform_admin";
     await ctx.storage.keys.create(
       {
         label: "tenant-admin-non-platform",
@@ -314,7 +314,7 @@ describe("POST /items — platform-credential gate (TSC42 §3/§4)", () => {
     // calls POST /items with type: "system.activity" to surface progress
     // / errors — the carve-out keeps that path open while still blocking
     // the dangerous system.* writes.
-    const runtimeKey = "myme_k1_test_runtime_credential";
+    const runtimeKey = "marfa_k1_test_runtime_credential";
     await ctx.storage.keys.createRuntimeCredential(
       {
         label: "runtime-cred",
@@ -362,7 +362,7 @@ describe("POST /items — platform-credential gate (TSC42 §3/§4)", () => {
     // Reads to reserved-namespace items are unrestricted (filtered by
     // tenant scoping at the storage layer); only writes need
     // is_platform.
-    const tenantReaderKey = "myme_k1_test_tenant_reader";
+    const tenantReaderKey = "marfa_k1_test_tenant_reader";
     await ctx.storage.keys.create(
       {
         label: "tenant-reader",

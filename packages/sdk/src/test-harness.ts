@@ -8,8 +8,8 @@ import {
   FilesystemBlobBackend,
   type AppConfig,
   type Storage,
-} from "@mymehq/server";
-import { MymeClient } from "./client.js";
+} from "@withmarfa/server";
+import { MarfaClient } from "./client.js";
 
 /** Mirrors the server-side `hashApiKey` (middleware/auth.ts). Inlined
  *  to avoid pulling a private server module into the SDK package. The
@@ -113,12 +113,12 @@ function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
 
 export interface KeysModeFixture {
   /** SDK client wired to call the in-process server via the bootstrap admin key. */
-  client: MymeClient;
-  /** The bootstrap admin key (`myme_k1_*`). Use to mint additional keys
+  client: MarfaClient;
+  /** The bootstrap admin key (`marfa_k1_*`). Use to mint additional keys
    *  in tests that need them. */
   adminKey: string;
   /** The custom `fetch` the SDK is wired through. Pass into a second
-   *  `MymeClient` if a test needs another bearer against the same
+   *  `MarfaClient` if a test needs another bearer against the same
    *  in-process app. */
   fetch: typeof globalThis.fetch;
   /** Underlying storage handle — surfaced for tests that need to seed
@@ -131,7 +131,7 @@ export interface KeysModeFixture {
 export async function createKeysModeFixture(
   configOverrides?: Partial<AppConfig>,
 ): Promise<KeysModeFixture> {
-  const tmpDir = mkdtempSync(join(tmpdir(), "myme-sdk-keys-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-sdk-keys-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(
@@ -153,7 +153,7 @@ export async function createKeysModeFixture(
   });
   const { key } = (await bootstrapRes.json()) as { key: string };
 
-  const client = new MymeClient({
+  const client = new MarfaClient({
     url: "http://localhost",
     apiKey: key,
     fetch,
@@ -176,7 +176,7 @@ export interface HostedModeFixture extends Omit<KeysModeFixture, "adminKey"> {
   /** `auth_user.id` for the signed-up user — the `authUserId` the
    *  account-lifecycle routes resolve from the bearer's tenant binding. */
   authUserId: string;
-  /** `users.tenant_id` for the bridged Myme profile. The bearer key is
+  /** `users.tenant_id` for the bridged Marfa profile. The bearer key is
    *  scoped to this tenant. */
   tenantId: string;
   /** A `tenant_admin` API key bound to `tenantId` — the SDK client
@@ -203,7 +203,7 @@ export interface HostedModeFixture extends Omit<KeysModeFixture, "adminKey"> {
 export async function createHostedModeFixture(
   configOverrides?: Partial<AppConfig>,
 ): Promise<HostedModeFixture> {
-  const tmpDir = mkdtempSync(join(tmpdir(), "myme-sdk-hosted-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-sdk-hosted-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"), {
     authMode: "hosted",
   });
@@ -297,7 +297,7 @@ export async function createHostedModeFixture(
   // same shape the real sign-up flow stamps (per
   // deprecated/grandfather-profiles-t074.ts:260) — tenant_admin role with
   // `*: write` permissions, scoped to the user's tenant.
-  const rawKey = `myme_k1_sdk_hosted_${suffix}`;
+  const rawKey = `marfa_k1_sdk_hosted_${suffix}`;
   await storage.keys.create(
     {
       label: `sdk-hosted-${suffix}`,
@@ -311,7 +311,7 @@ export async function createHostedModeFixture(
     tenantId,
   );
 
-  const client = new MymeClient({
+  const client = new MarfaClient({
     url: "http://localhost",
     apiKey: rawKey,
     fetch,

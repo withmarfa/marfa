@@ -14,7 +14,7 @@ import { Hono } from "hono";
 import { cycleMiddleware } from "./cycle.js";
 import { cycleRequestContext } from "../cycle-context.js";
 import type { AppEnv } from "./auth.js";
-import type { ApiKey } from "@mymehq/shared";
+import type { ApiKey } from "@withmarfa/shared";
 
 function buildApp(opts?: { apiKey?: ApiKey | undefined }): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -56,12 +56,12 @@ function apiKey(overrides: Partial<ApiKey> = {}): ApiKey {
 
 describe("cycleMiddleware", () => {
   describe("header path — connector continuing a chain", () => {
-    it("uses the X-Myme-Cycle-Origin / X-Myme-Cycle-Hop pair when both present", async () => {
+    it("uses the X-Marfa-Cycle-Origin / X-Marfa-Cycle-Hop pair when both present", async () => {
       const app = buildApp();
       const res = await app.request("/echo", {
         headers: {
-          "x-myme-cycle-origin": "conn-A",
-          "x-myme-cycle-hop": "3",
+          "x-marfa-cycle-origin": "conn-A",
+          "x-marfa-cycle-hop": "3",
         },
       });
       const body = (await res.json()) as { cycle: unknown };
@@ -75,8 +75,8 @@ describe("cycleMiddleware", () => {
       const app = buildApp();
       const res = await app.request("/echo", {
         headers: {
-          "x-myme-cycle-origin": "",
-          "x-myme-cycle-hop": "0",
+          "x-marfa-cycle-origin": "",
+          "x-marfa-cycle-hop": "0",
         },
       });
       const body = (await res.json()) as { cycle: unknown };
@@ -92,7 +92,7 @@ describe("cycleMiddleware", () => {
       });
       // Only origin, no hop — middleware ignores the partial pair.
       const res = await app.request("/echo", {
-        headers: { "x-myme-cycle-origin": "conn-X" },
+        headers: { "x-marfa-cycle-origin": "conn-X" },
       });
       const body = (await res.json()) as { cycle: unknown };
       expect(body.cycle).toEqual({
@@ -101,14 +101,14 @@ describe("cycleMiddleware", () => {
       });
     });
 
-    it("falls back to api-key shape when X-Myme-Cycle-Hop is malformed", async () => {
+    it("falls back to api-key shape when X-Marfa-Cycle-Hop is malformed", async () => {
       const app = buildApp({
         apiKey: apiKey({ connection_id: "conn-fallback" }),
       });
       const res = await app.request("/echo", {
         headers: {
-          "x-myme-cycle-origin": "conn-X",
-          "x-myme-cycle-hop": "not-a-number",
+          "x-marfa-cycle-origin": "conn-X",
+          "x-marfa-cycle-hop": "not-a-number",
         },
       });
       const body = (await res.json()) as { cycle: unknown };
@@ -118,12 +118,12 @@ describe("cycleMiddleware", () => {
       });
     });
 
-    it("falls back when X-Myme-Cycle-Hop is negative", async () => {
+    it("falls back when X-Marfa-Cycle-Hop is negative", async () => {
       const app = buildApp({ apiKey: apiKey() });
       const res = await app.request("/echo", {
         headers: {
-          "x-myme-cycle-origin": "conn-X",
-          "x-myme-cycle-hop": "-1",
+          "x-marfa-cycle-origin": "conn-X",
+          "x-marfa-cycle-hop": "-1",
         },
       });
       const body = (await res.json()) as { cycle: unknown };
@@ -165,7 +165,7 @@ describe("cycleMiddleware", () => {
 
     it("does not derive origin from arbitrary `<prefix>:<id>` shapes", async () => {
       // Only `oauth:` is meaningful for cycle attribution today.
-      // `test-admin-xyz`, `myme/oauth/authorize`, etc. all stamp to null.
+      // `test-admin-xyz`, `marfa/oauth/authorize`, etc. all stamp to null.
       const app = buildApp({
         apiKey: apiKey({ source: "test-admin-abc123" }),
       });
@@ -225,8 +225,8 @@ describe("cycleMiddleware", () => {
       const app = buildApp();
       const res = await app.request("/echo-both", {
         headers: {
-          "x-myme-cycle-origin": "conn-hdr",
-          "x-myme-cycle-hop": "4",
+          "x-marfa-cycle-origin": "conn-hdr",
+          "x-marfa-cycle-hop": "4",
         },
       });
       const body = (await res.json()) as {
@@ -249,14 +249,14 @@ describe("cycleMiddleware", () => {
       const [r1, r2] = await Promise.all([
         app.request("/echo-both", {
           headers: {
-            "x-myme-cycle-origin": "conn-one",
-            "x-myme-cycle-hop": "1",
+            "x-marfa-cycle-origin": "conn-one",
+            "x-marfa-cycle-hop": "1",
           },
         }),
         app.request("/echo-both", {
           headers: {
-            "x-myme-cycle-origin": "conn-two",
-            "x-myme-cycle-hop": "2",
+            "x-marfa-cycle-origin": "conn-two",
+            "x-marfa-cycle-hop": "2",
           },
         }),
       ]);

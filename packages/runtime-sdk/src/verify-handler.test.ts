@@ -25,7 +25,7 @@ function makeEnv(integrationName: string): ConsumerEnvironment {
     },
     mintCredential: (connectionId) =>
       Promise.resolve({
-        api_key: "myme_k1_verify_test",
+        api_key: "marfa_k1_verify_test",
         connection_id: connectionId,
         expires_at: new Date(Date.now() + 60_000).toISOString(),
       }),

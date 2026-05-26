@@ -1,12 +1,12 @@
 # Contributing
 
-Thanks for your interest in contributing to Myme.
+Thanks for your interest in contributing to Marfa.
 
 ## Setup
 
 ```bash
-git clone https://github.com/mymehq/myme.git
-cd myme
+git clone https://github.com/withmarfa/marfa.git
+cd marfa
 pnpm install
 pnpm test
 ```
@@ -65,9 +65,9 @@ The server tests run against SQLite by default. CI also runs against Postgres.
 
 ## Conformance suite
 
-The [conformance](https://github.com/mymehq/conformance) repo contains the conformance test suite. To run it against a local server:
+The [conformance](https://github.com/withmarfa/conformance) repo contains the conformance test suite. To run it against a local server:
 
 ```bash
 cd ../conformance
-MYME_API_URL=http://localhost:8600 MYME_API_KEY=your-key pnpm test
+MARFA_API_URL=http://localhost:8600 MARFA_API_KEY=your-key pnpm test
 ```

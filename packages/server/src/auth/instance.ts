@@ -5,7 +5,7 @@ import { passkey } from "@better-auth/passkey";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import * as pgSchema from "../storage/pg/schema.js";
 import { log } from "../middleware/logger.js";
-import type { EmailTransport as MymeEmailTransport } from "../email/transport.js";
+import type { EmailTransport as MarfaEmailTransport } from "../email/transport.js";
 import type { Storage } from "../storage/interface.js";
 import { renderMagicLinkEmail } from "./email-templates/magic-link.js";
 import { renderResetPasswordEmail } from "./email-templates/reset-password.js";
@@ -17,7 +17,7 @@ import {
 
 /**
  * The first parameter type of better-auth's drizzleAdapter — used to type
- * the `db` handle threaded through `MymeAuthOptions` so the call site no
+ * the `db` handle threaded through `MarfaAuthOptions` so the call site no
  * longer needs an `as never` escape hatch (§3.13). When better-auth bumps
  * and tightens the adapter signature, this alias surfaces the mismatch
  * at compile time at the consumer rather than masking it with a cast.
@@ -33,7 +33,7 @@ type DrizzleAdapterDb = Parameters<typeof drizzleAdapter>[0];
  *   PR 1 — email + password
  *   PR 2 — passkey + magic link (this addition)
  *   PR 3 — generic OIDC client (federated)
- *   PR 5 — OIDC provider (Myme as IdP)
+ *   PR 5 — OIDC provider (Marfa as IdP)
  */
 
 export type EmailTransport = (params: {
@@ -42,7 +42,7 @@ export type EmailTransport = (params: {
   token: string;
 }) => void | Promise<void>;
 
-export interface MymeAuthOptions {
+export interface MarfaAuthOptions {
   /** Drizzle handle from the storage factory. Typed against better-auth's
    *  `drizzleAdapter` first-parameter so the call site is statically
    *  checked without an `as never` cast. The Storage interface widens it
@@ -56,26 +56,26 @@ export interface MymeAuthOptions {
   baseURL: string;
   /** When false, the email + password sign-up endpoint is disabled.
    *  Default `false` per the orchestrator-confirmed sign-up policy
-   *  (`MYME_AUTH_ALLOW_SIGNUP=false`). Existing users can still sign in. */
+   *  (`MARFA_AUTH_ALLOW_SIGNUP=false`). Existing users can still sign in. */
   allowSignup: boolean;
   /** Optional shared secret used for cookie signing. When unset,
    *  better-auth generates an ephemeral secret per process — fine for
    *  dev, not safe for production. Production deployments must set
-   *  `MYME_AUTH_SECRET`. */
+   *  `MARFA_AUTH_SECRET`. */
   secret?: string;
   /** Origins permitted to make credentialed (cookie) requests against
    *  the auth surface. Defaults to the `baseURL` plus any `corsOrigins`
    *  from `AppConfig`. */
   trustedOrigins?: string[];
   /** Relying-party name shown to the user during passkey registration.
-   *  Defaults to "Myme". */
+   *  Defaults to "Marfa". */
   passkeyRpName?: string;
   /** Relying-party ID for passkey registration — typically the bare host
    *  of `baseURL`. When unset, derived from `baseURL`. */
   passkeyRpId?: string;
   /** Sink for magic-link emails. Defaults to a `log` transport that
    *  writes the link to stdout — fine for dev. Tests pass an inline
-   *  callable. Production wires `mymeEmailTransport` instead, which
+   *  callable. Production wires `marfaEmailTransport` instead, which
    *  goes through the rich email module (HTML template, idempotency
    *  key for log correlation). */
   emailTransport?: EmailTransport;
@@ -84,7 +84,7 @@ export interface MymeAuthOptions {
    *  absent, falls back to `emailTransport` (or the log default).
    *  Production paths set this; tests typically don't. See
    *  `src/email/index.ts` for construction. */
-  mymeEmailTransport?: MymeEmailTransport;
+  marfaEmailTransport?: MarfaEmailTransport;
   /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
    *  into the generic-oauth plugin. Each entry surfaces a sign-in button
    *  on the sign-in page and exposes `/auth/sign-in/oauth2` + `/auth/oauth2/callback/<providerId>`. */
@@ -96,7 +96,7 @@ export interface MymeAuthOptions {
     scopes?: string[];
   }[];
   /** Wave C PR2: turn on `requireEmailVerification` + `sendOnSignUp`.
-   *  Default: auto-detect from `mymeEmailTransport` — on when a real
+   *  Default: auto-detect from `marfaEmailTransport` — on when a real
    *  backend (`cloudflare` / `smtp`) is wired, off when the transport is
    *  `none` or missing. Tests pass `true` explicitly to exercise the
    *  verify flow without booting a real transport; production
@@ -118,28 +118,28 @@ const defaultLogTransport: EmailTransport = ({ email, url }) => {
   log("info", "magic-link email (log transport)", {
     to: email,
     url,
-    note: "configure MYME_EMAIL_TRANSPORT for live delivery",
+    note: "configure MARFA_EMAIL_TRANSPORT for live delivery",
   });
 };
 
 /** Authenticated user on a Better Auth session. Reduced surface — only the
  *  fields the OAuth consent flow currently consumes. */
-export interface MymeAuthSessionUser {
+export interface MarfaAuthSessionUser {
   id: string;
   email: string;
   name?: string | null;
 }
 
 /** A live Better Auth session (cookie-backed). */
-export interface MymeAuthSession {
-  user: MymeAuthSessionUser;
+export interface MarfaAuthSession {
+  user: MarfaAuthSessionUser;
   session: { id: string };
 }
 
 /** Narrow public type — covers everything `app.ts` and future routes need
  *  without re-exporting the full Better Auth generic surface (which drags
  *  in @simplewebauthn / zod internal types and breaks portable .d.ts emit). */
-export interface MymeAuth {
+export interface MarfaAuth {
   handler: (request: Request) => Promise<Response>;
   /**
    * Session lookup over the request's cookies. Returns the active
@@ -147,7 +147,7 @@ export interface MymeAuth {
    * OAuth consent flow uses this to gate `/auth/authorize` without
    * requiring admin bearer tokens.
    */
-  getSession: (headers: Headers) => Promise<MymeAuthSession | null>;
+  getSession: (headers: Headers) => Promise<MarfaAuthSession | null>;
   /** Whether new account creation is allowed on this instance. Mirrors
    *  the constructor option; the sign-in page reads it to decide
    *  whether to render a "Create one" link below the form. */
@@ -159,12 +159,12 @@ export interface MymeAuth {
   /** Public-facing issuer URL the instance advertises (drives
    *  `verification_uri` in the Device Authorization Grant response,
    *  the OAuth issuer field on the discovery doc, and the cookie
-   *  domain). Mirrors `MYME_AUTH_BASE_URL`. */
+   *  domain). Mirrors `MARFA_AUTH_BASE_URL`. */
   baseURL: string;
   api: unknown;
 }
 
-export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
+export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   const schema =
     options.dialect === "pg"
       ? {
@@ -198,7 +198,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
         };
 
   const transport = options.emailTransport ?? defaultLogTransport;
-  const richTransport = options.mymeEmailTransport;
+  const richTransport = options.marfaEmailTransport;
 
   // Wave C PR2: only flip `requireEmailVerification` when a real email
   // backend is wired. With the `none` backend (or no rich transport at
@@ -206,7 +206,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
   // flag on would 500 every sign-up. Graceful degradation: pre-PR1
   // (no transport) and unconfigured-PR1 (`none`) deployments keep the
   // pre-PR2 auto-sign-in behaviour. As soon as the operator wires
-  // `MYME_EMAIL_BACKEND=cloudflare` (or `smtp`) and restarts, verification
+  // `MARFA_EMAIL_BACKEND=cloudflare` (or `smtp`) and restarts, verification
   // turns on automatically. Callers (e.g. tests) can override the
   // auto-detect via `options.requireEmailVerification`.
   const emailVerificationEnabled =
@@ -268,7 +268,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
       // verify before any session lands.
       autoSignIn: true,
       // Default off per the workstream-1 brief; flips on when the
-      // `MYME_AUTH_ALLOW_SIGNUP` env var is set.
+      // `MARFA_AUTH_ALLOW_SIGNUP` env var is set.
       disableSignUp: !options.allowSignup,
       // Wave C PR2: every new sign-up must verify their email before
       // signing in — but only when a real email backend is actually
@@ -287,7 +287,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
       // a session that's already drifted somewhere unexpected.
       revokeSessionsOnPasswordReset: true,
       // Wave C PR3 / T-033: send the password-reset email through
-      // the rich Myme transport. The hook overrides better-auth's
+      // the rich Marfa transport. The hook overrides better-auth's
       // default URL to point at our themed `/auth/reset-password`
       // page directly (skipping better-auth's intermediate GET that
       // redirects to a callbackURL). Token validation happens on
@@ -337,7 +337,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
         log("info", "reset-password (no transport configured)", {
           to: user.email,
           url: ourUrl,
-          note: "configure MYME_EMAIL_BACKEND for live delivery",
+          note: "configure MARFA_EMAIL_BACKEND for live delivery",
         });
       },
     },
@@ -359,7 +359,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
           log("info", "verify-email (no transport configured)", {
             to: user.email,
             url,
-            note: "configure MYME_EMAIL_BACKEND for live delivery",
+            note: "configure MARFA_EMAIL_BACKEND for live delivery",
           });
           return;
         }
@@ -396,7 +396,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
     },
     plugins: [
       passkey({
-        rpName: options.passkeyRpName ?? "Myme",
+        rpName: options.passkeyRpName ?? "Marfa",
         rpID: derivedRpId,
         // Trust the same origins as cookie-credentialed requests.
         origin: options.baseURL,
@@ -472,7 +472,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
     advanced: {
       // Cookies set on /auth/*; the data plane (/items, /edges, etc.)
       // remains bearer-only and does not consume this cookie.
-      cookiePrefix: "myme.auth",
+      cookiePrefix: "marfa.auth",
       defaultCookieAttributes: {
         httpOnly: true,
         // `Secure` is conditional on the auth baseURL using HTTPS.
@@ -495,7 +495,7 @@ export function createMymeAuth(options: MymeAuthOptions): MymeAuth {
   const api = instance.api as {
     getSession: (params: {
       headers: Headers;
-    }) => Promise<MymeAuthSession | null>;
+    }) => Promise<MarfaAuthSession | null>;
   };
 
   return {

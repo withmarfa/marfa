@@ -1,6 +1,6 @@
 /**
  * `none` backend — explicit no-transport. Returns a structured error
- * on every send. Default if `MYME_EMAIL_BACKEND` is unset.
+ * on every send. Default if `MARFA_EMAIL_BACKEND` is unset.
  *
  * The point of this backend (vs simply having `transport === undefined`)
  * is that email-dependent flows fail with a clear, attributable error

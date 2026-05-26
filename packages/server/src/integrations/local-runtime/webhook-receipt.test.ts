@@ -130,8 +130,8 @@ describe("POST /runtime/webhook/:connection_id", () => {
         body,
         headers: {
           "content-type": "application/json",
-          "x-myme-signature": `sha256=${signature}`,
-          "x-myme-delivery-id": "delivery_test_1",
+          "x-marfa-signature": `sha256=${signature}`,
+          "x-marfa-delivery-id": "delivery_test_1",
         },
       },
     );
@@ -152,8 +152,8 @@ describe("POST /runtime/webhook/:connection_id", () => {
     const signature = signBody(body, setup.secret);
     const headers = {
       "content-type": "application/json",
-      "x-myme-signature": `sha256=${signature}`,
-      "x-myme-delivery-id": "delivery_dup",
+      "x-marfa-signature": `sha256=${signature}`,
+      "x-marfa-delivery-id": "delivery_dup",
     };
     const first = await setup.app.request(
       `/runtime/webhook/${setup.connectionId}`,
@@ -181,7 +181,7 @@ describe("POST /runtime/webhook/:connection_id", () => {
         body,
         headers: {
           "content-type": "application/json",
-          "x-myme-signature": `sha256=${badSignature}`,
+          "x-marfa-signature": `sha256=${badSignature}`,
         },
       },
     );
@@ -204,7 +204,7 @@ describe("POST /runtime/webhook/:connection_id", () => {
         body,
         headers: {
           "content-type": "application/json",
-          "x-myme-signature": `sha256=${signBody(body, setup.secret)}`,
+          "x-marfa-signature": `sha256=${signBody(body, setup.secret)}`,
         },
       },
     );

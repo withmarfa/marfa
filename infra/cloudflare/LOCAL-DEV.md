@@ -1,6 +1,6 @@
 # Local-dev loop for the Connections runtime
 
-This walkthrough gets you from a stock checkout to delivering an inbound webhook against a locally running control plane Worker, with the Myme server running on `:8602`.
+This walkthrough gets you from a stock checkout to delivering an inbound webhook against a locally running control plane Worker, with the Marfa server running on `:8602`.
 
 ## One-time setup
 
@@ -14,18 +14,18 @@ This walkthrough gets you from a stock checkout to delivering an inbound webhook
 
 ## Daily flow
 
-In **terminal A** (Myme server):
+In **terminal A** (Marfa server):
 
 ```sh
-cd /path/to/myme
-pnpm --filter @mymehq/server run dev      # boots on :8602 by default
+cd /path/to/marfa
+pnpm --filter @withmarfa/server run dev      # boots on :8602 by default
 ```
 
 In **terminal B** (control-plane Worker):
 
 ```sh
-cd /path/to/myme
-pnpm --filter @mymehq/runtime-control dev  # wrangler dev on :8787
+cd /path/to/marfa
+pnpm --filter @withmarfa/runtime-control dev  # wrangler dev on :8787
 ```
 
 In **terminal C** (cloudflared tunnel):
@@ -46,8 +46,8 @@ SECRET="<the secret you stored on the connection>"
 BODY='{"event":"test"}'
 SIG=$(printf %s "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -binary | xxd -p -c 256)
 curl -X POST "https://<your-tunnel>.trycloudflare.com/webhooks/inbound/<connection_id>" \
-  -H "X-Myme-Signature: sha256=$SIG" \
-  -H "X-Myme-Delivery-Id: dev-001" \
+  -H "X-Marfa-Signature: sha256=$SIG" \
+  -H "X-Marfa-Delivery-Id: dev-001" \
   -H "Content-Type: application/json" \
   -d "$BODY"
 ```
@@ -60,6 +60,6 @@ Once you tire of the `*.trycloudflare.com` URL changing on every restart, set up
 
 ## Troubleshooting
 
-- **403 from `/system/runtime-credentials`:** the Myme caller credential needs `is_platform: true`. The bootstrap admin key has it; an arbitrary admin key minted later does NOT unless you pass `is_platform: true` at create time.
-- **503 `control_plane_misconfigured` from `/webhooks/inbound`:** set `MYME_API_URL` and `MYME_RUNTIME_BROKER_KEY` in `wrangler dev`'s env (either via `.dev.vars` or the wrangler CLI). The broker key is whatever long-lived `is_platform: true` admin key the control plane should authenticate as.
+- **403 from `/system/runtime-credentials`:** the Marfa caller credential needs `is_platform: true`. The bootstrap admin key has it; an arbitrary admin key minted later does NOT unless you pass `is_platform: true` at create time.
+- **503 `control_plane_misconfigured` from `/webhooks/inbound`:** set `MARFA_API_URL` and `MARFA_RUNTIME_BROKER_KEY` in `wrangler dev`'s env (either via `.dev.vars` or the wrangler CLI). The broker key is whatever long-lived `is_platform: true` admin key the control plane should authenticate as.
 - **404 `no_subscriptions`:** you haven't created an `inbound_webhook` row for the `connection_id`. Use the existing `POST /connections/:id/inbound-webhooks` route (workstream 2 PR 5).

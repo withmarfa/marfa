@@ -31,7 +31,7 @@
  * runtime-sdk persists today (cursors, idempotency rings, echo
  * bloom filters) without ad-hoc JSON-roundtrip caveats.
  */
-import type { CursorStorageAdapter } from "@mymehq/runtime-sdk";
+import type { CursorStorageAdapter } from "@withmarfa/runtime-sdk";
 
 export interface InMemoryStorage extends CursorStorageAdapter {
   list(options?: {

@@ -1,7 +1,7 @@
 /**
  * Handler-level tests for the Task Auto-Archive integration.
  *
- * Builds ConnectionContext inline so the Myme HTTP API doesn't need
+ * Builds ConnectionContext inline so the Marfa HTTP API doesn't need
  * to be reachable. The handler's listItems / transitionItem / getItem
  * calls are intercepted by a stub `ConnectionClient` whose backing
  * store is a small in-memory task list.
@@ -20,7 +20,7 @@ import {
   type ItemState,
   type ScheduleMessage,
   type ItemEventMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import {
   handleSchedule,
   handleItemEvent,
@@ -107,7 +107,7 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
       } as ItemResource);
     },
     listItems: (query: ListItemsQuery = {}): Promise<ListItemsPage> => {
-      // Models real Myme's cursor: opaque + stable across the
+      // Models real Marfa's cursor: opaque + stable across the
       // filter snapshot at the time of the original list call. Items
       // that mutate out of the filter between pages don't shift the
       // cursor (the cursor knows where it was within the original
@@ -151,8 +151,8 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "mymehq.task-auto-archive",
-    myme: client,
+    integration_name: "withmarfa.task-auto-archive",
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
@@ -174,14 +174,14 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const SCHEDULE_MSG = (ms: number): ScheduleMessage => ({
   kind: "schedule",
-  integration_name: "mymehq.task-auto-archive",
+  integration_name: "withmarfa.task-auto-archive",
   connection_id: "conn_taa_test",
   scheduled_for_ms: ms,
 });
 
 const ITEM_EVENT_MSG = (eventType: string): ItemEventMessage => ({
   kind: "item-event",
-  integration_name: "mymehq.task-auto-archive",
+  integration_name: "withmarfa.task-auto-archive",
   connection_id: "conn_taa_test",
   event_type: eventType,
   item_id: "task_other",
@@ -362,7 +362,7 @@ describe("task-auto-archive handlers", () => {
   });
 
   it("processes every due row even with an offset-based cursor (T-019)", async () => {
-    // Real Myme today returns an opaque keyset cursor that's stable
+    // Real Marfa today returns an opaque keyset cursor that's stable
     // across in-place state changes. The pre-T-019 handler relied
     // on that — it transitioned items inside the pagination loop,
     // and the second page silently picked up where the first left
@@ -433,8 +433,8 @@ describe("task-auto-archive handlers", () => {
 
     const ctx: ConnectionContext = {
       connection_id: "conn_taa_test",
-      integration_name: "mymehq.task-auto-archive",
-      myme: client,
+      integration_name: "withmarfa.task-auto-archive",
+      marfa: client,
       cursor: createCursorStore(storage),
       activity: createActivitySink(client, "conn_taa_test"),
       echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),

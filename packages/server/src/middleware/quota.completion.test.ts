@@ -51,7 +51,7 @@ async function mintTenantAdmin(
   label: string,
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `myme_k1_quota_completion_${suffix}`;
+  const raw = `marfa_k1_quota_completion_${suffix}`;
   await ctx.storage.keys.create(
     {
       label,

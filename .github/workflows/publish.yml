@@ -51,65 +51,65 @@ jobs:
       # skipped cleanly (instead of npm rejecting the republish and
       # turning the job red). Tag pushes often bump only one package's
       # version, so skipping unchanged packages is the common case.
-      - name: Check @mymehq/shared publish status
+      - name: Check @withmarfa/shared publish status
         id: check_shared
         working-directory: packages/shared
         run: |
           local_version=$(node -p "require('./package.json').version")
-          published_versions=$(npm view @mymehq/shared versions --json 2>/dev/null || echo '[]')
+          published_versions=$(npm view @withmarfa/shared versions --json 2>/dev/null || echo '[]')
           if echo "$published_versions" | grep -q "\"$local_version\""; then
-            echo "@mymehq/shared@$local_version is already published — skipping"
+            echo "@withmarfa/shared@$local_version is already published — skipping"
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
           else
-            echo "@mymehq/shared@$local_version is new — will publish"
+            echo "@withmarfa/shared@$local_version is new — will publish"
             echo "should_publish=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish @mymehq/shared
+      - name: Publish @withmarfa/shared
         if: steps.check_shared.outputs.should_publish == 'true'
         working-directory: packages/shared
         run: |
           pnpm pack
-          npm publish mymehq-shared-*.tgz --access=public
+          npm publish withmarfa-shared-*.tgz --access=public
 
-      - name: Check @mymehq/sdk publish status
+      - name: Check @withmarfa/sdk publish status
         id: check_sdk
         working-directory: packages/sdk
         run: |
           local_version=$(node -p "require('./package.json').version")
-          published_versions=$(npm view @mymehq/sdk versions --json 2>/dev/null || echo '[]')
+          published_versions=$(npm view @withmarfa/sdk versions --json 2>/dev/null || echo '[]')
           if echo "$published_versions" | grep -q "\"$local_version\""; then
-            echo "@mymehq/sdk@$local_version is already published — skipping"
+            echo "@withmarfa/sdk@$local_version is already published — skipping"
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
           else
-            echo "@mymehq/sdk@$local_version is new — will publish"
+            echo "@withmarfa/sdk@$local_version is new — will publish"
             echo "should_publish=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish @mymehq/sdk
+      - name: Publish @withmarfa/sdk
         if: steps.check_sdk.outputs.should_publish == 'true'
         working-directory: packages/sdk
         run: |
           pnpm pack
-          npm publish mymehq-sdk-*.tgz --access=public
+          npm publish withmarfa-sdk-*.tgz --access=public
 
-      - name: Check @mymehq/webhooks publish status
+      - name: Check @withmarfa/webhooks publish status
         id: check_webhooks
         working-directory: packages/webhooks
         run: |
           local_version=$(node -p "require('./package.json').version")
-          published_versions=$(npm view @mymehq/webhooks versions --json 2>/dev/null || echo '[]')
+          published_versions=$(npm view @withmarfa/webhooks versions --json 2>/dev/null || echo '[]')
           if echo "$published_versions" | grep -q "\"$local_version\""; then
-            echo "@mymehq/webhooks@$local_version is already published — skipping"
+            echo "@withmarfa/webhooks@$local_version is already published — skipping"
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
           else
-            echo "@mymehq/webhooks@$local_version is new — will publish"
+            echo "@withmarfa/webhooks@$local_version is new — will publish"
             echo "should_publish=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish @mymehq/webhooks
+      - name: Publish @withmarfa/webhooks
         if: steps.check_webhooks.outputs.should_publish == 'true'
         working-directory: packages/webhooks
         run: |
           pnpm pack
-          npm publish mymehq-webhooks-*.tgz --access=public
+          npm publish withmarfa-webhooks-*.tgz --access=public

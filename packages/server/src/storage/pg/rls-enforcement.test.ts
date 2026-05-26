@@ -7,7 +7,7 @@
  * Two test surfaces:
  *
  *   1. **Direct DB-layer.** Open a Drizzle transaction, run `SET
- *      LOCAL ROLE myme_app; SELECT set_config('myme.tenant_id',
+ *      LOCAL ROLE marfa_app; SELECT set_config('marfa.tenant_id',
  *      tenantA, true)`, then issue an *unscoped* `SELECT * FROM
  *      items` (no WHERE clause). RLS must filter to tenant A's rows.
  *      This proves the policies bite the role even when the
@@ -47,7 +47,7 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
       await ctx.cleanup();
     });
 
-    it("filters cross-tenant SELECT under SET LOCAL ROLE myme_app", async () => {
+    it("filters cross-tenant SELECT under SET LOCAL ROLE marfa_app", async () => {
       const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 8)}`;
       const tenantB = `tenant-b-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -62,16 +62,16 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
         tenantB,
       );
 
-      // Now run as myme_app inside a transaction with tenant_id =
+      // Now run as marfa_app inside a transaction with tenant_id =
       // tenantA. The unscoped SELECT must return only tenant A's rows
       // — proving RLS filters at the DB layer, independent of the
       // application's WHERE clauses.
       const pgDb = (ctx.storage as unknown as { pgDb: PgDb }).pgDb;
       const seenIdsForA = await pgDb.transaction(async (tx) => {
         await tx.execute(
-          sql`SELECT set_config('myme.tenant_id', ${tenantA}, true)`,
+          sql`SELECT set_config('marfa.tenant_id', ${tenantA}, true)`,
         );
-        await tx.execute(sql`SET LOCAL ROLE myme_app`);
+        await tx.execute(sql`SET LOCAL ROLE marfa_app`);
         // Use the row-level helper so we hit the policy.
         const rows = await tx.execute<{ id: string; tenant_id: string }>(
           sql`SELECT id, tenant_id FROM items WHERE id IN (${itemA.id}, ${itemB.id})`,
@@ -85,9 +85,9 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
       // And the symmetric case for tenant B.
       const seenIdsForB = await pgDb.transaction(async (tx) => {
         await tx.execute(
-          sql`SELECT set_config('myme.tenant_id', ${tenantB}, true)`,
+          sql`SELECT set_config('marfa.tenant_id', ${tenantB}, true)`,
         );
-        await tx.execute(sql`SET LOCAL ROLE myme_app`);
+        await tx.execute(sql`SET LOCAL ROLE marfa_app`);
         const rows = await tx.execute<{ id: string; tenant_id: string }>(
           sql`SELECT id, tenant_id FROM items WHERE id IN (${itemA.id}, ${itemB.id})`,
         );
@@ -102,18 +102,18 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
       const pgDb = (ctx.storage as unknown as { pgDb: PgDb }).pgDb;
 
       await pgDb.transaction(async (tx) => {
-        await tx.execute(sql`SELECT set_config('myme.tenant_id', 'x', true)`);
-        await tx.execute(sql`SET LOCAL ROLE myme_app`);
+        await tx.execute(sql`SELECT set_config('marfa.tenant_id', 'x', true)`);
+        await tx.execute(sql`SET LOCAL ROLE marfa_app`);
       });
 
       // After the transaction commits, subsequent queries use the
       // owner role. A bare SELECT current_setting reads the setting
       // — empty string after `SET LOCAL` is cleared.
       const rows = await pgDb.execute<{ role: string; tenant: string }>(
-        sql`SELECT current_user::text AS role, current_setting('myme.tenant_id', true) AS tenant`,
+        sql`SELECT current_user::text AS role, current_setting('marfa.tenant_id', true) AS tenant`,
       );
-      expect(rows[0]?.role).not.toBe("myme_app");
-      // current_setting('myme.tenant_id', true) is per-session for
+      expect(rows[0]?.role).not.toBe("marfa_app");
+      // current_setting('marfa.tenant_id', true) is per-session for
       // anything outside a SET LOCAL, but inside the txn we set
       // LOCAL — at this point the setting is cleared.
       expect(rows[0]?.tenant ?? "").toBe("");
@@ -132,7 +132,7 @@ describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
 
       const mintKey = async (tenant: string) => {
         const suffix = Math.random().toString(36).slice(2, 10);
-        const raw = `myme_k1_${tenant}_${suffix}`;
+        const raw = `marfa_k1_${tenant}_${suffix}`;
         await ctx.storage.keys.create(
           {
             label: `${tenant}-admin`,

@@ -2,11 +2,11 @@
  * Manifest for the Sync Agent re-presentation.
  *
  * Local-runtime connector. The actual execution is the existing
- * daemon in the mymehq/sync repo (npm: @mymehq/sync) — the manifest
+ * daemon in the withmarfa/sync repo (npm: @withmarfa/sync) — the manifest
  * here exists so that the agent can be installed as a Connection
  * (manifest + Credential + per-Connection runtime extension namespace)
  * instead of running against a free-floating API key in
- * `~/.myme/sync.json`.
+ * `~/.marfa/sync.json`.
  *
  * Triggers: `manual` only. The Cloudflare runtime tier does not
  * dispatch to local connectors; the agent's own filesystem
@@ -17,15 +17,15 @@
  * webhook_verification is required by the schema but unused for
  * local connectors — declared as hmac-sha256 by convention.
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const SYNC_MANIFEST: IntegrationManifest = {
-  name: "mymehq.sync",
+  name: "withmarfa.sync",
   version: "0.1.0",
   manifest_schema_version: "1.0.0",
-  publisher: "mymehq",
+  publisher: "withmarfa",
   description:
-    "Local file-to-Myme bidirectional sync. Watches configured roots on disk and mirrors them as Myme items.",
+    "Local file-to-Marfa bidirectional sync. Watches configured roots on disk and mirrors them as Marfa items.",
   direction: "both",
   runtime_compatibility: ["local"],
   target_types: ["core.note", "core.file"],

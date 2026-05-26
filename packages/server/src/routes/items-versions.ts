@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
+import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireTypeAccess } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -78,12 +78,12 @@ export function itemsVersionsRoutes(storage: Storage) {
   router.openapi(listVersionsRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "read");

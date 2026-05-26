@@ -19,8 +19,8 @@ export interface ConnectionContext {
   integration_name: string;
   tenant_id?: string;
 
-  /** Authenticated Myme API client scoped to this Connection. */
-  myme: ConnectionClient;
+  /** Authenticated Marfa API client scoped to this Connection. */
+  marfa: ConnectionClient;
 
   /** Read/write opaque cursor state from the per-Connection DO. */
   cursor: CursorStore;

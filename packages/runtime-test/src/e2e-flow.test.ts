@@ -15,7 +15,7 @@
  *   2. consumeBatch picks the message up, invokes the primary's
  *      registered webhook handler, decoding `body_base64` to ArrayBuffer
  *      at the seam (T-009). The handler "publishes a reactive event"
- *      — in production this would post into Myme via the runtime
+ *      — in production this would post into Marfa via the runtime
  *      credential, the server's reactive-run bridge would fan out to
  *      subscribers, and a downstream item-event message would land on
  *      the queue. The e2e test simulates that bridge by enqueuing an
@@ -65,7 +65,7 @@ import {
   nextHopMetadata,
   type ItemEventMessage,
   type WebhookMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { createTestHarness } from "./harness.js";
 import {
   SECONDARY_INTEGRATION_NAME,
@@ -74,7 +74,7 @@ import {
   type SecondaryMarker,
 } from "./fixtures/secondary-connector.js";
 
-const PRIMARY_INTEGRATION_NAME = "myme.e2e-primary";
+const PRIMARY_INTEGRATION_NAME = "marfa.e2e-primary";
 const PRIMARY_CONNECTION_ID = "conn_primary";
 const SECONDARY_CONNECTION_ID = "conn_secondary";
 
@@ -121,7 +121,7 @@ describe("e2e — primary webhook → reactive event → secondary item-event", 
     //     (hop_count incremented, originating_connection_id stamped).
     //
     // In production, steps (b) and (c) would happen via the server's
-    // reactive-run bridge: the handler would call into Myme, the
+    // reactive-run bridge: the handler would call into Marfa, the
     // server would publish, the bridge would fan out, the
     // per-Integration Worker for the secondary would consume the
     // item-event. The e2e test simulates the bridge — reactive-run

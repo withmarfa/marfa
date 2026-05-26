@@ -104,7 +104,7 @@ export function renderVerifyEmailPage(params: VerifyEmailPageParams): string {
     `
           : `
       <h1>Verify your email</h1>
-      <p class="lede">Welcome to Myme. We've sent a verification email — click the link inside to finish signing in.</p>
+      <p class="lede">Welcome to Marfa. We've sent a verification email — click the link inside to finish signing in.</p>
       <p class="lede">Didn't get it? You can request another below.</p>
       ${resendForm}
     `;

@@ -3,7 +3,7 @@
  * Registers the inbound schedule handler; re-exports PerConnectionState
  * for the DO binding; exports the integration-worker default.
  */
-import { createIntegrationWorker } from "@mymehq/runtime-sdk/cloudflare";
+import { createIntegrationWorker } from "@withmarfa/runtime-sdk/cloudflare";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
 import { READWISE_MANIFEST } from "./manifest.js";
 

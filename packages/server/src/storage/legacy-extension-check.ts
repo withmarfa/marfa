@@ -7,7 +7,7 @@
  * `migrate-sync-extension-namespace.ts` copies legacy values across so
  * the engine's post-T-130 read path (which only consults
  * `extensions['sync']`) sees them. A self-hoster who skips the
- * migration but upgrades `@mymehq/sync` past `0.10.0` silently loses
+ * migration but upgrades `@withmarfa/sync` past `0.10.0` silently loses
  * the legacy extension data — the agent still writes to the new
  * namespace but never reads from the old one again.
  *
@@ -78,7 +78,7 @@ export async function checkLegacySyncAgentExtensions(
 function emitWarn(count: number): void {
   log(
     "warn",
-    "Detected legacy `extensions['sync-agent'].*` rows. The sync engine post-0.10.0 reads only `extensions['sync']`, so these values are no longer surfaced. Run the T-130 migration to copy them across before any user-facing impact: `pnpm --filter @mymehq/server tsx src/scripts/migrate-sync-extension-namespace.ts --dialect=<sqlite|pg>` (use `--dry-run` first to size the change).",
+    "Detected legacy `extensions['sync-agent'].*` rows. The sync engine post-0.10.0 reads only `extensions['sync']`, so these values are no longer surfaced. Run the T-130 migration to copy them across before any user-facing impact: `pnpm --filter @withmarfa/server tsx src/scripts/migrate-sync-extension-namespace.ts --dialect=<sqlite|pg>` (use `--dry-run` first to size the change).",
     {
       legacy_namespace: "sync-agent",
       current_namespace: "sync",

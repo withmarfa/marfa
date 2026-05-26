@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFilter } from "@mymehq/shared";
+import { parseFilter } from "@withmarfa/shared";
 import { filterToRawSql } from "./filter-sql.js";
 
 describe("filterToRawSql", () => {

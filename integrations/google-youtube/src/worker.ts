@@ -9,7 +9,7 @@
  *      no webhook-receipt — this integration is inbound + schedule
  *      only).
  */
-import { createIntegrationWorker } from "@mymehq/runtime-sdk/cloudflare";
+import { createIntegrationWorker } from "@withmarfa/runtime-sdk/cloudflare";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
 import { GOOGLE_YOUTUBE_MANIFEST } from "./manifest.js";
 

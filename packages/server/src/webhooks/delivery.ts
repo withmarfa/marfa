@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
-import { matchesTypePattern } from "@mymehq/shared";
-import type { Webhook } from "@mymehq/shared";
+import { matchesTypePattern } from "@withmarfa/shared";
+import type { Webhook } from "@withmarfa/shared";
 import type {
   PendingWebhookDelivery,
   WebhookStore,
@@ -29,7 +29,7 @@ function toWebhookEvent(type: ItemEvent["type"] | EdgeEvent["type"]): string {
  * string and enforce a replay window. Matches the documented contract
  * in docs/api/webhooks.mdx. Header format: `t=<unix>,v1=<hex-sha256>`.
  *
- * Returns the full header value. Callers set it as `X-Myme-Signature`.
+ * Returns the full header value. Callers set it as `X-Marfa-Signature`.
  */
 export function buildSignatureHeader(
   timestamp: string,
@@ -133,8 +133,8 @@ export async function deliverWebhookAttempt(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Myme-Signature": signature,
-        "X-Myme-Event": delivery.event,
+        "X-Marfa-Signature": signature,
+        "X-Marfa-Event": delivery.event,
       },
       body: delivery.payload,
       signal: controller.signal,

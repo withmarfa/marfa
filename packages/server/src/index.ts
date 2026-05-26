@@ -135,7 +135,7 @@ async function main() {
     : undefined;
 
   // Event log retention — clean up events older than the configured
-  // window (default 168h / 7d; override via MYME_EVENT_LOG_RETENTION_HOURS,
+  // window (default 168h / 7d; override via MARFA_EVENT_LOG_RETENTION_HOURS,
   // or per-tenant via TenantConfig.event_log_retention_hours).
   // Advisory-locked per-tenant so multi-instance deployments run each
   // sweep once per tick cluster-wide.
@@ -283,7 +283,7 @@ async function main() {
 
   // Construct the email transport once at boot and thread it into
   // createApp. The factory's sender-domain check fails loud here if
-  // MYME_EMAIL_FROM doesn't end @mail.myme.so on the Cloudflare
+  // MARFA_EMAIL_FROM doesn't end @mail.marfa.so on the Cloudflare
   // backend, preventing bad config reaching the request loop. The
   // `none` default returns the explicit-failure transport so
   // email-dependent flows surface a clean
@@ -296,7 +296,7 @@ async function main() {
     v && v.length > 0 ? v : undefined;
   const emailTransport = await createEmailTransport({
     backend: config.emailBackend ?? "none",
-    from: emptyToUndef(config.emailFrom) ?? "Myme <hello@mail.myme.so>",
+    from: emptyToUndef(config.emailFrom) ?? "Marfa <hello@mail.marfa.so>",
     replyTo: emptyToUndef(config.emailReplyTo),
     cloudflare:
       emptyToUndef(config.cloudflareAccountId) &&
@@ -323,7 +323,7 @@ async function main() {
   const oidcSigner = await OidcSigner.init(storage);
 
   // T-173 + T-174 — boot the local integrations runtime when
-  // MYME_INTEGRATION_RUNTIME=local (default). Set the env var to
+  // MARFA_INTEGRATION_RUNTIME=local (default). Set the env var to
   // "hosted" explicitly to delegate to the Cloudflare bridge above
   // instead.
   let localRuntime: LocalRuntimeBundle | null = null;
@@ -377,7 +377,7 @@ async function main() {
   );
 
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-    log("info", `Myme server listening on port ${String(info.port)}`);
+    log("info", `Marfa server listening on port ${String(info.port)}`);
   });
 
   // Graceful shutdown
@@ -424,10 +424,10 @@ async function main() {
  * inside the repo; from there `../../integrations` is the monorepo's
  * integration source tree. When the server runs outside the monorepo
  * (e.g. a packaged Docker image carrying only `dist`), the operator
- * sets `MYME_INTEGRATIONS_ROOT` explicitly.
+ * sets `MARFA_INTEGRATIONS_ROOT` explicitly.
  */
 function resolveIntegrationsRoot(): string | null {
-  const explicit = process.env.MYME_INTEGRATIONS_ROOT;
+  const explicit = process.env.MARFA_INTEGRATIONS_ROOT;
   if (explicit) return explicit;
   try {
     const here = fileURLToPath(new URL(".", import.meta.url));

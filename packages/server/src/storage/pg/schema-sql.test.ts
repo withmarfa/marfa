@@ -135,7 +135,7 @@ describeOrSkip("SCHEMA_SQL re-run safety — Postgres (T-145)", () => {
   });
 
   it("emits the expected role + grant baseline", async () => {
-    // Sanity check: SCHEMA_SQL grew the myme_app role and granted CRUD on
+    // Sanity check: SCHEMA_SQL grew the marfa_app role and granted CRUD on
     // the tenant-scoped tables. The freshness check covers drift; this is
     // a sanity bound so a future generator regression that silently drops
     // grants would fail loud.
@@ -146,14 +146,14 @@ describeOrSkip("SCHEMA_SQL re-run safety — Postgres (T-145)", () => {
     });
     try {
       const roleRows = await sql<{ count: number }[]>`
-        SELECT COUNT(*)::int AS count FROM pg_roles WHERE rolname = 'myme_app'
+        SELECT COUNT(*)::int AS count FROM pg_roles WHERE rolname = 'marfa_app'
       `;
       expect(roleRows[0]?.count).toBe(1);
 
       const grantRows = await sql<{ count: number }[]>`
         SELECT COUNT(DISTINCT table_name)::int AS count
         FROM information_schema.role_table_grants
-        WHERE grantee = 'myme_app' AND table_schema = 'public'
+        WHERE grantee = 'marfa_app' AND table_schema = 'public'
       `;
       // At time of writing: 22 tables. Threshold (>15) is a sanity bound,
       // not a brittle exact match — tables shift as the schema evolves.

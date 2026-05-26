@@ -3,7 +3,7 @@
  *
  * Builds ConnectionContext inline; HMAC verification is exercised
  * server-side (the `github` adapter has its own test in
- * @mymehq/server). These tests assume verification has already
+ * @withmarfa/server). These tests assume verification has already
  * passed and the delivery has reached the handler.
  */
 import { describe, it, expect } from "vitest";
@@ -15,7 +15,7 @@ import {
   type ConnectionClient,
   type CreateItemInput,
   type WebhookHandlerInput,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleGithubWebhook } from "./handlers.js";
 import { DELIVERY_RING_SIZE } from "./manifest.js";
 
@@ -85,8 +85,8 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "mymehq.github-webhooks",
-    myme: client,
+    integration_name: "withmarfa.github-webhooks",
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
@@ -103,12 +103,12 @@ const ISSUES_OPENED = {
     number: 42,
     title: "Repro: connector misses ping",
     body: "Steps to reproduce…",
-    html_url: "https://github.com/mymehq/myme/issues/42",
+    html_url: "https://github.com/withmarfa/marfa/issues/42",
     user: { login: "octocat" },
   },
   repository: {
-    full_name: "mymehq/myme",
-    html_url: "https://github.com/mymehq/myme",
+    full_name: "withmarfa/marfa",
+    html_url: "https://github.com/withmarfa/marfa",
   },
 };
 
@@ -120,12 +120,12 @@ const PR_OPENED = {
     number: 7,
     title: "Add Layer-3 RSS connector",
     body: "First Layer-3 PR.",
-    html_url: "https://github.com/mymehq/myme/pull/7",
+    html_url: "https://github.com/withmarfa/marfa/pull/7",
     user: { login: "augustcayzer" },
   },
   repository: {
-    full_name: "mymehq/myme",
-    html_url: "https://github.com/mymehq/myme",
+    full_name: "withmarfa/marfa",
+    html_url: "https://github.com/withmarfa/marfa",
   },
 };
 
@@ -134,9 +134,9 @@ const PR_CLOSED = {
   pull_request: {
     number: 7,
     title: "Add Layer-3 RSS connector",
-    html_url: "https://github.com/mymehq/myme/pull/7",
+    html_url: "https://github.com/withmarfa/marfa/pull/7",
   },
-  repository: { full_name: "mymehq/myme" },
+  repository: { full_name: "withmarfa/marfa" },
 };
 
 const PING = { zen: "Non-blocking is better than blocking." };
@@ -179,10 +179,10 @@ describe("github-webhooks handler", () => {
     expect(created).toHaveLength(1);
     expect(created[0]!.properties).toMatchObject({
       title: "Repro: connector misses ping",
-      url: "https://github.com/mymehq/myme/issues/42",
+      url: "https://github.com/withmarfa/marfa/issues/42",
       author: "octocat",
-      source_url: "https://github.com/mymehq/myme",
-      source_title: "mymehq/myme / issues",
+      source_url: "https://github.com/withmarfa/marfa",
+      source_title: "withmarfa/marfa / issues",
     });
     // T-087: source_id populated from the GraphQL node_id, threading the
     // server's `(source, source_id)` natural-key contract.
@@ -205,9 +205,9 @@ describe("github-webhooks handler", () => {
     expect(created).toHaveLength(1);
     expect(created[0]!.properties).toMatchObject({
       title: "Add Layer-3 RSS connector",
-      url: "https://github.com/mymehq/myme/pull/7",
+      url: "https://github.com/withmarfa/marfa/pull/7",
       author: "augustcayzer",
-      source_title: "mymehq/myme / pull_requests",
+      source_title: "withmarfa/marfa / pull_requests",
     });
     expect(created[0]!.source_id).toBe("PR_kwDOABCDEFG67890");
   });
@@ -221,9 +221,9 @@ describe("github-webhooks handler", () => {
         // node_id intentionally absent
         number: 99,
         title: "No node id",
-        html_url: "https://github.com/mymehq/myme/issues/99",
+        html_url: "https://github.com/withmarfa/marfa/issues/99",
       },
-      repository: { full_name: "mymehq/myme" },
+      repository: { full_name: "withmarfa/marfa" },
     };
     await handleGithubWebhook(
       ctx,
@@ -282,7 +282,7 @@ describe("github-webhooks handler", () => {
     expect(created).toHaveLength(1);
   });
 
-  it("retries on Myme-side createItem failure (delivery NOT recorded)", async () => {
+  it("retries on Marfa-side createItem failure (delivery NOT recorded)", async () => {
     const { ctx, created, emitted } = buildContext({ failCreate: true });
     const r1 = await handleGithubWebhook(
       ctx,

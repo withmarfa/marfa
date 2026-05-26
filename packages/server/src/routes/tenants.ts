@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ErrorCode, MymeError } from "@mymehq/shared";
-import type { TenantConfig } from "@mymehq/shared";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import type { TenantConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, requireTenantAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -280,7 +280,7 @@ export function tenantRoutes(storage: Storage) {
     const body = c.req.valid("json") as TenantConfig;
 
     if (!key.tenant_id || !storage.tenants) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Tenant config requires a tenant-scoped credential",
       );
@@ -313,7 +313,7 @@ export function tenantRoutes(storage: Storage) {
     if (!tenantId) {
       // Platform admin keys (no tenant_id) hit this — they should use
       // the explicit `/tenants/{id}/quotas` route instead.
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Caller has no tenant_id; use GET /tenants/{id}/quotas with an explicit tenant id.",
       );

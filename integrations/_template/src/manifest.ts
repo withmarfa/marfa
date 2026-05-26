@@ -1,6 +1,6 @@
 /**
  * Template Integration manifest. Each real integration ships its own
- * with the same shape — the contract is defined in @mymehq/shared
+ * with the same shape — the contract is defined in @withmarfa/shared
  * (`IntegrationManifestSchema`) and the install pipeline persists it
  * onto the `system.connection` row.
  *
@@ -16,9 +16,9 @@
  * `IntegrationManifestSchema` so future drift is caught locally.
  */
 export const TEMPLATE_MANIFEST = {
-  name: "myme.template",
+  name: "marfa.template",
   version: "0.0.1",
-  publisher: "myme",
+  publisher: "marfa",
   description:
     "Skeleton Integration. No external service. Exists to exercise the runtime substrate end-to-end during Layer 1 acceptance.",
   manifest_schema_version: "1.0.0",

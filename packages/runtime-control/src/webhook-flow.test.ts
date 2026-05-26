@@ -1,6 +1,6 @@
 /**
  * End-to-end test of the webhook receive → verify → enqueue flow with
- * mocked Cloudflare bindings + a stubbed Myme server fetch.
+ * mocked Cloudflare bindings + a stubbed Marfa server fetch.
  */
 import { describe, it, expect } from "vitest";
 import { buildApp } from "./app.js";
@@ -12,7 +12,7 @@ const SUBSCRIPTION = {
   connection_id: "conn_x",
   secret: SECRET,
   verification_method: "hmac-sha256" as const,
-  integration_name: "mymehq.test-webhook",
+  integration_name: "withmarfa.test-webhook",
   events: ["push"],
   disabled: false,
 };
@@ -58,7 +58,7 @@ function mockKv(): {
   };
 }
 
-function mockMymeFetch(
+function mockMarfaFetch(
   options: {
     subscriptions?: (typeof SUBSCRIPTION)[];
     fail?: boolean;
@@ -106,11 +106,11 @@ describe("webhook receive flow", () => {
     const queue = mockQueue();
     const kv = mockKv();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch();
+    globalThis.fetch = mockMarfaFetch();
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
-        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
         IDEMPOTENCY_KV: kv as unknown as KVNamespace,
       };
@@ -127,8 +127,8 @@ describe("webhook receive flow", () => {
           method: "POST",
           body: bodyBytes,
           headers: {
-            "x-myme-signature": `sha256=${sig}`,
-            "x-myme-delivery-id": "d_42",
+            "x-marfa-signature": `sha256=${sig}`,
+            "x-marfa-delivery-id": "d_42",
           },
         },
         env,
@@ -142,7 +142,7 @@ describe("webhook receive flow", () => {
       expect(enqueued.webhook_id).toBe("wh_1");
       // T-009: integration_name stamped from the subscription's
       // projected manifest name, not hardcoded to "".
-      expect(enqueued.integration_name).toBe("mymehq.test-webhook");
+      expect(enqueued.integration_name).toBe("withmarfa.test-webhook");
       // Wire format: body_base64, decoded by the SDK at the seam.
       expect(typeof enqueued.body_base64).toBe("string");
     } finally {
@@ -153,11 +153,11 @@ describe("webhook receive flow", () => {
   it("returns 401 when signature does not match", async () => {
     const queue = mockQueue();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch();
+    globalThis.fetch = mockMarfaFetch();
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
-        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
       };
       const app = buildApp();
@@ -167,7 +167,7 @@ describe("webhook receive flow", () => {
           method: "POST",
           body: '{"event":"push"}',
           headers: {
-            "x-myme-signature": "sha256=deadbeef",
+            "x-marfa-signature": "sha256=deadbeef",
           },
         },
         env,
@@ -182,11 +182,11 @@ describe("webhook receive flow", () => {
   it("returns 404 when no subscriptions exist for the connection", async () => {
     const queue = mockQueue();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({ subscriptions: [] });
+    globalThis.fetch = mockMarfaFetch({ subscriptions: [] });
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
-        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
       };
       const app = buildApp();
@@ -195,7 +195,7 @@ describe("webhook receive flow", () => {
         {
           method: "POST",
           body: "{}",
-          headers: { "x-myme-signature": "sha256=x" },
+          headers: { "x-marfa-signature": "sha256=x" },
         },
         env,
       );
@@ -209,11 +209,11 @@ describe("webhook receive flow", () => {
   it("returns 502 when the lookup fails", async () => {
     const queue = mockQueue();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({ fail: true });
+    globalThis.fetch = mockMarfaFetch({ fail: true });
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
-        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
       };
       const app = buildApp();
@@ -222,7 +222,7 @@ describe("webhook receive flow", () => {
         {
           method: "POST",
           body: "{}",
-          headers: { "x-myme-signature": "sha256=x" },
+          headers: { "x-marfa-signature": "sha256=x" },
         },
         env,
       );
@@ -236,11 +236,11 @@ describe("webhook receive flow", () => {
     const queue = mockQueue();
     const kv = mockKv();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch();
+    globalThis.fetch = mockMarfaFetch();
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
-        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
         IDEMPOTENCY_KV: kv as unknown as KVNamespace,
       };
@@ -252,8 +252,8 @@ describe("webhook receive flow", () => {
       const sig = await sign(bodyBuffer, SECRET);
       const app = buildApp();
       const headers = {
-        "x-myme-signature": `sha256=${sig}`,
-        "x-myme-delivery-id": "d_dup",
+        "x-marfa-signature": `sha256=${sig}`,
+        "x-marfa-delivery-id": "d_dup",
       };
       const first = await app.request(
         "/webhooks/inbound/conn_x",
@@ -279,7 +279,7 @@ describe("webhook receive flow", () => {
     const queue = mockQueue();
     const kv = mockKv();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       subscriptions: [
         {
           ...SUBSCRIPTION,
@@ -289,8 +289,8 @@ describe("webhook receive flow", () => {
     });
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
-        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
         IDEMPOTENCY_KV: kv as unknown as KVNamespace,
       };
@@ -330,20 +330,20 @@ describe("webhook receive flow", () => {
     const shared = mockQueue();
     const inbox = mockQueue();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       subscriptions: [
         {
           ...SUBSCRIPTION,
-          integration_name: "mymehq.inbox",
+          integration_name: "withmarfa.inbox",
         },
       ],
     });
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
-        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: shared,
-        WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX: inbox,
+        WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX: inbox,
       };
       const bodyBytes = new TextEncoder().encode('{"email":"x"}');
       const bodyBuffer = bodyBytes.buffer.slice(
@@ -358,8 +358,8 @@ describe("webhook receive flow", () => {
           method: "POST",
           body: bodyBytes,
           headers: {
-            "x-myme-signature": `sha256=${sig}`,
-            "x-myme-delivery-id": "msg_42",
+            "x-marfa-signature": `sha256=${sig}`,
+            "x-marfa-delivery-id": "msg_42",
           },
         },
         env,
@@ -378,20 +378,20 @@ describe("webhook receive flow", () => {
   it("falls back to the shared queue when no dedicated binding exists (T-247)", async () => {
     const shared = mockQueue();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       subscriptions: [
         {
           ...SUBSCRIPTION,
-          integration_name: "mymehq.github-webhooks",
+          integration_name: "withmarfa.github-webhooks",
         },
       ],
     });
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
-        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: shared,
-        // No WEBHOOK_RECEIPT_QUEUE_MYMEHQ_GITHUB_WEBHOOKS — fallback path.
+        // No WEBHOOK_RECEIPT_QUEUE_WITHMARFA_GITHUB_WEBHOOKS — fallback path.
       };
       const bodyBytes = new TextEncoder().encode('{"event":"push"}');
       const bodyBuffer = bodyBytes.buffer.slice(
@@ -406,8 +406,8 @@ describe("webhook receive flow", () => {
           method: "POST",
           body: bodyBytes,
           headers: {
-            "x-myme-signature": `sha256=${sig}`,
-            "x-myme-delivery-id": "gh_42",
+            "x-marfa-signature": `sha256=${sig}`,
+            "x-marfa-delivery-id": "gh_42",
           },
         },
         env,
@@ -423,18 +423,18 @@ describe("webhook receive flow", () => {
 
   it("returns 503 when neither the dedicated nor the shared binding is wired (T-247)", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       subscriptions: [
         {
           ...SUBSCRIPTION,
-          integration_name: "mymehq.inbox",
+          integration_name: "withmarfa.inbox",
         },
       ],
     });
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
-        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         // No queue bindings at all.
       };
       const bodyBytes = new TextEncoder().encode('{"email":"x"}');
@@ -449,7 +449,7 @@ describe("webhook receive flow", () => {
         {
           method: "POST",
           body: bodyBytes,
-          headers: { "x-myme-signature": `sha256=${sig}` },
+          headers: { "x-marfa-signature": `sha256=${sig}` },
         },
         env,
       );
@@ -464,7 +464,7 @@ describe("webhook receive flow", () => {
   it("rejects subscriptions with no integration_name (unrouteable)", async () => {
     const queue = mockQueue();
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       subscriptions: [
         {
           ...SUBSCRIPTION,
@@ -474,8 +474,8 @@ describe("webhook receive flow", () => {
     });
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
-        MYME_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
       };
       const bodyBytes = new TextEncoder().encode('{"event":"push"}');
@@ -490,7 +490,7 @@ describe("webhook receive flow", () => {
         {
           method: "POST",
           body: bodyBytes,
-          headers: { "x-myme-signature": `sha256=${sig}` },
+          headers: { "x-marfa-signature": `sha256=${sig}` },
         },
         env,
       );

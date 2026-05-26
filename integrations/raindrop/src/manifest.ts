@@ -14,7 +14,7 @@
  * 10-minute cron — Raindrop bookmarks are moderately time-sensitive
  * (operators expect newly-saved items to land relatively quickly).
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const RAINDROP_MANIFEST: IntegrationManifest = {
   name: "raindrop.bookmarks",

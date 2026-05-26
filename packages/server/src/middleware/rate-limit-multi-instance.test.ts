@@ -46,7 +46,7 @@ afterEach(async () => {
  * pointed at the same PG; this is that shape compressed into one
  * process via shared `storage`.
  *
- * Each app mounts the standard `createErrorHandler` so MymeError
+ * Each app mounts the standard `createErrorHandler` so MarfaError
  * (thrown by the middleware on rate-limit) coerces to a 429 response,
  * matching production wiring.
  */

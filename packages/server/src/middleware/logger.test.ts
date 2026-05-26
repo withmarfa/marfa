@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveRequestId } from "./logger.js";
-import { isValidId } from "@mymehq/shared";
+import { isValidId } from "@withmarfa/shared";
 
 // ---------------------------------------------------------------------------
 // resolveRequestId — client passthrough with validation

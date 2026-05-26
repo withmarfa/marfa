@@ -65,7 +65,7 @@ describe("POST /admin/restore-archive", () => {
     const archive = await buildArchive(
       {
         version: 1,
-        format: "myme-archive-v1",
+        format: "marfa-archive-v1",
         created_at: new Date().toISOString(),
         item_count: 1,
         blob_count: 1,
@@ -113,7 +113,7 @@ describe("POST /admin/restore-archive", () => {
 
   it("rejects archives with unsupported version", async () => {
     const archive = await buildArchive(
-      { version: 99, format: "myme-archive-v99" },
+      { version: 99, format: "marfa-archive-v99" },
       [],
       [],
     );
@@ -142,7 +142,7 @@ describe("POST /admin/restore-archive", () => {
   });
 
   it("requires admin role", async () => {
-    const rawKey = `myme_k1_member_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
       {
@@ -157,7 +157,7 @@ describe("POST /admin/restore-archive", () => {
     const archive = await buildArchive(
       {
         version: 1,
-        format: "myme-archive-v1",
+        format: "marfa-archive-v1",
         created_at: new Date().toISOString(),
         item_count: 0,
         blob_count: 0,

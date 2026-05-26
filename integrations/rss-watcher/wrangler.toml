@@ -1,17 +1,17 @@
 #:schema node_modules/wrangler/config-schema.json
-# Per-Integration Worker for mymehq.rss-watcher.
+# Per-Integration Worker for withmarfa.rss-watcher.
 # Schedule-trigger only — consumes its own scheduled-poll queue.
 # (Cloudflare Queues are single-consumer; per-integration queues are
 # necessary for multi-integration coexistence on staging.)
 
-name = "myme-integration-rss-watcher"
+name = "marfa-integration-rss-watcher"
 main = "src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 # `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from the env.
 
 [vars]
-INTEGRATION_NAME = "mymehq.rss-watcher"
+INTEGRATION_NAME = "withmarfa.rss-watcher"
 MANIFEST_CRON = "0 * * * *"
 ENVIRONMENT = "dev"
 
@@ -25,10 +25,10 @@ new_sqlite_classes = ["PerConnectionState"]
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
-name = "myme-integration-rss-watcher-staging"
+name = "marfa-integration-rss-watcher-staging"
 
 [env.staging.vars]
-INTEGRATION_NAME = "mymehq.rss-watcher"
+INTEGRATION_NAME = "withmarfa.rss-watcher"
 MANIFEST_CRON = "0 * * * *"
 ENVIRONMENT = "staging"
 
@@ -42,23 +42,23 @@ new_sqlite_classes = ["PerConnectionState"]
 
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-rss-watcher-staging"
+queue = "marfa-scheduled-poll-rss-watcher-staging"
 
 # T-103: DLQ producer binding so the consumer wrapper can stamp
 # `_failure_reason` on permanent failures before they leave the
 # operator's peekable surface.
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-rss-watcher-staging-dlq"
+queue = "marfa-scheduled-poll-rss-watcher-staging-dlq"
 
 [[env.staging.queues.consumers]]
-queue = "myme-scheduled-poll-rss-watcher-staging"
+queue = "marfa-scheduled-poll-rss-watcher-staging"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-rss-watcher-staging-dlq"
+dead_letter_queue = "marfa-scheduled-poll-rss-watcher-staging-dlq"
 
 # Secrets (`wrangler secret put --env staging`):
-#   - MYME_API_URL
-#   - MYME_RUNTIME_CONTROL_URL
-#   - MYME_RUNTIME_BROKER_KEY
+#   - MARFA_API_URL
+#   - MARFA_RUNTIME_CONTROL_URL
+#   - MARFA_RUNTIME_BROKER_KEY

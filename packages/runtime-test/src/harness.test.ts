@@ -3,7 +3,7 @@ import {
   registerScheduleHandler,
   registerWebhookHandler,
   _resetHandlers,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { createTestHarness } from "./harness.js";
 
 describe("createTestHarness", () => {
@@ -12,7 +12,7 @@ describe("createTestHarness", () => {
   });
 
   it("delivers a schedule message to the registered handler and returns ok=true", async () => {
-    const harness = createTestHarness({ integrationName: "myme.test" });
+    const harness = createTestHarness({ integrationName: "marfa.test" });
     let captured: unknown = null;
     registerScheduleHandler((ctx, msg) => {
       captured = msg;
@@ -22,7 +22,7 @@ describe("createTestHarness", () => {
 
     await harness.connection("conn_1").send({
       kind: "schedule",
-      integration_name: "myme.test",
+      integration_name: "marfa.test",
       connection_id: "conn_1",
       scheduled_for_ms: 1_700_000_000_000,
     });
@@ -33,7 +33,7 @@ describe("createTestHarness", () => {
   });
 
   it("isolates per-connection storage", async () => {
-    const harness = createTestHarness({ integrationName: "myme.test" });
+    const harness = createTestHarness({ integrationName: "marfa.test" });
     registerScheduleHandler(async (ctx) => {
       await ctx.cursor.write("main", { ran_for: ctx.connection_id });
       return { ok: true };
@@ -41,13 +41,13 @@ describe("createTestHarness", () => {
 
     await harness.connection("conn_a").send({
       kind: "schedule",
-      integration_name: "myme.test",
+      integration_name: "marfa.test",
       connection_id: "conn_a",
       scheduled_for_ms: 1,
     });
     await harness.connection("conn_b").send({
       kind: "schedule",
-      integration_name: "myme.test",
+      integration_name: "marfa.test",
       connection_id: "conn_b",
       scheduled_for_ms: 2,
     });
@@ -60,14 +60,14 @@ describe("createTestHarness", () => {
   });
 
   it("returns the partial outcome when a handler asks for retry", async () => {
-    const harness = createTestHarness({ integrationName: "myme.test" });
+    const harness = createTestHarness({ integrationName: "marfa.test" });
     registerWebhookHandler(() =>
       Promise.resolve({ ok: false, retry: true, reason: "rate_limited" }),
     );
 
     await harness.connection("conn_1").send({
       kind: "webhook",
-      integration_name: "myme.test",
+      integration_name: "marfa.test",
       connection_id: "conn_1",
       delivery_id: "d_1",
       headers: {},
@@ -79,7 +79,7 @@ describe("createTestHarness", () => {
   });
 
   it("filters out messages addressed to a different integration", async () => {
-    const harness = createTestHarness({ integrationName: "myme.test" });
+    const harness = createTestHarness({ integrationName: "marfa.test" });
     let calls = 0;
     registerScheduleHandler(() => {
       calls++;
@@ -99,11 +99,11 @@ describe("createTestHarness", () => {
   it("custom mintCredential is invoked for every message", async () => {
     let mintCalls = 0;
     const harness = createTestHarness({
-      integrationName: "myme.test",
+      integrationName: "marfa.test",
       mintCredential: (id) => {
         mintCalls++;
         return Promise.resolve({
-          api_key: "myme_k1_test",
+          api_key: "marfa_k1_test",
           expires_at: new Date(Date.now() + 60_000).toISOString(),
           connection_id: id,
         });
@@ -114,7 +114,7 @@ describe("createTestHarness", () => {
     for (let i = 0; i < 3; i++) {
       await harness.connection(`conn_${String(i)}`).send({
         kind: "schedule",
-        integration_name: "myme.test",
+        integration_name: "marfa.test",
         connection_id: `conn_${String(i)}`,
         scheduled_for_ms: i,
       });
@@ -128,7 +128,7 @@ describe("createTestHarness", () => {
     // body_base64; the SDK should hand the handler an ArrayBuffer with
     // matching bytes. The base64 round-trip is the seam that broke 3 of
     // 5 webhook integrations in production pre-T-009.
-    const harness = createTestHarness({ integrationName: "myme.test" });
+    const harness = createTestHarness({ integrationName: "marfa.test" });
     const original = "hello, webhook world";
     const bytes = new TextEncoder().encode(original);
     let bodyBuffer: ArrayBuffer | undefined;
@@ -145,7 +145,7 @@ describe("createTestHarness", () => {
 
     await harness.connection("conn_decode").send({
       kind: "webhook",
-      integration_name: "myme.test",
+      integration_name: "marfa.test",
       connection_id: "conn_decode",
       delivery_id: "d_decode",
       headers: { "content-type": "application/json" },

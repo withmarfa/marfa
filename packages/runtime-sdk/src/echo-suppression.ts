@@ -5,7 +5,7 @@
  *
  * Echo TTL: when the connector writes to an external service, the
  * service's webhook fires for the same change shortly after. Without
- * dedup, the inbound side re-ingests Myme's own write. Mechanism:
+ * dedup, the inbound side re-ingests Marfa's own write. Mechanism:
  * a short-lived `pending_writes` set keyed by
  * `(external_id, content_hash)` with a per-Integration TTL.
  *
@@ -46,7 +46,7 @@ export interface EchoSuppression {
 
   /** Returns true if there's an outstanding outbound write for the
    *  given external_id whose lag window hasn't elapsed. Caller should
-   *  defer reactive reads of the corresponding Myme item. Deletes the
+   *  defer reactive reads of the corresponding Marfa item. Deletes the
    *  underlying record on expiry so cleanup happens on every access
    *  path, not just `shouldSkipReactive` (T-016). */
   inLagWindow(externalId: string): Promise<boolean>;

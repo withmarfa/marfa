@@ -1,6 +1,6 @@
 /**
  * Confirms the template manifest constant validates against the canonical
- * Zod schema in @mymehq/shared. Belt-and-braces — TypeScript catches
+ * Zod schema in @withmarfa/shared. Belt-and-braces — TypeScript catches
  * shape drift at compile time, the runtime parse catches enum drift
  * and refinement drift the type system can't see (e.g. a tombstone
  * mapping enum that the schema later renames).
@@ -12,7 +12,7 @@
  * the template was the only Integration without a manifest.test.ts.)
  */
 import { describe, it, expect } from "vitest";
-import { IntegrationManifestSchema } from "@mymehq/shared";
+import { IntegrationManifestSchema } from "@withmarfa/shared";
 import { TEMPLATE_MANIFEST } from "./manifest.js";
 
 describe("Template manifest", () => {

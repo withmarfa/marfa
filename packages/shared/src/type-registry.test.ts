@@ -11,7 +11,7 @@ import {
   validateTransition,
   validateTypeSchema,
 } from "./type-registry.js";
-import type { ItemState } from "@mymehq/types";
+import type { ItemState } from "@withmarfa/types";
 import type { Item } from "./types.js";
 
 describe("TYPE_REGISTRY", () => {
@@ -24,7 +24,7 @@ describe("TYPE_REGISTRY", () => {
     // T-241 added `todoist.task` as the 27th.
     // T-242 added `readwise.book` + `readwise.highlight` as the 28th + 29th.
     // T-243 added `raindrop.raindrop` + `raindrop.collection` as the 30th + 31st.
-    // T-244 added `mymehq.captured_email` as the 32nd.
+    // T-244 added `withmarfa.captured_email` as the 32nd.
     // T-249 added `google.youtube.video` + `.playlist` + `.channel`
     // as the 33rd / 34th / 35th.
     expect(TYPE_REGISTRY.size).toBe(42);
@@ -40,7 +40,7 @@ describe("TYPE_REGISTRY", () => {
     expect(TYPE_REGISTRY.has("readwise.highlight")).toBe(true);
     expect(TYPE_REGISTRY.has("raindrop.raindrop")).toBe(true);
     expect(TYPE_REGISTRY.has("raindrop.collection")).toBe(true);
-    expect(TYPE_REGISTRY.has("mymehq.captured_email")).toBe(true);
+    expect(TYPE_REGISTRY.has("withmarfa.captured_email")).toBe(true);
     expect(TYPE_REGISTRY.has("system.device")).toBe(true);
     expect(TYPE_REGISTRY.has("system.credential")).toBe(true);
     expect(TYPE_REGISTRY.has("system.webhook")).toBe(true);

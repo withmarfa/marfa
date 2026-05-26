@@ -7,7 +7,7 @@
  *     Calls Todoist's `POST /api/v1/sync` with the stored
  *     `sync_token` (opaque; the sentinel `"*"` on the first run).
  *     For each returned item:
- *       - If `is_deleted` or `checked` → trash the mapped Myme item
+ *       - If `is_deleted` or `checked` → trash the mapped Marfa item
  *         (or skip if not mapped).
  *       - Else compute `(external_id, content_hash)`. If
  *         `ctx.echo.shouldSkipReactive(...)` → skip (we wrote this
@@ -16,7 +16,7 @@
  *         cursor.
  *     Persist the response's `sync_token` for the next call.
  *
- * - ITEM-EVENT (outbound, fires on Myme task mutations):
+ * - ITEM-EVENT (outbound, fires on Marfa task mutations):
  *     - The reactive bridge already filters self-events; defensively
  *       double-check against `cycle`.
  *     - Trash transition → REST `POST /api/v1/tasks/{id}/close`.
@@ -24,7 +24,7 @@
  *     - Mapping-known + active → REST `POST /api/v1/tasks/{id}` with
  *       a body subset (content, description, priority, labels, due).
  *     - Mapping-unknown + active → Sync `item_add` command with a
- *       deterministic `temp_id` (SHA-256 hex of `myme:<item.id>`)
+ *       deterministic `temp_id` (SHA-256 hex of `marfa:<item.id>`)
  *       and deterministic `uuid` for command-level idempotency
  *       (T-020 deterministic-id rail). On `sync_status.<uuid> ===
  *       "ok"`, read the real id from `temp_id_mapping`. On error
@@ -48,7 +48,7 @@ import {
   type HandlerResult,
   type CreateItemInput,
   type ItemResource,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import {
   DEFAULT_TARGET_TYPE,
   SYNC_RESOURCE_TYPES,
@@ -65,7 +65,7 @@ const TASKS_BASE_PATH = "/api/v1/tasks";
  *  idempotency rail returns a recoverable error without the
  *  `temp_id_mapping` we expect. Belt-and-braces; the deterministic
  *  uuid is the primary rail. */
-const MYME_ID_DESCRIPTION_SENTINEL_PREFIX = "[myme-id:";
+const MARFA_ID_DESCRIPTION_SENTINEL_PREFIX = "[marfa-id:";
 
 interface TodoistDue {
   date?: string;
@@ -116,8 +116,8 @@ interface TodoistCursor {
   /** ISO timestamp of the last successful schedule run. Diagnostic
    *  only; the watermark itself is `sync_token`. */
   last_inbound_at: string | null;
-  /** Map of Todoist task id → Myme item id. Used on every inbound +
-   *  outbound to look up the matching Myme item without round-tripping
+  /** Map of Todoist task id → Marfa item id. Used on every inbound +
+   *  outbound to look up the matching Marfa item without round-tripping
    *  through the server. */
   mappings: Record<string, string>;
 }
@@ -132,10 +132,10 @@ function defaultCursor(): TodoistCursor {
 
 function findExternalIdFor(
   cursor: TodoistCursor,
-  myme_id: string,
+  marfa_id: string,
 ): string | null {
   for (const [ext, m] of Object.entries(cursor.mappings)) {
-    if (m === myme_id) return ext;
+    if (m === marfa_id) return ext;
   }
   return null;
 }
@@ -160,18 +160,18 @@ async function sha256Hex(input: string): Promise<string> {
 }
 
 /** Deterministic temp_id for the Sync API's item_add command. Two runs
- *  of the same outbound for the same Myme item produce the same
+ *  of the same outbound for the same Marfa item produce the same
  *  temp_id; Todoist's per-uuid idempotency rail returns the original
  *  command's result instead of creating a duplicate. */
-function deriveTempId(myme_id: string): Promise<string> {
-  return sha256Hex(`myme:temp_id:${myme_id}`);
+function deriveTempId(marfa_id: string): Promise<string> {
+  return sha256Hex(`marfa:temp_id:${marfa_id}`);
 }
 
 /** Deterministic uuid for the Sync API command. Distinct from temp_id
  *  but derived from the same seed so a retry hits Todoist's
  *  "same-uuid → same-result" rail. */
-function deriveCommandUuid(myme_id: string): Promise<string> {
-  return sha256Hex(`myme:command_uuid:${myme_id}`);
+function deriveCommandUuid(marfa_id: string): Promise<string> {
+  return sha256Hex(`marfa:command_uuid:${marfa_id}`);
 }
 
 /** Content-hash for echo suppression. Includes every field a
@@ -204,21 +204,21 @@ function contentHashForItem(item: TodoistItem): string {
 }
 
 function stripSentinel(description: string): string {
-  // Drop the `[myme-id:<…>]` marker line if present. Multiple consumers
+  // Drop the `[marfa-id:<…>]` marker line if present. Multiple consumers
   // of the description should see what the user typed, not our
   // bookkeeping.
   return description
     .split("\n")
     .filter(
-      (line) => !line.trim().startsWith(MYME_ID_DESCRIPTION_SENTINEL_PREFIX),
+      (line) => !line.trim().startsWith(MARFA_ID_DESCRIPTION_SENTINEL_PREFIX),
     )
     .join("\n")
     .replace(/^\s+|\s+$/g, "");
 }
 
-function appendSentinel(description: string, myme_id: string): string {
+function appendSentinel(description: string, marfa_id: string): string {
   const base = description.length > 0 ? `${description}\n\n` : "";
-  return `${base}${MYME_ID_DESCRIPTION_SENTINEL_PREFIX}${myme_id}]`;
+  return `${base}${MARFA_ID_DESCRIPTION_SENTINEL_PREFIX}${marfa_id}]`;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +236,7 @@ export async function handleSchedule(
 
   let response: Response;
   try {
-    response = await ctx.myme.proxyRequestForm("POST", SYNC_PATH, {
+    response = await ctx.marfa.proxyRequestForm("POST", SYNC_PATH, {
       sync_token: cursor.sync_token,
       resource_types: JSON.stringify(SYNC_RESOURCE_TYPES),
     });
@@ -266,18 +266,18 @@ export async function handleSchedule(
   let trashed = 0;
 
   for (const item of payload.items ?? []) {
-    const mappedMymeId = cursor.mappings[item.id];
+    const mappedMarfaId = cursor.mappings[item.id];
 
     if (item.is_deleted === true || item.checked === true) {
-      if (mappedMymeId !== undefined) {
+      if (mappedMarfaId !== undefined) {
         try {
-          await ctx.myme.transitionItem(mappedMymeId, "trashed");
+          await ctx.marfa.transitionItem(mappedMarfaId, "trashed");
           trashed += 1;
           Reflect.deleteProperty(cursor.mappings, item.id);
         } catch (err) {
           await ctx.activity.emit({
             severity: "action_required",
-            summary: `todoist: failed to trash myme item for deleted/checked task ${item.id}`,
+            summary: `todoist: failed to trash marfa item for deleted/checked task ${item.id}`,
             detail: { error: errorMessage(err) },
           });
         }
@@ -293,10 +293,10 @@ export async function handleSchedule(
 
     const input = buildItemInput(item);
     try {
-      if (mappedMymeId !== undefined) {
-        await ctx.myme.updateItem(mappedMymeId, input);
+      if (mappedMarfaId !== undefined) {
+        await ctx.marfa.updateItem(mappedMarfaId, input);
       } else {
-        const created = await ctx.myme.createItem({
+        const created = await ctx.marfa.createItem({
           ...input,
           source_id: item.id,
         });
@@ -306,7 +306,7 @@ export async function handleSchedule(
     } catch (err) {
       await ctx.activity.emit({
         severity: "action_required",
-        summary: `todoist: failed to upsert myme item for task ${item.id}`,
+        summary: `todoist: failed to upsert marfa item for task ${item.id}`,
         detail: { error: errorMessage(err) },
       });
     }
@@ -352,7 +352,7 @@ export async function handleItemEvent(
     ((await ctx.cursor.read(CURSOR_KEY)) as TodoistCursor | null) ??
     defaultCursor();
 
-  const item = await ctx.myme.getItem(message.item_id);
+  const item = await ctx.marfa.getItem(message.item_id);
   if (item === null) {
     // Item disappeared. If we know its mapping treat it as trash; else
     // no-op.
@@ -376,7 +376,7 @@ export async function handleItemEvent(
   if (item.state === "trashed") {
     if (externalId !== null) {
       const path = `${TASKS_BASE_PATH}/${encodeURIComponent(externalId)}/close`;
-      const resp = await ctx.myme.proxyRequest("POST", path);
+      const resp = await ctx.marfa.proxyRequest("POST", path);
       if (!resp.ok && resp.status !== 404 && resp.status !== 410) {
         return reportOutboundFailure(ctx, "close", externalId, resp);
       }
@@ -393,7 +393,7 @@ export async function handleItemEvent(
   // Update path — REST. Simpler than Sync `item_update` for singletons.
   if (externalId !== null) {
     const body = buildTodoistUpdateBody(item);
-    const resp = await ctx.myme.proxyRequest(
+    const resp = await ctx.marfa.proxyRequest(
       "POST",
       `${TASKS_BASE_PATH}/${encodeURIComponent(externalId)}`,
       body,
@@ -418,7 +418,7 @@ export async function handleItemEvent(
   const temp_id = await deriveTempId(item.id);
   const uuid = await deriveCommandUuid(item.id);
   const args = buildTodoistAddArgs(item);
-  // Augment description with the myme-id sentinel for the
+  // Augment description with the marfa-id sentinel for the
   // belt-and-braces recovery path (the temp_id_mapping is the primary
   // rail).
   args.description = appendSentinel(args.description ?? "", item.id);
@@ -431,7 +431,7 @@ export async function handleItemEvent(
     },
   ];
 
-  const resp = await ctx.myme.proxyRequestForm("POST", SYNC_PATH, {
+  const resp = await ctx.marfa.proxyRequestForm("POST", SYNC_PATH, {
     sync_token: cursor.sync_token,
     resource_types: JSON.stringify(SYNC_RESOURCE_TYPES),
     commands: JSON.stringify(commands),
@@ -468,7 +468,7 @@ export async function handleItemEvent(
     await ctx.cursor.write(CURSOR_KEY, cursor);
     await ctx.activity.emit({
       severity: "info",
-      summary: `todoist outbound: created task ${real_id} from myme item ${item.id}`,
+      summary: `todoist outbound: created task ${real_id} from marfa item ${item.id}`,
     });
     return { ok: true };
   }
@@ -483,7 +483,7 @@ export async function handleItemEvent(
   await ctx.cursor.write(CURSOR_KEY, cursor);
   await ctx.activity.emit({
     severity: "action_required",
-    summary: `todoist outbound: item_add failed for myme item ${item.id}`,
+    summary: `todoist outbound: item_add failed for marfa item ${item.id}`,
     detail: { sync_status: status, error: errorPayload },
   });
   return { ok: true };
@@ -492,12 +492,12 @@ export async function handleItemEvent(
 async function ackHandledIfMappedAsTrash(
   ctx: ConnectionContext,
   cursor: TodoistCursor,
-  myme_id: string,
+  marfa_id: string,
 ): Promise<HandlerResult> {
-  const externalId = findExternalIdFor(cursor, myme_id);
+  const externalId = findExternalIdFor(cursor, marfa_id);
   if (externalId === null) return { ok: true };
   const path = `${TASKS_BASE_PATH}/${encodeURIComponent(externalId)}/close`;
-  const resp = await ctx.myme.proxyRequest("POST", path);
+  const resp = await ctx.marfa.proxyRequest("POST", path);
   if (!resp.ok && resp.status !== 404 && resp.status !== 410) {
     return reportOutboundFailure(ctx, "close (item gone)", externalId, resp);
   }
@@ -511,7 +511,7 @@ async function ackHandledIfMappedAsTrash(
 // ---------------------------------------------------------------------------
 
 function buildItemInput(item: TodoistItem): CreateItemInput {
-  // Inbound: Todoist item → `todoist.task` Myme item. Strip the
+  // Inbound: Todoist item → `todoist.task` Marfa item. Strip the
   // round-trip sentinel from description so the user sees what they
   // wrote, not our bookkeeping.
   const description = stripSentinel(item.description ?? "");
@@ -756,5 +756,5 @@ export const __internals = {
   appendSentinel,
   deriveTempId,
   deriveCommandUuid,
-  MYME_ID_DESCRIPTION_SENTINEL_PREFIX,
+  MARFA_ID_DESCRIPTION_SENTINEL_PREFIX,
 };

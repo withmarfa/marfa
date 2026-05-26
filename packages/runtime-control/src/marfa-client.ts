@@ -1,7 +1,7 @@
 /**
- * Internal client for control-plane → Myme server lookups.
+ * Internal client for control-plane → Marfa server lookups.
  *
- * Uses `MYME_RUNTIME_BROKER_KEY` (a long-lived `is_platform: true` API
+ * Uses `MARFA_RUNTIME_BROKER_KEY` (a long-lived `is_platform: true` API
  * key bound to the control-plane Worker as a secret). Calls the
  * server's `/system/inbound-webhook-subscriptions/:connection_id` and
  * `/system/runtime-credentials` endpoints — both PR 4 server-side
@@ -37,7 +37,7 @@ export interface MintedRuntimeCredential {
   created_at: string;
 }
 
-export class MymeServerClient {
+export class MarfaServerClient {
   constructor(
     private readonly apiUrl: string,
     private readonly brokerKey: string,

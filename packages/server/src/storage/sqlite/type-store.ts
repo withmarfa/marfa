@@ -3,10 +3,10 @@ import {
   getTypeSchema,
   registerTypeSchema,
   unregisterTypeSchema,
-  MymeError,
+  MarfaError,
   ErrorCode,
-} from "@mymehq/shared";
-import type { TypeSchema } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import type { TypeSchema } from "@withmarfa/shared";
 import { sql } from "drizzle-orm";
 import type { TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
@@ -36,7 +36,7 @@ export class SqliteTypeStore implements TypeStore {
         err instanceof Error &&
         err.message.includes("UNIQUE constraint failed")
       ) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.TYPE_ALREADY_EXISTS,
           `Type "${schema.id}" already exists`,
         );

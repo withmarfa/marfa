@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    name: "@mymehq/integration-task-auto-archive",
+    name: "@withmarfa/integration-task-auto-archive",
     include: ["src/**/*.test.ts"],
   },
 });

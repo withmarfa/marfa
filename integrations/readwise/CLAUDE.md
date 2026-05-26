@@ -52,8 +52,8 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 ```
 {
   updated_after: string,                         // ISO timestamp
-  book_mappings: Record<user_book_id, myme_id>,
-  highlight_mappings: Record<highlight_id, myme_id>,
+  book_mappings: Record<user_book_id, marfa_id>,
+  highlight_mappings: Record<highlight_id, marfa_id>,
   last_inbound_at: string | null
 }
 ```
@@ -65,8 +65,8 @@ sweep's start time.
 ## Edges — parent-of book → highlight
 
 Books are the parent; highlights are children. On highlight create,
-the handler issues `POST /edges { source_id: bookMymeId, target_id:
-highlightMymeId, edge_type: "parent-of" }`. The manifest grants
+the handler issues `POST /edges { source_id: bookMarfaId, target_id:
+highlightMarfaId, edge_type: "parent-of" }`. The manifest grants
 `parent-of: write` to the runtime credential.
 
 The edge is only created on first write — subsequent updates to the
@@ -77,7 +77,7 @@ the edge create.
 
 The handler issues only GET requests against Readwise. No DELETE, no
 PUT, no POST. `tombstone_mapping: "ignore"` on the manifest means
-Readwise-side deletes don't propagate to Myme trash (the handler
+Readwise-side deletes don't propagate to Marfa trash (the handler
 skips `is_deleted: true` rows on inbound). The `system.activity`
 summary line carries the literal string `"no destructive operations
 performed against the live Readwise account"` for operator visibility.
@@ -96,7 +96,7 @@ under the same publisher is a follow-on if Reader access is needed.
 The harness at `_local/validate-readwise.ts` (gitignored) drives the
 production handler against the user's real Readwise account using
 only GET operations. The validation log on T-242 carries the asserts:
-≥1 book + ≥1 highlight land in Myme; cursor advances; second sweep is
+≥1 book + ≥1 highlight land in Marfa; cursor advances; second sweep is
 a near-no-op (only items genuinely updated in the interval); `no
 destructive operations performed against the live Readwise account`
 surfaces in the activity summary.

@@ -1,5 +1,5 @@
 /**
- * @mymehq/runtime-test — public exports.
+ * @withmarfa/runtime-test — public exports.
  *
  * In-memory mocks of the Cloudflare runtime primitives the runtime
  * substrate depends on, plus a `createTestHarness` helper that bundles

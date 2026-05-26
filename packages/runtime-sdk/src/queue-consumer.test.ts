@@ -99,7 +99,7 @@ function makeEnv(): ConsumerEnvironment {
     },
     mintCredential: (id) =>
       Promise.resolve({
-        api_key: "myme_k1_test",
+        api_key: "marfa_k1_test",
         expires_at: new Date(Date.now() + 60_000).toISOString(),
         connection_id: id,
       }),
@@ -252,7 +252,7 @@ describe("consumeBatch", () => {
     // Reproduces the silent-failure mode that motivated T-255: when the
     // queue consumer's credential mint fails (e.g. broker secrets missing
     // on the Worker), the throw is caught by the dispatch try/catch but
-    // the activity-emit backstop downstream also can't reach Myme — so
+    // the activity-emit backstop downstream also can't reach Marfa — so
     // nothing surfaces to the operator. The console.error added in
     // T-255 is the only visible signal in that degraded mode.
     registerScheduleHandler(() => Promise.resolve({ ok: true }));

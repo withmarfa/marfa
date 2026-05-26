@@ -43,7 +43,7 @@ const CLIENT_ID = "test-client";
 const initiateResponse = (): Response =>
   new Response(
     JSON.stringify({
-      device_code: "myme_dc_abc",
+      device_code: "marfa_dc_abc",
       user_code: "WDJB-MJHT",
       verification_uri: `${ISSUER}/auth/device`,
       verification_uri_complete: `${ISSUER}/auth/device?user_code=WDJB-MJHT`,
@@ -56,8 +56,8 @@ const initiateResponse = (): Response =>
 const tokenResponse = (): Response =>
   new Response(
     JSON.stringify({
-      access_token: "myme_at_xyz",
-      refresh_token: "myme_rt_qrs",
+      access_token: "marfa_at_xyz",
+      refresh_token: "marfa_rt_qrs",
       token_type: "bearer",
       expires_in: 3600,
       scope: "core.note:read",
@@ -134,7 +134,7 @@ describe("startDeviceFlow", () => {
     });
     const provider = await handle.pollForToken();
     const accessToken = await provider.getAccessToken();
-    expect(accessToken).toBe("myme_at_xyz");
+    expect(accessToken).toBe("marfa_at_xyz");
   });
 
   it("bumps interval on slow_down and continues polling", async () => {

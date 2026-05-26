@@ -295,7 +295,7 @@ describe("Integration manifest JSON Schema artefact", () => {
     // Regenerate in-memory and byte-compare against the committed file.
     // The codegen script invocation is identical to this — when this
     // assertion fails after a Zod bump or schema edit, run
-    // `pnpm --filter @mymehq/shared run generate:manifest-schema` and
+    // `pnpm --filter @withmarfa/shared run generate:manifest-schema` and
     // commit the delta.
     const expected =
       JSON.stringify(z.toJSONSchema(IntegrationManifestSchema), null, 2) + "\n";

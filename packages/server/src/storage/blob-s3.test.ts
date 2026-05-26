@@ -253,7 +253,7 @@ describe("S3BlobBackend", () => {
       // pins forcePathStyle=true (the gate that makes endpoint-routed
       // S3-compatible stores work).
       const backend = new S3BlobBackend({
-        bucket: "myme-runtime-payloads-staging",
+        bucket: "marfa-runtime-payloads-staging",
         region: "auto",
         endpoint:
           "https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",

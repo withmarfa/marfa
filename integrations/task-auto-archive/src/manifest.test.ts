@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { IntegrationManifestSchema } from "@mymehq/shared";
+import { IntegrationManifestSchema } from "@withmarfa/shared";
 import {
   TASK_AUTO_ARCHIVE_MANIFEST,
   DEFAULT_ARCHIVE_AFTER_DAYS,

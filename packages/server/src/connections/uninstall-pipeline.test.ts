@@ -11,7 +11,7 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { performInstall } from "./install-pipeline.js";
 import { performUninstall, UninstallError } from "./uninstall-pipeline.js";
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -246,7 +246,7 @@ describe("performUninstall — partial-state semantics", () => {
         type_permissions: { "core.note": "read" },
         connection_id: installed.connectionId,
       },
-      hashApiKey("myme_k1_" + "0".repeat(64), "test-salt"),
+      hashApiKey("marfa_k1_" + "0".repeat(64), "test-salt"),
       undefined,
     );
 

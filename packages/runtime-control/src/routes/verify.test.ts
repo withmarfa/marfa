@@ -1,6 +1,6 @@
 /**
  * Verify route (T-082) — tests the synchronous service-binding dispatch
- * with a mocked Myme server (verify-context + activity poll) and a
+ * with a mocked Marfa server (verify-context + activity poll) and a
  * mocked service binding.
  */
 import { describe, it, expect } from "vitest";
@@ -41,7 +41,7 @@ function mockBinding(
   };
 }
 
-interface MymeFetchOptions {
+interface MarfaFetchOptions {
   verifyContext?: {
     integration_name: string;
     tenant_id: string | null;
@@ -56,7 +56,7 @@ interface MymeFetchOptions {
   }[];
 }
 
-function mockMymeFetch(opts: MymeFetchOptions = {}): typeof fetch {
+function mockMarfaFetch(opts: MarfaFetchOptions = {}): typeof fetch {
   return ((input: RequestInfo | URL) => {
     const url =
       typeof input === "string"
@@ -83,7 +83,7 @@ function mockMymeFetch(opts: MymeFetchOptions = {}): typeof fetch {
         );
       }
       const body = opts.verifyContext ?? {
-        integration_name: "mymehq.rss-watcher",
+        integration_name: "withmarfa.rss-watcher",
         tenant_id: null,
       };
       return Promise.resolve(
@@ -110,7 +110,7 @@ function mockMymeFetch(opts: MymeFetchOptions = {}): typeof fetch {
 
 describe("POST /connections/:id/verify", () => {
   it("rejects unauthenticated callers (no Authorization header)", async () => {
-    const env: ControlPlaneEnv = { MYME_API_URL: "http://localhost:0" };
+    const env: ControlPlaneEnv = { MARFA_API_URL: "http://localhost:0" };
     const app = buildApp();
     const res = await app.request(
       "/connections/conn_x/verify",
@@ -120,14 +120,14 @@ describe("POST /connections/:id/verify", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects when MYME_API_URL is missing", async () => {
+  it("rejects when MARFA_API_URL is missing", async () => {
     const app = buildApp();
     const res = await app.request(
       "/connections/conn_x/verify",
       {
         method: "POST",
         body: "{}",
-        headers: { authorization: "Bearer myme_k1_op" },
+        headers: { authorization: "Bearer marfa_k1_op" },
       },
       {},
     );
@@ -135,14 +135,14 @@ describe("POST /connections/:id/verify", () => {
   });
 
   it("rejects invalid JSON body", async () => {
-    const env: ControlPlaneEnv = { MYME_API_URL: "http://localhost:0" };
+    const env: ControlPlaneEnv = { MARFA_API_URL: "http://localhost:0" };
     const app = buildApp();
     const res = await app.request(
       "/connections/conn_x/verify",
       {
         method: "POST",
         body: "not-json",
-        headers: { authorization: "Bearer myme_k1_op" },
+        headers: { authorization: "Bearer marfa_k1_op" },
       },
       env,
     );
@@ -151,14 +151,14 @@ describe("POST /connections/:id/verify", () => {
   });
 
   it("rejects missing event field", async () => {
-    const env: ControlPlaneEnv = { MYME_API_URL: "http://localhost:0" };
+    const env: ControlPlaneEnv = { MARFA_API_URL: "http://localhost:0" };
     const app = buildApp();
     const res = await app.request(
       "/connections/conn_x/verify",
       {
         method: "POST",
         body: JSON.stringify({}),
-        headers: { authorization: "Bearer myme_k1_op" },
+        headers: { authorization: "Bearer marfa_k1_op" },
       },
       env,
     );
@@ -167,14 +167,14 @@ describe("POST /connections/:id/verify", () => {
   });
 
   it("rejects missing event.item_id", async () => {
-    const env: ControlPlaneEnv = { MYME_API_URL: "http://localhost:0" };
+    const env: ControlPlaneEnv = { MARFA_API_URL: "http://localhost:0" };
     const app = buildApp();
     const res = await app.request(
       "/connections/conn_x/verify",
       {
         method: "POST",
         body: JSON.stringify({ event: { event_type: "item.created" } }),
-        headers: { authorization: "Bearer myme_k1_op" },
+        headers: { authorization: "Bearer marfa_k1_op" },
       },
       env,
     );
@@ -187,13 +187,13 @@ describe("POST /connections/:id/verify", () => {
 
   it("forwards 403 from the verify-context endpoint when caller lacks is_platform", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       verifyContextStatus: 403,
       verifyContextErrorMessage:
         "Verify context lookup requires a platform credential",
     });
     try {
-      const env: ControlPlaneEnv = { MYME_API_URL: "http://localhost:0" };
+      const env: ControlPlaneEnv = { MARFA_API_URL: "http://localhost:0" };
       const app = buildApp();
       const res = await app.request(
         "/connections/conn_x/verify",
@@ -202,7 +202,7 @@ describe("POST /connections/:id/verify", () => {
           body: JSON.stringify({
             event: { item_id: "item_1", event_type: "item.created" },
           }),
-          headers: { authorization: "Bearer myme_k1_member" },
+          headers: { authorization: "Bearer marfa_k1_member" },
         },
         env,
       );
@@ -215,12 +215,12 @@ describe("POST /connections/:id/verify", () => {
 
   it("forwards 404 from the verify-context endpoint when the connection is missing", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       verifyContextStatus: 404,
       verifyContextErrorMessage: "Connection not found",
     });
     try {
-      const env: ControlPlaneEnv = { MYME_API_URL: "http://localhost:0" };
+      const env: ControlPlaneEnv = { MARFA_API_URL: "http://localhost:0" };
       const app = buildApp();
       const res = await app.request(
         "/connections/conn_missing/verify",
@@ -229,7 +229,7 @@ describe("POST /connections/:id/verify", () => {
           body: JSON.stringify({
             event: { item_id: "item_1", event_type: "item.created" },
           }),
-          headers: { authorization: "Bearer myme_k1_op" },
+          headers: { authorization: "Bearer marfa_k1_op" },
         },
         env,
       );
@@ -244,11 +244,11 @@ describe("POST /connections/:id/verify", () => {
 
   it("returns 503 when no service binding is declared for the integration", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       verifyContext: { integration_name: "acme.unknown", tenant_id: null },
     });
     try {
-      const env: ControlPlaneEnv = { MYME_API_URL: "http://localhost:0" };
+      const env: ControlPlaneEnv = { MARFA_API_URL: "http://localhost:0" };
       const app = buildApp();
       const res = await app.request(
         "/connections/conn_x/verify",
@@ -257,7 +257,7 @@ describe("POST /connections/:id/verify", () => {
           body: JSON.stringify({
             event: { item_id: "item_1", event_type: "item.created" },
           }),
-          headers: { authorization: "Bearer myme_k1_op" },
+          headers: { authorization: "Bearer marfa_k1_op" },
         },
         env,
       );
@@ -285,9 +285,9 @@ describe("POST /connections/:id/verify", () => {
         created_at: new Date().toISOString(),
       },
     ];
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       verifyContext: {
-        integration_name: "mymehq.rss-watcher",
+        integration_name: "withmarfa.rss-watcher",
         tenant_id: null,
       },
       activityRows: activity,
@@ -295,7 +295,7 @@ describe("POST /connections/:id/verify", () => {
     const binding = mockBinding(true);
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
+        MARFA_API_URL: "http://localhost:0",
         INTEGRATION_RSS_WATCHER: binding,
       };
       const app = buildApp();
@@ -310,7 +310,7 @@ describe("POST /connections/:id/verify", () => {
               payload: { item: { id: "item_1" }, metadata: null },
             },
           }),
-          headers: { authorization: "Bearer myme_k1_op" },
+          headers: { authorization: "Bearer marfa_k1_op" },
         },
         env,
       );
@@ -335,7 +335,7 @@ describe("POST /connections/:id/verify", () => {
       expect(body.ok).toBe(true);
       expect(body.handler_result).toEqual({ ok: true });
       expect(body.envelope_used.kind).toBe("item-event");
-      expect(body.envelope_used.integration_name).toBe("mymehq.rss-watcher");
+      expect(body.envelope_used.integration_name).toBe("withmarfa.rss-watcher");
       expect(body.envelope_used.connection_id).toBe("conn_test_verify");
       expect(body.envelope_used.item_id).toBe("item_1");
       expect(body.envelope_used.event_type).toBe("item.created");
@@ -355,16 +355,16 @@ describe("POST /connections/:id/verify", () => {
 
   it("surfaces a permanent handler failure verbatim", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       verifyContext: {
-        integration_name: "mymehq.rss-watcher",
+        integration_name: "withmarfa.rss-watcher",
         tenant_id: null,
       },
     });
     const binding = mockBinding(false, { reason: "upstream_500" });
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
+        MARFA_API_URL: "http://localhost:0",
         INTEGRATION_RSS_WATCHER: binding,
       };
       const app = buildApp();
@@ -375,7 +375,7 @@ describe("POST /connections/:id/verify", () => {
           body: JSON.stringify({
             event: { item_id: "item_1", event_type: "item.created" },
           }),
-          headers: { authorization: "Bearer myme_k1_op" },
+          headers: { authorization: "Bearer marfa_k1_op" },
         },
         env,
       );
@@ -399,16 +399,16 @@ describe("POST /connections/:id/verify", () => {
 
   it("threads operator-supplied cycle metadata into the envelope", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mockMymeFetch({
+    globalThis.fetch = mockMarfaFetch({
       verifyContext: {
-        integration_name: "mymehq.rss-watcher",
+        integration_name: "withmarfa.rss-watcher",
         tenant_id: null,
       },
     });
     const binding = mockBinding(true);
     try {
       const env: ControlPlaneEnv = {
-        MYME_API_URL: "http://localhost:0",
+        MARFA_API_URL: "http://localhost:0",
         INTEGRATION_RSS_WATCHER: binding,
       };
       const app = buildApp();
@@ -426,7 +426,7 @@ describe("POST /connections/:id/verify", () => {
               },
             },
           }),
-          headers: { authorization: "Bearer myme_k1_op" },
+          headers: { authorization: "Bearer marfa_k1_op" },
         },
         env,
       );

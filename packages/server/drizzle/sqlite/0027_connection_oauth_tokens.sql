@@ -2,7 +2,7 @@
 -- connectors.
 --
 -- One row per system.connection (unique on connection_id). Tokens are
--- encrypted at rest under HKDF(MYME_AUTH_SECRET, info=
+-- encrypted at rest under HKDF(MARFA_AUTH_SECRET, info=
 -- "connection-oauth-tokens"); the proxy route decrypts at request time
 -- and stamps `Authorization: Bearer <access>` on the upstream call.
 -- See packages/server/src/crypto/secret-encryption.ts for the helper.

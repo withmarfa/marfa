@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ErrorCode, MymeError, httpStatus } from "./errors.js";
+import { ErrorCode, MarfaError, httpStatus } from "./errors.js";
 
 describe("ErrorCode", () => {
   it("has all expected error codes", () => {
@@ -61,18 +61,18 @@ describe("httpStatus", () => {
   });
 });
 
-describe("MymeError", () => {
+describe("MarfaError", () => {
   it("constructs with code, message, and status", () => {
-    const err = new MymeError(ErrorCode.NOT_FOUND, "Item not found");
+    const err = new MarfaError(ErrorCode.NOT_FOUND, "Item not found");
     expect(err.code).toBe(ErrorCode.NOT_FOUND);
     expect(err.message).toBe("Item not found");
     expect(err.status).toBe(404);
-    expect(err.name).toBe("MymeError");
+    expect(err.name).toBe("MarfaError");
     expect(err.details).toBeUndefined();
   });
 
   it("accepts optional details", () => {
-    const err = new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid field", {
+    const err = new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid field", {
       field: "title",
       reason: "required",
     });
@@ -80,13 +80,13 @@ describe("MymeError", () => {
   });
 
   it("extends Error", () => {
-    const err = new MymeError(ErrorCode.FORBIDDEN, "Access denied");
+    const err = new MarfaError(ErrorCode.FORBIDDEN, "Access denied");
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(MymeError);
+    expect(err).toBeInstanceOf(MarfaError);
   });
 
   it("serializes to error response format", () => {
-    const err = new MymeError(ErrorCode.NOT_FOUND, "Item not found");
+    const err = new MarfaError(ErrorCode.NOT_FOUND, "Item not found");
     expect(err.toResponse()).toEqual({
       error: {
         code: "not_found",
@@ -96,9 +96,13 @@ describe("MymeError", () => {
   });
 
   it("includes details in error response when present", () => {
-    const err = new MymeError(ErrorCode.VERSION_CONFLICT, "Conflict detected", {
-      version: 3,
-    });
+    const err = new MarfaError(
+      ErrorCode.VERSION_CONFLICT,
+      "Conflict detected",
+      {
+        version: 3,
+      },
+    );
     expect(err.toResponse()).toEqual({
       error: {
         code: "version_conflict",
@@ -109,7 +113,7 @@ describe("MymeError", () => {
   });
 
   it("omits details from error response when absent", () => {
-    const err = new MymeError(ErrorCode.UNAUTHORIZED, "No API key");
+    const err = new MarfaError(ErrorCode.UNAUTHORIZED, "No API key");
     const response = err.toResponse();
     expect(response.error).not.toHaveProperty("details");
   });

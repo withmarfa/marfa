@@ -1,5 +1,5 @@
 // Client
-export { MymeClient } from "./client.js";
+export { MarfaClient } from "./client.js";
 export type {
   ClientConfig,
   UpdateOptions,
@@ -31,7 +31,7 @@ export type {
 
 // Errors
 export {
-  MymeError,
+  MarfaError,
   NotFoundError,
   ValidationError,
   ConflictError,
@@ -59,7 +59,7 @@ export type {
   VerifyWebhookSignatureInput,
 } from "./webhooks.js";
 
-// Re-export key types from @mymehq/shared
+// Re-export key types from @withmarfa/shared
 export type {
   Item,
   CreateItemInput,
@@ -83,5 +83,5 @@ export type {
   TenantMetrics,
   TenantActivityEntry,
   TenantQuota,
-} from "@mymehq/shared";
-export type { TypeSchema } from "@mymehq/shared";
+} from "@withmarfa/shared";
+export type { TypeSchema } from "@withmarfa/shared";

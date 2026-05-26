@@ -1,7 +1,7 @@
 /**
  * T-045 — OAuth scope grammar enforcement.
  *
- * The scope grammar in `@mymehq/shared` parses `<type>:<verb>`,
+ * The scope grammar in `@withmarfa/shared` parses `<type>:<verb>`,
  * `edge.<type>:<verb>`, `metadata:<verb>`, and `metadata.<sub>:<verb>`
  * shapes; the auth middleware projects them into `type_permissions`,
  * `edge_permissions`, and `metadata_permissions` on a synthetic

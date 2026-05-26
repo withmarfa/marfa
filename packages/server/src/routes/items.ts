@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   isValidId,
   isValidTimestamp,
@@ -14,8 +14,8 @@ import {
   isTypeInStrictMode,
   getSourceAllowlist,
   getSourceFilter,
-} from "@mymehq/shared";
-import type { ItemState } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import type { ItemState } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -746,7 +746,7 @@ export function itemRoutes(storage: Storage) {
 
     const type = body.type;
     if (!type) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.MISSING_REQUIRED_FIELD,
         "type is required",
         {
@@ -755,7 +755,7 @@ export function itemRoutes(storage: Storage) {
       );
     }
     if (!isValidTypeIdentifier(type)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INVALID_TYPE,
         `Invalid type identifier: ${type}`,
       );
@@ -763,21 +763,21 @@ export function itemRoutes(storage: Storage) {
 
     const properties = body.properties ?? {};
     if (typeof properties !== "object") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "properties must be an object",
       );
     }
 
     if (body.id && !isValidId(body.id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
     if (body.timestamp && !isValidTimestamp(body.timestamp)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid timestamp");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid timestamp");
     }
     if (body.state) {
       if (!(ITEM_STATES as readonly string[]).includes(body.state)) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           `Invalid state: ${body.state}`,
         );
@@ -793,7 +793,7 @@ export function itemRoutes(storage: Storage) {
     await enforceQuota(c, storage, "items");
 
     if (Array.isArray(body.tags) && body.tags.length > 100) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Maximum 100 tags per item",
       );
@@ -822,7 +822,7 @@ export function itemRoutes(storage: Storage) {
       allowedSources !== null &&
       (stampedSource === undefined || !allowedSources.includes(stampedSource))
     ) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Source "${stampedSource ?? "(unknown)"}" is not in the allow-list for type ${type}`,
         { type, source: stampedSource, allowed: allowedSources },
@@ -841,7 +841,7 @@ export function itemRoutes(storage: Storage) {
         strict: true,
       });
       if (!strictResult.success) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.INVALID_PROPERTIES,
           "Unknown property: strict mode rejects properties not declared in the type schema",
           {
@@ -855,7 +855,7 @@ export function itemRoutes(storage: Storage) {
     // write, and stamp `undefined` rather than the library default.
     const isSystemTypeWrite = SYSTEM_TYPE_IDS.has(type);
     if (isSystemTypeWrite && body.tier !== undefined) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "tier is not applicable to system.* items",
         { field: "tier" },
@@ -896,14 +896,14 @@ export function itemRoutes(storage: Storage) {
     if (body.edges) {
       for (const [edgeType, targets] of Object.entries(body.edges)) {
         if (!Array.isArray(targets)) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.VALIDATION_ERROR,
             `edges.${edgeType} must be an array of item ids`,
           );
         }
         for (const target of targets) {
           if (!isValidId(target)) {
-            throw new MymeError(
+            throw new MarfaError(
               ErrorCode.INVALID_ID,
               `Invalid target id in edges.${edgeType}`,
             );
@@ -947,7 +947,7 @@ export function itemRoutes(storage: Storage) {
         // than the body would be a confusing surprise; signalling the conflict
         // gives the caller a clear path to reconcile.
         if (body.id !== undefined && body.id !== existing.id) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.VALIDATION_ERROR,
             "Request `id` does not match the item resolved by (source, source_id)",
             {
@@ -978,7 +978,7 @@ export function itemRoutes(storage: Storage) {
               // input. The natural-key upsert path never sets `version`, so
               // this branch should be unreachable. Surface defensively if it
               // ever does.
-              throw new MymeError(
+              throw new MarfaError(
                 ErrorCode.VERSION_CONFLICT,
                 "Natural-key upsert produced an unexpected version conflict",
                 { id: existing.id },
@@ -1133,7 +1133,7 @@ export function itemRoutes(storage: Storage) {
 
     const type = query.type;
     if (type && !isValidTypeIdentifier(type) && !type.endsWith(".*")) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
       );
@@ -1141,7 +1141,7 @@ export function itemRoutes(storage: Storage) {
 
     const state = query.state as ItemState | undefined;
     if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Invalid state: ${state}`,
       );
@@ -1307,13 +1307,13 @@ export function itemRoutes(storage: Storage) {
   router.openapi(getItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const tid = c.get("apiKey")?.tenant_id;
     const item = await storage.items.get(id, tid);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "read");
@@ -1332,7 +1332,7 @@ export function itemRoutes(storage: Storage) {
   router.openapi(updateItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const body = c.req.valid("json");
@@ -1353,13 +1353,13 @@ export function itemRoutes(storage: Storage) {
       !hasTimestamp &&
       !hasSourceId
     ) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "At least one of `properties`, `edges`, `tier`, `timestamp`, or `source_id` is required.",
       );
     }
     if (body.timestamp !== undefined && !isValidTimestamp(body.timestamp)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "timestamp must be an ISO 8601 string",
       );
@@ -1370,7 +1370,7 @@ export function itemRoutes(storage: Storage) {
         !Number.isInteger(body.version) ||
         body.version < 0
       ) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           "version must be a non-negative integer",
         );
@@ -1381,7 +1381,7 @@ export function itemRoutes(storage: Storage) {
 
     const item = await storage.items.get(id, tid);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "write");
@@ -1405,7 +1405,7 @@ export function itemRoutes(storage: Storage) {
         tid,
       );
       if (existing && existing.id !== id) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.SOURCE_ID_CONFLICT,
           `source_id "${newSourceId}" is already in use under source "${item.source}"`,
           { source: item.source, source_id: newSourceId },
@@ -1419,14 +1419,14 @@ export function itemRoutes(storage: Storage) {
     if (hasEdges && body.edges) {
       for (const [edgeType, targets] of Object.entries(body.edges)) {
         if (!Array.isArray(targets)) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.VALIDATION_ERROR,
             `edges.${edgeType} must be an array of item ids`,
           );
         }
         for (const target of targets) {
           if (!isValidId(target)) {
-            throw new MymeError(
+            throw new MarfaError(
               ErrorCode.INVALID_ID,
               `Invalid target id in edges.${edgeType}`,
             );
@@ -1447,7 +1447,7 @@ export function itemRoutes(storage: Storage) {
       if (getTypeSchema(item.type)) {
         const validation = validateProperties(item.type, merged);
         if (!validation.success) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.INVALID_PROPERTIES,
             "Invalid properties",
             {
@@ -1467,7 +1467,7 @@ export function itemRoutes(storage: Storage) {
       for (const [edgeType, targets] of Object.entries(body.edges)) {
         const schema = getEdgeTypeSchema(edgeType);
         if (!schema) {
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.EDGE_TYPE_NOT_FOUND,
             `Unknown edge type: ${edgeType}`,
           );
@@ -1477,14 +1477,14 @@ export function itemRoutes(storage: Storage) {
         const uniqueTargets = new Set<string>();
         for (const target of targets) {
           if (target === id) {
-            throw new MymeError(
+            throw new MarfaError(
               ErrorCode.EDGE_CONSTRAINT_VIOLATION,
               `Edge source and target must be different items`,
               { edge_type: edgeType },
             );
           }
           if (uniqueTargets.has(target)) {
-            throw new MymeError(
+            throw new MarfaError(
               ErrorCode.EDGE_CONSTRAINT_VIOLATION,
               `Duplicate target ${target} in edges.${edgeType}`,
             );
@@ -1492,7 +1492,7 @@ export function itemRoutes(storage: Storage) {
           uniqueTargets.add(target);
           const targetItem = await storage.items.get(target, tid);
           if (!targetItem) {
-            throw new MymeError(
+            throw new MarfaError(
               ErrorCode.ITEM_NOT_FOUND,
               `Edge target not found: ${target}`,
             );
@@ -1602,7 +1602,7 @@ export function itemRoutes(storage: Storage) {
   router.openapi(deleteItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     requireAuth(c);
@@ -1614,7 +1614,7 @@ export function itemRoutes(storage: Storage) {
     // its `type_permissions`. Mirrors the PATCH /items handler above.
     const targetItem = await storage.items.get(id, tid);
     if (!targetItem) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     requireTypeAccess(c, targetItem.type, "write");
 
@@ -1665,12 +1665,12 @@ export function itemRoutes(storage: Storage) {
   router.openapi(getMetadataRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "read");
@@ -1685,12 +1685,12 @@ export function itemRoutes(storage: Storage) {
   router.openapi(putMetadataRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "write");
@@ -1699,7 +1699,7 @@ export function itemRoutes(storage: Storage) {
     const tags = body.tags;
 
     if (tags.length > 100) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Maximum 100 tags per item",
       );
@@ -1722,12 +1722,12 @@ export function itemRoutes(storage: Storage) {
   router.openapi(patchMetadataRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "write");
@@ -1737,7 +1737,7 @@ export function itemRoutes(storage: Storage) {
 
     // Pre-merge bounds check on incoming arrays
     if (Array.isArray(tags) && tags.length > 100) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Maximum 100 tags per item",
       );
@@ -1747,7 +1747,7 @@ export function itemRoutes(storage: Storage) {
 
     // Post-merge bounds check (incoming may be small but merge could exceed)
     if (metadata.tags.length > 100) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Maximum 100 tags per item (including existing tags)",
       );
@@ -1769,12 +1769,12 @@ export function itemRoutes(storage: Storage) {
   router.openapi(addTagsRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "write");
@@ -1788,7 +1788,7 @@ export function itemRoutes(storage: Storage) {
     const existingMeta = await storage.metadata.get(id);
     const projectedCount = new Set([...existingMeta.tags, ...tags]).size;
     if (projectedCount > 100) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Maximum 100 tags per item (including existing tags)",
       );
@@ -1820,7 +1820,7 @@ export function itemRoutes(storage: Storage) {
   router.openapi(purgeItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     // T-051 follow-on (Wave B Part 2): widened from `requireAdmin` to
@@ -1849,12 +1849,12 @@ export function itemRoutes(storage: Storage) {
   router.openapi(removeTagRoute, async (c) => {
     const { id, tag: rawTag } = c.req.valid("param");
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.INVALID_ID, "Invalid item ID");
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
     const item = await storage.items.get(id, c.get("apiKey")?.tenant_id);
     if (!item) {
-      throw new MymeError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
+      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
     requireTypeAccess(c, item.type, "write");

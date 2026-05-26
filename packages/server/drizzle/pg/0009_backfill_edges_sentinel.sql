@@ -6,7 +6,7 @@
 -- stays consistent between dialects (Postgres has gen_random_uuid(); SQLite
 -- doesn't). See `packages/server/scripts/backfill-edges.ts`.
 --
--- The migrate CLI (`pnpm --filter @mymehq/server run migrate`) auto-invokes
+-- The migrate CLI (`pnpm --filter @withmarfa/server run migrate`) auto-invokes
 -- the script; re-running is idempotent (rows are skipped if an equivalent
 -- edge already exists).
 SELECT 1;

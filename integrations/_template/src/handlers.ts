@@ -11,14 +11,14 @@ import {
   registerScheduleHandler,
   registerWebhookHandler,
   registerItemEventHandler,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import type {
   ConnectionContext,
   ScheduleMessage,
   WebhookHandlerInput,
   ItemEventMessage,
   HandlerResult,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 
 interface TemplateCursor {
   /** ISO timestamp the last successful run completed. */
@@ -71,10 +71,10 @@ export async function handleItemEvent(
   // Cycle-metadata contract (T-037): if your handler ever publishes a
   // downstream event whose cycle metadata is exposed to a publish API
   // that takes `originating_connection_id` and `hop_count`, use
-  // `nextHopMetadata` from `@mymehq/runtime-sdk` to compute the
+  // `nextHopMetadata` from `@withmarfa/runtime-sdk` to compute the
   // metadata. Never roll your own — getting the origin propagation or
   // the hop_count increment off-by-one breaks cycle prevention. Today
-  // none of the SDK's `ctx.myme.*` calls accept cycle metadata
+  // none of the SDK's `ctx.marfa.*` calls accept cycle metadata
   // directly, so this contract is forward-looking for any future SDK
   // surface that does.
   await ctx.activity.emit({

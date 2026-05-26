@@ -1,9 +1,9 @@
 {
-  "name": "@mymehq/integration-todoist",
+  "name": "@withmarfa/integration-todoist",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Bidirectional Todoist connector. Schedule trigger polls Todoist's Sync API for incremental task updates; item-event trigger pushes Myme core.task / todoist.task mutations back via REST + Sync API commands. First instance of the token-credential install seam (T-241 PR1).",
+  "description": "Bidirectional Todoist connector. Schedule trigger polls Todoist's Sync API for incremental task updates; item-event trigger pushes Marfa core.task / todoist.task mutations back via REST + Sync API commands. First instance of the token-credential install seam (T-241 PR1).",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -13,12 +13,12 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@mymehq/runtime-sdk": "workspace:*",
-    "@mymehq/shared": "workspace:*"
+    "@withmarfa/runtime-sdk": "workspace:*",
+    "@withmarfa/shared": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251201.0",
-    "@mymehq/runtime-test": "workspace:*",
+    "@withmarfa/runtime-test": "workspace:*",
     "typescript": "^6.0.2",
     "vitest": "^4.1.2",
     "tsup": "^8.5.1"

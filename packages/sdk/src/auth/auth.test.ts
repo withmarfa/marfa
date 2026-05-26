@@ -5,7 +5,7 @@ import {
   generateState,
 } from "./pkce.js";
 import { InMemoryTokenStorage } from "./storage.js";
-import { MymeAuth } from "./auth.js";
+import { MarfaAuth } from "./auth.js";
 import { __resetDiscoveryCache } from "./discovery.js";
 
 describe("PKCE primitives", () => {
@@ -60,14 +60,14 @@ function discoveryFetch(issuer: string): typeof globalThis.fetch {
     );
 }
 
-describe("MymeAuth", () => {
+describe("MarfaAuth", () => {
   beforeEach(() => {
     __resetDiscoveryCache();
   });
 
   it("buildAuthorizeUrl persists verifier+state and produces a valid URL", async () => {
     const storage = new InMemoryTokenStorage();
-    const auth = new MymeAuth({
+    const auth = new MarfaAuth({
       issuer: "http://localhost:8602",
       clientId: "test-client",
       redirectUri: "http://localhost:5173/callback",
@@ -91,7 +91,7 @@ describe("MymeAuth", () => {
 
     // Pending state should be persisted.
     const pending = await storage.get(
-      "myme.auth.pending:http://localhost:8602:test-client",
+      "marfa.auth.pending:http://localhost:8602:test-client",
     );
     expect(pending).toBeTruthy();
     const obj = JSON.parse(pending!) as {
@@ -104,7 +104,7 @@ describe("MymeAuth", () => {
 
   it("restore() returns null when no session exists", async () => {
     const storage = new InMemoryTokenStorage();
-    const auth = new MymeAuth({
+    const auth = new MarfaAuth({
       issuer: "http://localhost:8602",
       clientId: "test-client",
       redirectUri: "http://localhost:5173/callback",

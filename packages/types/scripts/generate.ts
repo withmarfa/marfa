@@ -164,7 +164,7 @@ function fieldLiteral(field: JsonField, isRequired: boolean): string {
 // interfaces from src/ and exports the ALL_TYPES array plus individual consts.
 const lines: string[] = [];
 lines.push("// Auto-generated from core/*.json — do not edit manually.");
-lines.push("// Run `pnpm --filter @mymehq/types generate` to regenerate.");
+lines.push("// Run `pnpm --filter @withmarfa/types generate` to regenerate.");
 lines.push("");
 lines.push('import type { TypeSchema } from "../src/schema-types.js";');
 lines.push("");
@@ -411,7 +411,9 @@ const edgeLines: string[] = [];
 edgeLines.push(
   "// Auto-generated from core/edges/*.json — do not edit manually.",
 );
-edgeLines.push("// Run `pnpm --filter @mymehq/types generate` to regenerate.");
+edgeLines.push(
+  "// Run `pnpm --filter @withmarfa/types generate` to regenerate.",
+);
 edgeLines.push("");
 edgeLines.push('import type { EdgeTypeSchema } from "../src/schema-types.js";');
 edgeLines.push("");

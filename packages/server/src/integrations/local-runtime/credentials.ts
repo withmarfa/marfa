@@ -15,11 +15,11 @@
  * if the integration runs every minute.
  */
 import { randomBytes } from "node:crypto";
-import type { RuntimeCredential } from "@mymehq/runtime-sdk";
+import type { RuntimeCredential } from "@withmarfa/runtime-sdk";
 import { hashApiKey } from "../../middleware/auth.js";
 import type { Storage } from "../../storage/interface.js";
 
-const KEY_PREFIX = "myme_k1_";
+const KEY_PREFIX = "marfa_k1_";
 const DEFAULT_TTL_MS = 600 * 1000;
 
 interface ConnectionProperties {

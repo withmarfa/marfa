@@ -2,8 +2,8 @@ import {
   IntegrationManifestSchema,
   MANIFEST_SCHEMA_VERSION_SUPPORTED_MAJOR,
   parseManifestSchemaMajor,
-} from "@mymehq/shared";
-import type { IntegrationManifest } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export interface ValidateManifestError {
   path: string;

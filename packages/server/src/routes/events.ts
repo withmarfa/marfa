@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { matchesTypePattern } from "@mymehq/shared";
+import { matchesTypePattern } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, computeTypeFilter } from "../middleware/auth.js";
 import { subscribe, subscribeEdges, wireEventName } from "../pubsub.js";
@@ -239,7 +239,7 @@ export function eventRoutes(
             // T-146: replay reads `storage.eventLog` — RLS-policy-
             // guarded tables. Install the ALS context so reads flow
             // through the reserved connection that carries
-            // `myme.tenant_id` + `myme_app` role. The live pumps
+            // `marfa.tenant_id` + `marfa_app` role. The live pumps
             // (`pump` / `pumpEdges`) below don't touch storage —
             // they read from in-memory pubsub iterators — and so
             // don't need the ALS scope.

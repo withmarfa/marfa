@@ -1,6 +1,6 @@
 import { eq, desc, sql } from "drizzle-orm";
-import { generateId } from "@mymehq/shared";
-import type { WebhookDelivery } from "@mymehq/shared";
+import { generateId } from "@withmarfa/shared";
+import type { WebhookDelivery } from "@withmarfa/shared";
 import type {
   PendingWebhookDelivery,
   WebhookDeliveryStore,
@@ -86,7 +86,7 @@ export class PgWebhookDeliveryStore implements WebhookDeliveryStore {
   }
 
   /**
-   * Atomic claim of pending deliveries. Two Myme instances pointed at the
+   * Atomic claim of pending deliveries. Two Marfa instances pointed at the
    * same database can both poll; without a claim each would see the same
    * `status='pending'` rows and double-deliver. This statement wraps the
    * eligibility SELECT in `FOR UPDATE SKIP LOCKED` and, in one trip,

@@ -1,6 +1,9 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode } from "@mymehq/shared";
-import type { PreviewEventEnvelope, PreviewEventResult } from "@mymehq/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import type {
+  PreviewEventEnvelope,
+  PreviewEventResult,
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireTenantAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -12,7 +15,7 @@ import {
   armScheduleForInstall,
   performInstall,
 } from "../connections/install-pipeline.js";
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 import { publish, resolveHopBudget } from "../pubsub.js";
 import type { ItemEventWithId } from "../pubsub.js";
 import {
@@ -365,13 +368,13 @@ export function connectionRoutes(storage: Storage, salt: string) {
       includePlatformScoped: true,
     });
     if (!integration) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INTEGRATION_NOT_FOUND,
         "Integration not found",
       );
     }
     if (integration.type !== "system.integration") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "integration_id does not refer to a system.integration item",
         { actual_type: integration.type },
@@ -399,8 +402,8 @@ export function connectionRoutes(storage: Storage, salt: string) {
     // Best-effort: arm the schedule alarm if the manifest has a schedule
     // trigger. Failures surface as system.activity action_required;
     // install itself stays successful.
-    const controlPlaneUrl = process.env.MYME_RUNTIME_CONTROL_URL;
-    const runtimeBrokerKey = process.env.MYME_RUNTIME_BROKER_KEY;
+    const controlPlaneUrl = process.env.MARFA_RUNTIME_CONTROL_URL;
+    const runtimeBrokerKey = process.env.MARFA_RUNTIME_BROKER_KEY;
     if (controlPlaneUrl && runtimeBrokerKey) {
       await armScheduleForInstall(storage, {
         manifest: props.manifest as IntegrationManifest,
@@ -445,7 +448,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
 
     const item = await storage.items.get(body.item_id, tenantId);
     if (!item) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.ITEM_NOT_FOUND,
         "Item not found in this tenant scope",
         { item_id: body.item_id },
@@ -535,7 +538,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
     if (body.connection_id !== undefined) {
       const conn = await storage.items.get(body.connection_id, tenantId);
       if (!conn) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.CONNECTION_NOT_FOUND,
           "Connection not found in this tenant scope",
           { connection_id: body.connection_id },
@@ -607,9 +610,9 @@ export function connectionRoutes(storage: Storage, salt: string) {
     } catch (err) {
       if (err instanceof UninstallError) {
         if (err.code === "connection_not_found") {
-          throw new MymeError(ErrorCode.CONNECTION_NOT_FOUND, err.message);
+          throw new MarfaError(ErrorCode.CONNECTION_NOT_FOUND, err.message);
         }
-        throw new MymeError(ErrorCode.VALIDATION_ERROR, err.message, {
+        throw new MarfaError(ErrorCode.VALIDATION_ERROR, err.message, {
           uninstall_error_code: err.code,
         });
       }

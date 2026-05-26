@@ -1,5 +1,5 @@
 /**
- * mymehq.inbox webhook handler.
+ * withmarfa.inbox webhook handler.
  *
  * The substrate verifies the HMAC against the per-connection
  * subscription secret using the `cloudflare-email` adapter, then
@@ -14,7 +14,7 @@
  *      the bounded ring on the cursor store. The server's own
  *      `connection.runtime.idempotency` map is the primary defence;
  *      this is the second wall, mirroring github-webhooks.
- *   3. Build a `mymehq.captured_email` item:
+ *   3. Build a `withmarfa.captured_email` item:
  *      - `source_id = Message-ID` (or the harness-supplied delivery
  *        id when Message-ID is absent, e.g. from a CC-only message
  *        synthesised at relay time)
@@ -28,7 +28,7 @@ import {
   type WebhookHandlerInput,
   type HandlerResult,
   type CreateItemInput,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { DELIVERY_RING_SIZE } from "./manifest.js";
 
 const CURSOR_KEY = "delivery_ring";
@@ -65,7 +65,7 @@ export async function handleInboxWebhook(
 ): Promise<HandlerResult> {
   const headers = message.headers;
   const deliveryIdHeader =
-    getHeader(headers, "X-Myme-Delivery-Id") ?? message.delivery_id;
+    getHeader(headers, "X-Marfa-Delivery-Id") ?? message.delivery_id;
 
   let envelope: EmailEnvelope;
   try {
@@ -73,7 +73,7 @@ export async function handleInboxWebhook(
   } catch (err) {
     await ctx.activity.emit({
       severity: "action_required",
-      summary: "mymehq.inbox: failed to parse webhook body",
+      summary: "withmarfa.inbox: failed to parse webhook body",
       detail: { error: errorMessage(err) },
     });
     // Don't retry — a malformed body won't repair itself.
@@ -92,7 +92,7 @@ export async function handleInboxWebhook(
     if (ids.includes(idempotencyKey)) {
       await ctx.activity.emit({
         severity: "info",
-        summary: `mymehq.inbox: duplicate delivery ${idempotencyKey} ignored`,
+        summary: `withmarfa.inbox: duplicate delivery ${idempotencyKey} ignored`,
       });
       return { ok: true };
     }
@@ -112,7 +112,7 @@ export async function handleInboxWebhook(
   ) {
     await ctx.activity.emit({
       severity: "action_required",
-      summary: "mymehq.inbox: envelope missing required `from`/`to`",
+      summary: "withmarfa.inbox: envelope missing required `from`/`to`",
       detail: {
         delivery_id: idempotencyKey,
         from_present: typeof fromAddress === "string",
@@ -125,7 +125,7 @@ export async function handleInboxWebhook(
   const item = buildCapturedEmail(envelope, fromAddress, toAddress);
 
   try {
-    const created = await ctx.myme.createItem(item);
+    const created = await ctx.marfa.createItem(item);
     // `properties.subject` is `unknown` from the indexed lookup —
     // narrow with a typeof guard before interpolating into the log
     // template.
@@ -133,7 +133,7 @@ export async function handleInboxWebhook(
     const subjectText = typeof subjectRaw === "string" ? subjectRaw : "";
     await ctx.activity.emit({
       severity: "info",
-      summary: `mymehq.inbox: captured email ${created.id} (subject: ${subjectText})`,
+      summary: `withmarfa.inbox: captured email ${created.id} (subject: ${subjectText})`,
       detail: {
         item_id: created.id,
         delivery_id: idempotencyKey,
@@ -144,13 +144,13 @@ export async function handleInboxWebhook(
   } catch (err) {
     await ctx.activity.emit({
       severity: "action_required",
-      summary: "mymehq.inbox: failed to create captured_email",
+      summary: "withmarfa.inbox: failed to create captured_email",
       detail: {
         error: errorMessage(err),
         delivery_id: idempotencyKey,
       },
     });
-    // Retry on Myme-side failures; the delivery is not yet recorded
+    // Retry on Marfa-side failures; the delivery is not yet recorded
     // so the next attempt re-tries.
     return { ok: false, retry: true, reason: "create_failed" };
   }
@@ -234,8 +234,8 @@ function buildCapturedEmail(
       : undefined;
 
   return sourceId === undefined
-    ? { type: "mymehq.captured_email", properties }
-    : { type: "mymehq.captured_email", source_id: sourceId, properties };
+    ? { type: "withmarfa.captured_email", properties }
+    : { type: "withmarfa.captured_email", source_id: sourceId, properties };
 }
 
 async function recordDelivery(

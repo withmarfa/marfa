@@ -27,7 +27,7 @@ export type OidcScope = "openid" | "profile" | "email" | "offline_access";
 export interface ParsedScope {
   typePattern: string;
   /** "read" / "write" for type / edge / metadata scopes; "none" for OIDC
-   *  literals (which have no read/write semantics on Myme resources). */
+   *  literals (which have no read/write semantics on Marfa resources). */
   operation: "read" | "write" | "none";
   /** "edge", "metadata", or "oidc" for the disambiguated families;
    *  undefined for type scopes. */

@@ -19,7 +19,7 @@ import {
   evaluateDispatch,
   type SubscriptionEntry,
 } from "../../connections/envelope.js";
-import type { ItemEventMessage } from "@mymehq/runtime-sdk";
+import type { ItemEventMessage } from "@withmarfa/runtime-sdk";
 import type { LocalRuntime, SchedulerEnvelope } from "./types.js";
 
 const SUBSCRIPTION_LOAD_PAGE_SIZE = 200;

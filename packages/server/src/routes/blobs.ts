@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode, isValidBlobHash } from "@mymehq/shared";
+import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { enforceQuota } from "../middleware/quota.js";
@@ -296,7 +296,7 @@ export function blobRoutes(
     // case. Absent/invalid header falls through to the post-buffer check.
     const declaredLength = Number(c.req.header("Content-Length"));
     if (Number.isFinite(declaredLength) && declaredLength > maxBlobSize) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.BLOB_TOO_LARGE,
         `Blob exceeds maximum size of ${String(maxBlobSize)} bytes`,
       );
@@ -311,7 +311,7 @@ export function blobRoutes(
       const formData = await c.req.formData();
       const file = formData.get("file");
       if (!(file instanceof File)) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           "Missing 'file' in multipart upload",
         );
@@ -324,11 +324,11 @@ export function blobRoutes(
     }
 
     if (data.length === 0) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Empty blob");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Empty blob");
     }
 
     if (data.length > maxBlobSize) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.BLOB_TOO_LARGE,
         `Blob exceeds maximum size of ${String(maxBlobSize)} bytes`,
       );
@@ -414,18 +414,18 @@ export function blobRoutes(
       hash = `sha256:${hash}`;
     }
     if (!isValidBlobHash(hash)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
     // T-049: tenant-scoped lookup. Cross-tenant probes return 404.
     const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
     if (!record) {
-      throw new MymeError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
+      throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
 
     const data = await blobBackend.get(hash);
     if (!data) {
-      throw new MymeError(ErrorCode.BLOB_NOT_FOUND, "Blob data not found");
+      throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob data not found");
     }
 
     return new Response(new Uint8Array(data), {
@@ -442,7 +442,7 @@ export function blobRoutes(
     const apiKey = requireAuth(c);
 
     if (!blobBackend.getPresignedUrl) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Presigned URLs are not available with the current blob backend",
       );
@@ -453,13 +453,13 @@ export function blobRoutes(
       hash = `sha256:${hash}`;
     }
     if (!isValidBlobHash(hash)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
     // T-049: tenant-scoped lookup. Cross-tenant probes return 404.
     const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
     if (!record) {
-      throw new MymeError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
+      throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
 
     const { ttl } = c.req.valid("query");
@@ -486,7 +486,7 @@ export function blobRoutes(
       while (hasMore) {
         const page = await storage.items.list({
           tenantId,
-          state: state as import("@mymehq/shared").ItemState | undefined,
+          state: state as import("@withmarfa/shared").ItemState | undefined,
           limit: 200,
           cursor,
         });
@@ -538,7 +538,7 @@ export function blobRoutes(
     requireAdmin(c);
 
     if (!blobBackend.list) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Reconciliation requires a blob backend that supports listing",
       );

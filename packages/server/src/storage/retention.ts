@@ -5,7 +5,7 @@ import type {
   Storage,
   TenantStore,
 } from "./interface.js";
-import type { TenantConfig } from "@mymehq/shared";
+import type { TenantConfig } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 
 const MS_PER_DAY = 86_400_000;

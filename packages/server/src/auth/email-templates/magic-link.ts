@@ -32,9 +32,9 @@ export function renderMagicLinkEmail(
   input: MagicLinkRenderInput,
 ): RenderedEmail {
   const expires = input.expiresInMinutes ?? 5;
-  const subject = "Sign in to Myme";
+  const subject = "Sign in to Marfa";
   const text = [
-    "Sign in to Myme",
+    "Sign in to Marfa",
     "",
     `Click the link below to sign in. It expires in ${String(expires)} minutes.`,
     "",
@@ -42,7 +42,7 @@ export function renderMagicLinkEmail(
     "",
     "If you didn't request this, you can safely ignore this email.",
     "",
-    "— Myme",
+    "— Marfa",
   ].join("\n");
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -56,7 +56,7 @@ export function renderMagicLinkEmail(
 <tr><td align="center">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;width:100%;background:#ffffff;border:1px solid ${BORDER};border-radius:8px;">
 <tr><td style="padding:32px;">
-<h1 style="margin:0 0 16px 0;font-size:20px;font-weight:600;color:${TEXT};">Sign in to Myme</h1>
+<h1 style="margin:0 0 16px 0;font-size:20px;font-weight:600;color:${TEXT};">Sign in to Marfa</h1>
 <p style="margin:0 0 24px 0;color:${MUTED};">Click the button below to sign in. This link expires in ${String(expires)} minutes.</p>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0">
 <tr><td style="border-radius:6px;background:${ACCENT};">
@@ -69,7 +69,7 @@ export function renderMagicLinkEmail(
 <p style="margin:0;color:${MUTED};font-size:13px;">If you didn't request this email, you can safely ignore it.</p>
 </td></tr>
 </table>
-<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Myme</p>
+<p style="margin:24px 0 0 0;color:${MUTED};font-size:12px;">— Marfa</p>
 </td></tr>
 </table>
 </body>

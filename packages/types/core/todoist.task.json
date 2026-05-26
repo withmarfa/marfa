@@ -44,7 +44,7 @@
     },
     "completed": {
       "type": "boolean",
-      "description": "Mirrors Todoist's `checked` flag. Closing a task in Myme (state transition to trashed) maps to Todoist's `/close` endpoint, which sets this to true upstream."
+      "description": "Mirrors Todoist's `checked` flag. Closing a task in Marfa (state transition to trashed) maps to Todoist's `/close` endpoint, which sets this to true upstream."
     },
     "url": {
       "type": "string",

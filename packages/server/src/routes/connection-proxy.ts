@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
-import { MymeError, ErrorCode, generateId, type Item } from "@mymehq/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  generateId,
+  type Item,
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -107,7 +112,7 @@ async function readCredentialConfig(
   const props = connection.properties as { credential_ref?: string };
   const credentialRef = props.credential_ref;
   if (!credentialRef) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
       `Connection ${connection.id} has no credential_ref. Install the connection via /integrations/:id/install or migrate the legacy inline OAuth config to a system.credential item.`,
     );
@@ -124,7 +129,7 @@ async function readCredentialConfig(
     connection.tenant_id ?? undefined,
   );
   if (credential?.type !== "system.credential") {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
       `Connection ${connection.id} has credential_ref '${credentialRef}' but no matching system.credential item exists.`,
     );
@@ -143,7 +148,7 @@ async function readCredentialConfig(
     secret_encrypted?: string;
   };
   if (typeof credProps.secret_encrypted !== "string") {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
       `Connection ${connection.id}'s credential_ref ${credentialRef} is missing the encrypted secret.`,
     );
@@ -156,7 +161,7 @@ async function readCredentialConfig(
       typeof cfg.oauth_token_url !== "string" ||
       typeof cfg.oauth_client_id !== "string"
     ) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
         `Connection ${connection.id}'s credential_ref ${credentialRef} is not a usable kind:oauth_token — required oauth_provider_config fields are missing.`,
       );
@@ -176,7 +181,7 @@ async function readCredentialConfig(
   if (credProps.kind === "api_token") {
     const cfg = credProps.api_token_config;
     if (typeof cfg?.upstream_base_url !== "string") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
         `Connection ${connection.id}'s credential_ref ${credentialRef} is not a usable kind:api_token — api_token_config.upstream_base_url is missing.`,
       );
@@ -207,7 +212,7 @@ async function readCredentialConfig(
     };
   }
 
-  throw new MymeError(
+  throw new MarfaError(
     ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
     `Connection ${connection.id}'s credential_ref ${credentialRef} has unsupported kind '${String(credProps.kind)}' (expected 'oauth_token' or 'api_token').`,
   );
@@ -245,7 +250,7 @@ function resolveUpstreamBaseUrl(
       // misconfiguration error rather than silently falling back.
       new URL(override);
     } catch {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
         `Connection ${connection.id}'s configuration.upstream_base_url_override is not a valid URL: '${override}'`,
       );
@@ -641,7 +646,10 @@ async function requireConnectionProxyAccess(
   const tenantId = key.tenant_id ?? undefined;
   const connection = await storage.items.get(connectionId, tenantId);
   if (connection?.type !== "system.connection") {
-    throw new MymeError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found");
+    throw new MarfaError(
+      ErrorCode.CONNECTION_NOT_FOUND,
+      "Connection not found",
+    );
   }
   const isAdmin = key.role === "admin" || key.is_platform;
   // Two connector-credential shapes accept here:
@@ -654,7 +662,7 @@ async function requireConnectionProxyAccess(
   //      `is_runtime_credential: true` and `connection_id` stamped at
   //      mint time, so the gate matches on that pair rather than the
   //      free-form source string. Without this widening, every
-  //      hosted-substrate integration Worker's `ctx.myme.proxyRequest`
+  //      hosted-substrate integration Worker's `ctx.marfa.proxyRequest`
   //      call 403s on dispatch — surfaced by T-236's hosted Marfa
   //      walkthrough (the first integration to drive the proxy under
   //      a broker-minted credential in production).
@@ -662,7 +670,7 @@ async function requireConnectionProxyAccess(
     key.source === `oauth:${connectionId}` ||
     (key.is_runtime_credential === true && key.connection_id === connectionId);
   if (!isAdmin && !isConnector) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Caller cannot proxy through this connection",
     );
@@ -793,7 +801,7 @@ export function connectionProxyRoutes(storage: Storage) {
             upstream_host: new URL(upstreamUrl).host,
           },
         });
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
           `Upstream 401: ${reason}`,
         );
@@ -817,7 +825,7 @@ export function connectionProxyRoutes(storage: Storage) {
           resource_type: "connection",
           resource_id: connectionId,
         });
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.OAUTH_PROXY_TOKEN_MISSING,
           "Connection has no stored OAuth token; complete authorisation first",
         );
@@ -856,7 +864,7 @@ export function connectionProxyRoutes(storage: Storage) {
               invalid_grant: result.invalidGrant,
             },
           });
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
             `Refresh failed: ${result.reason}`,
           );
@@ -865,7 +873,7 @@ export function connectionProxyRoutes(storage: Storage) {
         row = await storage.connectionOauthTokens.get(connectionId, tenantId);
         if (!row) {
           // Should be impossible — refresh just wrote.
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.OAUTH_PROXY_TOKEN_MISSING,
             "Token row vanished mid-refresh",
           );
@@ -879,7 +887,7 @@ export function connectionProxyRoutes(storage: Storage) {
           SECRET_INFO.connectionOauthToken,
         );
       } catch {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
           "Stored access token is unreadable; reauthorise to recover",
         );
@@ -920,7 +928,7 @@ export function connectionProxyRoutes(storage: Storage) {
               invalid_grant: result.invalidGrant,
             },
           });
-          throw new MymeError(
+          throw new MarfaError(
             ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED,
             `Upstream 401 and refresh failed: ${result.reason}`,
           );

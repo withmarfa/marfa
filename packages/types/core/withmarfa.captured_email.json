@@ -1,7 +1,7 @@
 {
-  "id": "mymehq.captured_email",
+  "id": "withmarfa.captured_email",
   "label": "Captured Email",
-  "description": "An email captured by the mymehq.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Maps onto `core.note` via `compatible_with` so cross-app readers see a title + body without knowing the captured-email shape. Attachment blob upload is gated on T-239; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
+  "description": "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Maps onto `core.note` via `compatible_with` so cross-app readers see a title + body without knowing the captured-email shape. Attachment blob upload is gated on T-239; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
   "version": 1,
   "compatible_with": ["core.note"],
   "fields": {
@@ -15,7 +15,7 @@
     },
     "to_address": {
       "type": "string",
-      "description": "Address the email was delivered to (the connection's capture address — e.g. `capture@inbox.myme.so`)."
+      "description": "Address the email was delivered to (the connection's capture address — e.g. `capture@inbox.marfa.so`)."
     },
     "subject": {
       "type": "string",
@@ -35,7 +35,7 @@
     },
     "sent_at": {
       "type": "datetime",
-      "description": "RFC 5322 `Date:` header, parsed to ISO 8601. The upstream-fidelity timestamp; distinct from Myme's `created_at` which stamps the inbound-receipt time."
+      "description": "RFC 5322 `Date:` header, parsed to ISO 8601. The upstream-fidelity timestamp; distinct from Marfa's `created_at` which stamps the inbound-receipt time."
     },
     "message_id": {
       "type": "string",

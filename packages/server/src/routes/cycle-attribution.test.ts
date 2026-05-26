@@ -57,7 +57,7 @@ async function nextEventMatching(
 }
 
 describe("cycle metadata attribution (T-039)", () => {
-  it("propagates X-Myme-Cycle-Origin / X-Myme-Cycle-Hop headers onto the published event", async () => {
+  it("propagates X-Marfa-Cycle-Origin / X-Marfa-Cycle-Hop headers onto the published event", async () => {
     const uniqueTitle = `cycle-attr-${Math.random().toString(36).slice(2, 8)}`;
 
     // Set up the listener BEFORE issuing the request so we don't miss
@@ -71,8 +71,8 @@ describe("cycle metadata attribution (T-039)", () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       headers: {
-        "X-Myme-Cycle-Origin": "conn-upstream",
-        "X-Myme-Cycle-Hop": "2",
+        "X-Marfa-Cycle-Origin": "conn-upstream",
+        "X-Marfa-Cycle-Hop": "2",
       },
       body: {
         type: "core.task",

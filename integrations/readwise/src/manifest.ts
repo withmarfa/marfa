@@ -14,7 +14,7 @@
  * per-token rate limit (240 req/min on Export) is generous but worth
  * conserving.
  */
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 export const READWISE_MANIFEST: IntegrationManifest = {
   name: "readwise.highlights",

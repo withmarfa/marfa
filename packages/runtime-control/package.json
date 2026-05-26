@@ -1,6 +1,6 @@
 {
-  "name": "@mymehq/runtime-control",
-  "version": "0.0.1",
+  "name": "@withmarfa/runtime-control",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Cloudflare Worker — Connections runtime control plane (inbound webhook router, lease broker, install callbacks).",
@@ -12,8 +12,8 @@
     "deploy": "wrangler deploy --config ../../infra/cloudflare/wrangler.control.toml"
   },
   "dependencies": {
-    "@mymehq/shared": "workspace:*",
-    "@mymehq/webhooks": "workspace:*",
+    "@withmarfa/shared": "workspace:*",
+    "@withmarfa/webhooks": "workspace:*",
     "hono": "^4.7.5"
   },
   "devDependencies": {

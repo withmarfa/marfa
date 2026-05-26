@@ -1,6 +1,6 @@
 {
-  "name": "@mymehq/shared",
-  "version": "7.0.0",
+  "name": "@withmarfa/shared",
+  "version": "1.0.0",
   "type": "module",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
@@ -28,7 +28,7 @@
     "uuidv7": "^1.2.1"
   },
   "devDependencies": {
-    "@mymehq/types": "workspace:*",
+    "@withmarfa/types": "workspace:*",
     "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",

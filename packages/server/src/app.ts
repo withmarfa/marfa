@@ -7,8 +7,8 @@ import { authMiddleware } from "./middleware/auth.js";
 import { createErrorHandler } from "./middleware/error-handler.js";
 import type { Storage } from "./storage/interface.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
-import type { MymeAuth } from "./auth/instance.js";
-import { createMymeAuth } from "./auth/instance.js";
+import type { MarfaAuth } from "./auth/instance.js";
+import { createMarfaAuth } from "./auth/instance.js";
 import type { OidcSigner } from "./auth/oidc-signing.js";
 import { itemRoutes } from "./routes/items.js";
 import { bulkRoutes } from "./routes/bulk.js";
@@ -33,7 +33,7 @@ import {
   oauthProviderOpenIdConfigMetadata,
 } from "@better-auth/oauth-provider";
 import { authStaticRoutes } from "./routes/auth-static.js";
-import type { EmailTransport as MymeEmailTransport } from "./email/transport.js";
+import type { EmailTransport as MarfaEmailTransport } from "./email/transport.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
 import { webhookRoutes } from "./routes/webhooks.js";
@@ -72,7 +72,7 @@ export function createApp(
   storage: Storage,
   blobBackend: BlobBackend,
   config: AppConfig,
-  emailTransport?: MymeEmailTransport,
+  emailTransport?: MarfaEmailTransport,
   oidcSigner?: OidcSigner,
   /**
    * T-173 — optional Hono sub-app mounted at the root path before any
@@ -188,7 +188,7 @@ export function createApp(
   const deployedVersion = config.versionSha ?? "dev";
   app.get("/", (c) =>
     c.json({
-      name: "myme",
+      name: "marfa",
       version: deployedVersion,
       features,
       cdn_base_url: config.cdnBaseUrl || null,
@@ -245,8 +245,8 @@ export function createApp(
     accountDeletionGuardMiddleware(storage, emailTransport, config.authBaseUrl),
   );
 
-  // Cycle metadata resolution (T-039, T-144). Reads X-Myme-Cycle-Origin /
-  // X-Myme-Cycle-Hop headers (a connector continuing a chain) or falls
+  // Cycle metadata resolution (T-039, T-144). Reads X-Marfa-Cycle-Origin /
+  // X-Marfa-Cycle-Hop headers (a connector continuing a chain) or falls
   // back to the api key's connection binding (a connector kicking off a
   // chain). Mounted AFTER auth because the fallback path reads
   // `c.var.apiKey`. T-144: the resolved cycle is written to BOTH
@@ -308,8 +308,8 @@ export function createApp(
           // prefixes appear BEFORE broader siblings per the
           // insertion-order match rule.
           //
-          // `/auth/authorize/decision` (Myme proxy) precedes
-          // `/auth/authorize` (Myme consent render).
+          // `/auth/authorize/decision` (Marfa proxy) precedes
+          // `/auth/authorize` (Marfa consent render).
           "/auth/oauth2/register": 10,
           "/auth/oauth2/token": 60,
           "/auth/oauth2/introspect": 60,
@@ -336,9 +336,9 @@ export function createApp(
 
   // T-025 part 2: Postgres RLS request-level enforcement. Wraps each
   // tenant-bounded request in a transaction with `SET LOCAL ROLE
-  // myme_app` and `set_config('myme.tenant_id', $tenant, true)` so
+  // marfa_app` and `set_config('marfa.tenant_id', $tenant, true)` so
   // the per-table RLS policies (T-025 part 1) actually filter
-  // queries. Pass-through when `MYME_RLS_ENFORCE=false` (the
+  // queries. Pass-through when `MARFA_RLS_ENFORCE=false` (the
   // default), when storage is SQLite (`pgDb` undefined), or when the
   // request has no tenant on its api key (platform admin / public
   // routes). See `middleware/rls-tenant-context.ts` for the full
@@ -361,12 +361,12 @@ export function createApp(
   // interface (BetterAuthStorageAdapter trait). No `as` cast needed —
   // both fields are optional, so a Storage that doesn't wire better-auth
   // simply skips the auth mount.
-  let auth: MymeAuth | undefined;
+  let auth: MarfaAuth | undefined;
   if (storage.betterAuthDb && storage.betterAuthDialect) {
     const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
       Boolean,
     );
-    auth = createMymeAuth({
+    auth = createMarfaAuth({
       db: storage.betterAuthDb,
       dialect: storage.betterAuthDialect,
       baseURL: config.authBaseUrl,
@@ -377,9 +377,9 @@ export function createApp(
       // Rich transport carries the HTML template + idempotency key
       // for log correlation. Falls back to the legacy callable for
       // tests that don't construct a full transport.
-      mymeEmailTransport: emailTransport,
+      marfaEmailTransport: emailTransport,
       // T-131: storage + salt are needed by the @better-auth/oauth-provider
-      // plugin (storeTokens.hash matches Myme's hashApiKey, clientReference
+      // plugin (storeTokens.hash matches Marfa's hashApiKey, clientReference
       // resolves tenant_id, hooks.after projects grants into system.connection).
       storage,
       apiKeySalt: config.apiKeySalt,
@@ -401,7 +401,7 @@ export function createApp(
   //
   // T-158: the plugin's helper does NOT advertise the device-code grant
   // type or the `device_authorization_endpoint` field (RFC 8628 §4) by
-  // default. Myme owns the device-flow surface at `/auth/device` +
+  // default. Marfa owns the device-flow surface at `/auth/device` +
   // `/auth/device/token`, so we wrap the plugin's response and inject
   // both before returning. The plugin DOES expose a `grantTypes` config
   // option that flows through to `grant_types_supported`, but passing
@@ -409,7 +409,7 @@ export function createApp(
   // (`@better-auth/oauth-provider@1.6.9` `dist/index.mjs:300-318`) to
   // attempt to handle the device-code grant and 400 with
   // `unsupported_grant_type` since none of its three case branches
-  // match. The URN's correct dispatch target is the Myme-owned
+  // match. The URN's correct dispatch target is the Marfa-owned
   // `/auth/device/token` endpoint, which RPs discover via the
   // `device_authorization_endpoint` field we add here. Augmenting the
   // metadata in app.ts — rather than passing `grantTypes` to the
@@ -451,7 +451,7 @@ export function createApp(
       if (!grants.includes(URN)) grants.push(URN);
       payload.grant_types_supported = grants;
       // RFC 8628 §4: `device_authorization_endpoint` advertises the
-      // device-authorization request endpoint. Myme's lives at
+      // device-authorization request endpoint. Marfa's lives at
       // `${authBaseUrl}/auth/device` (initiation; the polled token
       // exchange happens at `/auth/device/token`).
       payload.device_authorization_endpoint = `${baseURL.replace(/\/+$/, "")}/auth/device`;
@@ -527,7 +527,7 @@ export function createApp(
   // catch-all so this explicit GET handler wins over the plugin's own
   // mounted endpoints under /auth/oauth2/*.
   app.route("/auth", authConsentRoutes({ storage, auth }));
-  // T-158: Myme-owned DCR endpoint. Sits in front of the plugin's
+  // T-158: Marfa-owned DCR endpoint. Sits in front of the plugin's
   // `/auth/oauth2/register` for two reasons: (1) the plugin's body
   // schema rejects the device-code URN at validation time, (2) the
   // plugin's write path goes through Better Auth's Drizzle adapter
@@ -599,18 +599,18 @@ export function createApp(
     scheme: "bearer",
     bearerFormat: "API Key or OAuth Token",
     description:
-      "Pass an API key (myme_k1_...) or OAuth access token (myme_at_...)",
+      "Pass an API key (marfa_k1_...) or OAuth access token (marfa_at_...)",
   });
   // §3.15 note: `info.version` here is the API-contract version (the wire
   // shape exposed under /openapi.json), distinct from the deployed-build
-  // `version` reported on `GET /`. Keep this aligned with @mymehq/shared
+  // `version` reported on `GET /`. Keep this aligned with @withmarfa/shared
   // (which defines the wire types) — bump on contract changes, not on
   // every deploy. The shared package is currently 4.2.x; the API
   // contract version tracks its major.minor.
   app.doc("/openapi.json", {
     openapi: "3.1.0",
     info: {
-      title: "Myme API",
+      title: "Marfa API",
       version: "4.2.0",
       description: "Typed data layer for structured personal data",
     },

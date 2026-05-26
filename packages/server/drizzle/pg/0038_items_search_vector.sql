@@ -16,14 +16,14 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
 CREATE INDEX IF NOT EXISTS idx_items_search_vector
   ON items USING GIN(search_vector);
 
--- Grant on the new column to myme_app (the RLS application role from
+-- Grant on the new column to marfa_app (the RLS application role from
 -- T-025). The role already has SELECT/INSERT/UPDATE/DELETE on items,
 -- but ALTER TABLE ADD COLUMN inherits those grants in PG only when the
 -- role-level grant covered all columns at creation time. Belt-and-
 -- braces — re-run the GRANT explicitly.
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'myme_app') THEN
-    GRANT SELECT, INSERT, UPDATE, DELETE ON items TO myme_app;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'marfa_app') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON items TO marfa_app;
   END IF;
 END $$;

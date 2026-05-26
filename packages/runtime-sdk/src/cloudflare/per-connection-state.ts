@@ -15,10 +15,10 @@
  * The Worker exports this class from its top-level entrypoint; the
  * Cloudflare runtime instantiates one per `idFromName(connection_id)`.
  *
- * This file is part of the `@mymehq/runtime-sdk/cloudflare` subpath —
+ * This file is part of the `@withmarfa/runtime-sdk/cloudflare` subpath —
  * the substrate-specific surface that imports Workers types
  * (`DurableObject`, `DurableObjectState`, `Queue`). The runtime-agnostic
- * `PerConnectionStateCore` lives at the root `@mymehq/runtime-sdk`
+ * `PerConnectionStateCore` lives at the root `@withmarfa/runtime-sdk`
  * entry and is reused by the local-runtime substrate without any
  * Cloudflare type dependency.
  */

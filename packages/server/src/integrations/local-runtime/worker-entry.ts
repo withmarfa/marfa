@@ -7,7 +7,7 @@
  *
  *   1. On startup, reads `workerData.handlerModulePath` and imports it.
  *      The integration's `local.ts` calls `registerHandlers()` on import,
- *      seeding `@mymehq/runtime-sdk`'s in-thread handler registry.
+ *      seeding `@withmarfa/runtime-sdk`'s in-thread handler registry.
  *   2. Listens on `parentPort` for dispatch messages, builds a
  *      `ConnectionContext` from the supplied credential + cursor
  *      snapshot, runs `dispatchMessage`, and posts the
@@ -27,7 +27,7 @@ import {
   type ConnectionContext,
   type CursorStorageAdapter,
   type HandlerResult,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import type { WorkerDispatchRequest, WorkerDispatchResponse } from "./types.js";
 
 interface BootData {
@@ -101,7 +101,7 @@ function buildContext(
     connection_id: message.connection_id,
     integration_name: message.integration_name,
     ...(message.tenant_id !== undefined && { tenant_id: message.tenant_id }),
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(adapter),
     activity: createActivitySink(client, message.connection_id),
     echo: createEchoSuppression(adapter, echo),

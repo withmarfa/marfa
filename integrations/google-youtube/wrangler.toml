@@ -8,7 +8,7 @@
 # queue (YouTube Data API has no push-notification surface for the
 # liked-videos / subscriptions / playlists collections used here).
 
-name = "myme-integration-google-youtube"
+name = "marfa-integration-google-youtube"
 main = "src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
@@ -28,7 +28,7 @@ new_sqlite_classes = ["PerConnectionState"]
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
-name = "myme-integration-google-youtube-staging"
+name = "marfa-integration-google-youtube-staging"
 
 [env.staging.vars]
 INTEGRATION_NAME = "google.youtube"
@@ -45,22 +45,22 @@ new_sqlite_classes = ["PerConnectionState"]
 
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-google-youtube-staging"
+queue = "marfa-scheduled-poll-google-youtube-staging"
 
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-google-youtube-staging-dlq"
+queue = "marfa-scheduled-poll-google-youtube-staging-dlq"
 
 [[env.staging.queues.consumers]]
-queue = "myme-scheduled-poll-google-youtube-staging"
+queue = "marfa-scheduled-poll-google-youtube-staging"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-google-youtube-staging-dlq"
+dead_letter_queue = "marfa-scheduled-poll-google-youtube-staging-dlq"
 
 # ---- Prod -----------------------------------------------------------------
 [env.prod]
-name = "myme-integration-google-youtube-prod"
+name = "marfa-integration-google-youtube-prod"
 
 [env.prod.vars]
 INTEGRATION_NAME = "google.youtube"
@@ -77,23 +77,23 @@ new_sqlite_classes = ["PerConnectionState"]
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
-queue = "myme-scheduled-poll-google-youtube-prod"
+queue = "marfa-scheduled-poll-google-youtube-prod"
 
 [[env.prod.queues.producers]]
 binding = "SCHEDULED_POLL_DLQ_QUEUE"
-queue = "myme-scheduled-poll-google-youtube-prod-dlq"
+queue = "marfa-scheduled-poll-google-youtube-prod-dlq"
 
 [[env.prod.queues.consumers]]
-queue = "myme-scheduled-poll-google-youtube-prod"
+queue = "marfa-scheduled-poll-google-youtube-prod"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 6
-dead_letter_queue = "myme-scheduled-poll-google-youtube-prod-dlq"
+dead_letter_queue = "marfa-scheduled-poll-google-youtube-prod-dlq"
 
 # Secrets (`wrangler secret put --env <env>`):
-#   - MYME_API_URL
-#   - MYME_RUNTIME_CONTROL_URL
-#   - MYME_RUNTIME_BROKER_KEY
+#   - MARFA_API_URL
+#   - MARFA_RUNTIME_CONTROL_URL
+#   - MARFA_RUNTIME_BROKER_KEY
 #
 # Required for the queue consumer to mint per-Connection runtime
 # credentials via the control plane's `/lease/:connection_id/runtime`

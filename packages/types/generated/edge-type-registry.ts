@@ -1,5 +1,5 @@
 // Auto-generated from core/edges/*.json — do not edit manually.
-// Run `pnpm --filter @mymehq/types generate` to regenerate.
+// Run `pnpm --filter @withmarfa/types generate` to regenerate.
 
 import type { EdgeTypeSchema } from "../src/schema-types.js";
 

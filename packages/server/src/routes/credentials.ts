@@ -238,7 +238,7 @@ export function credentialRoutes(storage: Storage) {
 
     // Let encryption failures propagate as 500 — matches the pattern in
     // routes/oauth-callback.ts where the same call is unguarded. A failed
-    // encrypt here is a server-config bug (missing MYME_SECRET_KEY), not a
+    // encrypt here is a server-config bug (missing MARFA_SECRET_KEY), not a
     // user-input bug; surfacing 500 is the honest signal.
     const secret_encrypted = encryptSecret(
       body.oauth_client_secret,

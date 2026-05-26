@@ -1,5 +1,5 @@
-export { MymeAuth } from "./auth.js";
-export type { MymeAuthConfig } from "./auth.js";
+export { MarfaAuth } from "./auth.js";
+export type { MarfaAuthConfig } from "./auth.js";
 export { OAuthError } from "./errors.js";
 export type { OAuthErrorCode } from "./errors.js";
 export {

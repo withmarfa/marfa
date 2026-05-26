@@ -25,7 +25,7 @@ import {
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 
 const ORIGIN = "http://localhost:0";
@@ -47,7 +47,7 @@ function baseManifest(
     name: "acme.calendar-sync",
     version: "1.0.0",
     publisher: "Acme",
-    description: "Sync calendar events into Myme",
+    description: "Sync calendar events into Marfa",
     direction: "read",
     triggers: [
       { type: "schedule", config: { cron: "*/15 * * * *" } },
@@ -533,7 +533,7 @@ describe("GET /integrations — catalogue visibility (T-232)", () => {
     typePermissions: Record<string, "read" | "write" | "none"> = {},
   ): Promise<string> {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const raw = `myme_k1_test_member_${suffix}`;
+    const raw = `marfa_k1_test_member_${suffix}`;
     const hash = hashApiKey(raw, TEST_API_KEY_SALT);
     await ctx.storage.keys.create(
       {
@@ -754,7 +754,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope (T-234)", () =
     },
   ): Promise<string> {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const raw = `myme_k1_test_member_${suffix}`;
+    const raw = `marfa_k1_test_member_${suffix}`;
     const hash = hashApiKey(raw, TEST_API_KEY_SALT);
     await ctx.storage.keys.create(
       {
@@ -1095,7 +1095,7 @@ describe("/integrations/:id/install — browser session auth", () => {
     );
     const res = await sessionCtx.app.request(
       `/integrations/${integrationId}/install`,
-      { headers: { Authorization: "Bearer myme_k1_completely_invalid" } },
+      { headers: { Authorization: "Bearer marfa_k1_completely_invalid" } },
     );
     expect(res.status).toBe(401);
   });

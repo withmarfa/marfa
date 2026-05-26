@@ -1,7 +1,7 @@
 /**
  * One-shot data migration — Layer 3 PR 4 (sync re-presentation).
  *
- * Re-presents an existing `~/.myme/sync.json` configuration as a
+ * Re-presents an existing `~/.marfa/sync.json` configuration as a
  * `system.connection` (kind: integration,
  * runtime_compatibility: ["local"]) plus a `system.credential`
  * (kind: api_key, secret_encrypted under
@@ -23,24 +23,24 @@
  * Idempotent: re-running with the sentinel present is a no-op.
  *
  * Usage:
- *   pnpm --filter @mymehq/server migrate:sync-json-to-connection
+ *   pnpm --filter @withmarfa/server migrate:sync-json-to-connection
  *   SYNC_JSON_PATH=/path/to/sync.json pnpm tsx \
  *     packages/server/src/scripts/deprecated/migrate-sync-json-to-connection.ts
  *     [--dialect=sqlite|pg]
  *
  * Environment:
- *   - SYNC_JSON_PATH (default `~/.myme/sync.json`)
- *   - SYNC_CONNECTION_PATH (default `~/.myme/sync.connection.json`)
- *   - SQLITE_PATH (sqlite default `./data/myme.db`)
+ *   - SYNC_JSON_PATH (default `~/.marfa/sync.json`)
+ *   - SYNC_CONNECTION_PATH (default `~/.marfa/sync.connection.json`)
+ *   - SQLITE_PATH (sqlite default `./data/marfa.db`)
  *   - DATABASE_URL (pg required)
- *   - MYME_AUTH_SECRET (required for encryption)
+ *   - MARFA_AUTH_SECRET (required for encryption)
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { encryptSecret, SECRET_INFO } from "../../crypto/secret-encryption.js";
-import { SYNC_MANIFEST } from "@mymehq/integration-sync";
+import { SYNC_MANIFEST } from "@withmarfa/integration-sync";
 import type { Storage } from "../../storage/interface.js";
 
 interface SyncJsonShape {
@@ -81,10 +81,10 @@ export function defaultPaths(): MigrationPaths {
   const home = homedir();
   return {
     sync_json_path:
-      process.env.SYNC_JSON_PATH ?? join(home, ".myme", "sync.json"),
+      process.env.SYNC_JSON_PATH ?? join(home, ".marfa", "sync.json"),
     sync_connection_path:
       process.env.SYNC_CONNECTION_PATH ??
-      join(home, ".myme", "sync.connection.json"),
+      join(home, ".marfa", "sync.connection.json"),
   };
 }
 
@@ -259,7 +259,7 @@ async function main(): Promise<void> {
   } else {
     const { createSqliteStorage } =
       await import("../../storage/sqlite/index.js");
-    const path = process.env.SQLITE_PATH ?? "./data/myme.db";
+    const path = process.env.SQLITE_PATH ?? "./data/marfa.db";
     storage = await createSqliteStorage(path);
   }
 

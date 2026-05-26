@@ -90,9 +90,9 @@ interface YoutubeCursor {
   /** etag per user-created playlist, keyed by playlist id. */
   playlist_etags: Record<string, string>;
   mappings: {
-    videos: Record<string, string>; // youtube video id -> myme item id
-    channels: Record<string, string>; // youtube channel id -> myme item id
-    playlists: Record<string, string>; // youtube playlist id -> myme item id
+    videos: Record<string, string>; // youtube video id -> marfa item id
+    channels: Record<string, string>; // youtube channel id -> marfa item id
+    playlists: Record<string, string>; // youtube playlist id -> marfa item id
   };
   last_inbound_at: string | null;
 }

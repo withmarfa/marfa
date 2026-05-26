@@ -16,7 +16,7 @@
  *   2. If the item has both `sync` AND `sync-agent` extensions, log
  *      and skip — collisions in the wild signal a write under the new
  *      namespace landed before this migration ran. The dual-read
- *      window in `@mymehq/sync` 0.10.0 + handles this transparently
+ *      window in `@withmarfa/sync` 0.10.0 + handles this transparently
  *      ('sync' wins per-key); the migration leaves both values in
  *      place so the agent's read sees the union.
  *   3. Otherwise, copy the `sync-agent` value into `sync` and delete
@@ -33,13 +33,13 @@
  * extensions inline, avoiding an N+1 round-trip per item.
  *
  * Usage:
- *   pnpm --filter @mymehq/server tsx src/scripts/migrate-sync-extension-namespace.ts \
+ *   pnpm --filter @withmarfa/server tsx src/scripts/migrate-sync-extension-namespace.ts \
  *     --dialect=sqlite [--dry-run] [--page-size=200]
- *   pnpm --filter @mymehq/server tsx src/scripts/migrate-sync-extension-namespace.ts \
+ *   pnpm --filter @withmarfa/server tsx src/scripts/migrate-sync-extension-namespace.ts \
  *     --dialect=pg [--dry-run] [--page-size=200]
  *
  * Environment:
- *   - SQLITE_PATH (sqlite default ./data/myme.db)
+ *   - SQLITE_PATH (sqlite default ./data/marfa.db)
  *   - DATABASE_URL (pg required)
  *
  * Backup recommendation (PG, every-item blast radius):
@@ -188,7 +188,7 @@ async function main(): Promise<void> {
     storage = await createPgStorage(databaseUrl);
   } else {
     const { createSqliteStorage } = await import("../storage/sqlite/index.js");
-    const sqlitePath = process.env.SQLITE_PATH ?? "./data/myme.db";
+    const sqlitePath = process.env.SQLITE_PATH ?? "./data/marfa.db";
     storage = await createSqliteStorage(sqlitePath);
   }
 

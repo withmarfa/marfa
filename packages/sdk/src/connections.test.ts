@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { MymeClient } from "./client.js";
+import { MarfaClient } from "./client.js";
 
 // ---------------------------------------------------------------------------
 // `client.connections` SDK namespace coverage. Pins:
@@ -16,10 +16,10 @@ import { MymeClient } from "./client.js";
 // up a second server fixture for two methods would be overkill.
 // ---------------------------------------------------------------------------
 
-function makeClient(fetchImpl: typeof globalThis.fetch): MymeClient {
-  return new MymeClient({
+function makeClient(fetchImpl: typeof globalThis.fetch): MarfaClient {
+  return new MarfaClient({
     url: "http://example.test",
-    apiKey: "myme_k1_test",
+    apiKey: "marfa_k1_test",
     fetch: fetchImpl,
   });
 }

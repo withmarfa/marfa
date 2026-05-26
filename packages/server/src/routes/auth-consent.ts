@@ -38,16 +38,16 @@
  */
 
 import { Hono } from "hono";
-import type { ParsedScope } from "@mymehq/shared";
+import type { ParsedScope } from "@withmarfa/shared";
 import {
   parseScope,
   isValidScope,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
-import type { MymeAuth } from "../auth/instance.js";
+import type { MarfaAuth } from "../auth/instance.js";
 import { renderConsentScreen } from "./consent.js";
 import { setNoStore } from "./no-store.js";
 import { publish } from "../pubsub.js";
@@ -55,7 +55,7 @@ import { log } from "../middleware/logger.js";
 
 interface ConsentRouteDeps {
   storage: Storage;
-  auth: MymeAuth | undefined;
+  auth: MarfaAuth | undefined;
 }
 
 export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
@@ -165,7 +165,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
   });
 
   // ---------------------------------------------------------------------
-  // POST /auth/authorize/decision — Myme-owned decision handler that
+  // POST /auth/authorize/decision — Marfa-owned decision handler that
   // proxies to the plugin's /oauth2/consent endpoint, writing the
   // system.connection projection + audit row deterministically BEFORE
   // the plugin handles the rest of the flow.
@@ -247,7 +247,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // F2/F14: zero-scopes accept = deny. If the user submits with
     // `accept=true` but no scope checkboxes ticked, the plugin would
     // default to the originally-requested scope set (full grant) AND
-    // the Myme projection would skip (so /security shows no grant
+    // the Marfa projection would skip (so /security shows no grant
     // while tokens are valid). Both outcomes are wrong. Treat as a
     // deny + redirect back to consent with an error banner.
     if (accept && formScopes.length === 0) {
@@ -391,7 +391,7 @@ async function projectGrantOnConsent(
   }
 
   const now = new Date().toISOString();
-  let projectedItem: import("@mymehq/shared").Item;
+  let projectedItem: import("@withmarfa/shared").Item;
   let eventType: "created" | "updated";
   let priorScopes: string[] = [];
 
@@ -474,7 +474,7 @@ async function projectGrantOnConsent(
           status: "active",
           granted_at: now,
         },
-        source: "myme/oauth2/consent",
+        source: "marfa/oauth2/consent",
       },
       tenantId,
     );

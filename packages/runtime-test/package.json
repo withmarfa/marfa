@@ -1,6 +1,6 @@
 {
-  "name": "@mymehq/runtime-test",
-  "version": "0.0.1",
+  "name": "@withmarfa/runtime-test",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "In-memory mocks of Cloudflare runtime primitives (DO storage + alarms, Queues, KV) for unit-testing Connections integrations without a Worker runtime.",
@@ -20,7 +20,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@mymehq/runtime-sdk": "workspace:*"
+    "@withmarfa/runtime-sdk": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251201.0",

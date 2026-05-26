@@ -1,26 +1,26 @@
 /**
- * Cloudflare Email Worker for the `mymehq.inbox` integration.
+ * Cloudflare Email Worker for the `withmarfa.inbox` integration.
  *
  * Pipeline:
  *   1. Cloudflare Email Routing matches the capture address (e.g.
- *      `capture@inbox.myme.so`) and invokes `email()` on this Worker
+ *      `capture@inbox.marfa.so`) and invokes `email()` on this Worker
  *      with the inbound `ForwardableEmailMessage`.
  *   2. We parse MIME via `postal-mime` into a structured envelope
  *      (from, to, subject, text/html bodies, headers, attachments).
  *   3. We HMAC-SHA256 the JSON body with `WEBHOOK_SECRET` (= the
- *      per-connection subscription secret on the Myme server).
+ *      per-connection subscription secret on the Marfa server).
  *   4. Dispatch via a Cloudflare Worker Service Binding —
  *      `env.RUNTIME_CONTROL.fetch(request)` against the bound
- *      `myme-runtime-control-<env>` Worker at path
+ *      `marfa-runtime-control-<env>` Worker at path
  *      `/webhooks/inbound/<CONNECTION_ID>`. The synthetic
  *      `https://runtime-control` host in the URL is ignored by the
  *      binding; only path + headers + body reach the bound Worker's
  *      `fetch` handler. No DNS / TLS / edge involved. Replaces the
- *      `myme-runtime-control-staging.mymehq.workers.dev` HTTP-fetch
+ *      `marfa-runtime-control-staging.withmarfa.workers.dev` HTTP-fetch
  *      workaround that landed in T-244 (closed in T-250).
  *   5. The bound Worker verifies the HMAC, idempotency-checks on the
  *      Message-ID, and enqueues a `WebhookMessage` for the
- *      `mymehq.inbox` handler.
+ *      `withmarfa.inbox` handler.
  *
  * On non-2xx response from the bound Worker, we LOG and ACK — throwing
  * would bounce the email. Cloudflare Email Routing offers at-least-
@@ -41,7 +41,7 @@ import PostalMime, {
 
 interface Env {
   /**
-   * Service Binding to the `myme-runtime-control-<env>` Worker. The
+   * Service Binding to the `marfa-runtime-control-<env>` Worker. The
    * binding name is declared in `wrangler.toml` per-env. Calling
    * `env.RUNTIME_CONTROL.fetch(request)` invokes the bound Worker's
    * `fetch` handler directly — no DNS, TLS, or edge routing involved.
@@ -57,17 +57,17 @@ interface Env {
    */
   CONNECTION_ID: string;
   /**
-   * Per-connection subscription secret. Same value the Myme server
+   * Per-connection subscription secret. Same value the Marfa server
    * stores encrypted under `inbound_webhooks.secret_encrypted`. The
    * `cloudflare-email` verification adapter HMACs the body and
-   * compares against the `X-Myme-Signature` header.
+   * compares against the `X-Marfa-Signature` header.
    */
   WEBHOOK_SECRET: string;
   /** Deployment label (`dev` / `staging` / `prod`) — log enrichment only. */
   ENVIRONMENT?: string;
 }
 
-/** JSON envelope wire shape. Mirrors `mymehq.captured_email`'s
+/** JSON envelope wire shape. Mirrors `withmarfa.captured_email`'s
  *  property bag — the integration handler decodes this and lands it
  *  as an item without further translation. */
 export interface EmailEnvelope {
@@ -128,9 +128,9 @@ export default {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Myme-Signature": `sha256=${signatureHex}`,
-          "X-Myme-Delivery-Id": deliveryId,
-          "User-Agent": "mymehq-inbox-email-worker/0.2.0",
+          "X-Marfa-Signature": `sha256=${signatureHex}`,
+          "X-Marfa-Delivery-Id": deliveryId,
+          "User-Agent": "withmarfa-inbox-email-worker/0.2.0",
         },
         body,
       },

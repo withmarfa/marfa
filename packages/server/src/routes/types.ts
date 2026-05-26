@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   getTypeSchema,
   TYPE_REGISTRY,
@@ -10,7 +10,7 @@ import {
   classifyNamespace,
   diffTypeSchemas,
   isValidVersionBump,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -41,20 +41,20 @@ function validateParentChain(typeId: string, parentId: string): void {
   while (current) {
     depth++;
     if (depth > MAX_INHERITANCE_DEPTH) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Inheritance chain exceeds maximum depth of ${String(MAX_INHERITANCE_DEPTH)}`,
       );
     }
     if (current === typeId) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Circular inheritance detected",
       );
     }
     const parentSchema = getTypeSchema(current);
     if (!parentSchema) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Parent type "${current}" not found`,
       );
@@ -178,7 +178,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a custom type",
   description:
-    "Registers a custom type at runtime. Identifier must namespace under one of `app.<app-name>.<type>`, `user.<type>`, or `<publisher>.<type>` — reserved roots (`core`, `system`, `myme`) reject with `400 reserved_namespace`. Bodies are validated; mismatched semver bumps (additive change submitted as major, etc.) reject with `400 version_bump_mismatch`. Child types may not redefine ancestor fields — `400 inheritance_violation`. Property names may not shadow first-class `Item` wire fields (`device`, `source_id`, `timestamp`, `version`, `schema_version`, `tier`, `state`, `capture_latitude`, `capture_longitude`, etc.) — `400 property_shadows_field`.\n\nAdmin keys bypass; non-admin credentials need the `metadata.types:write` scope, default-off for new keys. See [Authoring types](/concepts/authoring-types) for the rubric and error catalogue.",
+    "Registers a custom type at runtime. Identifier must namespace under one of `app.<app-name>.<type>`, `user.<type>`, or `<publisher>.<type>` — reserved roots (`core`, `system`, `marfa`) reject with `400 reserved_namespace`. Bodies are validated; mismatched semver bumps (additive change submitted as major, etc.) reject with `400 version_bump_mismatch`. Child types may not redefine ancestor fields — `400 inheritance_violation`. Property names may not shadow first-class `Item` wire fields (`device`, `source_id`, `timestamp`, `version`, `schema_version`, `tier`, `state`, `capture_latitude`, `capture_longitude`, etc.) — `400 property_shadows_field`.\n\nAdmin keys bypass; non-admin credentials need the `metadata.types:write` scope, default-off for new keys. See [Authoring types](/concepts/authoring-types) for the rubric and error catalogue.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -348,7 +348,7 @@ export function typeRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
     const schema = resolveTypeSchema(id, TYPE_REGISTRY);
     if (!schema) {
-      throw new MymeError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
+      throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
     return c.json(schema, 200);
   });
@@ -364,23 +364,23 @@ export function typeRoutes(storage: Storage) {
 
     // Pre-validation for specific error codes
     if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.INVALID_TYPE,
         "Invalid type identifier. Must follow the five-tier namespace grammar: core.<type>, system.<type>, app.<app-name>.<type>, user.<type>, or <publisher>.<type>. Forward slashes and reserved-root collisions are rejected.",
       );
     }
     // TSC42 §3/§4 platform-credential gate. Only credentials marked as
-    // platform may register `core.*`, `system.*`, or `myme.*` types — these
+    // platform may register `core.*`, `system.*`, or `marfa.*` types — these
     // tiers are platform-shipped/operational, not authored at runtime by
     // ordinary tenant admins.
     if (typeof body.id === "string") {
       const tier = classifyNamespace(body.id);
       const isPlatformCaller = c.get("apiKey")?.is_platform === true;
       if (
-        (tier === "core" || tier === "system" || tier === "myme") &&
+        (tier === "core" || tier === "system" || tier === "marfa") &&
         !isPlatformCaller
       ) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.FORBIDDEN,
           `Reserved namespace: only platform credentials may register ${tier}.* types`,
           { namespace: tier },
@@ -388,7 +388,7 @@ export function typeRoutes(storage: Storage) {
       }
     }
     if (body.fields === undefined || body.fields === null) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.MISSING_REQUIRED_FIELD,
         "fields is required",
       );
@@ -424,7 +424,7 @@ export function typeRoutes(storage: Storage) {
         code = ErrorCode.INVALID_SCHEMA;
         message = "Invalid type schema";
       }
-      throw new MymeError(code, message, { errors: result.errors });
+      throw new MarfaError(code, message, { errors: result.errors });
     }
 
     const schema = result.data;
@@ -442,7 +442,7 @@ export function typeRoutes(storage: Storage) {
     }
 
     if (getTypeSchema(schema.id)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.TYPE_ALREADY_EXISTS,
         `Type "${schema.id}" already exists`,
       );
@@ -467,14 +467,14 @@ export function typeRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
 
     if (!isValidTypeIdentifier(id)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "Invalid type identifier",
       );
     }
 
     if (CORE_TYPE_IDS.has(id)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CORE_TYPE_IMMUTABLE,
         `Cannot modify core types`,
       );
@@ -482,13 +482,13 @@ export function typeRoutes(storage: Storage) {
 
     const existing = getTypeSchema(id);
     if (!existing) {
-      throw new MymeError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
+      throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
 
     const body = c.req.valid("json");
     const result = validateTypeSchema({ ...body, id });
     if (!result.success) {
-      throw new MymeError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
+      throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
         errors: result.errors,
       });
     }
@@ -506,7 +506,7 @@ export function typeRoutes(storage: Storage) {
     // returns the diff class for telemetry / SDK error messages.
     const diff = diffTypeSchemas(existing, schema);
     if (diff === "noop") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VERSION_BUMP_MISMATCH,
         "No structural or descriptive changes — re-submitting an identical schema is rejected",
         { diff },
@@ -519,7 +519,7 @@ export function typeRoutes(storage: Storage) {
       // can warn appropriately.
     }
     if (!isValidVersionBump(diff, existing.version, schema.version)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VERSION_BUMP_MISMATCH,
         diff === "patch"
           ? "Descriptive-only change accepts the existing version or higher"
@@ -546,7 +546,7 @@ export function typeRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
 
     if (CORE_TYPE_IDS.has(id)) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.CORE_TYPE_IMMUTABLE,
         `Cannot delete core types`,
       );
@@ -554,7 +554,7 @@ export function typeRoutes(storage: Storage) {
 
     const existing = getTypeSchema(id);
     if (!existing) {
-      throw new MymeError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
+      throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
 
     const { force } = c.req.valid("query");
@@ -566,7 +566,7 @@ export function typeRoutes(storage: Storage) {
         limit: 1,
       });
       if (items.data.length > 0) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.TYPE_IN_USE,
           `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
         );

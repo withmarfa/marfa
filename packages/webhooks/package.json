@@ -1,6 +1,6 @@
 {
-  "name": "@mymehq/webhooks",
-  "version": "0.1.0",
+  "name": "@withmarfa/webhooks",
+  "version": "1.0.0",
   "type": "module",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",

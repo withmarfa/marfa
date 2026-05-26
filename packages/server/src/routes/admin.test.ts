@@ -37,7 +37,7 @@ async function mintTenantKey(
   opts?: { is_platform?: boolean },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
-  const raw = `myme_k1_test_member_${suffix}`;
+  const raw = `marfa_k1_test_member_${suffix}`;
   const hash = hashApiKey(raw, TEST_API_KEY_SALT);
   await ctx.storage.keys.create(
     {

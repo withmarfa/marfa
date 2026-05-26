@@ -26,7 +26,7 @@ async function buildCtx(): Promise<Ctx> {
   // Rate-limit values now flow through AppConfig (single env-read site
   // lives in loadConfig). Set them directly on the literal below; the
   // middleware no longer reads process.env.
-  const tmpDir = mkdtempSync(join(tmpdir(), "myme-ratelimit-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-ratelimit-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(storage, blobBackend, {
@@ -71,7 +71,7 @@ async function buildCtx(): Promise<Ctx> {
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = `myme_k1_rl_admin_${suffix}`;
+  const rawKey = `marfa_k1_rl_admin_${suffix}`;
   await storage.keys.create(
     {
       label: "rl-admin",
@@ -211,7 +211,7 @@ describe("rate-limit per-path caps for /auth/oauth2/* (T-131 F8)", () => {
     expect(observed429).toBe(false);
   });
 
-  it("F8: /auth/authorize/decision (Myme proxy) has its own cap (cap=30)", async () => {
+  it("F8: /auth/authorize/decision (Marfa proxy) has its own cap (cap=30)", async () => {
     let observed429 = false;
     for (let i = 0; i < 5; i++) {
       const res = await ctx.app.request("/auth/authorize/decision", {

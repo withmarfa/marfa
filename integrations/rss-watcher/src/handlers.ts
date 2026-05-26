@@ -23,7 +23,7 @@ import {
   type HandlerResult,
   type CreateItemInput,
   type ItemResource,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { parseAtomFeed, type AtomEntry } from "./atom-parser.js";
 
 export const DEFAULT_FEED_URL = "https://simonwillison.net/atom/everything/";
@@ -92,7 +92,7 @@ export function createScheduleHandler(
     const created: ItemResource[] = [];
     for (const entry of newEntries) {
       try {
-        const item = await ctx.myme.createItem(
+        const item = await ctx.marfa.createItem(
           buildBookmarkInput(entry, parsed),
         );
         created.push(item);
@@ -133,7 +133,7 @@ export function registerHandlers(opts: RssHandlerOptions = {}): void {
 
 async function resolveFeedUrl(ctx: ConnectionContext): Promise<string> {
   try {
-    const connection = await ctx.myme.getItem(ctx.connection_id);
+    const connection = await ctx.marfa.getItem(ctx.connection_id);
     const props = connection?.properties as
       | { configuration?: unknown }
       | undefined;

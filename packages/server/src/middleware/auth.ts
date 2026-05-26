@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { createMiddleware } from "hono/factory";
 import type { Context } from "hono";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   classifyNamespace,
   resolveTypePermission,
@@ -12,8 +12,8 @@ import {
   scopesToOidcScopes,
   edgePermissionCovers,
   metadataPermissionCovers,
-} from "@mymehq/shared";
-import type { ApiKey } from "@mymehq/shared";
+} from "@withmarfa/shared";
+import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 
@@ -50,7 +50,7 @@ export interface AppEnv extends Record<string, unknown> {
     /**
      * Cycle metadata for events published from this request (T-039).
      * Resolved by `cycleMiddleware` after auth from either the inbound
-     * `X-Myme-Cycle-Origin` / `X-Myme-Cycle-Hop` headers (a connector
+     * `X-Marfa-Cycle-Origin` / `X-Marfa-Cycle-Hop` headers (a connector
      * reacting to a parent event — the SDK threads them via
      * `ConnectionClient.request()`) or from the caller's api key when
      * the headers are absent (the chain head).
@@ -84,8 +84,8 @@ export interface AppEnv extends Record<string, unknown> {
 // Key hashing
 // ---------------------------------------------------------------------------
 
-const KEY_PREFIX = "myme_k1_";
-const ACCESS_TOKEN_PREFIX = "myme_at_";
+const KEY_PREFIX = "marfa_k1_";
+const ACCESS_TOKEN_PREFIX = "marfa_at_";
 const DEBOUNCE_MS = 3600_000; // 1 hour
 
 /**
@@ -280,7 +280,7 @@ export function authMiddleware(storage: Storage, salt: string) {
 
     const token = authHeader.slice(7);
 
-    // OAuth access token (myme_at_* prefix).
+    // OAuth access token (marfa_at_* prefix).
     //
     // T-131: this used to call `storage.oauth.validateToken(hash)` against
     // the homegrown `oauth_tokens` table. We now look up the
@@ -292,7 +292,7 @@ export function authMiddleware(storage: Storage, salt: string) {
     //
     // **Side-channel join, NOT custom claims.** The plan's contingency
     // applies here (§Caveats §3 in the plan file): the plugin's
-    // `customAccessTokenClaims` only embeds in JWT tokens, and Myme
+    // `customAccessTokenClaims` only embeds in JWT tokens, and Marfa
     // keeps opaque tokens (correct for our profile — DB lookup is
     // sub-ms, revocation stays clean). The row itself carries
     // `referenceId` (= tenant_id, populated by `clientReference` at
@@ -348,7 +348,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       // OAuth-authenticated admins. `is_platform` stays hardcoded false
       // — platform-admin is an operator-tier flag exclusive to API keys
       // with explicit `is_platform: true`; OAuth tokens never claim it.
-      // Falls back to `member` when no Myme `users` row maps to the
+      // Falls back to `member` when no Marfa `users` row maps to the
       // auth_user (legacy rows the grandfather migration missed, or a
       // token whose user was hard-deleted mid-session).
       let projectedRole: "admin" | "tenant_admin" | "member" = "member";
@@ -457,7 +457,7 @@ export function authMiddleware(storage: Storage, salt: string) {
 
 export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
   if (!apiKey) {
-    throw new MymeError(ErrorCode.UNAUTHORIZED, "Authentication required");
+    throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
   }
   return apiKey;
 }
@@ -465,7 +465,7 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
 export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
   if (key.role !== "admin") {
-    throw new MymeError(ErrorCode.FORBIDDEN, "Admin access required");
+    throw new MarfaError(ErrorCode.FORBIDDEN, "Admin access required");
   }
   return key;
 }
@@ -495,7 +495,7 @@ export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
 export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
   if (key.role !== "admin" && key.role !== "tenant_admin") {
-    throw new MymeError(ErrorCode.FORBIDDEN, "Admin access required");
+    throw new MarfaError(ErrorCode.FORBIDDEN, "Admin access required");
   }
   return key;
 }
@@ -508,7 +508,7 @@ export function checkTypeAccess(
   const key = checkAuth(apiKey);
 
   // Platform-credential gate. Writes to `system.*` (and the internal-only
-  // `myme.*`) require `is_platform: true` independent of role — tenant
+  // `marfa.*`) require `is_platform: true` independent of role — tenant
   // admins are admin-shaped within their tenant but are NOT platform-
   // shaped by default; only the bootstrap admin and credentials it
   // mints with `is_platform: true` may write platform-internal items.
@@ -518,7 +518,7 @@ export function checkTypeAccess(
   // routinely; only registration of new core types is platform-gated
   // (see `routes/types.ts:331`).
   //
-  // Reads to `system.*` / `myme.*` are unrestricted (filtered by tenant
+  // Reads to `system.*` / `marfa.*` are unrestricted (filtered by tenant
   // scoping at the storage layer); only writes need `is_platform`.
   //
   // Carve-out: runtime credentials (`is_runtime_credential: true`) may
@@ -529,11 +529,11 @@ export function checkTypeAccess(
   // legitimate connector can't emit activity rows.
   if (level === "write") {
     const tier = classifyNamespace(type);
-    if ((tier === "system" || tier === "myme") && !key.is_platform) {
+    if ((tier === "system" || tier === "marfa") && !key.is_platform) {
       const isRuntimeActivityWrite =
         key.is_runtime_credential === true && type === "system.activity";
       if (!isRuntimeActivityWrite) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.TYPE_NOT_PERMITTED,
           `Reserved namespace: only platform credentials may write ${tier}.* items`,
         );
@@ -555,13 +555,13 @@ export function checkTypeAccess(
 
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (resolved === "none") {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,
       `No access to type "${type}"`,
     );
   }
   if (level === "write" && resolved === "read") {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,
       `Write access to type "${type}" denied`,
     );
@@ -639,7 +639,7 @@ export function requireEdgePermission(
   const apiKey = checkAuth(c.get("apiKey"));
   if (apiKey.role === "admin" || apiKey.role === "tenant_admin") return;
   if (edgePermissionCovers(apiKey.edge_permissions, edgeType, level)) return;
-  throw new MymeError(
+  throw new MarfaError(
     ErrorCode.EDGE_PERMISSION_DENIED,
     `Missing edge.${edgeType}:${level} permission`,
     { edge_type: edgeType, required: level },
@@ -669,7 +669,7 @@ export function requireMetadataPermission(
   if (apiKey.role === "admin" || apiKey.role === "tenant_admin") return;
   if (metadataPermissionCovers(apiKey.metadata_permissions, subresource, level))
     return;
-  throw new MymeError(
+  throw new MarfaError(
     ErrorCode.FORBIDDEN,
     `Missing metadata.${subresource}:${level} permission`,
     { metadata_subresource: subresource, required: level },

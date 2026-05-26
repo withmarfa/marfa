@@ -21,7 +21,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { performInstall } from "../connections/install-pipeline.js";
 import { hashApiKey } from "../middleware/auth.js";
-import type { IntegrationManifest } from "@mymehq/shared";
+import type { IntegrationManifest } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -300,7 +300,7 @@ describe("POST /connections/install — platform-scoped manifest, tenant_admin c
     const integration = await createIntegration(); // tenant_id: null
 
     const suffix = Math.random().toString(36).slice(2, 8);
-    const rawKey = `myme_k1_test_tadmin_${suffix}`;
+    const rawKey = `marfa_k1_test_tadmin_${suffix}`;
     const hash = hashApiKey(rawKey, TEST_API_KEY_SALT);
     await ctx.storage.keys.create(
       {

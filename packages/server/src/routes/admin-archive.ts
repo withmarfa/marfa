@@ -16,7 +16,7 @@ import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
 import { createRoute, z } from "@hono/zod-openapi";
 import * as tar from "tar-stream";
-import { MymeError, ErrorCode, isValidBlobHash } from "@mymehq/shared";
+import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -113,7 +113,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
 
     const rawBody = await c.req.arrayBuffer();
     if (rawBody.byteLength === 0) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Empty archive");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Empty archive");
     }
 
     let manifest: ArchiveManifest | null = null;
@@ -133,7 +133,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
         targetTenantParam !== undefined &&
         targetTenantParam !== callerTenant
       ) {
-        throw new MymeError(
+        throw new MarfaError(
           ErrorCode.FORBIDDEN,
           "Cannot restore into another tenant — target_tenant_id must match caller's tenant_id (or be omitted).",
         );
@@ -160,7 +160,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
               manifest = JSON.parse(buf.toString("utf-8")) as ArchiveManifest;
               if (manifest.version !== 1) {
                 reject(
-                  new MymeError(
+                  new MarfaError(
                     ErrorCode.VALIDATION_ERROR,
                     `Unsupported archive version: ${String(manifest.version)}`,
                   ),
@@ -168,12 +168,12 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
                 return;
               }
             } catch (err) {
-              if (err instanceof MymeError) {
+              if (err instanceof MarfaError) {
                 reject(err);
                 return;
               }
               reject(
-                new MymeError(
+                new MarfaError(
                   ErrorCode.VALIDATION_ERROR,
                   "Invalid manifest.json",
                 ),
@@ -245,7 +245,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     const m = manifest as ArchiveManifest | null;
     const manifestTenantId = m?.tenant_id ?? null;
     if (manifestTenantId !== null && manifestTenantId !== restoreTenantId) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Archive manifest.tenant_id "${manifestTenantId}" does not match restore tenant "${restoreTenantId}". Platform admins must pass target_tenant_id matching the source.`,
       );
@@ -269,7 +269,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     }
 
     if (items.length > MAX_ARCHIVE_ITEMS) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Maximum ${String(MAX_ARCHIVE_ITEMS)} items per archive`,
       );
@@ -294,7 +294,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
           imported++;
         } catch (err) {
           if (
-            err instanceof MymeError &&
+            err instanceof MarfaError &&
             err.code === ErrorCode.DUPLICATE_SOURCE
           ) {
             duplicates++;

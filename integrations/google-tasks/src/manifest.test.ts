@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { IntegrationManifestSchema } from "@mymehq/shared";
+import { IntegrationManifestSchema } from "@withmarfa/shared";
 import { GOOGLE_TASKS_MANIFEST } from "./manifest.js";
 
 describe("Google Tasks manifest", () => {

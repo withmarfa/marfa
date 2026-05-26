@@ -16,8 +16,8 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import type { ApiKey } from "@mymehq/shared";
-import { MymeError, ErrorCode } from "@mymehq/shared";
+import type { ApiKey } from "@withmarfa/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import { checkTenantAdmin, hashApiKey } from "./auth.js";
 import {
   createTestContext,
@@ -65,20 +65,20 @@ describe("checkTenantAdmin (unit)", () => {
 
   it("rejects member with FORBIDDEN", () => {
     const key = fakeKey("member");
-    expect(() => checkTenantAdmin(key)).toThrow(MymeError);
+    expect(() => checkTenantAdmin(key)).toThrow(MarfaError);
     try {
       checkTenantAdmin(key);
     } catch (e) {
-      expect((e as MymeError).code).toBe(ErrorCode.FORBIDDEN);
+      expect((e as MarfaError).code).toBe(ErrorCode.FORBIDDEN);
     }
   });
 
   it("rejects undefined with UNAUTHORIZED", () => {
-    expect(() => checkTenantAdmin(undefined)).toThrow(MymeError);
+    expect(() => checkTenantAdmin(undefined)).toThrow(MarfaError);
     try {
       checkTenantAdmin(undefined);
     } catch (e) {
-      expect((e as MymeError).code).toBe(ErrorCode.UNAUTHORIZED);
+      expect((e as MarfaError).code).toBe(ErrorCode.UNAUTHORIZED);
     }
   });
 });
@@ -97,7 +97,7 @@ async function mintKey(
   },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `myme_k1_tenant_admin_test_${suffix}`;
+  const raw = `marfa_k1_tenant_admin_test_${suffix}`;
   const keyHash = hashApiKey(raw, TEST_API_KEY_SALT);
   await ctx.storage.keys.create(
     {

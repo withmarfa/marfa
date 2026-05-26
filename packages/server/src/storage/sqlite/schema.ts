@@ -359,11 +359,11 @@ export const inboundWebhooks = sqliteTable(
     // edges, oauth_codes).
     connection_id: text("connection_id").notNull(),
     // The external service's id for this subscription. We retain it so
-    // operators can correlate Myme rows with upstream dashboards. Not
-    // unique — multiple Myme tenants may target the same external
+    // operators can correlate Marfa rows with upstream dashboards. Not
+    // unique — multiple Marfa tenants may target the same external
     // service id in dev environments.
     external_service_id: text("external_service_id"),
-    // AES-256-GCM(secret) under HKDF(MYME_AUTH_SECRET,
+    // AES-256-GCM(secret) under HKDF(MARFA_AUTH_SECRET,
     // "inbound-webhook-secrets"). Per-row IV is stored in the first 12
     // bytes of the ciphertext — see crypto/secret-encryption.ts.
     secret_encrypted: text("secret_encrypted").notNull(),
@@ -429,7 +429,7 @@ export const inboundWebhookEvents = sqliteTable(
 // (`POST /connections/:id/proxy/*`) reads from this table, decrypts, and
 // stamps `Authorization: Bearer <access>` on the upstream call.
 //
-// Tokens are encrypted at rest under HKDF(MYME_AUTH_SECRET, info=
+// Tokens are encrypted at rest under HKDF(MARFA_AUTH_SECRET, info=
 // "connection-oauth-tokens"); see crypto/secret-encryption.ts. Hashing won't
 // work — the proxy needs the raw token to forward upstream — so this is
 // envelope encryption, not one-way digest.
@@ -664,7 +664,7 @@ export const eventLog = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// Better Auth tables (auth_* prefix, isolated from myme's own users table)
+// Better Auth tables (auth_* prefix, isolated from marfa's own users table)
 //
 // These are owned and managed by the better-auth library; the schema mirrors
 // what `npx @better-auth/cli generate` produces, hand-translated to Drizzle
@@ -674,7 +674,7 @@ export const eventLog = sqliteTable(
 // Timestamp columns use `integer({ mode: "timestamp" })` (Unix seconds)
 // so the better-auth Drizzle adapter — which forwards JS Date objects —
 // can round-trip without manual ISO conversion. Stored as INTEGER under
-// the hood; this deviates from myme's TEXT-ISO convention but stays
+// the hood; this deviates from marfa's TEXT-ISO convention but stays
 // localised to the auth_* island.
 export const auth_user = sqliteTable(
   "auth_user",
@@ -690,7 +690,7 @@ export const auth_user = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
     // T-116: account-lifecycle state. See the PG sibling schema for the
     // full design note. `pending_deletion_at` stays TEXT/ISO to match
-    // the rest of myme's timestamp convention; the purger compares
+    // the rest of marfa's timestamp convention; the purger compares
     // strings without round-tripping through Date.
     deletion_state: text("deletion_state").notNull().default("active"),
     pending_deletion_at: text("pending_deletion_at"),
@@ -817,7 +817,7 @@ export const auth_oauth_client = sqliteTable(
     public: integer("public", { mode: "boolean" }),
     type: text("type"),
     requirePKCE: integer("require_pkce", { mode: "boolean" }),
-    /** Tenant binding from `clientReference` (Myme: tenant_id). */
+    /** Tenant binding from `clientReference` (Marfa: tenant_id). */
     referenceId: text("reference_id"),
     /** JSON object — additional client metadata */
     metadata: text("metadata"),

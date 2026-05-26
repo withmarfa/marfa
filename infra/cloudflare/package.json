@@ -1,5 +1,5 @@
 {
-  "name": "@mymehq/infra-cloudflare",
+  "name": "@withmarfa/infra-cloudflare",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
     "provision:prod": "tsx provision.ts prod"
   },
   "dependencies": {
-    "@mymehq/shared": "workspace:*"
+    "@withmarfa/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

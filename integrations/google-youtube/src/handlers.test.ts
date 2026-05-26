@@ -23,7 +23,7 @@ import {
   type ItemResource,
   type ItemState,
   type ScheduleMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleSchedule } from "./handlers.js";
 import { GOOGLE_YOUTUBE_MANIFEST } from "./manifest.js";
 
@@ -130,7 +130,7 @@ function buildContext(opts: BuildOpts): BuiltState {
   const ctx: ConnectionContext = {
     connection_id: CONNECTION_ID,
     integration_name: GOOGLE_YOUTUBE_MANIFEST.name,
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, CONNECTION_ID),
     echo: createEchoSuppression(storage, {
@@ -546,9 +546,9 @@ describe("google-youtube handleSchedule", () => {
       (c) => c.type === "google.youtube.playlist",
     );
     expect(playlistIdx).toBeGreaterThanOrEqual(0);
-    const playlistMymeId = `mit_${String(playlistIdx + 1)}`;
+    const playlistMarfaId = `mit_${String(playlistIdx + 1)}`;
     const playlistEdges = edges.filter(
-      (e) => e.source_id === playlistMymeId && e.edge_type === "parent-of",
+      (e) => e.source_id === playlistMarfaId && e.edge_type === "parent-of",
     );
     expect(playlistEdges.length).toBeGreaterThanOrEqual(2);
   });

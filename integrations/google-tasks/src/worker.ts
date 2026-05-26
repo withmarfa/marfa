@@ -9,7 +9,7 @@
  *      `wrangler.toml` (scheduled-poll + reactive-run) and dispatches by
  *      manifest name. No webhook family — Tasks API has no push surface.
  */
-import { createIntegrationWorker } from "@mymehq/runtime-sdk/cloudflare";
+import { createIntegrationWorker } from "@withmarfa/runtime-sdk/cloudflare";
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
 import { GOOGLE_TASKS_MANIFEST } from "./manifest.js";
 

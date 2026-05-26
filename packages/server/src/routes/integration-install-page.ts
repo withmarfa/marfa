@@ -59,9 +59,9 @@ function escapeHtml(str: string): string {
 function describeDirection(direction: "read" | "write" | "both"): string {
   switch (direction) {
     case "read":
-      return "Read-only — the connector will read from the external service into your Myme tenant.";
+      return "Read-only — the connector will read from the external service into your Marfa tenant.";
     case "write":
-      return "Write-only — the connector will write from your Myme tenant out to the external service.";
+      return "Write-only — the connector will write from your Marfa tenant out to the external service.";
     case "both":
       return "Two-way — the connector will read from and write to the external service.";
   }

@@ -1,5 +1,5 @@
 import { EventEmitter, on } from "node:events";
-import type { Edge, Item, Metadata } from "@mymehq/shared";
+import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { envNumber } from "./config.js";
 import { cycleRequestContext } from "./cycle-context.js";
 import type { EventLogStore, Storage } from "./storage/interface.js";

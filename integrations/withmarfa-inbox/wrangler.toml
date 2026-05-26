@@ -1,18 +1,18 @@
 #:schema node_modules/wrangler/config-schema.json
-# Per-Integration Worker for mymehq.inbox.
+# Per-Integration Worker for withmarfa.inbox.
 # Webhook-only integration — consumes the shared webhook-receipt
 # queue. The companion Cloudflare Email Worker that converts inbound
 # email → signed JSON webhook lives at `email-worker/` and ships its
 # own `wrangler.toml`; the two are deployed independently.
 
-name = "myme-integration-mymehq-inbox"
+name = "marfa-integration-withmarfa-inbox"
 main = "src/worker.ts"
 compatibility_date = "2025-12-01"
 compatibility_flags = ["nodejs_compat"]
 # `account_id` omitted — Wrangler reads CLOUDFLARE_ACCOUNT_ID from the env.
 
 [vars]
-INTEGRATION_NAME = "mymehq.inbox"
+INTEGRATION_NAME = "withmarfa.inbox"
 ENVIRONMENT = "dev"
 
 [[durable_objects.bindings]]
@@ -25,10 +25,10 @@ new_sqlite_classes = ["PerConnectionState"]
 
 # ---- Staging --------------------------------------------------------------
 [env.staging]
-name = "myme-integration-mymehq-inbox-staging"
+name = "marfa-integration-withmarfa-inbox-staging"
 
 [env.staging.vars]
-INTEGRATION_NAME = "mymehq.inbox"
+INTEGRATION_NAME = "withmarfa.inbox"
 ENVIRONMENT = "staging"
 
 [[env.staging.durable_objects.bindings]]
@@ -44,33 +44,33 @@ new_sqlite_classes = ["PerConnectionState"]
 # operator's peekable surface.
 #
 # T-247: consume from a per-integration webhook-receipt queue, NOT
-# the shared `myme-webhook-receipt-staging`. CF Queues allow only
-# one consumer per queue; `mymehq.github-webhooks` already owns the
+# the shared `marfa-webhook-receipt-staging`. CF Queues allow only
+# one consumer per queue; `withmarfa.github-webhooks` already owns the
 # shared queue's slot. The control plane routes by `integration_name`
-# to the matching producer binding (`WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX`
+# to the matching producer binding (`WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX`
 # in wrangler.control.toml).
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
-queue = "myme-webhook-receipt-mymehq-inbox-staging-dlq"
+queue = "marfa-webhook-receipt-withmarfa-inbox-staging-dlq"
 
 [[env.staging.queues.consumers]]
-queue = "myme-webhook-receipt-mymehq-inbox-staging"
+queue = "marfa-webhook-receipt-withmarfa-inbox-staging"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-webhook-receipt-mymehq-inbox-staging-dlq"
+dead_letter_queue = "marfa-webhook-receipt-withmarfa-inbox-staging-dlq"
 
 # Secrets (`wrangler secret put --env staging`):
-#   - MYME_API_URL
-#   - MYME_RUNTIME_CONTROL_URL
-#   - MYME_RUNTIME_BROKER_KEY
+#   - MARFA_API_URL
+#   - MARFA_RUNTIME_CONTROL_URL
+#   - MARFA_RUNTIME_BROKER_KEY
 
 # ---- Production -----------------------------------------------------------
 [env.prod]
-name = "myme-integration-mymehq-inbox-prod"
+name = "marfa-integration-withmarfa-inbox-prod"
 
 [env.prod.vars]
-INTEGRATION_NAME = "mymehq.inbox"
+INTEGRATION_NAME = "withmarfa.inbox"
 ENVIRONMENT = "prod"
 
 [[env.prod.durable_objects.bindings]]
@@ -83,11 +83,11 @@ new_sqlite_classes = ["PerConnectionState"]
 
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
-queue = "myme-webhook-receipt-mymehq-inbox-prod-dlq"
+queue = "marfa-webhook-receipt-withmarfa-inbox-prod-dlq"
 
 [[env.prod.queues.consumers]]
-queue = "myme-webhook-receipt-mymehq-inbox-prod"
+queue = "marfa-webhook-receipt-withmarfa-inbox-prod"
 max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 6
-dead_letter_queue = "myme-webhook-receipt-mymehq-inbox-prod-dlq"
+dead_letter_queue = "marfa-webhook-receipt-withmarfa-inbox-prod-dlq"

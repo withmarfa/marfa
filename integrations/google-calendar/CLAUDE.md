@@ -1,6 +1,6 @@
 # google-calendar
 
-Bidirectional sync between Google Calendar and Myme. First instance
+Bidirectional sync between Google Calendar and Marfa. First instance
 of the `google.*` publisher family; Google Tasks, Contacts, Drive
 will follow the same conventions.
 
@@ -54,7 +54,7 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 {
   syncToken: string | null,              // legacy mode only
   last_inbound_at: string | null,        // legacy mode only
-  mappings: Record<external_id, myme_id>,
+  mappings: Record<external_id, marfa_id>,
   mapping_calendars?: Record<external_id, calendar_id>,  // multi mode
   per_calendar?: Record<calendar_id, { syncToken, last_inbound_at }>,
   channels?: Record<calendar_id, {
@@ -64,7 +64,7 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 }
 ```
 
-`mappings` stays a flat `Record<external_id, myme_id>` for backward
+`mappings` stays a flat `Record<external_id, marfa_id>` for backward
 compatibility; multi mode populates `mapping_calendars` alongside so
 updates/deletes know which calendar to address.
 
@@ -93,11 +93,11 @@ the schedule handler uses (`events.list?syncToken=...`), and acks.
 ## Deterministic-id idempotency (T-020)
 
 Outbound new-event POST stamps a client-supplied `id` derived from
-the Myme item id (`SHA-256("myme:" + item.id)` → 64-char hex, which
+the Marfa item id (`SHA-256("marfa:" + item.id)` → 64-char hex, which
 is a subset of Calendar's base32hex alphabet). On Calendar's 409
 "conflict" response we GET the existing event for its current state
 and record the mapping idempotently. Result: at most one Calendar
-event per Myme item id, regardless of how many queue retries fire.
+event per Marfa item id, regardless of how many queue retries fire.
 
 ## All-day and timezone
 

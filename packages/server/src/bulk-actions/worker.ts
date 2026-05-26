@@ -15,7 +15,7 @@
  * Restart recovery: on `start()`, jobs whose `worker_heartbeat_at` is
  * older than `staleAfterMs` are reset to `queued`. Default 60s.
  */
-import { generateId } from "@mymehq/shared";
+import { generateId } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import type {
   BulkActionJobRow,

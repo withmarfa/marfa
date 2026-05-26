@@ -2,17 +2,17 @@
  * Handler-level tests for the Google Contacts (People API)
  * integration. Same pattern as google-tasks's handlers.test.ts: build
  * the ConnectionContext inline with the SDK primitives, mock
- * `ctx.myme` entirely. Coverage focuses on the People-API-specific
+ * `ctx.marfa` entirely. Coverage focuses on the People-API-specific
  * paths:
  *
  *   - Schedule: connections.list sweep upserts as the configured
  *     target type, mappings populate, syncToken advances.
  *   - Schedule: 410 → syncToken reset, full re-list, fresh syncToken
  *     persisted.
- *   - Schedule: metadata.deleted=true → trash mapped Myme item.
+ *   - Schedule: metadata.deleted=true → trash mapped Marfa item.
  *   - Item-event create: clientData marker injected on createContact.
  *   - Item-event create: idempotent recovery — existing person with
- *     myme-id clientData marker is found, mapping recorded, no fresh POST.
+ *     marfa-id clientData marker is found, mapping recorded, no fresh POST.
  *   - Item-event update: PATCH carries etag; 409 → refetch + retry once.
  *   - Item-event trash: DELETE on the resource path.
  */
@@ -28,7 +28,7 @@ import {
   type ItemState,
   type ItemEventMessage,
   type ScheduleMessage,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleSchedule, handleItemEvent } from "./handlers.js";
 import { GOOGLE_CONTACTS_MANIFEST } from "./manifest.js";
 
@@ -147,7 +147,7 @@ function buildContext(opts: BuildOpts): BuiltContext {
   const ctx: ConnectionContext = {
     connection_id: CONNECTION_ID,
     integration_name: GOOGLE_CONTACTS_MANIFEST.name,
-    myme: client,
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, CONNECTION_ID),
     echo: createEchoSuppression(storage, {
@@ -289,7 +289,7 @@ describe("google-contacts handleSchedule", () => {
     );
   });
 
-  it("trashes mapped Myme item when metadata.deleted=true surfaces", async () => {
+  it("trashes mapped Marfa item when metadata.deleted=true surfaces", async () => {
     const { ctx, transitions } = buildContext({
       proxyResponses: [
         () =>
@@ -317,7 +317,7 @@ describe("google-contacts handleSchedule", () => {
 });
 
 describe("google-contacts handleItemEvent — outbound create", () => {
-  it("idempotency search first; absent → POSTs createContact with myme-id clientData marker", async () => {
+  it("idempotency search first; absent → POSTs createContact with marfa-id clientData marker", async () => {
     const itemForEvent: ItemResource = {
       id: "mit_outbound",
       type: "google.contacts.contact",
@@ -351,7 +351,7 @@ describe("google-contacts handleItemEvent — outbound create", () => {
       clientData?: { key: string; value: string }[];
     };
     expect(body.clientData).toEqual([
-      { key: "myme-id", value: "mit_outbound" },
+      { key: "marfa-id", value: "mit_outbound" },
     ]);
     expect(body.names).toBeDefined();
 
@@ -361,7 +361,7 @@ describe("google-contacts handleItemEvent — outbound create", () => {
     expect(cursor.mappings["people/c-new"]).toBe("mit_outbound");
   });
 
-  it("idempotent recovery: scan finds person with myme-id marker → mapping recorded, no POST", async () => {
+  it("idempotent recovery: scan finds person with marfa-id marker → mapping recorded, no POST", async () => {
     const itemForEvent: ItemResource = {
       id: "mit_recover",
       type: "google.contacts.contact",
@@ -378,7 +378,7 @@ describe("google-contacts handleItemEvent — outbound create", () => {
                 resourceName: "people/c-already-there",
                 etag: "etag-existing",
                 names: [{ displayName: "Old" }],
-                clientData: [{ key: "myme-id", value: "mit_recover" }],
+                clientData: [{ key: "marfa-id", value: "mit_recover" }],
               },
             ],
           }),
@@ -453,7 +453,7 @@ describe("google-contacts handleItemEvent — outbound update with etag concurre
 });
 
 describe("google-contacts handleItemEvent — trash", () => {
-  it("trashed Myme item → DELETE on the resource path", async () => {
+  it("trashed Marfa item → DELETE on the resource path", async () => {
     const itemForEvent: ItemResource = {
       id: "mit_trash",
       type: "google.contacts.contact",

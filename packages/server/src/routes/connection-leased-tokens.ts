@@ -1,13 +1,13 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createHash, randomBytes } from "node:crypto";
 import {
-  MymeError,
+  MarfaError,
   ErrorCode,
   generateId,
   type ConnectionLeasedToken,
   type CreatedConnectionLeasedToken,
   type LeaseTokenIntrospection,
-} from "@mymehq/shared";
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type {
@@ -54,7 +54,7 @@ function hashLease(raw: string): string {
  * (T-018):
  *
  *   - `oauth:<connectionId>` — the synthetic ApiKey constructed by the
- *     auth middleware for an OAuth `myme_at_*` access token. The token
+ *     auth middleware for an OAuth `marfa_at_*` access token. The token
  *     was minted via the `/auth/authorize` consent flow and the
  *     consenting user authorised the connection.
  *   - `integration:<connectionId>` — the runtime credential the
@@ -113,7 +113,7 @@ async function requireConnectionAccess(
   // binding is its own scope, and self-hosted (single-tenant) deploys
   // legitimately leave `tenant_id` unset on those.
   if (!isAdmin && !isConnector && !key.tenant_id) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Tenant scope required for this credential",
     );
@@ -121,10 +121,10 @@ async function requireConnectionAccess(
   const tenantId = key.tenant_id ?? undefined;
   const connection = await storage.items.get(connectionId, tenantId);
   if (connection?.type !== "system.connection") {
-    throw new MymeError(ErrorCode.NOT_FOUND, "Connection not found");
+    throw new MarfaError(ErrorCode.NOT_FOUND, "Connection not found");
   }
   if (!isAdmin && !isConnector) {
-    throw new MymeError(
+    throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Caller cannot manage leased tokens on this connection",
     );
@@ -168,7 +168,7 @@ const issueLeaseRoute = createRoute({
   tags: ["Connection Leased Tokens"],
   summary: "Issue a leased token",
   description:
-    "Mints a short-TTL bearer token an external service can use to call back into Myme directly, without holding the connection's full runtime credential. The capability must be declared on the connection's integration manifest with `oauth_requirements: leased`; capabilities not declared as leased reject with `422`.\n\nThe `lease_token` field is returned **once** in the creation response; subsequent reads omit it. See [Integrations — OAuth proxy and leased tokens](/concepts/integrations#oauth-proxy-and-leased-tokens).",
+    "Mints a short-TTL bearer token an external service can use to call back into Marfa directly, without holding the connection's full runtime credential. The capability must be declared on the connection's integration manifest with `oauth_requirements: leased`; capabilities not declared as leased reject with `422`.\n\nThe `lease_token` field is returned **once** in the creation response; subsequent reads omit it. See [Integrations — OAuth proxy and leased tokens](/concepts/integrations#oauth-proxy-and-leased-tokens).",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -393,7 +393,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     );
     const declared = manifest.oauth_requirements[body.capability_id];
     if (declared !== "leased") {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.LEASE_CAPABILITY_NOT_DECLARED,
         declared === "proxy"
           ? `Capability '${body.capability_id}' is declared as 'proxy' in the manifest; lease issuance is not permitted. Use the proxy route instead.`
@@ -403,14 +403,14 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
 
     const ttlSec = body.ttl_seconds ?? LEASE_TTL_DEFAULT_SEC;
     if (ttlSec < 1 || ttlSec > LEASE_TTL_MAX_SEC) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.LEASE_TTL_OUT_OF_RANGE,
         `ttl_seconds must be between 1 and ${String(LEASE_TTL_MAX_SEC)}`,
       );
     }
 
     // Generate an opaque 32-byte hex bearer. Hashed at rest.
-    const rawLease = `myme_lt_${randomBytes(32).toString("hex")}`;
+    const rawLease = `marfa_lt_${randomBytes(32).toString("hex")}`;
     const id = generateId();
     const expiresAt = new Date(Date.now() + ttlSec * 1000).toISOString();
 
@@ -472,7 +472,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     );
     const lease = await storage.connectionLeasedTokens.get(lease_id, tenantId);
     if (lease?.connection_id !== connectionId) {
-      throw new MymeError(ErrorCode.LEASE_TOKEN_NOT_FOUND, "Lease not found");
+      throw new MarfaError(ErrorCode.LEASE_TOKEN_NOT_FOUND, "Lease not found");
     }
     await storage.connectionLeasedTokens.revoke(
       lease_id,

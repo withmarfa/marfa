@@ -6,7 +6,7 @@ import type { PgDb } from "./connection.js";
  *
  * The RLS pattern requires every storage operation issued during a
  * request to flow through ONE connection — the same connection that
- * carries `SET LOCAL ROLE myme_app` and `SET LOCAL myme.tenant_id =
+ * carries `SET LOCAL ROLE marfa_app` and `SET LOCAL marfa.tenant_id =
  * '<id>'`. Drizzle's `db.transaction()` returns a transaction object
  * (`tx`) that meets that contract: every query issued through `tx`
  * uses the transaction's reserved connection. The challenge is
@@ -65,7 +65,7 @@ interface PgRequestContext {
    * Active Drizzle transaction object for this request. Stores
    * issuing queries through the wrapped db will hit this transaction
    * — and therefore the reserved connection carrying `SET LOCAL
-   * ROLE myme_app` and `SET LOCAL myme.tenant_id = '<id>'`.
+   * ROLE marfa_app` and `SET LOCAL marfa.tenant_id = '<id>'`.
    */
   tx: PgTxContext;
 }

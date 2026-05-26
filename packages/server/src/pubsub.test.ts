@@ -20,7 +20,7 @@ import {
   DEFAULT_HOP_BUDGET,
 } from "./pubsub.js";
 import { cycleRequestContext } from "./cycle-context.js";
-import type { Item, Edge } from "@mymehq/shared";
+import type { Item, Edge } from "@withmarfa/shared";
 
 let ctx: TestContext;
 

@@ -1,9 +1,9 @@
 /**
- * Handler-level tests for the mymehq.inbox integration.
+ * Handler-level tests for the withmarfa.inbox integration.
  *
  * Builds ConnectionContext inline; HMAC verification is exercised
  * server-side (the `cloudflare-email` adapter has its own test in
- * `@mymehq/webhooks`). These tests assume verification has already
+ * `@withmarfa/webhooks`). These tests assume verification has already
  * passed and the delivery has reached the handler.
  */
 import { describe, it, expect } from "vitest";
@@ -15,7 +15,7 @@ import {
   type ConnectionClient,
   type CreateItemInput,
   type WebhookHandlerInput,
-} from "@mymehq/runtime-sdk";
+} from "@withmarfa/runtime-sdk";
 import { handleInboxWebhook, __internals } from "./handlers.js";
 import { DELIVERY_RING_SIZE } from "./manifest.js";
 
@@ -84,8 +84,8 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
 
   const ctx: ConnectionContext = {
     connection_id: connectionId,
-    integration_name: "mymehq.inbox",
-    myme: client,
+    integration_name: "withmarfa.inbox",
+    marfa: client,
     cursor: createCursorStore(storage),
     activity: createActivitySink(client, connectionId),
     echo: createEchoSuppression(storage, { echo_ttl_seconds: 60 }),
@@ -96,7 +96,7 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
 
 const FROM_SENDER = {
   from: { address: "sender@example.com", name: "Test Sender" },
-  to: "capture@inbox.myme.so",
+  to: "capture@inbox.marfa.so",
   subject: "Read this later",
   text_body: "Interesting article: https://example.com/x",
   html_body:
@@ -108,7 +108,7 @@ const FROM_SENDER = {
 
 const ENVELOPE_NO_BODY = {
   from: { address: "noreply@example.com" },
-  to: "capture@inbox.myme.so",
+  to: "capture@inbox.marfa.so",
   subject: "Empty body case",
   message_id: "<empty-body@example.com>",
 };
@@ -135,13 +135,13 @@ function makeWebhookMessage(
 ): WebhookHandlerInput {
   const headers: Record<string, string> = opts.lowercase
     ? {
-        "x-myme-signature": "sha256=stub",
-        "x-myme-delivery-id": deliveryId,
+        "x-marfa-signature": "sha256=stub",
+        "x-marfa-delivery-id": deliveryId,
         "content-type": "application/json",
       }
     : {
-        "X-Myme-Signature": "sha256=stub",
-        "X-Myme-Delivery-Id": deliveryId,
+        "X-Marfa-Signature": "sha256=stub",
+        "X-Marfa-Delivery-Id": deliveryId,
         "Content-Type": "application/json",
       };
   const bodyBuffer = new TextEncoder().encode(JSON.stringify(envelope)).buffer;
@@ -153,8 +153,8 @@ function makeWebhookMessage(
   };
 }
 
-describe("mymehq.inbox handler", () => {
-  it("creates a mymehq.captured_email on a well-formed envelope", async () => {
+describe("withmarfa.inbox handler", () => {
+  it("creates a withmarfa.captured_email on a well-formed envelope", async () => {
     const { ctx, created, emitted } = buildContext();
     const result = await handleInboxWebhook(
       ctx,
@@ -162,11 +162,11 @@ describe("mymehq.inbox handler", () => {
     );
     expect(result).toEqual({ ok: true });
     expect(created).toHaveLength(1);
-    expect(created[0]!.type).toBe("mymehq.captured_email");
+    expect(created[0]!.type).toBe("withmarfa.captured_email");
     expect(created[0]!.properties).toMatchObject({
       from_address: "sender@example.com",
       from_name: "Test Sender",
-      to_address: "capture@inbox.myme.so",
+      to_address: "capture@inbox.marfa.so",
       subject: "Read this later",
       text_body: "Interesting article: https://example.com/x",
       body: "Interesting article: https://example.com/x",
@@ -196,7 +196,7 @@ describe("mymehq.inbox handler", () => {
     );
     expect(created).toHaveLength(1);
     expect(emitted.at(-1)?.properties?.summary).toBe(
-      "mymehq.inbox: duplicate delivery <CAabc123@mail.gmail.com> ignored",
+      "withmarfa.inbox: duplicate delivery <CAabc123@mail.gmail.com> ignored",
     );
   });
 
@@ -234,8 +234,8 @@ describe("mymehq.inbox handler", () => {
     const broken: WebhookHandlerInput = {
       delivery_id: "delivery_bad",
       headers: {
-        "X-Myme-Signature": "sha256=stub",
-        "X-Myme-Delivery-Id": "delivery_bad",
+        "X-Marfa-Signature": "sha256=stub",
+        "X-Marfa-Delivery-Id": "delivery_bad",
       },
       body: new TextEncoder().encode("not-json").buffer,
       verified_at_ms: Date.now(),
@@ -249,7 +249,7 @@ describe("mymehq.inbox handler", () => {
     expect(emitted[0]?.properties?.severity).toBe("action_required");
   });
 
-  it("retries on Myme-side createItem failure (delivery NOT recorded)", async () => {
+  it("retries on Marfa-side createItem failure (delivery NOT recorded)", async () => {
     const { ctx, created, emitted } = buildContext({ failCreate: true });
     const r1 = await handleInboxWebhook(
       ctx,
@@ -319,7 +319,7 @@ describe("mymehq.inbox handler", () => {
     const input = __internals.buildCapturedEmail(
       ENVELOPE_WITH_ATTACHMENTS,
       "sender@example.com",
-      "capture@inbox.myme.so",
+      "capture@inbox.marfa.so",
     );
     expect(input.properties?.attachments).toEqual([
       {

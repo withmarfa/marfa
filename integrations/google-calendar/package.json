@@ -1,9 +1,9 @@
 {
-  "name": "@mymehq/integration-google-calendar",
+  "name": "@withmarfa/integration-google-calendar",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Bidirectional Google Calendar connector. Schedule trigger polls Calendar's events.list incremental sync; item-event trigger pushes Myme core.event changes back to Calendar via the OAuth proxy. Validates all four bidirectional_handling positions (echo TTL, lag window, tombstone mapping, partial-write mode).",
+  "description": "Bidirectional Google Calendar connector. Schedule trigger polls Calendar's events.list incremental sync; item-event trigger pushes Marfa core.event changes back to Calendar via the OAuth proxy. Validates all four bidirectional_handling positions (echo TTL, lag window, tombstone mapping, partial-write mode).",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -13,12 +13,12 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@mymehq/runtime-sdk": "workspace:*",
-    "@mymehq/shared": "workspace:*"
+    "@withmarfa/runtime-sdk": "workspace:*",
+    "@withmarfa/shared": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251201.0",
-    "@mymehq/runtime-test": "workspace:*",
+    "@withmarfa/runtime-test": "workspace:*",
     "typescript": "^6.0.2",
     "vitest": "^4.1.2",
     "tsup": "^8.5.1"

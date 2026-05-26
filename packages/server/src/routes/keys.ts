@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
-import { MymeError, ErrorCode, isValidId } from "@mymehq/shared";
+import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireTenantAdmin, hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -10,7 +10,7 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 
-const KEY_PREFIX = "myme_k1_";
+const KEY_PREFIX = "marfa_k1_";
 
 function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");
@@ -315,7 +315,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     if (isBootstrap) {
       const claimed = await storage.settings.claim("bootstrapped", "true");
       if (!claimed) {
-        throw new MymeError(ErrorCode.UNAUTHORIZED, "Authentication required");
+        throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
       }
     }
 
@@ -420,7 +420,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     const { id } = c.req.valid("param");
 
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
 
     // tenant_admin can only revoke keys in its own tenant —
@@ -428,7 +428,10 @@ export function keyRoutes(storage: Storage, salt: string) {
     if (key.role === "tenant_admin" && key.tenant_id) {
       const target = await storage.keys.get(id);
       if (target?.tenant_id !== key.tenant_id) {
-        throw new MymeError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
+        throw new MarfaError(
+          ErrorCode.API_KEY_NOT_FOUND,
+          `Key ${id} not found`,
+        );
       }
     }
 
@@ -451,17 +454,17 @@ export function keyRoutes(storage: Storage, salt: string) {
     const body = c.req.valid("json");
 
     if (!isValidId(id)) {
-      throw new MymeError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
 
     if ("source" in body) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "`source` is immutable after creation — it is baked into item provenance. Revoke and issue a new key instead.",
       );
     }
     if ("role" in body) {
-      throw new MymeError(
+      throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "`role` is immutable after creation for security reasons. Revoke and issue a new key instead.",
       );
@@ -469,7 +472,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     const existing = await storage.keys.get(id);
     if (!existing) {
-      throw new MymeError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
+      throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
     // tenant_admin can only update keys in its own tenant — same
     // 404 cloak as revoke.
@@ -478,7 +481,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       key.tenant_id &&
       existing.tenant_id !== key.tenant_id
     ) {
-      throw new MymeError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
+      throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
 
     const updated = await storage.keys.update(id, {

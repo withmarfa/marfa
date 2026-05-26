@@ -13,7 +13,7 @@
  * `/auth/static/auth.css` via the `renderAuthLayout` helper.
  */
 
-import type { ParsedScope } from "@mymehq/shared";
+import type { ParsedScope } from "@withmarfa/shared";
 import { renderAuthLayout } from "./auth-layout.js";
 
 interface DevicePageParams {

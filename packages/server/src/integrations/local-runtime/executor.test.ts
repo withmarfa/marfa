@@ -25,7 +25,7 @@ import type {
   WorkerDispatchRequest,
 } from "./types.js";
 
-const tempRoot = mkdtempSync(join(tmpdir(), "myme-executor-test-"));
+const tempRoot = mkdtempSync(join(tmpdir(), "marfa-executor-test-"));
 
 afterAll(() => {
   rmSync(tempRoot, { recursive: true, force: true });
@@ -63,7 +63,7 @@ describe("executor resilience", () => {
     const request: WorkerDispatchRequest = {
       apiUrl: "http://test.local",
       credential: {
-        api_key: "myme_k1_test",
+        api_key: "marfa_k1_test",
         expires_at: new Date(Date.now() + 60_000).toISOString(),
         connection_id: "test-connection",
       },

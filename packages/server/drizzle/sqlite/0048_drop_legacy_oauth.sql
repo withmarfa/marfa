@@ -7,7 +7,7 @@
 -- state was cleared and re-created via the new flow. Per the project's
 -- "no legacy carry-over" principle, no dual surface, no data preservation.
 --
--- The `oauth_device_codes` table is intentionally KEPT — it's the Myme-
+-- The `oauth_device_codes` table is intentionally KEPT — it's the Marfa-
 -- owned state machine for the device-flow surfaces (`/auth/device*`)
 -- which the plugin doesn't replace. Its `client_id` FK to `oauth_clients`
 -- is replaced by an application-enforced reference to

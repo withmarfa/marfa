@@ -11,7 +11,7 @@
  *     from a crashed prior run, rebuild the template (DROP + CREATE +
  *     migrate).
  *   - Per test file (createPgTestStorage / createTestContext):
- *     CREATE DATABASE <unique> TEMPLATE myme_test_template, return the
+ *     CREATE DATABASE <unique> TEMPLATE marfa_test_template, return the
  *     connection URL + a drop callback.
  *   - Per-file teardown: the cleanup callback closes the storage pool
  *     and drops the clone with WITH (FORCE) so any lingering connections
@@ -28,7 +28,7 @@
  *     unconditionally so a leaked pool connection can't block teardown.
  *   - CREATE/DROP DATABASE cannot run inside a transaction block.
  *
- * The role + grants set up by migrations 0035 / 0037 / 0040 (myme_app)
+ * The role + grants set up by migrations 0035 / 0037 / 0040 (marfa_app)
  * are CLUSTER-scoped, not database-scoped. The first migration run
  * against the template creates the role; clones inherit the grants
  * automatically.
@@ -38,10 +38,10 @@ import postgres from "postgres";
 import { runPgMigrations } from "../migrate.js";
 
 /** Name of the persistent template database. Built once per test run. */
-export const TEMPLATE_DB_NAME = "myme_test_template";
+export const TEMPLATE_DB_NAME = "marfa_test_template";
 
 /** Prefix for per-file clone databases. */
-const CLONE_PREFIX = "myme_test_clone_";
+const CLONE_PREFIX = "marfa_test_clone_";
 
 /**
  * Substitute the database segment of a Postgres connection URL.
@@ -58,18 +58,18 @@ export function withDatabase(url: string, dbName: string): string {
  * available (`postgres` by convention) so we can CREATE / DROP arbitrary
  * databases on the cluster.
  *
- * Reads MYME_TEST_PG_ADMIN_URL when set (test-pg.sh exports it). When
+ * Reads MARFA_TEST_PG_ADMIN_URL when set (test-pg.sh exports it). When
  * unset, derives it by swapping the DATABASE_URL's database segment to
  * `postgres`. Fails loud if neither is set — there's no reasonable
  * default for a test admin URL.
  */
 export function getAdminUrl(): string {
-  const explicit = process.env.MYME_TEST_PG_ADMIN_URL;
+  const explicit = process.env.MARFA_TEST_PG_ADMIN_URL;
   if (explicit) return explicit;
   const base = process.env.DATABASE_URL;
   if (!base) {
     throw new Error(
-      "PG test lifecycle requires MYME_TEST_PG_ADMIN_URL or DATABASE_URL to be set. Invoke via `pnpm test:pg` which sets both.",
+      "PG test lifecycle requires MARFA_TEST_PG_ADMIN_URL or DATABASE_URL to be set. Invoke via `pnpm test:pg` which sets both.",
     );
   }
   return withDatabase(base, "postgres");

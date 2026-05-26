@@ -17,7 +17,7 @@ on:
       - "LICENSE"
   # Freshness jobs are also triggerable manually so agents can verify
   # generated-artefact drift (types registry, openapi.json) before merging
-  # a PR that touches schema or shared-type sources. See myme/CLAUDE.md for
+  # a PR that touches schema or shared-type sources. See marfa/CLAUDE.md for
   # when to fire this.
   workflow_dispatch:
 
@@ -51,12 +51,12 @@ jobs:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @mymehq/types validate
+      - run: pnpm --filter @withmarfa/types validate
       - name: Regenerate and check for drift
         run: |
-          pnpm --filter @mymehq/types generate
+          pnpm --filter @withmarfa/types generate
           if ! git diff --exit-code packages/types/generated/; then
-            echo "Generated type registry is out of date. Run 'pnpm --filter @mymehq/types generate' and commit."
+            echo "Generated type registry is out of date. Run 'pnpm --filter @withmarfa/types generate' and commit."
             exit 1
           fi
 
@@ -81,14 +81,14 @@ jobs:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
-      # Build first — the generator script imports through @mymehq/shared,
+      # Build first — the generator script imports through @withmarfa/shared,
       # which needs its dist/ before tsx can resolve it.
       - run: pnpm build
       - name: Regenerate and check for drift
         run: |
-          pnpm --silent --filter @mymehq/server generate:openapi > openapi.json
+          pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json
           if ! git diff --exit-code openapi.json; then
-            echo "openapi.json is out of date. Run 'pnpm --silent --filter @mymehq/server generate:openapi > openapi.json' and commit."
+            echo "openapi.json is out of date. Run 'pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json' and commit."
             exit 1
           fi
 
@@ -102,14 +102,14 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      DATABASE_URL: postgresql://myme:myme@localhost:5432/myme_schema_dump
+      DATABASE_URL: postgresql://marfa:marfa@localhost:5432/marfa_schema_dump
     services:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: myme
-          POSTGRES_PASSWORD: myme
-          POSTGRES_DB: myme_schema_dump
+          POSTGRES_USER: marfa
+          POSTGRES_PASSWORD: marfa
+          POSTGRES_DB: marfa_schema_dump
         ports:
           - 5432:5432
         # `pg_isready` alone returns OK before the cluster actually serves
@@ -120,7 +120,7 @@ jobs:
         # fix; symmetric across all three PG service containers in this
         # workflow.
         options: >-
-          --health-cmd="pg_isready -U myme && psql -U myme -d postgres -c 'SELECT 1'"
+          --health-cmd="pg_isready -U marfa && psql -U marfa -d postgres -c 'SELECT 1'"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -157,7 +157,7 @@ jobs:
           sudo apt-get install -y postgresql-client-17
           echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
       - name: Regenerate SQLite SCHEMA_SQL
-        run: pnpm --filter @mymehq/server run schema-sql:generate:sqlite
+        run: pnpm --filter @withmarfa/server run schema-sql:generate:sqlite
       - name: Regenerate Postgres SCHEMA_SQL
         # Bypass the with-temp-pg.sh wrapper — runner reaches services
         # container directly on localhost:5432, and uses the host pg_dump 17
@@ -167,11 +167,11 @@ jobs:
         # instead of producing diff churn.
         run: |
           pg_dump --version
-          pnpm --filter @mymehq/server exec tsx scripts/generate-schema-sql.ts --dialect=pg
+          pnpm --filter @withmarfa/server exec tsx scripts/generate-schema-sql.ts --dialect=pg
       - name: Check for drift
         run: |
           if ! git diff --exit-code packages/server/src/storage/{pg,sqlite}/schema-sql.generated.ts; then
-            echo "SCHEMA_SQL is out of date. Run 'pnpm --filter @mymehq/server schema-sql:generate' and commit."
+            echo "SCHEMA_SQL is out of date. Run 'pnpm --filter @withmarfa/server schema-sql:generate' and commit."
             exit 1
           fi
 
@@ -202,7 +202,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @mymehq/server run lint:sqlite-migrations
+      - run: pnpm --filter @withmarfa/server run lint:sqlite-migrations
 
   # Test jobs — run on every PR and on main pushes. These are the fast
   # pre-merge signal and are considered load-bearing for merge decisions.
@@ -232,7 +232,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm test
-      - run: pnpm --filter @mymehq/server run smoke:worker-entry
+      - run: pnpm --filter @withmarfa/server run smoke:worker-entry
 
   ci-pg:
     name: CI (Postgres)
@@ -241,19 +241,19 @@ jobs:
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       STORAGE_DIALECT: pg
-      DATABASE_URL: postgresql://myme:myme@localhost:5432/myme_test
-      # The vitest globalSetup uses MYME_TEST_PG_ADMIN_URL to CREATE / DROP
+      DATABASE_URL: postgresql://marfa:marfa@localhost:5432/marfa_test
+      # The vitest globalSetup uses MARFA_TEST_PG_ADMIN_URL to CREATE / DROP
       # the test template + per-file clones on the cluster. Points at the
       # default `postgres` system DB so it's always reachable. See
       # packages/server/src/storage/pg/test-template.ts.
-      MYME_TEST_PG_ADMIN_URL: postgresql://myme:myme@localhost:5432/postgres
+      MARFA_TEST_PG_ADMIN_URL: postgresql://marfa:marfa@localhost:5432/postgres
     services:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: myme
-          POSTGRES_PASSWORD: myme
-          POSTGRES_DB: myme_test
+          POSTGRES_USER: marfa
+          POSTGRES_PASSWORD: marfa
+          POSTGRES_DB: marfa_test
         ports:
           - 5432:5432
         # `pg_isready` alone returns OK before the cluster actually serves
@@ -264,7 +264,7 @@ jobs:
         # fix; symmetric across all three PG service containers in this
         # workflow.
         options: >-
-          --health-cmd="pg_isready -U myme && psql -U myme -d postgres -c 'SELECT 1'"
+          --health-cmd="pg_isready -U marfa && psql -U marfa -d postgres -c 'SELECT 1'"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -319,11 +319,11 @@ jobs:
 
       - name: Prepare fresh empty sqlite DB path
         run: |
-          mkdir -p "${RUNNER_TEMP}/myme-migrate"
-          echo "SQLITE_PATH=${RUNNER_TEMP}/myme-migrate/fresh.db" >> "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/marfa-migrate"
+          echo "SQLITE_PATH=${RUNNER_TEMP}/marfa-migrate/fresh.db" >> "$GITHUB_ENV"
 
       - name: Run migrations against fresh DB
-        run: pnpm --filter @mymehq/server migrate
+        run: pnpm --filter @withmarfa/server migrate
 
   ci-fresh-migrate-pg:
     name: CI (Fresh migrate, Postgres)
@@ -332,14 +332,14 @@ jobs:
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       STORAGE_DIALECT: pg
-      DATABASE_URL: postgresql://myme:myme@localhost:5432/myme_migrate_test
+      DATABASE_URL: postgresql://marfa:marfa@localhost:5432/marfa_migrate_test
     services:
       postgres:
         image: postgres:17
         env:
-          POSTGRES_USER: myme
-          POSTGRES_PASSWORD: myme
-          POSTGRES_DB: myme_migrate_test
+          POSTGRES_USER: marfa
+          POSTGRES_PASSWORD: marfa
+          POSTGRES_DB: marfa_migrate_test
         ports:
           - 5432:5432
         # `pg_isready` alone returns OK before the cluster actually serves
@@ -350,7 +350,7 @@ jobs:
         # fix; symmetric across all three PG service containers in this
         # workflow.
         options: >-
-          --health-cmd="pg_isready -U myme && psql -U myme -d postgres -c 'SELECT 1'"
+          --health-cmd="pg_isready -U marfa && psql -U marfa -d postgres -c 'SELECT 1'"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -371,4 +371,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Run migrations against fresh DB
-        run: pnpm --filter @mymehq/server migrate
+        run: pnpm --filter @withmarfa/server migrate

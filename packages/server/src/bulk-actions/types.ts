@@ -1,7 +1,7 @@
 /**
  * T-218: server-internal types for the bulk_action substrate.
  *
- * Mirrors the public SDK shapes in `@mymehq/sdk` (`BulkActionInput`,
+ * Mirrors the public SDK shapes in `@withmarfa/sdk` (`BulkActionInput`,
  * `BulkActionResult`, `BulkActionJob`) so the server can carry them
  * without depending on the SDK package. Wire-shape compatibility is
  * enforced by the openapi-freshness CI gate.

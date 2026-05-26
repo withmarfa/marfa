@@ -6,7 +6,7 @@
  * changing them is a coordinated cross-PR change.
  */
 
-/** Cycle-detection metadata that flows from the Myme server's
+/** Cycle-detection metadata that flows from the Marfa server's
  *  event_log onto every reactive-run dispatch. The SDK refuses to
  *  call back into the server when hop_count >= budget. */
 export interface CycleMetadata {
@@ -159,7 +159,7 @@ export type HandlerResult =
 /** The control plane stamps this on every lease response so the SDK
  *  can cache it on the per-Connection DO. */
 export interface RuntimeCredential {
-  /** Bearer key the SDK includes in Myme API calls. */
+  /** Bearer key the SDK includes in Marfa API calls. */
   api_key: string;
   /** ISO timestamp the credential expires. The SDK refreshes
    *  preemptively at 80% of the issued TTL. */

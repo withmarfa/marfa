@@ -45,7 +45,7 @@ interface HostedContext {
 
 async function createHostedContext(): Promise<HostedContext> {
   const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
-  const tmpDir = mkdtempSync(join(tmpdir(), "myme-profile-test-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-profile-test-"));
   const blobPath = join(tmpDir, "blobs");
 
   let storage: Storage;
@@ -164,7 +164,7 @@ async function provisionUser(
     auth_user_id: authUserId,
   });
 
-  const rawKey = `myme_k1_test_${Math.random().toString(36).slice(2, 14)}`;
+  const rawKey = `marfa_k1_test_${Math.random().toString(36).slice(2, 14)}`;
   await storage.keys.create(
     {
       label: "test-admin",

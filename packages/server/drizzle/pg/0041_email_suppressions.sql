@@ -17,13 +17,13 @@ CREATE INDEX IF NOT EXISTS "idx_email_suppressions_email"
 --> statement-breakpoint
 -- T-025 RLS: extend grant + policy to email_suppressions. Empty-string
 -- tenant_id is the platform-level row (mirrors blob T-049 convention).
-GRANT SELECT, INSERT, UPDATE, DELETE ON "email_suppressions" TO "myme_app";
+GRANT SELECT, INSERT, UPDATE, DELETE ON "email_suppressions" TO "marfa_app";
 --> statement-breakpoint
 ALTER TABLE "email_suppressions" ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 DROP POLICY IF EXISTS "email_suppressions_tenant_isolation" ON "email_suppressions";
 --> statement-breakpoint
 CREATE POLICY "email_suppressions_tenant_isolation" ON "email_suppressions"
-  FOR ALL TO "myme_app"
-  USING (tenant_id = current_setting('myme.tenant_id', true)
+  FOR ALL TO "marfa_app"
+  USING (tenant_id = current_setting('marfa.tenant_id', true)
          OR tenant_id = '');

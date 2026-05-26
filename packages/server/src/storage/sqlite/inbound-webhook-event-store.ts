@@ -1,5 +1,5 @@
 import { eq, desc, sql } from "drizzle-orm";
-import type { InboundWebhookEvent } from "@mymehq/shared";
+import type { InboundWebhookEvent } from "@withmarfa/shared";
 import type { InboundWebhookEventStore } from "../interface.js";
 import { inboundWebhookEvents } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";

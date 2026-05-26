@@ -4,9 +4,9 @@
  * re-run.
  *
  * Usage:
- *   pnpm --filter @mymehq/infra-cloudflare provision dev
- *   pnpm --filter @mymehq/infra-cloudflare provision staging
- *   pnpm --filter @mymehq/infra-cloudflare provision prod
+ *   pnpm --filter @withmarfa/infra-cloudflare provision dev
+ *   pnpm --filter @withmarfa/infra-cloudflare provision staging
+ *   pnpm --filter @withmarfa/infra-cloudflare provision prod
  *
  * Required env:
  *   CLOUDFLARE_API_TOKEN   — token with Workers/Queues/KV/R2 write
@@ -16,29 +16,32 @@
  *   CLOUDFLARE_ZONE_ID     — zone to attach the tunnel CNAME to
  *
  * Resources created:
- *   - Queues:  myme-webhook-receipt-<env>, myme-scheduled-poll-<env>,
- *              myme-reactive-run-<env> (+ -dlq variants)
+ *   - Queues:  marfa-webhook-receipt-<env>, marfa-scheduled-poll-<env>,
+ *              marfa-reactive-run-<env> (+ -dlq variants)
  *   - Per-integration reactive-run queues (T-233):
- *              myme-reactive-run-<integration>-<env> (+ -dlq)
+ *              marfa-reactive-run-<integration>-<env> (+ -dlq)
  *              for every integration in REACTIVE_RUN_INTEGRATIONS that
  *              declares an `item-event` trigger.
  *   - Per-integration webhook-receipt queues (T-247):
- *              myme-webhook-receipt-<integration>-<env> (+ -dlq)
+ *              marfa-webhook-receipt-<integration>-<env> (+ -dlq)
  *              for every integration in WEBHOOK_RECEIVING_INTEGRATIONS
  *              that declares a `webhook` trigger.
  *   - Per-integration scheduled-poll queues (T-240):
- *              myme-scheduled-poll-<integration>-<env> (+ -dlq)
+ *              marfa-scheduled-poll-<integration>-<env> (+ -dlq)
  *              for every integration in SCHEDULED_POLL_INTEGRATIONS that
  *              declares a `schedule` trigger.
- *   - KV:      myme-control-idempotency-<env>
- *   - R2:      myme-runtime-payloads-<env>
+ *   - KV:      marfa-control-idempotency-<env>
+ *   - R2:      marfa-runtime-payloads-<env>
  *
  * Tunnel DNS automation is left to the operator for now (see
  * tunnel.config.example.yml). The current account-scoped token does
  * not carry zone-edit; provision.ts prints clear instructions if asked
  * to do tunnel work and the scope is missing.
  */
-import { integrationsWithTrigger, scheduledPollSlugFor } from "@mymehq/shared";
+import {
+  integrationsWithTrigger,
+  scheduledPollSlugFor,
+} from "@withmarfa/shared";
 import { CloudflareClient } from "./cloudflare-api.js";
 
 type Env = "dev" | "staging" | "prod";
@@ -49,21 +52,21 @@ function isEnv(s: string): s is Env {
 
 /**
  * Per-integration queue families are derived from the in-tree
- * integration registry (`@mymehq/shared` → `IN_TREE_INTEGRATIONS`).
+ * integration registry (`@withmarfa/shared` → `IN_TREE_INTEGRATIONS`).
  * Each integration declares its triggers; the registry filters into
  * three families consumed below:
  *
  *   - **Reactive-run** (T-233): integrations with `item-event`
- *     trigger get `myme-reactive-run-<slug>-<env>` (+ DLQ). The
+ *     trigger get `marfa-reactive-run-<slug>-<env>` (+ DLQ). The
  *     server's `reactive-run-bridge` routes envelopes per
  *     `integration_name` to the matching producer URL.
  *   - **Webhook-receipt** (T-247): integrations with `webhook`
  *     trigger AND a dedicated `webhookQueueBinding` get
- *     `myme-webhook-receipt-<slug>-<env>` (+ DLQ). Integrations
+ *     `marfa-webhook-receipt-<slug>-<env>` (+ DLQ). Integrations
  *     without the binding stay on the legacy shared queue
- *     (`mymehq.github-webhooks` today).
+ *     (`withmarfa.github-webhooks` today).
  *   - **Scheduled-poll** (T-240): integrations with `schedule`
- *     trigger get `myme-scheduled-poll-<slug>-<env>` (+ DLQ). The
+ *     trigger get `marfa-scheduled-poll-<slug>-<env>` (+ DLQ). The
  *     slug uses `scheduledPollSlugFor()` to honour pre-existing
  *     consumer-side naming conventions (some drop the publisher
  *     prefix, some keep it).
@@ -85,13 +88,13 @@ const SCHEDULED_POLL_INTEGRATIONS = integrationsWithTrigger("schedule").filter(
 /**
  * Cloudflare Queue names must match `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`
  * (no dots). The publisher-namespaced manifest name (e.g.
- * `mymehq.task-auto-archive`, `google.calendar`) carries a dot, so the
+ * `withmarfa.task-auto-archive`, `google.calendar`) carries a dot, so the
  * provisioner lowercases + replaces every dot with a hyphen to derive
  * the queue-name slug — same shape already used by the existing
- * `myme-scheduled-poll-<slug>-<env>` and
- * `myme-webhook-receipt-<slug>-<env>` queues.
+ * `marfa-scheduled-poll-<slug>-<env>` and
+ * `marfa-webhook-receipt-<slug>-<env>` queues.
  *
- *   "mymehq.task-auto-archive" → "mymehq-task-auto-archive"
+ *   "withmarfa.task-auto-archive" → "withmarfa-task-auto-archive"
  *   "google.calendar"          → "google-calendar"
  */
 function queueSlug(integrationName: string): string {
@@ -110,17 +113,17 @@ async function provisionQueues(
   out: ResourceIds,
 ): Promise<void> {
   const wanted = [
-    `myme-webhook-receipt-${env}`,
-    `myme-webhook-receipt-${env}-dlq`,
-    `myme-scheduled-poll-${env}`,
-    `myme-scheduled-poll-${env}-dlq`,
-    // The shared `myme-reactive-run-${env}` (+ DLQ) is the legacy
+    `marfa-webhook-receipt-${env}`,
+    `marfa-webhook-receipt-${env}-dlq`,
+    `marfa-scheduled-poll-${env}`,
+    `marfa-scheduled-poll-${env}-dlq`,
+    // The shared `marfa-reactive-run-${env}` (+ DLQ) is the legacy
     // single-consumer queue. T-233 splits per integration; the shared
     // queue + DLQ stay declared here for backward-compat through the
     // task-auto-archive migration window. Once PR3 drains it, the
     // shared queue can be removed from this list.
-    `myme-reactive-run-${env}`,
-    `myme-reactive-run-${env}-dlq`,
+    `marfa-reactive-run-${env}`,
+    `marfa-reactive-run-${env}-dlq`,
   ];
   // T-233 — per-integration reactive-run queues. Each integration with
   // an `item-event` trigger gets its own queue + DLQ; the server's
@@ -130,8 +133,8 @@ async function provisionQueues(
   // characters in queue names.
   for (const integration of REACTIVE_RUN_INTEGRATIONS) {
     const slug = queueSlug(integration.name);
-    wanted.push(`myme-reactive-run-${slug}-${env}`);
-    wanted.push(`myme-reactive-run-${slug}-${env}-dlq`);
+    wanted.push(`marfa-reactive-run-${slug}-${env}`);
+    wanted.push(`marfa-reactive-run-${slug}-${env}-dlq`);
   }
   // T-247 — per-integration webhook-receipt queues. Each integration
   // with a `webhook` trigger AND a dedicated binding gets its own
@@ -141,8 +144,8 @@ async function provisionQueues(
   // binding (e.g. github-webhooks today) stay on the shared queue.
   for (const integration of WEBHOOK_RECEIVING_INTEGRATIONS) {
     const slug = queueSlug(integration.name);
-    wanted.push(`myme-webhook-receipt-${slug}-${env}`);
-    wanted.push(`myme-webhook-receipt-${slug}-${env}-dlq`);
+    wanted.push(`marfa-webhook-receipt-${slug}-${env}`);
+    wanted.push(`marfa-webhook-receipt-${slug}-${env}-dlq`);
   }
   // T-240 — per-integration scheduled-poll queues. Each integration
   // with a `schedule` trigger gets its own queue + DLQ; the
@@ -152,8 +155,8 @@ async function provisionQueues(
   // publisher prefix (see InTreeIntegration JSDoc for the history).
   for (const integration of SCHEDULED_POLL_INTEGRATIONS) {
     const slug = scheduledPollSlugFor(integration);
-    wanted.push(`myme-scheduled-poll-${slug}-${env}`);
-    wanted.push(`myme-scheduled-poll-${slug}-${env}-dlq`);
+    wanted.push(`marfa-scheduled-poll-${slug}-${env}`);
+    wanted.push(`marfa-scheduled-poll-${slug}-${env}-dlq`);
   }
   const existing = await client.listQueues();
   const existingByName = new Map(existing.map((q) => [q.queue_name, q]));
@@ -182,9 +185,9 @@ async function provisionDlqHttpPull(
   // need http_pull. Idempotent — list existing consumers first; only add
   // when none of type http_pull is registered.
   const wantedDlqs = [
-    `myme-webhook-receipt-${env}-dlq`,
-    `myme-scheduled-poll-${env}-dlq`,
-    `myme-reactive-run-${env}-dlq`,
+    `marfa-webhook-receipt-${env}-dlq`,
+    `marfa-scheduled-poll-${env}-dlq`,
+    `marfa-reactive-run-${env}-dlq`,
   ];
   for (const name of wantedDlqs) {
     const queueId = out.queues[name];
@@ -212,7 +215,7 @@ async function provisionKv(
   env: Env,
   out: ResourceIds,
 ): Promise<void> {
-  const wanted = [`myme-control-idempotency-${env}`];
+  const wanted = [`marfa-control-idempotency-${env}`];
   const existing = await client.listKvNamespaces();
   const existingByName = new Map(existing.map((n) => [n.title, n]));
 
@@ -234,7 +237,7 @@ async function provisionR2(
   env: Env,
   out: ResourceIds,
 ): Promise<void> {
-  const wanted = [`myme-runtime-payloads-${env}`];
+  const wanted = [`marfa-runtime-payloads-${env}`];
   const existing = await client.listR2Buckets();
   const existingByName = new Set(existing.map((b) => b.name));
 
@@ -272,7 +275,7 @@ function checkTunnelScope(): void {
       "[tunnel]   the API token. Either extend the token's scope OR create",
     );
     console.log(
-      "[tunnel]   the CNAME manually (runtime[-staging].myme.so → tunnel uuid).",
+      "[tunnel]   the CNAME manually (runtime[-staging].marfa.so → tunnel uuid).",
     );
     console.log(
       "[tunnel]   See infra/cloudflare/tunnel.config.example.yml for context.",
@@ -328,7 +331,7 @@ async function main(): Promise<void> {
   // re-run.
   const reactiveRunUrls: Record<string, string> = {};
   for (const integration of REACTIVE_RUN_INTEGRATIONS) {
-    const queueName = `myme-reactive-run-${queueSlug(integration.name)}-${env}`;
+    const queueName = `marfa-reactive-run-${queueSlug(integration.name)}-${env}`;
     const queueId = out.queues[queueName];
     if (!queueId) {
       console.warn(

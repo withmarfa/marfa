@@ -25,7 +25,7 @@ export default {
     return new Response(
       JSON.stringify({
         ok: true,
-        integration: "myme.template",
+        integration: "marfa.template",
         message:
           "Template Integration. Queue handlers registered; HTTP surface unused. PR 3 wires the queue consumer.",
       }),

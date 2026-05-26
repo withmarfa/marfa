@@ -5,13 +5,13 @@
 # Why this exists (T-251). `wrangler deploy` doesn't rebuild any
 # workspace `dist/` artefacts before bundling — it just packages
 # whatever's currently in `node_modules/`. After merging a workspace
-# change (e.g. `@mymehq/webhooks`), the next `wrangler deploy` of a
+# change (e.g. `@withmarfa/webhooks`), the next `wrangler deploy` of a
 # consumer Worker carries the OLD bundled dist until someone manually
 # runs `pnpm --filter <pkg> build`. Surfaced during T-247's
 # runtime-control redeploy: a freshly-deployed Worker rejected the
 # new `cloudflare-email` verification method with
 # `unknown_verification_method:cloudflare-email` because the bundled
-# `@mymehq/webhooks` was pre-T-247. This script closes that gap by
+# `@withmarfa/webhooks` was pre-T-247. This script closes that gap by
 # pre-building every workspace dep the target Worker transitively
 # consumes (plus the Worker package itself, which is harmless and
 # rebuilds `dist/local.js` for the local-runtime path).
@@ -20,12 +20,12 @@
 #   ./scripts/deploy-worker.sh <worker-dir> [extra wrangler args...]
 #
 # Example:
-#   CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN_MYME \
+#   CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN_MARFA \
 #     ./scripts/deploy-worker.sh integrations/google-contacts --env staging
 #
 # Cloudflare account selection is the caller's job — set
-# CLOUDFLARE_API_TOKEN (or use the existing `wrangler-myme` helper
-# wrapper from aic-shell which sets it from `CLOUDFLARE_API_TOKEN_MYME`
+# CLOUDFLARE_API_TOKEN (or use the existing `wrangler-marfa` helper
+# wrapper from aic-shell which sets it from `CLOUDFLARE_API_TOKEN_MARFA`
 # / `_AIC`). The script invokes bare `wrangler`; it doesn't pick an
 # account.
 
@@ -61,7 +61,7 @@ echo "→ Pre-building workspace deps for $PKG_NAME"
 # runtime-control bundles via wrangler and has no `build`;
 # integration Workers do have a `build` that emits `dist/local.js`
 # for the local-runtime substrate path). pnpm honours topological
-# order, so `@mymehq/shared` rebuilds before `@mymehq/webhooks`
+# order, so `@withmarfa/shared` rebuilds before `@withmarfa/webhooks`
 # before consumer-packages — no stale upstream dist landing in the
 # worker bundle.
 pnpm --filter "$PKG_NAME..." --if-present build

@@ -3,7 +3,7 @@ import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
- * T-158: tests for the Myme-owned `POST /auth/oauth2/register` endpoint
+ * T-158: tests for the Marfa-owned `POST /auth/oauth2/register` endpoint
  * that fronts the @better-auth/oauth-provider plugin's DCR. See
  * `oauth-register.ts` for the why-we-override doc-block.
  *
@@ -32,7 +32,7 @@ describe("POST /auth/oauth2/register (T-158)", () => {
   it("returns 201 for grant_types: ['authorization_code']", async () => {
     // Gap 3 — pre-T-158 this path went through the plugin's DCR and
     // 500-ed on PG (string[] columns mishandled by Better Auth's
-    // Drizzle adapter). Now routes through the Myme override.
+    // Drizzle adapter). Now routes through the Marfa override.
     ctx = await createTestContext({ authAllowSignup: false });
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
@@ -53,7 +53,7 @@ describe("POST /auth/oauth2/register (T-158)", () => {
 
   it("returns 201 for grant_types: [device_code URN]", async () => {
     // Gap 2 — the plugin's body Zod enum rejected the URN at validation
-    // time; the Myme override accepts it.
+    // time; the Marfa override accepts it.
     ctx = await createTestContext({ authAllowSignup: false });
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
@@ -90,7 +90,7 @@ describe("POST /auth/oauth2/register (T-158)", () => {
   it("registered client is discoverable via the device-flow initiation path", async () => {
     // The roundtrip that broke before T-158: a row written by DCR has
     // to be readable by `storage.oauthProvider.getClient` (which
-    // safeJsonParse's `redirect_uris`). The Myme override writes the
+    // safeJsonParse's `redirect_uris`). The Marfa override writes the
     // column in the JSON-encoded shape the reader expects.
     ctx = await createTestContext({ authAllowSignup: false });
     const regRes = await request(ctx.app, "POST", "/auth/oauth2/register", {
@@ -111,7 +111,7 @@ describe("POST /auth/oauth2/register (T-158)", () => {
     });
     expect(initRes.status).toBe(200);
     const init = (await initRes.json()) as { device_code: string };
-    expect(init.device_code).toMatch(/^myme_dc_/);
+    expect(init.device_code).toMatch(/^marfa_dc_/);
   });
 
   it("rejects authorization_code grant without redirect_uris", async () => {

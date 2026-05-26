@@ -1,6 +1,6 @@
 # google-tasks
 
-Bidirectional sync between Google Tasks and Myme. Second instance of
+Bidirectional sync between Google Tasks and Marfa. Second instance of
 the `google.*` publisher family; shares the OAuth provider credential
 established for `google.calendar` via `credential_ref`.
 
@@ -40,7 +40,7 @@ Three operationally significant differences shape this integration:
   client `id` (T-020 deterministic-id idempotency). Tasks rejects it
   — Google assigns the id server-side. The idempotency rail here is a
   sentinel string injected into `notes`
-  (`[myme-id:<myme_item_id>]`); on a handler retry the handler scans
+  (`[marfa-id:<marfa_item_id>]`); on a handler retry the handler scans
   the target list for an existing task carrying the sentinel before
   issuing a fresh insert.
 
@@ -64,7 +64,7 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 
 ```
 {
-  mappings: Record<task_id, myme_id>,
+  mappings: Record<task_id, marfa_id>,
   mapping_lists: Record<task_id, task_list_id>,
   per_list: Record<task_list_id, {
     updated_min: string | null,        // ISO timestamp
@@ -93,10 +93,10 @@ epoch.
 
 ## Idempotency-on-retry via sentinel
 
-Outbound new-task POST injects `[myme-id:<itemId>]` into `notes`. On
+Outbound new-task POST injects `[marfa-id:<itemId>]` into `notes`. On
 retry (handler crashes between Tasks insert and cursor write):
 
-1. `findExistingByMymeIdSentinel` scans the target list for an
+1. `findExistingByMarfaIdSentinel` scans the target list for an
    existing task whose notes contain the sentinel.
 2. If found → record the mapping idempotently, no fresh insert.
 3. If not found → fresh insert proceeds.
@@ -109,7 +109,7 @@ notes value matches what the user sees on the Tasks app.
 ## Tombstones
 
 `showDeleted=true` is passed on every list call so deletions surface
-as `task.deleted === true`. Mapped Myme items transition to
+as `task.deleted === true`. Mapped Marfa items transition to
 `trashed`; the mapping entry is removed.
 
 ## Validation

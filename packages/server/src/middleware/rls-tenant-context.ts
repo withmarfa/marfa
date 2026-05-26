@@ -8,7 +8,7 @@ import type { AppEnv } from "./auth.js";
  * T-025 part 2: Postgres RLS request-level enforcement.
  *
  * Wraps each tenant-bounded request in a transaction with `SET LOCAL
- * ROLE myme_app` and `set_config('myme.tenant_id', $tenant, true)`,
+ * ROLE marfa_app` and `set_config('marfa.tenant_id', $tenant, true)`,
  * then runs the downstream handler with that transaction stored on
  * `pgRequestContext` (AsyncLocalStorage). The Drizzle proxy
  * (`request-context.ts:wrapDbWithRequestContext`) consults the ALS
@@ -37,8 +37,8 @@ import type { AppEnv } from "./auth.js";
  *      (`requireAdmin`) are still load-bearing here.
  *
  *   3. **RLS enabled, request has a tenant.** Wrap the handler in
- *      `db.transaction(...)` and set `SET LOCAL ROLE myme_app` +
- *      `myme.tenant_id`. Storage queries during the request flow
+ *      `db.transaction(...)` and set `SET LOCAL ROLE marfa_app` +
+ *      `marfa.tenant_id`. Storage queries during the request flow
  *      through the transaction's reserved connection. RLS policies
  *      filter every read/write to the session tenant.
  *
@@ -48,7 +48,7 @@ import type { AppEnv } from "./auth.js";
  * connection open for the same duration. They're exempted by URL
  * pattern HERE, but they are NOT bypass paths for RLS overall: T-146
  * closes the gap by applying session-level (`SET`, not `SET LOCAL`)
- * `myme.tenant_id` + `SET ROLE myme_app` on a dedicated pool
+ * `marfa.tenant_id` + `SET ROLE marfa_app` on a dedicated pool
  * connection inside the route itself (see
  * `storage/pg/streaming-rls.ts`). The exemption keeps the long-lived
  * transaction model away from streams; it does not skip the DB-level
@@ -56,7 +56,7 @@ import type { AppEnv } from "./auth.js";
  *
  * **`SET LOCAL` correctness.** `set_config(name, value, true)` is
  * the parameterised form of `SET LOCAL` — safe under
- * postgres-js binding. `SET LOCAL ROLE myme_app` is hardcoded
+ * postgres-js binding. `SET LOCAL ROLE marfa_app` is hardcoded
  * (role name is not user-controlled), so direct DDL is safe. Both
  * are scoped to the surrounding transaction by definition; on
  * COMMIT or ROLLBACK the connection returns to the pool with the
@@ -117,17 +117,17 @@ export function rlsTenantContextMiddleware(options: RlsMiddlewareOptions) {
     }
 
     // Case 3: tenant-bounded — wrap downstream in a transaction with
-    // SET LOCAL ROLE myme_app + tenant_id.
+    // SET LOCAL ROLE marfa_app + tenant_id.
     await db.transaction(async (tx) => {
       // `set_config` is the parameterised form of `SET LOCAL` and is
       // therefore postgres-js-binding safe. The third arg `true`
       // makes it transaction-local (cleared at COMMIT/ROLLBACK).
       await tx.execute(
-        sql`SELECT set_config('myme.tenant_id', ${tenantId}, true)`,
+        sql`SELECT set_config('marfa.tenant_id', ${tenantId}, true)`,
       );
       // Role name is hardcoded (not user-controlled) — direct DDL is
       // safe; SET LOCAL ROLE doesn't accept parameters.
-      await tx.execute(sql`SET LOCAL ROLE myme_app`);
+      await tx.execute(sql`SET LOCAL ROLE marfa_app`);
 
       await pgRequestContext.run({ tx }, async () => {
         await next();

@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import type { TenantQuota, QuotaResource } from "@mymehq/shared";
+import type { TenantQuota, QuotaResource } from "@withmarfa/shared";
 import type { TenantQuotaStore } from "../interface.js";
 import { tenantQuotas, items, outboundWebhooks, blobs } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";

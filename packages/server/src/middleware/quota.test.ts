@@ -25,7 +25,7 @@ async function mintTenantAdmin(
   label: string,
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `myme_k1_quota_test_${suffix}`;
+  const raw = `marfa_k1_quota_test_${suffix}`;
   // Note: `tenant_admin` doesn't bypass `type_permissions` today
   // (admin-only bypass — gap to address in a follow-on); grant `*: write`
   // explicitly so the test can exercise items.create.

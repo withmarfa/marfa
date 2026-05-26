@@ -1,6 +1,6 @@
 # todoist
 
-Bidirectional sync between Todoist and Myme. First instance of the
+Bidirectional sync between Todoist and Marfa. First instance of the
 **token-credential install seam** (T-241 PR1) — no OAuth dance; the
 user's Todoist API token is supplied at install via
 `POST /credentials/api-token` and the proxy stamps it transparently.
@@ -61,30 +61,30 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 {
   sync_token: string,                  // "*" sentinel on first run
   last_inbound_at: string | null,      // diagnostic
-  mappings: Record<todoist_id, myme_id>
+  mappings: Record<todoist_id, marfa_id>
 }
 ```
 
 ## Deterministic temp_id + uuid idempotency (T-020)
 
 Outbound `item_add` commands carry two deterministic fields, both
-derived from the Myme item id:
+derived from the Marfa item id:
 
-- **`temp_id = SHA-256("myme:temp_id:<myme_item_id>")`** — the
+- **`temp_id = SHA-256("marfa:temp_id:<marfa_item_id>")`** — the
   client-side placeholder Todoist resolves to a server-assigned id and
   returns in `temp_id_mapping`.
-- **`uuid = SHA-256("myme:command_uuid:<myme_item_id>")`** —
+- **`uuid = SHA-256("marfa:command_uuid:<marfa_item_id>")`** —
   Todoist's per-command idempotency key. From the docs: "Todoist will
   not execute a command that has the same UUID as a previously
   executed command." Replays of the same command return the original
   result, including the same `temp_id_mapping`.
 
 Result: a queue retry of the same outbound produces at most one
-Todoist task per Myme item id, regardless of how many retries fire.
+Todoist task per Marfa item id, regardless of how many retries fire.
 
 ## Description sentinel — belt-and-braces
 
-The handler also injects `[myme-id:<myme_item_id>]` into the task's
+The handler also injects `[marfa-id:<marfa_item_id>]` into the task's
 `description` on outbound create. The deterministic uuid above is the
 primary rail; the sentinel is a fallback for the rare case where a
 Sync response is partially recoverable. On inbound, `stripSentinel`
@@ -107,12 +107,12 @@ Todoist supports outbound webhooks (per-connection) but they require
 a publicly-reachable URL. Out of scope for this round; the schedule
 trigger is the only inbound rail. A future ticket can extend the
 manifest with a `webhook` trigger + a verifier in
-`@mymehq/webhooks`.
+`@withmarfa/webhooks`.
 
 ## Validation
 
 The end-to-end validation log against August's Todoist account lives
-on the bottom of [T-241-todoist-integration](https://github.com/mymehq/myme/issues?q=T-241)
+on the bottom of [T-241-todoist-integration](https://github.com/withmarfa/marfa/issues?q=T-241)
 in the vault project. The local harness at `_local/validate-todoist.ts`
 drives the production handler code against the real API for both
 directions.

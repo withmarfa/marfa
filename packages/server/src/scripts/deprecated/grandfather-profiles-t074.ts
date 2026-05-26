@@ -24,18 +24,18 @@
  * migration shape.
  *
  * Usage:
- *   pnpm --filter @mymehq/server tsx src/scripts/deprecated/grandfather-profiles-t074.ts --dialect=sqlite
- *   pnpm --filter @mymehq/server tsx src/scripts/deprecated/grandfather-profiles-t074.ts --dialect=pg
+ *   pnpm --filter @withmarfa/server tsx src/scripts/deprecated/grandfather-profiles-t074.ts --dialect=sqlite
+ *   pnpm --filter @withmarfa/server tsx src/scripts/deprecated/grandfather-profiles-t074.ts --dialect=pg
  *
  * Environment:
- *   - SQLITE_PATH (sqlite default ./data/myme.db)
+ *   - SQLITE_PATH (sqlite default ./data/marfa.db)
  *   - DATABASE_URL (pg required)
  *   - API_KEY_SALT (required for the admin api key created per orphan
  *     auth_user — same value the server runs with, so the minted keys
  *     authenticate against the running instance).
  */
 import { randomBytes } from "node:crypto";
-import { isReservedHandle, isValidHandle } from "@mymehq/shared";
+import { isReservedHandle, isValidHandle } from "@withmarfa/shared";
 import type { Storage } from "../../storage/interface.js";
 import { hashApiKey } from "../../middleware/auth.js";
 
@@ -206,7 +206,7 @@ async function listUsersNeedingHandle(
   );
 }
 
-const KEY_PREFIX = "myme_k1_";
+const KEY_PREFIX = "marfa_k1_";
 function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");
 }
@@ -337,7 +337,7 @@ async function main(): Promise<void> {
   } else {
     const { createSqliteStorage } =
       await import("../../storage/sqlite/index.js");
-    const sqlitePath = process.env.SQLITE_PATH ?? "./data/myme.db";
+    const sqlitePath = process.env.SQLITE_PATH ?? "./data/marfa.db";
     storage = await createSqliteStorage(sqlitePath, { authMode: "hosted" });
   }
 
