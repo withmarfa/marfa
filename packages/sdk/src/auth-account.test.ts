@@ -17,7 +17,7 @@ import {
  */
 async function mintFreshBearer(fixture: HostedModeFixture): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
-  const raw = `myme_k1_sdk_recovery_${suffix}`;
+  const raw = `marfa_k1_sdk_recovery_${suffix}`;
   const hash = createHmac("sha256", "test-salt").update(raw).digest("hex");
   await fixture.storage.keys.create(
     {

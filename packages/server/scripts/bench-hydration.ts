@@ -54,7 +54,7 @@ async function main(): Promise<void> {
     rateLimitWindowMs: 60_000,
     oauthRedirectAllowlist: [],
   });
-  const raw = "myme_k1_bench";
+  const raw = "marfa_k1_bench";
   await storage.keys.create(
     {
       label: "b",

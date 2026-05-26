@@ -103,7 +103,7 @@ describe("createTestHarness", () => {
       mintCredential: (id) => {
         mintCalls++;
         return Promise.resolve({
-          api_key: "myme_k1_test",
+          api_key: "marfa_k1_test",
           expires_at: new Date(Date.now() + 60_000).toISOString(),
           connection_id: id,
         });

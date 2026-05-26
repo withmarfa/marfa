@@ -47,7 +47,7 @@ new_sqlite_classes = ["PerConnectionState"]
 # the shared `marfa-webhook-receipt-staging`. CF Queues allow only
 # one consumer per queue; `withmarfa.github-webhooks` already owns the
 # shared queue's slot. The control plane routes by `integration_name`
-# to the matching producer binding (`WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX`
+# to the matching producer binding (`WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX`
 # in wrangler.control.toml).
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"

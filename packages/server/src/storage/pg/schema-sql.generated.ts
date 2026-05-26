@@ -10,12 +10,12 @@
 // fail the schema-sql-freshness CI check.
 
 export const SCHEMA_SQL = `
--- T-145: SCHEMA_SQL is auto-generated. The myme_app role + grants are
+-- T-145: SCHEMA_SQL is auto-generated. The marfa_app role + grants are
 -- reconstructed from information_schema because pg_dump --no-privileges
 -- strips them. The role is emitted first (RLS policies reference it);
 -- table grants are emitted after the pg_dump body (tables must exist).
 --
--- T-168: grant the connection user MEMBERSHIP in myme_app so SET ROLE
+-- T-168: grant the connection user MEMBERSHIP in marfa_app so SET ROLE
 -- succeeds during request handling. PG 16+ no longer auto-grants
 -- membership on CREATE ROLE; the creator gets admin option but must
 -- explicitly GRANT for the role to be settable via SET ROLE. The inner
@@ -25,24 +25,24 @@ export const SCHEMA_SQL = `
 -- then run the GRANT once).
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'myme_app') THEN
-    CREATE ROLE "myme_app";
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'marfa_app') THEN
+    CREATE ROLE "marfa_app";
   END IF;
   BEGIN
     -- quote_ident() is the identifier-injection safety boundary —
     -- current_user is a built-in PG function returning a name, but
     -- composing it into the GRANT via EXECUTE means we must quote it
     -- explicitly. Don't simplify to plain interpolation.
-    EXECUTE 'GRANT myme_app TO ' || quote_ident(current_user);
+    EXECUTE 'GRANT marfa_app TO ' || quote_ident(current_user);
   EXCEPTION
     WHEN insufficient_privilege THEN
       RAISE NOTICE
-        'Could not GRANT myme_app TO %: %. An operator with admin option on myme_app (or a superuser) must run this once before tenant-scoped requests will succeed.',
+        'Could not GRANT marfa_app TO %: %. An operator with admin option on marfa_app (or a superuser) must run this once before tenant-scoped requests will succeed.',
         current_user, SQLERRM;
   END;
 END
 $$;
-GRANT USAGE ON SCHEMA public TO "myme_app";
+GRANT USAGE ON SCHEMA public TO "marfa_app";
 
 CREATE SCHEMA IF NOT EXISTS public;
 
@@ -1363,87 +1363,87 @@ $$;
 ALTER TABLE public.api_keys ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS api_keys_tenant_isolation ON public.api_keys;
-CREATE POLICY api_keys_tenant_isolation ON public.api_keys TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY api_keys_tenant_isolation ON public.api_keys TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS audit_log_tenant_isolation ON public.audit_log;
-CREATE POLICY audit_log_tenant_isolation ON public.audit_log TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY audit_log_tenant_isolation ON public.audit_log TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.blobs ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS blobs_tenant_isolation ON public.blobs;
-CREATE POLICY blobs_tenant_isolation ON public.blobs TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id = ''::text)));
+CREATE POLICY blobs_tenant_isolation ON public.blobs TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id = ''::text)));
 
 ALTER TABLE public.bulk_action_jobs ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS bulk_action_jobs_tenant_isolation ON public.bulk_action_jobs;
-CREATE POLICY bulk_action_jobs_tenant_isolation ON public.bulk_action_jobs TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY bulk_action_jobs_tenant_isolation ON public.bulk_action_jobs TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.connection_leased_tokens ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS connection_leased_tokens_tenant_isolation ON public.connection_leased_tokens;
-CREATE POLICY connection_leased_tokens_tenant_isolation ON public.connection_leased_tokens TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY connection_leased_tokens_tenant_isolation ON public.connection_leased_tokens TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.connection_oauth_tokens ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS connection_oauth_tokens_tenant_isolation ON public.connection_oauth_tokens;
-CREATE POLICY connection_oauth_tokens_tenant_isolation ON public.connection_oauth_tokens TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY connection_oauth_tokens_tenant_isolation ON public.connection_oauth_tokens TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.custom_edge_types ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS custom_edge_types_tenant_isolation ON public.custom_edge_types;
-CREATE POLICY custom_edge_types_tenant_isolation ON public.custom_edge_types TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY custom_edge_types_tenant_isolation ON public.custom_edge_types TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.custom_types ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS custom_types_tenant_isolation ON public.custom_types;
-CREATE POLICY custom_types_tenant_isolation ON public.custom_types TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY custom_types_tenant_isolation ON public.custom_types TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.edges ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS edges_tenant_isolation ON public.edges;
-CREATE POLICY edges_tenant_isolation ON public.edges TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY edges_tenant_isolation ON public.edges TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.event_log ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS event_log_tenant_isolation ON public.event_log;
-CREATE POLICY event_log_tenant_isolation ON public.event_log TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY event_log_tenant_isolation ON public.event_log TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.inbound_webhooks ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS inbound_webhooks_tenant_isolation ON public.inbound_webhooks;
-CREATE POLICY inbound_webhooks_tenant_isolation ON public.inbound_webhooks TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY inbound_webhooks_tenant_isolation ON public.inbound_webhooks TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS items_tenant_isolation ON public.items;
-CREATE POLICY items_tenant_isolation ON public.items TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY items_tenant_isolation ON public.items TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.metadata ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS metadata_tenant_isolation ON public.metadata;
-CREATE POLICY metadata_tenant_isolation ON public.metadata TO myme_app USING ((EXISTS ( SELECT 1
+CREATE POLICY metadata_tenant_isolation ON public.metadata TO marfa_app USING ((EXISTS ( SELECT 1
    FROM public.items
   WHERE ((items.id = metadata.item_id) AND ((items.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (items.tenant_id IS NULL))))));
 
 ALTER TABLE public.outbound_webhooks ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS outbound_webhooks_tenant_isolation ON public.outbound_webhooks;
-CREATE POLICY outbound_webhooks_tenant_isolation ON public.outbound_webhooks TO myme_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY outbound_webhooks_tenant_isolation ON public.outbound_webhooks TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
 ALTER TABLE public.versions ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS versions_tenant_isolation ON public.versions;
-CREATE POLICY versions_tenant_isolation ON public.versions TO myme_app USING ((EXISTS ( SELECT 1
+CREATE POLICY versions_tenant_isolation ON public.versions TO marfa_app USING ((EXISTS ( SELECT 1
    FROM public.items
   WHERE ((items.id = versions.item_id) AND ((items.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (items.tenant_id IS NULL))))));
 
--- Table grants on the myme_app role (T-145; see role block above).
+-- Table grants on the marfa_app role (T-145; see role block above).
 -- Schema-qualified (\`public.x\`) so the grants resolve regardless of
 -- search_path — pg_dump emits its CREATE TABLE statements with the
 -- \`public.\` prefix, and grants must match the qualified table for
 -- non-default search_paths (e.g. test schemas) to apply correctly.
-GRANT DELETE, INSERT, SELECT, UPDATE ON "public"."api_keys", "public"."audit_log", "public"."blobs", "public"."bulk_action_jobs", "public"."connection_leased_tokens", "public"."connection_oauth_tokens", "public"."custom_edge_types", "public"."custom_types", "public"."edges", "public"."event_log", "public"."inbound_webhook_events", "public"."inbound_webhooks", "public"."items", "public"."metadata", "public"."oauth_device_codes", "public"."outbound_webhook_deliveries", "public"."outbound_webhooks", "public"."rate_limit_windows", "public"."settings", "public"."tenant_quotas", "public"."tenants", "public"."users", "public"."versions" TO "myme_app";
-GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "myme_app";
+GRANT DELETE, INSERT, SELECT, UPDATE ON "public"."api_keys", "public"."audit_log", "public"."blobs", "public"."bulk_action_jobs", "public"."connection_leased_tokens", "public"."connection_oauth_tokens", "public"."custom_edge_types", "public"."custom_types", "public"."edges", "public"."event_log", "public"."inbound_webhook_events", "public"."inbound_webhooks", "public"."items", "public"."metadata", "public"."oauth_device_codes", "public"."outbound_webhook_deliveries", "public"."outbound_webhooks", "public"."rate_limit_windows", "public"."settings", "public"."tenant_quotas", "public"."tenants", "public"."users", "public"."versions" TO "marfa_app";
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "marfa_app";
 `;

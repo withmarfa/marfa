@@ -54,7 +54,7 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 {
   syncToken: string | null,              // legacy mode only
   last_inbound_at: string | null,        // legacy mode only
-  mappings: Record<external_id, myme_id>,
+  mappings: Record<external_id, marfa_id>,
   mapping_calendars?: Record<external_id, calendar_id>,  // multi mode
   per_calendar?: Record<calendar_id, { syncToken, last_inbound_at }>,
   channels?: Record<calendar_id, {
@@ -64,7 +64,7 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 }
 ```
 
-`mappings` stays a flat `Record<external_id, myme_id>` for backward
+`mappings` stays a flat `Record<external_id, marfa_id>` for backward
 compatibility; multi mode populates `mapping_calendars` alongside so
 updates/deletes know which calendar to address.
 

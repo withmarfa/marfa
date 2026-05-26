@@ -110,7 +110,7 @@ describe("webhook receive flow", () => {
     try {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
         IDEMPOTENCY_KV: kv as unknown as KVNamespace,
       };
@@ -157,7 +157,7 @@ describe("webhook receive flow", () => {
     try {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
       };
       const app = buildApp();
@@ -186,7 +186,7 @@ describe("webhook receive flow", () => {
     try {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
       };
       const app = buildApp();
@@ -213,7 +213,7 @@ describe("webhook receive flow", () => {
     try {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
       };
       const app = buildApp();
@@ -240,7 +240,7 @@ describe("webhook receive flow", () => {
     try {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
         IDEMPOTENCY_KV: kv as unknown as KVNamespace,
       };
@@ -290,7 +290,7 @@ describe("webhook receive flow", () => {
     try {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
         IDEMPOTENCY_KV: kv as unknown as KVNamespace,
       };
@@ -341,9 +341,9 @@ describe("webhook receive flow", () => {
     try {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: shared,
-        WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX: inbox,
+        WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX: inbox,
       };
       const bodyBytes = new TextEncoder().encode('{"email":"x"}');
       const bodyBuffer = bodyBytes.buffer.slice(
@@ -389,9 +389,9 @@ describe("webhook receive flow", () => {
     try {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: shared,
-        // No WEBHOOK_RECEIPT_QUEUE_MYMEHQ_GITHUB_WEBHOOKS — fallback path.
+        // No WEBHOOK_RECEIPT_QUEUE_WITHMARFA_GITHUB_WEBHOOKS — fallback path.
       };
       const bodyBytes = new TextEncoder().encode('{"event":"push"}');
       const bodyBuffer = bodyBytes.buffer.slice(
@@ -434,7 +434,7 @@ describe("webhook receive flow", () => {
     try {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         // No queue bindings at all.
       };
       const bodyBytes = new TextEncoder().encode('{"email":"x"}');
@@ -475,7 +475,7 @@ describe("webhook receive flow", () => {
     try {
       const env: ControlPlaneEnv = {
         MARFA_API_URL: "http://localhost:0",
-        MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
         WEBHOOK_RECEIPT_QUEUE: queue,
       };
       const bodyBytes = new TextEncoder().encode('{"event":"push"}');

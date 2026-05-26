@@ -19,7 +19,7 @@ import { MarfaClient } from "./client.js";
 function makeClient(fetchImpl: typeof globalThis.fetch): MarfaClient {
   return new MarfaClient({
     url: "http://example.test",
-    apiKey: "myme_k1_test",
+    apiKey: "marfa_k1_test",
     fetch: fetchImpl,
   });
 }

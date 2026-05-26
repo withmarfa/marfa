@@ -16,8 +16,8 @@
  *       passed to `oauthProvider({...})`. Wires:
  *         - opaque tokens hashed via Marfa's existing `hashApiKey(t,salt)`
  *           so the bearer middleware shares the same hash format
- *         - `myme_at_` prefix on access tokens (bearer-middleware contract)
- *         - `myme_rt_` prefix on refresh tokens
+ *         - `marfa_at_` prefix on access tokens (bearer-middleware contract)
+ *         - `marfa_rt_` prefix on refresh tokens
  *         - `clientReference` → tenant_id resolved via the hosted-mode
  *           users table (auth_user.id → users.tenant_id)
  *         - `customAccessTokenClaims` / `customIdTokenClaims` /
@@ -262,12 +262,12 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     },
 
     // ----- Token prefix -----
-    // Preserves the `myme_at_*` contract the bearer middleware uses to
-    // distinguish OAuth tokens from API keys (`myme_k1_*`). The middleware
+    // Preserves the `marfa_at_*` contract the bearer middleware uses to
+    // distinguish OAuth tokens from API keys (`marfa_k1_*`). The middleware
     // ignores anything not matching one of these prefixes.
     prefix: {
-      opaqueAccessToken: "myme_at_",
-      refreshToken: "myme_rt_",
+      opaqueAccessToken: "marfa_at_",
+      refreshToken: "marfa_rt_",
     },
 
     // ----- Custom claims -----
@@ -458,10 +458,10 @@ async function detectAndZapReplayedAccessTokens(
   if (typeof refreshTokenRaw !== "string" || refreshTokenRaw.length === 0)
     return;
 
-  // The plugin strips the `prefix.refreshToken` (`myme_rt_`) BEFORE
+  // The plugin strips the `prefix.refreshToken` (`marfa_rt_`) BEFORE
   // calling our hasher (verified `index.mjs:394`) — same shape as the
   // access-token side. To match the stored hash, strip here too.
-  const REFRESH_PREFIX = "myme_rt_";
+  const REFRESH_PREFIX = "marfa_rt_";
   const bare = refreshTokenRaw.startsWith(REFRESH_PREFIX)
     ? refreshTokenRaw.slice(REFRESH_PREFIX.length)
     : refreshTokenRaw;

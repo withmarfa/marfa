@@ -81,7 +81,7 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 
 ```
 {
-  mappings: Record<resource_name, myme_id>,
+  mappings: Record<resource_name, marfa_id>,
   syncToken: string | null,
   last_inbound_at: string | null
 }
@@ -108,7 +108,7 @@ People API does not accept a client-supplied id on `createContact`.
 The retry-safe rail is a `clientData` entry:
 
 ```
-clientData: [{ key: "marfa-id", value: "<myme_item_id>" }]
+clientData: [{ key: "marfa-id", value: "<marfa_item_id>" }]
 ```
 
 `clientData` is a free-form per-person key/value list exposed in the

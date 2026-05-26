@@ -336,7 +336,7 @@ export function createApp(
 
   // T-025 part 2: Postgres RLS request-level enforcement. Wraps each
   // tenant-bounded request in a transaction with `SET LOCAL ROLE
-  // myme_app` and `set_config('marfa.tenant_id', $tenant, true)` so
+  // marfa_app` and `set_config('marfa.tenant_id', $tenant, true)` so
   // the per-table RLS policies (T-025 part 1) actually filter
   // queries. Pass-through when `MARFA_RLS_ENFORCE=false` (the
   // default), when storage is SQLite (`pgDb` undefined), or when the
@@ -377,7 +377,7 @@ export function createApp(
       // Rich transport carries the HTML template + idempotency key
       // for log correlation. Falls back to the legacy callable for
       // tests that don't construct a full transport.
-      mymeEmailTransport: emailTransport,
+      marfaEmailTransport: emailTransport,
       // T-131: storage + salt are needed by the @better-auth/oauth-provider
       // plugin (storeTokens.hash matches Marfa's hashApiKey, clientReference
       // resolves tenant_id, hooks.after projects grants into system.connection).
@@ -599,7 +599,7 @@ export function createApp(
     scheme: "bearer",
     bearerFormat: "API Key or OAuth Token",
     description:
-      "Pass an API key (myme_k1_...) or OAuth access token (myme_at_...)",
+      "Pass an API key (marfa_k1_...) or OAuth access token (marfa_at_...)",
   });
   // §3.15 note: `info.version` here is the API-contract version (the wire
   // shape exposed under /openapi.json), distinct from the deployed-build

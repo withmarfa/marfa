@@ -1,17 +1,17 @@
 -- T-025 part 1: Postgres RLS schema scaffold.
 --
 -- Lands the schema-side RLS scaffolding for hosted-mode multi-tenancy:
--- a new `myme_app` application role, GRANTs on every tenant-scoped
+-- a new `marfa_app` application role, GRANTs on every tenant-scoped
 -- table, and per-table RLS policies keyed on a session-scoped tenant
 -- context (`current_setting('marfa.tenant_id', true)`).
 --
 -- **What this migration does NOT do.** This migration creates the role
 -- and the policies but does not wire the application code to actually
--- connect as `myme_app` and SET the tenant_id. With `RLS_ENFORCE=false`
+-- connect as `marfa_app` and SET the tenant_id. With `RLS_ENFORCE=false`
 -- (the default), the application keeps connecting as the owner role and
 -- policies have no effect — single-tenant self-hosts are unaffected.
 -- The connection-pool wiring (transaction-per-request with `SET LOCAL
--- ROLE myme_app; SET LOCAL marfa.tenant_id = '<id>'` after auth) is
+-- ROLE marfa_app; SET LOCAL marfa.tenant_id = '<id>'` after auth) is
 -- T-025 part 2 — captured as a follow-on.
 --
 -- **Tenant matching.** Policies use:
@@ -29,7 +29,7 @@
 -- **Owner role.** The migration assumes the migrating user is the table
 -- owner. RLS policies don't apply to the table owner by default — that's
 -- exactly the property we want for the existing connection. Switch to
--- `myme_app` only at request time when RLS_ENFORCE=true.
+-- `marfa_app` only at request time when RLS_ENFORCE=true.
 
 -- ---------------------------------------------------------------------------
 -- Role + grants
@@ -37,18 +37,18 @@
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'myme_app') THEN
-    CREATE ROLE "myme_app";
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'marfa_app') THEN
+    CREATE ROLE "marfa_app";
   END IF;
 END
 $$;
 --> statement-breakpoint
 
 -- Default privileges so newly-created tables in the public schema also
--- grant to myme_app. Mostly belt-and-braces — explicit GRANTs below
+-- grant to marfa_app. Mostly belt-and-braces — explicit GRANTs below
 -- cover today's tables; this catches future tables added without an
 -- accompanying RLS migration.
-GRANT USAGE ON SCHEMA public TO "myme_app";
+GRANT USAGE ON SCHEMA public TO "marfa_app";
 --> statement-breakpoint
 
 -- Per-table grants. CRUD on tenant-scoped tables.
@@ -67,7 +67,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
   "event_log",
   "tenants",
   "settings"
-TO "myme_app";
+TO "marfa_app";
 --> statement-breakpoint
 
 -- ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ ALTER TABLE "items" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "items_tenant_isolation" ON "items";
 --> statement-breakpoint
 CREATE POLICY "items_tenant_isolation" ON "items"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);
 --> statement-breakpoint
@@ -91,7 +91,7 @@ ALTER TABLE "edges" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "edges_tenant_isolation" ON "edges";
 --> statement-breakpoint
 CREATE POLICY "edges_tenant_isolation" ON "edges"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);
 --> statement-breakpoint
@@ -102,7 +102,7 @@ ALTER TABLE "versions" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "versions_tenant_isolation" ON "versions";
 --> statement-breakpoint
 CREATE POLICY "versions_tenant_isolation" ON "versions"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (EXISTS (
     SELECT 1 FROM "items" WHERE "items".id = "versions".item_id
       AND ("items".tenant_id::text = current_setting('marfa.tenant_id', true)
@@ -116,7 +116,7 @@ ALTER TABLE "metadata" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "metadata_tenant_isolation" ON "metadata";
 --> statement-breakpoint
 CREATE POLICY "metadata_tenant_isolation" ON "metadata"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (EXISTS (
     SELECT 1 FROM "items" WHERE "items".id = "metadata".item_id
       AND ("items".tenant_id::text = current_setting('marfa.tenant_id', true)
@@ -130,7 +130,7 @@ ALTER TABLE "api_keys" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "api_keys_tenant_isolation" ON "api_keys";
 --> statement-breakpoint
 CREATE POLICY "api_keys_tenant_isolation" ON "api_keys"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);
 --> statement-breakpoint
@@ -142,7 +142,7 @@ ALTER TABLE "blobs" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "blobs_tenant_isolation" ON "blobs";
 --> statement-breakpoint
 CREATE POLICY "blobs_tenant_isolation" ON "blobs"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id = current_setting('marfa.tenant_id', true)
          OR tenant_id = '');
 --> statement-breakpoint
@@ -153,7 +153,7 @@ ALTER TABLE "custom_types" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "custom_types_tenant_isolation" ON "custom_types";
 --> statement-breakpoint
 CREATE POLICY "custom_types_tenant_isolation" ON "custom_types"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);
 --> statement-breakpoint
@@ -164,7 +164,7 @@ ALTER TABLE "custom_edge_types" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "custom_edge_types_tenant_isolation" ON "custom_edge_types";
 --> statement-breakpoint
 CREATE POLICY "custom_edge_types_tenant_isolation" ON "custom_edge_types"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);
 --> statement-breakpoint
@@ -175,7 +175,7 @@ ALTER TABLE "outbound_webhooks" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "outbound_webhooks_tenant_isolation" ON "outbound_webhooks";
 --> statement-breakpoint
 CREATE POLICY "outbound_webhooks_tenant_isolation" ON "outbound_webhooks"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);
 --> statement-breakpoint
@@ -186,7 +186,7 @@ ALTER TABLE "audit_log" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "audit_log_tenant_isolation" ON "audit_log";
 --> statement-breakpoint
 CREATE POLICY "audit_log_tenant_isolation" ON "audit_log"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);
 --> statement-breakpoint
@@ -197,6 +197,6 @@ ALTER TABLE "event_log" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "event_log_tenant_isolation" ON "event_log";
 --> statement-breakpoint
 CREATE POLICY "event_log_tenant_isolation" ON "event_log"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);

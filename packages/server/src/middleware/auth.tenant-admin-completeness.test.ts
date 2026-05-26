@@ -61,7 +61,7 @@ async function mintKey(
   },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `myme_k1_part2_test_${suffix}`;
+  const raw = `marfa_k1_part2_test_${suffix}`;
   const keyHash = hashApiKey(raw, TEST_API_KEY_SALT);
   await ctx.storage.keys.create(
     {

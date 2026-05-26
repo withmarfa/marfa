@@ -84,8 +84,8 @@ export interface AppEnv extends Record<string, unknown> {
 // Key hashing
 // ---------------------------------------------------------------------------
 
-const KEY_PREFIX = "myme_k1_";
-const ACCESS_TOKEN_PREFIX = "myme_at_";
+const KEY_PREFIX = "marfa_k1_";
+const ACCESS_TOKEN_PREFIX = "marfa_at_";
 const DEBOUNCE_MS = 3600_000; // 1 hour
 
 /**
@@ -280,7 +280,7 @@ export function authMiddleware(storage: Storage, salt: string) {
 
     const token = authHeader.slice(7);
 
-    // OAuth access token (myme_at_* prefix).
+    // OAuth access token (marfa_at_* prefix).
     //
     // T-131: this used to call `storage.oauth.validateToken(hash)` against
     // the homegrown `oauth_tokens` table. We now look up the

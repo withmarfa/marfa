@@ -475,9 +475,9 @@ async function initialFilesListSweep(
       tallyBlobOutcome(blobs, blob);
       const input = buildFileInput(file, config.target_type, blob);
       try {
-        const myme_id = cursor.mappings[file.id];
-        if (myme_id !== undefined) {
-          await ctx.marfa.updateItem(myme_id, input);
+        const marfa_id = cursor.mappings[file.id];
+        if (marfa_id !== undefined) {
+          await ctx.marfa.updateItem(marfa_id, input);
         } else {
           const created = await ctx.marfa.createItem({
             ...input,
@@ -512,13 +512,13 @@ async function applyChange(
   if (typeof fileId !== "string")
     return { upserted: 0, skipped: 0, trashed: 0, blobs: emptyBlobOutcomes() };
 
-  const myme_id = cursor.mappings[fileId];
+  const marfa_id = cursor.mappings[fileId];
 
   // Tombstone: removed OR trashed.
   if (change.removed === true || change.file?.trashed === true) {
-    if (myme_id !== undefined) {
+    if (marfa_id !== undefined) {
       try {
-        await ctx.marfa.transitionItem(myme_id, "trashed");
+        await ctx.marfa.transitionItem(marfa_id, "trashed");
         Reflect.deleteProperty(cursor.mappings, fileId);
         return {
           upserted: 0,
@@ -551,8 +551,8 @@ async function applyChange(
   tallyBlobOutcome(blobs, blob);
   const input = buildFileInput(file, config.target_type, blob);
   try {
-    if (myme_id !== undefined) {
-      await ctx.marfa.updateItem(myme_id, input);
+    if (marfa_id !== undefined) {
+      await ctx.marfa.updateItem(marfa_id, input);
     } else {
       const created = await ctx.marfa.createItem({
         ...input,

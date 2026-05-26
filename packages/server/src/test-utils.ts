@@ -103,7 +103,7 @@ export async function createPgTestStorage(options?: {
  * three-step setup produced, but writes into the @better-auth/oauth-provider
  * plugin's tables (`auth_oauth_client`, `auth_oauth_access_token`).
  *
- * Returns the raw access token (with `myme_at_` prefix) and the
+ * Returns the raw access token (with `marfa_at_` prefix) and the
  * system.connection item id. The bearer middleware looks the token up
  * by `hashApiKey(token, TEST_API_KEY_SALT)` and resolves to the right
  * scope projection.
@@ -252,16 +252,16 @@ export async function seedOauthBearer(
   // (prefix-stripped) token to match what the plugin's `storeTokens.hash`
   // does — see middleware/auth.ts bearer path + the device-flow terminal
   // in routes/auth-pages.ts for the canonical convention.
-  const rawToken = `myme_at_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
-  const rawRefresh = `myme_rt_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
+  const rawToken = `marfa_at_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
+  const rawRefresh = `marfa_rt_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const { hashApiKey } = await import("./middleware/auth.js");
   await storage.oauthProvider.mintTokenPair({
     accessTokenHash: hashApiKey(
-      rawToken.slice("myme_at_".length),
+      rawToken.slice("marfa_at_".length),
       TEST_API_KEY_SALT,
     ),
     refreshTokenHash: hashApiKey(
-      rawRefresh.slice("myme_rt_".length),
+      rawRefresh.slice("marfa_rt_".length),
       TEST_API_KEY_SALT,
     ),
     clientId,
@@ -500,7 +500,7 @@ export async function createTestContext(
 
   // Create a bootstrap admin key (unique per test context to avoid PG conflicts)
   const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = `myme_k1_test_admin_key_${suffix}`;
+  const rawKey = `marfa_k1_test_admin_key_${suffix}`;
   const keyHash = hashApiKey(rawKey, SALT);
   await storage.keys.create(
     {

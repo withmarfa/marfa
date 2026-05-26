@@ -13,7 +13,7 @@ import { pgRequestContext, type PgTxContext } from "./request-context.js";
  *
  * This helper achieves the same DB-level tenant fence via a different
  * mechanism: it reserves one pool connection for the stream, issues
- * **session-level** (not `SET LOCAL`) `SET ROLE myme_app` plus
+ * **session-level** (not `SET LOCAL`) `SET ROLE marfa_app` plus
  * `set_config('marfa.tenant_id', '<id>', false)`, and pins the
  * connection in the request-context ALS so the existing storage proxy
  * routes every read through it. On stream end (normal completion,
@@ -98,7 +98,7 @@ export async function acquireStreamRls(
     await reserved`SELECT set_config('marfa.tenant_id', ${tenantId}, false)`;
     // Role name is hardcoded — direct DDL is safe; SET ROLE doesn't
     // accept parameters.
-    await reserved.unsafe(`SET ROLE myme_app`);
+    await reserved.unsafe(`SET ROLE marfa_app`);
   } catch (err) {
     // Setup failed — connection may be in an unknown state. Try to
     // discard and release; on cascade failure, destroy. The caller

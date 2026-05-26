@@ -75,7 +75,7 @@ export interface MarfaAuthOptions {
   passkeyRpId?: string;
   /** Sink for magic-link emails. Defaults to a `log` transport that
    *  writes the link to stdout — fine for dev. Tests pass an inline
-   *  callable. Production wires `mymeEmailTransport` instead, which
+   *  callable. Production wires `marfaEmailTransport` instead, which
    *  goes through the rich email module (HTML template, idempotency
    *  key for log correlation). */
   emailTransport?: EmailTransport;
@@ -84,7 +84,7 @@ export interface MarfaAuthOptions {
    *  absent, falls back to `emailTransport` (or the log default).
    *  Production paths set this; tests typically don't. See
    *  `src/email/index.ts` for construction. */
-  mymeEmailTransport?: MarfaEmailTransport;
+  marfaEmailTransport?: MarfaEmailTransport;
   /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
    *  into the generic-oauth plugin. Each entry surfaces a sign-in button
    *  on the sign-in page and exposes `/auth/sign-in/oauth2` + `/auth/oauth2/callback/<providerId>`. */
@@ -96,7 +96,7 @@ export interface MarfaAuthOptions {
     scopes?: string[];
   }[];
   /** Wave C PR2: turn on `requireEmailVerification` + `sendOnSignUp`.
-   *  Default: auto-detect from `mymeEmailTransport` — on when a real
+   *  Default: auto-detect from `marfaEmailTransport` — on when a real
    *  backend (`cloudflare` / `smtp`) is wired, off when the transport is
    *  `none` or missing. Tests pass `true` explicitly to exercise the
    *  verify flow without booting a real transport; production
@@ -198,7 +198,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         };
 
   const transport = options.emailTransport ?? defaultLogTransport;
-  const richTransport = options.mymeEmailTransport;
+  const richTransport = options.marfaEmailTransport;
 
   // Wave C PR2: only flip `requireEmailVerification` when a real email
   // backend is wired. With the `none` backend (or no rich transport at

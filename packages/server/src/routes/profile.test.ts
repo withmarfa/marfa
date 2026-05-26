@@ -164,7 +164,7 @@ async function provisionUser(
     auth_user_id: authUserId,
   });
 
-  const rawKey = `myme_k1_test_${Math.random().toString(36).slice(2, 14)}`;
+  const rawKey = `marfa_k1_test_${Math.random().toString(36).slice(2, 14)}`;
   await storage.keys.create(
     {
       label: "test-admin",

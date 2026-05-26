@@ -219,7 +219,7 @@ export function exportRoutes(
 
     // T-146: when the caller has a tenant_id and RLS enforcement is on,
     // pin a dedicated pool connection for the stream and apply
-    // session-level `SET ROLE myme_app` + `marfa.tenant_id`. Storage
+    // session-level `SET ROLE marfa_app` + `marfa.tenant_id`. Storage
     // reads inside the stream then flow through that connection and
     // are RLS-filtered at the DB layer. Tenant-less callers (platform
     // admin / single-tenant self-host) and SQLite skip — same

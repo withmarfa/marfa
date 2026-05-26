@@ -41,8 +41,8 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 ```
 {
   last_created_at: string | null,
-  raindrop_mappings: Record<raindrop_id, myme_id>,
-  collection_mappings: Record<collection_id, myme_id>,
+  raindrop_mappings: Record<raindrop_id, marfa_id>,
+  collection_mappings: Record<collection_id, marfa_id>,
   last_collection_sweep_at: string | null,
   last_inbound_at: string | null
 }

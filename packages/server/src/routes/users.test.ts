@@ -207,7 +207,7 @@ describe("User-auth routes — authMode=hosted", () => {
       expect(body.user.provider).toBe(ident.provider);
       expect(body.user.provider_id).toBe(ident.provider_account_id);
       expect(body.user.tenant_id).toBe(body.tenant.id);
-      expect(body.api_key.startsWith("myme_k1_")).toBe(true);
+      expect(body.api_key.startsWith("marfa_k1_")).toBe(true);
 
       // The returned key should actually authenticate — round-trip via /auth/me.
       const me = await request(hosted.app, "GET", "/auth/me", {
@@ -253,7 +253,7 @@ describe("User-auth routes — authMode=hosted", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as SessionResponse;
       expect(body.user.id).toBe(signupBody.user.id);
-      expect(body.api_key.startsWith("myme_k1_")).toBe(true);
+      expect(body.api_key.startsWith("marfa_k1_")).toBe(true);
 
       // Session key should authenticate too.
       const me = await request(hosted.app, "GET", "/auth/me", {

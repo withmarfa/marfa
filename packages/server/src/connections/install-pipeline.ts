@@ -43,7 +43,7 @@ import { ErrorCode, MarfaError, type IntegrationManifest } from "@withmarfa/shar
 import { hashApiKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 
-const KEY_PREFIX = "myme_k1_";
+const KEY_PREFIX = "marfa_k1_";
 
 /** TTL for the seed runtime credential the install mints. The control
  *  plane's lease broker re-mints on 401, so this only needs to outlast

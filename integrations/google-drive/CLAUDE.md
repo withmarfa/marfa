@@ -74,7 +74,7 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 
 ```
 {
-  mappings: Record<drive_file_id, myme_id>,
+  mappings: Record<drive_file_id, marfa_id>,
   pageToken: string | null,            // changes.list cursor
   seeded: boolean,                     // initial files.list completed
   last_inbound_at: string | null,
@@ -108,7 +108,7 @@ the schedule trigger) so push and poll converge.
 ## Tombstones
 
 A `change.removed: true` or `change.file.trashed: true` triggers
-`transitionItem(myme_id, "trashed")` and removes the mapping entry.
+`transitionItem(marfa_id, "trashed")` and removes the mapping entry.
 
 ## Blob handling
 

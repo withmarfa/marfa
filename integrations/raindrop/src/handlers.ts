@@ -6,8 +6,8 @@
  * Cursor:
  *   {
  *     last_created_at: string | null,            // ISO timestamp watermark
- *     raindrop_mappings: Record<raindrop_id, myme_id>,
- *     collection_mappings: Record<collection_id, myme_id>,
+ *     raindrop_mappings: Record<raindrop_id, marfa_id>,
+ *     collection_mappings: Record<collection_id, marfa_id>,
  *     last_collection_sweep_at: string | null,
  *     last_inbound_at: string | null
  *   }

@@ -216,7 +216,7 @@ describe("Readwise handlers — inbound", () => {
     expect(created[1]?.type).toBe("readwise.highlight");
     expect(created[2]?.type).toBe("readwise.highlight");
 
-    // Both highlights have the book's myme_id as parent-of source.
+    // Both highlights have the book's marfa_id as parent-of source.
     expect(edgeCalls).toHaveLength(2);
     expect(edgeCalls[0]).toMatchObject({
       source_id: "mit_1",

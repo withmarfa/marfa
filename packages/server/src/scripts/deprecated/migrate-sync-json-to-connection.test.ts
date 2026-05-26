@@ -45,7 +45,7 @@ function makePaths(): MigrationPaths & { dir: string } {
 
 const sampleSyncJson = {
   url: "http://localhost:8602",
-  key: "myme_k1_sample_long_lived_key_xyz",
+  key: "marfa_k1_sample_long_lived_key_xyz",
   types: ["core.note", "core.file"],
   debounceMs: 3000,
   roots: [{ path: "/home/user/notes", type: "core.note" }],

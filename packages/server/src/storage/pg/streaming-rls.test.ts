@@ -15,7 +15,7 @@
  * The fix scopes the reset to exactly what the cleanup invariant
  * requires:
  *
- *   - `RESET ROLE` — drop the `myme_app` elevation.
+ *   - `RESET ROLE` — drop the `marfa_app` elevation.
  *   - `set_config('marfa.tenant_id', '', false)` — clear the GUC the
  *     RLS policies read.
  *
@@ -34,7 +34,7 @@
  *      it persists. This is the direct lock-in against a revert.
  *   2. **Role + tenant GUC are cleared on release.** The cleanup
  *      invariant must still hold — a connection returned to the pool
- *      cannot carry the `myme_app` role or a leaked `marfa.tenant_id`.
+ *      cannot carry the `marfa_app` role or a leaked `marfa.tenant_id`.
  *
  * Postgres-only — RLS is a PG feature.
  */
@@ -57,7 +57,7 @@ describe.skipIf(!isPg || !url)("streaming-rls cleanup (T-189)", () => {
       // eslint-disable-next-line @typescript-eslint/no-empty-function
       onnotice: () => {},
     });
-    const stmtName = `myme_t189_test_${Math.random().toString(36).slice(2, 10)}`;
+    const stmtName = `marfa_t189_test_${Math.random().toString(36).slice(2, 10)}`;
     const tenantId = "t-189-cache-test";
     try {
       // Create a session-level prepared statement directly. PREPARE
@@ -103,7 +103,7 @@ describe.skipIf(!isPg || !url)("streaming-rls cleanup (T-189)", () => {
     const tenantId = "t-189-invariant-test";
     try {
       const ctx = await acquireStreamRls(client, tenantId);
-      // During the stream: role is myme_app + GUC is set. Query via
+      // During the stream: role is marfa_app + GUC is set. Query via
       // the reserved connection (ctx.streamDb) — the parent client
       // has no free slot while the reservation is held.
       const midRole = (await ctx.streamDb.execute(
@@ -112,21 +112,21 @@ describe.skipIf(!isPg || !url)("streaming-rls cleanup (T-189)", () => {
       const midTenant = (await ctx.streamDb.execute(
         sql`SELECT current_setting('marfa.tenant_id', true) AS setting`,
       )) as unknown as readonly { setting: string | null }[];
-      expect(midRole[0]?.current_user).toBe("myme_app");
+      expect(midRole[0]?.current_user).toBe("marfa_app");
       expect(midTenant[0]?.setting).toBe(tenantId);
 
       await ctx.release();
 
       // After release: the parent client picks up the recycled
       // connection. Role must be back to the pool's default owner
-      // (not myme_app), and the tenant GUC must be empty.
+      // (not marfa_app), and the tenant GUC must be empty.
       const postRole = await client<
         { current_user: string }[]
       >`SELECT current_user::text`;
       const postTenant = await client<
         { setting: string | null }[]
       >`SELECT current_setting('marfa.tenant_id', true) AS setting`;
-      expect(postRole[0]?.current_user).not.toBe("myme_app");
+      expect(postRole[0]?.current_user).not.toBe("marfa_app");
       expect(postTenant[0]?.setting ?? "").toBe("");
     } finally {
       await client.end();

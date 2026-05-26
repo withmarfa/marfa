@@ -37,7 +37,7 @@ import type { Storage } from "../storage/interface.js";
 import { decryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
-const KEY_PREFIX = "myme_k1_";
+const KEY_PREFIX = "marfa_k1_";
 
 function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");

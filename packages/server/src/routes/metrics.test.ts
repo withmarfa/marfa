@@ -84,8 +84,8 @@ describe("GET /metrics", () => {
     // different number of items under each. The cache is supposed to be
     // per-tenant, so tenant A's counts must never appear in tenant B's
     // response within the cache TTL.
-    const rawA = `myme_k1_tenant_a_${Math.random().toString(36).slice(2, 10)}`;
-    const rawB = `myme_k1_tenant_b_${Math.random().toString(36).slice(2, 10)}`;
+    const rawA = `marfa_k1_tenant_a_${Math.random().toString(36).slice(2, 10)}`;
+    const rawB = `marfa_k1_tenant_b_${Math.random().toString(36).slice(2, 10)}`;
     await ctx.storage.keys.create(
       {
         label: "tenant-a-admin",

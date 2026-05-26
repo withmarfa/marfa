@@ -206,7 +206,7 @@ async function listUsersNeedingHandle(
   );
 }
 
-const KEY_PREFIX = "myme_k1_";
+const KEY_PREFIX = "marfa_k1_";
 function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");
 }

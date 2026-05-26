@@ -153,8 +153,8 @@ export const IN_TREE_INTEGRATIONS: readonly InTreeIntegration[] = [
     dirName: "withmarfa-inbox",
     triggers: ["webhook"],
     hasWorker: true,
-    serviceBinding: "INTEGRATION_MYMEHQ_INBOX",
-    webhookQueueBinding: "WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX",
+    serviceBinding: "INTEGRATION_WITHMARFA_INBOX",
+    webhookQueueBinding: "WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX",
   },
   {
     name: "withmarfa.sync",

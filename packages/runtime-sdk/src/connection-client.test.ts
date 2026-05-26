@@ -3,13 +3,13 @@ import { ConnectionClient, MarfaApiError } from "./connection-client.js";
 import type { RuntimeCredential } from "./types.js";
 
 const CRED: RuntimeCredential = {
-  api_key: "myme_k1_initial",
+  api_key: "marfa_k1_initial",
   expires_at: new Date(Date.now() + 60_000).toISOString(),
   connection_id: "conn_1",
 };
 
 const REFRESHED: RuntimeCredential = {
-  api_key: "myme_k1_refreshed",
+  api_key: "marfa_k1_refreshed",
   expires_at: new Date(Date.now() + 60_000).toISOString(),
   connection_id: "conn_1",
 };
@@ -70,7 +70,7 @@ describe("ConnectionClient", () => {
     expect(item.id).toBe("item_1");
     expect(captured[0]!.url).toBe("https://api.example.com/items");
     expect(captured[0]!.method).toBe("POST");
-    expect(captured[0]!.authorization).toBe("Bearer myme_k1_initial");
+    expect(captured[0]!.authorization).toBe("Bearer marfa_k1_initial");
   });
 
   it("refreshes the credential on 401 and retries once", async () => {
@@ -98,8 +98,8 @@ describe("ConnectionClient", () => {
     const item = await client.createItem({ type: "core.note" });
     expect(item.id).toBe("item_2");
     expect(refreshes).toBe(1);
-    expect(captured[0]!.authorization).toBe("Bearer myme_k1_initial");
-    expect(captured[1]!.authorization).toBe("Bearer myme_k1_refreshed");
+    expect(captured[0]!.authorization).toBe("Bearer marfa_k1_initial");
+    expect(captured[1]!.authorization).toBe("Bearer marfa_k1_refreshed");
   });
 
   it("surfaces persistent 401 as MarfaApiError after one refresh", async () => {
@@ -544,7 +544,7 @@ describe("ConnectionClient.uploadBlob (T-239)", () => {
     expect(captured).toHaveLength(1);
     expect(captured[0]!.url).toBe("https://api.example.com/blobs");
     expect(captured[0]!.method).toBe("POST");
-    expect(captured[0]!.authorization).toBe("Bearer myme_k1_initial");
+    expect(captured[0]!.authorization).toBe("Bearer marfa_k1_initial");
     expect(captured[0]!.contentType).toBe("application/pdf");
     // No cycle headers on /blobs — it doesn't publish events.
     expect(captured[0]!.cycleOrigin).toBeUndefined();
@@ -619,8 +619,8 @@ describe("ConnectionClient.uploadBlob (T-239)", () => {
 
     expect(refreshes).toBe(1);
     expect(captured).toHaveLength(2);
-    expect(captured[0]!.authorization).toBe("Bearer myme_k1_initial");
-    expect(captured[1]!.authorization).toBe("Bearer myme_k1_refreshed");
+    expect(captured[0]!.authorization).toBe("Bearer marfa_k1_initial");
+    expect(captured[1]!.authorization).toBe("Bearer marfa_k1_refreshed");
     // Body bytes are re-sent on the retry (full content, not a stream that
     // would have drained).
     expect(Array.from(captured[1]!.bodyBytes)).toEqual(Array.from(PDF_BYTES));

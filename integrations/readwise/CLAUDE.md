@@ -52,8 +52,8 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 ```
 {
   updated_after: string,                         // ISO timestamp
-  book_mappings: Record<user_book_id, myme_id>,
-  highlight_mappings: Record<highlight_id, myme_id>,
+  book_mappings: Record<user_book_id, marfa_id>,
+  highlight_mappings: Record<highlight_id, marfa_id>,
   last_inbound_at: string | null
 }
 ```

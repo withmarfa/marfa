@@ -47,8 +47,8 @@ import { setNoStore } from "./no-store.js";
 import { publish } from "../pubsub.js";
 import type { OidcSigner } from "../auth/oidc-signing.js";
 
-const ACCESS_TOKEN_PREFIX = "myme_at_";
-const REFRESH_TOKEN_PREFIX = "myme_rt_";
+const ACCESS_TOKEN_PREFIX = "marfa_at_";
+const REFRESH_TOKEN_PREFIX = "marfa_rt_";
 const ACCESS_TOKEN_TTL_MS = 3600_000; // 1 hour
 
 /**
@@ -2078,7 +2078,7 @@ export function authRoutes(
 // Device Authorization Grant — local helpers
 // ---------------------------------------------------------------------------
 
-const DEVICE_CODE_PREFIX = "myme_dc_";
+const DEVICE_CODE_PREFIX = "marfa_dc_";
 const DEVICE_CODE_TTL_MS = 600_000; // 10 minutes
 const DEVICE_CODE_DEFAULT_INTERVAL_SECONDS = 5;
 

@@ -56,9 +56,9 @@ This directory is one logical integration with two deployable Workers:
   `marfa-webhook-receipt-withmarfa-inbox-<env>` — its own dedicated
   queue per T-247; CF Queues allow only one consumer per queue, so
   every inbound-webhook integration gets its own). Bound under
-  `INTEGRATION_MYMEHQ_INBOX` in `wrangler.control.toml`. The control
+  `INTEGRATION_WITHMARFA_INBOX` in `wrangler.control.toml`. The control
   plane's webhook receipt route resolves the producer binding
-  (`WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX`) by `integration_name`.
+  (`WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX`) by `integration_name`.
 - **`./email-worker/`** — the Cloudflare Email Worker that converts
   inbound email → signed JSON webhook. Distinct Cloudflare product
   (Email Worker), distinct wrangler.toml, distinct deploy command,

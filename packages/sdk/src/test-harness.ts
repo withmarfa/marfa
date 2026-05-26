@@ -114,7 +114,7 @@ function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
 export interface KeysModeFixture {
   /** SDK client wired to call the in-process server via the bootstrap admin key. */
   client: MarfaClient;
-  /** The bootstrap admin key (`myme_k1_*`). Use to mint additional keys
+  /** The bootstrap admin key (`marfa_k1_*`). Use to mint additional keys
    *  in tests that need them. */
   adminKey: string;
   /** The custom `fetch` the SDK is wired through. Pass into a second
@@ -297,7 +297,7 @@ export async function createHostedModeFixture(
   // same shape the real sign-up flow stamps (per
   // deprecated/grandfather-profiles-t074.ts:260) — tenant_admin role with
   // `*: write` permissions, scoped to the user's tenant.
-  const rawKey = `myme_k1_sdk_hosted_${suffix}`;
+  const rawKey = `marfa_k1_sdk_hosted_${suffix}`;
   await storage.keys.create(
     {
       label: `sdk-hosted-${suffix}`,

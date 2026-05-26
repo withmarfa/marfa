@@ -92,7 +92,7 @@ queue = "marfa-scheduled-poll-staging"
 # `withmarfa.github-webhooks` until it migrates onto its own queue.
 
 [[env.staging.queues.producers]]
-binding = "WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX"
+binding = "WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX"
 queue = "marfa-webhook-receipt-withmarfa-inbox-staging"
 
 [[env.staging.queues.producers]]
@@ -117,7 +117,7 @@ queue = "marfa-scheduled-poll-prod"
 
 # T-247 — prod mirror of the per-integration webhook-receipt producers.
 [[env.prod.queues.producers]]
-binding = "WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX"
+binding = "WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX"
 queue = "marfa-webhook-receipt-withmarfa-inbox-prod"
 
 [[env.prod.queues.producers]]
@@ -213,7 +213,7 @@ binding = "INTEGRATION_RAINDROP"
 service = "marfa-integration-raindrop-staging"
 
 [[env.staging.services]]
-binding = "INTEGRATION_MYMEHQ_INBOX"
+binding = "INTEGRATION_WITHMARFA_INBOX"
 service = "marfa-integration-withmarfa-inbox-staging"
 
 # ---- Prod service bindings -----------------------------------------------
@@ -271,7 +271,7 @@ binding = "INTEGRATION_RAINDROP"
 service = "marfa-integration-raindrop-prod"
 
 [[env.prod.services]]
-binding = "INTEGRATION_MYMEHQ_INBOX"
+binding = "INTEGRATION_WITHMARFA_INBOX"
 service = "marfa-integration-withmarfa-inbox-prod"
 
 # ---------------------------------------------------------------------------

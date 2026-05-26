@@ -71,7 +71,7 @@ async function buildCtx(): Promise<Ctx> {
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = `myme_k1_rl_admin_${suffix}`;
+  const rawKey = `marfa_k1_rl_admin_${suffix}`;
   await storage.keys.create(
     {
       label: "rl-admin",

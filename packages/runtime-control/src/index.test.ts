@@ -4,7 +4,7 @@ import type { ControlPlaneEnv } from "./env.js";
 
 const BASE_ENV: ControlPlaneEnv = {
   MARFA_API_URL: "http://localhost:8602",
-  MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker_test",
+  MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker_test",
   ENVIRONMENT: "test",
 };
 

@@ -300,7 +300,7 @@ describe("POST /connections/install — platform-scoped manifest, tenant_admin c
     const integration = await createIntegration(); // tenant_id: null
 
     const suffix = Math.random().toString(36).slice(2, 8);
-    const rawKey = `myme_k1_test_tadmin_${suffix}`;
+    const rawKey = `marfa_k1_test_tadmin_${suffix}`;
     const hash = hashApiKey(rawKey, TEST_API_KEY_SALT);
     await ctx.storage.keys.create(
       {

@@ -16,9 +16,9 @@ interface TokenProviderLike {
 
 export interface TransportConfig {
   baseUrl: string;
-  /** Static API key (myme_k1_*). Mutually exclusive with `tokenProvider`. */
+  /** Static API key (marfa_k1_*). Mutually exclusive with `tokenProvider`. */
   apiKey?: string;
-  /** OAuth token provider (myme_at_* with refresh-on-401 retry).
+  /** OAuth token provider (marfa_at_* with refresh-on-401 retry).
    *  Mutually exclusive with `apiKey`. */
   tokenProvider?: TokenProviderLike;
   fetch?: typeof globalThis.fetch;

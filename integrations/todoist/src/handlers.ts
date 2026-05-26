@@ -132,10 +132,10 @@ function defaultCursor(): TodoistCursor {
 
 function findExternalIdFor(
   cursor: TodoistCursor,
-  myme_id: string,
+  marfa_id: string,
 ): string | null {
   for (const [ext, m] of Object.entries(cursor.mappings)) {
-    if (m === myme_id) return ext;
+    if (m === marfa_id) return ext;
   }
   return null;
 }
@@ -163,15 +163,15 @@ async function sha256Hex(input: string): Promise<string> {
  *  of the same outbound for the same Marfa item produce the same
  *  temp_id; Todoist's per-uuid idempotency rail returns the original
  *  command's result instead of creating a duplicate. */
-function deriveTempId(myme_id: string): Promise<string> {
-  return sha256Hex(`marfa:temp_id:${myme_id}`);
+function deriveTempId(marfa_id: string): Promise<string> {
+  return sha256Hex(`marfa:temp_id:${marfa_id}`);
 }
 
 /** Deterministic uuid for the Sync API command. Distinct from temp_id
  *  but derived from the same seed so a retry hits Todoist's
  *  "same-uuid → same-result" rail. */
-function deriveCommandUuid(myme_id: string): Promise<string> {
-  return sha256Hex(`marfa:command_uuid:${myme_id}`);
+function deriveCommandUuid(marfa_id: string): Promise<string> {
+  return sha256Hex(`marfa:command_uuid:${marfa_id}`);
 }
 
 /** Content-hash for echo suppression. Includes every field a
@@ -216,9 +216,9 @@ function stripSentinel(description: string): string {
     .replace(/^\s+|\s+$/g, "");
 }
 
-function appendSentinel(description: string, myme_id: string): string {
+function appendSentinel(description: string, marfa_id: string): string {
   const base = description.length > 0 ? `${description}\n\n` : "";
-  return `${base}${MARFA_ID_DESCRIPTION_SENTINEL_PREFIX}${myme_id}]`;
+  return `${base}${MARFA_ID_DESCRIPTION_SENTINEL_PREFIX}${marfa_id}]`;
 }
 
 // ---------------------------------------------------------------------------
@@ -492,9 +492,9 @@ export async function handleItemEvent(
 async function ackHandledIfMappedAsTrash(
   ctx: ConnectionContext,
   cursor: TodoistCursor,
-  myme_id: string,
+  marfa_id: string,
 ): Promise<HandlerResult> {
-  const externalId = findExternalIdFor(cursor, myme_id);
+  const externalId = findExternalIdFor(cursor, marfa_id);
   if (externalId === null) return { ok: true };
   const path = `${TASKS_BASE_PATH}/${encodeURIComponent(externalId)}/close`;
   const resp = await ctx.marfa.proxyRequest("POST", path);

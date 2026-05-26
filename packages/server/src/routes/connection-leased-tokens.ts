@@ -54,7 +54,7 @@ function hashLease(raw: string): string {
  * (T-018):
  *
  *   - `oauth:<connectionId>` — the synthetic ApiKey constructed by the
- *     auth middleware for an OAuth `myme_at_*` access token. The token
+ *     auth middleware for an OAuth `marfa_at_*` access token. The token
  *     was minted via the `/auth/authorize` consent flow and the
  *     consenting user authorised the connection.
  *   - `integration:<connectionId>` — the runtime credential the
@@ -410,7 +410,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     }
 
     // Generate an opaque 32-byte hex bearer. Hashed at rest.
-    const rawLease = `myme_lt_${randomBytes(32).toString("hex")}`;
+    const rawLease = `marfa_lt_${randomBytes(32).toString("hex")}`;
     const id = generateId();
     const expiresAt = new Date(Date.now() + ttlSec * 1000).toISOString();
 

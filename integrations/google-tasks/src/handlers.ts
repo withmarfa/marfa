@@ -281,11 +281,11 @@ export async function handleSchedule(
           }
         }
 
-        const myme_id = cursor.mappings[task.id];
+        const marfa_id = cursor.mappings[task.id];
         if (task.deleted === true) {
-          if (myme_id !== undefined) {
+          if (marfa_id !== undefined) {
             try {
-              await ctx.marfa.transitionItem(myme_id, "trashed");
+              await ctx.marfa.transitionItem(marfa_id, "trashed");
               trashed += 1;
               Reflect.deleteProperty(cursor.mappings, task.id);
               Reflect.deleteProperty(cursor.mapping_lists, task.id);
@@ -308,8 +308,8 @@ export async function handleSchedule(
 
         const input = buildTaskInput(task, config.target_type, listId);
         try {
-          if (myme_id !== undefined) {
-            await ctx.marfa.updateItem(myme_id, input);
+          if (marfa_id !== undefined) {
+            await ctx.marfa.updateItem(marfa_id, input);
           } else {
             const created = await ctx.marfa.createItem({
               ...input,
@@ -672,10 +672,10 @@ function buildTasksPayload(item: ItemResource): Record<string, unknown> {
 
 function findExternalIdFor(
   cursor: TasksCursor,
-  myme_id: string,
+  marfa_id: string,
 ): string | null {
   for (const [ext, m] of Object.entries(cursor.mappings)) {
-    if (m === myme_id) return ext;
+    if (m === marfa_id) return ext;
   }
   return null;
 }
@@ -683,9 +683,9 @@ function findExternalIdFor(
 async function ackHandledIfMappedAsDelete(
   ctx: ConnectionContext,
   cursor: TasksCursor,
-  myme_id: string,
+  marfa_id: string,
 ): Promise<HandlerResult> {
-  const externalId = findExternalIdFor(cursor, myme_id);
+  const externalId = findExternalIdFor(cursor, marfa_id);
   if (externalId === null) return { ok: true };
   const listId = cursor.mapping_lists[externalId] ?? DEFAULT_TASK_LIST_ID;
   const path = `${TASKS_API_BASE}/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(externalId)}`;

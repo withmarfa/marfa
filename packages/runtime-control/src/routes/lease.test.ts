@@ -46,7 +46,7 @@ function mockMarfaFetch(captured: FetchCall[]): typeof fetch {
       return Promise.resolve(
         new Response(
           JSON.stringify({
-            api_key: "myme_k1_runtime_test",
+            api_key: "marfa_k1_runtime_test",
             connection_id: "conn_x",
             expires_at: new Date(Date.now() + 600_000).toISOString(),
           }),

@@ -165,7 +165,7 @@ async function dumpPg(): Promise<string> {
 
   await runPgMigrations(databaseUrl);
 
-  // Grants on the myme_app role — captured before pg_dump strips them.
+  // Grants on the marfa_app role — captured before pg_dump strips them.
   // pg_dump --no-privileges discards GRANT statements; reinstated below
   // from information_schema.
   const grants = await fetchPgGrants(databaseUrl);
@@ -179,7 +179,7 @@ async function dumpPg(): Promise<string> {
   const { role: roleBlock, grants: grantsBlock } = buildPgRoleAndGrants(grants);
 
   // Order matters at apply time:
-  //   1. Role (DO IF NOT EXISTS) — RLS policies later reference `myme_app`.
+  //   1. Role (DO IF NOT EXISTS) — RLS policies later reference `marfa_app`.
   //   2. pg_dump output — tables, indexes, constraints, IDENTITY, RLS enable,
   //      policies. Policies reference the role; the role now exists.
   //   3. Grants — applied to tables that now exist. Grants don't gate policy
@@ -241,7 +241,7 @@ async function fetchPgGrants(databaseUrl: string): Promise<PgGrant[]> {
     const rows = await sql<PgGrant[]>`
       SELECT table_name, privilege_type
       FROM information_schema.role_table_grants
-      WHERE grantee = 'myme_app'
+      WHERE grantee = 'marfa_app'
         AND table_schema = 'public'
       ORDER BY table_name, privilege_type
     `;
@@ -291,12 +291,12 @@ function buildPgRoleAndGrants(grants: PgGrant[]): {
   }
 
   const roleLines: string[] = [
-    "-- T-145: SCHEMA_SQL is auto-generated. The myme_app role + grants are",
+    "-- T-145: SCHEMA_SQL is auto-generated. The marfa_app role + grants are",
     "-- reconstructed from information_schema because pg_dump --no-privileges",
     "-- strips them. The role is emitted first (RLS policies reference it);",
     "-- table grants are emitted after the pg_dump body (tables must exist).",
     "--",
-    "-- T-168: grant the connection user MEMBERSHIP in myme_app so SET ROLE",
+    "-- T-168: grant the connection user MEMBERSHIP in marfa_app so SET ROLE",
     "-- succeeds during request handling. PG 16+ no longer auto-grants",
     "-- membership on CREATE ROLE; the creator gets admin option but must",
     "-- explicitly GRANT for the role to be settable via SET ROLE. The inner",
@@ -306,28 +306,28 @@ function buildPgRoleAndGrants(grants: PgGrant[]): {
     "-- then run the GRANT once).",
     "DO $$",
     "BEGIN",
-    `  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'myme_app') THEN`,
-    `    CREATE ROLE "myme_app";`,
+    `  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'marfa_app') THEN`,
+    `    CREATE ROLE "marfa_app";`,
     "  END IF;",
     "  BEGIN",
     "    -- quote_ident() is the identifier-injection safety boundary —",
     "    -- current_user is a built-in PG function returning a name, but",
     "    -- composing it into the GRANT via EXECUTE means we must quote it",
     "    -- explicitly. Don't simplify to plain interpolation.",
-    `    EXECUTE 'GRANT myme_app TO ' || quote_ident(current_user);`,
+    `    EXECUTE 'GRANT marfa_app TO ' || quote_ident(current_user);`,
     "  EXCEPTION",
     "    WHEN insufficient_privilege THEN",
     "      RAISE NOTICE",
-    "        'Could not GRANT myme_app TO %: %. An operator with admin option on myme_app (or a superuser) must run this once before tenant-scoped requests will succeed.',",
+    "        'Could not GRANT marfa_app TO %: %. An operator with admin option on marfa_app (or a superuser) must run this once before tenant-scoped requests will succeed.',",
     "        current_user, SQLERRM;",
     "  END;",
     "END",
     "$$;",
-    `GRANT USAGE ON SCHEMA public TO "myme_app";`,
+    `GRANT USAGE ON SCHEMA public TO "marfa_app";`,
   ];
 
   const grantLines: string[] = [
-    "-- Table grants on the myme_app role (T-145; see role block above).",
+    "-- Table grants on the marfa_app role (T-145; see role block above).",
     "-- Schema-qualified (`public.x`) so the grants resolve regardless of",
     "-- search_path — pg_dump emits its CREATE TABLE statements with the",
     "-- `public.` prefix, and grants must match the qualified table for",
@@ -341,13 +341,13 @@ function buildPgRoleAndGrants(grants: PgGrant[]): {
       .sort()
       .map((t) => `"public"."${t}"`)
       .join(", ");
-    grantLines.push(`GRANT ${verbs} ON ${tables} TO "myme_app";`);
+    grantLines.push(`GRANT ${verbs} ON ${tables} TO "marfa_app";`);
   }
 
-  // Sequence usage — myme_app needs to insert into IDENTITY columns
+  // Sequence usage — marfa_app needs to insert into IDENTITY columns
   // (event_log.id). Granted blanket; matches the prior SCHEMA_SQL.
   grantLines.push(
-    `GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "myme_app";`,
+    `GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "marfa_app";`,
   );
 
   return {

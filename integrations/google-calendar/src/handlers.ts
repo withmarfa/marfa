@@ -262,11 +262,11 @@ async function handleScheduleLegacy(
   let skippedEcho = 0;
   let trashed = 0;
   for (const event of payload.items ?? []) {
-    const myme_id = cursor.mappings[event.id];
+    const marfa_id = cursor.mappings[event.id];
     if (event.status === "cancelled") {
-      if (myme_id !== undefined) {
+      if (marfa_id !== undefined) {
         try {
-          await ctx.marfa.transitionItem(myme_id, "trashed");
+          await ctx.marfa.transitionItem(marfa_id, "trashed");
           trashed += 1;
           Reflect.deleteProperty(cursor.mappings, event.id);
         } catch (err) {
@@ -288,8 +288,8 @@ async function handleScheduleLegacy(
 
     const input = buildEventInput(event, config.target_type, calendarId);
     try {
-      if (myme_id !== undefined) {
-        await ctx.marfa.updateItem(myme_id, input);
+      if (marfa_id !== undefined) {
+        await ctx.marfa.updateItem(marfa_id, input);
       } else {
         const created = await ctx.marfa.createItem({
           ...input,
@@ -366,7 +366,7 @@ async function handleItemEventLegacy(
     // Item disappeared (deleted before we could read). Treat it
     // as a delete-equivalent if we know the mapping by checking
     // mappings reverse: but the bridge gives us item_id, and
-    // mappings are external_id → myme_id, so reverse-lookup.
+    // mappings are external_id → marfa_id, so reverse-lookup.
     return ackHandledIfMappedAsDelete(
       ctx,
       cursor,
@@ -818,11 +818,11 @@ async function syncOneCalendar(
   let skippedEcho = 0;
   let trashed = 0;
   for (const event of payload.items ?? []) {
-    const myme_id = cursor.mappings[event.id];
+    const marfa_id = cursor.mappings[event.id];
     if (event.status === "cancelled") {
-      if (myme_id !== undefined) {
+      if (marfa_id !== undefined) {
         try {
-          await ctx.marfa.transitionItem(myme_id, "trashed");
+          await ctx.marfa.transitionItem(marfa_id, "trashed");
           trashed += 1;
           Reflect.deleteProperty(cursor.mappings, event.id);
           Reflect.deleteProperty(cursor.mapping_calendars, event.id);
@@ -845,8 +845,8 @@ async function syncOneCalendar(
 
     const input = buildEventInput(event, config.target_type, calendarId);
     try {
-      if (myme_id !== undefined) {
-        await ctx.marfa.updateItem(myme_id, input);
+      if (marfa_id !== undefined) {
+        await ctx.marfa.updateItem(marfa_id, input);
       } else {
         const created = await ctx.marfa.createItem({
           ...input,
@@ -1001,11 +1001,11 @@ async function handleScheduleMulti(
     let skippedEcho = 0;
     let trashed = 0;
     for (const event of payload.items ?? []) {
-      const myme_id = cursor.mappings[event.id];
+      const marfa_id = cursor.mappings[event.id];
       if (event.status === "cancelled") {
-        if (myme_id !== undefined) {
+        if (marfa_id !== undefined) {
           try {
-            await ctx.marfa.transitionItem(myme_id, "trashed");
+            await ctx.marfa.transitionItem(marfa_id, "trashed");
             trashed += 1;
             Reflect.deleteProperty(cursor.mappings, event.id);
             Reflect.deleteProperty(cursor.mapping_calendars, event.id);
@@ -1028,8 +1028,8 @@ async function handleScheduleMulti(
 
       const input = buildEventInput(event, config.target_type, calendarId);
       try {
-        if (myme_id !== undefined) {
-          await ctx.marfa.updateItem(myme_id, input);
+        if (marfa_id !== undefined) {
+          await ctx.marfa.updateItem(marfa_id, input);
         } else {
           const created = await ctx.marfa.createItem({
             ...input,
@@ -1377,10 +1377,10 @@ function buildEventPath(
 
 function findExternalIdFor(
   cursor: CalendarCursor,
-  myme_id: string,
+  marfa_id: string,
 ): string | null {
   for (const [ext, marfa] of Object.entries(cursor.mappings)) {
-    if (marfa === myme_id) return ext;
+    if (marfa === marfa_id) return ext;
   }
   return null;
 }
@@ -1388,10 +1388,10 @@ function findExternalIdFor(
 async function ackHandledIfMappedAsDelete(
   ctx: ConnectionContext,
   cursor: CalendarCursor,
-  myme_id: string,
+  marfa_id: string,
   fallbackCalendarId: string = DEFAULT_CALENDAR_ID,
 ): Promise<HandlerResult> {
-  const externalId = findExternalIdFor(cursor, myme_id);
+  const externalId = findExternalIdFor(cursor, marfa_id);
   if (externalId === null) {
     return { ok: true };
   }
@@ -1491,9 +1491,9 @@ function errorMessage(err: unknown): string {
  * exposes the same API as `globalThis.crypto`, so this works under
  * the Vitest fixture too.
  */
-async function deriveDeterministicCalendarId(myme_id: string): Promise<string> {
+async function deriveDeterministicCalendarId(marfa_id: string): Promise<string> {
   const encoder = new TextEncoder();
-  const data = encoder.encode(`marfa:${myme_id}`);
+  const data = encoder.encode(`marfa:${marfa_id}`);
   const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
   const bytes = new Uint8Array(digest);
   let out = "";

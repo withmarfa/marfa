@@ -54,7 +54,7 @@ export interface ControlPlaneEnv {
    *      Worker's wrangler.toml pointing at the same queue.
    *   4. `provision.ts` mints the queue + DLQ.
    */
-  WEBHOOK_RECEIPT_QUEUE_MYMEHQ_INBOX?: QueueProducer;
+  WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX?: QueueProducer;
   WEBHOOK_RECEIPT_QUEUE_GOOGLE_CALENDAR?: QueueProducer;
   WEBHOOK_RECEIPT_QUEUE_GOOGLE_DRIVE?: QueueProducer;
   /** Reactive-run producer (the server-side bridge sends here too;
@@ -103,7 +103,7 @@ export interface ControlPlaneEnv {
   INTEGRATION_TODOIST_TASKS?: ServiceBinding;
   INTEGRATION_READWISE?: ServiceBinding;
   INTEGRATION_RAINDROP?: ServiceBinding;
-  INTEGRATION_MYMEHQ_INBOX?: ServiceBinding;
+  INTEGRATION_WITHMARFA_INBOX?: ServiceBinding;
 }
 
 /** Subset of Cloudflare's Fetcher binding (service binding) we use. */

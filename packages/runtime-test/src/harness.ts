@@ -64,7 +64,7 @@ export interface TestHarness {
 }
 
 const DEFAULT_CREDENTIAL: RuntimeCredential = {
-  api_key: "myme_k1_runtime_test",
+  api_key: "marfa_k1_runtime_test",
   expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
   connection_id: "_unset_",
 };

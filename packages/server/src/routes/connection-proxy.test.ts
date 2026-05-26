@@ -636,7 +636,7 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
     // its own tenant; the proxy then calls readOAuthConfig, which is
     // where the cross-tenant credential lookup happens.
     const suffix = Math.random().toString(36).slice(2, 8);
-    const rawKey = `myme_k1_t235_admin_a_${suffix}`;
+    const rawKey = `marfa_k1_t235_admin_a_${suffix}`;
     const hash = hashApiKey(rawKey, TEST_API_KEY_SALT);
     await ctx.storage.keys.create(
       {
@@ -718,7 +718,7 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
     // broker (source `runtime-<prefix>-<ts>`) produce. The free-form
     // source does NOT match `oauth:${connectionId}`; the widened gate
     // matches on the `(is_runtime_credential, connection_id)` pair.
-    const rawKey = "myme_k1_" + "f".repeat(64);
+    const rawKey = "marfa_k1_" + "f".repeat(64);
     const keyHash = hashApiKey(rawKey, TEST_API_KEY_SALT);
     await ctx.storage.keys.createRuntimeCredential(
       {
@@ -760,7 +760,7 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
     await seedToken(connectionA);
 
     // Credential bound to connectionB attempts to proxy through connectionA.
-    const rawKey = "myme_k1_" + "e".repeat(64);
+    const rawKey = "marfa_k1_" + "e".repeat(64);
     const keyHash = hashApiKey(rawKey, TEST_API_KEY_SALT);
     await ctx.storage.keys.createRuntimeCredential(
       {

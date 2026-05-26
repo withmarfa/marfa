@@ -142,7 +142,7 @@ describe("POST /admin/restore-archive", () => {
   });
 
   it("requires admin role", async () => {
-    const rawKey = `myme_k1_member_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
       {

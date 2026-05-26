@@ -1,7 +1,7 @@
 /**
  * T-025 part 1 — Postgres RLS schema scaffold.
  *
- * Verifies the migration applied: `myme_app` role exists, RLS is enabled
+ * Verifies the migration applied: `marfa_app` role exists, RLS is enabled
  * on every tenant-scoped table, and the per-table policies are present.
  *
  * Cross-tenant denial via the actual role-on-checkout path is tested in
@@ -33,9 +33,9 @@ describe.skipIf(!isPg)("Postgres RLS scaffold (T-025 part 1)", () => {
     await ctx.cleanup();
   });
 
-  it("creates the myme_app role", async () => {
+  it("creates the marfa_app role", async () => {
     const rows = (await pgClient(
-      `SELECT rolname FROM pg_roles WHERE rolname = 'myme_app'`,
+      `SELECT rolname FROM pg_roles WHERE rolname = 'marfa_app'`,
     )) as { rolname: string }[];
     expect(rows).toHaveLength(1);
   });
@@ -76,12 +76,12 @@ describe.skipIf(!isPg)("Postgres RLS scaffold (T-025 part 1)", () => {
     },
   );
 
-  it("grants CRUD on tenant-scoped tables to myme_app", async () => {
+  it("grants CRUD on tenant-scoped tables to marfa_app", async () => {
     // Spot-check a couple of tables
     for (const table of ["items", "edges", "blobs"]) {
       const grants = (await pgClient(
         `SELECT privilege_type FROM information_schema.role_table_grants
-           WHERE grantee = 'myme_app' AND table_name = $1`,
+           WHERE grantee = 'marfa_app' AND table_name = $1`,
         [table],
       )) as { privilege_type: string }[];
       const types = new Set(grants.map((g) => g.privilege_type));

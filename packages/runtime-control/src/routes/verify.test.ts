@@ -127,7 +127,7 @@ describe("POST /connections/:id/verify", () => {
       {
         method: "POST",
         body: "{}",
-        headers: { authorization: "Bearer myme_k1_op" },
+        headers: { authorization: "Bearer marfa_k1_op" },
       },
       {},
     );
@@ -142,7 +142,7 @@ describe("POST /connections/:id/verify", () => {
       {
         method: "POST",
         body: "not-json",
-        headers: { authorization: "Bearer myme_k1_op" },
+        headers: { authorization: "Bearer marfa_k1_op" },
       },
       env,
     );
@@ -158,7 +158,7 @@ describe("POST /connections/:id/verify", () => {
       {
         method: "POST",
         body: JSON.stringify({}),
-        headers: { authorization: "Bearer myme_k1_op" },
+        headers: { authorization: "Bearer marfa_k1_op" },
       },
       env,
     );
@@ -174,7 +174,7 @@ describe("POST /connections/:id/verify", () => {
       {
         method: "POST",
         body: JSON.stringify({ event: { event_type: "item.created" } }),
-        headers: { authorization: "Bearer myme_k1_op" },
+        headers: { authorization: "Bearer marfa_k1_op" },
       },
       env,
     );
@@ -202,7 +202,7 @@ describe("POST /connections/:id/verify", () => {
           body: JSON.stringify({
             event: { item_id: "item_1", event_type: "item.created" },
           }),
-          headers: { authorization: "Bearer myme_k1_member" },
+          headers: { authorization: "Bearer marfa_k1_member" },
         },
         env,
       );
@@ -229,7 +229,7 @@ describe("POST /connections/:id/verify", () => {
           body: JSON.stringify({
             event: { item_id: "item_1", event_type: "item.created" },
           }),
-          headers: { authorization: "Bearer myme_k1_op" },
+          headers: { authorization: "Bearer marfa_k1_op" },
         },
         env,
       );
@@ -257,7 +257,7 @@ describe("POST /connections/:id/verify", () => {
           body: JSON.stringify({
             event: { item_id: "item_1", event_type: "item.created" },
           }),
-          headers: { authorization: "Bearer myme_k1_op" },
+          headers: { authorization: "Bearer marfa_k1_op" },
         },
         env,
       );
@@ -310,7 +310,7 @@ describe("POST /connections/:id/verify", () => {
               payload: { item: { id: "item_1" }, metadata: null },
             },
           }),
-          headers: { authorization: "Bearer myme_k1_op" },
+          headers: { authorization: "Bearer marfa_k1_op" },
         },
         env,
       );
@@ -375,7 +375,7 @@ describe("POST /connections/:id/verify", () => {
           body: JSON.stringify({
             event: { item_id: "item_1", event_type: "item.created" },
           }),
-          headers: { authorization: "Bearer myme_k1_op" },
+          headers: { authorization: "Bearer marfa_k1_op" },
         },
         env,
       );
@@ -426,7 +426,7 @@ describe("POST /connections/:id/verify", () => {
               },
             },
           }),
-          headers: { authorization: "Bearer myme_k1_op" },
+          headers: { authorization: "Bearer marfa_k1_op" },
         },
         env,
       );

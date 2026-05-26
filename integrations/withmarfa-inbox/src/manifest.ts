@@ -31,7 +31,7 @@
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
-export const MYMEHQ_INBOX_MANIFEST: IntegrationManifest = {
+export const WITHMARFA_INBOX_MANIFEST: IntegrationManifest = {
   name: "withmarfa.inbox",
   version: "0.1.0",
   manifest_schema_version: "1.0.0",
@@ -56,7 +56,7 @@ export const MYMEHQ_INBOX_MANIFEST: IntegrationManifest = {
   },
 };
 
-export const INTEGRATION_NAME = MYMEHQ_INBOX_MANIFEST.name;
+export const INTEGRATION_NAME = WITHMARFA_INBOX_MANIFEST.name;
 
 /** Bounded idempotency ring stamped on the handler-side cursor; the
  *  server's own `connection.runtime.idempotency` map is the primary

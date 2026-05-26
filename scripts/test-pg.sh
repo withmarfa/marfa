@@ -25,7 +25,7 @@ CONTAINER_NAME="marfa-test-pg-$$"
 PG_PORT=$((55432 + ($$ % 1000)))
 PG_USER="marfa"
 PG_PASSWORD="marfa"
-PG_DB="myme_test"
+PG_DB="marfa_test"
 
 if ! docker info >/dev/null 2>&1; then
   echo "⊘ Docker is not running — skipping test:pg." >&2
@@ -84,7 +84,7 @@ echo "→ Running server tests (Postgres)"
 # list. The server tests are the only ones that exercise the dialect env vars.
 #
 # Two PG URLs are exported:
-#   - DATABASE_URL — historical compat, points at ${PG_DB} (myme_test).
+#   - DATABASE_URL — historical compat, points at ${PG_DB} (marfa_test).
 #     The globalSetup uses it only as a fallback to derive the admin URL.
 #   - MARFA_TEST_PG_ADMIN_URL — points at the `postgres` system DB so the
 #     globalSetup can CREATE/DROP the test template + per-file clones.

@@ -34,7 +34,7 @@ beforeAll(async () => {
   // keeps the "noter" namespace writable. See metrics.test.ts:89-99 for
   // the same seeding pattern.
   const suffix = Math.random().toString(36).slice(2, 10);
-  scopedKey = `myme_k1_ext_scoped_${suffix}`;
+  scopedKey = `marfa_k1_ext_scoped_${suffix}`;
   await ctx.storage.keys.create(
     {
       label: SCOPED_LABEL,

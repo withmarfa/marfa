@@ -66,7 +66,7 @@ interface TokenProviderLike {
 
 /**
  * Credentials are mutually exclusive at the type level: pass either a
- * static API key (myme_k1_*) or an OAuth token provider (myme_at_*).
+ * static API key (marfa_k1_*) or an OAuth token provider (marfa_at_*).
  */
 export type ClientCredential =
   | { apiKey: string; tokenProvider?: never }

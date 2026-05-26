@@ -18,7 +18,7 @@
  *     etag returns 409, the handler refetches and reapplies once.
  *
  * Same `bidirectional_handling` defaults as Calendar / Tasks. Same
- * cursor-mappings shape (resource_name -> myme_id). No second-level
+ * cursor-mappings shape (resource_name -> marfa_id). No second-level
  * scoping (Tasks' per-list, Calendar's per-calendar) — every contact
  * lives in the single "connections" collection.
  *
@@ -254,12 +254,12 @@ export async function handleSchedule(
 
     for (const person of payload.connections ?? []) {
       const resourceName = person.resourceName;
-      const myme_id = cursor.mappings[resourceName];
+      const marfa_id = cursor.mappings[resourceName];
 
       if (person.metadata?.deleted === true) {
-        if (myme_id !== undefined) {
+        if (marfa_id !== undefined) {
           try {
-            await ctx.marfa.transitionItem(myme_id, "trashed");
+            await ctx.marfa.transitionItem(marfa_id, "trashed");
             trashed += 1;
             Reflect.deleteProperty(cursor.mappings, resourceName);
           } catch (err) {
@@ -281,8 +281,8 @@ export async function handleSchedule(
 
       const input = buildPersonInput(person, config.target_type);
       try {
-        if (myme_id !== undefined) {
-          await ctx.marfa.updateItem(myme_id, input);
+        if (marfa_id !== undefined) {
+          await ctx.marfa.updateItem(marfa_id, input);
         } else {
           const created = await ctx.marfa.createItem({
             ...input,
@@ -469,7 +469,7 @@ export function registerHandlers(): void {
 
 async function findExistingByMarfaIdMarker(
   ctx: ConnectionContext,
-  mymeItemId: string,
+  marfaItemId: string,
 ): Promise<PersonResource | null> {
   let pageToken: string | undefined;
   let pages = 0;
@@ -497,7 +497,7 @@ async function findExistingByMarfaIdMarker(
       if (
         Array.isArray(cd) &&
         cd.some(
-          (e) => e.key === MARFA_ID_CLIENT_DATA_KEY && e.value === mymeItemId,
+          (e) => e.key === MARFA_ID_CLIENT_DATA_KEY && e.value === marfaItemId,
         )
       ) {
         return person;
@@ -710,10 +710,10 @@ function encodeResourceName(resourceName: string): string {
 
 function findExternalIdFor(
   cursor: ContactsCursor,
-  myme_id: string,
+  marfa_id: string,
 ): string | null {
   for (const [ext, m] of Object.entries(cursor.mappings)) {
-    if (m === myme_id) return ext;
+    if (m === marfa_id) return ext;
   }
   return null;
 }
@@ -721,9 +721,9 @@ function findExternalIdFor(
 async function ackHandledIfMappedAsDelete(
   ctx: ConnectionContext,
   cursor: ContactsCursor,
-  myme_id: string,
+  marfa_id: string,
 ): Promise<HandlerResult> {
-  const externalId = findExternalIdFor(cursor, myme_id);
+  const externalId = findExternalIdFor(cursor, marfa_id);
   if (externalId === null) return { ok: true };
   const path = `${PEOPLE_API_BASE}/${encodeResourceName(externalId)}:deleteContact`;
   const resp = await ctx.marfa.proxyRequest("DELETE", path);

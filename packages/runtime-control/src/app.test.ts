@@ -4,7 +4,7 @@ import type { ControlPlaneEnv } from "./env.js";
 
 const TEST_ENV: ControlPlaneEnv = {
   MARFA_API_URL: "http://localhost:8602",
-  MARFA_RUNTIME_BROKER_KEY: "myme_k1_broker_test",
+  MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker_test",
   ENVIRONMENT: "test",
 };
 
@@ -18,7 +18,7 @@ describe("control plane app — base routes", () => {
       service: "runtime-control",
       version: VERSION,
       environment: "test",
-      myme_api_url_configured: true,
+      marfa_api_url_configured: true,
     });
   });
 
@@ -27,7 +27,7 @@ describe("control plane app — base routes", () => {
     const res = await app.request("/health", { method: "GET" }, {});
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
-      myme_api_url_configured: false,
+      marfa_api_url_configured: false,
       environment: "unknown",
     });
   });

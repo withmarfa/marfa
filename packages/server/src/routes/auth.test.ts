@@ -26,7 +26,7 @@ describe("authentication", () => {
 
   it("returns 401 with invalid key", async () => {
     const res = await request(ctx.app, "GET", "/items", {
-      key: "myme_k1_invalid_key",
+      key: "marfa_k1_invalid_key",
     });
     expect(res.status).toBe(401);
   });

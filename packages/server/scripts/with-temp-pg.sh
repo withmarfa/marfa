@@ -40,7 +40,7 @@ pick_port() {
 PG_PORT="$(pick_port)"
 PG_USER="marfa"
 PG_PASSWORD="marfa"
-PG_DB="myme_schema_dump"
+PG_DB="marfa_schema_dump"
 CONTAINER_NAME="marfa-schema-dump-pg-${PG_PORT}"
 
 cleanup() {

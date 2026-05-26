@@ -163,7 +163,7 @@ try {
   const request = {
     apiUrl: `http://127.0.0.1:${STUB_PORT}`,
     credential: {
-      api_key: "myme_k1_smoke",
+      api_key: "marfa_k1_smoke",
       expires_at: new Date(Date.now() + 60_000).toISOString(),
       connection_id: "smoke-connection-id",
     },

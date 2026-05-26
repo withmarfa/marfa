@@ -111,7 +111,7 @@ describe("POST /auth/oauth2/register (T-158)", () => {
     });
     expect(initRes.status).toBe(200);
     const init = (await initRes.json()) as { device_code: string };
-    expect(init.device_code).toMatch(/^myme_dc_/);
+    expect(init.device_code).toMatch(/^marfa_dc_/);
   });
 
   it("rejects authorization_code grant without redirect_uris", async () => {

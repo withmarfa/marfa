@@ -49,16 +49,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS "idx_bulk_action_jobs_idempotency"
   ON "bulk_action_jobs" ("tenant_id", "idempotency_key")
   WHERE "idempotency_key" IS NOT NULL;
 --> statement-breakpoint
--- T-025 RLS: tenant_isolation policy + myme_app grants. NULL tenant_id
+-- T-025 RLS: tenant_isolation policy + marfa_app grants. NULL tenant_id
 -- is allowed through for platform / bootstrap-admin operations (mirrors
 -- audit_log + items conventions).
-GRANT SELECT, INSERT, UPDATE, DELETE ON "bulk_action_jobs" TO "myme_app";
+GRANT SELECT, INSERT, UPDATE, DELETE ON "bulk_action_jobs" TO "marfa_app";
 --> statement-breakpoint
 ALTER TABLE "bulk_action_jobs" ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 DROP POLICY IF EXISTS "bulk_action_jobs_tenant_isolation" ON "bulk_action_jobs";
 --> statement-breakpoint
 CREATE POLICY "bulk_action_jobs_tenant_isolation" ON "bulk_action_jobs"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);

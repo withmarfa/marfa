@@ -6,7 +6,7 @@ interface HealthResponse {
   service: "runtime-control";
   version: string;
   environment: string;
-  myme_api_url_configured: boolean;
+  marfa_api_url_configured: boolean;
 }
 
 export function registerHealthRoute(
@@ -19,7 +19,7 @@ export function registerHealthRoute(
       service: "runtime-control",
       version,
       environment: c.env.ENVIRONMENT ?? "unknown",
-      myme_api_url_configured: Boolean(c.env.MARFA_API_URL),
+      marfa_api_url_configured: Boolean(c.env.MARFA_API_URL),
     };
     return c.json(body);
   });

@@ -239,7 +239,7 @@ export function eventRoutes(
             // T-146: replay reads `storage.eventLog` — RLS-policy-
             // guarded tables. Install the ALS context so reads flow
             // through the reserved connection that carries
-            // `marfa.tenant_id` + `myme_app` role. The live pumps
+            // `marfa.tenant_id` + `marfa_app` role. The live pumps
             // (`pump` / `pumpEdges`) below don't touch storage —
             // they read from in-memory pubsub iterators — and so
             // don't need the ALS scope.

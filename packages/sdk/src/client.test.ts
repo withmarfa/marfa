@@ -863,7 +863,7 @@ describe("keys", () => {
       role: "member",
     });
     expect(id).toBeTruthy();
-    expect(key).toMatch(/^myme_k1_/);
+    expect(key).toMatch(/^marfa_k1_/);
 
     const keys = await client.keys.list();
     const found = keys.find((k) => k.id === id);
@@ -939,7 +939,7 @@ describe("error handling", () => {
   it("throws UnauthorizedError with bad key", async () => {
     const badClient = new MarfaClient({
       url: "http://localhost",
-      apiKey: "myme_k1_invalid",
+      apiKey: "marfa_k1_invalid",
       fetch: testFetchFn,
     });
 
@@ -1010,7 +1010,7 @@ describe("Extended SDK surface", () => {
       type_permissions: { "*": "write" },
     });
     expect(created.id).toBeTruthy();
-    expect(created.key.startsWith("myme_k1_")).toBe(true);
+    expect(created.key.startsWith("marfa_k1_")).toBe(true);
     expect(created.label).toBe("wave2-sdk-test");
     expect(created.source).toBe("wave2-sdk-test-src");
     expect(created.role).toBe("member");

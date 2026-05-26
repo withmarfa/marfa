@@ -11,7 +11,7 @@ import { hashApiKey, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
-const KEY_PREFIX = "myme_k1_";
+const KEY_PREFIX = "marfa_k1_";
 
 function generateRawKey(): string {
   return KEY_PREFIX + randomBytes(32).toString("hex");

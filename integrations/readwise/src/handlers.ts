@@ -6,8 +6,8 @@
  * Cursor:
  *   {
  *     updated_after: string,                                  // ISO timestamp
- *     book_mappings: Record<readwise_user_book_id, myme_id>,
- *     highlight_mappings: Record<readwise_highlight_id, myme_id>,
+ *     book_mappings: Record<readwise_user_book_id, marfa_id>,
+ *     highlight_mappings: Record<readwise_highlight_id, marfa_id>,
  *     last_inbound_at: string | null
  *   }
  *
@@ -22,8 +22,8 @@
  *      - For each highlight in the book:
  *        - Upsert as `readwise.highlight` with `book_id` set to the
  *          readwise user_book_id for cross-traversal without edge lookup.
- *        - Record a `parent-of` edge from the book's myme_id to the
- *          highlight's myme_id (idempotent — the substrate dedupes).
+ *        - Record a `parent-of` edge from the book's marfa_id to the
+ *          highlight's marfa_id (idempotent — the substrate dedupes).
  *   4. Follow `nextPageCursor` until exhausted.
  *   5. Persist the new `updated_after` (use `now` so the next sweep
  *      narrows to changes since this poll started).

@@ -15,14 +15,14 @@
 -- single-tenant self-hosts (where tenant_id IS NULL on every row)
 -- continue to work transparently when the application-layer never
 -- supplies the GUC. Active only when MARFA_RLS_ENFORCE=true gates the
--- middleware that switches the connection role to myme_app.
+-- middleware that switches the connection role to marfa_app.
 
 ALTER TABLE "inbound_webhooks" ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
 DROP POLICY IF EXISTS "inbound_webhooks_tenant_isolation" ON "inbound_webhooks";
 --> statement-breakpoint
 CREATE POLICY "inbound_webhooks_tenant_isolation" ON "inbound_webhooks"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);
 --> statement-breakpoint
@@ -32,7 +32,7 @@ ALTER TABLE "connection_oauth_tokens" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "connection_oauth_tokens_tenant_isolation" ON "connection_oauth_tokens";
 --> statement-breakpoint
 CREATE POLICY "connection_oauth_tokens_tenant_isolation" ON "connection_oauth_tokens"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);
 --> statement-breakpoint
@@ -42,6 +42,6 @@ ALTER TABLE "connection_leased_tokens" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "connection_leased_tokens_tenant_isolation" ON "connection_leased_tokens";
 --> statement-breakpoint
 CREATE POLICY "connection_leased_tokens_tenant_isolation" ON "connection_leased_tokens"
-  FOR ALL TO "myme_app"
+  FOR ALL TO "marfa_app"
   USING (tenant_id::text = current_setting('marfa.tenant_id', true)
          OR tenant_id IS NULL);
