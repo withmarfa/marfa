@@ -141,7 +141,7 @@ run_migrations() {
     local name="${SERVICE_NAMES[$i]}"
     local url="${SERVICE_DBS[$i]}"
     echo "  Migrating $name DB..."
-    if ! remote "STORAGE_DIALECT=pg DATABASE_URL='$url' pnpm --filter @withmarfa/server migrate"; then
+    if ! remote "DB_DIALECT=pg DATABASE_URL='$url' pnpm --filter @withmarfa/server migrate"; then
       echo -e "  ${RED}$name migration failed${NC}"
       return 1
     fi

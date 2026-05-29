@@ -26,7 +26,7 @@ import {
 import { hashApiKey } from "../middleware/auth.js";
 import { initEventLog } from "../pubsub.js";
 
-const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+const dialect = process.env.DB_DIALECT ?? "sqlite";
 const isPg = dialect === "pg";
 
 async function mintTenantKey(

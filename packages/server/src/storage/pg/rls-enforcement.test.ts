@@ -32,7 +32,7 @@ import {
 import { hashApiKey } from "../../middleware/auth.js";
 import type { PgDb } from "./connection.js";
 
-const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+const dialect = process.env.DB_DIALECT ?? "sqlite";
 const isPg = dialect === "pg";
 
 describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {

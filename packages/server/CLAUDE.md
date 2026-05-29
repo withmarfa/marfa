@@ -420,7 +420,7 @@ Node-bundled integrations substrate. Boots conditionally on `MARFA_INTEGRATION_R
 
 **Trust model.** Fault isolation, not adversarial isolation. Operators trust the integrations they install — same posture as installing an npm package in the host app. For untrusted code, run hosted.
 
-**Substrate requires Postgres.** `MARFA_INTEGRATION_RUNTIME=local` with `STORAGE_DIALECT=sqlite` throws a clear startup error pointing at the PG requirement. SQLite self-hosts must keep `=hosted` until they migrate.
+**Substrate requires Postgres.** `MARFA_INTEGRATION_RUNTIME=local` with `DB_DIALECT=sqlite` throws a clear startup error pointing at the PG requirement. SQLite self-hosts must keep `=hosted` until they migrate.
 
 **Operator footprint.** Two containers — server + Postgres. No Redis, no extra binary, no Postgres extension dependency. pg-boss creates its own `pgboss` schema inside the same Postgres instance the rest of the server already uses.
 

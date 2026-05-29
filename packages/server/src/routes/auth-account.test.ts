@@ -29,7 +29,7 @@ async function readLatestVerification(
   storage: TestContext["storage"],
   prefix: string,
 ): Promise<string | null> {
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   if (dialect === "pg") {
     const pg = storage as unknown as {
       __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
@@ -187,7 +187,7 @@ describe("T-116 — account deletion routes", () => {
 
     // Backdate expiresAt.
     const past = new Date(Date.now() - 60_000);
-    const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+    const dialect = process.env.DB_DIALECT ?? "sqlite";
     if (dialect === "pg") {
       const pg = ctx.storage as unknown as {
         __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
@@ -495,7 +495,7 @@ async function countCancelTokens(
   storage: TestContext["storage"],
   authUserId: string,
 ): Promise<number> {
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   if (dialect === "pg") {
     const pg = storage as unknown as {
       __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
@@ -704,7 +704,7 @@ async function reinsertCancelToken(
   token: string,
   authUserId: string,
 ): Promise<void> {
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const id = randomBytes(16).toString("hex");
   const identifier = `account-cancel:${token}`;
   const expiresAt = new Date(Date.now() + 30 * 86_400_000);
@@ -845,7 +845,7 @@ describe("T-141 — cancel route honesty when cascade wins the race", () => {
     );
     const authUserId = byEmail?.auth_user_id ?? "";
     expect(authUserId).toBeTruthy();
-    const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+    const dialect = process.env.DB_DIALECT ?? "sqlite";
     const nowIso = new Date().toISOString();
     if (dialect === "pg") {
       const pg = ctx.storage as unknown as {

@@ -6,7 +6,7 @@ import { cloneTemplate, type PgTemplateClone } from "./test-template.js";
 // UPDATE SKIP LOCKED RETURNING) depends on MVCC + row locks, which
 // better-sqlite3 doesn't provide. The SQLite store preserves the same
 // claim-forward shape but serialises writes at the process level.
-const isPg = process.env.STORAGE_DIALECT === "pg";
+const isPg = process.env.DB_DIALECT === "pg";
 
 // One template clone for the whole file. Each test opens fresh
 // `createPgStorage` instances against the same clone URL — keeps the

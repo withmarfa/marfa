@@ -84,7 +84,7 @@ export interface StartLocalRuntimeOptions {
  * from T-174 onwards is `"local"`; set the env var explicitly to
  * `"hosted"` to opt out.
  *
- * Throws when `STORAGE_DIALECT=sqlite` is paired with
+ * Throws when `DB_DIALECT=sqlite` is paired with
  * `MARFA_INTEGRATION_RUNTIME=local`: the local substrate requires
  * Postgres (advisory locks + pg-boss schema). SQLite self-host must
  * stay on hosted until they switch to PG.
@@ -96,7 +96,7 @@ export async function tryStartLocalIntegrationRuntime(
   if ((config.integrationRuntime ?? "local") !== "local") return null;
   if (config.storageDialect !== "pg") {
     throw new Error(
-      "MARFA_INTEGRATION_RUNTIME=local requires STORAGE_DIALECT=pg. " +
+      "MARFA_INTEGRATION_RUNTIME=local requires DB_DIALECT=pg. " +
         "SQLite self-hosts must keep MARFA_INTEGRATION_RUNTIME=hosted until they migrate to Postgres.",
     );
   }

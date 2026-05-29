@@ -3,7 +3,7 @@ import { createPgStorage } from "./index.js";
 
 // Postgres-only — advisory locks are a pg feature. SQLite's coordination
 // store is a pass-through by design (single-process per DB file).
-const isPg = process.env.STORAGE_DIALECT === "pg";
+const isPg = process.env.DB_DIALECT === "pg";
 const url = process.env.DATABASE_URL ?? "";
 
 describe.skipIf(!isPg || !url)("pg CoordinationStore", () => {

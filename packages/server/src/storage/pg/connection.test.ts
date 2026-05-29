@@ -3,8 +3,8 @@ import postgres from "postgres";
 import { createConnection } from "./connection.js";
 
 // Postgres-only — runs under `pnpm test:pg` which spins up a throw-away
-// pg17 container and sets STORAGE_DIALECT=pg + DATABASE_URL.
-const isPg = process.env.STORAGE_DIALECT === "pg";
+// pg17 container and sets DB_DIALECT=pg + DATABASE_URL.
+const isPg = process.env.DB_DIALECT === "pg";
 const url = process.env.DATABASE_URL ?? "";
 
 describe.skipIf(!isPg || !url)("pg connection", () => {

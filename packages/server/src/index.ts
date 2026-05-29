@@ -60,7 +60,7 @@ async function main() {
   let storage: Storage;
   if (config.storageDialect === "pg") {
     if (!config.databaseUrl) {
-      throw new Error("DATABASE_URL is required when STORAGE_DIALECT=pg");
+      throw new Error("DATABASE_URL is required when DB_DIALECT=pg");
     }
     storage = await createPgStorage(config.databaseUrl, {
       versionSnapshotIntervalMs: config.versionSnapshotIntervalMs,

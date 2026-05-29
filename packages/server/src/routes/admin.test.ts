@@ -346,7 +346,7 @@ async function seedPendingDeletionUser(
   email: string,
   pendingDeletionAtIso: string,
 ): Promise<string> {
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const userId = `test-pd-user-${Math.random().toString(36).slice(2, 12)}`;
   // PG `auth_user.created_at`/`updated_at` are TIMESTAMP — accept ISO
   // strings via the driver. SQLite same columns are integer({mode:

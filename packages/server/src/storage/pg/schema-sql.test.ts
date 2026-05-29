@@ -19,7 +19,7 @@
  * Runs against a per-file clone of the test template — the clone has the
  * schema baked in from the template's migrations, exactly matching the
  * production "boot against an already-bootstrapped DB" path. Skips when
- * STORAGE_DIALECT is not pg.
+ * DB_DIALECT is not pg.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -27,7 +27,7 @@ import postgres from "postgres";
 import { SCHEMA_SQL } from "./schema-sql.generated.js";
 import { cloneTemplate, type PgTemplateClone } from "./test-template.js";
 
-const isPg = process.env.STORAGE_DIALECT === "pg";
+const isPg = process.env.DB_DIALECT === "pg";
 const describeOrSkip = isPg ? describe : describe.skip;
 
 // One clone for the whole file. Each test opens its own short-lived
