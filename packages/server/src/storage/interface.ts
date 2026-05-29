@@ -678,12 +678,14 @@ export interface UserStore {
     provider: string;
     provider_id: string;
     tenant_id: string;
-    /** Optional: claim a handle at creation time (sign-up flow stamps it
-     *  here; legacy `POST /auth/signup` leaves it null). */
+    /** Optional: claim a handle at creation time. The Better Auth
+     *  sign-up flow (`POST /auth/sign-up/email`) always stamps it; test
+     *  fixtures and admin tooling may leave it null. */
     handle?: string;
     /** Optional: bind to a Better Auth `auth_user.id`. Stamped at sign-up
-     *  time; legacy `POST /auth/signup` leaves it null. T-074: this is the
-     *  canonical bridge between Better Auth identity and the Marfa profile. */
+     *  time by `POST /auth/sign-up/email`. T-074: this is the canonical
+     *  bridge between Better Auth identity and the Marfa profile. Test
+     *  fixtures and admin tooling may leave it null. */
     auth_user_id?: string;
     /** T-178: optional role on creation. No route surfaces this — sign-up
      *  flows default to `member`. Tests and the operator's escape hatch
