@@ -603,15 +603,15 @@ export function createApp(
   });
   // §3.15 note: `info.version` here is the API-contract version (the wire
   // shape exposed under /openapi.json), distinct from the deployed-build
-  // `version` reported on `GET /`. Keep this aligned with @withmarfa/shared
-  // (which defines the wire types) — bump on contract changes, not on
-  // every deploy. The shared package is currently 4.2.x; the API
-  // contract version tracks its major.minor.
+  // `version` reported on `GET /`. Bump on contract changes, not on
+  // every deploy. Contract version was 4.2.0 before this wave; bumped
+  // to 5.0.0 to reflect retirement of legacy `POST /auth/signup` +
+  // `POST /auth/session` and removal of `system.connection.kind: tenant`.
   app.doc("/openapi.json", {
     openapi: "3.1.0",
     info: {
       title: "Marfa API",
-      version: "4.2.0",
+      version: "5.0.0",
       description: "Typed data layer for structured personal data",
     },
   });

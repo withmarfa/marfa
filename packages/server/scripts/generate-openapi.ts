@@ -59,13 +59,14 @@ const app = createApp(storage, blobBackend, config);
 
 // `info.version` here is the API-contract version (the wire shape exposed
 // at /openapi.json), distinct from the deployed-build `version` reported on
-// `GET /`. Bumped on contract changes, not on every deploy. Aligned with
-// @withmarfa/shared (which defines the wire types).
+// `GET /`. Bumped to 5.0.0 in the Phase 2 API-rename wave (retirement of
+// legacy `POST /auth/signup` and removal of `system.connection.kind:
+// tenant`). Keep in lockstep with the duplicate literal in `src/app.ts`.
 const spec = app.getOpenAPIDocument({
   openapi: "3.1.0",
   info: {
     title: "Marfa API",
-    version: "4.2.0",
+    version: "5.0.0",
     description: "Typed data layer for structured personal data",
   },
 });
