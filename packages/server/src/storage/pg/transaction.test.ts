@@ -22,7 +22,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, type TestContext } from "../../test-utils.js";
 
-const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+const dialect = process.env.DB_DIALECT ?? "sqlite";
 const isPg = dialect === "pg";
 
 describe.skipIf(!isPg)("PgStorage.runInTransaction (T-160)", () => {

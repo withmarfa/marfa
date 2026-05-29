@@ -295,7 +295,7 @@ export function loadConfig(): AppConfig {
   const port = envNumber(process.env.PORT, 8600);
   return {
     port,
-    storageDialect: process.env.STORAGE_DIALECT === "pg" ? "pg" : "sqlite",
+    storageDialect: process.env.DB_DIALECT === "pg" ? "pg" : "sqlite",
     sqlitePath: process.env.SQLITE_PATH ?? "./data/marfa.db",
     databaseUrl: process.env.DATABASE_URL ?? "",
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",

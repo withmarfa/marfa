@@ -159,7 +159,7 @@ describe("bootstrap sentinel", () => {
     app: ReturnType<typeof createApp>;
     storage: Storage;
   }> {
-    const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+    const dialect = process.env.DB_DIALECT ?? "sqlite";
     let storage: Storage;
     let blobPath: string;
     if (dialect === "pg") {
@@ -399,13 +399,12 @@ describe("bootstrap sentinel", () => {
 
   // The remaining T-014 assertions exercise SQLite-specific introspection
   // (`__sqliteAll`, `runSqliteMigrations`). The PG side is exercised by the
-  // production server boot path under `STORAGE_DIALECT=pg` (this file's
+  // production server boot path under `DB_DIALECT=pg` (this file's
   // dialect-aware `freshApp` runs the bootstrap path against the PG
   // container) and by the SCHEMA_SQL diff itself; running these specific
   // introspection tests on PG would require parallel PG-flavoured queries
   // for marginal additional coverage.
-  const SKIP_SQLITE_ONLY =
-    (process.env.STORAGE_DIALECT ?? "sqlite") !== "sqlite";
+  const SKIP_SQLITE_ONLY = (process.env.DB_DIALECT ?? "sqlite") !== "sqlite";
 
   it.skipIf(SKIP_SQLITE_ONLY)(
     "bootstrap stamps __drizzle_migrations so a follow-up migrate is a no-op (T-014, sqlite)",

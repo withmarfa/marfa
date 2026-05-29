@@ -16,7 +16,7 @@
  * fixture should produce the same query results across dialects.
  *
  * The suite runs against whichever dialect the test process targets
- * (`STORAGE_DIALECT=sqlite` or `pg`). The CI matrix runs both, so a
+ * (`DB_DIALECT=sqlite` or `pg`). The CI matrix runs both, so a
  * regression in either dialect surfaces as a failed PR check.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";

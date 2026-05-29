@@ -48,7 +48,7 @@ async function seedItemWithUpdatedAt(opts: {
   // Force the updated_at to a contrived value via raw SQL — both dialects
   // expose `__pgClient` / `__sqliteAll` / `__sqliteRun` escape hatches on
   // storage; here we just write directly through the Drizzle internals.
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   if (dialect === "pg") {
     const s = ctx.storage as unknown as {
       __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
@@ -76,7 +76,7 @@ const id = (suffix: string): string =>
  * suppresses trashed rows, so we go straight to the table.
  */
 async function rowExists(itemId: string): Promise<boolean> {
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   if (dialect === "pg") {
     const s = ctx.storage as unknown as {
       __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
@@ -451,7 +451,7 @@ async function seedAuthSession(opts: {
   token: string;
   expiresAt: Date;
 }): Promise<void> {
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const nowIso = new Date().toISOString();
   const expiresIso = opts.expiresAt.toISOString();
   if (dialect === "pg") {
@@ -489,7 +489,7 @@ async function seedAuthSession(opts: {
 }
 
 async function authSessionExists(sessionId: string): Promise<boolean> {
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   if (dialect === "pg") {
     const s = ctx.storage as unknown as {
       __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;

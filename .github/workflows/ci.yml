@@ -240,7 +240,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      STORAGE_DIALECT: pg
+      DB_DIALECT: pg
       DATABASE_URL: postgresql://marfa:marfa@localhost:5432/marfa_test
       # The vitest globalSetup uses MARFA_TEST_PG_ADMIN_URL to CREATE / DROP
       # the test template + per-file clones on the cluster. Points at the
@@ -299,7 +299,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      STORAGE_DIALECT: sqlite
+      DB_DIALECT: sqlite
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -331,7 +331,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      STORAGE_DIALECT: pg
+      DB_DIALECT: pg
       DATABASE_URL: postgresql://marfa:marfa@localhost:5432/marfa_migrate_test
     services:
       postgres:

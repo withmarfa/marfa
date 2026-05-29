@@ -316,7 +316,7 @@ export async function markEmailVerified(
   storage: Storage,
   email: string,
 ): Promise<void> {
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const lower = email.toLowerCase();
   if (dialect === "pg") {
     const pg = storage as unknown as {
@@ -357,7 +357,7 @@ export async function markEmailVerified(
 export async function readLatestResetToken(
   storage: Storage,
 ): Promise<string | null> {
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   if (dialect === "pg") {
     const pg = storage as unknown as {
       __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
@@ -426,7 +426,7 @@ export async function waitForAudit<T>(
 export async function createTestContext(
   overrides?: Partial<AppConfig>,
 ): Promise<TestContext> {
-  const dialect = process.env.STORAGE_DIALECT ?? "sqlite";
+  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
   const blobPath = join(tmpDir, "blobs");
 

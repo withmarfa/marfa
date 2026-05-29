@@ -56,7 +56,7 @@ if (
 ) {
   const dialect = process.argv.includes("--dialect")
     ? (process.argv[process.argv.indexOf("--dialect") + 1] as "pg" | "sqlite")
-    : process.env.STORAGE_DIALECT === "pg"
+    : process.env.DB_DIALECT === "pg"
       ? "pg"
       : "sqlite";
 

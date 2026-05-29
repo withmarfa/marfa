@@ -91,7 +91,7 @@ echo "→ Running server tests (Postgres)"
 #     Required for the per-file template-database lifecycle that replaced
 #     the shared-DB + truncate-on-setup pattern (PR 1 of the May 2026 CI/test
 #     audit). See packages/server/src/storage/pg/test-template.ts.
-STORAGE_DIALECT=pg \
+DB_DIALECT=pg \
   DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/${PG_DB}" \
   MARFA_TEST_PG_ADMIN_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/postgres" \
   pnpm test

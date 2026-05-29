@@ -3,7 +3,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     // Global setup builds the PG template database once per test run
-    // (when STORAGE_DIALECT=pg) and tears it down at the end. Per-file
+    // (when DB_DIALECT=pg) and tears it down at the end. Per-file
     // clones are owned by `createPgTestStorage` in `src/test-utils.ts`.
     // No-op for the sqlite path. See src/storage/pg/test-template.ts
     // for the lifecycle rationale.

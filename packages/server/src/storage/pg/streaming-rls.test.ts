@@ -44,7 +44,7 @@ import postgres from "postgres";
 import { sql } from "drizzle-orm";
 import { acquireStreamRls } from "./streaming-rls.js";
 
-const isPg = process.env.STORAGE_DIALECT === "pg";
+const isPg = process.env.DB_DIALECT === "pg";
 const url = process.env.DATABASE_URL ?? "";
 
 describe.skipIf(!isPg || !url)("streaming-rls cleanup (T-189)", () => {

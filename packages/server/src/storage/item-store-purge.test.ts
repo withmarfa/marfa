@@ -19,7 +19,7 @@ const FIXED_NOW = new Date("2026-04-15T12:00:00.000Z");
 const id = (suffix: string): string =>
   `019d0000-0000-7000-a000-${suffix.padStart(12, "0")}`;
 
-const isPg = (): boolean => (process.env.STORAGE_DIALECT ?? "sqlite") === "pg";
+const isPg = (): boolean => (process.env.DB_DIALECT ?? "sqlite") === "pg";
 
 /**
  * Returns the FTS row count for an item id. Always 0 on Postgres (no FTS

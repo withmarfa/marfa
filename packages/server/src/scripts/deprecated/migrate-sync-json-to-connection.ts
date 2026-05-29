@@ -243,7 +243,7 @@ async function main(): Promise<void> {
   const dialectArg = process.argv.find((a) => a.startsWith("--dialect="));
   const dialect: "sqlite" | "pg" = dialectArg
     ? (dialectArg.slice("--dialect=".length) as "sqlite" | "pg")
-    : process.env.STORAGE_DIALECT === "pg"
+    : process.env.DB_DIALECT === "pg"
       ? "pg"
       : "sqlite";
 
