@@ -872,7 +872,7 @@ const systemActivity: TypeSchema = {
 const systemApp: TypeSchema = {
   id: "system.app",
   label: "App",
-  description: "A registered app identity. Required for `app.<app-name>.<type>` registrations to mean anything — the app name resolves through this record. Lifecycle is bounded to active/revoked. Has no tier.",
+  description: "A registered app identity. Carries the human-readable identity (display name, homepage) for an app whose types live under `app.<name>.<type>`. The wire layer does not require a `system.app` record to exist when a type under `app.<name>.*` registers — these records are advisory metadata for surfacing in connected-apps UIs, not registration prerequisites. Has no tier and no lifecycle status; the row's existence is the activation signal.",
   version: 1,
   fields: {
     name: { type: "string", description: "Stable identifier slug used in app.<name>.<type> registrations", required: true },
