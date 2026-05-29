@@ -1,6 +1,10 @@
 # Marfa
 
-Typed data layer. This monorepo contains eight active workspace packages plus six in-tree Integrations and the Cloudflare infra package:
+Typed data layer. This monorepo contains eight active workspace packages plus six in-tree Integrations and the Cloudflare infra package.
+
+Vault Surface: [[Marfa]] in `~/aic-vault/Projects/marfa-TCC02/Surfaces/Marfa.md` — principle + intent.
+
+Docs MCP convention: when working on documented surfaces (types, edges, runtime substrates), query the docs MCP first rather than re-deriving from source. Lit up in Phase 5 of the docs source wave.
 
 **Core packages (`packages/`):**
 
