@@ -284,7 +284,7 @@ export function createApp(
           // RFC 8628's default 5-second poll interval means a single
           // in-flight device flow burns 12 calls/minute, so 60/min
           // accommodates ~5 concurrent flows without sharing budget
-          // with /auth/token.
+          // with `/auth/oauth2/token`.
           //
           // The per-email throttle on `/auth/forgot-password`
           // (3/hour, in-route) is the inner cap; the per-IP cap
@@ -355,7 +355,7 @@ export function createApp(
   // into authRoutes (the OAuth consent screen consumes its cookie-based
   // getSession to gate `/auth/authorize`). The catch-all `/auth/*` mount
   // is registered AFTER the explicit /auth routes so explicit handlers
-  // win for `/auth/clients`, `/auth/authorize`, `/auth/token`, etc.
+  // win for `/auth/clients`, `/auth/authorize`, `/auth/oauth2/*`, etc.
   //
   // §3.13: the better-auth handles are typed fields on the Storage
   // interface (BetterAuthStorageAdapter trait). No `as` cast needed —

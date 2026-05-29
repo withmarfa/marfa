@@ -554,7 +554,7 @@ export function request(
     /**
      * Form-encoded body (mutually exclusive with `body`). Used by
      * OAuth 2.0 surfaces that must accept `application/x-www-form-urlencoded`
-     * — `/auth/token`, `/auth/authorize` POST, `/auth/device/token`.
+     * — `/auth/oauth2/token`, `/auth/authorize` POST, `/auth/device/token`.
      */
     form?: Record<string, string | string[]>;
     headers?: Record<string, string>;

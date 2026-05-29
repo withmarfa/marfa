@@ -160,7 +160,7 @@ const oauthLastUsedCache = new Map<string, number>();
  *
  * Used by:
  *   - `authMiddleware` for every authenticated bearer-bearing request.
- *   - The `/auth/token` (authorization_code + refresh_token) and
+ *   - The `/auth/oauth2/token` (authorization_code + refresh_token) and
  *     `/auth/device/token` handlers, which issue tokens without
  *     resolving a bearer through the middleware.
  */
