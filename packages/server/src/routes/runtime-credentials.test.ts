@@ -684,11 +684,14 @@ describe("GET /system/connections/:id/dlq-context", () => {
   });
 
   it("returns null integration_name when integration_ref is missing", async () => {
+    // `kind: app` connections (OAuth grants) don't carry `integration_ref`,
+    // so they exercise the same null-integration_name codepath without
+    // needing a synthetic `kind`.
     const conn = await ctx.storage.items.create(
       {
         type: "system.connection",
         properties: {
-          kind: "tenant",
+          kind: "app",
           status: "active",
           granted_at: new Date().toISOString(),
         },
@@ -706,7 +709,7 @@ describe("GET /system/connections/:id/dlq-context", () => {
       kind: string;
       integration_name: string | null;
     };
-    expect(body.kind).toBe("tenant");
+    expect(body.kind).toBe("app");
     expect(body.integration_name).toBeNull();
   });
 });

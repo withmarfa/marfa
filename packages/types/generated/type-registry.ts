@@ -885,10 +885,10 @@ const systemApp: TypeSchema = {
 const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
-  description: "An approved relationship between this Marfa tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorised — workstream 1), `integration` (a hosted/local connector that reads or writes Marfa on the user's behalf — workstream 2), and `tenant` (cross-tenant access — future). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (no client write path in WS2 — runtime executor lands in WS3).",
+  description: "An approved relationship between this Marfa tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorised — workstream 1) and `integration` (a hosted/local connector that reads or writes Marfa on the user's behalf — workstream 2). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (no client write path in WS2 — runtime executor lands in WS3).",
   version: 1,
   fields: {
-    kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "integration", "tenant"] },
+    kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "integration"] },
     client_id: { type: "string", description: "OAuth client identifier (for kind: app)" },
     scopes: { type: "array", description: "Granted scope strings", items_type: "string" },
     status: { type: "enum", description: "Lifecycle status (universal across all kinds)", required: true, enum_values: ["active", "revoked"] },
