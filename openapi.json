@@ -12086,6 +12086,13 @@
                   "oauth_default_scope": {
                     "type": "string",
                     "maxLength": 2048
+                  },
+                  "authorize_extra_params": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "maxLength": 2048
+                    }
                   }
                 },
                 "required": [

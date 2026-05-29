@@ -338,7 +338,7 @@ Defaults (per-minute window per IP):
 | `/auth/forgot-password`     | 5   |
 | `/auth/reset-password`      | 10  |
 | `/auth/verify-email/resend` | 5   |
-| `/auth/token`               | 20  |
+| `/auth/oauth2/token`        | 60  |
 | `/keys`                     | 200 |
 
 Per-email throttle on `/auth/forgot-password` (3/hour, in-route, `auth/per-email-throttle.ts`) sits inside the per-IP cap — bot-net protection on the IP layer, account-protection on the email layer. The window is shared (`config.rateLimitWindowMs`, default 60s) — per-path windows would need a middleware refactor; deferred.
