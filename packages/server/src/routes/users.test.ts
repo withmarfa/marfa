@@ -12,6 +12,7 @@ import type { TestContext } from "../test-utils.js";
 import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 
@@ -20,6 +21,11 @@ const SALT = "test-salt";
 // The default createTestContext() runs in `authMode: "keys"`, where the
 // user-auth routes are not mounted. Happy-path coverage needs a
 // hosted-mode app, built inline here (mirroring tenants.test.ts).
+//
+// Legacy `POST /auth/signup` + `POST /auth/session` retired — Better Auth
+// at `/auth/sign-up/email` is the canonical sign-up surface. Tests below
+// mint user + tenant + admin key directly through storage rather than
+// driving signup as the test-fixture path.
 interface HostedContext {
   app: Hono<AppEnv>;
   storage: Storage;
@@ -105,24 +111,13 @@ interface User {
   tenant_id: string;
   handle?: string | null;
   // T-074: email + avatar_url dropped from `users`; auth_user.email is
-  // canonical. The legacy /auth/signup + /auth/me wire shape no longer
-  // returns email — callers reach for /profile/me (joined to auth_user).
+  // canonical. The /auth/me wire shape no longer returns email — callers
+  // reach for /profile/me (joined to auth_user).
 }
 
 interface Tenant {
   id: string;
   name: string | null;
-}
-
-interface SignupResponse {
-  user: User;
-  tenant: Tenant;
-  api_key: string;
-}
-
-interface SessionResponse {
-  user: User;
-  api_key: string;
 }
 
 interface MeResponse {
@@ -134,16 +129,53 @@ interface ErrorBody {
   error: { code: string };
 }
 
-function uniqueProvider(prefix: string): {
+/**
+ * Mints a user + tenant + admin API key directly through storage —
+ * replaces the legacy `POST /auth/signup` fixture path. Returns the raw
+ * key so tests can authenticate against `/auth/me` and `/auth/me/handle`.
+ */
+async function mintUser(
+  storage: Storage,
+  prefix: string,
+  options: { name?: string } = {},
+): Promise<{
+  user: User;
+  tenant: Tenant;
+  apiKey: string;
   provider: string;
-  provider_account_id: string;
-  email: string;
-} {
+  providerAccountId: string;
+}> {
   const suffix = Math.random().toString(36).slice(2, 10);
+  const provider = "test";
+  const providerAccountId = `${prefix}-${suffix}`;
+  const displayName = options.name ?? `${prefix}-${suffix}@example.com`;
+
+  const tenant = await storage.tenants!.create(displayName);
+  const user = (await storage.users!.create({
+    name: options.name,
+    provider,
+    provider_id: providerAccountId,
+    tenant_id: tenant.id,
+  })) as unknown as User;
+
+  const rawKey = `marfa_k1_test_${prefix}_${suffix}`;
+  await storage.keys.create(
+    {
+      label: "admin",
+      source: "admin",
+      role: "admin",
+      type_permissions: { "*": "write" },
+    },
+    hashApiKey(rawKey, SALT),
+    tenant.id,
+  );
+
   return {
-    provider: "test",
-    provider_account_id: `${prefix}-${suffix}`,
-    email: `${prefix}-${suffix}@example.com`,
+    user,
+    tenant: tenant as unknown as Tenant,
+    apiKey: rawKey,
+    provider,
+    providerAccountId,
   };
 }
 
@@ -162,27 +194,73 @@ describe("User-auth routes — not mounted under authMode=keys", () => {
     await ctx.cleanup();
   });
 
-  it("POST /auth/signup returns 404", async () => {
-    const res = await request(ctx.app, "POST", "/auth/signup", {
+  it("GET /auth/me is not mounted (404)", async () => {
+    // Keys-mode skips the explicit userAuthRoutes mount. The Better Auth
+    // catch-all under /auth/* returns 404 for routes it doesn't own.
+    const res = await request(ctx.app, "GET", "/auth/me");
+    expect(res.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Retired surfaces — `POST /auth/signup` and `POST /auth/session` no
+// longer exist in any mode. Better Auth at `/auth/sign-up/email` is the
+// only sign-up path; sign-in goes through `/auth/sign-in/email`.
+// ---------------------------------------------------------------------------
+
+describe("Retired legacy provider-identity surfaces", () => {
+  let hosted: HostedContext;
+  let keysCtx: TestContext;
+
+  beforeAll(async () => {
+    hosted = await createHostedContext();
+    keysCtx = await createTestContext();
+  });
+
+  afterAll(async () => {
+    await hosted.cleanup();
+    await keysCtx.cleanup();
+  });
+
+  it("POST /auth/signup is gone under authMode=hosted", async () => {
+    const res = await request(hosted.app, "POST", "/auth/signup", {
       body: {
         email: "x@example.com",
         provider: "test",
         provider_account_id: "x",
       },
     });
-    expect(res.status).toBe(404);
+    expect([401, 404]).toContain(res.status);
   });
 
-  it("POST /auth/session returns 404", async () => {
-    const res = await request(ctx.app, "POST", "/auth/session", {
+  it("POST /auth/session is gone under authMode=hosted", async () => {
+    const res = await request(hosted.app, "POST", "/auth/session", {
       body: { provider: "test", provider_account_id: "x" },
     });
-    expect(res.status).toBe(404);
+    expect([401, 404]).toContain(res.status);
+  });
+
+  it("POST /auth/signup is gone under authMode=keys", async () => {
+    const res = await request(keysCtx.app, "POST", "/auth/signup", {
+      body: {
+        email: "x@example.com",
+        provider: "test",
+        provider_account_id: "x",
+      },
+    });
+    expect([401, 404]).toContain(res.status);
+  });
+
+  it("POST /auth/session is gone under authMode=keys", async () => {
+    const res = await request(keysCtx.app, "POST", "/auth/session", {
+      body: { provider: "test", provider_account_id: "x" },
+    });
+    expect([401, 404]).toContain(res.status);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Hosted-mode context: the user-auth routes are mounted.
+// Hosted-mode happy paths against the surviving routes.
 // ---------------------------------------------------------------------------
 
 describe("User-auth routes — authMode=hosted", () => {
@@ -196,85 +274,6 @@ describe("User-auth routes — authMode=hosted", () => {
     await hosted.cleanup();
   });
 
-  describe("POST /auth/signup", () => {
-    it("creates user, tenant, and admin API key (201)", async () => {
-      const ident = uniqueProvider("signup-happy");
-      const res = await request(hosted.app, "POST", "/auth/signup", {
-        body: { ...ident, name: "Happy User" },
-      });
-      expect(res.status).toBe(201);
-      const body = (await res.json()) as SignupResponse;
-      expect(body.user.provider).toBe(ident.provider);
-      expect(body.user.provider_id).toBe(ident.provider_account_id);
-      expect(body.user.tenant_id).toBe(body.tenant.id);
-      expect(body.api_key.startsWith("marfa_k1_")).toBe(true);
-
-      // The returned key should actually authenticate — round-trip via /auth/me.
-      const me = await request(hosted.app, "GET", "/auth/me", {
-        key: body.api_key,
-      });
-      expect(me.status).toBe(200);
-      const meBody = (await me.json()) as MeResponse;
-      expect(meBody.user?.id).toBe(body.user.id);
-      expect(meBody.tenant.id).toBe(body.tenant.id);
-    });
-
-    it("returns 409 on duplicate (provider, provider_account_id)", async () => {
-      const ident = uniqueProvider("signup-dup");
-      const first = await request(hosted.app, "POST", "/auth/signup", {
-        body: ident,
-      });
-      expect(first.status).toBe(201);
-
-      const second = await request(hosted.app, "POST", "/auth/signup", {
-        body: ident,
-      });
-      expect(second.status).toBe(409);
-      const err = (await second.json()) as ErrorBody;
-      expect(err.error.code).toBe("conflict");
-    });
-  });
-
-  describe("POST /auth/session", () => {
-    it("exchanges an existing provider identity for an API key (200)", async () => {
-      const ident = uniqueProvider("session-happy");
-      const signup = await request(hosted.app, "POST", "/auth/signup", {
-        body: ident,
-      });
-      expect(signup.status).toBe(201);
-      const signupBody = (await signup.json()) as SignupResponse;
-
-      const res = await request(hosted.app, "POST", "/auth/session", {
-        body: {
-          provider: ident.provider,
-          provider_account_id: ident.provider_account_id,
-        },
-      });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as SessionResponse;
-      expect(body.user.id).toBe(signupBody.user.id);
-      expect(body.api_key.startsWith("marfa_k1_")).toBe(true);
-
-      // Session key should authenticate too.
-      const me = await request(hosted.app, "GET", "/auth/me", {
-        key: body.api_key,
-      });
-      expect(me.status).toBe(200);
-    });
-
-    it("returns 404 for an unknown provider identity", async () => {
-      const res = await request(hosted.app, "POST", "/auth/session", {
-        body: {
-          provider: "test",
-          provider_account_id: `nobody-${Math.random().toString(36).slice(2)}`,
-        },
-      });
-      expect(res.status).toBe(404);
-      const err = (await res.json()) as ErrorBody;
-      expect(err.error.code).toBe("not_found");
-    });
-  });
-
   describe("GET /auth/me", () => {
     it("rejects unauthenticated requests with 401", async () => {
       const res = await request(hosted.app, "GET", "/auth/me");
@@ -282,20 +281,17 @@ describe("User-auth routes — authMode=hosted", () => {
     });
 
     it("returns user + tenant for the authenticated caller (200)", async () => {
-      const ident = uniqueProvider("me-happy");
-      const signup = await request(hosted.app, "POST", "/auth/signup", {
-        body: { ...ident, name: "Me Test" },
+      const minted = await mintUser(hosted.storage, "me-happy", {
+        name: "Me Test",
       });
-      const signupBody = (await signup.json()) as SignupResponse;
-
       const res = await request(hosted.app, "GET", "/auth/me", {
-        key: signupBody.api_key,
+        key: minted.apiKey,
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as MeResponse;
-      expect(body.user?.id).toBe(signupBody.user.id);
-      expect(body.user?.provider_id).toBe(ident.provider_account_id);
-      expect(body.tenant.id).toBe(signupBody.tenant.id);
+      expect(body.user?.id).toBe(minted.user.id);
+      expect(body.user?.provider_id).toBe(minted.providerAccountId);
+      expect(body.tenant.id).toBe(minted.tenant.id);
     });
   });
 
@@ -308,30 +304,26 @@ describe("User-auth routes — authMode=hosted", () => {
     });
 
     it("claims a valid handle and persists it on the user (200)", async () => {
-      const ident = uniqueProvider("handle-happy");
-      const signup = await request(hosted.app, "POST", "/auth/signup", {
-        body: { ...ident, name: "Handle Test" },
+      const minted = await mintUser(hosted.storage, "handle-happy", {
+        name: "Handle Test",
       });
-      const signupBody = (await signup.json()) as SignupResponse;
 
       const res = await request(hosted.app, "PUT", "/auth/me/handle", {
-        key: signupBody.api_key,
-        body: { handle: ident.provider_account_id },
+        key: minted.apiKey,
+        body: { handle: minted.providerAccountId },
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as { user: User };
-      expect(body.user.handle).toBe(ident.provider_account_id);
+      expect(body.user.handle).toBe(minted.providerAccountId);
     });
 
     it("rejects a reserved brand handle with 400 handle_reserved", async () => {
-      const ident = uniqueProvider("reserved-brand");
-      const signup = await request(hosted.app, "POST", "/auth/signup", {
-        body: { ...ident, name: "Reserved Test" },
+      const minted = await mintUser(hosted.storage, "reserved-brand", {
+        name: "Reserved Test",
       });
-      const signupBody = (await signup.json()) as SignupResponse;
 
       const res = await request(hosted.app, "PUT", "/auth/me/handle", {
-        key: signupBody.api_key,
+        key: minted.apiKey,
         body: { handle: "google" },
       });
       expect(res.status).toBe(400);
@@ -340,14 +332,12 @@ describe("User-auth routes — authMode=hosted", () => {
     });
 
     it("rejects a reserved structural word with 400 handle_reserved", async () => {
-      const ident = uniqueProvider("reserved-struct");
-      const signup = await request(hosted.app, "POST", "/auth/signup", {
-        body: { ...ident, name: "Reserved Test" },
+      const minted = await mintUser(hosted.storage, "reserved-struct", {
+        name: "Reserved Test",
       });
-      const signupBody = (await signup.json()) as SignupResponse;
 
       const res = await request(hosted.app, "PUT", "/auth/me/handle", {
-        key: signupBody.api_key,
+        key: minted.apiKey,
         body: { handle: "admin" },
       });
       expect(res.status).toBe(400);
@@ -356,14 +346,12 @@ describe("User-auth routes — authMode=hosted", () => {
     });
 
     it("rejects a reserved namespace root with 400 handle_reserved", async () => {
-      const ident = uniqueProvider("reserved-root");
-      const signup = await request(hosted.app, "POST", "/auth/signup", {
-        body: { ...ident, name: "Reserved Test" },
+      const minted = await mintUser(hosted.storage, "reserved-root", {
+        name: "Reserved Test",
       });
-      const signupBody = (await signup.json()) as SignupResponse;
 
       const res = await request(hosted.app, "PUT", "/auth/me/handle", {
-        key: signupBody.api_key,
+        key: minted.apiKey,
         body: { handle: "core" },
       });
       expect(res.status).toBe(400);
@@ -372,14 +360,12 @@ describe("User-auth routes — authMode=hosted", () => {
     });
 
     it("rejects a reserved future-namespace handle with 400 handle_reserved", async () => {
-      const ident = uniqueProvider("reserved-sync");
-      const signup = await request(hosted.app, "POST", "/auth/signup", {
-        body: { ...ident, name: "Reserved Test" },
+      const minted = await mintUser(hosted.storage, "reserved-sync", {
+        name: "Reserved Test",
       });
-      const signupBody = (await signup.json()) as SignupResponse;
 
       const res = await request(hosted.app, "PUT", "/auth/me/handle", {
-        key: signupBody.api_key,
+        key: minted.apiKey,
         body: { handle: "sync" },
       });
       expect(res.status).toBe(400);
@@ -388,14 +374,12 @@ describe("User-auth routes — authMode=hosted", () => {
     });
 
     it("rejects a malformed handle with 400 validation_error", async () => {
-      const ident = uniqueProvider("malformed");
-      const signup = await request(hosted.app, "POST", "/auth/signup", {
-        body: { ...ident, name: "Malformed Test" },
+      const minted = await mintUser(hosted.storage, "malformed", {
+        name: "Malformed Test",
       });
-      const signupBody = (await signup.json()) as SignupResponse;
 
       const res = await request(hosted.app, "PUT", "/auth/me/handle", {
-        key: signupBody.api_key,
+        key: minted.apiKey,
         body: { handle: "--abc" },
       });
       expect(res.status).toBe(400);
@@ -404,26 +388,18 @@ describe("User-auth routes — authMode=hosted", () => {
     });
 
     it("rejects an already-claimed handle with 409 conflict", async () => {
-      const a = uniqueProvider("collide-a");
-      const b = uniqueProvider("collide-b");
-      const sa = await request(hosted.app, "POST", "/auth/signup", {
-        body: { ...a, name: "A" },
-      });
-      const sb = await request(hosted.app, "POST", "/auth/signup", {
-        body: { ...b, name: "B" },
-      });
-      const saBody = (await sa.json()) as SignupResponse;
-      const sbBody = (await sb.json()) as SignupResponse;
+      const a = await mintUser(hosted.storage, "collide-a", { name: "A" });
+      const b = await mintUser(hosted.storage, "collide-b", { name: "B" });
 
       const taken = `taken-${Math.random().toString(36).slice(2, 10)}`;
       const claim = await request(hosted.app, "PUT", "/auth/me/handle", {
-        key: saBody.api_key,
+        key: a.apiKey,
         body: { handle: taken },
       });
       expect(claim.status).toBe(200);
 
       const collide = await request(hosted.app, "PUT", "/auth/me/handle", {
-        key: sbBody.api_key,
+        key: b.apiKey,
         body: { handle: taken },
       });
       expect(collide.status).toBe(409);

@@ -513,7 +513,7 @@ export function createApp(
   );
   app.route("/auth", authRoutes(storage, config.apiKeySalt, auth, oidcSigner));
   if (config.authMode === "hosted" && storage.users && storage.tenants) {
-    app.route("/auth", userAuthRoutes(storage, config.apiKeySalt));
+    app.route("/auth", userAuthRoutes(storage));
   }
   // T-116: account-lifecycle routes — initiate / confirm / cancel.
   // Mounted BEFORE the better-auth catch-all so the explicit handlers
