@@ -491,6 +491,21 @@ export interface BulkActionJob {
 }
 
 // ---------------------------------------------------------------------------
+// Secure storage protocol — parallel to the Swift SDK's `SecureStorage`.
+// TS's runtime is heterogeneous (Node, Deno, browser), so the SDK does
+// not bundle a concrete backend; callers wire up file-backed, OS
+// keyring, or in-memory implementations as their environment demands.
+// ---------------------------------------------------------------------------
+
+/** Minimal contract for the credential store consumed by
+ *  `MarfaClient.fromSecureStorage()`. Implementations need only support
+ *  `get(account)`; richer operations belong to the implementing module. */
+export interface SecureStorage {
+  /** Returns the stored API key for `account`, or `null` when absent. */
+  get(account: string): Promise<string | null>;
+}
+
+// ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
 
@@ -513,6 +528,60 @@ export class MarfaClient {
     this.defaultConflictStrategy = config.conflictStrategy ?? "auto";
     this.defaultOnConflictAutoMerge = config.onConflictAutoMerge;
     this.cdnBaseUrl = config.cdnBaseUrl;
+  }
+
+  // -------------------------------------------------------------------------
+  // Static factories — parity with the Swift SDK's
+  // `MarfaClient.fromEnvironment()` / `.fromSecureStorage()`.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Builds a client from process environment variables.
+   *
+   * Reads `MARFA_API_URL` and `MARFA_API_KEY` from `globalThis.process.env`.
+   * Returns `null` if either is missing or empty, or if `process` is not
+   * available (e.g. browser context with no shim) — callers decide how to
+   * fall back.
+   *
+   * Mirrors the Swift SDK's `MarfaClient.fromEnvironment()` shape.
+   */
+  static fromEnvironment(
+    extra: Omit<ClientConfig, "url" | "apiKey" | "tokenProvider"> = {},
+  ): MarfaClient | null {
+    const env = (
+      globalThis as { process?: { env?: Record<string, string | undefined> } }
+    ).process?.env;
+    const url = env?.MARFA_API_URL;
+    const apiKey = env?.MARFA_API_KEY;
+    if (!url || !apiKey) return null;
+    return new MarfaClient({ url, apiKey, ...extra });
+  }
+
+  /**
+   * Builds a client by loading the API key from a `SecureStorage`-shaped
+   * backend. Mirrors the Swift SDK's `MarfaClient.fromSecureStorage()` —
+   * the secret-storage abstraction is protocol-only, so callers can plug
+   * in a file-backed store, an OS keyring binding, or an in-memory mock.
+   *
+   * Throws when the storage does not carry a value for `account`.
+   */
+  static async fromSecureStorage(
+    options: {
+      storage: SecureStorage;
+      account: string;
+      url: string;
+    } & Omit<ClientConfig, "url" | "apiKey" | "tokenProvider">,
+  ): Promise<MarfaClient> {
+    const apiKey = await options.storage.get(options.account);
+    if (!apiKey) {
+      throw new Error(
+        `No API key found in secure storage for account "${options.account}".`,
+      );
+    }
+    const { storage, account, ...rest } = options;
+    void storage;
+    void account;
+    return new MarfaClient({ ...rest, apiKey });
   }
 
   // ---- Items ----

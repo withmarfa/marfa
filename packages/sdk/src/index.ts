@@ -27,6 +27,8 @@ export type {
   CreateWithAttachmentsResult,
   // T-117 — admin keys list response shape.
   TenantApiKeySummary,
+  // SDK parity — credential-loading primitive for `MarfaClient.fromSecureStorage`.
+  SecureStorage,
 } from "./client.js";
 
 // Errors
