@@ -111,8 +111,8 @@ manifest with a `webhook` trigger + a verifier in
 
 ## Validation
 
-The end-to-end validation log against August's Todoist account lives
-on the bottom of [T-241-todoist-integration](https://github.com/withmarfa/marfa/issues?q=T-241)
-in the vault project. The local harness at `_local/validate-todoist.ts`
+The end-to-end validation log against a test Todoist account lives
+on the bottom of [T-241-todoist-integration](https://github.com/withmarfa/marfa/issues?q=T-241).
+The local harness at `_local/validate-todoist.ts`
 drives the production handler code against the real API for both
 directions.

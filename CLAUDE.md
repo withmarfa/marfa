@@ -2,8 +2,6 @@
 
 Typed data layer. This monorepo contains eight active workspace packages plus six in-tree Integrations and the Cloudflare infra package.
 
-Vault Surface: [[Marfa]] in `~/aic-vault/Projects/marfa-TCC02/Surfaces/Marfa.md` — principle + intent.
-
 Docs MCP convention: when working on documented surfaces (types, edges, runtime substrates, connections, auth flows), query the docs MCP at `https://docs.marfa.so/mcp` (or use `marfa docs search "<query>"` from CLI) before re-deriving from source. After changing a public surface, update the relevant docs page in the same PR.
 
 **Core packages (`packages/`):**
