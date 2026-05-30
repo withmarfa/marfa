@@ -196,6 +196,45 @@ describe("POST /auth/oauth2/register (T-158)", () => {
     }
   });
 
+  it("accepts http:// redirect URIs whose origin is in the trusted-origin allowlist", async () => {
+    // A self-hosted browser client served over plain http on a private
+    // network (a LAN host, a Tailscale MagicDNS name) registers a
+    // non-loopback http redirect. The operator opts in by listing the
+    // origin in CORS_ORIGINS; the DCR validator then accepts it.
+    ctx = await createTestContext({
+      authAllowSignup: false,
+      corsOrigins: ["http://aic-atlas:9021"],
+    });
+    const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
+      body: {
+        redirect_uris: ["http://aic-atlas:9021/auth/callback"],
+        grant_types: ["authorization_code"],
+        client_name: "trusted-origin-http",
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.redirect_uris).toEqual(["http://aic-atlas:9021/auth/callback"]);
+  });
+
+  it("still rejects http:// redirect URIs whose origin is not trusted", async () => {
+    // Same shape, but the origin is absent from CORS_ORIGINS — the
+    // exemption must not fire just because some other origin is trusted.
+    ctx = await createTestContext({
+      authAllowSignup: false,
+      corsOrigins: ["http://aic-atlas:9021"],
+    });
+    const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
+      body: {
+        redirect_uris: ["http://evil.example.com/cb"],
+        grant_types: ["authorization_code"],
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.error).toBe("invalid_redirect_uri");
+  });
+
   it("rejects scopes outside the server's allowed set", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {

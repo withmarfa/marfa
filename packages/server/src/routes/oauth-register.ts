@@ -127,17 +127,30 @@ function dcrError(error: string, description: string): DcrError {
 
 /**
  * Validates `redirect_uris` per the plugin's `SafeUrlSchema` semantics
- * (`@better-auth/oauth-provider@1.6.9` `dist/index.mjs:200-225`):
+ * (`@better-auth/oauth-provider@1.6.9` `dist/index.mjs:200-225`), with one
+ * deliberate Marfa widening for self-hosting:
  *
  *   - rejects `javascript:`, `data:`, `vbscript:`
- *   - allows http:// only for loopback hosts (127.0.0.1, ::1, *.localhost)
+ *   - allows http:// for loopback hosts (127.0.0.1, ::1, *.localhost)
+ *   - allows http:// for any origin the operator has explicitly added to
+ *     the instance trusted-origin allowlist (`CORS_ORIGINS`)
  *   - allows custom schemes (mobile apps, `myapp://...`)
  *   - requires https:// otherwise
  *
- * Mirrored here so a third-party SDK that previously hit the plugin's
- * DCR sees identical 400-error rejection messages.
+ * The trusted-origin widening is what lets a self-hosted browser client
+ * served over plain http on a private network — a LAN host, a Tailscale
+ * MagicDNS name — complete the OAuth redirect without a public TLS
+ * endpoint. The operator opts in by listing the client's origin in
+ * `CORS_ORIGINS`; nothing is widened by default. Hosted Marfa lists only
+ * its https web-app origin there, so the http branch never fires for it.
+ *
+ * Otherwise mirrored to the plugin's behaviour so a third-party SDK that
+ * previously hit the plugin's DCR sees identical 400-error shapes.
  */
-function validateRedirectUri(uri: string): string | null {
+function validateRedirectUri(
+  uri: string,
+  trustedOrigins: ReadonlySet<string>,
+): string | null {
   let u: URL;
   try {
     u = new URL(uri);
@@ -148,8 +161,12 @@ function validateRedirectUri(uri: string): string | null {
   if (DANGEROUS.includes(u.protocol)) {
     return "URL cannot use javascript:, data:, or vbscript: scheme";
   }
-  if (u.protocol === "http:" && !isLoopbackHost(u.host)) {
-    return "Redirect URI must use HTTPS (HTTP allowed only for loopback hosts)";
+  if (
+    u.protocol === "http:" &&
+    !isLoopbackHost(u.host) &&
+    !trustedOrigins.has(u.origin)
+  ) {
+    return "Redirect URI must use HTTPS (HTTP allowed only for loopback or trusted origins)";
   }
   return null;
 }
@@ -176,9 +193,13 @@ export function oauthRegisterRoutes(
   storage: Storage,
   oauthProvider: OauthProviderStore,
   auth: MarfaAuth | undefined,
+  trustedRedirectOrigins: readonly string[] = [],
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
   const allowedScopes = new Set(buildAllowedScopes());
+  // Operator-trusted origins (from `CORS_ORIGINS`) that may serve a public
+  // OAuth client over plain http — see `validateRedirectUri`.
+  const trustedOrigins = new Set(trustedRedirectOrigins);
 
   router.post("/oauth2/register", async (c) => {
     // RFC 7591 §3.2.1 — content-type must be JSON for the request body.
@@ -287,7 +308,7 @@ export function oauthRegisterRoutes(
       );
     }
     for (const uri of redirectUris) {
-      const err = validateRedirectUri(uri);
+      const err = validateRedirectUri(uri, trustedOrigins);
       if (err) {
         return c.json(dcrError("invalid_redirect_uri", err), 400);
       }
