@@ -78,9 +78,10 @@ async function main(): Promise<void> {
     const manifestPath = resolve(integrationsRoot, dir, "src/manifest.ts");
     let manifest: Manifest | undefined;
     try {
-      const mod: Record<string, unknown> = await import(
-        pathToFileURL(manifestPath).href
-      );
+      const mod = (await import(pathToFileURL(manifestPath).href)) as Record<
+        string,
+        unknown
+      >;
       manifest = Object.values(mod).find(isManifest);
     } catch (err) {
       console.warn(`skip ${dir}: cannot import manifest (${String(err)})`);
@@ -110,12 +111,14 @@ async function main(): Promise<void> {
     } else {
       failed += 1;
       const body = await res.text();
-      console.error(`FAILED     ${tag} -> ${res.status} ${body.slice(0, 200)}`);
+      console.error(
+        `FAILED     ${tag} -> ${String(res.status)} ${body.slice(0, 200)}`,
+      );
     }
   }
 
   console.log(
-    `\nDone: ${registered} registered, ${existed} already present, ${failed} failed.`,
+    `\nDone: ${String(registered)} registered, ${String(existed)} already present, ${String(failed)} failed.`,
   );
   process.exit(failed > 0 ? 1 : 0);
 }
