@@ -537,7 +537,12 @@ export function createApp(
   if (storage.oauthProvider) {
     app.route(
       "/auth",
-      oauthRegisterRoutes(storage, storage.oauthProvider, auth),
+      oauthRegisterRoutes(
+        storage,
+        storage.oauthProvider,
+        auth,
+        config.corsOrigins,
+      ),
     );
   }
 
