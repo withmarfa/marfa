@@ -108,6 +108,31 @@ describe("Wave C PR2: verify-on-signup flow", () => {
     expect(html).toContain('action="/auth/verify-email/resend"');
   });
 
+  it("derives the return target from a same-origin callbackURL (T-270)", async () => {
+    ctx = await createTestContext();
+    // The verification email link carries `callbackURL` (Better Auth's
+    // param), not `return_to`. A same-origin callbackURL is normalised to a
+    // relative return target so the Continue link carries the user onward.
+    const ok = await request(
+      ctx.app,
+      "GET",
+      "/auth/verify-email?email=a%40b.com&callbackURL=%2Fauth%2Fauthorize%3Fclient_id%3Dabc",
+      { headers: { origin: ORIGIN } },
+    );
+    expect(await ok.text()).toContain(
+      'name="return_to" value="/auth/authorize?client_id=abc"',
+    );
+
+    // An off-origin callbackURL is rejected — falls back to "/".
+    const evil = await request(
+      ctx.app,
+      "GET",
+      "/auth/verify-email?email=a%40b.com&callbackURL=https%3A%2F%2Fevil.example%2Fx",
+      { headers: { origin: ORIGIN } },
+    );
+    expect(await evil.text()).toContain('name="return_to" value="/"');
+  });
+
   it("GET /auth/verify-email?sent=1 renders the resent state", async () => {
     ctx = await createTestContext();
     const res = await request(

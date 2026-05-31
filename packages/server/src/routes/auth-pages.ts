@@ -942,7 +942,28 @@ export function authRoutes(
     const url = new URL(c.req.url);
     const token = url.searchParams.get("token");
     const email = url.searchParams.get("email");
-    const returnTo = validateReturnTo(url.searchParams.get("return_to"));
+    // The verification email's link carries the post-verify target as
+    // `callbackURL` (Better Auth's param — an absolute, same-origin URL such
+    // as the OAuth authorize endpoint); our own redirects use `return_to`
+    // (relative). Accept either, normalising a same-origin callbackURL down
+    // to a relative path so the success page's Continue link carries the user
+    // onward (e.g. back into the OAuth flow and on to the app) rather than to
+    // the API root at `/`.
+    const callbackParam = url.searchParams.get("callbackURL");
+    let callbackReturnTo: string | null = null;
+    if (callbackParam) {
+      try {
+        const cb = new URL(callbackParam, auth.baseURL);
+        if (cb.origin === new URL(auth.baseURL).origin) {
+          callbackReturnTo = `${cb.pathname}${cb.search}`;
+        }
+      } catch {
+        callbackReturnTo = null;
+      }
+    }
+    const returnTo = validateReturnTo(
+      url.searchParams.get("return_to") ?? callbackReturnTo,
+    );
     const sent = url.searchParams.get("sent");
     setNoStore(c);
 
