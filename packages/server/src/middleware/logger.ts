@@ -1,5 +1,7 @@
 import { createMiddleware } from "hono/factory";
 import { generateId } from "@withmarfa/shared";
+import { logs, SeverityNumber } from "@opentelemetry/api-logs";
+import type { AnyValue, AnyValueMap } from "@opentelemetry/api-logs";
 import type { AppEnv } from "./auth.js";
 
 // ---------------------------------------------------------------------------
@@ -54,6 +56,34 @@ export function resolveRequestId(incomingHeader: string | undefined): string {
 
 type LogLevel = "info" | "warn" | "error";
 
+const LEVEL_TO_SEVERITY: Record<LogLevel, SeverityNumber> = {
+  info: SeverityNumber.INFO,
+  warn: SeverityNumber.WARN,
+  error: SeverityNumber.ERROR,
+};
+
+/**
+ * T-275: mirror a log line to the OpenTelemetry logs pipeline. A pure no-op
+ * unless a global `LoggerProvider` is registered by `instrumentation.ts`
+ * (i.e. only when `MARFA_OTEL_ENABLED=true` with a logs endpoint). The OTLP
+ * log exporter ships these to PostHog in hosted mode. PII redaction runs in
+ * the `PiiRedactionLogRecordProcessor` before export; the `log()` body /
+ * request line is Marfa-controlled and safe.
+ */
+function emitOtelLog(
+  level: LogLevel,
+  body: string,
+  attributes: Record<string, unknown>,
+): void {
+  logs.getLogger("marfa-server").emit({
+    severityNumber: LEVEL_TO_SEVERITY[level],
+    severityText: level.toUpperCase(),
+    body,
+    attributes: attributes as Record<string, AnyValue> satisfies AnyValueMap,
+    timestamp: new Date(),
+  });
+}
+
 export function log(
   level: LogLevel,
   message: string,
@@ -66,6 +96,7 @@ export function log(
     ...data,
   };
   process.stdout.write(JSON.stringify(entry) + "\n");
+  emitOtelLog(level, message, data ?? {});
 }
 
 // ---------------------------------------------------------------------------
@@ -101,5 +132,11 @@ export function loggerMiddleware() {
     }
 
     process.stdout.write(JSON.stringify(entry) + "\n");
+
+    // T-275: mirror to OTel logs (no-op unless a LoggerProvider is
+    // registered). Severity tracks the response status.
+    const level: LogLevel =
+      entry.status >= 500 ? "error" : entry.status >= 400 ? "warn" : "info";
+    emitOtelLog(level, `${entry.method} ${entry.path}`, { ...entry });
   });
 }

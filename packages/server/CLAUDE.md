@@ -389,6 +389,26 @@ Reserved namespaces are documented here so accidental general-purpose use ("just
 
 `connection.properties.configuration.upstream_base_url_override` is a per-connection knob the connection-proxy consults before falling back to the credential's `upstream_base_url`. Lets multiple integrations sharing one OAuth credential target different upstream hosts — e.g. `google.contacts` on `people.googleapis.com` while `google.calendar` / `drive` / `tasks` use the same credential row pointing at `www.googleapis.com`. Per-connection rather than per-credential because the override is part of the install-time decision, not the credential's identity. Malformed values (not parseable as a URL) fail loud with `OAUTH_PROXY_UPSTREAM_INVALID` rather than silently routing to the credential's host. Trust model is unchanged from the broader proxy gate — only tenant-admin can install / configure a connection.
 
+## OpenTelemetry (T-275)
+
+Vendor-neutral OTel for traces + logs, **off by default**. Self-host opts in; hosted Marfa sets `MARFA_OTEL_ENABLED=true`.
+
+**Launch requirement.** The bootstrap (`src/instrumentation.ts`, built to `dist/instrumentation.js`) MUST be loaded via Node `--import`, not a normal import — HTTP auto-instrumentation has to patch `node:http` before the app's modules load, and ESM hoists imports. Dev runs it via `tsx --import ./src/instrumentation.ts`; production runs `node --import ./dist/instrumentation.js dist/index.js`. Importing it from `index.ts` would be too late. When `MARFA_OTEL_ENABLED!=="true"` the bootstrap returns before loading any SDK module — a true no-op.
+
+**Config** (read directly from env by the bootstrap; mirrored into `AppConfig` for the rest of the server). Standard `OTEL_EXPORTER_OTLP_*` vars carry endpoint + headers; `MARFA_OTEL_*` carries policy:
+
+- `MARFA_OTEL_ENABLED` — master toggle (default off).
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` — per-signal targets. Each pipeline is built only when its endpoint is set, so hosted test mode (logs → PostHog, no trace store) ships logs without exporting traces.
+- `OTEL_EXPORTER_OTLP_HEADERS` — `k=v,k2=v2` (e.g. `Authorization=Bearer <token>`).
+- `MARFA_OTEL_SAMPLE_RATIO` — baseline trace sampling (default 0.05). Errors export at 100% regardless.
+- `OTEL_SERVICE_NAME` — resource service name (default `marfa-server`).
+
+**Sampling (5% + 100% on errors).** Head sampling can't see a future error, so the SDK records every span (`AlwaysOnSampler`) and an `ErrorBucketFilterSpanProcessor` (`src/otel/error-aware-sampler.ts`) gates _export_ at span end: error / 5xx spans always export, others export only if the trace id falls in the deterministic baseline bucket. Per-trace, stateless, stable across instances.
+
+**PII discipline.** `src/otel/redaction.ts` strips a denylist of sensitive attribute keys and redacts substring matches before export, in a processor registered ahead of the exporter. Header capture is off by default. The denylist is unit-tested (`redaction.test.ts`) — a denied key that survives fails the build.
+
+**Logs.** `log()` and the request logger (`middleware/logger.ts`) mirror to the OTel logs pipeline via `@opentelemetry/api-logs` (no-op unless a `LoggerProvider` is registered). Hosted points the logs exporter at PostHog (`/i/v1/logs`); PostHog has no general-trace store, so traces target a generic OTLP collector if one is wanted. `index.ts`'s graceful shutdown awaits `globalThis.__marfaOtelShutdown` so the final batch flushes before exit (matters on the ephemeral hosted container).
+
 ## Tests
 
 `pnpm test` from the monorepo root, or `pnpm test:fresh-sqlite` / `pnpm test:pg` for the dialect matrices. Integration tests use `createTestContext()` from `src/test-utils.ts` — boots an in-process app against a `:memory:` SQLite or a throw-away `postgres:17` container.

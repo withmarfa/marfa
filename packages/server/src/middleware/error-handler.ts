@@ -1,5 +1,6 @@
 import type { ErrorHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
 import { notifyError } from "./error-notifier.js";
@@ -117,6 +118,15 @@ export function createErrorHandler(config: {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
+
+    // T-275: record the exception on the active OTel span and mark it
+    // errored, so it always exports (the error-aware sampler forces 100%
+    // on errors). API-only + null-guarded — a pure no-op when OTel is off.
+    const span = trace.getActiveSpan();
+    if (span) {
+      if (err instanceof Error) span.recordException(err);
+      span.setStatus({ code: SpanStatusCode.ERROR });
+    }
 
     if (config.errorWebhookUrl) {
       notifyError(
