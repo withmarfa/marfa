@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+#
+# Set the secrets for the Marfa server Container Worker (T-277). Mirrors
+# init-integration-worker-secrets.sh. The Worker must already exist (deploy
+# once first); after setting secrets, re-run the deploy so the container
+# restarts and picks them up as process env (envVars reads `env` at launch).
+#
+# Usage:
+#   ./infra/cloudflare/scripts/init-server-container-secrets.sh <staging|prod>
+#
+# Reads values from the calling shell's environment (source your per-machine
+# secrets file first). Secret slots use consumer-scoped names; the source env
+# vars carry the *_MARFA developer suffix.
+#
+#   DATABASE_URL                <- NEON_DATABASE_URL_POOLED_MARFA  (pooled app conn)
+#   MARFA_AUTH_SECRET           <- MARFA_SERVER_AUTH_SECRET        (stable; generated if unset)
+#   API_KEY_SALT                <- MARFA_SERVER_API_KEY_SALT       (stable; generated if unset)
+#   CLOUDFLARE_EMAIL_API_TOKEN  <- CLOUDFLARE_API_TOKEN_MARFA
+#   OTEL_EXPORTER_OTLP_HEADERS  <- "Authorization=Bearer $POSTHOG_PROJECT_KEY_MARFA"
+# Optional (set only when the source var is present):
+#   CLOUDFLARE_QUEUES_API_TOKEN <- CLOUDFLARE_API_TOKEN_MARFA      (only if MARFA_SET_QUEUES=1)
+#   CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS <- CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS
+#   MARFA_RUNTIME_BROKER_KEY    <- MARFA_RUNTIME_BROKER_KEY
+#   S3_ACCESS_KEY_ID            <- R2_ACCESS_KEY_ID                (R2 S3-API creds)
+#   S3_SECRET_ACCESS_KEY        <- R2_SECRET_ACCESS_KEY
+#
+# Generated auth secret/salt are PRINTED once — persist them (e.g. into the
+# per-machine secrets file as MARFA_SERVER_AUTH_SECRET / MARFA_SERVER_API_KEY_SALT)
+# so re-runs don't rotate them (rotating API_KEY_SALT invalidates every key).
+
+set -euo pipefail
+
+ENV_NAME="${1:-}"
+if [[ "$ENV_NAME" != "staging" && "$ENV_NAME" != "prod" ]]; then
+  echo "Usage: $0 <staging|prod>" >&2
+  exit 1
+fi
+if [[ "$ENV_NAME" == "staging" ]]; then
+  WORKER="marfa-server-staging"
+else
+  WORKER="marfa-server"
+fi
+
+put_secret() { # name value
+  local name="$1" value="$2"
+  if [[ -z "$value" ]]; then
+    echo "  – skip $name (source empty)"
+    return
+  fi
+  printf '%s' "$value" | wrangler secret put "$name" --name "$WORKER" >/dev/null
+  echo "  ✓ set $name"
+}
+
+: "${NEON_DATABASE_URL_POOLED_MARFA:?set NEON_DATABASE_URL_POOLED_MARFA}"
+: "${CLOUDFLARE_API_TOKEN_MARFA:?set CLOUDFLARE_API_TOKEN_MARFA}"
+: "${POSTHOG_PROJECT_KEY_MARFA:?set POSTHOG_PROJECT_KEY_MARFA}"
+
+AUTH_SECRET="${MARFA_SERVER_AUTH_SECRET:-}"
+SALT="${MARFA_SERVER_API_KEY_SALT:-}"
+if [[ -z "$AUTH_SECRET" ]]; then AUTH_SECRET="$(openssl rand -hex 32)"; GEN_AUTH=1; fi
+if [[ -z "$SALT" ]]; then SALT="$(openssl rand -hex 32)"; GEN_SALT=1; fi
+
+echo "→ Setting secrets on $WORKER"
+put_secret DATABASE_URL "$NEON_DATABASE_URL_POOLED_MARFA"
+put_secret MARFA_AUTH_SECRET "$AUTH_SECRET"
+put_secret API_KEY_SALT "$SALT"
+put_secret CLOUDFLARE_EMAIL_API_TOKEN "$CLOUDFLARE_API_TOKEN_MARFA"
+put_secret OTEL_EXPORTER_OTLP_HEADERS "Authorization=Bearer ${POSTHOG_PROJECT_KEY_MARFA}"
+
+# Optional — reactive runs / schedule arming / R2 blobs.
+if [[ "${MARFA_SET_QUEUES:-}" == "1" ]]; then
+  put_secret CLOUDFLARE_QUEUES_API_TOKEN "$CLOUDFLARE_API_TOKEN_MARFA"
+  put_secret CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS "${CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS:-}"
+fi
+put_secret MARFA_RUNTIME_BROKER_KEY "${MARFA_RUNTIME_BROKER_KEY:-}"
+put_secret S3_ACCESS_KEY_ID "${R2_ACCESS_KEY_ID:-}"
+put_secret S3_SECRET_ACCESS_KEY "${R2_SECRET_ACCESS_KEY:-}"
+
+if [[ "${GEN_AUTH:-}" == "1" || "${GEN_SALT:-}" == "1" ]]; then
+  echo ""
+  echo "⚠ Generated secret(s) — persist these so re-runs don't rotate them:"
+  [[ "${GEN_AUTH:-}" == "1" ]] && echo "  MARFA_SERVER_AUTH_SECRET=$AUTH_SECRET"
+  [[ "${GEN_SALT:-}" == "1" ]] && echo "  MARFA_SERVER_API_KEY_SALT=$SALT"
+  echo "(rotating API_KEY_SALT invalidates every API key.)"
+fi
+
+echo "→ Done. Re-run deploy-server-container.sh $ENV_NAME so the container restarts with these."

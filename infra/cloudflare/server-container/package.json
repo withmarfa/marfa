@@ -1,0 +1,18 @@
+{
+  "name": "@withmarfa/server-container",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker front + Container Durable Object for the hosted Marfa server (T-277).",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.3.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260501.0",
+    "typescript": "^6.0.2",
+    "wrangler": "^4.94.0"
+  }
+}
