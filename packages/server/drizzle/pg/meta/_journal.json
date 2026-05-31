@@ -442,6 +442,13 @@
       "when": 1779638407000,
       "tag": "0062_t224_naming",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1780220788633,
+      "tag": "0063_auth_user_rls",
+      "breakpoints": true
     }
   ]
 }

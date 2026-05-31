@@ -1370,6 +1370,13 @@ ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS audit_log_tenant_isolation ON public.audit_log;
 CREATE POLICY audit_log_tenant_isolation ON public.audit_log TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
 
+ALTER TABLE public.auth_user ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS auth_user_self ON public.auth_user;
+CREATE POLICY auth_user_self ON public.auth_user FOR SELECT TO marfa_app USING ((id IN ( SELECT users.auth_user_id
+   FROM public.users
+  WHERE (users.tenant_id = current_setting('marfa.tenant_id'::text, true)))));
+
 ALTER TABLE public.blobs ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS blobs_tenant_isolation ON public.blobs;
@@ -1445,5 +1452,6 @@ CREATE POLICY versions_tenant_isolation ON public.versions TO marfa_app USING ((
 -- \`public.\` prefix, and grants must match the qualified table for
 -- non-default search_paths (e.g. test schemas) to apply correctly.
 GRANT DELETE, INSERT, SELECT, UPDATE ON "public"."api_keys", "public"."audit_log", "public"."blobs", "public"."bulk_action_jobs", "public"."connection_leased_tokens", "public"."connection_oauth_tokens", "public"."custom_edge_types", "public"."custom_types", "public"."edges", "public"."event_log", "public"."inbound_webhook_events", "public"."inbound_webhooks", "public"."items", "public"."metadata", "public"."oauth_device_codes", "public"."outbound_webhook_deliveries", "public"."outbound_webhooks", "public"."rate_limit_windows", "public"."settings", "public"."tenant_quotas", "public"."tenants", "public"."users", "public"."versions" TO "marfa_app";
+GRANT SELECT ON "public"."auth_user" TO "marfa_app";
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "marfa_app";
 `;
