@@ -410,6 +410,19 @@ async function main() {
     server.close(() => {
       storage
         .close()
+        // T-275: flush + shut down OpenTelemetry before exit so the final
+        // batch of logs/traces isn't lost on the ephemeral hosted container
+        // (scale-to-zero SIGTERM). No-op when OTel is disabled. Accessed via
+        // an inline cast rather than the ambient `declare global` so the
+        // per-entry .d.ts build (which doesn't see instrumentation.ts's
+        // augmentation) stays typed.
+        .then(() =>
+          (
+            globalThis as {
+              __marfaOtelShutdown?: () => Promise<void>;
+            }
+          ).__marfaOtelShutdown?.(),
+        )
         .then(() => process.exit(0))
         .catch(() => process.exit(1));
     });

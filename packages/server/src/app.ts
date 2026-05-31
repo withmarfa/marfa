@@ -65,6 +65,7 @@ import { accountDeletionGuardMiddleware } from "./middleware/account-deletion-gu
 import { authAccountRoutes } from "./routes/auth-account.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
 import { loggerMiddleware } from "./middleware/logger.js";
+import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
 import { rlsTenantContextMiddleware } from "./middleware/rls-tenant-context.js";
 import type { PgClient, PgDb } from "./storage/pg/connection.js";
 import { healthRoutes } from "./routes/health.js";
@@ -103,6 +104,11 @@ export function createApp(
 
   // Structured logging (wraps entire request lifecycle)
   app.use("*", loggerMiddleware());
+
+  // T-275: stamp request_id / key_id / tenant_id onto the active OTel span
+  // and mark 5xx as span errors. Pure no-op when OpenTelemetry is disabled
+  // (no active span). After the logger so `requestId` is already set.
+  app.use("*", otelCorrelationMiddleware());
 
   // CORS — explicit origins from config, plus any localhost/127.0.0.1 origin automatically
   if (config.corsOrigins.length > 0) {

@@ -223,6 +223,38 @@ export interface AppConfig {
    * `"local"` fallback.
    */
   integrationRuntime?: "hosted" | "local";
+  /**
+   * OpenTelemetry (T-275). The instrumentation bootstrap
+   * (`src/instrumentation.ts`) reads its toggle + exporter config from the
+   * environment directly because it must run before `loadConfig` (and
+   * before any instrumented module loads). These fields exist so the rest
+   * of the server can read the *resolved* OTel config from the single
+   * config source — they are NOT the wiring path for the SDK itself.
+   *
+   * Default OFF. "On for hosted" is a deploy-config fact (the hosted
+   * container sets `MARFA_OTEL_ENABLED=true`), not a code default — safer
+   * for self-hosters, consistent with how `emailBackend` / `integrationRuntime`
+   * default to the inert value. Standard `OTEL_EXPORTER_OTLP_*` env vars are
+   * honored directly for endpoint + headers (operators expect them; PostHog's
+   * own docs hand out exactly these names); `MARFA_OTEL_*` carries Marfa
+   * policy (toggle, sampling). Optional on the type so `AppConfig` literals
+   * in tests keep compiling.
+   */
+  otelEnabled?: boolean;
+  otelServiceName?: string;
+  /** OTLP traces endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`). Empty in
+   *  hosted test mode — the trace pipeline is built but points at no store;
+   *  PostHog has no general-trace ingest (only logs + errors). */
+  otelTracesEndpoint?: string;
+  /** OTLP logs endpoint (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`). Hosted points
+   *  this at PostHog's `https://eu.i.posthog.com/i/v1/logs`. */
+  otelLogsEndpoint?: string;
+  /** Exporter headers parsed from `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k2=v2`).
+   *  Carries e.g. `Authorization=Bearer <phc_...>` for PostHog. */
+  otelHeaders?: Record<string, string>;
+  /** Baseline trace sample ratio (`MARFA_OTEL_SAMPLE_RATIO`, default 0.05).
+   *  Errors export at 100% regardless — see `otel/error-aware-sampler.ts`. */
+  otelSampleRatio?: number;
 }
 
 export interface OidcProviderConfig {
@@ -271,6 +303,52 @@ export function parseEventLogRetentionHours(raw: string | undefined): number {
     return DEFAULT_EVENT_LOG_RETENTION_HOURS;
   }
   return parsed;
+}
+
+const DEFAULT_OTEL_SAMPLE_RATIO = 0.05;
+
+/**
+ * Parses `MARFA_OTEL_SAMPLE_RATIO` — the baseline head-sampling ratio for
+ * traces. Unset → default (0.05). Out-of-range or unparseable values warn
+ * and clamp into [0, 1] (or fall back to the default), mirroring the
+ * fail-soft stance of `parseEventLogRetentionHours`. Exported for unit
+ * testing. Errors always export at 100% regardless of this ratio — see
+ * `otel/error-aware-sampler.ts`.
+ */
+export function parseOtelSampleRatio(raw: string | undefined): number {
+  if (raw === undefined || raw === "") return DEFAULT_OTEL_SAMPLE_RATIO;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    console.warn(
+      `Invalid MARFA_OTEL_SAMPLE_RATIO=${raw}, falling back to ${String(DEFAULT_OTEL_SAMPLE_RATIO)}`,
+    );
+    return DEFAULT_OTEL_SAMPLE_RATIO;
+  }
+  if (parsed < 0) return 0;
+  if (parsed > 1) return 1;
+  return parsed;
+}
+
+/**
+ * Parses the OTLP exporter headers env var (`OTEL_EXPORTER_OTLP_HEADERS`),
+ * a comma-separated list of `key=value` pairs per the OTLP exporter spec
+ * (e.g. `Authorization=Bearer abc123,X-Tenant=acme`). Whitespace around
+ * keys/values is trimmed; the value may itself contain `=` (split on the
+ * first only). Malformed entries are skipped. Exported for unit testing.
+ */
+export function parseOtelHeaders(
+  raw: string | undefined,
+): Record<string, string> {
+  if (!raw) return {};
+  const out: Record<string, string> = {};
+  for (const pair of raw.split(",")) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) continue;
+    const key = pair.slice(0, eq).trim();
+    const value = pair.slice(eq + 1).trim();
+    if (key) out[key] = value;
+  }
+  return out;
 }
 
 export function loadConfig(): AppConfig {
@@ -418,6 +496,21 @@ export function loadConfig(): AppConfig {
     integrationRuntime: parseIntegrationRuntime(
       process.env.MARFA_INTEGRATION_RUNTIME,
     ),
+    otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
+    otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
+    otelTracesEndpoint:
+      process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??
+      "",
+    otelLogsEndpoint:
+      process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ??
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??
+      "",
+    otelHeaders: parseOtelHeaders(
+      process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS ??
+        process.env.OTEL_EXPORTER_OTLP_HEADERS,
+    ),
+    otelSampleRatio: parseOtelSampleRatio(process.env.MARFA_OTEL_SAMPLE_RATIO),
   };
 }
 

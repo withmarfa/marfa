@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { envNumber } from "./config.js";
+import { envNumber, parseOtelSampleRatio, parseOtelHeaders } from "./config.js";
 
 /**
  * §3.16 — `Number(env) || default` swallows zero. The canonical pattern
@@ -34,5 +34,51 @@ describe("envNumber (§3.16 zero-safe env reader)", () => {
   it("parses well-formed integers and floats", () => {
     expect(envNumber("42", 0)).toBe(42);
     expect(envNumber("3.14", 0)).toBeCloseTo(3.14);
+  });
+});
+
+describe("parseOtelSampleRatio (T-275)", () => {
+  it("defaults to 0.05 when unset or empty", () => {
+    expect(parseOtelSampleRatio(undefined)).toBe(0.05);
+    expect(parseOtelSampleRatio("")).toBe(0.05);
+  });
+
+  it("honors a valid in-range ratio", () => {
+    expect(parseOtelSampleRatio("0.25")).toBe(0.25);
+    expect(parseOtelSampleRatio("1")).toBe(1);
+    expect(parseOtelSampleRatio("0")).toBe(0);
+  });
+
+  it("clamps out-of-range values into [0, 1]", () => {
+    expect(parseOtelSampleRatio("5")).toBe(1);
+    expect(parseOtelSampleRatio("-0.5")).toBe(0);
+  });
+
+  it("falls back to the default on unparseable input", () => {
+    expect(parseOtelSampleRatio("nope")).toBe(0.05);
+  });
+});
+
+describe("parseOtelHeaders (T-275)", () => {
+  it("returns an empty object when unset", () => {
+    expect(parseOtelHeaders(undefined)).toEqual({});
+    expect(parseOtelHeaders("")).toEqual({});
+  });
+
+  it("parses comma-separated key=value pairs and trims whitespace", () => {
+    expect(parseOtelHeaders("X-A=1, X-B = 2")).toEqual({
+      "X-A": "1",
+      "X-B": "2",
+    });
+  });
+
+  it("keeps '=' inside a value (splits on the first only)", () => {
+    expect(parseOtelHeaders("Authorization=Bearer abc=def")).toEqual({
+      Authorization: "Bearer abc=def",
+    });
+  });
+
+  it("skips malformed entries", () => {
+    expect(parseOtelHeaders("=novalue,good=ok,nokey")).toEqual({ good: "ok" });
   });
 });
