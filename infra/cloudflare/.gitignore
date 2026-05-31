@@ -2,3 +2,4 @@
 # but if the trap is bypassed (Ctrl-C window, hard kill) the rendered
 # toml shouldn't accidentally end up committed.
 .wrangler.control.rendered.toml
+.wrangler.rendered.jsonc

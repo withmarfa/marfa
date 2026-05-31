@@ -13,6 +13,10 @@ openapi.json
 packages/types/integration-manifest-schema.json
 # Lockfile — owned by pnpm, not Prettier.
 pnpm-lock.yaml
+# Templated wrangler config (T-277) — carries `${VAR}` envsubst tokens that
+# aren't valid JSONC until rendered by deploy-server-container.sh.
+infra/cloudflare/server-container/wrangler.jsonc
+**/.wrangler.rendered.jsonc
 # Global scratch folders (per ~/.gitignore_global). Matches the same set
 # eslint.config.js ignores — harnesses, captures, throwaway files that
 # sit in the repo tree but aren't part of source.

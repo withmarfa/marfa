@@ -1,0 +1,87 @@
+# Build + deploy the Marfa server to Cloudflare Containers (T-277).
+#
+# Split design: the slow, arch-sensitive image build runs on the self-hosted
+# Apple-Silicon runner (free; cross-compiles to linux/amd64 via buildx), pushes
+# to Cloudflare's managed registry; the fast bind+deploy runs on a GitHub-hosted
+# Linux runner referencing the pushed image by tag.
+#
+# Manual trigger only — this is the riskiest deploy. Runtime secrets
+# (DATABASE_URL, MARFA_AUTH_SECRET, ...) are set out-of-band via
+# infra/cloudflare/scripts/init-server-container-secrets.sh and persist on the
+# Worker; this workflow does not handle them.
+#
+# Required GitHub config (org or repo):
+#   secrets.CLOUDFLARE_API_TOKEN      marfa-account token (CLOUDFLARE_API_TOKEN_MARFA)
+#   secrets.CLOUDFLARE_ACCOUNT_ID     marfa account id
+#   vars.STAGING_WORKERS_SUBDOMAIN    account workers.dev subdomain (staging auth base URL)
+#
+# The self-hosted runner must be enabled (gh-runner enable) for the build job.
+
+name: Deploy server container
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, prod]
+        default: staging
+
+concurrency:
+  group: deploy-server-container-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build-push:
+    runs-on: [self-hosted, macOS, ARM64]
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: echo "tag=${ENVIRONMENT}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Build linux/amd64 image
+        run: |
+          docker buildx build --platform linux/amd64 \
+            -f packages/server/Dockerfile \
+            --build-arg VERSION_SHA="${GITHUB_SHA::7}" \
+            -t "marfa-server:${{ steps.meta.outputs.tag }}" \
+            --load .
+      - name: Push to Cloudflare managed registry
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler containers push "marfa-server:${{ steps.meta.outputs.tag }}"
+
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Deploy Worker + container
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_WORKERS_SUBDOMAIN: ${{ vars.STAGING_WORKERS_SUBDOMAIN }}
+          SERVER_IMAGE_TAG: ${{ needs.build-push.outputs.image_tag }}
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: |
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          ./infra/cloudflare/scripts/deploy-server-container.sh "$ENVIRONMENT"

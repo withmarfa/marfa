@@ -1,0 +1,49 @@
+// Marfa server — Cloudflare Containers Worker front (T-277).
+//
+// TEMPLATE: the placeholder tokens below are rendered by
+// `infra/cloudflare/scripts/deploy-server-container.sh <staging|prod>` (the
+// repo's envsubst pattern, same as wrangler.control.toml) so operator
+// specifics (account id, image ref) never land in a committed file. Do not
+// `wrangler deploy` this file directly — run the deploy script.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "${SERVER_WORKER_NAME}",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-01",
+  "account_id": "${CLOUDFLARE_ACCOUNT_ID}",
+  "workers_dev": ${SERVER_WORKERS_DEV},
+  "routes": ${SERVER_ROUTES},
+  "observability": { "enabled": true },
+  "containers": [
+    {
+      "class_name": "MarfaServerContainer",
+      "image": "${SERVER_IMAGE}",
+      "instance_type": "${SERVER_INSTANCE_TYPE}",
+      "max_instances": ${SERVER_MAX_INSTANCES}
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "MarfaServerContainer", "name": "MARFA_SERVER" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["MarfaServerContainer"] }
+  ],
+  // Front-Worker CPU ceiling (cost-safety, T-278). Bounds the Worker, not the
+  // container; the container's cost is governed by instance_type x awake-time
+  // x max_instances.
+  "limits": { "cpu_ms": 30000 },
+  "vars": {
+    "CONTAINER_SLEEP_AFTER": "${SERVER_SLEEP_AFTER}",
+    "BLOB_BACKEND": "${V_BLOB_BACKEND}",
+    "MARFA_AUTH_BASE_URL": "${V_AUTH_BASE_URL}",
+    "CORS_ORIGINS": "${V_CORS_ORIGINS}",
+    "MARFA_RUNTIME_CONTROL_URL": "${V_RUNTIME_CONTROL_URL}",
+    "CLOUDFLARE_ACCOUNT_ID": "${CLOUDFLARE_ACCOUNT_ID}",
+    "MARFA_EMAIL_FROM": "${V_EMAIL_FROM}",
+    "S3_BUCKET": "${V_S3_BUCKET}",
+    "S3_ENDPOINT": "${V_S3_ENDPOINT}",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "${V_OTEL_LOGS_ENDPOINT}"
+  }
+}
