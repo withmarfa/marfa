@@ -754,6 +754,11 @@ export function authRoutes(
         email: emailStr,
         password: passwordStr,
         name: nameStr,
+        // Thread the post-verification target through to Better Auth so the
+        // verification email's link returns the user into the app rather
+        // than the API root. Without this, Better Auth defaults callbackURL
+        // to "/". Mirrors the sign-in and resend handlers.
+        callbackURL: new URL(returnTo, auth.baseURL).toString(),
       }),
     });
     const response = await auth.handler(upstream);
