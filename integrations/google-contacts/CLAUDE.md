@@ -129,12 +129,12 @@ removed.
 
 `google.contacts.contact.photo_url` carries the People API photo URL
 as a string. There is no blob ingest in v1 — the URL is enough for
-display purposes and avoids R2 churn. T-238 (google.drive) is the
-first integration to handle binary blobs end-to-end.
+display purposes and avoids R2 churn. The `google.drive` integration
+is the first to handle binary blobs end-to-end.
 
 ## Validation
 
-The TS-harness validation log against the Oblix throwaway account
-lives at the bottom of T-237 in the vault project. Use
-`gog people --account oblix.cyzr@gmail.com --client oblix-gcp ...` /
-`gog contacts ...` for data generation + read-back during validation.
+Validate end-to-end against a throwaway Google test account: use
+the Google People / Contacts API (via the Google Cloud client of
+your choice) to generate data and read it back, then confirm items
+round-trip through the integration.

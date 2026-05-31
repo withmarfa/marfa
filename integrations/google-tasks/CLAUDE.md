@@ -114,7 +114,7 @@ as `task.deleted === true`. Mapped Marfa items transition to
 
 ## Validation
 
-The end-to-end validation log against the Oblix throwaway account
-(`oblix.cyzr@gmail.com`) lives on the bottom of T-236 in the vault
-project. Use `gog --account oblix.cyzr@gmail.com --client oblix-gcp
-tasks ...` for data generation + read-back during validation.
+Validate end-to-end against a throwaway Google test account: use
+the Google Tasks API (via the Google Cloud client of your choice)
+to generate data and read it back, then confirm items round-trip
+through the integration.

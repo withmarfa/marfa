@@ -170,8 +170,7 @@ export async function createPgStorage(
      * `begin` connection sat `idle in transaction` waiting for queries
      * that never came. Under concurrent writes the pool saturated, every
      * `runInTransaction` callback blocked acquiring an inner connection,
-     * and the server wedged for ~15 minutes until clients gave up. See
-     * vault artifact `Staging Wedge Diagnosis — 2026-05-17.md`.
+     * and the server wedged for ~15 minutes until clients gave up.
      *
      * Goes through the wrapped `db`: when the caller is already inside
      * the RLS middleware's transaction (a tenant-scoped request), the

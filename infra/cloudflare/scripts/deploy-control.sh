@@ -9,7 +9,7 @@
 #   ./infra/cloudflare/scripts/deploy-control.sh <staging|prod> [extra wrangler args]
 #
 # Required env (operator-specific):
-#   - CLOUDFLARE_API_TOKEN              (marfa-account token; same one the wrangler-marfa helper sets)
+#   - CLOUDFLARE_API_TOKEN              (marfa-account token)
 #   - CLOUDFLARE_ACCOUNT_ID             (account hosting the Worker)
 #   - CONTROL_PLANE_STAGING_KV_ID       (idempotency KV namespace id, staging)
 #   - CONTROL_PLANE_PROD_KV_ID          (idempotency KV namespace id, prod)
@@ -74,7 +74,7 @@ if (( ${#MISSING[@]} > 0 )); then
   echo "error: required env vars not set:" >&2
   printf '  - %s\n' "${MISSING[@]}" >&2
   echo "" >&2
-  echo "Source your per-machine secrets file (e.g. ~/.config/aic-shell/secrets.env)" >&2
+  echo "Export them (e.g. from your per-machine secrets file)" >&2
   echo "and set the CONTROL_PLANE_* values before invoking this script." >&2
   exit 1
 fi

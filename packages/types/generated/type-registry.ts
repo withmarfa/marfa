@@ -461,7 +461,7 @@ const googleCalendarEvent: TypeSchema = {
     place: { type: "string", description: "Free-text location (maps to Calendar `location`)" },
     html_link: { type: "url", description: "Stable HTTPS link to the event on the Google Calendar web UI." },
     etag: { type: "string", description: "Calendar's change-detection token. Used for conditional updates and as the content-hash key for echo suppression." },
-    source_calendar_id: { type: "string", description: "ID of the Google Calendar this event lives on (the user's `oblix.cyzr@gmail.com` primary calendar, a shared work calendar, etc.). Set on inbound items so multi-calendar mappings round-trip; outbound writes derive the target calendar from this field or fall back to the connection's configured default." },
+    source_calendar_id: { type: "string", description: "ID of the Google Calendar this event lives on (the user's primary calendar, a shared work calendar, etc.). Set on inbound items so multi-calendar mappings round-trip; outbound writes derive the target calendar from this field or fall back to the connection's configured default." },
     status: { type: "enum", description: "Calendar event status.", enum_values: ["confirmed", "tentative", "cancelled"] },
     transparency: { type: "enum", description: "Whether the event blocks time on the user's calendar (Calendar `transparency`).", enum_values: ["opaque", "transparent"] },
     visibility: { type: "enum", description: "Event visibility setting (Calendar `visibility`).", enum_values: ["default", "public", "private", "confidential"] },

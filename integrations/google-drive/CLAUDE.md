@@ -193,15 +193,14 @@ to address:
 
 ## Validation
 
-The TS-harness validation log against the Oblix throwaway account
-lives at the bottom of T-238 in the vault project. T-239 validates
-the `all-files` round-trip end-to-end against staging — drop a
-small binary (PDF) into a watched folder, confirm the item lands
-as `core.file` with `properties.blob_ref = sha256:<hex>`, then
-`my -i admin blobs get <hash>` round-trips the bytes. Negative
-cases (oversize, Google-native) verify the item lands as
-`google.drive.file` with `blob_ref` absent and the run summary
-counters reflect the skip reasons.
+Validate the `all-files` round-trip end-to-end against a running
+server using a throwaway Google test account — drop a small binary
+(PDF) into a watched folder, confirm the item lands as `core.file`
+with `properties.blob_ref = sha256:<hex>`, then fetch the blob back
+by hash (e.g. `my -i admin blobs get <hash>`) and confirm the bytes
+round-trip. Negative cases (oversize, Google-native) verify the item
+lands as `google.drive.file` with `blob_ref` absent and the run
+summary counters reflect the skip reasons.
 
-Use `gog drive --account oblix.cyzr@gmail.com --client oblix-gcp ...`
-for seed + teardown.
+Use the Google Drive API (via the Google Cloud client of your
+choice) for seed + teardown.

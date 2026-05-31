@@ -63,7 +63,7 @@ const CURSOR_KEY = "main";
 const FILES_PAGE_SIZE = 100;
 
 /** Initial-sync hard cap on pages to prevent runaway against a
- *  huge Drive on first connect. The harness against Oblix has a few
+ *  huge Drive on first connect. A throwaway test account has a few
  *  test files; production deployments would want this configurable
  *  via `connection.properties.configuration.initial_sync_max_files`. */
 const INITIAL_SYNC_PAGE_LIMIT = 50;

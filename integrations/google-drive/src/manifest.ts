@@ -20,8 +20,8 @@
  *     (new channel first, then stop old) — same shape as Calendar
  *     PR4.
  *   - **Initial sync via `files.list`.** Paginates through the
- *     user's Drive (filtered by `trashed=false`). The harness
- *     against Oblix is small; production deployments would want a
+ *     user's Drive (filtered by `trashed=false`). A throwaway test
+ *     account is small; production deployments would want a
  *     configurable initial-sync bound.
  *   - **Blob handling — `metadata` and `all-files` modes.**
  *     `download_mode = "metadata"` (the default) reads file metadata

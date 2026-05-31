@@ -20,14 +20,12 @@
 #   ./scripts/deploy-worker.sh <worker-dir> [extra wrangler args...]
 #
 # Example:
-#   CLOUDFLARE_API_TOKEN=$CLOUDFLARE_API_TOKEN_MARFA \
+#   CLOUDFLARE_API_TOKEN=<your-token> \
 #     ./scripts/deploy-worker.sh integrations/google-contacts --env staging
 #
 # Cloudflare account selection is the caller's job — set
-# CLOUDFLARE_API_TOKEN (or use the existing `wrangler-marfa` helper
-# wrapper from aic-shell which sets it from `CLOUDFLARE_API_TOKEN_MARFA`
-# / `_AIC`). The script invokes bare `wrangler`; it doesn't pick an
-# account.
+# CLOUDFLARE_API_TOKEN in the environment before invoking. The script
+# invokes bare `wrangler`; it doesn't pick an account.
 
 set -euo pipefail
 

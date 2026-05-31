@@ -63,7 +63,7 @@ if [[ ${#missing[@]} -gt 0 ]]; then
     echo "  - $var" >&2
   done
   echo "" >&2
-  echo "Source them from your per-machine secrets file (e.g. ~/.config/aic-shell/secrets.env)" >&2
+  echo "Export them (e.g. from your per-machine secrets file)" >&2
   echo "before invoking this script." >&2
   exit 1
 fi
