@@ -18,6 +18,8 @@
 #   - SERVER_IMAGE_TAG         (image tag in the managed registry; default "staging"/"prod")
 #   - SERVER_IMAGE             (full registry ref; overrides the derived one)
 #   - V_BLOB_BACKEND           ("s3" once R2 creds exist; default "fs" for staging validation)
+#   - S3_ENDPOINT              (R2 S3-API endpoint; default derives the standard-jurisdiction
+#                               host — override for a jurisdiction-restricted bucket, e.g. EU)
 #   - SERVER_SLEEP_AFTER       (container idle scale-to-zero timer; default "20m")
 #   - STAGING_WORKERS_SUBDOMAIN (account workers.dev subdomain, for the staging auth base URL)
 #
@@ -50,12 +52,17 @@ if (( ${#MISSING[@]} > 0 )); then
 fi
 
 # Shared / derived.
-export SERVER_INSTANCE_TYPE="standard"
+export SERVER_INSTANCE_TYPE="standard-1"
 export SERVER_MAX_INSTANCES="1"
 export SERVER_SLEEP_AFTER="${SERVER_SLEEP_AFTER:-20m}"
 export V_EMAIL_FROM="Marfa <hello@mail.marfa.so>"
 export V_OTEL_LOGS_ENDPOINT="https://eu.i.posthog.com/i/v1/logs"
-export V_S3_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+# R2 S3-API endpoint for blob storage. The default-jurisdiction R2 endpoint is
+# `<account>.r2.cloudflarestorage.com`; jurisdiction-restricted buckets (e.g.
+# EU) use `<account>.<jurisdiction>.r2.cloudflarestorage.com` instead. The
+# endpoint must match the bucket's jurisdiction or every S3 op returns
+# NoSuchBucket — set S3_ENDPOINT to override the derived default.
+export V_S3_ENDPOINT="${S3_ENDPOINT:-https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com}"
 # Default to fs until R2 S3-API credentials are minted (see operator notes);
 # flip to s3 by exporting V_BLOB_BACKEND=s3 once the secrets are set.
 export V_BLOB_BACKEND="${V_BLOB_BACKEND:-fs}"

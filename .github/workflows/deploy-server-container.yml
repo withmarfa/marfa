@@ -83,5 +83,10 @@ jobs:
           SERVER_IMAGE_TAG: ${{ needs.build-push.outputs.image_tag }}
           ENVIRONMENT: ${{ github.event.inputs.environment }}
         run: |
-          export PATH="$PWD/node_modules/.bin:$PATH"
+          # wrangler is a dependency of the server-container workspace package,
+          # not a root dep — so it lives in that package's node_modules/.bin,
+          # not the repo root. Put that on PATH so the deploy script's bare
+          # `wrangler deploy` resolves on CI (a global wrangler may mask this
+          # locally, hiding the gap).
+          export PATH="$PWD/infra/cloudflare/server-container/node_modules/.bin:$PWD/node_modules/.bin:$PATH"
           ./infra/cloudflare/scripts/deploy-server-container.sh "$ENVIRONMENT"
