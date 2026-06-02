@@ -8,11 +8,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/containers": "^0.3.5"
+    "@cloudflare/containers": "^0.3.6"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260501.0",
-    "typescript": "^6.0.2",
-    "wrangler": "^4.94.0"
+    "@cloudflare/workers-types": "^4.20260602.1",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.96.0"
   }
 }
