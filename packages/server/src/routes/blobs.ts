@@ -49,12 +49,13 @@ const BlobReconcileResponseSchema = z.object({
 // ---------------------------------------------------------------------------
 
 const uploadBlobRoute = createRoute({
+  operationId: "uploadBlob",
   method: "post",
   path: "/",
   tags: ["Blobs"],
   summary: "Upload a blob",
   description:
-    "Uploads binary content and returns its `sha256:<hex>` content-addressed hash. Accepts `multipart/form-data` (typical for browser file inputs) or `application/octet-stream` (raw bytes for SDK / CLI uploads).\n\nUploads are idempotent: re-uploading identical bytes returns the existing hash without re-storing — the storage backend deduplicates by hash. `MAX_BLOB_SIZE` (default 50 MB) caps individual uploads; over-size returns `413 blob_too_large`. Tenant blob count and storage-byte quotas (`blobs`, `storage_bytes`) gate uploads.\n\nReference the returned `hash` from item properties (`blob_ref` on `core.file.*` types) or attachment entries. See [Blobs](/concepts/blobs).",
+    "Uploads binary content and returns its `sha256:<hex>` content-addressed hash, accepting `multipart/form-data` or `application/octet-stream`. Uploads are idempotent — identical bytes return the existing hash without re-storing — and are capped at `MAX_BLOB_SIZE` (default 50 MB), over which they return `413 blob_too_large`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -100,16 +101,17 @@ const uploadBlobRoute = createRoute({
 });
 
 const getBlobRoute = createRoute({
+  operationId: "downloadBlob",
   method: "get",
   path: "/{hash}",
   tags: ["Blobs"],
   summary: "Download blob binary",
   description:
-    "Streams the bytes for a previously-uploaded blob, identified by its `sha256:<hex>` hash. Response is `application/octet-stream` with the raw bytes. Tenant-scoped — a hash uploaded in tenant A is not visible to tenant B; cross-tenant probes return 404.\n\nFor S3-backed deployments serving images and other static assets, prefer `GET /blobs/{hash}/url` (presigned URL) so the browser fetches directly from the object store and the API isn't a proxy.",
+    "Streams the raw bytes for a previously-uploaded blob as `application/octet-stream`. Tenant-scoped — a hash uploaded in one tenant is invisible to another, so cross-tenant probes return 404.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      hash: z.string(),
+      hash: z.string().describe("Content-addressed `sha256:<hex>` blob hash."),
     }),
   },
   responses: {
@@ -149,19 +151,26 @@ const getBlobRoute = createRoute({
 });
 
 const getBlobUrlRoute = createRoute({
+  operationId: "getBlobUrl",
   method: "get",
   path: "/{hash}/url",
   tags: ["Blobs"],
   summary: "Get a presigned download URL for a blob",
   description:
-    "Returns a time-limited presigned URL pointing directly at the underlying S3-compatible object store. The `ttl` query parameter (seconds, default 3600) sets the URL's lifetime. Useful for serving images and other static assets without proxying them through the API server.\n\nAvailable only when `BLOB_BACKEND=s3`. Filesystem-backed deployments return `400` — use `GET /blobs/{hash}` to stream bytes instead.",
+    "Returns a time-limited presigned URL pointing directly at the S3-compatible object store, so clients fetch the blob without proxying through the API. Available only when `BLOB_BACKEND=s3`; filesystem-backed deployments return `400` and must stream via `GET /blobs/{hash}`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      hash: z.string(),
+      hash: z.string().describe("Content-addressed `sha256:<hex>` blob hash."),
     }),
     query: z.object({
-      ttl: z.coerce.number().int().min(1).optional().default(3600),
+      ttl: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .default(3600)
+        .describe("URL lifetime in seconds."),
     }),
   },
   responses: {
@@ -201,16 +210,21 @@ const getBlobUrlRoute = createRoute({
 });
 
 const cleanupBlobsRoute = createRoute({
+  operationId: "cleanupBlobs",
   method: "post",
   path: "/cleanup",
   tags: ["Blobs"],
   summary: "Remove unreferenced blobs",
   description:
-    "Removes blobs that no item references — including items in trash. Run periodically to reclaim storage after item deletion accumulates orphaned blobs. Set `dry_run=true` to preview what would be removed without writing. Admin-only.",
+    "Removes blobs that no item references, including items in trash, to reclaim storage. Admin-only; set `dry_run=true` to preview what would be removed without writing.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      dry_run: z.enum(["true", "false"]).optional().default("false"),
+      dry_run: z
+        .enum(["true", "false"])
+        .optional()
+        .default("false")
+        .describe("Preview removals without deleting when `true`."),
     }),
   },
   responses: {
@@ -234,18 +248,21 @@ const cleanupBlobsRoute = createRoute({
 });
 
 const reconcileBlobsRoute = createRoute({
+  operationId: "reconcileBlobs",
   method: "post",
   path: "/reconcile",
   tags: ["Blobs"],
   summary: "Reconcile blob storage",
   description:
-    "Compares the blob storage backend against the database to find " +
-    "orphaned files (in storage but not DB) and missing files (in DB but " +
-    "not storage). Defaults to dry_run=true for safety.",
+    "Compares the blob storage backend against the database to find orphaned files (in storage, not the DB) and missing files (in the DB, not storage). Admin-only; defaults to `dry_run=true` for safety.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      dry_run: z.enum(["true", "false"]).optional().default("true"),
+      dry_run: z
+        .enum(["true", "false"])
+        .optional()
+        .default("true")
+        .describe("Report only without deleting orphans when `true`."),
     }),
   },
   responses: {

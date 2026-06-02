@@ -81,12 +81,13 @@ const RuntimeCredentialResponseSchema = z.object({
 });
 
 const createRuntimeCredentialRoute = createRoute({
+  operationId: "issueRuntimeCredential",
   method: "post",
   path: "/runtime-credentials",
   tags: ["System"],
   summary: "Issue a runtime credential",
   description:
-    "Mints a short-lived API key scoped to a single connection. The runtime-control plane calls this to provision the credential a per-integration Worker presents when invoking Marfa on the connection's behalf. The `api_key` field is returned **once**; subsequent reads omit it.",
+    "Mints a short-lived API key scoped to a single connection, for the per-integration Worker that calls Marfa on the connection's behalf. The api_key is returned once and never again.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -183,16 +184,20 @@ const VerifyContextSchema = z.object({
 });
 
 const verifyContextRoute = createRoute({
+  operationId: "getConnectionVerifyContext",
   method: "get",
   path: "/connections/{connection_id}/verify-context",
   tags: ["System"],
   summary: "Get verify context for a connection",
   description:
-    "Returns the manifest `integration_name` and `tenant_id` the runtime-control verify route needs to construct a queue envelope. Validates the connection exists, is `kind: integration`, and is active. Operator-debug surface.",
+    "Returns the integration name and tenant the runtime-control verify route needs to build a queue envelope. Requires the connection to exist, be kind integration, and be active.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      connection_id: z.string().min(1),
+      connection_id: z
+        .string()
+        .min(1)
+        .describe("Connection to resolve verify context for."),
     }),
   },
   responses: {
@@ -256,16 +261,20 @@ const DlqContextSchema = z.object({
 });
 
 const dlqContextRoute = createRoute({
+  operationId: "getConnectionDlqContext",
   method: "get",
   path: "/connections/{connection_id}/dlq-context",
   tags: ["System"],
   summary: "Get DLQ context for a connection",
   description:
-    "Returns minimal connection metadata for the runtime-control DLQ peek/replay routes. Operator-debug surface. Unlike verify-context, this does NOT narrow by kind or state — operators inspect DLQs precisely when a connection is unhealthy.",
+    "Returns minimal connection metadata for the runtime-control DLQ peek/replay routes. Unlike verify-context, it does not narrow by kind or state, since operators inspect DLQs precisely when a connection is unhealthy.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      connection_id: z.string().min(1),
+      connection_id: z
+        .string()
+        .min(1)
+        .describe("Connection to resolve DLQ context for."),
     }),
   },
   responses: {
@@ -301,6 +310,7 @@ const dlqContextRoute = createRoute({
 });
 
 const lookupInboundWebhooksRoute = createRoute({
+  operationId: "listConnectionInboundWebhookSubscriptions",
   method: "get",
   path: "/inbound-webhook-subscriptions/{connection_id}",
   tags: ["System"],
@@ -310,7 +320,10 @@ const lookupInboundWebhooksRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      connection_id: z.string().min(1),
+      connection_id: z
+        .string()
+        .min(1)
+        .describe("Connection whose inbound-webhook subscriptions to list."),
     }),
   },
   responses: {

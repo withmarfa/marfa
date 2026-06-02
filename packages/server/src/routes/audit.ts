@@ -25,22 +25,45 @@ const AuditEntrySchema = z.object({
 });
 
 const listAuditRoute = createRoute({
+  operationId: "listAuditLog",
   method: "get",
   path: "/",
-  tags: ["Admin"],
+  tags: ["Audit"],
   summary: "List audit log entries",
   description:
-    "Returns audit-log entries in reverse-chronological order, optionally filtered by `action`, `resource_type`, `resource_id`, or a `since` / `until` time range. Cursor-paginated. Each entry carries the credential that performed the action (`key_id`), the resolved client IP (subject to `TRUSTED_PROXY_CIDRS`), and a structured `details` payload that varies by action.\n\nThe audit log records every state-changing API call plus a few admin-side reads. Item / edge reads, SSE subscribe/unsubscribe, and search queries are NOT logged — those land in request logs instead. Retention is `AUDIT_RETENTION_DAYS` (default 90; per-tenant override via `TenantConfig.audit_retention_days`); older rows are removed by a periodic cleanup job. Tenant-scoped admin keys see their own tenant's rows; tenantless bootstrap-admin keys see every row.\n\nNon-admin credentials return `403 forbidden`. See [Audit log](/concepts/audit).",
+    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      action: z.string().optional(),
-      resource_type: z.string().optional(),
-      resource_id: z.string().optional(),
-      since: z.string().optional(),
-      until: z.string().optional(),
-      limit: z.coerce.number().int().min(1).max(200).optional().default(50),
-      cursor: z.string().optional(),
+      action: z.string().optional().describe("Filter to a single action."),
+      resource_type: z
+        .string()
+        .optional()
+        .describe("Filter to a single resource type."),
+      resource_id: z
+        .string()
+        .optional()
+        .describe("Filter to a single resource id."),
+      since: z
+        .string()
+        .optional()
+        .describe("Include entries at or after this timestamp."),
+      until: z
+        .string()
+        .optional()
+        .describe("Include entries before this timestamp."),
+      limit: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .default(50)
+        .describe("Maximum entries to return (1–200, default 50)."),
+      cursor: z
+        .string()
+        .optional()
+        .describe("Opaque pagination cursor from a previous response."),
     }),
   },
   responses: {

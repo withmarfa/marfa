@@ -154,15 +154,18 @@ const InboundWebhookEventSchema = z.object({
 // Route definitions — subscription scope (mounted under /connections)
 // ---------------------------------------------------------------------------
 
-const ConnectionIdParam = z.object({ id: z.string() });
+const ConnectionIdParam = z.object({
+  id: z.string().describe("Id of the connection the subscription belongs to."),
+});
 
 const createInboundWebhookRoute = createRoute({
+  operationId: "createInboundWebhook",
   method: "post",
   path: "/{id}/inbound-webhooks",
   tags: ["Inbound Webhooks"],
   summary: "Register an inbound webhook subscription on a connection",
   description:
-    "Registers an inbound-webhook subscription on an integration connection. External services (the connection's upstream) deliver events into Marfa by POSTing to the public receipt URL the platform exposes per subscription. Signature verification uses the adapter named in `webhook_verification.method` on the connection's manifest — `hmac-sha256`, `slack`, `stripe`, or `github`.\n\nThe `secret` is returned **once** in the creation response — store it then; subsequent reads redact it. See [Inbound webhooks](/api/inbound-webhooks).",
+    "Registers an inbound-webhook subscription so the connection's upstream service can deliver events into Marfa. Signature verification uses the adapter named in the connection manifest's `webhook_verification.method`; the `secret` is returned only once, in this response.",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -222,12 +225,13 @@ const createInboundWebhookRoute = createRoute({
 });
 
 const listInboundWebhooksRoute = createRoute({
+  operationId: "listInboundWebhooks",
   method: "get",
   path: "/{id}/inbound-webhooks",
   tags: ["Inbound Webhooks"],
   summary: "List inbound webhook subscriptions on a connection",
   description:
-    "Returns every inbound-webhook subscription attached to the connection. Secrets are redacted in list responses — they only return at creation time. Use to render an operator surface showing what an integration is subscribed to upstream.",
+    "Returns every inbound-webhook subscription attached to the connection. Secrets are redacted here — they only return at creation time.",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -271,22 +275,30 @@ const listInboundWebhooksRoute = createRoute({
 });
 
 const InboundWebhookIdsParam = z.object({
-  id: z.string(),
-  webhook_id: z.string(),
+  id: z.string().describe("Id of the connection the subscription belongs to."),
+  webhook_id: z.string().describe("Id of the inbound webhook subscription."),
 });
 
 const listDeliveriesRoute = createRoute({
+  operationId: "listInboundWebhookDeliveries",
   method: "get",
   path: "/{id}/inbound-webhooks/{webhook_id}/deliveries",
   tags: ["Inbound Webhooks"],
   summary: "List recent receipts for an inbound webhook subscription",
   description:
-    "Returns recent inbound deliveries received on this subscription, newest first. Each entry records the sender's delivery id, the resolved adapter, the verification outcome (verified / unverified / dedup-hit), the dispatch outcome (ok / retry / failed), and any error reason. Use to debug a failing connector or audit what the upstream service has sent.",
+    "Returns recent inbound deliveries received on this subscription, newest first, recording each receipt's verification and dispatch outcome. Use to debug a failing connector or audit what the upstream service has sent.",
   security: [{ bearerAuth: [] }],
   request: {
     params: InboundWebhookIdsParam,
     query: z.object({
-      limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+      limit: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .default(50)
+        .describe("Maximum number of deliveries to return."),
     }),
   },
   responses: {
@@ -331,18 +343,19 @@ const listDeliveriesRoute = createRoute({
 });
 
 const RetryParams = z.object({
-  id: z.string(),
-  webhook_id: z.string(),
-  event_id: z.string(),
+  id: z.string().describe("Id of the connection the subscription belongs to."),
+  webhook_id: z.string().describe("Id of the inbound webhook subscription."),
+  event_id: z.string().describe("Id of the delivery to replay."),
 });
 
 const retryDeliveryRoute = createRoute({
+  operationId: "retryInboundWebhookDelivery",
   method: "post",
   path: "/{id}/inbound-webhooks/{webhook_id}/deliveries/{event_id}/retry",
   tags: ["Inbound Webhooks"],
   summary: "Replay an inbound webhook delivery",
   description:
-    "Re-dispatches a previously-received inbound delivery from the DLQ. The original envelope is preserved verbatim — signature verification is not re-run (the receipt is already trusted), and the dedup window is bypassed (the operator is intentionally re-delivering). Use after deploying a connector-side fix to clear stuck deliveries. See [Inbound webhooks — manual replay](/api/inbound-webhooks#manual-replay).",
+    "Re-dispatches a previously-received inbound delivery from the DLQ with its original envelope intact. Signature verification is not re-run and the dedup window is bypassed, since the operator is deliberately re-delivering.",
   security: [{ bearerAuth: [] }],
   request: { params: RetryParams },
   responses: {
@@ -536,7 +549,9 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
 // Public receipt route (mounted under /webhooks/inbound)
 // ---------------------------------------------------------------------------
 
-const ReceiptIdParam = z.object({ id: z.string() });
+const ReceiptIdParam = z.object({
+  id: z.string().describe("Id of the inbound webhook subscription."),
+});
 
 // The receipt route deliberately omits a `body` schema. HMAC verification
 // requires the raw bytes — `@hono/zod-openapi`'s body validator parses
@@ -545,12 +560,13 @@ const ReceiptIdParam = z.object({ id: z.string() });
 // the request stream intact. The OpenAPI spec carries the path + status
 // codes; the per-Integration body shape is documented elsewhere.
 const receiveInboundWebhookRoute = createRoute({
+  operationId: "deliverInboundWebhook",
   method: "post",
   path: "/{id}",
   tags: ["Inbound Webhooks"],
   summary: "Deliver an inbound webhook",
   description:
-    "Public receipt endpoint that accepts a signed payload from an external service. The platform verifies the signature using the connection manifest's `webhook_verification.method` adapter, deduplicates against the sender's `external_delivery_id` (a unique index on `(subscription_id, external_delivery_id)` collapses repeat presentations to the original receipt row), and enqueues the envelope for the per-integration Worker. Failed verification returns `401 invalid_signature` and the body is not forwarded. See [Inbound webhooks](/api/inbound-webhooks).",
+    "Public receipt endpoint that accepts a signed payload from an external service, verifies its signature, deduplicates against the sender's delivery id, and enqueues the envelope for processing. Failed verification returns 401 and the body is not forwarded.",
   request: {
     params: ReceiptIdParam,
   },

@@ -22,12 +22,13 @@ const TagListSchema = z.object({
 // ---------------------------------------------------------------------------
 
 const listTagsRoute = createRoute({
+  operationId: "listTags",
   method: "get",
   path: "/tags",
   tags: ["Metadata"],
   summary: "List distinct tags in use",
   description:
-    "Returns every distinct tag in use across items the caller can read, with a usage count per tag, sorted by count descending then tag ascending. Tenant-scoped, type-permission scoped, excludes trashed items. Use to populate tag pickers, autocomplete, or `all tags` UI without iterating items. See [Metadata — listing all tags](/concepts/metadata#listing-all-tags).",
+    "Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's tenant and type permissions; trashed items are excluded.",
   security: [{ bearerAuth: [] }],
   request: {},
   responses: {

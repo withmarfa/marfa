@@ -43,6 +43,7 @@ const MetricsResponseSchema = z.object({
 });
 
 const getMetricsRoute = createRoute({
+  operationId: "getServerMetrics",
   method: "get",
   path: "/",
   tags: ["Admin"],

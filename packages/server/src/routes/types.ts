@@ -104,12 +104,13 @@ const TypeSchemaResponse = z.object({
 // ---------------------------------------------------------------------------
 
 const listTypesRoute = createRoute({
+  operationId: "listTypes",
   method: "get",
   path: "/",
   tags: ["Types"],
   summary: "List types",
   description:
-    "Returns every type registered in the tenant — the core type catalogue plus any custom types registered via `POST /types`. Each entry carries the type identifier, parent (for inheriting types), fields, optional `display_hints`, `merge_policy`, and `version_policy`. Use as the manifest a custom-type-aware client reads at startup. See [Types](/concepts/types).",
+    "Returns every type registered in the tenant — the core type catalogue plus any custom types registered via `POST /types`. Use as the schema manifest a type-aware client reads at startup.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -132,16 +133,17 @@ const listTypesRoute = createRoute({
 });
 
 const getTypeRoute = createRoute({
+  operationId: "getType",
   method: "get",
   path: "/{id}",
   tags: ["Types"],
   summary: "Get a type",
   description:
-    "Returns the full schema for a single type — fields, parent, `display_hints`, `merge_policy`, `version_policy`. Resolves both core and tenant-registered custom types by identifier.",
+    "Returns the full schema for a single type, resolving inheritance so the response reflects the effective fields and policies. Works for both core and tenant-registered custom types.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string(),
+      id: z.string().describe("Type identifier."),
     }),
   },
   responses: {
@@ -173,12 +175,13 @@ const getTypeRoute = createRoute({
 });
 
 const registerTypeRoute = createRoute({
+  operationId: "registerType",
   method: "post",
   path: "/",
   tags: ["Types"],
   summary: "Register a custom type",
   description:
-    "Registers a custom type at runtime. Identifier must namespace under one of `app.<app-name>.<type>`, `user.<type>`, or `<publisher>.<type>` — reserved roots (`core`, `system`, `marfa`) reject with `400 reserved_namespace`. Bodies are validated; mismatched semver bumps (additive change submitted as major, etc.) reject with `400 version_bump_mismatch`. Child types may not redefine ancestor fields — `400 inheritance_violation`. Property names may not shadow first-class `Item` wire fields (`device`, `source_id`, `timestamp`, `version`, `schema_version`, `tier`, `state`, `capture_latitude`, `capture_longitude`, etc.) — `400 property_shadows_field`.\n\nAdmin keys bypass; non-admin credentials need the `metadata.types:write` scope, default-off for new keys. See [Authoring types](/concepts/authoring-types) for the rubric and error catalogue.",
+    "Registers a custom type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; reserved roots, ancestor-field redefinitions, and property names shadowing first-class `Item` fields all reject with `400`. Admin keys bypass; non-admin credentials need the `metadata.types:write` scope, which is off by default.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -226,16 +229,17 @@ const registerTypeRoute = createRoute({
 });
 
 const updateTypeRoute = createRoute({
+  operationId: "updateType",
   method: "put",
   path: "/{id}",
   tags: ["Types"],
   summary: "Update a custom type",
   description:
-    "Replaces a custom type's schema. Admin-only — core types are immutable and return 400. Re-runs the registration-time correctness rails (semver diff, inheritance check, field-name validation). The diff between the prior and new version sets the required version bump; mismatched bumps reject with `400 version_bump_mismatch`. See [Authoring types — semver diff](/concepts/authoring-types#server-side-semver-diff).",
+    "Replaces a custom type's schema, re-running the registration-time correctness rails. Admin-only — core types are immutable and return 400; the structural diff between versions sets the required version bump, and a mismatch rejects with `400 version_bump_mismatch`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string(),
+      id: z.string().describe("Type identifier."),
     }),
     body: {
       content: {
@@ -274,19 +278,23 @@ const updateTypeRoute = createRoute({
 });
 
 const deleteTypeRoute = createRoute({
+  operationId: "deleteType",
   method: "delete",
   path: "/{id}",
   tags: ["Types"],
   summary: "Delete a custom type",
   description:
-    "Removes a custom type registration. Admin-only — core types are immutable. By default, deletion is rejected if any item of the type still exists. Pass `?force=true` to delete the type and orphan existing rows (rows persist with the type identifier intact, but new writes against that type return `400 invalid_type`).",
+    "Removes a custom type registration. Admin-only — core types are immutable. Deletion is rejected if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 invalid_type`).",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string(),
+      id: z.string().describe("Type identifier."),
     }),
     query: z.object({
-      force: z.enum(["true", "false"]).optional(),
+      force: z
+        .enum(["true", "false"])
+        .optional()
+        .describe("Delete and orphan existing items when `true`."),
     }),
   },
   responses: {

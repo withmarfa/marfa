@@ -535,8 +535,8 @@ describe("Query-language: edge[X]=Y and backref[X]=Y", () => {
 });
 
 describe("Custom edge-type registration", () => {
-  it("admin registers a custom edge type via POST /edges/types", async () => {
-    const res = await request(ctx.app, "POST", "/edges/types", {
+  it("admin registers a custom edge type via POST /edge-types", async () => {
+    const res = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.adminKey,
       body: {
         id: "test.custom-link",
@@ -561,7 +561,7 @@ describe("Custom edge-type registration", () => {
   });
 
   it("rejects redefinition of a core edge type", async () => {
-    const res = await request(ctx.app, "POST", "/edges/types", {
+    const res = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.adminKey,
       body: {
         id: "about",
@@ -572,7 +572,7 @@ describe("Custom edge-type registration", () => {
   });
 
   it("rejects `extends` on custom edge type", async () => {
-    const res = await request(ctx.app, "POST", "/edges/types", {
+    const res = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.adminKey,
       body: {
         id: "test.inherit",

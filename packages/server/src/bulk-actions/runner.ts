@@ -28,7 +28,7 @@ export interface ChunkOutcome {
 export interface RunChunkContext {
   storage: Storage;
   tenantId: string | null;
-  /** The full BulkActionInput sent to `POST /items/bulk_action`. */
+  /** The full BulkActionInput sent to `POST /items/bulk-actions`. */
   input: BulkActionInput;
   /** Ids the worker has assigned to this chunk. */
   ids: string[];

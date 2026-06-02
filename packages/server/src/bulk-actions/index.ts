@@ -1,5 +1,5 @@
 /**
- * T-218: async substrate for `POST /items/bulk_action`.
+ * T-218: async substrate for `POST /items/bulk-actions`.
  *
  * Public surface:
  *   - `BulkActionWorker` — the in-process polling loop. One per server

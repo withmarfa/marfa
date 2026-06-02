@@ -43,6 +43,7 @@ interface ArchiveManifest {
 }
 
 const restoreArchiveRoute = createRoute({
+  operationId: "adminRestoreArchive",
   method: "post",
   path: "/restore-archive",
   tags: ["Admin"],
@@ -54,7 +55,12 @@ const restoreArchiveRoute = createRoute({
       // explicit `?target_tenant_id=<id>`. Tenant-bound admins
       // (tenant_admin / admin with tenant_id) may not override —
       // the manifest tenant_id must match their own tenant.
-      target_tenant_id: z.string().optional(),
+      target_tenant_id: z
+        .string()
+        .optional()
+        .describe(
+          "Platform admins set the tenant to restore into; tenant-bound admins must match their own tenant.",
+        ),
     }),
     body: {
       content: {

@@ -90,7 +90,7 @@ async function issueLease(
     scopes?: string[];
   } = {},
 ): Promise<Response> {
-  return request(ctx.app, "POST", `/connections/${connectionId}/lease-token`, {
+  return request(ctx.app, "POST", `/connections/${connectionId}/lease-tokens`, {
     key: ctx.adminKey,
     body: {
       capability_id: overrides.capability_id ?? "drive.upload",
@@ -108,7 +108,7 @@ function sha256(input: string): string {
 // Issue
 // ---------------------------------------------------------------------------
 
-describe("POST /connections/:id/lease-token — capability gating", () => {
+describe("POST /connections/:id/lease-tokens — capability gating", () => {
   it("issues a lease for a manifest-declared 'leased' capability", async () => {
     const connectionId = await createConnection();
     const res = await issueLease(connectionId);
@@ -148,7 +148,7 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
     const res = await request(
       ctx.app,
       "POST",
-      `/connections/${connectionId}/lease-token`,
+      `/connections/${connectionId}/lease-tokens`,
       {
         key: ctx.adminKey,
         body: {
@@ -166,7 +166,7 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
     const res = await request(
       ctx.app,
       "POST",
-      `/connections/${connectionId}/lease-token`,
+      `/connections/${connectionId}/lease-tokens`,
       {
         body: {
           capability_id: "drive.upload",
@@ -226,7 +226,7 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
     const ok = await request(
       ctx.app,
       "POST",
-      `/connections/${connBody.item.id}/lease-token`,
+      `/connections/${connBody.item.id}/lease-tokens`,
       {
         key: ctx.adminKey,
         body: { capability_id: "drive.upload" },
@@ -238,7 +238,7 @@ describe("POST /connections/:id/lease-token — capability gating", () => {
     const denied = await request(
       ctx.app,
       "POST",
-      `/connections/${connBody.item.id}/lease-token`,
+      `/connections/${connBody.item.id}/lease-tokens`,
       {
         key: ctx.adminKey,
         body: { capability_id: "not.declared" },
@@ -276,7 +276,7 @@ describe("connector runtime credential — integration: source (T-018)", () => {
     const res = await request(
       ctx.app,
       "POST",
-      `/connections/${connectionId}/lease-token`,
+      `/connections/${connectionId}/lease-tokens`,
       {
         key: rawKey,
         body: { capability_id: "drive.upload" },
@@ -313,7 +313,7 @@ describe("connector runtime credential — integration: source (T-018)", () => {
     const res = await request(
       ctx.app,
       "POST",
-      `/connections/${connectionB}/lease-token`,
+      `/connections/${connectionB}/lease-tokens`,
       {
         key: rawKey,
         body: { capability_id: "drive.upload" },

@@ -102,12 +102,13 @@ const ApiKeySummarySchema = z.object({
 // ---------------------------------------------------------------------------
 
 const listTenantsRoute = createRoute({
+  operationId: "adminListTenants",
   method: "get",
   path: "/tenants",
   tags: ["Admin"],
   summary: "List tenants",
   description:
-    "Lists every tenant in the instance with current operator-status. Platform-admin only.",
+    "Lists every tenant in the instance with current operator status. Platform-admin only.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -138,14 +139,17 @@ const listTenantsRoute = createRoute({
 });
 
 const showTenantRoute = createRoute({
+  operationId: "adminGetTenant",
   method: "get",
   path: "/tenants/{id}",
   tags: ["Admin"],
   summary: "Show a tenant",
   description:
-    "Returns the tenant row plus its current per-tenant quota overrides (null when no override is configured) plus a slice of recent `system.activity` items for the tenant. Platform-admin only.",
+    "Returns the tenant row, its current quota overrides, and a slice of recent activity. Quota overrides are null when none are configured. Platform-admin only.",
   security: [{ bearerAuth: [] }],
-  request: { params: z.object({ id: z.string() }) },
+  request: {
+    params: z.object({ id: z.string().describe("Tenant id.") }),
+  },
   responses: {
     200: {
       content: { "application/json": { schema: TenantShowSchema } },
@@ -179,14 +183,17 @@ const showTenantRoute = createRoute({
 });
 
 const suspendTenantRoute = createRoute({
+  operationId: "adminSuspendTenant",
   method: "post",
   path: "/tenants/{id}/suspend",
   tags: ["Admin"],
   summary: "Suspend a tenant",
   description:
-    "Flips the tenant's `status` to 'suspended'. Future non-GET requests from credentials in this tenant are rejected at the auth middleware with HTTP 403 `tenant_suspended`. Reads pass through; platform admins bypass. Idempotent: re-suspending a suspended tenant is a no-op. Emits a `tenant.suspend` audit row.",
+    "Suspends the tenant, after which its credentials are rejected on writes while reads still pass through. Idempotent; re-suspending is a no-op.",
   security: [{ bearerAuth: [] }],
-  request: { params: z.object({ id: z.string() }) },
+  request: {
+    params: z.object({ id: z.string().describe("Tenant id to suspend.") }),
+  },
   responses: {
     200: {
       content: { "application/json": { schema: TenantSchema } },
@@ -220,14 +227,17 @@ const suspendTenantRoute = createRoute({
 });
 
 const unsuspendTenantRoute = createRoute({
+  operationId: "adminUnsuspendTenant",
   method: "post",
   path: "/tenants/{id}/unsuspend",
   tags: ["Admin"],
   summary: "Unsuspend a tenant",
   description:
-    "Flips the tenant's `status` back to 'active'. Reverse of `suspend`. Idempotent. Emits a `tenant.unsuspend` audit row.",
+    "Reactivates a suspended tenant, restoring write access. Idempotent.",
   security: [{ bearerAuth: [] }],
-  request: { params: z.object({ id: z.string() }) },
+  request: {
+    params: z.object({ id: z.string().describe("Tenant id to unsuspend.") }),
+  },
   responses: {
     200: {
       content: { "application/json": { schema: TenantSchema } },
@@ -261,14 +271,17 @@ const unsuspendTenantRoute = createRoute({
 });
 
 const tenantMetricsRoute = createRoute({
+  operationId: "adminGetTenantMetrics",
   method: "get",
   path: "/tenants/{id}/metrics",
   tags: ["Admin"],
   summary: "Get tenant metrics",
   description:
-    "Per-tenant usage snapshot — item count by state, blob count and total bytes, custom-type count, and the most recent `system.activity` entries for the tenant. Platform-admin only.",
+    "Returns a per-tenant usage snapshot covering item, blob, and storage counts plus recent activity. Platform-admin only.",
   security: [{ bearerAuth: [] }],
-  request: { params: z.object({ id: z.string() }) },
+  request: {
+    params: z.object({ id: z.string().describe("Tenant id.") }),
+  },
   responses: {
     200: {
       content: { "application/json": { schema: TenantMetricsSchema } },
@@ -302,14 +315,17 @@ const tenantMetricsRoute = createRoute({
 });
 
 const listTenantKeysRoute = createRoute({
+  operationId: "adminListTenantKeys",
   method: "get",
   path: "/tenants/{id}/keys",
   tags: ["Admin"],
   summary: "List a tenant's API keys",
   description:
-    "Lists active (non-revoked) API keys for the named tenant. Operator surface for emergency revocation — pair with `DELETE /keys/:id`. Platform-admin only.",
+    "Lists active (non-revoked) API keys for a tenant, for emergency revocation paired with key deletion. Platform-admin only.",
   security: [{ bearerAuth: [] }],
-  request: { params: z.object({ id: z.string() }) },
+  request: {
+    params: z.object({ id: z.string().describe("Tenant id.") }),
+  },
   responses: {
     200: {
       content: {
@@ -344,12 +360,13 @@ const PurgeNowResponseSchema = z.object({
 });
 
 const accountDeletionPurgeNowRoute = createRoute({
+  operationId: "adminPurgePendingDeletions",
   method: "post",
   path: "/account-deletion/purge-now",
   tags: ["Admin"],
   summary: "Force a one-shot run of the pending-delete purger",
   description:
-    "T-124 — Calls `PendingDeletePurger.runOnce()` directly and returns the count of accounts purged. Useful when an account has just passed its grace window and the operator doesn't want to wait for the next scheduled sweep (default cadence: 1 hour). Idempotent: re-running with no eligible rows returns 0. Only sweeps accounts already past `pending_deletion_at + grace_days` — does not bypass the grace window. Emits an `admin.account_deletion.purge_now` audit row.",
+    "Runs the pending-deletion sweep immediately instead of waiting for the scheduled job, returning the count purged. Only sweeps accounts already past their grace window; it does not bypass that window.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

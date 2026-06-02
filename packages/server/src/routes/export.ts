@@ -85,27 +85,43 @@ function resolveExportTenant(
 // ---------------------------------------------------------------------------
 
 const exportRoute = createRoute({
+  operationId: "exportTenantData",
   method: "get",
   path: "/",
   tags: ["Export"],
   summary: "Export tenant data",
   description:
-    "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON or a tar.gz archive. Filterable by `type`, `state`, `source`, `since` / `until`. NDJSON is the default — one JSON object per line, items first then edges then metadata, suitable for piping into another store or `jq`. `format=archive` produces a `marfa-archive-v1.tar.gz` ingestible by `POST /admin/restore-archive` for tenant-to-tenant migrations.\n\nLong-running; the response keeps streaming until the filter is exhausted. Tenant-scoped — exports only what the caller can read. See [Bulk operations — archive restore](/api/bulk-operations#archive-restore) for the round-trip.",
+    "Streams the tenant's items, edges, metadata, extensions, and blob references as NDJSON (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` that `POST /admin/restore-archive` can ingest. Tenant-scoped, exporting only what the caller can read; the response streams until the filter is exhausted.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      type: z.string().optional(),
-      state: z.string().optional(),
-      source: z.string().optional(),
-      since: z.string().optional(),
-      until: z.string().optional(),
-      format: z.string().optional(),
+      type: z
+        .string()
+        .optional()
+        .describe("Filter to a single type identifier"),
+      state: z.string().optional().describe("Filter by item state"),
+      source: z.string().optional().describe("Filter by source credential"),
+      since: z
+        .string()
+        .optional()
+        .describe("Include only items updated at or after this timestamp"),
+      until: z
+        .string()
+        .optional()
+        .describe("Include only items updated at or before this timestamp"),
+      format: z
+        .string()
+        .optional()
+        .describe("Output format: `ndjson` (default) or `archive`"),
       // T-053: platform admins scope a hosted-mode export to a
       // specific tenant by passing `?target_tenant_id=<id>`. Tenant-
       // bound callers (tenant_admin / member) get their own
       // tenant automatically; supplying a mismatching value here
       // returns 403.
-      target_tenant_id: z.string().optional(),
+      target_tenant_id: z
+        .string()
+        .optional()
+        .describe("Platform admins scope the export to a specific tenant"),
     }),
   },
   responses: {

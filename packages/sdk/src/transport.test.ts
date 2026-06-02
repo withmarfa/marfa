@@ -160,7 +160,7 @@ describe("HttpTransport — typed error subclasses preserve server code", () => 
     );
 
     await expect(
-      transport.request("POST", "/items/bulk_action"),
+      transport.request("POST", "/items/bulk-actions"),
     ).rejects.toSatisfy(
       (err: unknown) =>
         err instanceof ValidationError &&
