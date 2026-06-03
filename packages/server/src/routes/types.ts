@@ -235,7 +235,7 @@ const updateTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Update a custom type",
   description:
-    "Replaces a custom type's schema, re-running the registration-time correctness rails. Admin-only — core types are immutable and return 400; the structural diff between versions sets the required version bump, and a mismatch rejects with `400 version_bump_mismatch`.",
+    "Replaces a custom type's schema, re-running the registration-time correctness rails. Admin-only — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

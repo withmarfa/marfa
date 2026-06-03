@@ -10,7 +10,7 @@
     },
     "severity": {
       "type": "enum",
-      "description": "Surfacing level. `info` for routine completion, `warning` for non-blocking concerns, `error` for recoverable failure, `action_required` for items the user has to resolve (surfaced via /items?type=system.activity&filter=metadata.severity=\"action_required\")",
+      "description": "Surfacing level. `info` for routine completion, `warning` for non-blocking concerns, `error` for recoverable failure, `action_required` for items the user has to resolve (surfaced via /items?type=system.activity&filter=properties.severity eq \"action_required\")",
       "enum_values": ["info", "warning", "error", "action_required"]
     },
     "summary": {

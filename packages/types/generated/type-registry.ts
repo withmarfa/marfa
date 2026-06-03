@@ -863,7 +863,7 @@ const systemActivity: TypeSchema = {
   version: 1,
   fields: {
     connection_id: { type: "string", description: "Id of the emitting system.connection item", required: true },
-    severity: { type: "enum", description: "Surfacing level. `info` for routine completion, `warning` for non-blocking concerns, `error` for recoverable failure, `action_required` for items the user has to resolve (surfaced via /items?type=system.activity&filter=metadata.severity=\"action_required\")", required: true, enum_values: ["info", "warning", "error", "action_required"] },
+    severity: { type: "enum", description: "Surfacing level. `info` for routine completion, `warning` for non-blocking concerns, `error` for recoverable failure, `action_required` for items the user has to resolve (surfaced via /items?type=system.activity&filter=properties.severity eq \"action_required\")", required: true, enum_values: ["info", "warning", "error", "action_required"] },
     summary: { type: "string", description: "Short one-liner shown in feed surfaces", required: true },
     detail: { type: "object", description: "Optional JSON context for richer rendering or programmatic resolution" },
   },
