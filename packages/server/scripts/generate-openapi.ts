@@ -60,15 +60,17 @@ const app = createApp(storage, blobBackend, config);
 
 // `info.version` here is the API-contract version (the wire shape exposed
 // at /openapi.json), distinct from the deployed-build `version` reported on
-// `GET /`. Bumped to 6.0.0 in the docs API-surface rework (breaking path
-// renames: bulk-actions, tenants/me/config, edge-types, lease-tokens).
-// Keep in lockstep with the duplicate literal in `src/app.ts`.
+// `GET /`. Bumped to 5.1.0 in the docs API-surface rework: the path renames
+// (bulk-actions, tenants/me/config, edge-types, lease-tokens) are breaking,
+// but the API is pre-release and nothing pins the contract version yet, so the
+// change deliberately rides a minor rather than a major. Keep in lockstep with
+// the duplicate literal in `src/app.ts`.
 const spec = finalizeOpenAPISpec(
   app.getOpenAPIDocument({
     openapi: "3.1.0",
     info: {
       title: "Marfa API",
-      version: "6.0.0",
+      version: "5.1.0",
       description: "Typed data layer for structured personal data",
     },
   }),

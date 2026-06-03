@@ -616,8 +616,10 @@ export function createApp(
   // §3.15 note: `info.version` here is the API-contract version (the wire
   // shape exposed under /openapi.json), distinct from the deployed-build
   // `version` reported on `GET /`. Bump on contract changes, not on every
-  // deploy. Bumped to 6.0.0 in the docs API-surface rework (breaking path
-  // renames: bulk-actions, tenants/me/config, edge-types, lease-tokens).
+  // deploy. Bumped to 5.1.0 in the docs API-surface rework: the path renames
+  // (bulk-actions, tenants/me/config, edge-types, lease-tokens) are breaking,
+  // but the API is pre-release and nothing pins the contract version yet, so
+  // the change deliberately rides a minor rather than a major.
   // `finalizeOpenAPISpec` shapes the public reference (ordered tags, internal
   // operations stripped, plain-Hono routes injected) — shared with the
   // committed spec in `scripts/generate-openapi.ts` so the two never drift.
@@ -626,7 +628,7 @@ export function createApp(
       openapi: "3.1.0",
       info: {
         title: "Marfa API",
-        version: "6.0.0",
+        version: "5.1.0",
         description: "Typed data layer for structured personal data",
       },
     }),
