@@ -20,12 +20,12 @@ interface QueueProducer {
  * `integration_name` is a defence-in-depth check that only fires
  * AFTER a message reaches a consumer, so a shared queue would
  * silently filter out every integration except the one that owns the
- * consumer slot. Pre-T-247 this collapsed onto github-webhooks.
+ * consumer slot.
  *
  * The resolver returns the per-integration producer when one is
- * bound, falling back to the legacy shared `WEBHOOK_RECEIPT_QUEUE`
- * for backward compatibility with github-webhooks. Returning
- * `undefined` means no producer is wired — the route returns 503.
+ * bound, falling back to the shared `WEBHOOK_RECEIPT_QUEUE` for
+ * github-webhooks. Returning `undefined` means no producer is
+ * wired — the route returns 503.
  */
 export function resolveWebhookQueueProducer(
   env: ControlPlaneEnv,
@@ -71,12 +71,10 @@ function hasAnyWebhookProducer(env: ControlPlaneEnv): boolean {
  *   1. Resolve subscription configs by `connection_id` from the Marfa
  *      server (the broker key authenticates the lookup).
  *   2. Verify the delivery against each subscription's adapter; the
- *      first that passes wins. T-009 lifted all four supported methods
- *      (HMAC-SHA256, Slack, Stripe, GitHub) into the control plane;
- *      T-035 consolidated them into `@withmarfa/webhooks` so the
- *      Worker control plane and the Node-side server share one
- *      Web-Crypto implementation. The previously-stubbed `custom`
- *      method was dropped in T-011.
+ *      first that passes wins. The four supported methods
+ *      (HMAC-SHA256, Slack, Stripe, GitHub) live in
+ *      `@withmarfa/webhooks` so the Worker control plane and the
+ *      Node-side server share one Web-Crypto implementation.
  *   3. Enforce idempotency via the IDEMPOTENCY_KV namespace keyed by
  *      `${webhook_id}:${delivery_id}` with a 1-hour TTL. Duplicate
  *      receipts respond 200 without enqueuing.
@@ -111,7 +109,7 @@ export function registerWebhookRoutes(
       );
     }
     // T-247 — early sanity check: if no webhook-receipt producer
-    // binding is wired AT ALL (neither the legacy shared nor any
+    // binding is wired AT ALL (neither the shared nor any
     // per-integration), fail fast with a clear deploy-misconfigured
     // 503. The per-integration resolver lower down handles the
     // narrower case "the requested integration's producer isn't

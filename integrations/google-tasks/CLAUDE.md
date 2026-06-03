@@ -74,8 +74,8 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 }
 ```
 
-`mapping_lists` is mandatory (no legacy single-list cursor to keep
-compatible with). Calendar's `mapping_calendars` is the analog.
+`mapping_lists` is mandatory — every cursor carries it. Calendar's
+`mapping_calendars` is the analog.
 
 ## Watermark advance
 

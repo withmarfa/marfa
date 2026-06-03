@@ -8,10 +8,11 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 const CACHE_TTL_MS = 60_000;
 const startedAt = Date.now();
 
-// Per-tenant cache. Previously this was a module-level response + timestamp,
-// which let one tenant's admin see another tenant's item/blob/etc counts for
-// up to CACHE_TTL_MS. Key = tenant_id or a sentinel when the caller's key
-// has no tenant_id (single-tenant/keys-mode installs).
+// Per-tenant cache, keyed by tenant. A single module-level response +
+// timestamp would let one tenant's admin see another tenant's
+// item/blob/etc counts for up to CACHE_TTL_MS. Key = tenant_id or a
+// sentinel when the caller's key has no tenant_id (single-tenant/keys-mode
+// installs).
 interface CacheEntry {
   response: Record<string, unknown>;
   at: number;

@@ -6,7 +6,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * Mirrors the shape T-025 introduced for tenant context (see
  * `storage/pg/request-context.ts`): a single `AsyncLocalStorage` set by
  * `cycleMiddleware` at request entry and read by `publish` / `publishEdge`
- * in `pubsub.ts`, so route handlers no longer have to spread
+ * in `pubsub.ts`, so route handlers don't have to spread
  * `...c.var.cycle` into every publish call.
  *
  * Lives at the top of `src/` (not under `middleware/`) because both the

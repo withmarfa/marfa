@@ -18,9 +18,9 @@ const REPLAY_BATCH_SIZE = 500;
  * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable T-146
  * session-level RLS on a dedicated pool connection for the lifetime
  * of the SSE stream. Without both set the route runs on the owner
- * connection (unchanged pre-T-146 behaviour) — used for SQLite, for
- * tenant-less callers (platform admin / single-tenant self-host),
- * and when RLS enforcement is disabled instance-wide.
+ * connection — used for SQLite, for tenant-less callers (platform
+ * admin / single-tenant self-host), and when RLS enforcement is
+ * disabled instance-wide.
  */
 export interface EventRoutesOptions {
   rlsEnforce: boolean;

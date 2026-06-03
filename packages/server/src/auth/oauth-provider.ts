@@ -1,9 +1,9 @@
 /**
- * T-131: @better-auth/oauth-provider plugin wiring.
+ * @better-auth/oauth-provider plugin wiring (T-131).
  *
- * Replaces the homegrown OAuth surface (formerly `routes/oauth.ts`,
- * ~2,725 LOC) with the production-stable plugin. Endpoints land under
- * `/auth/oauth2/*` via Better Auth's catch-all (basePath `/auth`).
+ * The OAuth protocol surface is owned by the @better-auth/oauth-provider
+ * plugin; endpoints land under `/auth/oauth2/*` via Better Auth's
+ * catch-all (basePath `/auth`).
  *
  * Three coupled pieces in this file:
  *   1. `buildAllowedScopes(...)`  — enumerates the Marfa scope grammar

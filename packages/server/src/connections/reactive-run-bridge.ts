@@ -306,7 +306,7 @@ async function loadSubscriptions(
 
   // Operational visibility — without this an operator can't tell the
   // bridge has loaded all of the tenant's subscriptions vs. silently
-  // capped them at the page size (the pre-T-013 bug).
+  // capping them at the page size.
   console.info(
     `[reactive-run-bridge] loaded ${String(out.size)} subscription(s) across ${String(pages)} page(s)`,
   );
@@ -315,10 +315,9 @@ async function loadSubscriptions(
 
 function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   const fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
-  // T-135 + T-233: bounded keep-alive Pool per queue ORIGIN. Pre-T-233
-  // the bridge held one Pool for the single queue URL; with per-
-  // integration URLs the queues may live at different origins, so the
-  // map is keyed by `new URL(url).origin`. In practice every Cloudflare
+  // T-135 + T-233: bounded keep-alive Pool per queue ORIGIN. Per-
+  // integration queue URLs may live at different origins, so the map is
+  // keyed by `new URL(url).origin`. In practice every Cloudflare
   // queue for a given account shares the same `api.cloudflare.com`
   // origin so the map usually has one entry, but the shape supports
   // multi-origin without changes. Lazy creation: first send to a new
@@ -562,17 +561,16 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
  * whose `event.tenantId` doesn't match the subscriber's tenant. The
  * downstream Worker still authenticates with a per-Connection runtime
  * credential, so the API permission gate remains as the inner backstop —
- * but cross-tenant work no longer pays the queue / Worker cost. Single-
+ * and cross-tenant work doesn't pay the queue / Worker cost. Single-
  * tenant self-hosted: every connection and event are tenantless (null),
- * the gate trivially passes (null === null), no behaviour change.
+ * the gate trivially passes (null === null).
  *
  * T-036 (parallel fanout): subscribers receive concurrently via
- * `Promise.allSettled`. The pre-T-036 shape was a sequential `await`
- * per subscriber — a slow / wedged subscriber whose 5s per-fetch
- * timeout (T-013) was firing imposed that latency on every other
- * subscriber waiting behind it. Parallel dispatch decouples
- * subscribers; per-subscriber retry, timeout, and error-isolation
- * paths from T-013 are preserved inside each task. At very high
+ * `Promise.allSettled`. A sequential `await` per subscriber would let
+ * a slow / wedged subscriber whose 5s per-fetch timeout (T-013) is
+ * firing impose that latency on every other subscriber behind it.
+ * Parallel dispatch decouples subscribers; per-subscriber retry,
+ * timeout, and error-isolation paths from T-013 apply inside each task. At very high
  * subscriber counts (a few hundred per tenant) we'd want bounded
  * concurrency to avoid overwhelming Cloudflare Queues; that's a
  * separate optimisation worth filing if/when needed.
@@ -730,7 +728,7 @@ async function handleSubscriberFailure(
     `[reactive-run-bridge] subscriber ${entry.connection_id} fanout failed:`,
     reason,
   );
-  // Operator-visible per-event row (severity error) — historical behaviour.
+  // Operator-visible per-event row (severity error) on fanout failure.
   // The system.activity write is the storage-layer call only; it does
   // NOT invoke `publish()` (publish is the route-layer's job in
   // `routes/items.ts`). So this write is invisible to the bridge's own

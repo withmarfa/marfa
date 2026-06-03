@@ -230,9 +230,10 @@ export const blobs = sqliteTable(
 // OAuth tables
 // ---------------------------------------------------------------------------
 
-// T-131: oauth_clients + oauth_tokens dropped — replaced by
-// auth_oauth_client + auth_oauth_access_token + auth_oauth_refresh_token
-// owned by the @better-auth/oauth-provider plugin. See migration
+// OAuth client + token storage is owned by the
+// @better-auth/oauth-provider plugin (auth_oauth_client +
+// auth_oauth_access_token + auth_oauth_refresh_token), so no
+// oauth_clients / oauth_tokens tables are defined here. See migration
 // 0048_drop_legacy_oauth.sql for the drop DDL.
 
 // ---------------------------------------------------------------------------
@@ -251,11 +252,10 @@ export const oauthDeviceCodes = sqliteTable(
      *  the row is preserved for audit but no new pending row may reuse
      *  the value (enforced by a unique index over the natural key). */
     user_code: text("user_code").notNull().unique(),
-    /** T-131: FK previously pointed at the dropped `oauth_clients` table.
-     *  Now stores the @better-auth/oauth-provider client_id business key
+    /** Stores the @better-auth/oauth-provider client_id business key
      *  (auth_oauth_client.client_id) as a plain string — application-
      *  enforced integrity, consistent with the plugin's own cross-table
-     *  references. */
+     *  references (no FK). */
     client_id: text("client_id").notNull(),
     /** Space-separated list of requested scopes. Stored verbatim;
      *  parsed via parseScope at consent / token time. */

@@ -3,12 +3,12 @@
  * shared across the Cloudflare Worker control plane (`runtime-control`)
  * and the Node-side server (`packages/server`).
  *
- * Pre-T-035 the two runtimes maintained parallel implementations
- * (`node:crypto` vs Web Crypto). This package consolidates onto a
- * single Web-Crypto-only implementation; Node 20+ exposes Web Crypto
- * natively as `globalThis.crypto`, so both runtimes import the same
- * code path. A cross-runtime parity test in this package guards the
- * contract.
+ * One Web-Crypto-only implementation serves both runtimes — Node 20+
+ * exposes Web Crypto natively as `globalThis.crypto`, so the Worker
+ * control plane and the Node-side server import the same code path
+ * rather than maintaining parallel `node:crypto` vs Web Crypto
+ * implementations. A cross-runtime parity test in this package guards
+ * the contract.
  *
  * Adapters are pure: no logging, no DB, no clock injection beyond
  * what the headers themselves carry. Surface results upstream.

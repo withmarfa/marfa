@@ -154,8 +154,7 @@ export interface AppConfig {
    *  the rate-limit middleware so there's a single env-read site. */
   rateLimitDefaultLimit: number;
   /** Rate-limit window size in ms. Read from `RATE_LIMIT_WINDOW_MS`
-   *  (default 60_000). The self-hosting docs were previously wrong about
-   *  this being hard-coded; it's an env var. */
+   *  (default 60_000) — configurable, not hard-coded. */
   rateLimitWindowMs: number;
   /** Deployed-build identifier, surfaced on `GET /` as `version`. Filled
    *  by `index.ts` from `version.json` at startup; defaults to `"dev"`

@@ -372,10 +372,10 @@ export function keyRoutes(storage: Storage, salt: string) {
       newKeyTenantId,
     );
 
-    // The bootstrap sentinel was stamped above via `settings.claim`, so the
-    // post-mint write is no longer needed. (Pre-T-007 the sentinel was
-    // stamped after the mint, which left a window for concurrent calls to
-    // both pass the gate and both mint admin keys.)
+    // The bootstrap sentinel is stamped above via `settings.claim`, before
+    // the mint, so there's no post-mint write. Stamping it after the mint
+    // would leave a window for concurrent calls to both pass the gate and
+    // both mint admin keys.
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

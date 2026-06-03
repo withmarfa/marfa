@@ -163,14 +163,14 @@ export async function createPgStorage(
      * `request-context.ts`. All work inside `fn` runs on the
      * transaction's reserved connection; rollback is real on throw.
      *
-     * Pre-T-160 this used `client.begin(async () => fn())` and discarded
-     * the transaction-scoped query interface. Storage calls inside `fn`
-     * fell through to the unwrapped base instance via the proxy (no ALS
-     * context) and acquired SECOND pool connections per query, while the
-     * `begin` connection sat `idle in transaction` waiting for queries
-     * that never came. Under concurrent writes the pool saturated, every
-     * `runInTransaction` callback blocked acquiring an inner connection,
-     * and the server wedged for ~15 minutes until clients gave up.
+     * It must install `tx` on the ALS rather than discarding the
+     * transaction-scoped query interface (as a bare
+     * `client.begin(async () => fn())` would). Without the ALS context,
+     * storage calls inside `fn` fall through to the unwrapped base
+     * instance and acquire SECOND pool connections per query while the
+     * `begin` connection sits `idle in transaction` — under concurrent
+     * writes the pool saturates and every `runInTransaction` callback
+     * blocks acquiring an inner connection.
      *
      * Goes through the wrapped `db`: when the caller is already inside
      * the RLS middleware's transaction (a tenant-scoped request), the

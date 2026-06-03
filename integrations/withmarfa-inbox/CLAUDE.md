@@ -41,12 +41,10 @@ withmarfa.inbox integration handler
 withmarfa.captured_email item (source_id = Message-ID)
 ```
 
-T-250 replaced step 4's HTTP fetch with the Service Binding shape.
-The prior `WEBHOOK_URL` workaround pointed at
-`marfa-runtime-control-staging.withmarfa.workers.dev` — the
-custom-domain route returned 522 during T-244 validation; the
-workers.dev URL sidestepped it. Service Bindings remove the edge
-hop entirely, so both 522 and the workers.dev URL go away.
+Step 4 reaches the runtime-control Worker through a Service Binding
+rather than an HTTP fetch. The binding invokes the bound Worker's
+`fetch` handler directly — no DNS, TLS, or edge routing — so there's
+no custom-domain or `workers.dev` URL in the path at all.
 
 ## Two Workers, one integration
 

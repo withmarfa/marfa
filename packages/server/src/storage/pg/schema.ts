@@ -240,9 +240,10 @@ export const blobs = pgTable(
 // OAuth tables
 // ---------------------------------------------------------------------------
 
-// T-131: oauth_clients + oauth_tokens dropped — replaced by
-// auth_oauth_client + auth_oauth_access_token + auth_oauth_refresh_token
-// owned by the @better-auth/oauth-provider plugin. See migration
+// OAuth client + token storage is owned by the
+// @better-auth/oauth-provider plugin (auth_oauth_client +
+// auth_oauth_access_token + auth_oauth_refresh_token), so no
+// oauth_clients / oauth_tokens tables are defined here. See migration
 // 0055_drop_legacy_oauth.sql for the drop DDL.
 
 // ---------------------------------------------------------------------------
@@ -257,8 +258,8 @@ export const oauthDeviceCodes = pgTable(
     device_code_hash: text("device_code_hash").notNull().unique(),
     /** Short, low-entropy code displayed to the human (XXXX-XXXX shape). */
     user_code: text("user_code").notNull().unique(),
-    /** T-131: FK previously pointed at the dropped `oauth_clients` table.
-     *  Now stores the plugin's business `client_id` as a plain string. */
+    /** Stores the plugin's business `client_id` as a plain string
+     *  (no FK). */
     client_id: text("client_id").notNull(),
     scope: text("scope").notNull(),
     status: text("status").notNull().default("pending"),

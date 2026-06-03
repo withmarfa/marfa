@@ -20,8 +20,9 @@
  *
  * Step ordering (after the step-0 re-check):
  *   1. Resolve `users.tenant_id`. If no row, only the auth_user
- *      cleanup runs (the user never had a tenant — pre-T-074 legacy
- *      shape, or a sign-up that bailed before tenant provisioning).
+ *      cleanup runs (the user never had a tenant — a single-tenant
+ *      self-host shape, or a sign-up that bailed before tenant
+ *      provisioning).
  *   2. Per-tenant teardown of connection-related artefacts. The full
  *      `performUninstall` pipeline isn't reachable from storage
  *      (route-layer concern), so we do the minimal subset of its

@@ -1,28 +1,26 @@
 /**
  * OAuth consent screen renderer.
  *
- * Wave C PR4: layout extraction. Older inline `<style>` block dropped
- * in favour of the shared `/auth/static/auth.css` design tokens —
- * unifies the visual surface with sign-in / sign-up / device-flow.
+ * Layout: the shared `/auth/static/auth.css` design tokens style the
+ * screen, unifying the visual surface with sign-in / sign-up /
+ * device-flow.
  *
- * Wave C PR5 / T-032: re-consent diff. When the caller passes
- * `priorScopes` (the scope set the user previously approved on this
- * client, looked up via `system.connection` of `kind: app`),
- * the screen renders three group blocks — Previously granted (kept),
- * New permissions (added), and No longer requested (removed) —
- * instead of the flat read / write split. First-time consent (no
- * prior grant) keeps the flat shape.
+ * Re-consent diff (T-032): when the caller passes `priorScopes` (the
+ * scope set the user previously approved on this client, looked up via
+ * `system.connection` of `kind: app`), the screen renders three group
+ * blocks — Previously granted (kept), New permissions (added), and No
+ * longer requested (removed) — instead of the flat read / write split.
+ * First-time consent (no prior grant) renders the flat shape.
  *
- * T-131 rewrite: the homegrown surface used to POST the consent form
- * to `/auth/authorize` to mint the authorization code AT consent time.
- * The @better-auth/oauth-provider plugin inverts this — it signs the
- * full authorize-request query string (response_type + client_id +
- * redirect_uri + scope + state + code_challenge + code_challenge_method
- * + exp + sig) and redirects to the consent page carrying that signed
- * blob. The consent form POSTs back to `/auth/oauth2/consent` with
- * `{ accept, scope?, oauth_query }` — the plugin verifies the sig,
- * re-hydrates the original params from `oauth_query`, mints the code,
- * and redirects to the RP's `redirect_uri?code=...`.
+ * Authorization flow (T-131): the @better-auth/oauth-provider plugin
+ * signs the full authorize-request query string (response_type +
+ * client_id + redirect_uri + scope + state + code_challenge +
+ * code_challenge_method + exp + sig) and redirects to the consent page
+ * carrying that signed blob. The consent form POSTs back to
+ * `/auth/oauth2/consent` with `{ accept, scope?, oauth_query }` — the
+ * plugin verifies the sig, re-hydrates the original params from
+ * `oauth_query`, mints the code, and redirects to the RP's
+ * `redirect_uri?code=...`.
  *
  * So: the form carries the entire signed query string as a single
  * hidden field `oauth_query`. `client_id` is rendered for the projection

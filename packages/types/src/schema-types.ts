@@ -35,9 +35,8 @@ export interface FieldDefinition {
    * T-015: opt-out flag for full-text search indexing. When `false`,
    * the field's content is excluded from FTS — both the SQLite FTS5
    * `extra` column and the PG `search_vector` materialised tsvector.
-   * Defaults to `true` for backward compatibility (existing types
-   * without this flag continue to be indexed). Only meaningful for
-   * `string`-typed fields; ignored elsewhere.
+   * Defaults to `true` — a field without this flag is indexed. Only
+   * meaningful for `string`-typed fields; ignored elsewhere.
    *
    * Use case: types whose string fields carry secrets, opaque ids,
    * or noisy content that shouldn't surface in search results.
@@ -69,8 +68,8 @@ export interface DisplayHints {
  * Per-field strategy for resolving concurrent edits on the same item.
  *
  * - `last_writer_wins` — server's current value wins on conflict; the
- *   client's stale change is dropped. The historical default for every
- *   field; matches single-value semantics like enums, scalars, IDs, and
+ *   client's stale change is dropped. The default for every field;
+ *   matches single-value semantics like enums, scalars, IDs, and
  *   timestamps.
  * - `keep_both_copies` — preserve the client's edit by spawning a sibling
  *   item of the same type tagged `conflicted-copy`. The original item

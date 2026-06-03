@@ -15,7 +15,7 @@
  *   tractable. (Programming errors — missing config, malformed message
  *   — still throw, since those are bugs not transport conditions.)
  *
- * Hard-bounce suppression is no longer maintained server-side. Cloudflare
+ * Hard-bounce suppression is not maintained server-side. Cloudflare
  * Email Service handles its own internal suppression list; SMTP self-hosters
  * own their domain reputation. Sends to a suppressed address surface as
  * a `{ ok: false, retryable: false }` result with structured logging.

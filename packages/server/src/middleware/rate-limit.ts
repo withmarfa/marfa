@@ -15,9 +15,8 @@ export interface RateLimitConfig {
   /** Trusted reverse-proxy CIDRs for safe x-forwarded-for handling. */
   trustedProxyCidrs: CidrRange[];
   /**
-   * Required storage handle. T-026 promoted this to required (was
-   * optional pre-T-026) because the rate-limit counter itself now
-   * lives in the shared store (`storage.rateLimits`). The handle also
+   * Required storage handle. The rate-limit counter lives in the shared
+   * store (`storage.rateLimits`), so the handle is mandatory. It also
    * carries the per-tenant rate-cap lookup (T-052 follow-on).
    */
   storage: Storage;

@@ -11,7 +11,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "API Key or OAuth Token",
-        "description": "Pass an API key (marfa_k1_...) or OAuth access token (marfa_at_...)"
+        "description": "Authenticate with an API key (`marfa_k1_…`) or an OAuth access token (`marfa_at_…`)."
       }
     },
     "schemas": {},

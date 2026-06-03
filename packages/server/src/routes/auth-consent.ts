@@ -415,10 +415,11 @@ async function projectGrantOnConsent(
     }
 
     // F3: re-consent resets `status` to "active" + clears `revoked_at`.
-    // Pre-fix, a previously-revoked row had its scopes updated but
-    // `status="revoked"` stuck → /security hid the grant while the
-    // plugin issued tokens against it. Setting `revoked_at: undefined`
-    // makes JSON.stringify drop the key from the stored properties.
+    // Without the reset, a re-consented row would keep its scopes
+    // updated but `status="revoked"` stuck → /security would hide the
+    // grant while the plugin issued tokens against it. Setting
+    // `revoked_at: undefined` makes JSON.stringify drop the key from
+    // the stored properties.
     const updated = await storage.items.update(
       grantItemId,
       {

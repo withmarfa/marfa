@@ -36,8 +36,8 @@
  * CF maintains hard-bounce suppression internally across the account.
  * Sends to a suppressed address return a 4xx from CF; we surface it as
  * `{ ok: false, retryable: false }` and structured-log. No server-side
- * `email_suppressions` table — that surface was removed alongside the
- * prior backend (T-107).
+ * `email_suppressions` table — suppression is owned entirely by CF's
+ * account-wide list.
  *
  * # Structured logging on non-2xx
  *
@@ -50,10 +50,9 @@
  * (html / text), subject line (may carry user-specific tokens or names),
  * idempotency-key contents (may carry user id / token jti).
  *
- * Privacy posture: the prior backend kept structured per-recipient
- * suppression records server-side; we now rely on CF's internal list,
- * so server logs MUST NOT introduce a parallel PII trail through the
- * back door.
+ * Privacy posture: suppression is owned by CF's internal list, with no
+ * per-recipient records kept server-side, so server logs MUST NOT
+ * introduce a parallel PII trail through the back door.
  *
  * # Response shape (verified live against the open-beta API)
  *

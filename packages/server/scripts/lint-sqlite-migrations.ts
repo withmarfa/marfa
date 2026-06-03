@@ -166,7 +166,7 @@ function main(): void {
   console.error(
     "Drizzle's libsql migrator splits each .sql file on `--> statement-breakpoint` and runs each chunk via\n" +
       "libsql's single-statement `execute()`. Multiple `;`-terminated statements in one chunk silently drop\n" +
-      "all but the first — see T-145 (PR #240) for the historical context.\n",
+      "all but the first — see T-145 (PR #240) for the background.\n",
   );
   for (const o of offenses) {
     console.error(

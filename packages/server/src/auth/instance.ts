@@ -273,9 +273,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       // Wave C PR2: every new sign-up must verify their email before
       // signing in — but only when a real email backend is actually
       // configured. The `none` backend (or no transport at all) would
-      // 500 every sign-up. The grandfather migration (0042 PG / 0035
-      // SQLite) marks pre-existing accounts as verified so this flip
-      // doesn't lock them out when an operator turns on a real backend.
+      // 500 every sign-up. Migration 0042 (PG) / 0035 (SQLite) marks
+      // accounts predating the requirement as verified so turning on a
+      // real backend doesn't lock them out.
       requireEmailVerification: emailVerificationEnabled,
       // Wave C PR3 / T-033: 1h reset-token TTL. Long enough for a
       // user to switch tabs / inboxes, short enough to bound the
@@ -430,7 +430,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       magicLink({
         sendMagicLink: async ({ email, url, token }) => {
           // Rich transport gets the HTML template + idempotency key
-          // for log correlation. Falls back to the legacy callable
+          // for log correlation. Falls back to the basic callable
           // transport for tests and the log-default for unconfigured
           // deployments.
           if (richTransport) {

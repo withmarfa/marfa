@@ -259,8 +259,7 @@ async function fetchPgGrants(databaseUrl: string): Promise<PgGrant[]> {
  *   - `role`   — emitted BEFORE the pg_dump body; policies reference the role.
  *   - `grants` — emitted AFTER the pg_dump body; tables must exist first.
  *
- * Tables with identical privilege sets share a single GRANT line — matches
- * the shape of the prior hand-written SCHEMA_SQL closely enough that
+ * Tables with identical privilege sets share a single GRANT line, so
  * reviewers can audit grants visually. Stable ordering (verb-set key, then
  * alphabetical table) guarantees deterministic output for the freshness
  * diff.
@@ -345,7 +344,7 @@ function buildPgRoleAndGrants(grants: PgGrant[]): {
   }
 
   // Sequence usage — marfa_app needs to insert into IDENTITY columns
-  // (event_log.id). Granted blanket; matches the prior SCHEMA_SQL.
+  // (event_log.id). Granted blanket across the schema.
   grantLines.push(
     `GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "marfa_app";`,
   );
@@ -461,10 +460,9 @@ function transformPgStatement(stmt: string): string {
   // re-runs simply skip when an equivalent constraint already exists.
   //
   // T-157: the guard is SEMANTIC, not name-based. It keys on `contype` +
-  // the column set, so an existing DB whose historical constraint label
-  // differs (e.g. Postgres-default `_pkey` vs Drizzle's
-  // `_<table>_<cols>_pk`) still satisfies the guard and the ADD is
-  // correctly skipped. PK / UNIQUE / FK are detected by parsing the
+  // the column set, so an existing DB whose constraint label differs
+  // (e.g. Postgres-default `_pkey` vs Drizzle's `_<table>_<cols>_pk`)
+  // still satisfies the guard and the ADD is correctly skipped. PK / UNIQUE / FK are detected by parsing the
   // definition. CHECK / EXCLUDE fall through to a name-based fallback
   // (the current schema emits neither — defensive only).
   const addConstraintMatch =
@@ -501,13 +499,13 @@ function transformPgStatement(stmt: string): string {
 /**
  * Build a semantic IF-NOT-EXISTS guard for an `ADD CONSTRAINT` statement
  * (T-157). The guard checks for an equivalent constraint by `contype` +
- * column set, NOT by `conname`, so an existing DB whose historical
- * constraint has a different label still satisfies the guard.
+ * column set, NOT by `conname`, so an existing DB whose constraint has a
+ * different label still satisfies the guard.
  *
  * Supported constraint types: PRIMARY KEY, UNIQUE, FOREIGN KEY. Anything
- * else (CHECK, EXCLUDE) falls back to the legacy name-based guard — the
- * current Drizzle-generated schema emits none of those, but keep the
- * fallback so a future addition doesn't crash the generator.
+ * else (CHECK, EXCLUDE) falls back to a name-based guard — the current
+ * Drizzle-generated schema emits none of those, but keep the fallback so
+ * a future addition doesn't crash the generator.
  */
 function buildConstraintGuardSql(
   tableRef: string,

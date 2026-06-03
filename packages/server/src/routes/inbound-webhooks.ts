@@ -421,8 +421,8 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     );
 
     // Stamp method on the new row from the validated manifest. The
-    // legacy `verification_adapter_id` column was reserved for the
-    // dropped `custom` method (T-011); always undefined now.
+    // `verification_adapter_id` column is always undefined — no current
+    // verification method uses it.
     const verification_method = manifest.webhook_verification.method;
     const verification_adapter_id: string | undefined = undefined;
 

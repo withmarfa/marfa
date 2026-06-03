@@ -81,7 +81,7 @@ Middleware order in `app.ts`: logger → CORS → client-ip → auth → cycle �
 
 ## Cycle metadata propagation (T-144)
 
-Same shape as Postgres RLS (T-025): state that must stay coherent across a request flows through one mechanism (middleware + AsyncLocalStorage), not by every caller spreading the value. `cycleMiddleware` resolves the per-request cycle and writes it to both `c.var.cycle` (diagnostic) and `cycleRequestContext` (the ALS at `src/cycle-context.ts`). `pubsub.publish` and `pubsub.publishEdge` consult the ALS automatically; route handlers no longer carry `...c.var.cycle` on every publish call.
+Same shape as Postgres RLS (T-025): state that must stay coherent across a request flows through one mechanism (middleware + AsyncLocalStorage), not by every caller spreading the value. `cycleMiddleware` resolves the per-request cycle and writes it to both `c.var.cycle` (diagnostic) and `cycleRequestContext` (the ALS at `src/cycle-context.ts`). `pubsub.publish` and `pubsub.publishEdge` consult the ALS automatically; route handlers do not carry `...c.var.cycle` on every publish call.
 
 **Explicit override path.** Server-internal callers that need to synthesise a cycle (rather than propagate the request's) can pass `originatingConnectionId` and/or `hopCount` explicitly on the `publish` event argument — the resolver short-circuits to the explicit values when either field is present. No internal caller exercises this today; the `POST /connections/preview-event` route runs its own duplicate of `passesHopBudget`'s effective-hop logic against `body.cycle` for hypothetical-event reasoning (it never calls `publish`).
 
@@ -101,14 +101,14 @@ Two coordinated PRs land RLS as defence-in-depth beneath the application-layer t
 
 The Drizzle PG instance is wrapped in a per-request context proxy (`storage/pg/request-context.ts`) that consults an `AsyncLocalStorage` on every method access. The RLS middleware (`middleware/rls-tenant-context.ts`) wraps each tenant-bounded request in `db.transaction(async tx => { SELECT set_config('marfa.tenant_id', $1, true); SET LOCAL ROLE marfa_app; ... })` and stores `tx` on the ALS. Storage calls during the request flow through `tx`'s reserved connection and are subject to the policies.
 
-**Activation.** Gated by `MARFA_RLS_ENFORCE` (**default `true` from T-146**; was `false` pre-T-146). Explicit opt-out is `MARFA_RLS_ENFORCE=false` — convenient for diagnosis but should not run in production. With the flag off, the proxy still exists but the middleware never installs an ALS context, so all queries fall through to the unwrapped base instance and run as the connection owner (RLS bypassed by virtue of ownership). SQLite is unaffected — the middleware skips when `storage.pgDb` is undefined.
+**Activation.** Gated by `MARFA_RLS_ENFORCE` (**defaults to `true`**). Explicit opt-out is `MARFA_RLS_ENFORCE=false` — convenient for diagnosis but should not run in production. With the flag off, the proxy still exists but the middleware never installs an ALS context, so all queries fall through to the unwrapped base instance and run as the connection owner (RLS bypassed by virtue of ownership). SQLite is unaffected — the middleware skips when `storage.pgDb` is undefined.
 
 **Bypass paths.** Two intentional carve-outs from the role-switch wrapper:
 
 - **Platform-admin / anonymous / bootstrap** — requests with no `apiKey.tenant_id` skip the wrapper and run as the owner. `requireAdmin` is still load-bearing for cross-tenant authority.
 - **Better Auth** — `storage.betterAuthDb` is the unwrapped base instance. The auth library manages its own connection context outside the data-plane request middleware; auth tables (`auth_*`) carry no RLS.
 
-Streaming responses (`/events` SSE + `/export` NDJSON / archive) used to be a third bypass — wrapping them in a transaction would pin a pool connection for the response's full duration. T-146 closes that gap via a different mechanism (see next section). They remain exempt from the transaction wrapper but apply session-level RLS internally.
+Streaming responses (`/events` SSE + `/export` NDJSON / archive) are a special case — wrapping them in a transaction would pin a pool connection for the response's full duration. They are exempt from the transaction wrapper but apply session-level RLS internally via a different mechanism (see next section).
 
 ## Streaming RLS (T-146)
 
@@ -135,11 +135,11 @@ The helper lives at `storage/pg/streaming-rls.ts`. Public surface: `acquireStrea
 
 If any condition is false the route runs on the owner connection, matching the per-request middleware's bypass semantics.
 
-**Pre-T-146 historical note.** The original RLS PR (T-025) left `/events` + `/export` as a deliberate gap — `STREAMING_PATH_PREFIXES` in `middleware/rls-tenant-context.ts` exempted them from the transaction wrapper and the docstring acknowledged the depth-of-defence hole. T-146 closes it.
+**Transaction-wrapper exemption.** `STREAMING_PATH_PREFIXES` in `middleware/rls-tenant-context.ts` exempts `/events` + `/export` from the per-request transaction wrapper. They apply session-level RLS internally (above) rather than wrapping the long-lived response in a transaction.
 
 ## Per-tenant background cleanup (T-050)
 
-Three cleanup jobs (`TrashPurger`, audit cleanup, event-log cleanup) fan out per-tenant. Each tick the job lists every tenant via `TenantStore.list()`, resolves the effective retention (per-tenant `TenantConfig` override OR env default), and runs the cleanup once per tenant scope plus once for the NULL-tenant bucket (single-tenant self-host items + any unscoped legacy rows).
+Three cleanup jobs (`TrashPurger`, audit cleanup, event-log cleanup) fan out per-tenant. Each tick the job lists every tenant via `TenantStore.list()`, resolves the effective retention (per-tenant `TenantConfig` override OR env default), and runs the cleanup once per tenant scope plus once for the NULL-tenant bucket (single-tenant self-host items + any rows with no tenant scope).
 
 Per-tenant overrides on `TenantConfig`:
 
@@ -165,10 +165,8 @@ OAuth tokens are issued with scopes parsed by `parseScope` in `@withmarfa/shared
 - **`requireEdgePermission(c, edgeType, level)`** — consults `edge_permissions`. Wired on `POST /edges`, `PATCH /edges/:id`, `DELETE /edges/:id`, and on every edge mutation inside an atomic `POST /items`. Admin and tenant_admin bypass.
 - **`requireMetadataPermission(c, subresource, level)`** — consults `metadata_permissions`. Wired on `POST /types` (`metadata.types:write`). Admin and tenant_admin bypass.
 - **List-read enforcement via `getTypeFilter`** — list endpoints (`GET /items`, `/search`, `/export`, bulk reads) project `type_permissions` into a storage-layer `allowed_types` filter. Out-of-scope types silently drop from the result set (status 200 with empty data) — implicit denial, not 403. The single-item GET path enforces explicitly via `requireTypeAccess`. Strict rejection on list filter mismatch would force callers to know exactly what's in scope; the implicit-denial shape lets a token pass `?type=X` even with a multi-type scope and get the right results.
-- **Empty `allowed_types` filters to zero rows.** The storage layer treats `allowed_types: []` as "no readable types" (forces `1=0` in SQL); previously it silently passed through and returned every row, a real security gap a no-scope token could exploit. Fixed in T-045 alongside the projection wiring.
+- **Empty `allowed_types` filters to zero rows.** The storage layer treats `allowed_types: []` as "no readable types" (forces `1=0` in SQL). Passing it through unfiltered would return every row — a security gap a no-scope token could exploit — so the empty case must deny, not widen.
 - **More-restrictive-wins is automatic.** OAuth tokens are synthetic `ApiKey` records built only from the granted scopes — there's no underlying API key whose permissions might be wider. Scope and credential are the same map.
-
-**Force re-consent on T-045 deploy.** [Historical — script removed in T-131. T-131's deploy is itself a hard reset of OAuth state: the legacy `oauth_clients` / `oauth_tokens` / `oauth_codes` tables are dropped; every grant must be re-created via the new flow.]
 
 ## OAuth Provider plugin (T-131)
 
@@ -204,7 +202,7 @@ The OAuth-protocol surface is owned by [@better-auth/oauth-provider](https://www
 
 **`last_used_at` stamping (code-flow).** The bearer middleware resolves the projected `system.connection` item by `(tenantId, clientId, authUserId)` via `storage.oauthProvider.findGrantItemId` on the first authenticated request inside the debounce window, then stamps `properties.last_used_at` via the existing `storage.oauth.updateLastUsedAt` helper. Two-layer debounce (in-memory cache + DB-side conditional UPDATE) means at most one stamp per grant per 30s window cluster-wide. Device-flow grants continue to stamp at `/auth/device/token` issuance against `row.connection_item_id` (the FK on `oauth_device_codes`).
 
-**Refresh-token replay — closed.** Plugin behaviour verified in source (`index.mjs:747-761`): stale-refresh replay deletes the entire refresh chain for `(clientId, userId)` and returns `invalid_grant`. Plugin does NOT delete access tokens from the same chain — they used to remain valid until TTL (1h default). T-131 follow-on closes the gap: a before-hook on `/oauth2/token` (`detectAndZapReplayedAccessTokens`) hashes the request's `refresh_token`, peeks at the row, and if `revoked: true` pre-emptively deletes access tokens for `(clientId, userId)` via `storage.oauthProvider.revokeAccessTokensForGrant`. The plugin's own logic then runs (returning `invalid_grant`); access tokens are already gone. Best-effort throughout — failures swallowed, the 1h TTL still bounds exposure in the unlikely degraded path.
+**Refresh-token replay — closed.** Plugin behaviour verified in source (`index.mjs:747-761`): stale-refresh replay deletes the entire refresh chain for `(clientId, userId)` and returns `invalid_grant`. Plugin does NOT delete access tokens from the same chain — on its own they would remain valid until TTL (1h default). Marfa closes that gap with a before-hook on `/oauth2/token` (`detectAndZapReplayedAccessTokens`) hashes the request's `refresh_token`, peeks at the row, and if `revoked: true` pre-emptively deletes access tokens for `(clientId, userId)` via `storage.oauthProvider.revokeAccessTokensForGrant`. The plugin's own logic then runs (returning `invalid_grant`); access tokens are already gone. Best-effort throughout — failures swallowed, the 1h TTL still bounds exposure in the unlikely degraded path.
 
 **JWT plugin (`auth_jwks` table).** Mounted alongside oauth-provider for id_token signing. Auto-generates an RSA key pair on first use; rotates by inserting new rows.
 
@@ -217,11 +215,11 @@ Both dialects index the same set of property fields and respect the same per-typ
 - **SQLite** uses an FTS5 virtual table (`items_fts`) populated at write time by `SqliteSearchStore.indexSync` / `removeSync`. Five columns: `title`, `body`, `description`, `name`, `extra`. The `extra` column concatenates every other string-typed field declared on the type that isn't `searchable: false`.
 - **Postgres** uses a materialised `tsvector` column (`items.search_vector`) populated at write time by `PgSearchStore.index` / `remove` via the same shared text extractor. The column is GIN-indexed (`idx_items_search_vector`); the search query reads the column directly instead of computing `to_tsvector(...)` at query time over the JSON.
 
-`searchable: false` on a type's `FieldDefinition` opts the field out of FTS for both dialects. The flag is honoured for the four core fields (title, body, description, name) via `isFieldSearchableExcluded` and for the long tail via `getSearchableStringFields`. Defaults to `true` (searchable) for backward compatibility — existing types without the flag keep their pre-T-015 behaviour.
+`searchable: false` on a type's `FieldDefinition` opts the field out of FTS for both dialects. The flag is honoured for the four core fields (title, body, description, name) via `isFieldSearchableExcluded` and for the long tail via `getSearchableStringFields`. Defaults to `true` (searchable) — a type that omits the flag indexes the field.
 
 `PgSearchStore` writes go through the request-context-aware Drizzle instance (`db.execute(sql\`...\`)`) so an `index()`call inside a`db.transaction(...)` runs on the same reserved connection as the parent INSERT/UPDATE — atomicity preserved. Reads (the search query) use the bare client; search isn't typically nested in a write transaction.
 
-The PG migration set is two steps: `0038_items_search_vector.sql` adds the column + index, `0039_backfill_items_search_vector.sql` populates `search_vector` for every existing row using the same field set as the write-time indexer. Pre-T-015 deployments running the migrator catch up cleanly. The backfill doesn't consult per-type `searchable: false` opt-outs (those are TS-side metadata) — pre-existing rows surface a slightly broader vector than their type metadata implies until the next write rewrites them; never narrower.
+The PG migration set is two steps: `0038_items_search_vector.sql` adds the column + index, `0039_backfill_items_search_vector.sql` populates `search_vector` for every existing row using the same field set as the write-time indexer, so any DB running the migrator catches up cleanly. The backfill doesn't consult per-type `searchable: false` opt-outs (those are TS-side metadata) — back-filled rows surface a slightly broader vector than their type metadata implies until the next write rewrites them; never narrower.
 
 ## Per-tenant quotas (T-052)
 
@@ -255,11 +253,11 @@ Pluggable transport for transactional email. Three backends in-tree, picked by `
 
 **Idempotency caveat.** Cloudflare Email Service does NOT honour any documented send-time idempotency header. The `idempotencyKey` field on `EmailMessage` flows through to internal audit + log correlation but does not influence the CF send path. A transient retry of the same send can produce duplicate deliveries — acceptable for the three transactional flows wired today (each ships a single-use token; second send is semantically harmless).
 
-**Suppression handling.** Cloudflare maintains its own internal hard-bounce suppression list across the account. Sends to a suppressed address return a 4xx from CF; the server surfaces it through structured logs and returns `{ ok: false, retryable: false }` to the caller. **No server-side `email_suppressions` table.** The prior backend's webhook → table → pre-send-check chain was removed in T-107; CF's internal list replaces it.
+**Suppression handling.** Cloudflare maintains its own internal hard-bounce suppression list across the account. Sends to a suppressed address return a 4xx from CF; the server surfaces it through structured logs and returns `{ ok: false, retryable: false }` to the caller. **No server-side `email_suppressions` table.** Suppression is owned entirely by Cloudflare's account-wide list — the server keeps no webhook → table → pre-send-check chain of its own.
 
-**Privacy posture for send-time logs.** On non-2xx the transport logs HTTP status, CF error code + message, recipient _domain_ only (e.g. `gmail.com`), backend identifier, and the message's `tags`. It never logs: full recipient address, email body (html / text), subject line, or idempotency-key contents. The prior backend kept structured per-recipient suppression records server-side; with that surface removed, server logs must not introduce a parallel PII trail through the back door.
+**Privacy posture for send-time logs.** On non-2xx the transport logs HTTP status, CF error code + message, recipient _domain_ only (e.g. `gmail.com`), backend identifier, and the message's `tags`. It never logs: full recipient address, email body (html / text), subject line, or idempotency-key contents. With suppression owned by Cloudflare and no per-recipient records kept server-side, server logs must not introduce a parallel PII trail through the back door.
 
-**Historical audit data.** The `email.suppressed` audit action existed under the prior backend and may appear in historical audit data; not emitted by the current backend.
+**The `email.suppressed` audit action.** Not emitted by the current backend — suppression is tracked at the Cloudflare account level (above), so no audit row is written for it.
 
 ## Email verification on sign-up (Wave C PR2)
 
@@ -269,7 +267,7 @@ Every new sign-up gets `auth_user.email_verified = false` and the better-auth in
 - **Sign-up wrapper.** `POST /auth/sign-up` detects the verification-required path by the absence of a Set-Cookie on better-auth's response (which `shouldSkipAutoSignIn` produces when `requireEmailVerification` is on) and 302s to `/auth/verify-email?email=…&return_to=…` instead of `return_to`.
 - **Verify-email page.** `GET /auth/verify-email` renders one of four states: `pending` (no token, just-redirected after sign-up), `success` (token validated), `failure` (expired / invalid / unknown — falls back to a resend form), `resent` (after a successful resend). Uses the shared auth-page layout from PR4.
 - **Resend.** `POST /auth/verify-email/resend` calls better-auth's `POST /auth/send-verification-email` and redirects back with `?sent=1` regardless of whether the address actually exists, to avoid email enumeration.
-- **Grandfather.** Migration `0042_grandfather_email_verified.sql` (PG) / `0035_…` (SQLite) flips `email_verified=true` for every account created before the PR landed. Fresh DBs match zero rows; the migration is a no-op there.
+- **Existing-account migration.** Migration `0042_grandfather_email_verified.sql` (PG) / `0035_…` (SQLite) flips `email_verified=true` for any account predating the verification requirement, so the requirement doesn't lock them out. Fresh DBs match zero rows; the migration is a no-op there.
 - **Tests.** `markEmailVerified(storage, email)` in `src/test-utils.ts` is the test-side stand-in for clicking the verify link — direct `UPDATE auth_user SET email_verified = TRUE WHERE LOWER(email) = ?`. Use it between sign-up and sign-in in any test that needs an authenticated session post-PR2.
 
 ## Forgot-password + reset (Wave C PR3 / T-033)
@@ -413,7 +411,7 @@ Vendor-neutral OTel for traces + logs, **off by default**. Self-host opts in; ho
 
 `pnpm test` from the monorepo root, or `pnpm test:fresh-sqlite` / `pnpm test:pg` for the dialect matrices. Integration tests use `createTestContext()` from `src/test-utils.ts` — boots an in-process app against a `:memory:` SQLite or a throw-away `postgres:17` container.
 
-**PG test isolation — template-database pattern.** Each PG test file gets its own freshly-cloned database via `CREATE DATABASE … TEMPLATE marfa_test_template`. The template is built once at test-run start (vitest globalSetup at `src/test-global-setup.ts`) — it runs migrations into an empty DB and stays quiescent for the rest of the run. Per-file lifecycle lives in `src/storage/pg/test-template.ts`. `createPgTestStorage()` (consumed by `createTestContext` and the few test files that roll their own storage with custom `authMode`) clones the template, opens storage against the clone, returns an awaitable `cleanup()` that drops the clone with `WITH (FORCE)`. The pattern replaces the prior shared-DB + `_pgTruncate`-on-setup model; parallel-safe by construction, no truncate-race load-bearing comments. `cleanup()` is awaitable (the prior fire-and-forget shape starved afterAll hooks under heavy admin DDL traffic). `MARFA_TEST_PG_ADMIN_URL` points at the cluster's `postgres` system DB so the lifecycle can issue admin operations; `scripts/test-pg.sh` exports both that and a `DATABASE_URL` for backward compat.
+**PG test isolation — template-database pattern.** Each PG test file gets its own freshly-cloned database via `CREATE DATABASE … TEMPLATE marfa_test_template`. The template is built once at test-run start (vitest globalSetup at `src/test-global-setup.ts`) — it runs migrations into an empty DB and stays quiescent for the rest of the run. Per-file lifecycle lives in `src/storage/pg/test-template.ts`. `createPgTestStorage()` (consumed by `createTestContext` and the few test files that roll their own storage with custom `authMode`) clones the template, opens storage against the clone, returns an awaitable `cleanup()` that drops the clone with `WITH (FORCE)`. Per-file clones are parallel-safe by construction — no shared-DB truncate races, no truncate-race load-bearing comments. `cleanup()` is awaitable so afterAll hooks don't starve under heavy admin DDL traffic. `MARFA_TEST_PG_ADMIN_URL` points at the cluster's `postgres` system DB so the lifecycle can issue admin operations; `scripts/test-pg.sh` exports both that and a `DATABASE_URL` for tooling that reads the standard env var.
 
 **PG connection-cap math.** Peak in-flight connections under the test matrix: `maxForks (6) × maxPoolSize per file (3) + admin clients (≈1 per worker)` ≈ 24 connections. `scripts/test-pg.sh` bumps the container to `max_connections=500` for headroom; CI runs against the postgres image's default `max_connections=100`, which is comfortably above the 24 peak. If a future change raises `maxForks` past about 25, the CI service container's cap becomes the bottleneck — bump `max_connections` on the CI service container too (note: GHA service containers don't expose `command:` directly, so the cleanest path is a custom postgres image or a startup script).
 

@@ -19,8 +19,8 @@ const MS_PER_DAY = 86_400_000;
  *      default).
  *   3. Runs a tenant-scoped sweep with that effective retention.
  *   4. Also runs the NULL-tenant sweep at the instance default — this
- *      catches single-tenant self-host items and any unscoped legacy
- *      rows.
+ *      catches single-tenant self-host items and any rows with no
+ *      tenant scope.
  *   5. Sums the deleted counts.
  *
  * Each per-tenant + the NULL sweep are gated by a per-tenant
@@ -430,10 +430,10 @@ async function runTenantFanout(opts: {
     );
     if (deleted) total += deleted;
   }
-  // NULL-tenant scope — single-tenant self-host items + any unscoped
-  // legacy rows. Always uses the instance default (the legacy
-  // unscoped semantics are preserved for self-hosts that never
-  // configured per-tenant overrides).
+  // NULL-tenant scope — single-tenant self-host items + any rows with
+  // no tenant scope. Always uses the instance default, which is the
+  // retention self-hosts get when they never configure per-tenant
+  // overrides.
   if (opts.instanceDefault > 0) {
     const cutoff = new Date(
       opts.nowFn().getTime() - opts.instanceDefault * opts.unitMs,
@@ -480,9 +480,9 @@ export async function runTenantCleanup(opts: {
 }): Promise<number> {
   const nowFn = opts.nowFn ?? (() => new Date());
   if (!opts.fanout) {
-    // Legacy global path — preserves single-tenant self-host
-    // behaviour exactly. The cleanup methods take retention values
-    // directly (not pre-computed cutoffs); pass through.
+    // Global path (no fanout) — the single-tenant self-host sweep.
+    // The cleanup methods take retention values directly (not
+    // pre-computed cutoffs); pass through.
     if (opts.instanceDefault <= 0) return 0;
     const fn = (): Promise<number> => opts.sweep(opts.instanceDefault);
     if (!opts.coordination) return fn();

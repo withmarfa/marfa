@@ -56,8 +56,8 @@ export const AUTH_CSS = `/*
   --success-border: #b8d8af;
   --success-ink: #2a5a1f;
 
-  /* Section background — kept for legacy auth surfaces that group
-     scopes in a tinted block (device-consent today). */
+  /* Section background — used by auth surfaces that group scopes in a
+     tinted block (device-consent today). */
   --section-bg: #fafaf7;
 
   /* Scope literal pill — used by the security page only; the consent
@@ -305,8 +305,8 @@ input[type="text"]:focus {
   border-color: var(--accent-hover);
 }
 
-/* Legacy size modifier — retained for any callsite that still asks for
-   a bigger button, but the consent + sign-in screens no longer use it. */
+/* Larger-button size modifier — available for any callsite that asks
+   for a bigger button. The consent + sign-in screens don't use it. */
 .btn--lg {
   min-height: 40px;
   padding: 10px 18px;
@@ -588,8 +588,8 @@ details.section[open] > summary .section__chevron {
   cursor: not-allowed;
 }
 
-/* Legacy .scopes list — kept for surfaces that still use the old
-   bullet-list shape (device-consent on some pages). */
+/* .scopes list — the bullet-list shape used by some surfaces
+   (device-consent on some pages). */
 .scopes {
   margin: 0;
   padding: 0;
@@ -617,9 +617,9 @@ details.section[open] > summary .section__chevron {
   margin-top: 2px;
 }
 
-/* Legacy alias — older consent renderer used .scope-literal /
-   .scope-human directly. Kept so the security-page rows + any
-   unchanged renderers still pick up the same styling tokens. */
+/* .scope-literal / .scope-human aliases — the security-page rows and
+   any renderer that targets these classes pick up the same styling
+   tokens. */
 .scope-literal {
   display: inline-block;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

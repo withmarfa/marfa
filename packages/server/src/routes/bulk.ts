@@ -4,9 +4,8 @@
  * Two endpoints, two shapes:
  *
  *   POST /items/bulk        — list-in: caller provides explicit items to
- *                             create/upsert. Replaces the historical /import
- *                             with modes, atomic control, inline edges, and
- *                             per-item outcomes.
+ *                             create/upsert. Supports modes, atomic
+ *                             control, inline edges, and per-item outcomes.
  *   POST /items/bulk-actions — filter-in: caller provides a filter and an
  *                             action; server applies the action to every
  *                             matched item. Actions are a discriminated

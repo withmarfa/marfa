@@ -24,9 +24,9 @@ import { acquireStreamRls } from "../storage/pg/streaming-rls.js";
  * Options for `exportRoutes`. `rlsEnforce` + `pgClient` enable T-146
  * session-level RLS on a dedicated pool connection for the duration
  * of the stream. Without both set, the route runs on the owner
- * connection (unchanged pre-T-146 behaviour) — used for SQLite, for
- * tenant-less callers (platform admin / single-tenant self-host),
- * and when RLS enforcement is disabled instance-wide.
+ * connection — used for SQLite, for tenant-less callers (platform
+ * admin / single-tenant self-host), and when RLS enforcement is
+ * disabled instance-wide.
  */
 export interface ExportRoutesOptions {
   rlsEnforce: boolean;
@@ -42,15 +42,14 @@ export interface ExportRoutesOptions {
  *      anything other than the caller's own) are rejected with 403.
  *   2. **platform admin (no tenant_id)** — MUST pass an explicit
  *      `?target_tenant_id=<id>` query param. Without it we reject
- *      with 400 to avoid the historical bug where a platform key
- *      received an export covering every tenant on the instance.
+ *      with 400, so a platform key never receives an export covering
+ *      every tenant on the instance.
  *   3. **single-tenant self-host (anonymous / bootstrap admin
- *      mode)** — historically callers exported the whole DB. To
- *      avoid breaking those deployments we treat a tenant-less
- *      caller running against a DB whose items have no tenant_id
- *      (NULL) as the legitimate single-tenant path: pass
- *      `tenantId: undefined` through to the storage layer so list
- *      operations match `tenant_id IS NULL`. Distinguishing this
+ *      mode)** — a tenant-less caller running against a DB whose items
+ *      have no tenant_id (NULL) is the legitimate single-tenant path:
+ *      pass `tenantId: undefined` through to the storage layer so list
+ *      operations match `tenant_id IS NULL`, exporting the whole DB.
+ *      Distinguishing this
  *      from case 2 is the explicit `target_tenant_id` query param —
  *      operators on hosted multi-tenant deployments must set it;
  *      single-tenant operators don't.

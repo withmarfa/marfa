@@ -14,10 +14,8 @@
  *
  * Defaults: 3 requests per email per 1-hour rolling window. The
  * counter ALWAYS increments on `attempt()` — including over-cap
- * attempts. This differs cosmetically from the pre-T-026 shape (which
- * froze the counter at the cap once exceeded); the user-visible
- * behaviour is identical: once `count > limit`, requests are rejected
- * until the window rolls over.
+ * attempts. Once `count > limit`, requests are rejected until the
+ * window rolls over.
  */
 
 import type { Storage } from "../storage/interface.js";

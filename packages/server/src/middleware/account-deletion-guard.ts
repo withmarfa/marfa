@@ -206,7 +206,7 @@ export function accountDeletionGuardMiddleware(
 
 async function extractEmail(rawReq: Request): Promise<string | null> {
   // The body shape varies — JSON (`/auth/sign-in/email` from
-  // browser fetch) or form-encoded (legacy callers). Clone before
+  // browser fetch) or form-encoded (form posts). Clone before
   // reading so the downstream handler can re-read the body intact.
   try {
     const cloned = rawReq.clone();

@@ -95,7 +95,7 @@ function originFromApiKey(
  * diagnostic reads and the existing `cycle.test.ts` assertion path) AND
  * the `cycleRequestContext` `AsyncLocalStorage` store. `publish()` and
  * `publishEdge()` in `pubsub.ts` read the ALS automatically, so route
- * handlers no longer thread `...c.var.cycle` into every publish call.
+ * handlers don't thread `...c.var.cycle` into every publish call.
  * The two writes stay in lockstep — single resolved value, written
  * twice in the same step.
  */

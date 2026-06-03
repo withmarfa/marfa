@@ -1,14 +1,12 @@
 /**
  * POST /admin/restore-archive — admin-only, tar.gz body.
  *
- * Lifts the archive-import behaviour that used to live at
- * POST /import?format=archive into a dedicated endpoint. Content-type is
+ * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
- * blobs_imported}`. Preserves the manifest v1 contract, blob-hash
- * verification, and the item-import transaction boundary the original
- * handler had.
+ * blobs_imported}`. Enforces the manifest v1 contract, blob-hash
+ * verification, and a single item-import transaction boundary.
  *
- * Paired with GET /export?format=archive, which stays where it is.
+ * Paired with GET /export?format=archive.
  */
 
 import { createHash } from "node:crypto";
@@ -32,9 +30,9 @@ interface ArchiveManifest {
   created_at: string;
   /**
    * T-053: tenant_id stamped at export time. Used here to verify
-   * the importing admin's authority over the source tenant. Older
-   * archives (pre-T-053) lack the field — restored as null so
-   * single-tenant self-host archives keep working.
+   * the importing admin's authority over the source tenant. An
+   * archive without this field restores as null, so single-tenant
+   * self-host archives keep working.
    */
   tenant_id?: string | null;
   item_count: number;
@@ -234,7 +232,7 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
 
     // T-053: verify manifest.tenant_id against the resolved restore
     // tenant. Three legitimate shapes:
-    //   - manifest.tenant_id is null/undefined → pre-T-053 archive,
+    //   - manifest.tenant_id is null/undefined → an untenanted archive
     //     or single-tenant self-host export. Allowed regardless of
     //     restore tenant (the import semantics fall back to a NULL
     //     tenant_id on items, matching the source shape).

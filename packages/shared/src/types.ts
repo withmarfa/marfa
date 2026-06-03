@@ -25,8 +25,8 @@ export const TIERS: readonly Tier[] = ["library", "feed"] as const;
 /**
  * Principal roles.
  *
- * Applies to both API-key principals (the historical surface) and to
- * OAuth-bearer principals via `users.role` (T-178). The role gates
+ * Applies to both API-key principals and OAuth-bearer principals via
+ * `users.role` (T-178). The role gates
  * admin-shaped routes via `requireTenantAdmin(c)` and `requireAdmin(c)`;
  * the bearer middleware projects this onto the synthetic principal
  * regardless of credential type.
@@ -996,8 +996,8 @@ export interface TenantConfig {
  *
  * The wire shape returned by the profile endpoints is `Profile`, not
  * `User` — `Profile` is the read-time projection that joins `auth_user`
- * for email and reconstructs `avatar_url`. `User` stays as the storage-
- * shape for the legacy hosted-mode signup/session endpoints.
+ * for email and reconstructs `avatar_url`. `User` is the underlying
+ * hosted-mode storage shape.
  */
 export interface User {
   id: string;
@@ -1013,18 +1013,16 @@ export interface User {
   provider_id: string;
   tenant_id: string;
   /**
-   * Lowercase alphanumeric + hyphens, 3–32 chars. T-074: required at
-   * signup going forward; legacy hosted-mode users get a generated
-   * handle via the grandfather migration script. Per TSC42 §8 the
-   * user-id (the immutable PK) is what foreign references key off;
-   * the handle is potentially renameable in a later iteration.
+   * Lowercase alphanumeric + hyphens, 3–32 chars. Required at signup
+   * (nullable here because not every stored row carries one). Per
+   * TSC42 §8 the user-id (the immutable PK) is what foreign references
+   * key off; the handle is potentially renameable in a later iteration.
    * Reserved roots and reserved structural words cannot be claimed.
    */
   handle: string | null;
   /** T-074: FK to `auth_user.id` (Better Auth). Canonical bridge from
-   *  authentication identity to Marfa profile. NULL only on legacy rows
-   *  the grandfather migration couldn't match (no `auth_user` row with
-   *  the same email at migration time). */
+   *  authentication identity to Marfa profile. NULL only on a `users`
+   *  row with no matching `auth_user`. */
   auth_user_id: string | null;
   /** T-178: principal role projected onto the bearer principal for
    *  OAuth-authenticated requests. Defaults to `member`; operator
