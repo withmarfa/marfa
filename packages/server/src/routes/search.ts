@@ -37,28 +37,61 @@ const SearchResultSchema = z.object({
 });
 
 const searchRoute = createRoute({
+  operationId: "searchItems",
   method: "get",
   path: "/",
   tags: ["Search"],
   summary: "Search items",
   description:
-    "Full-text search across the tenant's items. Indexes textual properties (body, title, description, name, and other string-typed fields not flagged `searchable: false`) plus tags. Ranking is by relevance with a configurable recency boost.\n\nAccepts the same filter parameters as `GET /items` — narrow by `type`, `state`, `tier`, `tags`, source, edge / backref clauses — so the search query and the filter set compose. `tags` is comma-separated with AND semantics.\n\nUses `limit` / `offset` pagination rather than cursors. Result ordering is stable for the query's lifetime; absolute `score` values are not guaranteed across index rebuilds. See [Search and query](/api/search-and-query).",
+    "Full-text search across the tenant's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` and uses `limit` / `offset` paging; absolute scores aren't stable across index rebuilds.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      q: z.string().min(1, "Query parameter 'q' is required"),
-      type: z.string().optional(),
-      state: z.enum(ITEM_STATES as unknown as [string, ...string[]]).optional(),
-      tier: z.enum(["library", "feed", "all"]).optional(),
+      q: z
+        .string()
+        .min(1, "Query parameter 'q' is required")
+        .describe("Full-text search query."),
+      type: z.string().describe("Restrict to a single type.").optional(),
+      state: z
+        .enum(ITEM_STATES as unknown as [string, ...string[]])
+        .describe("Filter by lifecycle state.")
+        .optional(),
+      tier: z
+        .enum(["library", "feed", "all"])
+        .describe("Filter by tier; `all` or absent means unfiltered.")
+        .optional(),
       /** Opt-in inclusions, comma-separated. `system` includes the platform
        *  `system.*` records, which are excluded from search results by
        *  default per TSC42 §4. */
-      include: z.string().optional(),
+      include: z
+        .string()
+        .describe("Comma-separated opt-in inclusions, e.g. `system`.")
+        .optional(),
       /** Comma-separated tag list. Items must have ALL specified tags. */
-      tags: z.string().optional(),
-      limit: z.coerce.number().int().min(1).max(100).optional().default(20),
-      offset: z.coerce.number().int().min(0).max(10000).optional().default(0),
-      filter: z.string().optional(),
+      tags: z
+        .string()
+        .describe("Comma-separated tags; items must match all (AND).")
+        .optional(),
+      limit: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .default(20)
+        .describe("Maximum results to return."),
+      offset: z.coerce
+        .number()
+        .int()
+        .min(0)
+        .max(10000)
+        .optional()
+        .default(0)
+        .describe("Number of results to skip for paging."),
+      filter: z
+        .string()
+        .describe("Structured filter expression, as on `GET /items`.")
+        .optional(),
     }),
   },
   responses: {

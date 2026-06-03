@@ -641,7 +641,7 @@ export interface ConnectionLeasedToken {
 
 /**
  * Extends `ConnectionLeasedToken` with the raw `lease_token` field —
- * returned once in the 201 response to `POST /connections/:id/lease-token`,
+ * returned once in the 201 response to `POST /connections/:id/lease-tokens`,
  * never echoed by subsequent reads.
  */
 export interface CreatedConnectionLeasedToken extends ConnectionLeasedToken {
@@ -961,7 +961,7 @@ export type QuotaResource =
   | "storage_bytes"
   | "rate_per_minute";
 
-/** Tenant-level configuration. Admin-writable via `/tenants/current/config`. */
+/** Tenant-level configuration. Admin-writable via `/tenants/me/config`. */
 export interface TenantConfig {
   enforcement?: EnforcementSettings;
   /**

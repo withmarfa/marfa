@@ -367,7 +367,7 @@ export interface BulkEdgeResult {
   results: BulkEdgeResultEntry[];
 }
 
-/** Filter shape for `POST /items/bulk_action`. Mirrors the `GET /items`
+/** Filter shape for `POST /items/bulk-actions`. Mirrors the `GET /items`
  *  query grammar — every field is AND-composed, `filter` accepts the
  *  full filter-SQL DSL. */
 export interface BulkActionFilter {
@@ -464,8 +464,8 @@ export interface BulkActionPollOptions {
   onProgress?: (job: BulkActionJob) => void;
 }
 
-/** Async-job envelope returned by `POST /items/bulk_action` (non-dry-run)
- *  and by `GET /items/bulk_action/jobs/:id`. The SDK's `bulkAction()`
+/** Async-job envelope returned by `POST /items/bulk-actions` (non-dry-run)
+ *  and by `GET /items/bulk-actions/jobs/:id`. The SDK's `bulkAction()`
  *  resolves with the embedded `BulkActionResult` once `status` is
  *  terminal; advanced callers using `bulkActionAsync()` receive the
  *  envelope directly and drive their own polling. */
@@ -957,7 +957,7 @@ export class MarfaClient {
       // they got before the async refactor.
       const { data, status } = await this.transport.requestWithStatus<
         BulkActionResult | BulkActionJob
-      >("POST", "/items/bulk_action", { body: input });
+      >("POST", "/items/bulk-actions", { body: input });
       if (status === 200) {
         // dry_run path stayed synchronous; the response IS the result.
         return data as BulkActionResult;
@@ -1029,7 +1029,7 @@ export class MarfaClient {
       const { data, status } =
         await this.transport.requestWithStatus<BulkActionJob>(
           "POST",
-          "/items/bulk_action",
+          "/items/bulk-actions",
           { body: input },
         );
       // Server returns 202 for the async path; defensive check.
@@ -1047,7 +1047,7 @@ export class MarfaClient {
     bulkActionStatus: (jobId: string): Promise<BulkActionJob> =>
       this.transport.request<BulkActionJob>(
         "GET",
-        `/items/bulk_action/jobs/${encodeURIComponent(jobId)}`,
+        `/items/bulk-actions/jobs/${encodeURIComponent(jobId)}`,
         { timeoutMs: 5_000 },
       ),
 
@@ -1056,7 +1056,7 @@ export class MarfaClient {
     bulkActionCancel: (jobId: string): Promise<BulkActionJob> =>
       this.transport.request<BulkActionJob>(
         "DELETE",
-        `/items/bulk_action/jobs/${encodeURIComponent(jobId)}`,
+        `/items/bulk-actions/jobs/${encodeURIComponent(jobId)}`,
       ),
 
     /** Outbound edges from this item. Shortcut for edges.listFromSource. */
@@ -1332,19 +1332,19 @@ export class MarfaClient {
       create: async (schema: EdgeTypeSchema): Promise<EdgeTypeSchema> => {
         const res = await this.transport.request<{
           edge_type: EdgeTypeSchema;
-        }>("POST", "/edges/types", { body: schema });
+        }>("POST", "/edge-types", { body: schema });
         return res.edge_type;
       },
       list: async (): Promise<EdgeTypeSchema[]> => {
         const res = await this.transport.request<{
           edge_types: EdgeTypeSchema[];
-        }>("GET", "/edges/types");
+        }>("GET", "/edge-types");
         return res.edge_types;
       },
       delete: async (id: string): Promise<void> => {
         await this.transport.request<{ ok: true }>(
           "DELETE",
-          `/edges/types/${id}`,
+          `/edge-types/${id}`,
         );
       },
     },
@@ -1628,20 +1628,15 @@ export class MarfaClient {
     /** Returns the current tenant's config. Empty object when nothing
      * is configured. */
     getConfig: async (): Promise<TenantConfig> => {
-      return this.transport.request<TenantConfig>(
-        "GET",
-        "/tenants/current/config",
-      );
+      return this.transport.request<TenantConfig>("GET", "/tenants/me/config");
     },
 
     /** Replaces the current tenant's config (PUT semantics — full
      * replacement, not merge). */
     setConfig: async (config: TenantConfig): Promise<TenantConfig> => {
-      return this.transport.request<TenantConfig>(
-        "PUT",
-        "/tenants/current/config",
-        { body: config },
-      );
+      return this.transport.request<TenantConfig>("PUT", "/tenants/me/config", {
+        body: config,
+      });
     },
 
     /** Per-tenant resource quotas (T-052). Empty / missing limits fall

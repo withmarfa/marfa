@@ -10,7 +10,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 // ---------------------------------------------------------------------------
 
 const IdParam = z.object({
-  id: z.string(),
+  id: z.string().describe("Item id whose version history to return"),
 });
 
 const VersionSchema = z.object({
@@ -27,12 +27,13 @@ const VersionSchema = z.object({
 // ---------------------------------------------------------------------------
 
 const listVersionsRoute = createRoute({
+  operationId: "listItemVersions",
   method: "get",
   path: "/{id}/versions",
   tags: ["Items"],
   summary: "List item versions",
   description:
-    "Returns the version-snapshot history for one item, newest first. Each snapshot carries the version number, the timestamp of the update that produced it, the full properties at that version, and the credential that wrote it.\n\nSnapshots are thinned on a rolling schedule — every snapshot in the recent window, one per calendar day in the daily window, one per ISO week in the weekly window, dropped beyond. The most recent snapshot is never thinned. To restore from a version, fetch its properties and re-send them through `PATCH /items/{id}` — the restore becomes a new forward version. See [Versions](/concepts/versions).",
+    "Returns the version-snapshot history for one item, newest first. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,

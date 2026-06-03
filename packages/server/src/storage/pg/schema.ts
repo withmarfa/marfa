@@ -502,10 +502,10 @@ export const auditLog = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// bulk_action_jobs (T-218: async substrate for /items/bulk_action)
+// bulk_action_jobs (T-218: async substrate for /items/bulk-actions)
 // ---------------------------------------------------------------------------
 
-// Job rows for the async bulk_action endpoint. POST /items/bulk_action
+// Job rows for the async bulk_action endpoint. POST /items/bulk-actions
 // (non-dry-run) inserts a row; the in-process worker picks it up via
 // SELECT ... FOR UPDATE SKIP LOCKED, runs the action in batched-SQL
 // chunks, writes progress to processed_count / succeeded_count /

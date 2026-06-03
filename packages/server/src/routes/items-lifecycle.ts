@@ -13,7 +13,7 @@ import { filterMetadataForCaller } from "./util.js";
 // ---------------------------------------------------------------------------
 
 const IdParam = z.object({
-  id: z.string(),
+  id: z.string().describe("Item id to act on"),
 });
 
 // ---------------------------------------------------------------------------
@@ -21,12 +21,13 @@ const IdParam = z.object({
 // ---------------------------------------------------------------------------
 
 const restoreItemRoute = createRoute({
+  operationId: "restoreItem",
   method: "post",
   path: "/{id}/restore",
   tags: ["Items"],
   summary: "Restore a trashed item",
   description:
-    "Restores a `trashed` item to `active`. Sugar for the common case; the universal entry point is `POST /items/{id}/transition` with `state: active`. Trashed items are auto-purged after `TRASH_RETENTION_DAYS` (default 60) — restore before that window to keep the row. See [Lifecycle](/concepts/lifecycle).",
+    "Restores a trashed item to active. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -58,12 +59,13 @@ const restoreItemRoute = createRoute({
 });
 
 const transitionItemRoute = createRoute({
+  operationId: "transitionItem",
   method: "post",
   path: "/{id}/transition",
   tags: ["Items"],
   summary: "Transition item state",
   description:
-    "Transitions the item to the supplied `state`. Valid transitions: `active ↔ archived`, `active → trashed`, `archived → trashed`, `trashed → active` (restore). Direct `trashed → archived` is rejected with `400 invalid_transition` — restore to active first. Universal entry point used by the dedicated `restore` and soft-delete routes underneath. See [Lifecycle](/concepts/lifecycle).",
+    "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,

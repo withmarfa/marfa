@@ -59,12 +59,13 @@ const DeliverySchema = z.object({
 // ---------------------------------------------------------------------------
 
 const createWebhookRoute = createRoute({
+  operationId: "createWebhook",
   method: "post",
   path: "/",
   tags: ["Webhooks"],
   summary: "Create a webhook",
   description:
-    "Registers an outbound webhook subscription. Each subscription targets a URL and one or more event names (`item.created`, `item.updated`, `edge.created`, etc. — wildcards accepted). The optional `type_filter` narrows item events to specific item types.\n\nThe `secret` field is the HMAC-SHA256 signing key the server will use on every delivery; if omitted, the server generates one and returns it in the response. The plaintext secret is returned **only** on creation — store it then. Subsequent reads redact it. See [Webhooks](/api/webhooks) for delivery semantics, retry schedule, and signature verification.",
+    "Registers an outbound webhook subscription targeting a URL and one or more event names (wildcards accepted). The `secret` is the HMAC-SHA256 signing key, generated server-side when omitted, and returned in plaintext only on creation.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -114,12 +115,13 @@ const createWebhookRoute = createRoute({
 });
 
 const listWebhooksRoute = createRoute({
+  operationId: "listWebhooks",
   method: "get",
   path: "/",
   tags: ["Webhooks"],
   summary: "List webhooks",
   description:
-    "Returns every outbound webhook subscription in the caller's tenant. Secrets are redacted in every list response — the plaintext is only returned at create time. Use to render an operator surface for inspecting registered URLs, events, and filters.",
+    "Returns every outbound webhook subscription in the caller's tenant. Secrets are redacted here — the plaintext is only returned at create time.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -144,16 +146,17 @@ const listWebhooksRoute = createRoute({
 });
 
 const getWebhookRoute = createRoute({
+  operationId: "getWebhook",
   method: "get",
   path: "/{id}",
   tags: ["Webhooks"],
   summary: "Get a webhook",
   description:
-    "Returns one outbound webhook subscription by id. Secret is redacted. To pair with delivery history, use `GET /webhooks/{id}/deliveries`.",
+    "Returns one outbound webhook subscription by id, with its secret redacted.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string(),
+      id: z.string().describe("Id of the webhook to fetch."),
     }),
   },
   responses: {
@@ -185,16 +188,17 @@ const getWebhookRoute = createRoute({
 });
 
 const updateWebhookRoute = createRoute({
+  operationId: "updateWebhook",
   method: "patch",
   path: "/{id}",
   tags: ["Webhooks"],
   summary: "Update a webhook",
   description:
-    "Updates mutable fields on an outbound webhook subscription — `url`, `events`, `type_filter`, `active`. Body is a partial: unsupplied fields keep their existing values. To rotate the signing secret, delete the subscription and create a new one.",
+    "Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. The signing secret cannot be rotated here — delete the subscription and create a new one.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string(),
+      id: z.string().describe("Id of the webhook to update."),
     }),
     body: {
       content: {
@@ -249,16 +253,17 @@ const updateWebhookRoute = createRoute({
 });
 
 const deleteWebhookRoute = createRoute({
+  operationId: "deleteWebhook",
   method: "delete",
   path: "/{id}",
   tags: ["Webhooks"],
   summary: "Delete a webhook",
   description:
-    "Removes the subscription. In-flight deliveries already queued continue to fire and retry per the standard schedule; no new deliveries are queued. Delivery history rows are retained until the audit retention window expires.",
+    "Removes the subscription so no new deliveries are queued. Deliveries already queued still fire and retry on the standard schedule, and delivery history is retained until the audit retention window expires.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string(),
+      id: z.string().describe("Id of the webhook to delete."),
     }),
   },
   responses: {
@@ -290,19 +295,27 @@ const deleteWebhookRoute = createRoute({
 });
 
 const listDeliveriesRoute = createRoute({
+  operationId: "listWebhookDeliveries",
   method: "get",
   path: "/{id}/deliveries",
   tags: ["Webhooks"],
   summary: "List webhook deliveries",
   description:
-    "Returns recent delivery attempts for one subscription, newest first. Each entry carries the event id, the resolved URL, the response status, attempt count, and the next retry time (when retrying). Use to debug delivery failures and confirm that `X-Marfa-Event-Id` deduplication is working on the receiver side.",
+    "Returns recent delivery attempts for one subscription, newest first, with each attempt's response status, attempt count, and next retry time. Use to debug delivery failures.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
-      id: z.string(),
+      id: z.string().describe("Id of the webhook whose deliveries to list."),
     }),
     query: z.object({
-      limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+      limit: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .default(50)
+        .describe("Maximum number of delivery attempts to return."),
     }),
   },
   responses: {

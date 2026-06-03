@@ -75,11 +75,12 @@ const EdgeTypeResponseSchema = z.object({
 
 const createEdgeTypeRoute = createRoute({
   method: "post",
-  path: "/types",
-  tags: ["EdgeTypes"],
+  path: "/",
+  operationId: "createEdgeType",
+  tags: ["Edge Types"],
   summary: "Register an edge type",
   description:
-    "Registers a custom edge type. Carries `cardinality` (`one-to-one` / `one-to-many` / `many-to-one` / `many-to-many`), `cascade_on_delete` (`cascade` / `orphan` / `block`), source and target type constraints, and an optional `property_schema`. Core edge type names (`about`, `parent-of`, `in-thread`, `attached-to`, `references`, `authored-by`, `derived-from`, `supersedes`) are reserved and collide with `409 conflict`.\n\nAdmin-only. Custom edge types do not inherit — they're flat. See [Edges — custom edge types](/concepts/edges#custom-edge-types).",
+    "Registers a custom edge type with its cardinality, cascade behaviour, type constraints, and optional property schema. Admin-only; the eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -129,11 +130,12 @@ const createEdgeTypeRoute = createRoute({
 
 const listEdgeTypesRoute = createRoute({
   method: "get",
-  path: "/types",
-  tags: ["EdgeTypes"],
+  path: "/",
+  operationId: "listEdgeTypes",
+  tags: ["Edge Types"],
   summary: "List edge types",
   description:
-    "Returns every edge type registered in the tenant — the eight core types (`about`, `parent-of`, `in-thread`, `attached-to`, `references`, `authored-by`, `derived-from`, `supersedes`) plus any custom types registered via `POST /edges/types`. Each entry carries its cardinality, cascade behaviour, and source/target type constraints.",
+    "Returns every edge type registered in the tenant — the eight core types plus any custom registrations — each with its cardinality, cascade behaviour, and source/target type constraints.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -151,13 +153,14 @@ const listEdgeTypesRoute = createRoute({
 
 const deleteEdgeTypeRoute = createRoute({
   method: "delete",
-  path: "/types/{id}",
-  tags: ["EdgeTypes"],
+  path: "/{id}",
+  operationId: "deleteEdgeType",
+  tags: ["Edge Types"],
   summary: "Delete an edge type",
   description:
-    "Removes a custom edge type registration. Core edge types are immutable and rejected with 400. If existing edges of this type remain, the request fails — delete or migrate them first. Admin-only.",
+    "Removes a custom edge type registration. Admin-only; core edge types are rejected, and the request fails while any edges of this type still exist, so delete or migrate them first.",
   security: [{ bearerAuth: [] }],
-  request: { params: z.object({ id: z.string() }) },
+  request: { params: z.object({ id: z.string().describe("Edge type id.") }) },
   responses: {
     200: {
       content: { "application/json": { schema: OkResponseSchema } },

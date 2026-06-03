@@ -159,16 +159,22 @@ const IntrospectionSchema = z.object({
   expires_at: z.string().optional(),
 });
 
-const ConnectionIdParam = z.object({ id: z.string() });
-const LeaseIdsParam = z.object({ id: z.string(), lease_id: z.string() });
+const ConnectionIdParam = z.object({
+  id: z.string().describe("Id of the connection the lease belongs to."),
+});
+const LeaseIdsParam = z.object({
+  id: z.string().describe("Id of the connection the lease belongs to."),
+  lease_id: z.string().describe("Id of the lease to revoke."),
+});
 
 const issueLeaseRoute = createRoute({
+  operationId: "mintLeaseToken",
   method: "post",
-  path: "/{id}/lease-token",
+  path: "/{id}/lease-tokens",
   tags: ["Connection Leased Tokens"],
   summary: "Issue a leased token",
   description:
-    "Mints a short-TTL bearer token an external service can use to call back into Marfa directly, without holding the connection's full runtime credential. The capability must be declared on the connection's integration manifest with `oauth_requirements: leased`; capabilities not declared as leased reject with `422`.\n\nThe `lease_token` field is returned **once** in the creation response; subsequent reads omit it. See [Integrations — OAuth proxy and leased tokens](/concepts/integrations#oauth-proxy-and-leased-tokens).",
+    "Mints a short-TTL bearer token an external service can use to call back into Marfa directly, without holding the connection's full runtime credential. The capability must be declared as `leased` in the connection manifest's `oauth_requirements`, otherwise the request rejects with 422; the `lease_token` is returned only once, in this response.",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -243,12 +249,13 @@ const issueLeaseRoute = createRoute({
 });
 
 const listLeasesRoute = createRoute({
+  operationId: "listLeaseTokens",
   method: "get",
   path: "/{id}/lease-tokens",
   tags: ["Connection Leased Tokens"],
   summary: "List active leases for a connection",
   description:
-    "Returns leases attached to the connection that are not revoked and have not expired. Lease tokens themselves are never returned in list responses — only the lease metadata (id, capability, scopes, TTL, granted-at, last-used-at).",
+    "Returns the connection's leases that are neither revoked nor expired. The lease tokens themselves are never returned here — only lease metadata.",
   security: [{ bearerAuth: [] }],
   request: { params: ConnectionIdParam },
   responses: {
@@ -288,12 +295,13 @@ const listLeasesRoute = createRoute({
 });
 
 const revokeLeaseRoute = createRoute({
+  operationId: "revokeLeaseToken",
   method: "post",
   path: "/{id}/lease-tokens/{lease_id}/revoke",
   tags: ["Connection Leased Tokens"],
   summary: "Revoke a leased token",
   description:
-    "Invalidates a lease before its TTL expires. The next presentation of the token at `POST /lease-tokens/validate` returns `active: false`. Idempotent — revoking an already-revoked lease returns 200.",
+    "Invalidates a lease before its TTL expires, so the next introspection returns `active: false`. Idempotent — revoking an already-revoked lease returns 200.",
   security: [{ bearerAuth: [] }],
   request: { params: LeaseIdsParam },
   responses: {
@@ -332,12 +340,13 @@ const revokeLeaseRoute = createRoute({
 });
 
 const introspectLeaseRoute = createRoute({
+  operationId: "validateLeaseToken",
   method: "post",
   path: "/validate",
   tags: ["Connection Leased Tokens"],
   summary: "Introspect a leased token",
   description:
-    "Introspects a lease token. Returns RFC 7662–shaped fields — `active`, `connection_id`, `capability`, `scope`, `exp`, `iat` — for an external service to verify the token is still valid before honouring a callback. Tokens that are revoked, expired, or unrecognised return `active: false` with no further metadata.",
+    "Introspects a lease token so an external service can verify it before honouring a callback. Tokens that are revoked, expired, or unrecognised return `active: false` with no further metadata.",
   request: {
     body: {
       content: {

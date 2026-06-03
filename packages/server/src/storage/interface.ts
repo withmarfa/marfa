@@ -1710,7 +1710,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   accountLifecycle?: AccountLifecycleStore;
   settings: SettingsStore;
   coordination: CoordinationStore;
-  /** T-218: async substrate for `POST /items/bulk_action`. Always wired
+  /** T-218: async substrate for `POST /items/bulk-actions`. Always wired
    *  on both dialects. The worker module reads + writes through this
    *  store; the route handler creates jobs + serves GET / DELETE. */
   bulkActionJobs: BulkActionJobStore;

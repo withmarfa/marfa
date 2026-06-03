@@ -36,12 +36,13 @@ const TenantConfigSchema = z.object({
 });
 
 const getConfigRoute = createRoute({
+  operationId: "getTenantConfig",
   method: "get",
-  path: "/current/config",
+  path: "/me/config",
   tags: ["Tenants"],
   summary: "Get the current tenant's configuration",
   description:
-    "Returns the tenant-level configuration. Carries the three optional schema-enforcement levers under `enforcement` (`strict_mode`, `source_allowlist`, `source_filter` — see [Schema enforcement](/concepts/schema-enforcement)) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`) that override the instance env defaults per-tenant. Returns an empty object when nothing is configured. Admin or tenant_admin.",
+    "Returns the calling tenant's configuration — the optional `enforcement` levers plus the per-tenant cleanup-job retention overrides. Returns an empty object when nothing is configured. Admin or tenant_admin.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -70,12 +71,13 @@ const getConfigRoute = createRoute({
 });
 
 const putConfigRoute = createRoute({
+  operationId: "replaceTenantConfig",
   method: "put",
-  path: "/current/config",
+  path: "/me/config",
   tags: ["Tenants"],
   summary: "Replace the current tenant's configuration",
   description:
-    "Overwrites the tenant's config with the supplied object — full replacement, not merge. The accepted shape carries the optional `enforcement` block (`strict_mode`, `source_allowlist`, `source_filter`) plus the per-tenant cleanup-job overrides (`audit_retention_days`, `event_log_retention_hours`, `trash_retention_days`). Cleanup-job override values must be non-negative — `0` disables the corresponding job for this tenant.\n\nAdmin or tenant_admin. See [Schema enforcement](/concepts/schema-enforcement).",
+    "Overwrites the tenant's config with the supplied object — full replacement, not a merge. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this tenant. Admin or tenant_admin.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -136,14 +138,19 @@ const QuotaSchema = z.object({
 });
 
 const getQuotasRoute = createRoute({
+  operationId: "getTenantQuotas",
   method: "get",
   path: "/{id}/quotas",
   tags: ["Tenants"],
   summary: "Get tenant quotas",
   description:
-    "Returns the per-tenant quota ceilings for a specific tenant — items, webhooks, blobs, storage bytes, and per-minute rate limit. `null` on a field means the env default applies; an entirely-null payload means no per-tenant override is configured. Platform-admin only — tenant admins use `GET /tenants/me/quotas` to read their own ceilings without knowing their tenant id.",
+    "Returns the per-tenant quota ceilings for a specific tenant. A `null` field means the env default applies, and an entirely-null payload means no per-tenant override is configured. Platform-admin only — tenant admins use `GET /tenants/me/quotas` to read their own ceilings without knowing their tenant id.",
   security: [{ bearerAuth: [] }],
-  request: { params: z.object({ id: z.string() }) },
+  request: {
+    params: z.object({
+      id: z.string().describe("ID of the tenant whose quotas to read"),
+    }),
+  },
   responses: {
     200: {
       content: { "application/json": { schema: QuotaSchema } },
@@ -176,12 +183,13 @@ const getQuotasRoute = createRoute({
 // — their own tenant_id to read their ceilings. Cleaner than asking
 // them to invoke the platform-admin route at `/{tenant_id}/quotas`.
 const getOwnQuotasRoute = createRoute({
+  operationId: "getOwnQuotas",
   method: "get",
   path: "/me/quotas",
   tags: ["Tenants"],
   summary: "Get current tenant quotas",
   description:
-    "Returns the calling tenant's quota ceilings, resolved from the calling credential's tenant so the caller doesn't need to know its own tenant id. Returns a row of nulls when no per-tenant override is configured (env defaults apply). Platform-admin keys with no tenant id receive `400` — use `GET /tenants/{id}/quotas` with the explicit id instead. Admin or tenant_admin.",
+    "Returns the calling tenant's quota ceilings, resolved from the credential so the caller doesn't need to know its own tenant id. A platform-admin key with no tenant id receives `400` — use `GET /tenants/{id}/quotas` with an explicit id instead. Admin or tenant_admin.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -216,15 +224,18 @@ const getOwnQuotasRoute = createRoute({
 });
 
 const putQuotasRoute = createRoute({
+  operationId: "updateTenantQuotas",
   method: "put",
   path: "/{id}/quotas",
   tags: ["Tenants"],
   summary: "Update tenant quotas",
   description:
-    "Sets the per-tenant quota ceilings for a specific tenant. Each field is independent — supplied non-null values override the env default; supplied `null` resets to the env default for that field. Platform-admin only.",
+    "Sets the per-tenant quota ceilings for a specific tenant. Each field is independent — a non-null value overrides the env default, while `null` resets that field to the env default. Platform-admin only.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: z.object({ id: z.string() }),
+    params: z.object({
+      id: z.string().describe("ID of the tenant whose quotas to set"),
+    }),
     body: {
       content: {
         "application/json": {

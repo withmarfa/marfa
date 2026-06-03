@@ -49,23 +49,23 @@ async function createMemberKey(label: string): Promise<string> {
 }
 
 describe("Edge-type endpoints — auth gate", () => {
-  it("POST /edges/types rejects unauthenticated", async () => {
-    const res = await request(ctx.app, "POST", "/edges/types", {
+  it("POST /edge-types rejects unauthenticated", async () => {
+    const res = await request(ctx.app, "POST", "/edge-types", {
       body: { id: `${NS}.unauth`, cardinality: "many-to-many" },
     });
     expect(res.status).toBe(401);
   });
 
-  it("DELETE /edges/types/:id rejects unauthenticated", async () => {
-    const res = await request(ctx.app, "DELETE", `/edges/types/${NS}.unauth`);
+  it("DELETE /edge-types/:id rejects unauthenticated", async () => {
+    const res = await request(ctx.app, "DELETE", `/edge-types/${NS}.unauth`);
     expect(res.status).toBe(401);
   });
 });
 
 describe("Edge-type endpoints — admin gate", () => {
-  it("POST /edges/types rejects non-admin keys with 403", async () => {
+  it("POST /edge-types rejects non-admin keys with 403", async () => {
     const memberKey = await createMemberKey("et-post-member");
-    const res = await request(ctx.app, "POST", "/edges/types", {
+    const res = await request(ctx.app, "POST", "/edge-types", {
       key: memberKey,
       body: { id: `${NS}.admin-gate`, cardinality: "many-to-many" },
     });
@@ -74,19 +74,19 @@ describe("Edge-type endpoints — admin gate", () => {
     expect(body.error.code).toBe("forbidden");
   });
 
-  it("DELETE /edges/types/:id rejects non-admin keys with 403", async () => {
+  it("DELETE /edge-types/:id rejects non-admin keys with 403", async () => {
     const memberKey = await createMemberKey("et-delete-member");
-    const res = await request(ctx.app, "DELETE", `/edges/types/${NS}.x`, {
+    const res = await request(ctx.app, "DELETE", `/edge-types/${NS}.x`, {
       key: memberKey,
     });
     expect(res.status).toBe(403);
   });
 });
 
-describe("POST /edges/types — happy path and validation", () => {
+describe("POST /edge-types — happy path and validation", () => {
   it("admin registers a custom edge type (201)", async () => {
     const id = `${NS}.happy`;
-    const res = await request(ctx.app, "POST", "/edges/types", {
+    const res = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.adminKey,
       body: {
         id,
@@ -106,7 +106,7 @@ describe("POST /edges/types — happy path and validation", () => {
   });
 
   it("409 on redefinition of a core edge type", async () => {
-    const res = await request(ctx.app, "POST", "/edges/types", {
+    const res = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.adminKey,
       body: { id: "about", cardinality: "many-to-many" },
     });
@@ -116,7 +116,7 @@ describe("POST /edges/types — happy path and validation", () => {
   });
 
   it("400 when `extends` is supplied (unsupported)", async () => {
-    const res = await request(ctx.app, "POST", "/edges/types", {
+    const res = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.adminKey,
       body: {
         id: `${NS}.inherit`,
@@ -130,7 +130,7 @@ describe("POST /edges/types — happy path and validation", () => {
   });
 
   it("400 on an invalid type identifier", async () => {
-    const res = await request(ctx.app, "POST", "/edges/types", {
+    const res = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.adminKey,
       body: { id: "INVALID", cardinality: "many-to-many" },
     });
@@ -138,16 +138,16 @@ describe("POST /edges/types — happy path and validation", () => {
   });
 });
 
-describe("GET /edges/types — list", () => {
+describe("GET /edge-types — list", () => {
   it("returns core types plus just-registered custom types", async () => {
     const id = `${NS}.list`;
-    const create = await request(ctx.app, "POST", "/edges/types", {
+    const create = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.adminKey,
       body: { id, cardinality: "many-to-many" },
     });
     expect(create.status).toBe(201);
 
-    const res = await request(ctx.app, "GET", "/edges/types", {
+    const res = await request(ctx.app, "GET", "/edge-types", {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(200);
@@ -159,23 +159,23 @@ describe("GET /edges/types — list", () => {
   });
 });
 
-describe("DELETE /edges/types/:id — happy path and errors", () => {
+describe("DELETE /edge-types/:id — happy path and errors", () => {
   it("admin deletes a custom edge type (200), then it is gone from list", async () => {
     const id = `${NS}.delete-me`;
-    const create = await request(ctx.app, "POST", "/edges/types", {
+    const create = await request(ctx.app, "POST", "/edge-types", {
       key: ctx.adminKey,
       body: { id, cardinality: "many-to-many" },
     });
     expect(create.status).toBe(201);
 
-    const del = await request(ctx.app, "DELETE", `/edges/types/${id}`, {
+    const del = await request(ctx.app, "DELETE", `/edge-types/${id}`, {
       key: ctx.adminKey,
     });
     expect(del.status).toBe(200);
     const body = (await del.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
 
-    const list = await request(ctx.app, "GET", "/edges/types", {
+    const list = await request(ctx.app, "GET", "/edge-types", {
       key: ctx.adminKey,
     });
     const data = (await list.json()) as EdgeTypeListResponse;
@@ -183,7 +183,7 @@ describe("DELETE /edges/types/:id — happy path and errors", () => {
   });
 
   it("400 when attempting to delete a core edge type", async () => {
-    const res = await request(ctx.app, "DELETE", "/edges/types/about", {
+    const res = await request(ctx.app, "DELETE", "/edge-types/about", {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(400);
@@ -195,7 +195,7 @@ describe("DELETE /edges/types/:id — happy path and errors", () => {
     const res = await request(
       ctx.app,
       "DELETE",
-      `/edges/types/${NS}.does-not-exist`,
+      `/edge-types/${NS}.does-not-exist`,
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(404);

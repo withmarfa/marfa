@@ -601,7 +601,7 @@ export function request(
 }
 
 /**
- * T-218: drive `POST /items/bulk_action` through to a terminal state
+ * T-218: drive `POST /items/bulk-actions` through to a terminal state
  * synchronously for tests. The async endpoint returns 202 + a job
  * envelope; this helper drains the in-process worker by calling
  * `runOnce()` until the queue is empty, then GETs the final job state,
@@ -633,7 +633,7 @@ export async function runBulkActionAsync(
   job?: BulkActionJob;
   errorResponse?: { error: { code: string; message: string } };
 }> {
-  const res = await request(ctx.app, "POST", "/items/bulk_action", {
+  const res = await request(ctx.app, "POST", "/items/bulk-actions", {
     body,
     key,
   });
@@ -669,7 +669,7 @@ export async function runBulkActionAsync(
   const finalRes = await request(
     ctx.app,
     "GET",
-    `/items/bulk_action/jobs/${queued.id}`,
+    `/items/bulk-actions/jobs/${queued.id}`,
     { key },
   );
   if (finalRes.status !== 200) {

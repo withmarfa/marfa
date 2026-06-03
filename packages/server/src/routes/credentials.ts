@@ -116,12 +116,13 @@ const ApiTokenCredentialResponseSchema = z.object({
 // ---------------------------------------------------------------------------
 
 const createOAuthProviderCredentialRoute = createRoute({
+  operationId: "createOAuthProviderCredential",
   method: "post",
   path: "/oauth-provider",
   tags: ["Credentials"],
   summary: "Create an OAuth provider credential",
   description:
-    "Creates a `system.credential` of `kind: oauth_token` carrying an upstream service's OAuth client config — authorize URL, token URL, client_id, encrypted client_secret, upstream API base URL, and optional default scope. The resulting credential id is passed as `credential_ref` on subsequent `POST /connections/install` calls so multiple integrations of the same upstream (e.g. `google.calendar` + `google.tasks`) share one OAuth client and one stored secret instead of duplicating per-integration.\n\nThe client_secret is encrypted server-side under the `connectionOauthToken` HKDF domain (AES-256-GCM). Decryption only happens at the OAuth proxy + callback paths; the plaintext is never returned by any read path.\n\nTenant-scoped: the credential is created in the calling key's tenant, and integrations within that tenant can reference it. Cross-tenant reuse is not supported — each tenant brings its own OAuth provider config.",
+    "Creates a `system.credential` of `kind: oauth_token` holding an upstream service's OAuth client config, with the client secret encrypted at rest. The returned credential id is passed as `credential_ref` on subsequent `POST /connections/install` calls; the credential is tenant-scoped and cannot be reused across tenants.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -171,12 +172,13 @@ const createOAuthProviderCredentialRoute = createRoute({
 });
 
 const createApiTokenCredentialRoute = createRoute({
+  operationId: "createApiTokenCredential",
   method: "post",
   path: "/api-token",
   tags: ["Credentials"],
   summary: "Create a static API-token credential",
   description:
-    "Creates a `system.credential` of `kind: api_token` carrying an upstream service's API base URL + the user-supplied bearer token (encrypted at rest). The resulting credential id is passed as `credential_ref` on subsequent `POST /connections/install` calls.\n\nFor integrations whose upstream uses a static bearer (Todoist, Readwise, Raindrop, etc) rather than the OAuth dance. The connection proxy stamps the bearer transparently on every call; there is no refresh primitive — when the upstream rejects the token (401), the proxy surfaces 401 and emits a `system.activity` of severity `action_required` asking the operator to reinstall with a fresh token.\n\nThe bearer is encrypted server-side under the `connectionOauthToken` HKDF domain (AES-256-GCM) — same encryption domain that protects OAuth client secrets and access/refresh tokens. The plaintext is never returned by any read path.\n\nTenant-scoped: the credential is created in the calling key's tenant.",
+    "Creates a tenant-scoped `system.credential` of `kind: api_token` holding an upstream's base URL plus a static bearer token (encrypted at rest), for integrations that use a static token rather than OAuth. There is no refresh primitive — when the upstream rejects the token, the proxy surfaces the 401 and emits an `action_required` activity prompting reinstall with a fresh token.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {

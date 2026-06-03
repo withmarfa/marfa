@@ -84,12 +84,13 @@ const PLACEHOLDER_PALETTE = [
 // ---------------------------------------------------------------------------
 
 const getProfileRoute = createRoute({
+  operationId: "getProfile",
   method: "get",
   path: "/me",
   tags: ["Profile"],
   summary: "Get the calling user's profile",
   description:
-    "Returns the profile for the user who owns the caller's tenant — `username`, `first_name`, `last_name`, `bio`, `avatar_url`, plus `email` (mirrored read-only from the auth identity record).\n\nThe `avatar_url` resolves to the uploaded avatar when present, or to a deterministic placeholder generated from `username` when none is set. Profile is virtual — there's no items-table row per user; this endpoint reads from the underlying user record. For OIDC-shaped userinfo, use `GET /auth/userinfo` instead. See [Profile](/concepts/profile).",
+    "Returns the profile for the user who owns the caller's tenant. `avatar_url` resolves to the uploaded avatar when present, otherwise to a deterministic placeholder generated from the username; for OIDC-shaped userinfo, use `GET /auth/userinfo` instead.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -116,12 +117,13 @@ const getProfileRoute = createRoute({
 });
 
 const updateProfileRoute = createRoute({
+  operationId: "updateProfile",
   method: "patch",
   path: "/me",
   tags: ["Profile"],
   summary: "Update the calling user's profile",
   description:
-    "Updates any subset of `username`, `first_name`, `last_name`, `bio`. Username changes flow through the same validators as handle claims (reserved-handle and uniqueness checks). Username collisions return `409 conflict`; reserved values return `400 handle_reserved`. Email is read-only from the auth identity record and cannot be updated here.",
+    "Updates any subset of the profile fields. A username change runs through the same validators as handle claims — collisions return `409 conflict` and reserved values return `400 handle_reserved`. Email is read-only and cannot be updated here.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -173,12 +175,13 @@ const updateProfileRoute = createRoute({
 });
 
 const setAvatarRoute = createRoute({
+  operationId: "uploadAvatar",
   method: "post",
   path: "/me/avatar",
   tags: ["Profile"],
   summary: "Upload an avatar",
   description:
-    "Uploads an image as the user's avatar. The accepted MIME types are enumerated on the request body schema. Subject to the standard blob size cap and the tenant's `blobs` and `storage_bytes` quotas — over-size returns `413`. The uploaded image is stored as a content-addressed blob; the public `avatar_url` on the profile reconstructs at read time.",
+    "Uploads an image as the user's avatar, stored as a content-addressed blob. Subject to the standard blob size cap and the tenant's `blobs` and `storage_bytes` quotas — an over-size payload returns `413`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -221,12 +224,13 @@ const setAvatarRoute = createRoute({
 });
 
 const deleteAvatarRoute = createRoute({
+  operationId: "deleteAvatar",
   method: "delete",
   path: "/me/avatar",
   tags: ["Profile"],
   summary: "Delete the avatar",
   description:
-    "Clears the uploaded avatar. The next read of the profile resolves `avatar_url` to a deterministic placeholder generated from `username`. Idempotent — clearing when no avatar is set returns the unchanged profile.",
+    "Clears the uploaded avatar, so the next profile read resolves `avatar_url` to a deterministic placeholder generated from the username. Idempotent — clearing when no avatar is set returns the unchanged profile.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

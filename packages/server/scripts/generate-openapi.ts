@@ -10,6 +10,7 @@
 import { createSqliteStorage } from "../src/storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../src/storage/blob-backend.js";
 import { createApp } from "../src/app.js";
+import { finalizeOpenAPISpec } from "../src/openapi-finalize.js";
 import type { AppConfig } from "../src/config.js";
 
 const config: AppConfig = {
@@ -59,17 +60,21 @@ const app = createApp(storage, blobBackend, config);
 
 // `info.version` here is the API-contract version (the wire shape exposed
 // at /openapi.json), distinct from the deployed-build `version` reported on
-// `GET /`. Bumped to 5.0.0 in the Phase 2 API-rename wave (retirement of
-// legacy `POST /auth/signup` and removal of `system.connection.kind:
-// tenant`). Keep in lockstep with the duplicate literal in `src/app.ts`.
-const spec = app.getOpenAPIDocument({
-  openapi: "3.1.0",
-  info: {
-    title: "Marfa API",
-    version: "5.0.0",
-    description: "Typed data layer for structured personal data",
-  },
-});
+// `GET /`. Bumped to 5.1.0 in the docs API-surface rework: the path renames
+// (bulk-actions, tenants/me/config, edge-types, lease-tokens) are breaking,
+// but the API is pre-release and nothing pins the contract version yet, so the
+// change deliberately rides a minor rather than a major. Keep in lockstep with
+// the duplicate literal in `src/app.ts`.
+const spec = finalizeOpenAPISpec(
+  app.getOpenAPIDocument({
+    openapi: "3.1.0",
+    info: {
+      title: "Marfa API",
+      version: "5.1.0",
+      description: "Typed data layer for structured personal data",
+    },
+  }),
+);
 
 console.log(JSON.stringify(spec, null, 2));
 

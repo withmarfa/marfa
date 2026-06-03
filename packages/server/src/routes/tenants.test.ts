@@ -135,16 +135,16 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("GET /tenants/current/config — keys-mode fallback", () => {
+describe("GET /tenants/me/config — keys-mode fallback", () => {
   it("requires admin — 401 without credentials", async () => {
-    const res = await request(ctx.app, "GET", "/tenants/current/config");
+    const res = await request(ctx.app, "GET", "/tenants/me/config");
     expect(res.status).toBe(401);
   });
 
   it("returns {} for a non-tenant-scoped admin (no tenant store)", async () => {
     // The bootstrap test admin has no tenant_id, and authMode is "keys"
     // so storage.tenants is undefined. The handler short-circuits to {}.
-    const res = await request(ctx.app, "GET", "/tenants/current/config", {
+    const res = await request(ctx.app, "GET", "/tenants/me/config", {
       key: ctx.adminKey,
     });
     expect(res.status).toBe(200);
@@ -153,16 +153,16 @@ describe("GET /tenants/current/config — keys-mode fallback", () => {
   });
 });
 
-describe("PUT /tenants/current/config — keys-mode fallback", () => {
+describe("PUT /tenants/me/config — keys-mode fallback", () => {
   it("requires admin — 401 without credentials", async () => {
-    const res = await request(ctx.app, "PUT", "/tenants/current/config", {
+    const res = await request(ctx.app, "PUT", "/tenants/me/config", {
       body: {},
     });
     expect(res.status).toBe(401);
   });
 
   it("rejects a non-tenant-scoped credential with 400 VALIDATION_ERROR", async () => {
-    const res = await request(ctx.app, "PUT", "/tenants/current/config", {
+    const res = await request(ctx.app, "PUT", "/tenants/me/config", {
       key: ctx.adminKey,
       body: {},
     });
@@ -190,7 +190,7 @@ describe("Tenant config — hosted mode", () => {
       enforcement: { strict_mode: { types: ["core.note"] } },
     });
 
-    const res = await request(hosted.app, "GET", "/tenants/current/config", {
+    const res = await request(hosted.app, "GET", "/tenants/me/config", {
       key: hosted.tenantAdminKey,
     });
     expect(res.status).toBe(200);
@@ -201,7 +201,7 @@ describe("Tenant config — hosted mode", () => {
   });
 
   it("PUT rejects a negative cleanup-job override with 400", async () => {
-    const res = await request(hosted.app, "PUT", "/tenants/current/config", {
+    const res = await request(hosted.app, "PUT", "/tenants/me/config", {
       key: hosted.tenantAdminKey,
       body: {
         audit_retention_days: -1,
@@ -217,7 +217,7 @@ describe("Tenant config — hosted mode", () => {
       enforcement: { strict_mode: { types: ["core.note"] } },
       audit_retention_days: 45,
     };
-    const res = await request(hosted.app, "PUT", "/tenants/current/config", {
+    const res = await request(hosted.app, "PUT", "/tenants/me/config", {
       key: hosted.tenantAdminKey,
       body: config,
     });
@@ -227,7 +227,7 @@ describe("Tenant config — hosted mode", () => {
     expect(body.audit_retention_days).toBe(45);
 
     // Round-trip: GET must return the persisted value.
-    const getRes = await request(hosted.app, "GET", "/tenants/current/config", {
+    const getRes = await request(hosted.app, "GET", "/tenants/me/config", {
       key: hosted.tenantAdminKey,
     });
     expect(getRes.status).toBe(200);

@@ -20,7 +20,7 @@ import { MarfaServerClient } from "../marfa-client.js";
  *
  *   POST /lease/:connection_id/oauth/:capability_id
  *     Stub for Layer 2 — proxies a leased-token request to Marfa's
- *     existing `/connections/:id/lease-token` route. Layer 2 wires
+ *     existing `/connections/:id/lease-tokens` route. Layer 2 wires
  *     the install-time manifest persistence that captures
  *     `oauth_requirements.<capability_id> === "leased"`; until then
  *     the broker returns 501.

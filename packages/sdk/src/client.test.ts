@@ -992,7 +992,7 @@ describe("Extended SDK surface", () => {
     expect(typeof config).toBe("object");
   });
 
-  it("tenants.setConfig calls PUT /tenants/current/config", async () => {
+  it("tenants.setConfig calls PUT /tenants/me/config", async () => {
     // The test fixture runs in single-tenant SQLite mode (no tenant_id on
     // the bootstrap key); the server route rejects PUT under that
     // configuration with a clear validation error. Conformance against a

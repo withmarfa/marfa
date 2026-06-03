@@ -45,7 +45,7 @@ async function seed(
   return ids;
 }
 
-describe("POST /items/bulk_action (async)", () => {
+describe("POST /items/bulk-actions (async)", () => {
   it("dry_run stays synchronous and returns matched ids without mutating", async () => {
     const tag = `dryrun-${Math.random().toString(36).slice(2, 8)}`;
     const ids = await seed("core.note", 3, { tags: [tag] });
@@ -395,7 +395,7 @@ describe("POST /items/bulk_action (async)", () => {
   });
 });
 
-describe("GET + DELETE /items/bulk_action/jobs/:id", () => {
+describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
   it("GET returns the terminal job envelope after the worker runs", async () => {
     const tag = `get-${Math.random().toString(36).slice(2, 8)}`;
     await seed("core.note", 2, { tags: [tag] });
@@ -423,7 +423,7 @@ describe("GET + DELETE /items/bulk_action/jobs/:id", () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/items/bulk_action/jobs/does-not-exist",
+      "/items/bulk-actions/jobs/does-not-exist",
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(404);
@@ -436,7 +436,7 @@ describe("GET + DELETE /items/bulk_action/jobs/:id", () => {
     await seed("core.note", 2, { tags: [tag] });
 
     // POST without running the worker — the job sits in `queued`.
-    const postRes = await request(ctx.app, "POST", "/items/bulk_action", {
+    const postRes = await request(ctx.app, "POST", "/items/bulk-actions", {
       key: ctx.adminKey,
       body: {
         action: "transition",
@@ -451,7 +451,7 @@ describe("GET + DELETE /items/bulk_action/jobs/:id", () => {
     const delRes = await request(
       ctx.app,
       "DELETE",
-      `/items/bulk_action/jobs/${queued.id}`,
+      `/items/bulk-actions/jobs/${queued.id}`,
       { key: ctx.adminKey },
     );
     expect(delRes.status).toBe(200);
@@ -463,7 +463,7 @@ describe("GET + DELETE /items/bulk_action/jobs/:id", () => {
     const res = await request(
       ctx.app,
       "DELETE",
-      "/items/bulk_action/jobs/does-not-exist",
+      "/items/bulk-actions/jobs/does-not-exist",
       { key: ctx.adminKey },
     );
     expect(res.status).toBe(404);
@@ -471,7 +471,7 @@ describe("GET + DELETE /items/bulk_action/jobs/:id", () => {
 
   it("foreign credential is 403 on GET", async () => {
     // POST as admin
-    const postRes = await request(ctx.app, "POST", "/items/bulk_action", {
+    const postRes = await request(ctx.app, "POST", "/items/bulk-actions", {
       key: ctx.adminKey,
       body: {
         action: "transition",
@@ -497,7 +497,7 @@ describe("GET + DELETE /items/bulk_action/jobs/:id", () => {
     const getRes = await request(
       ctx.app,
       "GET",
-      `/items/bulk_action/jobs/${queued.id}`,
+      `/items/bulk-actions/jobs/${queued.id}`,
       { key: rawKey },
     );
     expect(getRes.status).toBe(403);

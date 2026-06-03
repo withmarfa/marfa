@@ -204,8 +204,8 @@ export enum ErrorCode {
   BULK_ATOMIC_ROLLBACK = "bulk_atomic_rollback",
   /**
    * T-218: a referenced bulk_action job id does not exist or is not
-   * visible to the caller. Returned by `GET /items/bulk_action/jobs/:id`
-   * and `DELETE /items/bulk_action/jobs/:id`. The cancelled / failed
+   * visible to the caller. Returned by `GET /items/bulk-actions/jobs/:id`
+   * and `DELETE /items/bulk-actions/jobs/:id`. The cancelled / failed
    * terminal states are NOT in this enum — they're carried in the job
    * envelope's `status` field on a 200 GET, and SDKs classify them
    * client-side rather than the server returning an HTTP error.

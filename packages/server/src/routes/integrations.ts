@@ -56,12 +56,13 @@ const IntegrationListResponseSchema = z.object({
 });
 
 const registerRoute = createRoute({
+  operationId: "registerIntegration",
   method: "post",
   path: "/",
   tags: ["Integrations"],
   summary: "Register an integration manifest",
   description:
-    "Registers an integration manifest as a `system.integration` item. One row per `(manifest_name, manifest_version)` pair; subsequent versions register as sibling items, not edits. The manifest is validated against `IntegrationManifestSchema` — declared triggers, OAuth requirements, webhook verification method, target types, permissions.\n\nOnce registered, the manifest is installable into any tenant via `POST /integrations/{id}/install` (consent flow) or `POST /connections/install` (server-side admin install). See [Integrations](/concepts/integrations) and [Marketplace](/concepts/marketplace).",
+    "Registers an integration manifest as a `system.integration` item, validating it before the write. One row per `(manifest_name, manifest_version)` pair — registering a new version creates a sibling item rather than editing the existing one.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -115,17 +116,27 @@ const registerRoute = createRoute({
 });
 
 const listRoute = createRoute({
+  operationId: "listIntegrations",
   method: "get",
   path: "/",
   tags: ["Integrations"],
   summary: "List integrations",
   description:
-    "Returns every registered integration manifest. Filter by `manifest_name` to enumerate versions of one integration. Each row carries the manifest contents, publisher metadata, and registration timestamps — use to render a marketplace surface or pick a version to install.",
+    "Returns every registered integration manifest. Filter by `manifest_name` to enumerate the registered versions of one integration.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      manifest_name: z.string().optional(),
-      limit: z.coerce.number().int().min(1).max(200).optional(),
+      manifest_name: z
+        .string()
+        .optional()
+        .describe("Filter to versions of a single integration by name."),
+      limit: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Maximum number of integrations to return."),
     }),
   },
   responses: {
@@ -147,15 +158,18 @@ const listRoute = createRoute({
 });
 
 const getRoute = createRoute({
+  operationId: "getIntegration",
   method: "get",
   path: "/{id}",
   tags: ["Integrations"],
   summary: "Get an integration",
   description:
-    "Returns one integration manifest by id. The full manifest body is included — triggers, OAuth requirements, webhook verification, target types, permissions, bidirectional handling. Use as the source-of-truth payload at install time so the consent screen renders the actual scopes the user is approving.",
+    "Returns one integration manifest by id, including the full manifest body. Use as the source-of-truth payload at install time so the consent screen renders the actual scopes being approved.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: z.object({ id: z.string().min(1) }),
+    params: z.object({
+      id: z.string().min(1).describe("Id of the integration to fetch."),
+    }),
   },
   responses: {
     200: {

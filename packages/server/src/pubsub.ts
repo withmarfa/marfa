@@ -171,7 +171,7 @@ export function nextHopMetadata(
  * such publish triggers a `storage.tenants.getConfig` round-trip which
  * is a real DB hit on hosted Postgres. 30s is the trade-off: long enough
  * to absorb burst traffic at near-zero cost; short enough that an
- * operator's `PUT /tenants/current/config` change to `max_event_hop_budget`
+ * operator's `PUT /tenants/me/config` change to `max_event_hop_budget`
  * propagates within a window the operator can tolerate.
  */
 const HOP_BUDGET_TTL_MS = 30_000;

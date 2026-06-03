@@ -1,4 +1,5 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { finalizeOpenAPISpec } from "./openapi-finalize.js";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import type { AppConfig } from "./config.js";
@@ -483,7 +484,7 @@ export function createApp(
   app.route("/items", itemEdgeListingRoutes(storage));
   app.route("/edges", edgeRoutes(storage));
   app.route("/edges", edgesBulkRoutes(storage));
-  app.route("/edges", edgeTypeRoutes(storage));
+  app.route("/edge-types", edgeTypeRoutes(storage));
   app.route("/types", typeRoutes(storage));
   app.route("/search", searchRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
@@ -614,18 +615,25 @@ export function createApp(
   });
   // §3.15 note: `info.version` here is the API-contract version (the wire
   // shape exposed under /openapi.json), distinct from the deployed-build
-  // `version` reported on `GET /`. Bump on contract changes, not on
-  // every deploy. Contract version was 4.2.0 before this wave; bumped
-  // to 5.0.0 to reflect retirement of legacy `POST /auth/signup` +
-  // `POST /auth/session` and removal of `system.connection.kind: tenant`.
-  app.doc("/openapi.json", {
-    openapi: "3.1.0",
-    info: {
-      title: "Marfa API",
-      version: "5.0.0",
-      description: "Typed data layer for structured personal data",
-    },
-  });
+  // `version` reported on `GET /`. Bump on contract changes, not on every
+  // deploy. Bumped to 5.1.0 in the docs API-surface rework: the path renames
+  // (bulk-actions, tenants/me/config, edge-types, lease-tokens) are breaking,
+  // but the API is pre-release and nothing pins the contract version yet, so
+  // the change deliberately rides a minor rather than a major.
+  // `finalizeOpenAPISpec` shapes the public reference (ordered tags, internal
+  // operations stripped, plain-Hono routes injected) — shared with the
+  // committed spec in `scripts/generate-openapi.ts` so the two never drift.
+  const openapiDocument = finalizeOpenAPISpec(
+    app.getOpenAPIDocument({
+      openapi: "3.1.0",
+      info: {
+        title: "Marfa API",
+        version: "5.1.0",
+        description: "Typed data layer for structured personal data",
+      },
+    }),
+  );
+  app.get("/openapi.json", (c) => c.json(openapiDocument));
 
   return app;
 }

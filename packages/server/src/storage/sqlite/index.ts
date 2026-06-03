@@ -91,7 +91,7 @@ export async function createSqliteStorage(
 
   // Warm up the in-memory edge-type registry from the custom_edge_types
   // table. Fire-and-forget: if the DB is empty (fresh test) this is a
-  // no-op, and new rows added at runtime are registered on POST /edges/types.
+  // no-op, and new rows added at runtime are registered on POST /edge-types.
   void edgeTypeStore.loadCustomEdgeTypes().then((types) => {
     for (const ct of types) {
       if (!isCoreEdgeType(ct.id)) registerEdgeTypeSchema(ct);
