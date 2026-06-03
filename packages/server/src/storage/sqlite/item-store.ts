@@ -706,9 +706,9 @@ export class SqliteItemStore implements ItemStore {
       lt(items.updated_at, beforeDate),
     ];
     // T-050 — tenantId === null filters to rows where tenant_id IS NULL
-    // (single-tenant self-host items + any unscoped legacy rows). Empty
-    // string is NOT a sentinel here — items.tenant_id is nullable, not
-    // empty-string-defaulted like blobs.tenant_id.
+    // (single-tenant self-host items + any rows with no tenant scope).
+    // Empty string is NOT a sentinel here — items.tenant_id is nullable,
+    // not empty-string-defaulted like blobs.tenant_id.
     if (tenantId === null) {
       baseConditions.push(isNull(items.tenant_id));
     } else if (tenantId !== undefined) {

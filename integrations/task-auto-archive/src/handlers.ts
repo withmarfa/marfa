@@ -25,13 +25,13 @@
  *      each id to `archived`. The list call has already returned;
  *      the cursor is not at risk from mid-iteration mutations.
  *
- *   The pre-T-019 shape transitioned items inside the page loop. It
- *   relied on the cursor being opaque keyset (stable across the
- *   filter snapshot). If a future cursor change made it offset-based,
- *   page 2 would skip items that page 1 archived — silently. The
- *   collect-then-act split removes that coupling: the handler now
- *   works correctly under either cursor model. Memory-bounded by
- *   `MAX_PAGES_PER_TICK * PAGE_SIZE` (1000 IDs at current settings).
+ *   The collect-then-act split matters: transitioning items inside the
+ *   page loop would rely on the cursor being opaque keyset (stable
+ *   across the filter snapshot), and an offset-based cursor would let
+ *   page 2 silently skip items that page 1 archived. Collecting the
+ *   snapshot first, then transitioning, works correctly under either
+ *   cursor model. Memory-bounded by `MAX_PAGES_PER_TICK * PAGE_SIZE`
+ *   (1000 IDs at current settings).
  *
  * Failure handling: per-item transition errors don't abort the
  * sweep; each surfaces as a `system.activity` row with severity
@@ -135,8 +135,8 @@ async function runSweep(
     stopReason = "page_cap";
   }
 
-  // Phase 2 — act. The pagination is complete; transitioning items
-  // out of `state: active` no longer interacts with the cursor.
+  // Phase 2 — act. Pagination is complete, so transitioning items out
+  // of `state: active` here doesn't interact with the cursor.
   let archived = 0;
   for (const id of dueIds) {
     try {

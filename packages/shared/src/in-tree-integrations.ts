@@ -1,8 +1,8 @@
 /**
  * Registry of the in-tree integrations shipped in this monorepo.
  *
- * Single source of truth for the dispatch sites that used to maintain
- * structurally-identical lists of integrations:
+ * Single source of truth for the dispatch sites that would otherwise
+ * each maintain a structurally-identical list of integrations:
  *
  *   - `packages/runtime-control/src/routes/arm-schedule.ts`
  *   - `packages/runtime-control/src/routes/verify.ts`
@@ -52,15 +52,15 @@ export interface InTreeIntegration {
   serviceBinding?: string;
   /** `ControlPlaneEnv` field for the dedicated per-integration
    *  webhook-receipt queue producer. Set only when this integration
-   *  consumes from its own queue; undefined means it uses the legacy
-   *  shared `WEBHOOK_RECEIPT_QUEUE` (currently just
+   *  consumes from its own queue; undefined means it uses the shared
+   *  `WEBHOOK_RECEIPT_QUEUE` (currently just
    *  `withmarfa.github-webhooks`). */
   webhookQueueBinding?: string;
   /** Override for the scheduled-poll queue slug. Defaults to
    *  `dirName` for integrations declaring a `schedule` trigger. The
    *  only override today is `todoist` → `todoist-tasks` because the
-   *  consumer's `wrangler.toml` historically used the manifest-derived
-   *  slug for that one. */
+   *  consumer's `wrangler.toml` uses that slug rather than the
+   *  manifest-derived one. */
   scheduledPollQueueSlug?: string;
 }
 
@@ -78,8 +78,8 @@ export const IN_TREE_INTEGRATIONS: readonly InTreeIntegration[] = [
     triggers: ["webhook"],
     hasWorker: true,
     serviceBinding: "INTEGRATION_GITHUB_WEBHOOKS",
-    // No `webhookQueueBinding` — still on the legacy shared queue.
-    // Migrating to a dedicated queue is a separate operational task
+    // No `webhookQueueBinding` — consumes from the shared queue.
+    // Moving to a dedicated queue is a separate operational task
     // (consumer-side queue switch + drain of the shared queue).
   },
   {

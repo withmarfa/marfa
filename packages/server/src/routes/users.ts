@@ -146,8 +146,7 @@ const meRoute = createRoute({
  *
  * Sign-up + sign-in flow through the Better Auth surface mounted under
  * /auth/sign-up/email, /auth/sign-in/email, etc. (see auth-pages.ts).
- * The legacy POST /auth/signup + POST /auth/session provider-identity
- * surfaces were retired — Better Auth is the only sign-up path.
+ * Better Auth is the only sign-up path.
  */
 export function userAuthRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();

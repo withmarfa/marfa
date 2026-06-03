@@ -210,7 +210,7 @@ export interface ItemStore {
    * - `undefined` — every row older than the cutoff.
    * - `string` — only rows where `tenant_id` matches.
    * - `null` — only rows where `tenant_id IS NULL` (single-tenant
-   *   self-host items + any unscoped legacy rows).
+   *   self-host items + any rows with no tenant scope).
    */
   purgeTrashedOlderThan(
     beforeDate: string,
@@ -1157,7 +1157,7 @@ export interface AuditStore {
    * job can fan out per-tenant honouring per-tenant retention
    * overrides:
    *
-   * - `undefined` — every row older than the cutoff (legacy behaviour).
+   * - `undefined` — every row older than the cutoff (unscoped sweep).
    * - `string` — only rows where `tenant_id` matches.
    * - `null` — only rows where `tenant_id IS NULL` (system-initiated
    *   audits + the no-tenant rows that single-tenant self-hosts use).
@@ -1192,9 +1192,8 @@ export interface PersistedEvent {
    *  serialises via `String(id)` and parses via `BigInt(Last-Event-ID)`. */
   id: bigint;
   event_type: string;
-  /** Populated on item events; null on edge events. Migration 0014
-   *  relaxed this to nullable so edge events no longer reuse source_id
-   *  as a NOT NULL workaround. */
+  /** Populated on item events; null on edge events — the column is
+   *  nullable so edge events don't have to borrow source_id. */
   item_id: string | null;
   edge_id: string | null;
   tenant_id: string | null;

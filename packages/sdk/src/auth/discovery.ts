@@ -1,12 +1,11 @@
 /**
  * OAuth endpoint discovery via RFC 8414 (`/.well-known/oauth-authorization-server`).
  *
- * The SDK previously hardcoded `/auth/authorize` and `/auth/token` against
- * the server's pre-T-131 URL layout. The server migration moved those to
- * `/auth/oauth2/authorize` and `/auth/oauth2/token` (Better Auth OAuth
- * Provider plugin). Rather than chasing URL changes through hardcoded
- * literals, the SDK now reads the canonical metadata doc on first use and
- * caches the result for the process lifetime.
+ * The SDK reads the canonical metadata doc on first use and caches the
+ * result for the process lifetime, rather than hardcoding endpoint URL
+ * literals. The OAuth endpoints (`/auth/oauth2/authorize`,
+ * `/auth/oauth2/token`, etc.) are owned by the Better Auth OAuth
+ * Provider plugin and resolved from the discovery doc.
  *
  * `discoverEndpoints(issuer)` is called by `MarfaAuth`, `StoredTokenProvider`,
  * and `startDeviceFlow`. A module-scope promise cache de-duplicates
@@ -14,7 +13,7 @@
  * collide on the same `.well-known` fetch.
  *
  * Failure is hard: a server that doesn't publish the discovery doc isn't a
- * server this SDK supports. No fallback to legacy paths.
+ * server this SDK supports. There is no fallback to hardcoded paths.
  */
 import { normaliseIssuer } from "./issuer.js";
 

@@ -279,7 +279,7 @@ const CORE_SEARCH_FIELDS = new Set(["title", "body", "description", "name"]);
  * fields explicitly flagged as non-searchable are excluded from this list,
  * which means both dialects' FTS index (the SQLite `items_fts.extra`
  * column and the PG `search_vector` materialised tsvector) skip them.
- * Fields without the flag default to searchable for backward compatibility.
+ * Fields without the flag default to searchable.
  */
 export function getSearchableStringFields(typeId: string): string[] {
   const fields = getResolvedFields(typeId);
@@ -301,7 +301,7 @@ export function getSearchableStringFields(typeId: string): string[] {
  * description, name) — `getSearchableStringFields` only covers the
  * long tail. Fields that don't exist on the type, or non-string fields,
  * return false (the default-searchable shape). The flag defaults to
- * `true` (searchable) for backward compat with existing types.
+ * `true` (searchable) — a type that omits it indexes the field.
  */
 export function isFieldSearchableExcluded(
   typeId: string,
@@ -662,12 +662,12 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     }
   }
 
-  // Lifecycle is universal — reject stale state-machine declarations.
-  for (const legacyKey of ["states", "default_state", "transitions"]) {
-    if (legacyKey in obj) {
+  // Lifecycle is universal — reject state-machine declarations.
+  for (const forbiddenKey of ["states", "default_state", "transitions"]) {
+    if (forbiddenKey in obj) {
       errors.push({
-        field: legacyKey,
-        message: `Schemas no longer declare \`${legacyKey}\`; lifecycle is universal (metadata-layer).`,
+        field: forbiddenKey,
+        message: `Schemas must not declare \`${forbiddenKey}\`; lifecycle is universal (metadata-layer).`,
       });
     }
   }

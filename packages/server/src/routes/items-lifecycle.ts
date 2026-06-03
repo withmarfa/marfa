@@ -135,10 +135,10 @@ export function itemsLifecycleRoutes(storage: Storage) {
     requireAuth(c);
     const tenantId = c.get("apiKey")?.tenant_id;
     // Fetch the (trashed) item to get its type, then run the permission
-    // gate BEFORE calling `restore()`. Previously the write happened
-    // first and then the gate — a throwing gate would leave the item
-    // restored with no rollback. `getIncludingTrashed` sees past the
-    // normal trashed-is-invisible filter.
+    // gate BEFORE calling `restore()`. Running the write first would
+    // leave the item restored with no rollback if the gate throws.
+    // `getIncludingTrashed` sees past the normal trashed-is-invisible
+    // filter.
     const pending = await storage.items.getIncludingTrashed(id, tenantId);
     if (!pending) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);

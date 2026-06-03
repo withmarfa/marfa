@@ -63,7 +63,7 @@ function isEnv(s: string): s is Env {
  *   - **Webhook-receipt** (T-247): integrations with `webhook`
  *     trigger AND a dedicated `webhookQueueBinding` get
  *     `marfa-webhook-receipt-<slug>-<env>` (+ DLQ). Integrations
- *     without the binding stay on the legacy shared queue
+ *     without the binding stay on the shared queue
  *     (`withmarfa.github-webhooks` today).
  *   - **Scheduled-poll** (T-240): integrations with `schedule`
  *     trigger get `marfa-scheduled-poll-<slug>-<env>` (+ DLQ). The
@@ -117,11 +117,11 @@ async function provisionQueues(
     `marfa-webhook-receipt-${env}-dlq`,
     `marfa-scheduled-poll-${env}`,
     `marfa-scheduled-poll-${env}-dlq`,
-    // The shared `marfa-reactive-run-${env}` (+ DLQ) is the legacy
-    // single-consumer queue. T-233 splits per integration; the shared
-    // queue + DLQ stay declared here for backward-compat through the
-    // task-auto-archive migration window. Once PR3 drains it, the
-    // shared queue can be removed from this list.
+    // The shared `marfa-reactive-run-${env}` (+ DLQ) is the
+    // single-consumer queue. T-233 splits reactive-run per integration;
+    // the shared queue + DLQ stay declared here while the
+    // task-auto-archive connection still drains through it. Once that
+    // drain completes, the shared queue can be removed from this list.
     `marfa-reactive-run-${env}`,
     `marfa-reactive-run-${env}-dlq`,
   ];

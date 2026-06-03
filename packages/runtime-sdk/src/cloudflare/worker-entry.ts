@@ -50,7 +50,7 @@ export interface IntegrationWorkerEnv extends PerConnectionAlarmEnv {
    * per-env in the integration's `wrangler.toml` as
    * `[[env.<env>.queues.producers]]` pointing at the relevant DLQ.
    *
-   * When a binding is unset, the wrapper falls through to its pre-T-103
+   * When a binding is unset, the wrapper takes the no-DLQ
    * permanent-failure path (ack + activity emit only).
    */
   WEBHOOK_RECEIPT_DLQ_QUEUE?: DlqProducer;

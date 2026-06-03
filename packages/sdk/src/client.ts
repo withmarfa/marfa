@@ -148,8 +148,8 @@ export interface ListFilters {
   tier?: Tier | "all";
   tags?: string[];
   /** Filter-language expression, e.g. `edge[parent-of] eq "<id>"` or
-   *  `edge[parent-of] not_exists`. The filter language replaces the
-   *  previously-exposed `parent_id` and `root_only` convenience params. */
+   *  `edge[parent-of] not_exists`. The filter language is how edge and
+   *  hierarchy relationships are queried. */
   filter?: string;
   sort?: "created_at" | "updated_at" | "timestamp";
   direction?: "asc" | "desc";
@@ -764,8 +764,8 @@ export class MarfaClient {
     },
 
     /**
-     * Create or upsert many items in one call (admin-only). Replaces the
-     * historical `/import` endpoint. Up to 5000 items per call.
+     * Create or upsert many items in one call (admin-only). Up to 5000
+     * items per call.
      *
      * Modes: `"upsert"` (default) updates matching `(source, source_id)`
      * rows in place; `"create_only"` surfaces matches as `skipped`.

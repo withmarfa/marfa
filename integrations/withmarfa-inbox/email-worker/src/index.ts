@@ -45,7 +45,6 @@ interface Env {
    * binding name is declared in `wrangler.toml` per-env. Calling
    * `env.RUNTIME_CONTROL.fetch(request)` invokes the bound Worker's
    * `fetch` handler directly — no DNS, TLS, or edge routing involved.
-   * Replaces the prior `WEBHOOK_URL` HTTP-fetch path (T-250).
    */
   RUNTIME_CONTROL: Fetcher;
   /**

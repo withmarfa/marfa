@@ -64,24 +64,24 @@ import { CALENDAR_API_BASE, DEFAULT_CALENDAR_ID } from "./manifest.js";
 const CURSOR_KEY = "main";
 
 interface CalendarCursor {
-  /** Opaque sync token from Calendar's incremental-sync API (legacy
-   *  single-calendar mode only — populated when no `selected_calendar_ids`
+  /** Opaque sync token from Calendar's incremental-sync API (single-
+   *  calendar mode only — populated when no `selected_calendar_ids`
    *  is configured). Multi-calendar mode uses `per_calendar[].syncToken`
    *  below. */
   syncToken: string | null;
-  /** ISO timestamp of the last successful schedule run (legacy mode). */
+  /** ISO timestamp of the last successful schedule run (single-calendar mode). */
   last_inbound_at: string | null;
   /** Map of Calendar event id → Marfa item id. Used to look up
    *  the Marfa item on echo / update / delete without round-tripping
    *  through the server. Bounded by Calendar's own dedup;
    *  realistically a few hundred to a few thousand entries. The shape
-   *  stays a flat `Record<string, string>` for backward compatibility
-   *  with legacy single-calendar cursors — the per-event calendar id
-   *  lives alongside in `mapping_calendars`. */
+   *  is a flat `Record<string, string>` shared by single-calendar
+   *  cursors — the per-event calendar id lives alongside in
+   *  `mapping_calendars`. */
   mappings: Record<string, string>;
   /** Multi-calendar mode only: per-event calendar id, so updates and
    *  deletes know which calendar the mapped event lives on. Sparse —
-   *  legacy single-calendar cursors leave this undefined and writes go
+   *  single-calendar cursors leave this undefined and writes go
    *  to the connection's primary calendar. */
   mapping_calendars?: Record<string, string>;
   /** Multi-calendar mode only: per-calendar sync cursor. Top-level
@@ -94,17 +94,17 @@ interface CalendarCursor {
 
 /**
  * Normalised view of the connection's `properties.configuration` for
- * the handler. Legacy mode (no `selected_calendar_ids`) preserves the
- * pre-T-231 behaviour: single primary-calendar sync, writes as
- * `core.event`. Multi mode honours the install-time picker selections.
+ * the handler. Single mode (no `selected_calendar_ids`) syncs a single
+ * primary calendar and writes as `core.event`. Multi mode honours the
+ * install-time picker selections.
  */
 interface ConnectionConfig {
-  mode: "legacy" | "multi";
-  /** Single calendar id in legacy mode; nominated default-write in multi. */
+  mode: "single" | "multi";
+  /** Single calendar id in single mode; nominated default-write in multi. */
   default_write_calendar_id: string;
-  /** All calendars to sync from. Single-entry array in legacy mode. */
+  /** All calendars to sync from. Single-entry array in single mode. */
   selected_calendar_ids: string[];
-  /** Target type for inbound items. `core.event` in legacy; configurable
+  /** Target type for inbound items. `core.event` in single mode; configurable
    *  in multi (default `google.calendar.event`). */
   target_type: string;
 }
@@ -141,25 +141,25 @@ async function resolveConnectionConfig(
       };
     }
 
-    // Legacy fallback. The pre-T-231 `resolveCalendarId` path honoured
-    // a single `calendar_id` string on configuration as the calendar to
-    // sync; preserve that as the legacy single-calendar id.
-    const legacyCalendarId =
+    // Single-calendar fallback. A bare `calendar_id` string on
+    // configuration names the one calendar to sync; use it as the
+    // single-calendar id.
+    const singleCalendarId =
       typeof cfg.calendar_id === "string" && cfg.calendar_id.length > 0
         ? cfg.calendar_id
         : DEFAULT_CALENDAR_ID;
     return {
-      mode: "legacy",
-      selected_calendar_ids: [legacyCalendarId],
-      default_write_calendar_id: legacyCalendarId,
+      mode: "single",
+      selected_calendar_ids: [singleCalendarId],
+      default_write_calendar_id: singleCalendarId,
       target_type: targetType ?? "core.event",
     };
   } catch {
     // If the connection lookup fails for any reason, fall back to the
-    // fully-legacy primary-calendar / core.event defaults so the
-    // handler still does something useful rather than failing hard.
+    // single primary-calendar / core.event defaults so the handler
+    // still does something useful rather than failing hard.
     return {
-      mode: "legacy",
+      mode: "single",
       selected_calendar_ids: [DEFAULT_CALENDAR_ID],
       default_write_calendar_id: DEFAULT_CALENDAR_ID,
       target_type: "core.event",
@@ -202,10 +202,10 @@ export async function handleSchedule(
   if (config.mode === "multi") {
     return handleScheduleMulti(ctx, message, config);
   }
-  return handleScheduleLegacy(ctx, message, config);
+  return handleScheduleSingle(ctx, message, config);
 }
 
-async function handleScheduleLegacy(
+async function handleScheduleSingle(
   ctx: ConnectionContext,
   message: ScheduleMessage,
   config: ConnectionConfig,
@@ -335,10 +335,10 @@ export async function handleItemEvent(
   if (config.mode === "multi") {
     return handleItemEventMulti(ctx, message, config);
   }
-  return handleItemEventLegacy(ctx, message, config);
+  return handleItemEventSingle(ctx, message, config);
 }
 
-async function handleItemEventLegacy(
+async function handleItemEventSingle(
   ctx: ConnectionContext,
   message: ItemEventMessage,
   config: ConnectionConfig,
@@ -414,9 +414,8 @@ async function handleItemEventLegacy(
     // and returns 409 on conflict. The 409 path below recovers the
     // mapping idempotently without creating a duplicate event.
     const deterministicId = await deriveDeterministicCalendarId(item.id);
-    // Legacy single-calendar mode: write to the configured default
-    // calendar (which is the primary by default and matches the
-    // pre-T-231 `resolveCalendarId` behaviour exactly).
+    // Single-calendar mode: write to the configured default calendar
+    // (the primary by default).
     const calendarId = config.default_write_calendar_id;
     const postPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`;
     const postPayload = { ...calendarPayload, id: deterministicId };
@@ -890,7 +889,7 @@ async function syncOneCalendar(
 // Multi-calendar handlers (T-231 PR3). Active when the connection's
 // `properties.configuration` carries `selected_calendar_ids[]` and a
 // `default_write_calendar_id` — i.e. the post-install picker has been
-// run. Until then, the legacy single-calendar path above runs unchanged.
+// run. Without that configuration, the single-calendar path above runs.
 // ---------------------------------------------------------------------------
 
 interface PerCalendarCursor {
@@ -1157,7 +1156,7 @@ async function handleItemEventMulti(
     const resp = await ctx.marfa.proxyRequest("POST", postPath, postPayload);
 
     if (resp.status === 409) {
-      // T-020 idempotent recovery — same handling as legacy.
+      // T-020 idempotent recovery — same handling as single-calendar mode.
       const fetchPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(writeCalendarId)}/events/${encodeURIComponent(deterministicId)}`;
       const fetchResp = await ctx.marfa.proxyRequest("GET", fetchPath);
       if (!fetchResp.ok) {
@@ -1216,9 +1215,8 @@ async function handleItemEventMulti(
 /**
  * Build the Marfa-side `CreateItemInput` from a Calendar event.
  *
- * `targetType` defaults to `"core.event"` so legacy single-calendar
- * callers (the pre-T-231 schedule handler) write cross-app `core.event`
- * items as they always did. Multi-calendar mode passes the
+ * `targetType` defaults to `"core.event"` so single-calendar callers
+ * write cross-app `core.event` items. Multi-calendar mode passes the
  * configured target type — usually `"google.calendar.event"` for
  * upstream-fidelity round-trip. When the target is
  * `google.calendar.event` the function additionally writes the
@@ -1257,7 +1255,7 @@ function buildEventInput(
   if (event.status !== undefined) properties.status = event.status;
 
   if (targetType === "core.event") {
-    // Legacy cross-app target carries the html link as a generic url.
+    // The cross-app `core.event` target carries the html link as a generic url.
     if (event.htmlLink !== undefined) properties.url = event.htmlLink;
     return { type: targetType, properties };
   }
@@ -1303,8 +1301,8 @@ function buildEventInput(
  * of `dateTime`) and `timezone` (sets `start.timeZone` / `end.timeZone`).
  * Both are read from item properties — present on
  * `google.calendar.event` items, absent on plain `core.event` items.
- * The fallback (no `all_day`, no `timezone`) matches the pre-T-231
- * behaviour exactly: `start: { dateTime: <iso> }`, `end: { dateTime: <iso> }`.
+ * The fallback (no `all_day`, no `timezone`) writes
+ * `start: { dateTime: <iso> }`, `end: { dateTime: <iso> }`.
  */
 function buildCalendarPayload(item: ItemResource): Record<string, unknown> {
   const props = (item.properties ?? {}) as {
@@ -1365,8 +1363,8 @@ function buildCalendarPayload(item: ItemResource): Record<string, unknown> {
 
 /**
  * Build the path to a specific event on a given calendar. Defaults to
- * the connection's primary calendar so legacy single-calendar code
- * paths continue to address the primary as before.
+ * the connection's primary calendar so single-calendar code paths
+ * address the primary.
  */
 function buildEventPath(
   externalId: string,
@@ -1396,8 +1394,8 @@ async function ackHandledIfMappedAsDelete(
     return { ok: true };
   }
   // Multi-calendar mode tracks per-event calendar_id in
-  // `mapping_calendars`; legacy mode has no entry there and falls
-  // back to the connection's default-write calendar.
+  // `mapping_calendars`; single-calendar mode has no entry there and
+  // falls back to the connection's default-write calendar.
   const calendarId =
     cursor.mapping_calendars?.[externalId] ?? fallbackCalendarId;
   const path = buildEventPath(externalId, calendarId);

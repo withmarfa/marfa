@@ -71,15 +71,14 @@ export function registerLeaseRoutes(
         // Wildcard write on all three permission axes — mirrors the
         // local-substrate credential mint (see
         // `packages/server/src/integrations/local-runtime/credentials.ts`).
-        // Pre-T-260 only `type_permissions` was set, so the runtime
-        // credential could write items but silently failed every
-        // `createEdge` / extension write — both default to `{}` and
-        // block the call. T-249's `google.youtube` was the first
-        // manifest to declare `permissions.edge: { "parent-of": "write" }`
-        // and surfaced the gap. Manifest-projected permissions
-        // (each Connection's credential carrying exactly the
-        // per-manifest map rather than wildcard) is a separate
-        // refinement filed as the long-term follow-on on T-260.
+        // All three axes must be granted: `edge_permissions` and
+        // `extension_permissions` default to `{}`, which blocks every
+        // `createEdge` / extension write, so a `type_permissions`-only
+        // credential could write items but silently fail edge and
+        // extension writes. Manifest-projected permissions (each
+        // Connection's credential carrying exactly the per-manifest map
+        // rather than wildcard) is a separate refinement filed as the
+        // long-term follow-on on T-260.
         type_permissions: { "*": "write" },
         edge_permissions: { "*": "write" },
         extension_permissions: { "*": "write" },

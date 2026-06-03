@@ -114,12 +114,12 @@ async function createUserAppGrant(
   source: "marfa/oauth/authorize" | "marfa/oauth/device",
 ): Promise<{ id: string; created: boolean }> {
   // T-144: cycle metadata flows through `cycleRequestContext` (set by
-  // `cycleMiddleware`) — `publish()` reads it automatically. The
-  // explicit `cycle` parameter was dead weight under the new shape.
+  // `cycleMiddleware`) — `publish()` reads it automatically, so this
+  // path doesn't thread cycle explicitly.
   let tenantId: string | undefined;
   if (storage.users) {
     // T-074: lookup by Better Auth user id (the canonical bridge);
-    // `users.email` no longer exists.
+    // the `users` table keys on auth user id, not email.
     const user = await storage.users.getByAuthUserId(consentingUser.id);
     tenantId = user?.tenant_id;
     if (!tenantId) {
@@ -204,14 +204,12 @@ async function createUserAppGrant(
 }
 
 /**
- * T-131 note on the signature: `salt` + `oidcSigner` used to be consumed
- * by the OAuth-protocol handlers that lived in this file (token issuance,
- * id_token signing). The @better-auth/oauth-provider plugin owns those
- * surfaces now and gets its own salt + signer wiring through `instance.ts`.
- * The two arguments are kept on `authRoutes` for caller compatibility
- * (app.ts still threads them through); they're consumed inside the kept
- * surfaces (device flow uses `salt` for hashing, future expansions may
- * need `oidcSigner` for ID-token-related claims).
+ * Note on the signature: the @better-auth/oauth-provider plugin owns
+ * token issuance + id_token signing, with its own salt + signer wired
+ * through `instance.ts`. `salt` + `oidcSigner` are threaded into
+ * `authRoutes` by app.ts for the surfaces this file still serves —
+ * device flow uses `salt` for hashing, and `oidcSigner` is reserved
+ * for future ID-token-related claims.
  */
 export function authRoutes(
   storage: Storage,
@@ -382,10 +380,9 @@ export function authRoutes(
       await storage.oauthProvider.revokeTokensForGrant(clientId, authUserId);
     }
     // T-131: emit the audit row. Fire-and-forget (audit failures must
-    // never break the user-facing revoke flow). Pre-T-131 this row was
-    // listed in CLAUDE.md as "out-of-scope today" — T-131 is what gave us
-    // a clean emission seam (the explicit Marfa handler, not the plugin
-    // hook which fires from a token-in-hand context without client_id).
+    // never break the user-facing revoke flow). Emitted from this
+    // explicit Marfa handler rather than the plugin hook, which fires
+    // from a token-in-hand context without `client_id`.
     void storage.audit.log({
       tenant_id: tenantId ?? null,
       action: "auth.grant.revoked",
@@ -1408,9 +1405,9 @@ export function authRoutes(
     });
     // T-131: per-grant client-name lookup from the plugin's
     // auth_oauth_client table. Worst-case N small queries; for the
-    // page-load scale this is fine and avoids the prior batch-list
-    // pattern which reads every client across every tenant. If the
-    // page grows hot, swap for a single IN-clause batch read.
+    // page-load scale this is fine and avoids a batch-list read of
+    // every client across every tenant. If the page grows hot, swap
+    // for a single IN-clause batch read.
     const grants: SecurityPageGrant[] = [];
     for (const item of grantItems.data) {
       const props = item.properties;
@@ -1633,8 +1630,7 @@ export function authRoutes(
         "client_id and scope are required",
       );
     }
-    // T-131: client lookup migrated from the dropped `oauth_clients`
-    // table to the plugin's `auth_oauth_client` table.
+    // Client lookup reads the plugin's `auth_oauth_client` table.
     const client = await storage.oauthProvider?.getClient(clientId);
     if (!client) {
       throw new MarfaError(ErrorCode.INVALID_CLIENT, "Unknown client_id");

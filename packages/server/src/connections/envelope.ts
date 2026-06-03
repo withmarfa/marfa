@@ -77,10 +77,10 @@ export async function buildEntryForConnection(
 ): Promise<SubscriptionEntry | null> {
   // T-175: item-level state gate. Both layers must hold —
   // `state === "active"` (canonical lifecycle) AND `properties.status`
-  // either unset or `active` (application-layer runtime status). The
-  // pre-T-175 code only checked the latter, so a Connection transitioned
-  // to `state: revoked` (via the uninstall pipeline) but retaining
-  // `properties.status: active` continued firing reactive runs.
+  // either unset or `active` (application-layer runtime status).
+  // Checking only the latter would let a Connection transitioned to
+  // `state: revoked` (via the uninstall pipeline) but retaining
+  // `properties.status: active` keep firing reactive runs.
   if (connection.state !== undefined && connection.state !== "active") {
     return null;
   }

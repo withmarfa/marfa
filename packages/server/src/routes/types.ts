@@ -507,10 +507,10 @@ export function typeRoutes(storage: Storage) {
       validateParentChain(schema.id, schema.parent);
     }
 
-    // TSC42 §7: server-side semver diff. Replaces the historical
-    // auto-increment with a structural classifier — no-op submissions are
-    // rejected, descriptive-only changes accept the existing version,
-    // additive and breaking changes require an explicit bump. The classifier
+    // TSC42 §7: server-side semver diff via a structural classifier —
+    // no-op submissions are rejected, descriptive-only changes accept the
+    // existing version, additive and breaking changes require an explicit
+    // bump. The classifier
     // returns the diff class for telemetry / SDK error messages.
     const diff = diffTypeSchemas(existing, schema);
     if (diff === "noop") {

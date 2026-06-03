@@ -33,9 +33,9 @@ export interface OAuthStateEnvelope {
   redirect_uri: string;
   /** PKCE verifier (T-010). Carried through the upstream provider's
    *  authorize → callback redirect inside the encrypted state envelope so
-   *  the callback can present it at the token exchange. Optional only to
-   *  preserve historical state envelopes while flows complete; the start
-   *  route always emits one. */
+   *  the callback can present it at the token exchange. Optional so an
+   *  in-flight envelope without it still decodes; the start route always
+   *  emits one. */
   code_verifier?: string;
   /** Epoch ms after which this state is rejected. */
   expires_at_ms: number;

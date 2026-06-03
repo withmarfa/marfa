@@ -117,10 +117,10 @@ Two modes, picked via `connection.properties.configuration.download_mode`:
 - **`metadata` (default)** — every Drive file lands as
   `google.drive.file` with `blob_ref` absent. Drive's own
   checksums (`md5_checksum`, `sha256_checksum`) and the
-  `drive_file_id` are still captured as independent properties;
-  no synthesised `blob_ref` (the prior synthesised refs —
-  `sha256:<sha256Checksum>`, `md5:<md5Checksum>`, `drive:<id>` —
-  weren't fetchable via `GET /blobs/{ref}`, so they're gone).
+  `drive_file_id` are captured as independent properties. No
+  synthesised `blob_ref` — a ref the bytes can't be fetched from
+  via `GET /blobs/{ref}` would be misleading, so metadata mode
+  emits none.
 - **`all-files`** — for each non-Google-native file within the
   configured ceiling, the handler proxies
   `GET /drive/v3/files/{id}?alt=media` to download the bytes,

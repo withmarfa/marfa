@@ -339,8 +339,8 @@ export async function performInstall(
   // -------------------------------------------------------------------
   // Audit trail (T-012). Awaited and rolled back on failure — `system.connection`
   // writes are operationally significant and an unaudited install isn't
-  // auditable. Pre-T-012 this was `void storage.audit.log(...)`, which
-  // swallowed audit-DB failures silently.
+  // auditable, so the audit write is awaited (not fire-and-forget) and a
+  // failure fails the install rather than being swallowed.
   // -------------------------------------------------------------------
   try {
     await storage.audit.log({

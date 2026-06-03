@@ -62,10 +62,10 @@ function hashLease(raw: string): string {
  *     `connections/install-pipeline.ts`).
  *
  * Either source identifies "the connector itself" for the purpose of
- * managing leased tokens on this connection. Pre-T-018 the check was
- * narrowed to `oauth:` and the runtime credential's `integration:`
- * source got locked out — contradicting the design "the connector
- * requests a short-TTL bearer for direct calls".
+ * managing leased tokens on this connection. Both `oauth:` and the
+ * runtime credential's `integration:` source must pass — the design is
+ * "the connector requests a short-TTL bearer for direct calls", and the
+ * runtime credential is a legitimate connector.
  */
 function isConnectionScopedSource(
   source: string,

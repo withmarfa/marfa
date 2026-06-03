@@ -147,10 +147,10 @@ export async function createSqliteStorage(
     rateLimits: new SqliteRateLimitStore(db),
     // T-050: tenant store is wired unconditionally so the per-tenant
     // cleanup fan-out works on any deployment, including keys-mode
-    // self-hosts that have explicitly created tenant rows. The hosted-
-    // mode gate previously here was stale — the store is harmless in
-    // single-tenant deployments (it just lists zero tenants and the
-    // cleanup falls through to the NULL-bucket sweep).
+    // self-hosts that have explicitly created tenant rows. No hosted-
+    // mode gate — the store is harmless in single-tenant deployments
+    // (it just lists zero tenants and the cleanup falls through to the
+    // NULL-bucket sweep).
     tenants: new SqliteTenantStore(db),
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),
@@ -160,9 +160,7 @@ export async function createSqliteStorage(
      * libsql `BEGIN IMMEDIATE` via Drizzle's `db.transaction(async tx => …)`,
      * stores `tx` on the per-request ALS so every store call inside `fn`
      * resolves its executor to the transaction, and rolls back on throw.
-     *
-     * Pre-T-071 this was a silent no-op for async bodies (better-sqlite3
-     * has no async transaction API). The shim is gone; rollback is real.
+     * Rollback is real — not a no-op for async bodies.
      */
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
       return await baseDb.transaction(async (tx) => {

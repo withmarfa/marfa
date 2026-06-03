@@ -33,8 +33,8 @@ export interface VerifyWebhookSignatureInput {
   /**
    * Maximum future skew (seconds) to tolerate. Default 60 — matches
    * the documented platform contract. Timestamps further ahead than
-   * this are rejected as `too_old` (name is legacy; it captures
-   * "outside the acceptable window").
+   * this are rejected as `too_old` — the code captures "outside the
+   * acceptable window" in either direction, not just past timestamps.
    */
   futureSkew?: number;
   /**

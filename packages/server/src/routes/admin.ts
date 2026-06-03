@@ -1,9 +1,8 @@
 /**
  * `/admin/*` operator surface. Every route in this file is platform-
  * admin only (`requireAdmin` enforces). The CLI's `my platform` command
- * tree is the canonical consumer (renamed from `my admin` post-T-117);
- * the routes are also reachable directly via the SDK's `client.admin`
- * namespace.
+ * tree is the canonical consumer; the routes are also reachable directly
+ * via the SDK's `client.admin` namespace.
  *
  * Routes:
  *

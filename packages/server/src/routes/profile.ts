@@ -277,10 +277,10 @@ interface ResolvedProfile {
 
 /**
  * Builds the wire `Profile` shape from a `users` row + the joined
- * `auth_user` email pair. The auth join is required for email; missing
- * `auth_user_id` (legacy users the grandfather couldn't match) falls
- * back to empty string + unverified. Routes upstream of this helper
- * decide whether to surface the partial state or 404.
+ * `auth_user` email pair. The auth join is required for email; a
+ * `users` row with no `auth_user_id` falls back to empty string +
+ * unverified. Routes upstream of this helper decide whether to surface
+ * the partial state or 404.
  */
 function buildProfile(
   user: {

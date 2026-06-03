@@ -17,7 +17,7 @@ import type { EventLogStore, Storage } from "./storage/interface.js";
  * Events originating from a human caller MUST resolve to
  * `{ originatingConnectionId: null, hopCount: 0 }`.
  *
- * **T-144 — request-scoped resolution.** Callers no longer thread cycle
+ * **T-144 — request-scoped resolution.** Callers don't thread cycle
  * metadata explicitly on every `publish(...)`. `cycleMiddleware` stores
  * the resolved cycle in `cycleRequestContext` at request entry;
  * `publish` and `publishEdge` consult it automatically. The optional
@@ -304,10 +304,9 @@ async function passesHopBudget(
   if (!isConnectorOriginated && cycle.hopCount === 0) return true;
   // Connector chains: enforce a floor of 1 so a malformed wire publish
   // that stamps origin but leaves hopCount at 0 doesn't slip past the
-  // budget. T-144: with ALS-driven propagation, contributor-discipline
-  // failures can no longer produce this shape — but the inbound header
-  // path can still surface it, so the guard is kept as wire-tampering
-  // defence.
+  // budget. ALS-driven propagation means in-process callers can't
+  // produce this shape, but a tampered inbound header still can — so
+  // the guard stays as wire-tampering defence.
   const effectiveHopCount = isConnectorOriginated
     ? Math.max(cycle.hopCount, 1)
     : cycle.hopCount;

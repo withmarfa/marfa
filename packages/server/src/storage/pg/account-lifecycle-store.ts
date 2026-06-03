@@ -35,8 +35,8 @@ export class PgAccountLifecycleStore implements AccountLifecycleStore {
       //    The join is intentionally written via a sub-select so the
       //    cross-table mutation stays in one transaction. The user is
       //    looked up via `users.auth_user_id`; null-tenant rows on
-      //    `users` (legacy / single-tenant self-host) are skipped by
-      //    the IS NOT NULL guard.
+      //    `users` (single-tenant self-host) are skipped by the
+      //    IS NOT NULL guard.
       await tx
         .update(apiKeys)
         .set({ revoked_at: nowIso })

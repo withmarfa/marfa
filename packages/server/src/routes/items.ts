@@ -1657,9 +1657,9 @@ export function itemRoutes(storage: Storage) {
     const tid = c.get("apiKey")?.tenant_id;
 
     // Gate on the item's type BEFORE entering the cascade-delete
-    // transaction. Previously DELETE had no type-permission check, so
-    // any authenticated credential could trash any item regardless of
-    // its `type_permissions`. Mirrors the PATCH /items handler above.
+    // transaction. Without this check any authenticated credential
+    // could trash any item regardless of its `type_permissions`.
+    // Mirrors the PATCH /items handler above.
     const targetItem = await storage.items.get(id, tid);
     if (!targetItem) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
@@ -1830,9 +1830,8 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const tags = body.tags;
 
-    // Check the 100-tag cap BEFORE writing. Previously the write ran
-    // first and the cap was validated on the post-write metadata, so
-    // over-limit tags persisted after the error was thrown.
+    // Check the 100-tag cap BEFORE writing. Validating after the write
+    // would let over-limit tags persist even though the error is thrown.
     const existingMeta = await storage.metadata.get(id);
     const projectedCount = new Set([...existingMeta.tags, ...tags]).size;
     if (projectedCount > 100) {
@@ -1877,8 +1876,8 @@ export function itemRoutes(storage: Storage) {
     // its own tenant's items.
     requireTenantAdmin(c);
     const tenantId = c.get("apiKey")?.tenant_id;
-    // Edges no longer carry a FK to items (thread-target compat window) so
-    // cascade cleanup must happen explicitly before the item row goes.
+    // Edges carry no FK to items, so cascade cleanup must happen
+    // explicitly before the item row goes.
     await storage.edges.deleteBySource(id);
     await storage.edges.deleteByTarget(id);
     await storage.items.purge(id, tenantId);

@@ -29,8 +29,8 @@ const TEST_API_KEY_SALT = "test-salt";
  * - `createKeysModeFixture()` — the simple bring-up. Bootstraps a
  *   platform-admin API key over `POST /keys` and returns a client
  *   pointed at it. Use for any SDK surface that doesn't depend on
- *   `auth_user` resolution. Mirrors the inline pattern that
- *   `client.test.ts` has used historically.
+ *   `auth_user` resolution. Mirrors the inline pattern in
+ *   `client.test.ts`.
  *
  * - `createHostedModeFixture()` — the hosted-mode bring-up (T-123).
  *   Boots the server in `authMode: 'hosted'`, runs a sign-up through
@@ -294,8 +294,7 @@ export async function createHostedModeFixture(
   const tenantId = user.tenant_id;
 
   // Mint a tenant_admin key bound to the user's tenant. This is the
-  // same shape the real sign-up flow stamps (per
-  // deprecated/grandfather-profiles-t074.ts:260) — tenant_admin role with
+  // same shape the real sign-up flow stamps — tenant_admin role with
   // `*: write` permissions, scoped to the user's tenant.
   const rawKey = `marfa_k1_sdk_hosted_${suffix}`;
   await storage.keys.create(

@@ -24,9 +24,8 @@ export default defineConfig({
     // template-DB pattern serialises clones briefly (CREATE DATABASE
     // FROM TEMPLATE), and each per-file pool holds a few connections.
     // 6 workers × (3 storage + 1 admin) ≈ 24 peak connections —
-    // comfortably under PG default `max_connections=100`.
-    // Pre-template-DB this used to be 1 (fileParallelism=false); the
-    // 6× speedup over that is plenty.
+    // comfortably under PG default `max_connections=100`. The
+    // template-DB pattern makes file-level parallelism safe here.
     pool: "forks",
     poolOptions: {
       forks: {

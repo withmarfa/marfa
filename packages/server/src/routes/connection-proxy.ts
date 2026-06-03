@@ -114,7 +114,7 @@ async function readCredentialConfig(
   if (!credentialRef) {
     throw new MarfaError(
       ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
-      `Connection ${connection.id} has no credential_ref. Install the connection via /integrations/:id/install or migrate the legacy inline OAuth config to a system.credential item.`,
+      `Connection ${connection.id} has no credential_ref. Install the connection via /integrations/:id/install or move its inline OAuth config to a system.credential item.`,
     );
   }
   // T-235: thread the connection's tenant into the credential lookup.
@@ -186,9 +186,9 @@ async function readCredentialConfig(
         `Connection ${connection.id}'s credential_ref ${credentialRef} is not a usable kind:api_token — api_token_config.upstream_base_url is missing.`,
       );
     }
-    // T-246: default to `Bearer` for backward compatibility with
-    // T-241 PR1 credentials that pre-date the field. Anything not in
-    // the supported set falls back to Bearer rather than 500'ing on a
+    // T-246: default to `Bearer` when no auth scheme is set, and treat
+    // anything outside the supported set as Bearer too — a missing or
+    // unrecognised scheme falls back rather than 500'ing on a
     // misconfigured credential.
     const SUPPORTED_SCHEMES: ApiTokenAuthScheme[] = [
       "Bearer",
@@ -808,9 +808,9 @@ export function connectionProxyRoutes(storage: Storage) {
       }
     } else {
       // -----------------------------------------------------------------
-      // OAuth-token branch (the pre-T-241 shape). Look up the stored
-      // access/refresh tokens, proactively refresh inside the leeway
-      // window, reactively refresh on 401 + retry once.
+      // OAuth-token branch. Look up the stored access/refresh tokens,
+      // proactively refresh inside the leeway window, reactively refresh
+      // on 401 + retry once.
       // -----------------------------------------------------------------
 
       // Look up the token row. tenantId-scoped read so cross-tenant

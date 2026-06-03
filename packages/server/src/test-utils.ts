@@ -305,8 +305,8 @@ export async function seedOauthBearer(
  * Wave C PR2 helper. With `requireEmailVerification: true` the auth
  * instance blocks sign-in until `auth_user.email_verified` is `true`.
  * Tests that exercise the post-sign-in flow (consent, OAuth, etc.)
- * call this between sign-up and sign-in to grandfather the test
- * account. Equivalent to a user clicking the verification link, but
+ * call this between sign-up and sign-in to mark the test account
+ * verified. Equivalent to a user clicking the verification link, but
  * without the round-trip through the email transport.
  *
  * Safe to call when the user doesn't exist — the UPDATE simply
@@ -432,10 +432,9 @@ export async function createTestContext(
 
   // T-178: thread `authMode` through to storage construction so tests
   // overriding `authMode: "hosted"` get a UserStore (`storage.users`).
-  // Previously the storage was built keys-mode regardless and only the
-  // AppConfig saw the override — tests needing `storage.users` had to
-  // roll their own context (see routes/profile.test.ts for the older
-  // pattern).
+  // The override reaches both storage and AppConfig, so a test needing
+  // `storage.users` just sets `authMode: "hosted"` rather than rolling
+  // its own context.
   const storageAuthMode: "keys" | "hosted" = overrides?.authMode ?? "keys";
   let storage: Storage;
   let pgCleanup: (() => Promise<void>) | undefined;

@@ -24,7 +24,7 @@ export type TypeRegistry = ReadonlyMap<string, TypeSchema>;
  *
  * Returns an empty `MergePolicy` (no `fields`, no `default`) for unknown types
  * or types with no policy in the chain. Callers should treat unspecified
- * strategies as `last_writer_wins` (the historical default).
+ * strategies as `last_writer_wins` (the default).
  */
 export function resolveMergePolicy(
   typeId: string,

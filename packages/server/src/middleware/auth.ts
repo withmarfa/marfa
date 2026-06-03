@@ -282,13 +282,11 @@ export function authMiddleware(storage: Storage, salt: string) {
 
     // OAuth access token (marfa_at_* prefix).
     //
-    // T-131: this used to call `storage.oauth.validateToken(hash)` against
-    // the homegrown `oauth_tokens` table. We now look up the
-    // @better-auth/oauth-provider plugin's `auth_oauth_access_token`
-    // directly — both paths compute the same hash (the plugin's
-    // `storeTokens.hash` is wired to `hashApiKey(token, salt)` in
-    // `auth/oauth-provider.ts`), so a token in hand resolves to its row
-    // by exact-match on the hashed `token` column.
+    // Looks up the @better-auth/oauth-provider plugin's
+    // `auth_oauth_access_token` directly. The plugin's `storeTokens.hash`
+    // is wired to `hashApiKey(token, salt)` in `auth/oauth-provider.ts`,
+    // so a token in hand resolves to its row by exact-match on the
+    // hashed `token` column.
     //
     // **Side-channel join, NOT custom claims.** The plan's contingency
     // applies here (§Caveats §3 in the plan file): the plugin's
@@ -349,8 +347,8 @@ export function authMiddleware(storage: Storage, salt: string) {
       // — platform-admin is an operator-tier flag exclusive to API keys
       // with explicit `is_platform: true`; OAuth tokens never claim it.
       // Falls back to `member` when no Marfa `users` row maps to the
-      // auth_user (legacy rows the grandfather migration missed, or a
-      // token whose user was hard-deleted mid-session).
+      // auth_user (an unmapped auth_user, or a token whose user was
+      // hard-deleted mid-session).
       let projectedRole: "admin" | "tenant_admin" | "member" = "member";
       if (oauthToken.userId && storage.users) {
         const user = await storage.users.getByAuthUserId(oauthToken.userId);
@@ -384,9 +382,8 @@ export function authMiddleware(storage: Storage, salt: string) {
       // The `system.connection` projection lands at consent time (POST
       // /auth/authorize/decision in routes/auth-consent.ts) and for the
       // device-flow at /auth/device/consent — every issued token has a
-      // matching projection by the time it's used. If lookup misses
-      // (race or pre-T-131 token surviving a migration window), we
-      // skip silently.
+      // matching projection by the time it's used. If the lookup misses
+      // (e.g. a race), we skip silently.
       if (oauthToken.userId) {
         void stampOAuthGrantLastUsedByGrantKey(storage, {
           tenantId: oauthTenantId,

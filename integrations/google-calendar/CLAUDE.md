@@ -42,9 +42,9 @@ Driven by `connection.properties.configuration`:
   has been minted; enables push notifications via `channels.watch`.
 
 Set via the install-time picker at `GET /connections/:id/configure`.
-Without configuration the handler falls back to legacy single-primary
-behaviour — useful for the pre-T-231 install path and as a safety
-net for `core.event` writes.
+Without configuration the handler runs in single-primary-calendar
+mode — the default for an uninstalled-picker connection and the
+safety net for `core.event` writes.
 
 ## Cursor shape
 
@@ -52,8 +52,8 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 
 ```
 {
-  syncToken: string | null,              // legacy mode only
-  last_inbound_at: string | null,        // legacy mode only
+  syncToken: string | null,              // single-calendar mode only
+  last_inbound_at: string | null,        // single-calendar mode only
   mappings: Record<external_id, marfa_id>,
   mapping_calendars?: Record<external_id, calendar_id>,  // multi mode
   per_calendar?: Record<calendar_id, { syncToken, last_inbound_at }>,
@@ -64,8 +64,8 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 }
 ```
 
-`mappings` stays a flat `Record<external_id, marfa_id>` for backward
-compatibility; multi mode populates `mapping_calendars` alongside so
+`mappings` is a flat `Record<external_id, marfa_id>` shared by both
+modes; multi mode populates `mapping_calendars` alongside so
 updates/deletes know which calendar to address.
 
 ## Push notifications via channels.watch
@@ -108,9 +108,8 @@ event per Marfa item id, regardless of how many queue retries fire.
 - `properties.timezone: string` → writes `start.timeZone` /
   `end.timeZone` alongside `dateTime`.
 
-Items without these fields fall back to the pre-T-231 plain
-`dateTime` shape exactly — no breaking change to existing
-`core.event` round-trips.
+Items without these fields write the plain `dateTime` shape, which
+keeps `core.event` round-trips intact.
 
 ## Recurrence — parked
 

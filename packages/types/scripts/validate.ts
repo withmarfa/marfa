@@ -128,12 +128,12 @@ for (const file of files) {
   }
 
   // Lifecycle lives at the metadata layer (active/archived/trashed) and is
-  // not declared per-type. Reject leftover schema-level state keys.
-  for (const legacyKey of ["states", "default_state", "transitions"]) {
-    if (legacyKey in schema) {
+  // not declared per-type. Reject schema-level state keys.
+  for (const forbiddenKey of ["states", "default_state", "transitions"]) {
+    if (forbiddenKey in schema) {
       addError(
         file,
-        `Schemas no longer declare \`${legacyKey}\`; lifecycle is universal.`,
+        `Schemas must not declare \`${forbiddenKey}\`; lifecycle is universal.`,
       );
     }
   }

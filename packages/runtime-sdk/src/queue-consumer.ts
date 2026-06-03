@@ -87,9 +87,9 @@ export interface ConsumerEnvironment {
    * Resolve a DLQ producer binding for a given message kind (T-103). On
    * permanent failure the wrapper sends an enriched copy of the message
    * (carrying `_failure_reason`) to the resolved DLQ before acking the
-   * original. Returning `null` (or omitting the resolver entirely) keeps
-   * the pre-T-103 behaviour: ack + activity emit only, message
-   * effectively dropped from operator-peekable surfaces.
+   * original. Returning `null` (or omitting the resolver entirely) means
+   * ack + activity emit only — the message is effectively dropped from
+   * operator-peekable surfaces with no DLQ copy.
    *
    * Routing by `message.kind` (webhook / schedule / item-event) lets a
    * Worker that consumes multiple queue families (e.g. task-auto-archive
@@ -165,11 +165,10 @@ function backoffSecondsFor(attempts: number): number {
 /**
  * Process a Cloudflare Queue batch with per-message ack/retry (T-043).
  *
- * Pre-T-043 this function returned a single batch-level verdict and
- * Cloudflare retried the WHOLE batch on any retry, including the
- * messages that already processed successfully. That whole-batch retry
- * is the upstream cause of the duplicate-write hazards T-020 (Calendar
- * outbound) and T-038 (server-side natural-key idempotency) defended
+ * A single batch-level verdict would make Cloudflare retry the WHOLE
+ * batch on any retry, re-running messages that already succeeded — the
+ * upstream cause of the duplicate-write hazards T-020 (Calendar
+ * outbound) and T-038 (server-side natural-key idempotency) defend
  * against. Per-message ack — `Message.ack()` and `Message.retry({
  * delaySeconds })` — closes the hazard at its source: a partial-batch
  * failure only retries the failures.
@@ -195,10 +194,9 @@ function backoffSecondsFor(attempts: number): number {
  *     `msg.ack()` (acked counter). These messages aren't ours to
  *     process; acking lets Cloudflare drop them from the queue.
  *
- * The `outcome` counters stay populated for telemetry compatibility —
- * existing dashboards keyed on `acked / retried / failed` keep
- * working. The function no longer throws on retry: per-message
- * `retry()` has informed Cloudflare directly.
+ * The `outcome` counters stay populated for telemetry — dashboards
+ * keyed on `acked / retried / failed` read them. The function does not
+ * throw on retry: per-message `retry()` informs Cloudflare directly.
  *
  * T-020's deterministic-id workaround for outbound Calendar writes
  * stays as belt-and-braces. The contract "createItem with `(source,
@@ -273,11 +271,11 @@ export async function consumeBatch(
     let result: HandlerResult;
     let dispatchThrew = false;
     // Captured separately for the `_failure_reason` stamp on permanent
-    // failure (T-103). We keep `result.reason` carrying the legacy
-    // `"dispatch_threw: ..."` prefix because the activity-emit `detail.reason`
-    // path has consumed that shape since T-043; the DLQ-stamp path uses
-    // the bare error message + class name so the flattened
-    // `<class>: <message> (attempts: <n>)` operator string isn't double-prefixed.
+    // failure (T-103). `result.reason` carries the `"dispatch_threw: ..."`
+    // prefix because the activity-emit `detail.reason` path consumes that
+    // shape; the DLQ-stamp path uses the bare error message + class name so
+    // the flattened `<class>: <message> (attempts: <n>)` operator string
+    // isn't double-prefixed.
     let thrownClassName: string | null = null;
     let thrownMessage: string | null = null;
     try {

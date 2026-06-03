@@ -29,12 +29,12 @@ export interface ControlPlaneEnv {
 
   // ---- Bindings provisioned via wrangler.control.toml -----------------
   /**
-   * Legacy shared Cloudflare Queue producer for verified inbound webhook
-   * deliveries. Kept as the fallback path for `withmarfa.github-webhooks`
-   * which still consumes from this queue. New inbound-webhook
-   * integrations bind their own per-integration producer below — the
-   * shared queue + envelope-filter model can't scale past a single
-   * consumer (Cloudflare Queues allow at most one consumer per queue;
+   * Shared Cloudflare Queue producer for verified inbound webhook
+   * deliveries. The fallback path for `withmarfa.github-webhooks`, which
+   * consumes from this queue. New inbound-webhook integrations bind
+   * their own per-integration producer below — the shared queue +
+   * envelope-filter model can't scale past a single consumer
+   * (Cloudflare Queues allow at most one consumer per queue;
    * the runtime-sdk's envelope filter only fires after the message has
    * already been delivered to that single consumer, so any other
    * integration's messages would be silently filtered out).

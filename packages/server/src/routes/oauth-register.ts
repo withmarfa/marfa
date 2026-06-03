@@ -144,8 +144,8 @@ function dcrError(error: string, description: string): DcrError {
  * `CORS_ORIGINS`; nothing is widened by default. Hosted Marfa lists only
  * its https web-app origin there, so the http branch never fires for it.
  *
- * Otherwise mirrored to the plugin's behaviour so a third-party SDK that
- * previously hit the plugin's DCR sees identical 400-error shapes.
+ * Otherwise mirrored to the plugin's behaviour so a third-party SDK
+ * hitting the plugin's DCR directly sees identical 400-error shapes.
  */
 function validateRedirectUri(
   uri: string,
@@ -338,7 +338,7 @@ export function oauthRegisterRoutes(
     // Unauthenticated DCR is always public per RFC 7591 §3.2.1 — the
     // plugin enforces `auth_method=none` (and clears type=web) for
     // unauthenticated callers (`dist/index.mjs:1175-1183`). Mirror that
-    // here so a third-party SDK previously calling the plugin sees the
+    // here so a third-party SDK calling the plugin directly sees the
     // same response shape.
     const tokenEndpointAuthMethod = "none";
     const clientType =

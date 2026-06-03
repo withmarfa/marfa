@@ -266,8 +266,8 @@ export function createApp(
 
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS
   // and RATE_LIMIT_WINDOW_MS). Protects all endpoints. Configuration flows
-  // through AppConfig — the rate-limit middleware no longer reads process.env
-  // directly, so there is a single env-read site (loadConfig).
+  // through AppConfig — the rate-limit middleware reads its settings from
+  // there, not process.env, so there is a single env-read site (loadConfig).
   if (config.rateLimitEnabled) {
     app.use(
       "*",
@@ -382,7 +382,7 @@ export function createApp(
       trustedOrigins,
       oidcProviders: config.oidcProviders,
       // Rich transport carries the HTML template + idempotency key
-      // for log correlation. Falls back to the legacy callable for
+      // for log correlation. Falls back to the basic callable for
       // tests that don't construct a full transport.
       marfaEmailTransport: emailTransport,
       // T-131: storage + salt are needed by the @better-auth/oauth-provider
@@ -611,7 +611,7 @@ export function createApp(
     scheme: "bearer",
     bearerFormat: "API Key or OAuth Token",
     description:
-      "Pass an API key (marfa_k1_...) or OAuth access token (marfa_at_...)",
+      "Authenticate with an API key (`marfa_k1_…`) or an OAuth access token (`marfa_at_…`).",
   });
   // §3.15 note: `info.version` here is the API-contract version (the wire
   // shape exposed under /openapi.json), distinct from the deployed-build

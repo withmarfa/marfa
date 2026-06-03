@@ -347,10 +347,10 @@ export function edgeRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // Use getIncludingTrashed so edges whose source item is trashed
-    // still run the source-type permission check. Previously
-    // storage.items.get() returned null for trashed sources, which
-    // silently skipped the gate and let a credential without the
-    // source type's write permission mutate the edge.
+    // still run the source-type permission check. A plain
+    // storage.items.get() returns null for trashed sources, which would
+    // silently skip the gate and let a credential without the source
+    // type's write permission mutate the edge.
     const srcItem = await storage.items.getIncludingTrashed(
       existing.source_id,
       c.get("apiKey")?.tenant_id,
@@ -390,10 +390,10 @@ export function edgeRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // Use getIncludingTrashed so edges whose source item is trashed
-    // still run the source-type permission check. Previously
-    // storage.items.get() returned null for trashed sources, which
-    // silently skipped the gate and let a credential without the
-    // source type's write permission mutate the edge.
+    // still run the source-type permission check. A plain
+    // storage.items.get() returns null for trashed sources, which would
+    // silently skip the gate and let a credential without the source
+    // type's write permission mutate the edge.
     const srcItem = await storage.items.getIncludingTrashed(
       existing.source_id,
       c.get("apiKey")?.tenant_id,
