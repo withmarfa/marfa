@@ -9,7 +9,7 @@
  *   - set `properties.credential_ref` to the new credential's id
  *   - remove the OAuth fields from `properties.configuration`
  *     (upstream_base_url, oauth_token_url, oauth_client_id,
- *     oauth_client_secret) so the legacy plaintext path no longer has
+ *     oauth_client_secret) so the older plaintext path no longer has
  *     a fallback for that connection
  *
  * Per-connection failures are logged and skipped; one bad row doesn't
