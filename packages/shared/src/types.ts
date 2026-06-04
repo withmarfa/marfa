@@ -347,8 +347,6 @@ export interface SearchResult {
   relevance_score: number;
   /** HTML snippet with `<mark>` tags highlighting matched terms. */
   snippet_html?: string;
-  /** @deprecated Use `snippet_html` instead. Contains the same HTML content. */
-  snippet?: string;
 }
 
 /** Standard error response body. */
