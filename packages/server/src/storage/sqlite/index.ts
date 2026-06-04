@@ -181,10 +181,9 @@ export async function createSqliteStorage(
     betterAuthDb: baseDb,
     betterAuthDialect: "sqlite" as const,
     /** Raw query escape hatch. Originally added for retention tests;
-     *  now also consumed by `legacy-extension-check.ts` (T-140 boot
-     *  probe — JSON1 operators not naturally expressible in Drizzle)
-     *  and `routes/auth-account.ts` (auth_verification probes).
-     *  Production callers exist. */
+     *  now also consumed by `routes/auth-account.ts`
+     *  (auth_verification probes — JSON1 operators not naturally
+     *  expressible in Drizzle). Production callers exist. */
     async __sqliteAll(query: string): Promise<unknown[]> {
       const result = await raw.execute(query);
       return result.rows;

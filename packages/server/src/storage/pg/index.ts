@@ -204,10 +204,9 @@ export async function createPgStorage(
     /** Raw query escape hatch. Originally added for parameterised
      *  mutations in retention tests; now also consumed by
      *  `routes/auth-account.ts` (auth_verification probes via the
-     *  better-auth-managed table) and `legacy-extension-check.ts`
-     *  (T-140 boot probe — JSON operators not naturally expressible
-     *  in Drizzle). Production callers exist; rename is a real
-     *  blast-radius change. */
+     *  better-auth-managed table — JSON operators not naturally
+     *  expressible in Drizzle). Production callers exist; rename is a
+     *  real blast-radius change. */
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]> {
       return params
         ? client.unsafe(query, params as (string | number | boolean)[])

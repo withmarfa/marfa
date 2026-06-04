@@ -30,7 +30,6 @@ import { fileURLToPath } from "node:url";
 import { log } from "./middleware/logger.js";
 import { createEmailTransport } from "./email/index.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
-import { checkLegacySyncAgentExtensions } from "./storage/legacy-extension-check.js";
 import {
   BulkActionWorker,
   BulkActionJobGcSweeper,
@@ -274,12 +273,6 @@ async function main() {
     storage.coordination,
   );
   bulkActionGc.start();
-
-  // T-140: surface a one-shot WARN at boot if any items still carry
-  // `extensions['sync-agent'].*` (un-migrated post-T-130). Best-effort,
-  // never blocks boot. Operator-facing log line names the migration
-  // script with the exact command.
-  void checkLegacySyncAgentExtensions(storage);
 
   // Construct the email transport once at boot and thread it into
   // createApp. The factory's sender-domain check fails loud here if
