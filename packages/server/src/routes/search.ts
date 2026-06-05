@@ -33,7 +33,6 @@ const SearchResultSchema = z.object({
   metadata: MetadataSchema,
   relevance_score: z.number(),
   snippet_html: z.string().optional(),
-  snippet: z.string().optional(),
 });
 
 const searchRoute = createRoute({

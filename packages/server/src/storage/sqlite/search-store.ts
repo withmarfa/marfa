@@ -184,7 +184,6 @@ export class SqliteSearchStore implements SearchStore {
       }),
       relevance_score: Math.abs(row.rank as number),
       snippet_html: (row.snippet as string) || undefined,
-      snippet: (row.snippet as string) || undefined,
     }));
   }
 }

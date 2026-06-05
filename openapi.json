@@ -9732,9 +9732,6 @@
                           },
                           "snippet_html": {
                             "type": "string"
-                          },
-                          "snippet": {
-                            "type": "string"
                           }
                         },
                         "required": [
