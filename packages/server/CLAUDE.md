@@ -444,4 +444,4 @@ Node-bundled integrations substrate. Boots conditionally on `MARFA_INTEGRATION_R
 
 **Default.** `MARFA_INTEGRATION_RUNTIME` defaults to `local` from T-174. Hosted Marfa deployments + any operator that wants to delegate to the Cloudflare bridge sets the env var explicitly to `hosted`.
 
-**Public docs.** The semantic parity sheet between substrates lives in `withmarfa/docs/concepts/runtime-substrates.mdx`.
+**Public docs.** The semantic parity sheet between substrates lives in `withmarfa/docs/guides/connections/runtime-substrates.mdx`.
