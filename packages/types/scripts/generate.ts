@@ -293,6 +293,8 @@ lines.push("");
 // applies only to this set.
 for (const schema of systemSchemas) {
   const name = varName(schema.id);
+  const { fields: resolvedFields, required: resolvedRequired } =
+    resolveFields(schema);
   lines.push(`const ${name}: TypeSchema = {`);
   lines.push(`  id: "${schema.id}",`);
   if (schema.parent) lines.push(`  parent: "${schema.parent}",`);
@@ -305,8 +307,8 @@ for (const schema of systemSchemas) {
   }
   lines.push(`  version: ${String(schema.version)},`);
   lines.push("  fields: {");
-  for (const [fieldName, fieldDef] of Object.entries(schema.fields)) {
-    const isReq = schema.required.includes(fieldName);
+  for (const [fieldName, fieldDef] of Object.entries(resolvedFields)) {
+    const isReq = resolvedRequired.has(fieldName);
     lines.push(`    ${fieldName}: ${fieldLiteral(fieldDef, isReq)},`);
   }
   lines.push("  },");

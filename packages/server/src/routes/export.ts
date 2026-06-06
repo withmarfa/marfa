@@ -199,7 +199,7 @@ export function exportRoutes(
     });
 
     if (query.format === "archive") {
-      return handleArchiveExport(c, storage, blobBackend, options);
+      return handleArchiveExport(c, storage, blobBackend, options, tenantId);
     }
 
     const type = query.type;
@@ -311,6 +311,9 @@ async function handleArchiveExport(
   storage: Storage,
   blobBackend: BlobBackend,
   options: ExportRoutesOptions,
+  /** Already resolved by the route handler — passed in rather than
+   *  re-resolved so the tenant decision happens exactly once per request. */
+  tenantId: string | undefined,
 ): Promise<Response> {
   const type = c.req.query("type");
   if (type && !isValidTypeIdentifier(type)) {
@@ -323,10 +326,6 @@ async function handleArchiveExport(
   const since = c.req.query("since");
   const until = c.req.query("until");
   const source = c.req.query("source");
-  const tenantId = resolveExportTenant(
-    c.get("apiKey"),
-    c.req.query("target_tenant_id"),
-  );
   const allowedTypes = getTypeFilter(c);
 
   const rlsCtx =

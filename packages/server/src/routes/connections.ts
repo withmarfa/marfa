@@ -16,7 +16,11 @@ import {
   performInstall,
 } from "../connections/install-pipeline.js";
 import type { IntegrationManifest } from "@withmarfa/shared";
-import { publish, resolveHopBudget } from "../pubsub.js";
+import {
+  computeEffectiveHopCount,
+  publish,
+  resolveHopBudget,
+} from "../pubsub.js";
 import type { ItemEventWithId } from "../pubsub.js";
 import {
   buildEntryForConnection,
@@ -449,13 +453,13 @@ export function connectionRoutes(storage: Storage, salt: string) {
     };
 
     const hopBudgetMax = await resolveHopBudget(tenantId);
-    const hopCount = event.hopCount ?? 0;
     const isConnectorOriginated = event.originatingConnectionId != null;
-    // Mirrors pubsub.passesHopBudget: connector-originated at hop 0 counts as 1
-    // so a malformed publish can't bypass the budget.
-    const effectiveHopCount = isConnectorOriginated
-      ? Math.max(hopCount, 1)
-      : hopCount;
+    // Shares pubsub.computeEffectiveHopCount so the connector-at-hop-0-counts-as-1
+    // floor can't drift from the live budget gate.
+    const effectiveHopCount = computeEffectiveHopCount({
+      originatingConnectionId: event.originatingConnectionId ?? null,
+      hopCount: event.hopCount ?? 0,
+    });
     const hopBudgetExceeded =
       isConnectorOriginated && effectiveHopCount > hopBudgetMax;
 

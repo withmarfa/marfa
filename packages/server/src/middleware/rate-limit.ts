@@ -74,10 +74,6 @@ export function rateLimitMiddleware(
   }, config.windowMs * 2);
   cleanupInterval.unref();
 
-  (
-    cleanupInterval as unknown as { _rateLimitCleanup: true }
-  )._rateLimitCleanup = true;
-
   /**
    * Fetch the per-tenant rate cap (with cache). Returns `null` for
    * tenants with no override and no env default.

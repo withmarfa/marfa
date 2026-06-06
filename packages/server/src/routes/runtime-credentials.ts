@@ -456,7 +456,7 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     }
     if (connection.type !== "system.connection") {
       throw new MarfaError(
-        ErrorCode.CONNECTION_NOT_FOUND,
+        ErrorCode.VALIDATION_ERROR,
         "Item is not a system.connection",
       );
     }

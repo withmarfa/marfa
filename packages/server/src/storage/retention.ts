@@ -463,9 +463,7 @@ export async function runTenantCleanup(opts: {
   unitMs: number;
   /** Cleanup sweep — `tenantId === null` means "rows where tenant_id IS NULL". */
   sweep: (retention: number, tenantId?: string | null) => Promise<number>;
-  nowFn?: () => Date;
 }): Promise<number> {
-  const nowFn = opts.nowFn ?? (() => new Date());
   if (!opts.fanout) {
     if (opts.instanceDefault <= 0) return 0;
     const fn = (): Promise<number> => opts.sweep(opts.instanceDefault);
@@ -495,8 +493,5 @@ export async function runTenantCleanup(opts: {
     );
     if (deleted) total += deleted;
   }
-  // nowFn reserved for future pre-computed-cutoff variants; audit/eventLog
-  // stores compute their own cutoffs from the retention value directly.
-  void nowFn;
   return total;
 }

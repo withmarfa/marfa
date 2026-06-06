@@ -349,7 +349,10 @@ export const inboundWebhooks = pgTable(
     // Verification method stamped at subscription time from the
     // submitted manifest's webhook_verification.method.
     verification_method: text("verification_method").notNull(),
-    // Non-null when verification_method === 'custom'.
+    // Intentionally nullable: only set when verification_method === 'custom',
+    // naming the adapter that verifies the signature. The built-in methods
+    // (hmac-sha256, slack, stripe, github) are self-describing and leave this
+    // undefined — a null here is the normal case, not missing data.
     verification_adapter_id: text("verification_adapter_id"),
     events: text("events").notNull().default("[]"),
     // Use integer for cross-dialect parity with sqlite — both stores
