@@ -150,6 +150,37 @@ describe("webhook receive flow", () => {
     }
   });
 
+  it("returns 413 when the body exceeds the size limit", async () => {
+    const queue = mockQueue();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockMarfaFetch();
+    try {
+      const env: ControlPlaneEnv = {
+        MARFA_API_URL: "http://localhost:0",
+        MARFA_RUNTIME_BROKER_KEY: "marfa_k1_broker",
+        WEBHOOK_RECEIPT_QUEUE: queue,
+      };
+      // One byte over the 64 KiB cap. Rejected before signature
+      // verification, so no valid signature is needed.
+      const oversized = new Uint8Array(64 * 1024 + 1);
+      const app = buildApp();
+      const res = await app.request(
+        "/webhooks/inbound/conn_x",
+        {
+          method: "POST",
+          body: oversized,
+          headers: { "x-marfa-signature": "sha256=deadbeef" },
+        },
+        env,
+      );
+      // Rejected before the queue send, so nothing is enqueued.
+      expect(res.status).toBe(413);
+      expect(queue.calls).toHaveLength(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("returns 401 when signature does not match", async () => {
     const queue = mockQueue();
     const originalFetch = globalThis.fetch;
