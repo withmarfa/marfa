@@ -358,9 +358,7 @@ export async function handleItemEvent(
     return ackHandledIfMappedAsTrash(ctx, cursor, message.item_id);
   }
 
-  // Only react to task-shaped items. Echo-loops are already prevented
-  // by the bridge + the `cycle` check above; this is just a sanity
-  // gate against being woken on an unrelated type.
+  // Gate against being woken on an unrelated item type.
   if (item.type !== "core.task" && item.type !== "todoist.task") {
     return { ok: true };
   }
@@ -389,7 +387,6 @@ export async function handleItemEvent(
     return { ok: true };
   }
 
-  // Update path — REST. Simpler than Sync `item_update` for singletons.
   if (externalId !== null) {
     const body = buildTodoistUpdateBody(item);
     const resp = await ctx.marfa.proxyRequest(
@@ -410,16 +407,11 @@ export async function handleItemEvent(
     return { ok: true };
   }
 
-  // Create path — Sync API with deterministic temp_id + uuid. The
-  // deterministic uuid means a retry sees the original command's
-  // result via Todoist's command-level idempotency rail; the
-  // temp_id_mapping resolves the server-side id either way.
   const temp_id = await deriveTempId(item.id);
   const uuid = await deriveCommandUuid(item.id);
   const args = buildTodoistAddArgs(item);
-  // Augment description with the marfa-id sentinel for the
-  // belt-and-braces recovery path (the temp_id_mapping is the primary
-  // rail).
+  // Inject the marfa-id sentinel as belt-and-braces; temp_id_mapping is
+  // the primary idempotency rail.
   args.description = appendSentinel(args.description ?? "", item.id);
   const commands = [
     {
@@ -443,9 +435,7 @@ export async function handleItemEvent(
   const payload = payloadRaw as SyncResponse;
   const status = payload.sync_status?.[uuid];
 
-  // Sync_token advances after every Sync API call regardless of
-  // command success — persist so the next inbound poll picks up the
-  // new state correctly.
+  // sync_token advances after every Sync call regardless of command success.
   cursor.sync_token = payload.sync_token;
 
   if (status === "ok") {
@@ -510,9 +500,6 @@ async function ackHandledIfMappedAsTrash(
 // ---------------------------------------------------------------------------
 
 function buildItemInput(item: TodoistItem): CreateItemInput {
-  // Inbound: Todoist item → `todoist.task` Marfa item. Strip the
-  // round-trip sentinel from description so the user sees what they
-  // wrote, not our bookkeeping.
   const description = stripSentinel(item.description ?? "");
   const props: Record<string, unknown> = {
     title: item.content ?? "",

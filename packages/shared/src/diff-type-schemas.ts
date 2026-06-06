@@ -32,7 +32,6 @@ function fieldsAreDescriptiveOnlyDiff(
   a: FieldDefinition,
   b: FieldDefinition,
 ): boolean {
-  // Same structural shape but one of `description` differs: descriptive-only.
   if (!fieldDefinitionsEquivalent(a, b)) return false;
   return a.description !== b.description;
 }
@@ -42,8 +41,6 @@ function fieldsAreDescriptiveOnlyDiff(
  * version. Used by `POST /types` to gate the version bump.
  */
 export function diffTypeSchemas(prev: TypeSchema, next: TypeSchema): DiffClass {
-  // Walk every field on prev — removals or required-tightening or type
-  // changes are major.
   let major = false;
   let minor = false;
   let descriptive = false;
@@ -66,8 +63,7 @@ export function diffTypeSchemas(prev: TypeSchema, next: TypeSchema): DiffClass {
     }
   }
 
-  // Walk new fields — additions are at least minor; required additions are
-  // major (would tighten validation for existing items).
+  // Required additions are major — they tighten validation for existing items.
   for (const [name, nextField] of Object.entries(nextFields)) {
     if (prevFields[name]) continue;
     if (nextField.required === true) {
@@ -77,7 +73,6 @@ export function diffTypeSchemas(prev: TypeSchema, next: TypeSchema): DiffClass {
     }
   }
 
-  // Top-level descriptive fields (label, description) — not breaking.
   if (prev.label !== next.label || prev.description !== next.description) {
     descriptive = true;
   }

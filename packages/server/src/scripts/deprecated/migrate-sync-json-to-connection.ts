@@ -93,12 +93,10 @@ export async function migrateSyncJsonToConnection(
   paths: MigrationPaths = defaultPaths(),
   tenantId?: string,
 ): Promise<SyncMigrationReport> {
-  // 1. Idempotency: sentinel present → already migrated.
   if (existsSync(paths.sync_connection_path)) {
     return { status: "already_migrated" };
   }
 
-  // 2. Read sync.json.
   if (!existsSync(paths.sync_json_path)) {
     return {
       status: "no_sync_json",
@@ -122,10 +120,8 @@ export async function migrateSyncJsonToConnection(
     };
   }
 
-  // 3. Find or create the system.integration item for the manifest.
   const integrationId = await ensureIntegrationItem(storage, tenantId);
 
-  // 4. Encrypt the api_key + create the system.credential.
   const secret_encrypted = encryptSecret(
     parsed.key,
     SECRET_INFO.apiKeyCredential,
@@ -142,7 +138,6 @@ export async function migrateSyncJsonToConnection(
     tenantId,
   );
 
-  // 5. Create the system.connection bound to both refs.
   const configuration: Record<string, unknown> = {};
   if (parsed.roots !== undefined) configuration.roots = parsed.roots;
   if (parsed.debounceMs !== undefined) {
@@ -167,7 +162,6 @@ export async function migrateSyncJsonToConnection(
     tenantId,
   );
 
-  // 6. Write the sentinel pointer so the agent reads from it.
   const pointer: SyncConnectionPointer = {
     schema_version: 1,
     connection_id: connection.id,
@@ -230,6 +224,7 @@ function printReport(report: SyncMigrationReport): void {
   console.log("---------------------------------------------");
 }
 
+// Only fires when invoked directly via tsx, not when imported by tests.
 const invokedDirectly =
   process.argv[1] !== undefined &&
   (process.argv[1].endsWith("migrate-sync-json-to-connection.ts") ||

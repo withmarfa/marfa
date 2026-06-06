@@ -64,7 +64,6 @@ const OIDC_LITERALS: ReadonlySet<OidcScope> = new Set([
 
 /** Parses a scope string into its type pattern and operation. Returns null if invalid. */
 export function parseScope(scope: string): ParsedScope | null {
-  // OIDC literals (openid / profile / email). No operation suffix.
   if (OIDC_LITERALS.has(scope as OidcScope)) {
     return {
       typePattern: scope,
@@ -175,9 +174,6 @@ export function scopesToTypePermissions(
     const parsed = parseScope(scope);
     if (!parsed) continue;
 
-    // Skip metadata, edge, and OIDC scopes — they don't map to
-    // type_permissions. OIDC literals surface only on the synthetic
-    // ApiKey's `oidc_scopes` set.
     if (
       parsed.kind === "metadata" ||
       parsed.kind === "edge" ||
@@ -186,7 +182,6 @@ export function scopesToTypePermissions(
       continue;
 
     const current = perms[parsed.typePattern];
-    // Write trumps read, never downgrade
     if (parsed.operation === "write" || current === undefined) {
       perms[parsed.typePattern] = parsed.operation;
     }

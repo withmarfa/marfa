@@ -125,7 +125,7 @@ async function seedToken(
   } = {},
 ): Promise<void> {
   const accessPlain = opts.accessPlain ?? "access-original";
-  // Distinguish "absent" (apply default) from "explicit null" (no refresh token).
+  // `"refreshPlain" in opts` distinguishes "absent" (use default) from explicit `null` (no refresh token).
   const refreshPlain =
     "refreshPlain" in opts ? opts.refreshPlain : "refresh-original";
   const expiresInSec = opts.expiresInSec ?? 3600;
@@ -206,9 +206,7 @@ describe("connection_oauth_tokens — storage round-trip", () => {
     const row = await ctx.storage.connectionOauthTokens.get(connectionId);
     expect(row).not.toBeNull();
     if (!row) throw new Error("row missing");
-    // Stored ciphertext is NOT the plaintext.
     expect(row.access_token_encrypted).not.toContain(plaintext);
-    // Decrypts back to the plaintext.
     expect(
       decryptSecret(
         row.access_token_encrypted,
@@ -627,10 +625,8 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
     const tenantA = await ctx.storage.tenants.create("t235-proxy-A");
     const tenantB = await ctx.storage.tenants.create("t235-proxy-B");
 
-    // Mint a tenant-A admin key. Admin (not platform) is tenant-bounded
-    // — `requireConnectionProxyAccess` admits it for connections inside
-    // its own tenant; the proxy then calls readOAuthConfig, which is
-    // where the cross-tenant credential lookup happens.
+    // Admin (not platform) is tenant-bounded; the cross-tenant fence fires inside readOAuthConfig,
+    // after requireConnectionProxyAccess passes.
     const suffix = Math.random().toString(36).slice(2, 8);
     const rawKey = `marfa_k1_t235_admin_a_${suffix}`;
     const hash = hashApiKey(rawKey, TEST_API_KEY_SALT);
@@ -646,7 +642,6 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
       tenantA.id,
     );
 
-    // Credential lives in tenant B.
     const crossCred = await ctx.storage.items.create(
       {
         type: "system.credential",
@@ -684,16 +679,13 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
       tenantA.id,
     );
 
-    // Tenant-A admin proxies through the connection.
     const proxyRes = await request(
       ctx.app,
       "POST",
       `/connections/${crossConn.id}/proxy/path`,
       { key: rawKey },
     );
-
-    // Fence holds: 422 upstream-invalid (credential lookup miss),
-    // NOT 200 with a decrypted tenant-B secret.
+    // Fence holds: credential lookup misses (wrong tenant) → 422, not 200 with tenant-B secret.
     expect(proxyRes.status).toBe(422);
     const err = (await proxyRes.json()) as { error: { code: string } };
     expect(err.error.code).toBe("oauth_proxy_upstream_invalid");
@@ -709,11 +701,6 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
     const connectionId = await createConnection();
     await seedToken(connectionId);
 
-    // Mint a runtime credential bound to this connection — same shape
-    // the install pipeline (source `integration:<id>`) and the lease
-    // broker (source `runtime-<prefix>-<ts>`) produce. The free-form
-    // source does NOT match `oauth:${connectionId}`; the widened gate
-    // matches on the `(is_runtime_credential, connection_id)` pair.
     const rawKey = "marfa_k1_" + "f".repeat(64);
     const keyHash = hashApiKey(rawKey, TEST_API_KEY_SALT);
     await ctx.storage.keys.createRuntimeCredential(
@@ -755,7 +742,6 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
     const connectionB = await createConnection();
     await seedToken(connectionA);
 
-    // Credential bound to connectionB attempts to proxy through connectionA.
     const rawKey = "marfa_k1_" + "e".repeat(64);
     const keyHash = hashApiKey(rawKey, TEST_API_KEY_SALT);
     await ctx.storage.keys.createRuntimeCredential(

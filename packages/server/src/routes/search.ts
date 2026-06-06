@@ -124,7 +124,6 @@ export function searchRoutes(storage: Storage) {
     const { q, type, state, tier, tags, limit, offset, filter, include } =
       c.req.valid("query");
 
-    // Business logic validation beyond Zod
     if (type && !isValidTypeIdentifier(type)) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -136,8 +135,6 @@ export function searchRoutes(storage: Storage) {
 
     const allowed_types = getTypeFilter(c);
 
-    // Tier filter, matching `/items`. `all` and absent both mean
-    // unfiltered; `library` and `feed` narrow the scope.
     const tierFilter: "library" | "feed" | undefined =
       tier === "library" ? "library" : tier === "feed" ? "feed" : undefined;
 
@@ -159,7 +156,6 @@ export function searchRoutes(storage: Storage) {
       typeof type === "string" && type.startsWith("system.");
     const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
 
-    // Source-filter lever — only narrows when a specific type is requested.
     const callerKeyForSearch = c.get("apiKey");
     const callerTenantIdForSearch = callerKeyForSearch?.tenant_id;
     const tenantConfigForSearch =

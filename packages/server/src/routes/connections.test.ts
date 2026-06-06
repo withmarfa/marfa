@@ -195,12 +195,6 @@ describe("POST /connections/install — happy path", () => {
   });
 
   it("threads body.configuration onto the new connection's properties.configuration", async () => {
-    // Install-time configuration seed — the connection's
-    // `configuration` bag is otherwise stamped as an empty object by
-    // the install-pipeline. The body field is threaded through the
-    // install-pipeline so server-side callers can populate per-
-    // connection knobs (e.g. `upstream_base_url_override`) in one
-    // round-trip instead of install + PATCH.
     const integration = await createIntegration();
     const res = await request(ctx.app, "POST", "/connections/install", {
       key: ctx.adminKey,
@@ -225,10 +219,6 @@ describe("POST /connections/install — happy path", () => {
   });
 
   it("uses the explicit label on the seed credential when provided, falling back to manifest name + version otherwise", async () => {
-    // The install pipeline stamps `label` onto the seed runtime credential
-    // (install-pipeline.ts:198) rather than onto the connection's
-    // properties. The route's job is to default the label correctly when
-    // the request body omits it.
     const integration = await createIntegration();
 
     const labeled = await request(ctx.app, "POST", "/connections/install", {
@@ -289,11 +279,8 @@ describe("POST /connections/install — error mapping", () => {
 });
 
 describe("POST /connections/install — platform-scoped manifest, tenant_admin caller", () => {
-  // The route admits `tenant_admin`. A tenant_admin's tenant_id is
-  // non-null, so without the `includePlatformScoped` widening on the
-  // manifest lookup the route 404s for any manifest registered by a
-  // platform credential. Pin both the success path and the
-  // tenant-stamping invariant.
+  // Without `includePlatformScoped`, manifests registered by a platform credential are invisible to
+  // tenant_admin callers (tenant_id IS NULL rows don't match). Pin success + tenant-stamping invariant.
   it("tenant_admin can install a platform-scoped manifest; resulting connection lands in caller tenant", async () => {
     if (!ctx.storage.tenants) return;
     const tenant = await ctx.storage.tenants.create("t234-conn-install");
@@ -382,13 +369,11 @@ describe("POST /connections/:id/uninstall — happy path", () => {
     expect(body.inbound_webhooks_disabled).toBe(0);
     expect(body.activity_id).toMatch(/^[0-9a-f-]+$/);
 
-    // Credential really gone from active list.
     const credAfter = (await ctx.storage.keys.list()).find(
       (k) => k.id === installed.credentialId,
     );
     expect(credAfter).toBeUndefined();
 
-    // State is revoked.
     const conn = await ctx.storage.items.getIncludingTrashed(
       installed.connectionId,
       undefined,
@@ -505,10 +490,7 @@ function manifestWithItemEventTrigger(name: string): IntegrationManifest {
     publisher: "Acme",
     description: "preview-event route test",
     direction: "both",
-    // The bridge subscribes connections whose manifest declares an
-    // `item-event` trigger. Set it explicitly so the preview route's
-    // `buildEntryForConnection` returns a non-null entry.
-    triggers: [{ type: "item-event" }],
+    triggers: [{ type: "item-event" }], // buildEntryForConnection returns null without this trigger
     target_types: ["core.note"],
     runtime_compatibility: ["hosted"],
     bidirectional_handling: {
@@ -692,9 +674,7 @@ describe("POST /connections/preview-event — happy path", () => {
 
 describe("POST /connections/preview-event — non-dispatch reasons", () => {
   it("reports `subscription_inactive` when the filtered connection_id is not an item-event subscriber", async () => {
-    // An app-kind connection — buildEntryForConnection returns null so
-    // the route stamps subscription_inactive instead of building an
-    // envelope.
+    // app-kind connections are not item-event subscribers; the route stamps subscription_inactive.
     const appConn = await ctx.storage.items.create(
       {
         type: "system.connection",

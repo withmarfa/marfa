@@ -152,7 +152,6 @@ async function main(): Promise<void> {
   console.log(`Run tag:            ${runTag}`);
   console.log("");
 
-  // Step 1: register the synthetic integration manifest.
   console.log("[1/4] Registering synthetic integration manifest...");
   const integrationResp = (await postJson(
     config.url,
@@ -163,7 +162,6 @@ async function main(): Promise<void> {
   const integrationId = integrationResp.id;
   console.log(`        integration_id = ${integrationId}`);
 
-  // Step 2: install N subscribing connections via the JSON install endpoint.
   console.log(
     `[2/4] Installing ${String(config.connectionCount)} subscribing connections...`,
   );
@@ -190,14 +188,11 @@ async function main(): Promise<void> {
     `        all ${String(config.connectionCount)} installed in ${String(Date.now() - installStart)}ms`,
   );
 
-  // Step 3: settle. The bridge's subscription cache is invalidated on
-  // system.connection lifecycle events; allow a moment for the in-process
-  // listener to absorb every install before the burst.
+  // The subscription cache is invalidated on connection lifecycle events;
+  // allow a moment for the in-process listener to absorb every install.
   console.log("[3/4] Letting bridge subscription cache settle (3s)...");
   await sleep(3000);
 
-  // Step 4: publish the event burst (creating core.note items, which the
-  // bridge picks up from the pubsub `item.created` channel).
   console.log(
     `[4/4] Publishing ${String(config.eventCount)} item-events (creating core.note items)...`,
   );

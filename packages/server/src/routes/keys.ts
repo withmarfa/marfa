@@ -303,11 +303,6 @@ export function keyRoutes(storage: Storage, salt: string) {
   router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");
     if (!isBootstrap) {
-      // tenant_admin can mint own-tenant keys. The new key's tenant_id
-      // is stamped from the caller's tenant_id in the storage layer;
-      // `is_platform` is coerced to `false` unless the caller is itself
-      // platform (see below), so a tenant_admin cannot escalate to
-      // platform via the request body.
       requireTenantAdmin(c);
     }
 
@@ -332,12 +327,8 @@ export function keyRoutes(storage: Storage, salt: string) {
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
 
-    // Only a platform credential can mint another platform credential.
-    // Bootstrap is a special case — the very first credential created at
-    // install time IS the seed platform credential, so we accept the
-    // request body's flag (or default to true when bootstrapping). After
-    // that, callers without is_platform: true see their request silently
-    // coerced to false.
+    // is_platform escalation requires the caller to already be platform.
+    // Bootstrap is exempted — the seed key is implicitly platform.
     const callerIsPlatform = c.get("apiKey")?.is_platform === true;
     let isPlatform: boolean;
     if (isBootstrap) {
@@ -346,12 +337,6 @@ export function keyRoutes(storage: Storage, salt: string) {
       isPlatform = callerIsPlatform && body.is_platform === true;
     }
 
-    // Stamp the new key's tenant_id from the caller's tenant_id so a
-    // tenant_admin minting an own-tenant key gets the binding automatically.
-    // Bootstrap is a special case — the seed admin is stamped tenant-less
-    // (NULL) so it can write across tenants until a hosted-mode tenant is
-    // created. Platform admins on a single-tenant self-host also have
-    // tenant_id undefined; that path is unchanged.
     const newKeyTenantId = c.get("apiKey")?.tenant_id;
 
     const stored = await storage.keys.create(
@@ -369,11 +354,6 @@ export function keyRoutes(storage: Storage, salt: string) {
       keyHash,
       newKeyTenantId,
     );
-
-    // The bootstrap sentinel is stamped above via `settings.claim`, before
-    // the mint, so there's no post-mint write. Stamping it after the mint
-    // would leave a window for concurrent calls to both pass the gate and
-    // both mint admin keys.
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -425,8 +405,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
 
-    // tenant_admin can only revoke keys in its own tenant —
-    // surface as 404 so cross-tenant probes can't enumerate ids.
+    // 404 not 403 — cross-tenant probes must not enumerate key ids.
     if (key.role === "tenant_admin" && key.tenant_id) {
       const target = await storage.keys.get(id);
       if (target?.tenant_id !== key.tenant_id) {
@@ -476,8 +455,6 @@ export function keyRoutes(storage: Storage, salt: string) {
     if (!existing) {
       throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
-    // tenant_admin can only update keys in its own tenant — same
-    // 404 cloak as revoke.
     if (
       key.role === "tenant_admin" &&
       key.tenant_id &&

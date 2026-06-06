@@ -368,11 +368,8 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
 
     const body = c.req.valid("json");
 
-    // Refuse to mint a runtime credential for a non-active Connection.
-    // Cuts every downstream activity path (queue handler dispatch,
-    // reactive-run callback, lease refresh) when a Connection is revoked
-    // at the item layer. The lease broker hits this endpoint on every
-    // cache miss, so the gate is load-bearing.
+    // Refuse to mint for non-active connections — the lease broker calls this
+    // on every cache miss, so this gate cuts all downstream paths on revocation.
     const connection = await storage.items.get(body.connection_id);
     if (connection?.type !== "system.connection") {
       throw new MarfaError(
@@ -393,9 +390,8 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
 
-    // Always grant write on connection.runtime so the credential can
-    // hydrate its own subtree. Manifest-supplied extension grants merge
-    // on top.
+    // Always grant connection.runtime:write so the credential can hydrate
+    // its own subtree; manifest grants merge on top.
     const extensionPermissions = {
       "connection.runtime": "write" as const,
       ...(body.extension_permissions ?? {}),
@@ -575,12 +571,9 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     }
     const { connection_id } = c.req.valid("param");
 
-    // Refuse to surface subscriptions for non-active Connections.
-    // The uninstall pipeline disables subscriptions individually, but a
-    // Connection that landed in `revoked` through a different path (admin
-    // override, future API) would still list non-disabled rows here without
-    // this gate. Return an empty list so the control-plane receipt handler
-    // 404s upstream.
+    // Return empty for non-active connections. The uninstall pipeline disables
+    // subscriptions individually, but a connection revoked through an admin
+    // override or future API would still list rows without this gate.
     const connection = await storage.items.get(connection_id);
     if (connection?.type !== "system.connection") {
       return c.json({ subscriptions: [] }, 200);
@@ -590,9 +583,8 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     }
 
     const rows = await storage.inboundWebhooks.listByConnection(connection_id);
-    // Project the integration manifest's `name` so the control plane can
-    // stamp `integration_name` on the queue message envelope. Resolve once
-    // per connection (low cardinality) rather than per-row.
+    // Resolve the manifest name once per connection (not per subscription row)
+    // so the control plane can stamp `integration_name` on the queue envelope.
     let integrationName: string | undefined;
     const integrationRef = (
       connection.properties as { integration_ref?: string }

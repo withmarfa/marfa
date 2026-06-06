@@ -141,9 +141,8 @@ async function resolveConnectionConfig(
       };
     }
 
-    // Single-calendar fallback. A bare `calendar_id` string on
-    // configuration names the one calendar to sync; use it as the
-    // single-calendar id.
+    // Single-calendar fallback: bare `calendar_id` on configuration names the
+    // one calendar to sync; default to `primary` when absent.
     const singleCalendarId =
       typeof cfg.calendar_id === "string" && cfg.calendar_id.length > 0
         ? cfg.calendar_id
@@ -155,9 +154,7 @@ async function resolveConnectionConfig(
       target_type: targetType ?? "core.event",
     };
   } catch {
-    // If the connection lookup fails for any reason, fall back to the
-    // single primary-calendar / core.event defaults so the handler
-    // still does something useful rather than failing hard.
+    // Connection lookup failed — fall back to safe defaults.
     return {
       mode: "single",
       selected_calendar_ids: [DEFAULT_CALENDAR_ID],
@@ -360,13 +357,10 @@ async function handleItemEventSingle(
     mappings: {},
   };
 
-  // Look up the item we're reacting to.
   const item = await ctx.marfa.getItem(message.item_id);
   if (item === null) {
-    // Item disappeared (deleted before we could read). Treat it
-    // as a delete-equivalent if we know the mapping by checking
-    // mappings reverse: but the bridge gives us item_id, and
-    // mappings are external_id → marfa_id, so reverse-lookup.
+    // Item disappeared before we read it — treat as a delete if we have
+    // the mapping (mappings are external_id → marfa_id, so reverse-lookup).
     return ackHandledIfMappedAsDelete(
       ctx,
       cursor,
@@ -403,19 +397,9 @@ async function handleItemEventSingle(
     return { ok: true };
   }
 
-  // Create or update on Calendar.
   const calendarPayload = buildCalendarPayload(item);
   if (externalId === null) {
-    // Stamp a deterministic id derived from the item id so a retry
-    // of the same handler invocation reaches Calendar with the same
-    // id. Calendar's `events.insert` accepts a client-supplied `id`
-    // (5–1024 chars, base32hex alphabet — hex is a subset of
-    // base32hex, so a SHA-256 hex digest is valid) and returns 409
-    // on conflict. The 409 path below recovers the mapping
-    // idempotently without creating a duplicate event.
     const deterministicId = await deriveDeterministicCalendarId(item.id);
-    // Single-calendar mode: write to the configured default calendar
-    // (the primary by default).
     const calendarId = config.default_write_calendar_id;
     const postPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`;
     const postPayload = { ...calendarPayload, id: deterministicId };
@@ -466,7 +450,6 @@ async function handleItemEventSingle(
     return { ok: true };
   }
 
-  // PATCH path.
   const path = buildEventPath(externalId);
   const resp = await ctx.marfa.proxyRequest("PATCH", path, calendarPayload);
   if (!resp.ok) {
@@ -1147,7 +1130,6 @@ async function handleItemEventMulti(
   const calendarPayload = buildCalendarPayload(item);
 
   if (externalId === null) {
-    // New event — route to the default-write calendar.
     const writeCalendarId = config.default_write_calendar_id;
     const deterministicId = await deriveDeterministicCalendarId(item.id);
     const postPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(writeCalendarId)}/events`;
@@ -1196,7 +1178,6 @@ async function handleItemEventMulti(
     return { ok: true };
   }
 
-  // PATCH — update existing mapped event on its mapped calendar.
   const path = buildEventPath(externalId, mappedCalendarId);
   const resp = await ctx.marfa.proxyRequest("PATCH", path, calendarPayload);
   if (!resp.ok) {
@@ -1254,14 +1235,12 @@ function buildEventInput(
   if (event.status !== undefined) properties.status = event.status;
 
   if (targetType === "core.event") {
-    // The cross-app `core.event` target carries the html link as a generic url.
     if (event.htmlLink !== undefined) properties.url = event.htmlLink;
     return { type: targetType, properties };
   }
 
-  // `google.calendar.event` (upstream-fidelity target). Carry the
-  // Google-specific fields the type declares so a round-trip preserves
-  // what Calendar considers authoritative.
+  // google.calendar.event: carry Google-specific fields so a round-trip
+  // preserves what Calendar considers authoritative.
   if (event.htmlLink !== undefined) properties.html_link = event.htmlLink;
   if (event.etag !== undefined) properties.etag = event.etag;
   if (event.start?.timeZone !== undefined) {

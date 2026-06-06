@@ -14,10 +14,8 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-// Drizzle doesn't have a first-class tsvector type, so we declare a small
-// customType. We never SELECT the column directly (search reads use raw SQL
-// via the unsafe path); declaring it lets `drizzle-kit generate` emit the
-// right migration shape and lets the item-store INSERTs reference it.
+// Drizzle has no first-class tsvector type. This customType lets drizzle-kit
+// emit the right migration shape; search reads use raw SQL, not Drizzle select.
 const tsvector = customType<{ data: string; driverData: string }>({
   dataType: () => "tsvector",
 });
@@ -219,9 +217,8 @@ export const apiKeys = pgTable(
 // blobs (metadata only — actual files on filesystem)
 // ---------------------------------------------------------------------------
 
-// Blob metadata table. Composite PK on (tenant_id, hash); empty-string
-// sentinel for instance-wide / platform-admin / single-tenant rows.
-// See sqlite/schema.ts for the full design rationale.
+// Composite PK on (tenant_id, hash); empty-string sentinel for instance-wide /
+// platform-admin / single-tenant rows. See sqlite/schema.ts for design rationale.
 export const blobs = pgTable(
   "blobs",
   {
@@ -233,16 +230,6 @@ export const blobs = pgTable(
   },
   (t) => [primaryKey({ columns: [t.tenant_id, t.hash] })],
 );
-
-// ---------------------------------------------------------------------------
-// OAuth tables
-// ---------------------------------------------------------------------------
-
-// OAuth client + token storage is owned by the
-// @better-auth/oauth-provider plugin (auth_oauth_client +
-// auth_oauth_access_token + auth_oauth_refresh_token), so no
-// oauth_clients / oauth_tokens tables are defined here. See migration
-// 0055_drop_legacy_oauth.sql for the drop DDL.
 
 // ---------------------------------------------------------------------------
 // oauth_device_codes — Device Authorization Grant (RFC 8628)
@@ -466,8 +453,7 @@ export const connectionLeasedTokens = pgTable(
   ],
 );
 
-// oauth_codes was dropped — replaced by the @better-auth/oauth-provider
-// plugin's authorization code state machine.
+// oauth_codes was dropped — replaced by @better-auth/oauth-provider's auth code state machine.
 
 // ---------------------------------------------------------------------------
 // audit_log (append-only audit trail)
@@ -639,14 +625,11 @@ export const eventLog = pgTable(
       .primaryKey()
       .generatedAlwaysAsIdentity(),
     event_type: text("event_type").notNull(),
-    // Nullable: item events set item_id and leave edge_id null; edge
-    // events set edge_id and leave item_id null. Relaxed from NOT NULL
-    // in migration 0014.
+    // item events set item_id; edge events set edge_id. Both nullable (relaxed in migration 0014).
     item_id: text("item_id"),
     edge_id: text("edge_id"),
     tenant_id: text("tenant_id"),
     payload: text("payload").notNull(),
-    // Cycle-detection metadata; see sqlite/schema.ts for design notes.
     originating_connection_id: text("originating_connection_id"),
     hop_count: integer("hop_count").notNull().default(0),
     created_at: text("created_at").notNull(),
@@ -669,10 +652,9 @@ export const eventLog = pgTable(
 // for both dialects. Column names use the camelCase keys better-auth expects.
 // ---------------------------------------------------------------------------
 
-// Timestamp columns use `timestamp({ mode: "date" })` so the better-auth
-// Drizzle adapter — which forwards JS Date objects — can round-trip.
-// This deviates from marfa's TEXT-ISO convention but stays localised
-// to the auth_* island.
+// Timestamp columns use `timestamp({ mode: "date" })` — better-auth's Drizzle
+// adapter forwards JS Dates. Deviates from Marfa's TEXT-ISO convention but
+// stays localised to the auth_* island.
 export const auth_user = pgTable(
   "auth_user",
   {

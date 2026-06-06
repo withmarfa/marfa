@@ -25,7 +25,6 @@ export type {
   CreateWithAttachmentsAttachment,
   CreateWithAttachmentsResult,
   TenantApiKeySummary,
-  // Credential-loading primitive for `MarfaClient.fromSecureStorage`.
   SecureStorage,
 } from "./client.js";
 

@@ -52,9 +52,6 @@ export async function createPgStorage(
     skipBootstrap?: boolean;
   },
 ): Promise<Storage> {
-  // `db` is the wrapped Drizzle instance (per-request RLS context aware);
-  // `baseDb` is the raw owner-connection instance reserved for Better Auth.
-  // See `request-context.ts` for the substitution mechanic.
   const { db, baseDb, client, close } = await createConnection(
     connectionString,
     {
@@ -74,7 +71,6 @@ export async function createPgStorage(
   const metadataStore = new PgMetadataStore(db);
   const typeStore = new PgTypeStore(db);
 
-  // Load custom types from the database and register them in memory
   const loadedCustomTypes = await typeStore.loadCustomTypes();
   for (const ct of loadedCustomTypes) {
     if (!isCoreType(ct.id)) {
@@ -92,13 +88,10 @@ export async function createPgStorage(
   const connectionLeasedTokenStore = new PgConnectionLeasedTokenStore(db);
   const auditStore = new PgAuditStore(db);
   const eventLogStore = new PgEventLogStore(db);
-  // auth_session sweep runs against the unwrapped owner instance, matching
-  // how better-auth itself talks to its tables (baseDb).
   const authSessionStore = new PgAuthSessionStore(baseDb);
   const edgeStore = new PgEdgeStore(db);
   const edgeTypeStore = new PgEdgeTypeStore(db);
 
-  // Load custom edge types into the in-memory registry on startup.
   const loadedCustomEdgeTypes = await edgeTypeStore.loadCustomEdgeTypes();
   for (const ct of loadedCustomEdgeTypes) {
     if (!isCoreEdgeType(ct.id)) {
@@ -207,18 +200,9 @@ export async function createPgStorage(
         ? client.unsafe(query, params as (string | number | boolean)[])
         : client.unsafe(query);
     },
-    // Better Auth runs on the unwrapped base instance — its tables
-    // (auth_user, auth_session, etc.) carry no RLS policies and the
-    // auth library manages its own connection context outside the
-    // per-request RLS middleware.
     betterAuthDb: baseDb,
     betterAuthDialect: "pg" as const,
-    // The wrapped Drizzle instance, exposed so the RLS middleware can
-    // drive `db.transaction(...)` to wrap each tenant-bounded request.
     pgDb: db,
-    // The underlying postgres-js client, exposed so streaming routes
-    // (`/events`, `/export`) can `client.reserve()` a dedicated pool
-    // connection for session-level RLS.
     pgClient: client,
   } satisfies Storage & {
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]>;

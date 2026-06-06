@@ -126,8 +126,7 @@ async function createUserAppGrant(
   }
   const now = new Date().toISOString();
 
-  // F15: detect re-consent. Existing projection → update in place; else
-  // insert. Mirrors `projectGrantOnConsent` from `routes/auth-consent.ts`.
+  // Detect re-consent — update in place if a projection exists, else insert.
   let existingItemId: string | null = null;
   if (typeof storage.oauthProvider?.findGrantItemId === "function") {
     existingItemId = await storage.oauthProvider.findGrantItemId({
@@ -138,9 +137,8 @@ async function createUserAppGrant(
   }
 
   if (existingItemId) {
-    // Re-consent: items.update writes a versions snapshot + bumps
-    // version. Flip status back to "active" + clear revoked_at (F3
-    // equivalent for device-flow).
+    // Re-consent: flip status back to "active" + clear revoked_at; same
+    // rationale as projectGrantOnConsent in auth-consent.ts.
     const existing = await storage.items.get(existingItemId, tenantId);
     if (!existing) {
       // Race — findGrantItemId saw a row but a concurrent delete
@@ -550,8 +548,6 @@ export function authRoutes(
         const single = response.headers.get("set-cookie");
         if (single) redirectHeaders.append("set-cookie", single);
       }
-      // Audit-row on the success path. Don't await — audit failures
-      // shouldn't block sign-in.
       void storage.audit.log({
         action: "auth.sign_in.success",
         resource_type: "auth_user",
@@ -562,8 +558,6 @@ export function authRoutes(
       return new Response(null, { status: 302, headers: redirectHeaders });
     }
 
-    // Audit-row on the failure path. Captures the reason from
-    // better-auth's error body where possible.
     void storage.audit.log({
       action: "auth.sign_in.failed",
       resource_type: "auth_user",
@@ -820,8 +814,6 @@ export function authRoutes(
         return errorRedirect("signup_failed");
       }
 
-      // Audit the sign-up. Don't await — audit failures shouldn't
-      // block the user's redirect.
       void storage.audit.log({
         action: "auth.sign_up",
         resource_type: "auth_user",
@@ -1855,9 +1847,7 @@ export function authRoutes(
       return c.html(renderDeviceDecisionPage({ approved: false }));
     }
 
-    // Approve: create (or update) the system.connection (kind: app)
-    // projection through ItemStore (F15 upsert) and flip the
-    // device-code row to approved.
+    // Approve: upsert the system.connection projection and flip the device-code row.
     const grant = await createUserAppGrant(
       storage,
       sessionResult.session.user,
@@ -1873,13 +1863,9 @@ export function authRoutes(
         302,
       );
     }
-    // F16: emit `auth.grant.created` audit row for the device-flow
-    // consent approval (CLAUDE.md's audit-row table claims this fires;
-    // pre-fix it didn't). `source: "device"` distinguishes from the
-    // code-flow path which uses the implicit default (source absent).
-    // Resolve tenant_id for the audit row from the same users-table
-    // lookup createUserAppGrant did — duplicated cheaply here to avoid
-    // changing the helper's signature.
+    // Resolve tenant_id for the audit row. Duplicates the users-table
+    // lookup createUserAppGrant already did — kept to avoid changing the
+    // helper's signature.
     let auditTenantId: string | null = null;
     if (storage.users) {
       const userRow = await storage.users.getByAuthUserId(
@@ -2013,17 +1999,10 @@ export function authRoutes(
     const accessHash = hashApiKey(accessBare, salt);
     const refreshHash = hashApiKey(refreshBare, salt);
 
-    // Resolve the underlying system.connection (grant) so we can pull
-    // tenant_id + the scopes the user actually approved. The grant
-    // properties already carry the scope set; we read them as the
-    // authoritative input to the token-mint.
-    //
-    // `connection_item_id` comes from the server-controlled
-    // `oauth_device_codes` row written by the device-code approve
-    // handler — never user-supplied — so a wrong-type result is not
-    // reachable today. The type check is defence-in-depth: a future
-    // change to the approve handler that stamped a non-`system.connection`
-    // id would otherwise silently mint an orphan token.
+    // Resolve the grant to extract tenant_id + approved scopes.
+    // Type check is defence-in-depth: connection_item_id comes from a
+    // server-controlled row, but a future approve-handler change could
+    // stamp a wrong id and silently mint an orphan token without it.
     const deviceGrant = await storage.items.get(row.connection_item_id);
     if (deviceGrant?.type !== "system.connection") {
       throw new Error(
@@ -2142,23 +2121,8 @@ function buildSignInRedirect(params: {
   return `/auth/sign-in${query ? `?${query}` : ""}`;
 }
 
-/** Forward selected headers (origin, cookie) from the inbound request
- *  onto the upstream Better Auth dispatch. Origin matters for Better
- *  Auth's trustedOrigins check; cookie matters when re-signing-in
- *  while a stale session cookie is present. Other headers (host,
- *  content-length) are recomputed by the constructor.
- *
- *  When the inbound `Origin` is missing or the literal string `"null"`
- *  (browsers serialize Origin as `"null"` for navigations under
- *  privacy-strict referrer policies, sandboxed iframes, etc.), fall
- *  back to `fallbackOrigin`. The dispatch is server-internal — Better
- *  Auth's CSRF check is on the OUTER (browser→server) request; the
- *  authoritative origin for the upstream dispatch is the auth instance
- *  itself.
- */
 /** Map the `?notice=` query param on /auth/security to the flash banner
- *  the page renders. Unknown codes resolve to `undefined` (no banner)
- *  rather than 500ing. */
+ *  the page renders. Unknown codes return `undefined` (no banner). */
 function parseNotice(
   raw: string | null,
 ): { kind: "success" | "error"; text: string } | undefined {
@@ -2193,6 +2157,13 @@ function parseNotice(
   return messages[raw];
 }
 
+/**
+ * Forward selected headers (origin, cookie) from the inbound request
+ * onto the upstream Better Auth dispatch. When `Origin` is absent or
+ * `"null"` (browsers serialise it as `"null"` under strict referrer
+ * policies / sandboxed iframes), fall back to `fallbackOrigin` so
+ * Better Auth's trustedOrigins check passes on the internal dispatch.
+ */
 function forwardHeaders(
   src: Headers,
   base: Record<string, string>,

@@ -49,20 +49,13 @@ export function eventRoutes(
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
-        // RLS context for this stream. Acquired up front; cleanup
-        // runs exactly once via `releaseRls()` which is hooked into
-        // every termination path (normal close, error, abort, catchup
-        // terminal). Acquisition failure aborts the stream and the
-        // client sees a closed connection (no rows leaked).
         let rlsCtx: StreamRlsContext | null = null;
         if (options.rlsEnforce && options.pgClient !== null && tenantId) {
           try {
             rlsCtx = await acquireStreamRls(options.pgClient, tenantId);
           } catch (err) {
-            // Setup failed before any data was sent. Close the stream;
-            // node-server propagates as an empty SSE response. No
-            // tenant context was set — connection has already been
-            // returned to or destroyed from the pool.
+            // Setup failed before any data was sent; close so the client
+            // sees a clean disconnect rather than a hanging connection.
             try {
               controller.error(err);
             } catch {
@@ -75,18 +68,14 @@ export function eventRoutes(
         const releaseRls = (): void => {
           if (rlsReleased || !rlsCtx) return;
           rlsReleased = true;
-          // Fire-and-forget — cleanup must not block the abort /
-          // controller-close hot path. Release is idempotent and
-          // self-contained; failures destroy the connection rather
-          // than risk a poisoned return to the pool.
+          // Fire-and-forget — must not block the abort/close path.
+          // Failures destroy the connection rather than risk a poisoned pool return.
           const ctx = rlsCtx;
           void ctx.release().catch(() => {
             /* logged inside disposeReserved; swallow here */
           });
         };
-        // Mutable flag used across async callbacks. Wrapped in an object
-        // so TypeScript's narrowing doesn't assume the value is `false`
-        // at the callsite when mutations happen inside async closures.
+        // Object wrapper prevents TS narrowing from assuming `closed` stays `false` across async closures.
         const state: { closed: boolean } = { closed: false };
 
         const send = (data: string) => {
@@ -94,10 +83,7 @@ export function eventRoutes(
           try {
             controller.enqueue(encoder.encode(data));
           } catch {
-            // Enqueue failed — controller is gone. Drive cleanup()
-            // immediately so the reserved RLS connection is released
-            // rather than waiting for the next pump tick (which on an
-            // idle stream could be indefinite). `cleanup()` is idempotent.
+            // Controller gone — cleanup immediately rather than waiting for the next pump tick.
             cleanup();
           }
         };
@@ -116,18 +102,13 @@ export function eventRoutes(
         const cleanup = () => {
           state.closed = true;
           clearInterval(keepAlive);
-          // Release the RLS-pinned connection on every termination path.
-          // Idempotent — safe to call from multiple exit points (pump
-          // completion, error, abort, terminal catchup event, server
-          // shutdown). The cleanup closure is the single chokepoint.
           releaseRls();
         };
 
-        // Buffer live events while replaying
         const liveBuffer: ItemEventWithId[] = [];
         let replaying = !!lastEventId;
 
-        // Subscribe to live events BEFORE starting replay to avoid gaps
+        // Subscribe BEFORE replay starts to avoid gaps.
         const events = subscribe({ typeFilter: typeParam, tenantId });
         const reader = events[Symbol.asyncIterator]();
 
@@ -173,7 +154,6 @@ export function eventRoutes(
           );
         };
 
-        // Pump live item events — either buffer during replay or send directly
         const liveEdgeBuffer: EdgeEventWithId[] = [];
         const pump = () => {
           reader
@@ -200,8 +180,6 @@ export function eventRoutes(
 
         pump();
 
-        // Pump live edge events on a separate loop; replay pulls them from
-        // the same event_log so buffering semantics mirror the item path.
         const edgeIter = subscribeEdges({ tenantId })[Symbol.asyncIterator]();
         const pumpEdges = () => {
           edgeIter
@@ -221,10 +199,9 @@ export function eventRoutes(
         };
         pumpEdges();
 
-        // Replay missed events if Last-Event-ID was provided
         if (lastEventId) {
-          // event_log.id is i64 (PG bigint, SQLite INTEGER). Parse as bigint
-          // so cursors above Number.MAX_SAFE_INTEGER round-trip cleanly.
+          // event_log.id is PG bigint / SQLite INTEGER — parse as BigInt so
+          // cursors above Number.MAX_SAFE_INTEGER round-trip cleanly.
           let afterId: bigint | null;
           try {
             afterId = BigInt(lastEventId);
@@ -233,11 +210,6 @@ export function eventRoutes(
           }
           if (afterId !== null) {
             const afterIdResolved = afterId;
-            // Replay reads from RLS-guarded tables. Install the ALS
-            // context so reads flow through the reserved connection
-            // that carries the tenant_id and the app role. The live
-            // pumps (`pump` / `pumpEdges`) read from in-memory pubsub
-            // iterators and don't need the ALS scope.
             const replay = async () => {
               try {
                 // Detect stale cursors — clients whose `Last-Event-ID`
@@ -257,18 +229,10 @@ export function eventRoutes(
                       min_retained_id: String(minRetained),
                       requested: String(afterIdResolved),
                     });
-                    // Emit the terminal event using the same SSE framing
-                    // (id / event / data / blank-line) as every other event
-                    // on this stream. The id is the min retained id so a
-                    // naive EventSource client won't store a cursor older
-                    // than what the log can serve.
+                    // id is the min retained id so clients don't store a cursor older than the log can serve.
                     send(
                       `id: ${String(minRetained)}\nevent: catchup_too_old\ndata: ${payload}\n\n`,
                     );
-                    // Close the stream: stop pumps, release iterators,
-                    // end the underlying controller. No further events
-                    // will be delivered — the client must re-sync state
-                    // before reconnecting.
                     cleanup();
                     void reader.return(undefined);
                     void edgeIter.return(undefined);
@@ -282,8 +246,6 @@ export function eventRoutes(
                 }
 
                 let lastReplayedId: bigint = afterIdResolved;
-
-                // Replay in batches
                 while (!state.closed) {
                   const batch = await storage.eventLog.getAfter(
                     lastReplayedId,
@@ -297,9 +259,6 @@ export function eventRoutes(
                     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
                     if (state.closed) return;
                     const isEdge = event.edge_id !== null;
-                    // Type filter (`?type=`) applies to item events only.
-                    // Edge events have no item type; skip them when the
-                    // subscriber asked for a specific item type.
                     if (isEdge) {
                       if (typeParam) {
                         lastReplayedId = event.id;
@@ -341,7 +300,6 @@ export function eventRoutes(
                   if (batch.length < REPLAY_BATCH_SIZE) break;
                 }
 
-                // Drain buffered live events, skipping any already replayed
                 replaying = false;
                 for (const event of liveBuffer) {
                   if (state.closed) return;
@@ -364,7 +322,6 @@ export function eventRoutes(
                 }
                 liveEdgeBuffer.length = 0;
               } catch {
-                // Replay failed — switch to live-only mode
                 replaying = false;
                 liveBuffer.length = 0;
                 liveEdgeBuffer.length = 0;
@@ -382,7 +339,6 @@ export function eventRoutes(
           }
         }
 
-        // Clean up when the client disconnects
         c.req.raw.signal.addEventListener("abort", () => {
           cleanup();
           void reader.return(undefined);

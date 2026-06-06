@@ -74,11 +74,10 @@ function isInTrusted(
     const [rangeAddr] = range;
     if (rangeAddr.kind() !== addr.kind()) continue;
     try {
-      // ipaddr.js typings split IPv4/IPv6 match overloads; the kinds match
-      // so the unsafe cast is OK at runtime.
+      // kinds match, so the cast to `never` is safe at runtime despite the split typings
       if (addr.match(range as never)) return true;
     } catch {
-      // mismatched kinds shouldn't reach here, but ignore if they do
+      // should not reach here; ignore if it does
     }
   }
   return false;
@@ -112,20 +111,14 @@ export function getClientIp(
   const peer = normalise(peerRaw);
   if (!peer) return null;
 
-  // No proxy trust → always return the peer; ignore the header.
   if (trustedCidrs.length === 0) return peer.toString();
 
-  // If the immediate peer isn't a trusted proxy, the header (if any) is
-  // attacker-controlled — ignore it and return the peer.
+  // If the peer itself isn't trusted, any XFF header it sent is attacker-controlled.
   if (!isInTrusted(peer, trustedCidrs)) return peer.toString();
 
   const xff = c.req.header("x-forwarded-for");
   if (!xff) return peer.toString();
 
-  // Walk right-to-left, skipping trusted hops. The first untrusted entry
-  // is the closest client IP we can verify. If the entire chain is
-  // trusted we return the leftmost (the original client address as
-  // vouched for by the trusted proxy stack).
   const hops = xff
     .split(",")
     .map((s) => s.trim())
@@ -136,8 +129,7 @@ export function getClientIp(
     if (!isInTrusted(hop, trustedCidrs)) return hop.toString();
   }
 
-  // Fully-trusted chain: leftmost = original client.
-  return normalise(hops[0] ?? "")?.toString() ?? peer.toString();
+  return normalise(hops[0] ?? "")?.toString() ?? peer.toString(); // fully-trusted chain: leftmost = original client
 }
 
 export type { CidrRange };

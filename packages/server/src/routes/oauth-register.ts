@@ -201,9 +201,8 @@ export function oauthRegisterRoutes(
   const trustedOrigins = new Set(trustedRedirectOrigins);
 
   router.post("/oauth2/register", async (c) => {
-    // RFC 7591 §3.2.1 — content-type must be JSON for the request body.
-    // The plugin enforces this internally; we do the same here so the
-    // SDK behaviour stays identical across both surfaces.
+    // Content-type must be JSON — matches plugin behaviour so SDK error shapes
+    // stay identical across both surfaces (RFC 7591 §3.2.1).
     const contentType = c.req.header("content-type") ?? "";
     if (!contentType.includes("application/json")) {
       return c.json(
@@ -238,9 +237,7 @@ export function oauthRegisterRoutes(
 
     const body: RegisterBody = parsed.data;
 
-    // ---- Grant types ----
-    // RFC 7591 §2: default to `authorization_code` when omitted —
-    // matches plugin behaviour.
+    // RFC 7591 §2: default to `authorization_code` when omitted — matches plugin behaviour.
     const grantTypes = body.grant_types ?? ["authorization_code"];
 
     // `refresh_token` is only valid alongside a primary grant that
@@ -275,9 +272,7 @@ export function oauthRegisterRoutes(
       );
     }
 
-    // ---- Response types ----
-    // RFC 7591 §2: defaults to `["code"]`. When `authorization_code`
-    // is in `grant_types`, `code` MUST be in `response_types`.
+    // RFC 7591 §2: defaults to `["code"]`. `authorization_code` requires `code` in response_types.
     const responseTypes = body.response_types ?? ["code"];
     if (
       grantTypes.includes("authorization_code") &&
@@ -292,9 +287,7 @@ export function oauthRegisterRoutes(
       );
     }
 
-    // ---- Redirect URIs ----
-    // Required for `authorization_code` (browser flow). Device-only
-    // clients (`grant_types: [DEVICE_CODE_GRANT]`) may omit them.
+    // Required for `authorization_code`; device-only clients may omit.
     const needsRedirectUris = grantTypes.includes("authorization_code");
     const redirectUris = body.redirect_uris ?? [];
     if (needsRedirectUris && redirectUris.length === 0) {
@@ -313,15 +306,12 @@ export function oauthRegisterRoutes(
       }
     }
 
-    // ---- Scope validation ----
-    // The body's `scope` (space-separated) MUST be a subset of the
-    // server-allowed scope set. Default — when omitted — is the full
-    // allowed set (mirrors plugin behaviour at `dist/index.mjs:1205`).
+    // `scope` must be a subset of the server-allowed set. Omitted → full set
+    // (mirrors plugin behaviour at `dist/index.mjs:1205`).
     const requestedScopes = (body.scope?.trim() ?? "")
       .split(/\s+/)
       .filter((s) => s.length > 0);
     if (requestedScopes.length === 0) {
-      // Default — use the full allowed set.
       for (const sc of allowedScopes) requestedScopes.push(sc);
     }
     for (const sc of requestedScopes) {
@@ -333,19 +323,13 @@ export function oauthRegisterRoutes(
       }
     }
 
-    // ---- Token endpoint auth method ----
-    // Unauthenticated DCR is always public per RFC 7591 §3.2.1 — the
-    // plugin enforces `auth_method=none` (and clears type=web) for
-    // unauthenticated callers (`dist/index.mjs:1175-1183`). Mirror that
-    // here so a third-party SDK calling the plugin directly sees the
-    // same response shape.
+    // Unauthenticated DCR is always public — mirror the plugin's `auth_method=none`
+    // enforcement (`dist/index.mjs:1175-1183`) so SDK response shapes stay identical.
     const tokenEndpointAuthMethod = "none";
     const clientType =
       body.type === "web" ? undefined : (body.type ?? undefined);
 
-    // ---- Client identity ----
-    // Business key — mirrors the plugin's 32-char alphanumeric format
-    // (`dist/index.mjs:1265`).
+    // Format-compatible with the plugin's 32-char alphanumeric clientId (`dist/index.mjs:1265`).
     const clientId = generateClientId();
     if (await oauthProvider.clientExists(clientId)) {
       // Collision is astronomically unlikely (32-char a-zA-Z gives
@@ -356,11 +340,8 @@ export function oauthRegisterRoutes(
       );
     }
 
-    // ---- Tenant binding ----
-    // Mirrors the plugin's `clientReference` callback semantics. For
-    // unauthenticated DCR there's no session, so the binding is null.
-    // (Hosted-mode tenant accountability happens later, at the
-    // consent-step grant projection — `routes/auth-consent.ts`.)
+    // Mirrors the plugin's `clientReference` callback. Unauthenticated DCR
+    // binds null; tenant accountability lands later at the consent step.
     let referenceId: string | null = null;
     if (auth) {
       try {
@@ -381,7 +362,6 @@ export function oauthRegisterRoutes(
       }
     }
 
-    // ---- Persist ----
     let created;
     try {
       created = await oauthProvider.createClient({
@@ -411,9 +391,7 @@ export function oauthRegisterRoutes(
       return c.json(dcrError("server_error", "failed to register client"), 500);
     }
 
-    // RFC 7591 §3.2.1 — 201 Created, no-store cache. Response shape
-    // matches the plugin's existing endpoint so a third-party SDK
-    // sees no wire-shape regression.
+    // 201 + no-store cache, matching the plugin's existing endpoint wire shape (RFC 7591 §3.2.1).
     c.header("Cache-Control", "no-store");
     c.header("Pragma", "no-cache");
     return c.json(

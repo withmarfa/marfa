@@ -405,7 +405,7 @@ export interface SubscribeOptions {
 }
 
 /**
- * Iterator cleanup contract (§3.8).
+ * Iterator cleanup contract.
  *
  * `subscribe()` and `subscribeEdges()` return `AsyncGenerator`s backed by
  * `events.on(emitter, ...)`. When the consumer is done — SSE client
@@ -468,5 +468,4 @@ export async function* subscribeEdges(options?: {
   }
 }
 
-// Keep isEdgeEvent exported-private to consumers that type-narrow on the union.
 export { isEdgeEvent };

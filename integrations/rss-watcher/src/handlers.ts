@@ -231,7 +231,6 @@ async function reportFailure(
     summary: `RSS Watcher: ${summary}`,
     detail: err === null ? undefined : { error: errorMessage(err) },
   });
-  // Retry on transient errors; the runtime decides whether to backoff.
   return { ok: false, retry: true, reason: summary };
 }
 

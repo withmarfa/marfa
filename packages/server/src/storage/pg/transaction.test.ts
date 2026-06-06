@@ -93,12 +93,10 @@ describe.skipIf(!isPg)("PgStorage.runInTransaction", () => {
   });
 
   it("supports concurrent runInTransaction calls without pool deadlock", async () => {
-    // Pool size is 10 (`pg/connection.ts`). Without the ALS routing, each
-    // `runInTransaction` consumed two pool slots (one for the outer begin
-    // and one for each inner query via the unwrapped baseDb), so >5
-    // concurrent calls deadlocked. With the fix, each call holds one slot
-    // via the proxy + ALS routing. 12 parallel writes here exceed the pool
-    // size on the old shape and pass on the new shape.
+    // Pool = 10. Old code consumed two slots per runInTransaction (outer
+    // begin + inner queries on baseDb), so >5 concurrent calls deadlocked.
+    // With ALS routing each call holds one slot. 12 > pool size catches a
+    // regression to the two-slot shape.
     const concurrency = 12;
     const results = await Promise.all(
       Array.from({ length: concurrency }, (_, i) =>

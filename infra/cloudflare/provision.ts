@@ -123,31 +123,16 @@ async function provisionQueues(
     `marfa-reactive-run-${env}`,
     `marfa-reactive-run-${env}-dlq`,
   ];
-  // Per-integration reactive-run queues. Each integration with an
-  // `item-event` trigger gets its own queue + DLQ; the server's bridge
-  // routes envelopes per `integration_name` to the matching queue URL.
-  // The integration name's publisher dot is replaced with a hyphen for
-  // the queue slug because Cloudflare Queues reject dot characters.
   for (const integration of REACTIVE_RUN_INTEGRATIONS) {
     const slug = queueSlug(integration.name);
     wanted.push(`marfa-reactive-run-${slug}-${env}`);
     wanted.push(`marfa-reactive-run-${slug}-${env}-dlq`);
   }
-  // Per-integration webhook-receipt queues. Each integration with a
-  // `webhook` trigger AND a dedicated binding gets its own queue + DLQ;
-  // the control plane's webhook route resolves a per-integration producer
-  // binding and writes verified deliveries there. Integrations without a
-  // binding (e.g. github-webhooks today) stay on the shared queue.
   for (const integration of WEBHOOK_RECEIVING_INTEGRATIONS) {
     const slug = queueSlug(integration.name);
     wanted.push(`marfa-webhook-receipt-${slug}-${env}`);
     wanted.push(`marfa-webhook-receipt-${slug}-${env}-dlq`);
   }
-  // Per-integration scheduled-poll queues. Each integration with a
-  // `schedule` trigger gets its own queue + DLQ; the integration's
-  // Worker consumes from it on each cron tick. The slug uses the
-  // registry's per-integration `scheduledPollQueueSlug` override because
-  // some consumer wrangler.toml entries dropped the publisher prefix.
   for (const integration of SCHEDULED_POLL_INTEGRATIONS) {
     const slug = scheduledPollSlugFor(integration);
     wanted.push(`marfa-scheduled-poll-${slug}-${env}`);

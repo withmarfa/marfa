@@ -50,8 +50,7 @@ describe.skipIf(!isPg)("Postgres RLS enforcement", () => {
       const tenantA = `tenant-a-${Math.random().toString(36).slice(2, 8)}`;
       const tenantB = `tenant-b-${Math.random().toString(36).slice(2, 8)}`;
 
-      // Create one item per tenant via the storage interface (running
-      // as owner so RLS is bypassed; plain insert).
+      // Create one item per tenant as the owner (RLS bypassed at this level).
       const itemA = await ctx.storage.items.create(
         { type: "core.note", properties: { body: "tenant A item" } },
         tenantA,
@@ -61,17 +60,15 @@ describe.skipIf(!isPg)("Postgres RLS enforcement", () => {
         tenantB,
       );
 
-      // Now run as marfa_app inside a transaction with tenant_id =
-      // tenantA. The unscoped SELECT must return only tenant A's rows
-      // — proving RLS filters at the DB layer, independent of the
-      // application's WHERE clauses.
+      // Run as marfa_app with tenant_id = tenantA. Unscoped SELECT must
+      // return only tenant A's rows — proves RLS bites at the DB layer
+      // independent of application WHERE clauses.
       const pgDb = (ctx.storage as unknown as { pgDb: PgDb }).pgDb;
       const seenIdsForA = await pgDb.transaction(async (tx) => {
         await tx.execute(
           sql`SELECT set_config('marfa.tenant_id', ${tenantA}, true)`,
         );
         await tx.execute(sql`SET LOCAL ROLE marfa_app`);
-        // Use the row-level helper so we hit the policy.
         const rows = await tx.execute<{ id: string; tenant_id: string }>(
           sql`SELECT id, tenant_id FROM items WHERE id IN (${itemA.id}, ${itemB.id})`,
         );
@@ -81,7 +78,6 @@ describe.skipIf(!isPg)("Postgres RLS enforcement", () => {
       expect(seenIdsForA.has(itemA.id)).toBe(true);
       expect(seenIdsForA.has(itemB.id)).toBe(false);
 
-      // And the symmetric case for tenant B.
       const seenIdsForB = await pgDb.transaction(async (tx) => {
         await tx.execute(
           sql`SELECT set_config('marfa.tenant_id', ${tenantB}, true)`,
@@ -105,16 +101,11 @@ describe.skipIf(!isPg)("Postgres RLS enforcement", () => {
         await tx.execute(sql`SET LOCAL ROLE marfa_app`);
       });
 
-      // After the transaction commits, subsequent queries use the
-      // owner role. A bare SELECT current_setting reads the setting
-      // — empty string after `SET LOCAL` is cleared.
       const rows = await pgDb.execute<{ role: string; tenant: string }>(
         sql`SELECT current_user::text AS role, current_setting('marfa.tenant_id', true) AS tenant`,
       );
       expect(rows[0]?.role).not.toBe("marfa_app");
-      // current_setting('marfa.tenant_id', true) is per-session for
-      // anything outside a SET LOCAL, but inside the txn we set
-      // LOCAL — at this point the setting is cleared.
+      // SET LOCAL cleared on commit — GUC is empty outside the transaction.
       expect(rows[0]?.tenant ?? "").toBe("");
     });
   });
@@ -173,16 +164,12 @@ describe.skipIf(!isPg)("Postgres RLS enforcement", () => {
       // POST /items returns `{ item: {...}, metadata: {...} }`.
       const created = (await createRes.json()) as { item: { id: string } };
 
-      // Tenant A asks for tenant B's item id directly. Application
-      // layer would have rejected via the tenant-scoped store; RLS
-      // blocks the row at the DB even if the application layer is
-      // bypassed.
+      // Tenant A requests tenant B's item — RLS blocks it at the DB layer.
       const probeRes = await ctx.app.request(`/items/${created.item.id}`, {
         headers: { authorization: `Bearer ${tenantAKey}` },
       });
       expect(probeRes.status).toBe(404);
 
-      // And tenant B can still see its own item.
       const ownRes = await ctx.app.request(`/items/${created.item.id}`, {
         headers: { authorization: `Bearer ${tenantBKey}` },
       });

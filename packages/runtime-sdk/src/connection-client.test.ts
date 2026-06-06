@@ -543,8 +543,7 @@ describe("ConnectionClient.uploadBlob", () => {
     expect(captured[0]!.method).toBe("POST");
     expect(captured[0]!.authorization).toBe("Bearer marfa_k1_initial");
     expect(captured[0]!.contentType).toBe("application/pdf");
-    // No cycle headers on /blobs — it doesn't publish events.
-    expect(captured[0]!.cycleOrigin).toBeUndefined();
+    expect(captured[0]!.cycleOrigin).toBeUndefined(); // /blobs doesn't publish events
     expect(captured[0]!.cycleHop).toBeUndefined();
     expect(Array.from(captured[0]!.bodyBytes)).toEqual(Array.from(PDF_BYTES));
     expect(result).toEqual({
@@ -618,9 +617,7 @@ describe("ConnectionClient.uploadBlob", () => {
     expect(captured).toHaveLength(2);
     expect(captured[0]!.authorization).toBe("Bearer marfa_k1_initial");
     expect(captured[1]!.authorization).toBe("Bearer marfa_k1_refreshed");
-    // Body bytes are re-sent on the retry (full content, not a stream that
-    // would have drained).
-    expect(Array.from(captured[1]!.bodyBytes)).toEqual(Array.from(PDF_BYTES));
+    expect(Array.from(captured[1]!.bodyBytes)).toEqual(Array.from(PDF_BYTES)); // bytes re-sent on retry
     expect(result.hash).toBe("sha256:abc");
   });
 

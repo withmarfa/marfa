@@ -16,10 +16,6 @@ import type { DrizzleDb } from "./connection.js";
 export class SqliteOAuthStore implements OAuthStore {
   constructor(private db: DrizzleDb) {}
 
-  // -----------------------------------------------------------------------
-  // Device Authorization Grant
-  // -----------------------------------------------------------------------
-
   async createDeviceCode(input: {
     deviceCodeHash: string;
     userCode: string;

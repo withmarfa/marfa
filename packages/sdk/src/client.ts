@@ -490,10 +490,7 @@ export interface BulkActionJob {
 }
 
 // ---------------------------------------------------------------------------
-// Secure storage protocol — parallel to the Swift SDK's `SecureStorage`.
-// TS's runtime is heterogeneous (Node, Deno, browser), so the SDK does
-// not bundle a concrete backend; callers wire up file-backed, OS
-// keyring, or in-memory implementations as their environment demands.
+// Secure storage protocol
 // ---------------------------------------------------------------------------
 
 /** Minimal contract for the credential store consumed by
@@ -530,8 +527,7 @@ export class MarfaClient {
   }
 
   // -------------------------------------------------------------------------
-  // Static factories — parity with the Swift SDK's
-  // `MarfaClient.fromEnvironment()` / `.fromSecureStorage()`.
+  // Static factories
   // -------------------------------------------------------------------------
 
   /**
@@ -684,9 +680,6 @@ export class MarfaClient {
       properties: Record<string, unknown>,
       options?: UpdateOptions,
     ): Promise<Item> => {
-      // Skip the upfront GET when the caller has supplied an expected
-      // version. `type` stays optional — the conflict handler lazy-fetches
-      // it only if a `keep_both_copies` path needs to spawn a sibling item.
       const expected = options?.expectedVersion;
       let version: number;
       let type: string | undefined = options?.type;
@@ -808,9 +801,8 @@ export class MarfaClient {
       const edgeType = input.edgeType ?? "attached-to";
       const hostId = input.item.id ?? generateId();
 
-      // Upload blobs concurrently. Promise.all surfaces the first
-      // rejection; we rewrap so the operator sees which attachment
-      // failed (the original error becomes the cause).
+      // Rewrap any blob upload error to include the attachment index —
+      // the caller needs to know which one failed.
       const uploadResults = await Promise.all(
         input.attachments.map(async (att, idx) => {
           try {
@@ -825,9 +817,6 @@ export class MarfaClient {
         }),
       );
 
-      // Build the bulk payload. Host first (caller's input passed
-      // through), then each attachment with auto blob_ref / mime_type
-      // and the `attached-to` edge pointing at the host id.
       const hostBulkItem: BulkItemInput = {
         ...input.item,
         id: hostId,
@@ -838,8 +827,6 @@ export class MarfaClient {
         (att, idx) => {
           const attachmentId = att.id ?? generateId();
           attachmentIds.push(attachmentId);
-          // Promise.all preserves index ↔ result ordering, so uploadResults[idx]
-          // is guaranteed populated when we reach this point.
           const upload = uploadResults[idx];
           if (!upload) {
             throw new MarfaError(
@@ -849,9 +836,6 @@ export class MarfaClient {
             );
           }
 
-          // Merge caller-supplied edges with the helper's `attached-to`
-          // (or whatever `edgeType` resolves to). Additive on collision:
-          // host id is appended rather than overwriting.
           const callerEdges = att.edges ?? {};
           const callerSameType = callerEdges[edgeType] ?? [];
           const mergedEdges: Record<string, string[]> = {
@@ -878,13 +862,9 @@ export class MarfaClient {
         atomic: true,
       });
 
-      // Distil the bulk result into typed { host, attachments } using
-      // the minted ids as the join key. Bulk returns one entry per input
-      // item; on the atomic happy path every outcome is `"created"`.
-      // Errored AND skipped entries surface as a MarfaError — the helper
-      // guarantees a fresh create on every call, so any non-created
-      // outcome (typically a `create_only` collision on a caller-supplied
-      // `input.item.id`) is a programming error rather than success.
+      // Any non-created outcome (errored or skipped) is a programming error
+      // here — the helper guarantees fresh creates. Skips typically mean a
+      // caller-supplied `input.item.id` collided with an existing row.
       const errored = bulkResult.results.find((r) => r.outcome === "errored");
       if (errored) {
         throw new MarfaError(
@@ -902,10 +882,7 @@ export class MarfaClient {
         );
       }
 
-      // Hydrate the items via individual reads — `items.bulk` returns
-      // `BulkResultEntry { id, outcome }`, not the full `Item`. One round
-      // trip per item; acceptable for the typical attachment-count
-      // (1–5) and avoids needing a second wire endpoint. Concurrent.
+      // `items.bulk` returns ids, not full Items — hydrate with concurrent GETs.
       const hydrated = await Promise.all(
         [hostId, ...attachmentIds].map((id) => this.items.get(id)),
       );
@@ -948,16 +925,11 @@ export class MarfaClient {
           );
         }
       }
-      // The server returns 200 for dry-run (synchronous) and 202 + a
-      // BulkActionJob envelope for everything else. `bulkAction()` polls
-      // internally and resolves with the same BulkActionResult shape
-      // regardless, keeping callers unaware of the async job lifecycle.
       const { data, status } = await this.transport.requestWithStatus<
         BulkActionResult | BulkActionJob
       >("POST", "/items/bulk-actions", { body: input });
       if (status === 200) {
-        // dry_run path stayed synchronous; the response IS the result.
-        return data as BulkActionResult;
+        return data as BulkActionResult; // dry_run is synchronous
       }
       const queued = data as BulkActionJob;
       const final = await pollUntilTerminal({
@@ -1029,7 +1001,6 @@ export class MarfaClient {
           "/items/bulk-actions",
           { body: input },
         );
-      // Server returns 202 for the async path; defensive check.
       if (status !== 202) {
         throw new MarfaError(
           "internal_error",

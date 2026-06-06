@@ -96,10 +96,6 @@ export function authAccountRoutes(
         "Account deletion requires an authenticated caller",
       );
     }
-    // Look up the auth_user email + name. We use storage.users where
-    // available to fetch the bridged row; the canonical email lives on
-    // auth_user — but rather than thread a dedicated lookup we read it
-    // off the user record where possible.
     let email: string | null = null;
     let name: string | null = null;
     if (storage.users) {
@@ -222,7 +218,7 @@ export function authAccountRoutes(
       });
     }
 
-    // No plaintext email in audit details — same rationale as the delete_requested site above.
+    // No plaintext email in audit details — same rationale as POST /account/delete above.
     void storage.audit.log({
       action: "auth.account.delete_confirmed",
       resource_type: "auth_account",
@@ -355,10 +351,9 @@ async function insertVerification(
 ): Promise<void> {
   const db = storage.betterAuthDb;
   if (!db) throw new Error("betterAuthDb not wired");
-  // Branch on dialect. Both schemas expose auth_verification with the
-  // same column set; the row shape is identical except for timestamp
-  // encoding (Date → INTEGER on SQLite, Date → TIMESTAMP on PG —
-  // Drizzle's `mode: "date" | "timestamp"` round-trips the JS Date).
+  // Both schemas expose auth_verification with the same column shape.
+  // Only difference is timestamp encoding (Date → INTEGER on SQLite,
+  // Date → TIMESTAMP on PG) and that SQLite queries require `.run()`.
   const now = new Date();
   const id = randomBytes(16).toString("hex");
   if (storage.betterAuthDialect === "pg") {
@@ -466,10 +461,6 @@ async function findVerificationByValue(
 ): Promise<VerificationRow | null> {
   const db = storage.betterAuthDb;
   if (!db) return null;
-  // Drizzle query builder on both dialects. `like` + `eq` parameterise
-  // everything; both schemas expose the same column shape so the only
-  // dialect difference is `.get()` (sqlite) vs result-array destructure
-  // (pg) and the dynamic schema import.
   if (storage.betterAuthDialect === "pg") {
     const { auth_verification } = await import("../storage/pg/schema.js");
     const rows = await (

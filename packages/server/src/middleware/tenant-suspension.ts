@@ -86,28 +86,21 @@ export function evictTenantStatus(tenantId: string): void {
  */
 export function tenantSuspensionMiddleware(storage: Storage) {
   return createMiddleware<AppEnv>(async (c, next) => {
-    // Read-shaped methods always pass through.
     const method = c.req.method;
     if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
       return next();
     }
 
     const apiKey = c.get("apiKey");
-    // Anonymous or tenant-less credentials are out of scope.
     if (!apiKey?.tenant_id) {
       return next();
     }
 
-    // Platform-admin bypass: operators must be able to suspend /
-    // unsuspend / quota-adjust on a suspended tenant.
     if (apiKey.is_platform) {
       return next();
     }
 
-    // Tenant store is optional on bare Storage shapes (single-tenant
-    // self-hosts can skip it entirely). When unavailable, fail open —
-    // the surface degrades to today's behaviour. Hosted deployments
-    // always have it.
+    // Fail open when the tenant store is absent (single-tenant self-hosts).
     const tenants = storage.tenants;
     if (!tenants) {
       return next();

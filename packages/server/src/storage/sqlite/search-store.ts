@@ -61,7 +61,6 @@ export class SqliteSearchStore implements SearchStore {
       params.push(filters.tenantId);
     }
 
-    // Default: exclude trashed
     if (filters.state) {
       conditions.push("AND i.state = ?");
       params.push(filters.state);
@@ -89,8 +88,7 @@ export class SqliteSearchStore implements SearchStore {
       conditions.push("AND i.type NOT LIKE 'system.%'");
     }
 
-    // Tags filter — items must have ALL specified tags. Uses the same
-    // json_each pattern as /items.
+    // Items must have ALL specified tags (AND semantics).
     if (filters.tags && filters.tags.length > 0) {
       for (const tag of filters.tags) {
         conditions.push(
@@ -100,7 +98,6 @@ export class SqliteSearchStore implements SearchStore {
       }
     }
 
-    // Type permission filtering
     if (filters.allowed_types) {
       // Empty allowed_types means "no readable types" — see
       // SqliteItemStore.list. Must filter to zero rows.
@@ -120,7 +117,6 @@ export class SqliteSearchStore implements SearchStore {
       }
     }
 
-    // Advanced query language filter
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
       const { clause, params: filterParams } = filterToRawSql(
@@ -173,7 +169,6 @@ export class SqliteSearchStore implements SearchStore {
     const rows = await this.db.all<Record<string, unknown>>(builder);
 
     return rows.map((row) => ({
-      // tier is a plain text column; rowToItem normalizes the value.
       item: rowToItem({
         ...row,
       } as unknown as typeof items.$inferSelect),

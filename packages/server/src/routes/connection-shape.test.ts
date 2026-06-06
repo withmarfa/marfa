@@ -12,16 +12,9 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-// Tests for the `integration` kind of system.connection. Exercises the
-// connector-specific fields end-to-end via POST /items + GET /items to
-// confirm the schema accepts them, persists them, and rejects invalid
-// enum values.
-//
-// Authority: writes to system.* require is_platform: true on the
-// credential. The bootstrap admin key created by createTestContext is
-// platform, so it can write any system type. The shape is reachable
-// through the generic items API, gated by the existing
-// platform-credential check.
+// system.connection shape tests. Exercises connector-specific fields via POST /items + GET /items:
+// schema acceptance, persistence, and enum rejection. Writes to system.* require is_platform: true;
+// the bootstrap admin key from createTestContext satisfies that gate.
 
 interface ItemResponse {
   item: {
@@ -78,7 +71,6 @@ describe("system.connection — kind: integration shape", () => {
     expect(props.next_run_at).toBe("2026-04-30T00:15:00.000Z");
     expect(props.feed_activity).toBe(false);
 
-    // Round-trip: fetch by id and confirm the same shape comes back.
     const getRes = await request(ctx.app, "GET", `/items/${created.item.id}`, {
       key: ctx.adminKey,
     });
@@ -151,8 +143,6 @@ describe("system.connection — kind: integration shape", () => {
     expect(created.item.properties.feed_activity).toBe(true);
   });
 
-  // The new connector-specific fields are additive; existing
-  // app items must continue to validate without them.
   it("regression: app kind still validates", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,

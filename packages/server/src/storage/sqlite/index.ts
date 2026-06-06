@@ -56,11 +56,6 @@ export async function createSqliteStorage(
 > {
   const { db: baseDb, raw, close } = await createConnection(sqlitePath);
 
-  // Wrap the Drizzle instance with the per-request context proxy. Stores
-  // capture the wrapped instance and call `this.db.foo()` unchanged; the
-  // proxy redirects to the active transaction when one is in flight (set
-  // by `runInTransaction` below) and falls through to the base instance
-  // otherwise.
   const db = wrapDbWithRequestContext(baseDb);
 
   const versionStore = new SqliteVersionStore(db);
@@ -84,22 +79,16 @@ export async function createSqliteStorage(
   const connectionLeasedTokenStore = new SqliteConnectionLeasedTokenStore(db);
   const auditStore = new SqliteAuditStore(db);
   const eventLogStore = new SqliteEventLogStore(db);
-  // auth_session sweep — instance-wide, no tenant scoping.
   const authSessionStore = new SqliteAuthSessionStore(db);
   const edgeStore = new SqliteEdgeStore(db);
   const edgeTypeStore = new SqliteEdgeTypeStore(db);
 
-  // Warm up the in-memory edge-type registry from the custom_edge_types
-  // table. Fire-and-forget: if the DB is empty (fresh test) this is a
-  // no-op, and new rows added at runtime are registered on POST /edge-types.
   void edgeTypeStore.loadCustomEdgeTypes().then((types) => {
     for (const ct of types) {
       if (!isCoreEdgeType(ct.id)) registerEdgeTypeSchema(ct);
     }
   });
 
-  // Same pattern for the custom-type registry. libsql is async-only, so
-  // the warm-up is an explicit fire-and-forget rather than a sync call.
   void typeStore.loadCustomTypes().then((types) => {
     for (const t of types) {
       if (!isCoreType(t.id)) registerTypeSchema(t);

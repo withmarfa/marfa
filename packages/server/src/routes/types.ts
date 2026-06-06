@@ -340,17 +340,11 @@ const deleteTypeRoute = createRoute({
 export function typeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  // GET /types — list all registered types (core + custom)
   router.openapi(listTypesRoute, (c) => {
     requireAuth(c);
     return c.json(Array.from(TYPE_REGISTRY.values()), 200);
   });
 
-  // GET /types/:id — get a single type schema, inheritance-resolved.
-  // Walks the parent chain and returns the effective view of `fields`,
-  // `display_hints`, `version_policy`, and `merge_policy` so callers don't
-  // have to resolve inheritance themselves. Mirrors the resolver already used
-  // at 409-conflict assembly time.
   router.openapi(getTypeRoute, (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
@@ -361,16 +355,10 @@ export function typeRoutes(storage: Storage) {
     return c.json(schema, 200);
   });
 
-  // POST /types — register a custom type. Admins bypass the check;
-  // non-admin credentials (member keys, OAuth tokens) need the
-  // `metadata.types:write` scope explicitly granted. Default-off for
-  // new keys: type registration is a privileged capability that has to
-  // be deliberately granted.
   router.openapi(registerTypeRoute, async (c) => {
     requireMetadataPermission(c, "types", "write");
     const body = c.req.valid("json");
 
-    // Pre-validation for specific error codes
     if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
       throw new MarfaError(
         ErrorCode.INVALID_TYPE,
@@ -404,8 +392,7 @@ export function typeRoutes(storage: Storage) {
 
     const result = validateTypeSchema(body);
     if (!result.success) {
-      // Surface specific discriminators so clients (e.g. conformance
-      // conformance) can disambiguate from generic schema-shape failures.
+      // Surface specific error codes so clients can disambiguate from generic schema failures.
       const hasPropertyShadowsField = result.errors.some(
         (e) => e.code === "property_shadows_field",
       );
@@ -437,7 +424,6 @@ export function typeRoutes(storage: Storage) {
 
     const schema = result.data;
 
-    // Auto-generate label from type ID if not provided
     if (!schema.label) {
       const lastSegment = schema.id.split(".").pop() ?? schema.id;
       schema.label = lastSegment
@@ -469,7 +455,6 @@ export function typeRoutes(storage: Storage) {
     return c.json({ type: created }, 201);
   });
 
-  // PUT /types/:id — update a custom type (admin only)
   router.openapi(updateTypeRoute, async (c) => {
     requireAdmin(c);
     const { id } = c.req.valid("param");
@@ -519,12 +504,9 @@ export function typeRoutes(storage: Storage) {
         { diff },
       );
     }
-    if (diff === "major") {
-      // Field removal is a breaking diff; with integer versions we accept
-      // breaking changes when the version bumps. Wire-shape consumers see
-      // the diff class in the rejection / acceptance audit so SDK telemetry
-      // can warn appropriately.
-    }
+    // A major diff (field removal) is permitted; the version-bump check below enforces
+    // that the caller explicitly incremented the version, and the diff class surfaces
+    // in audit so SDK telemetry can warn consumers.
     if (!isValidVersionBump(diff, existing.version, schema.version)) {
       throw new MarfaError(
         ErrorCode.VERSION_BUMP_MISMATCH,
@@ -547,7 +529,6 @@ export function typeRoutes(storage: Storage) {
     return c.json({ type: updated }, 200);
   });
 
-  // DELETE /types/:id — delete a custom type (admin only)
   router.openapi(deleteTypeRoute, async (c) => {
     requireAdmin(c);
     const { id } = c.req.valid("param");

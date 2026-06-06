@@ -96,10 +96,9 @@ async function runSweep(
   const cutoffMs = nowMs - archiveAfterDays * 24 * 60 * 60 * 1000;
   const cutoffIso = new Date(cutoffMs).toISOString();
 
-  // Phase 1 — collect. Walk pages, collect IDs of items older than
-  // the cutoff. Do NOT transition while paginating; transitioning
-  // inside the page loop can silently skip rows under offset-based
-  // cursors.
+  // Phase 1 — collect. Walk pages; do NOT transition while paginating.
+  // Transitioning inside the page loop silently skips rows under
+  // offset-based cursors.
   let inspected = 0;
   let cursor: string | undefined;
   let pages = 0;
@@ -135,8 +134,7 @@ async function runSweep(
     stopReason = "page_cap";
   }
 
-  // Phase 2 — act. Pagination is complete, so transitioning items out
-  // of `state: active` here doesn't interact with the cursor.
+  // Phase 2 — act. Pagination complete; transitions can't shift the cursor.
   let archived = 0;
   for (const id of dueIds) {
     try {

@@ -4,13 +4,6 @@
  * (`IntegrationManifestSchema`) and the install pipeline persists it
  * onto the `system.connection` row.
  *
- * §2.3 fix: this file was out of date with the canonical schema. The shape now
- * matches it exactly:
- *   - `triggers[0]` carries cron under a nested `config: { cron }`
- *   - `tombstone_mapping` uses the canonical `state-trashed` value
- *   - `partial_write_mode` uses the hyphenated `all-or-nothing` value
- *   - `webhook_verification` discriminates on `method` (not `type`)
- *
  * The `manifest.test.ts` sibling parses this object through
  * `IntegrationManifestSchema` so future drift is caught locally.
  */

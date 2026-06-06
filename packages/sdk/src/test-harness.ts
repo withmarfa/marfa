@@ -140,7 +140,6 @@ export async function createKeysModeFixture(
   );
   const fetch = createTestFetch(app);
 
-  // Bootstrap: the first POST /keys against a fresh DB is auth-bypassed.
   const bootstrapRes = await fetch("http://localhost/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -219,15 +218,11 @@ export async function createHostedModeFixture(
   const fetch = createTestFetch(app);
   const ORIGIN = "http://localhost:0";
 
-  // Mint a unique identity per fixture so parallel tests don't collide.
   const suffix = Math.random().toString(36).slice(2, 12);
   const email = `sdk-hosted-${suffix}@test.invalid`;
   const handle = `sdk${suffix}`;
   const password = "correct horse battery staple";
 
-  // Sign up via the wrapped form endpoint (provisions tenants + users
-  // bridge atomically). Form-encoded body, mirrors the real sign-up
-  // page submission.
   const signUpForm = new URLSearchParams({
     email,
     name: handle,
@@ -250,9 +245,7 @@ export async function createHostedModeFixture(
     );
   }
 
-  // Mark email verified directly so the bearer-bound user is in a
-  // clean active state. (Sign-in itself isn't needed for the bearer
-  // path — we mint the API key from the storage layer.)
+  // Short-circuit email verification — sign-in isn't needed for the bearer path.
   const sqlite = storage as unknown as {
     __sqliteAll: (query: string) => Promise<unknown[]>;
     __sqliteRun: (
@@ -265,10 +258,8 @@ export async function createHostedModeFixture(
     [email.toLowerCase()],
   );
 
-  // Resolve auth_user.id → users.tenant_id via the bridge. The
-  // __sqliteAll helper in the test-utils harness doesn't accept
-  // bind params, so the email is interpolated; safe in test code
-  // where `email` is the locally-minted suffix-only string above.
+  // __sqliteAll doesn't accept bind params, so interpolate.
+  // Safe here: `email` is the locally-minted suffix-only string above.
   const lowered = email.toLowerCase().replace(/'/g, "''");
   const authUserRows = (await sqlite.__sqliteAll(
     `SELECT id FROM auth_user WHERE LOWER(email) = '${lowered}'`,
@@ -292,9 +283,6 @@ export async function createHostedModeFixture(
   }
   const tenantId = user.tenant_id;
 
-  // Mint a tenant_admin key bound to the user's tenant. This is the
-  // same shape the real sign-up flow stamps — tenant_admin role with
-  // `*: write` permissions, scoped to the user's tenant.
   const rawKey = `marfa_k1_sdk_hosted_${suffix}`;
   await storage.keys.create(
     {

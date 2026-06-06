@@ -123,7 +123,6 @@ export function loggerMiddleware() {
     const apiKey = c.get("apiKey");
     if (apiKey) entry.key_id = apiKey.id;
 
-    // Extract error code from response body if it's an error status
     if (c.res.status >= 400) {
       const errorCode = c.res.headers.get("X-Error-Code");
       if (errorCode) entry.error_code = errorCode;
@@ -131,8 +130,6 @@ export function loggerMiddleware() {
 
     process.stdout.write(JSON.stringify(entry) + "\n");
 
-    // Mirror to OTel logs (no-op unless a LoggerProvider is registered).
-    // Severity tracks the response status.
     const level: LogLevel =
       entry.status >= 500 ? "error" : entry.status >= 400 ? "warn" : "info";
     emitOtelLog(level, `${entry.method} ${entry.path}`, { ...entry });

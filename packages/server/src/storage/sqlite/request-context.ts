@@ -61,12 +61,6 @@ export type SqliteTxContext = Parameters<
 >[0];
 
 interface SqliteRequestContext {
-  /**
-   * Active Drizzle transaction object for this request. Stores issuing
-   * queries through the wrapped db will hit this transaction — and
-   * therefore the reserved connection holding the libsql `BEGIN
-   * IMMEDIATE` writer lock.
-   */
   tx: SqliteTxContext;
 }
 
@@ -104,12 +98,6 @@ export function wrapDbWithRequestContext(baseDb: DrizzleDb): DrizzleDb {
       const source: object = ctx?.tx ?? target;
 
       if (prop === "transaction") {
-        // Intercept .transaction(callback) so the new tx is installed on
-        // the ALS for the duration of the callback. This makes every
-        // downstream store call inside the tx flow through the held
-        // writer connection — without this, calls on the proxy would
-        // see no ALS, fall through to the base client, and hit
-        // SQLITE_BUSY.
         const original = Reflect.get(source, prop, source) as unknown;
         if (typeof original !== "function") return original;
         const fn = original as (...args: unknown[]) => unknown;

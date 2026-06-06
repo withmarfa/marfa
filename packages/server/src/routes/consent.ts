@@ -113,10 +113,7 @@ export function renderConsentScreen(params: ConsentParams): string {
   const scopeRow = (scope: ParsedScope, opts?: { checked?: boolean }) => {
     const literal = scopeLiteralFor(scope);
     const description = descriptionFor(scope.typePattern);
-    // Fall back to the literal only if there's no plain-English line
-    // for this scope — that should be rare (every core type + OIDC
-    // scope has a description). The literal is otherwise hidden.
-    const human = description ?? literal;
+    const human = description ?? literal; // literal fallback is rare; every core/OIDC scope has a description
     const checked = opts?.checked === false ? "" : "checked";
     return `<label class="scope-row">
       <span class="scope-row__text">${escapeHtml(human)}</span>
@@ -151,8 +148,6 @@ export function renderConsentScreen(params: ConsentParams): string {
 
     const total = descriptor.scopes.length;
 
-    // Removed-section variant: read-only list, no toggles, no
-    // disclosure (it's informational so should always be visible).
     if (descriptor.modifier === "removed") {
       const literals = descriptor.scopes.map((s) => scopeLiteralFor(s));
       return `<section class="section${modifierClass}">
@@ -165,10 +160,6 @@ export function renderConsentScreen(params: ConsentParams): string {
       </section>`;
     }
 
-    // All other sections collapse by default. Summary shows label +
-    // live "X enabled" / "X of Y enabled" count + chevron. Defaults
-    // are everything-on, so the initial state always reads "Y enabled"
-    // with no "of" — clean.
     const countLabel = `${String(total)} enabled`;
     return `<details class="section${modifierClass}" data-section>
       <summary class="section__head">
@@ -202,8 +193,6 @@ export function renderConsentScreen(params: ConsentParams): string {
         .map((lit) => parsedByLiteral.get(lit))
         .filter((s): s is ParsedScope => s !== undefined);
 
-    // Order: the change first ("New permissions"), then the carry-over,
-    // then the informational drop-list at the bottom.
     sections.push({
       label: "New permissions",
       hint: "These were not part of the previous grant.",
@@ -216,8 +205,7 @@ export function renderConsentScreen(params: ConsentParams): string {
       scopes: lookup(diff.kept),
     });
 
-    // Removed section uses literals only — wrap in dummy ParsedScopes
-    // so the descriptor + render loop stay uniform.
+    // Wrap removed literals in ParsedScope objects so the render loop stays uniform.
     const removedAsParsed: ParsedScope[] = diff.removed.map((literal) => {
       const lastColon = literal.lastIndexOf(":");
       const typePattern = lastColon > 0 ? literal.slice(0, lastColon) : literal;
@@ -261,19 +249,12 @@ export function renderConsentScreen(params: ConsentParams): string {
     ? `<span class="client-name">${safeClient}</span> needs different permissions than before.`
     : `<span class="client-name">${safeClient}</span> is asking to access your Marfa space. Untick anything you'd rather not share.`;
 
-  // Inline error banner — survives across pages because the POST handler
-  // 302s back to GET with `?error=...` on validation failure rather than
-  // re-rendering.
   const errorBanner = params.errorMessage
     ? `<div class="alert alert--error" role="alert">${escapeHtml(params.errorMessage)}</div>`
     : "";
 
-  // Live "X enabled" / "X of Y enabled" count on each section summary.
-  // Without JS the count still renders correctly at the initial state
-  // (everything-on → "Y enabled"); the script just keeps it accurate
-  // when the user toggles individual scopes. Also stops propagation on
-  // toggle clicks so flicking a switch inside the summary doesn't also
-  // collapse the section.
+  // Enhancement: keeps the "X enabled" count accurate as toggles flip.
+  // Stops propagation on toggle clicks so a switch inside a summary doesn't collapse the section.
   const enhancementScript = `
     (function () {
       var sections = document.querySelectorAll('[data-section]');

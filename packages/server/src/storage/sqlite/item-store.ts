@@ -192,7 +192,6 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  // Fix 4: trashed items return null (404 to callers)
   async get(
     id: string,
     tenantId?: string,
@@ -291,7 +290,7 @@ export class SqliteItemStore implements ItemStore {
       if (filters.type.endsWith(".*")) {
         conditions.push(like(items.type, filters.type.slice(0, -1) + "%"));
       } else {
-        // Include subtypes: core.entity matches core.entity, core.entity.person, etc.
+        // Include subtypes: `core.entity` also matches `core.entity.person`, etc.
         const typeClause = or(
           eq(items.type, filters.type),
           like(items.type, filters.type + ".%"),
@@ -314,7 +313,6 @@ export class SqliteItemStore implements ItemStore {
       conditions.push(sql`${items.type} NOT LIKE 'system.%'`);
     }
 
-    // Timestamp range filters — uses COALESCE(timestamp, created_at) as effective date
     if (filters.since) {
       conditions.push(
         sql`COALESCE(${items.timestamp}, ${items.created_at}) >= ${filters.since}`,
@@ -326,7 +324,6 @@ export class SqliteItemStore implements ItemStore {
       );
     }
 
-    // Fix 6: tags filter — items must have ALL specified tags
     if (filters.tags && filters.tags.length > 0) {
       for (const tag of filters.tags) {
         conditions.push(
@@ -497,7 +494,6 @@ export class SqliteItemStore implements ItemStore {
           .run();
       };
 
-      // Fast path: version omitted — always merge, no conflict detection
       if (input.version === undefined || row.version === input.version) {
         if (
           shouldCreateVersion(
@@ -555,10 +551,7 @@ export class SqliteItemStore implements ItemStore {
         });
       }
 
-      // Fix 5: any version < current is a conflict, not necessarily invalid
       if (!ancestor) {
-        // Version doesn't exist in history — still a conflict scenario
-        // (client has a version we've never seen, or version 0 meaning "never seen")
         return {
           error: { code: "version_conflict" as const, status: 409 as const },
           current: { version: row.version, properties: currentProps },
@@ -584,7 +577,6 @@ export class SqliteItemStore implements ItemStore {
         } satisfies ConflictResponse;
       }
 
-      // Auto-merge
       if (
         shouldCreateVersion(
           latestTs,
@@ -665,8 +657,7 @@ export class SqliteItemStore implements ItemStore {
       );
     }
 
-    // Cascade: metadata and versions are deleted via ON DELETE CASCADE.
-    // Search index must be removed explicitly.
+    // metadata and versions cascade; search index must be removed explicitly.
     await this.db.delete(items).where(this.tenantWhere(id, tenantId)).run();
 
     await this.searchStore.remove(id);
@@ -768,7 +759,7 @@ export class SqliteItemStore implements ItemStore {
       throw new MarfaError(ErrorCode.INVALID_TRANSITION, error);
     }
 
-    // State transitions always create a version snapshot
+    // State transitions always snapshot current properties.
     await this.versionStore.create(
       id,
       row.version,
@@ -811,7 +802,6 @@ export class SqliteItemStore implements ItemStore {
 
     sqlText += " GROUP BY state";
 
-    // Stitch ?-split fragments with drizzle parameter binding.
     const fragments = sqlText.split("?");
     const builder = sql.empty();
     for (let i = 0; i < fragments.length; i++) {

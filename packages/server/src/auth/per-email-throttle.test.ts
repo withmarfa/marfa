@@ -124,7 +124,6 @@ describe("PerEmailThrottle", () => {
     );
     expect(a.allowed).toBe(true);
     expect(b.allowed).toBe(false);
-    // Different email — fresh counter.
     const c = await t.attempt(
       "bob@example.com",
       new Date(1_000_200).toISOString(),

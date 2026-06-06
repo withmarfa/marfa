@@ -9,10 +9,6 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
-// ---------------------------------------------------------------------------
-// tenants + users (hosted mode)
-// ---------------------------------------------------------------------------
-
 export const tenants = sqliteTable("tenants", {
   id: text("id").primaryKey(),
   name: text("name"),
@@ -58,10 +54,6 @@ export const users = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// items
-// ---------------------------------------------------------------------------
-
 export const items = sqliteTable(
   "items",
   {
@@ -93,10 +85,7 @@ export const items = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// metadata (1:1 sidecar for items)
-// ---------------------------------------------------------------------------
-
+// metadata: 1:1 sidecar for items
 export const metadata = sqliteTable("metadata", {
   item_id: text("item_id")
     .primaryKey()
@@ -104,10 +93,6 @@ export const metadata = sqliteTable("metadata", {
   tags: text("tags").notNull().default("[]"),
   extensions: text("extensions").notNull().default("{}"),
 });
-
-// ---------------------------------------------------------------------------
-// edges (first-class typed relationships between items)
-// ---------------------------------------------------------------------------
 
 export const edges = sqliteTable(
   "edges",
@@ -137,10 +122,6 @@ export const edges = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// versions (item property snapshots)
-// ---------------------------------------------------------------------------
-
 export const versions = sqliteTable(
   "versions",
   {
@@ -155,10 +136,6 @@ export const versions = sqliteTable(
   },
   (table) => [index("idx_versions_item_id").on(table.item_id)],
 );
-
-// ---------------------------------------------------------------------------
-// api_keys
-// ---------------------------------------------------------------------------
 
 export const apiKeys = sqliteTable(
   "api_keys",
@@ -197,9 +174,8 @@ export const apiKeys = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// blobs (metadata only — actual files on filesystem)
-// ---------------------------------------------------------------------------
-
+// blobs
+//
 // Blob rows are per-tenant. The same `hash` can appear under multiple
 // tenant_ids; the file system / S3 backend dedupes physically (one file
 // per hash), but the blobs table carries one row per (tenant_id, hash) so
@@ -227,17 +203,11 @@ export const blobs = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// OAuth tables
-// ---------------------------------------------------------------------------
-
-// OAuth client + token storage is owned by the
-// @better-auth/oauth-provider plugin (auth_oauth_client +
-// auth_oauth_access_token + auth_oauth_refresh_token), so no
-// oauth_clients / oauth_tokens tables are defined here. See migration
-// 0048_drop_legacy_oauth.sql for the drop DDL.
-
-// ---------------------------------------------------------------------------
 // oauth_device_codes — Device Authorization Grant (RFC 8628)
+//
+// OAuth client + token storage is owned by the @better-auth/oauth-provider
+// plugin (auth_oauth_client + auth_oauth_access_token +
+// auth_oauth_refresh_token). See migration 0048_drop_legacy_oauth.sql.
 // ---------------------------------------------------------------------------
 
 export const oauthDeviceCodes = sqliteTable(
@@ -281,10 +251,6 @@ export const oauthDeviceCodes = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// custom_types (runtime type registration)
-// ---------------------------------------------------------------------------
-
 export const customTypes = sqliteTable("custom_types", {
   id: text("id").primaryKey(),
   tenant_id: text("tenant_id"),
@@ -301,10 +267,6 @@ export const customEdgeTypes = sqliteTable("custom_edge_types", {
   updated_at: text("updated_at").notNull(),
 });
 
-// ---------------------------------------------------------------------------
-// outbound_webhooks
-// ---------------------------------------------------------------------------
-
 export const outboundWebhooks = sqliteTable("outbound_webhooks", {
   id: text("id").primaryKey(),
   tenant_id: text("tenant_id"),
@@ -316,10 +278,6 @@ export const outboundWebhooks = sqliteTable("outbound_webhooks", {
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
-
-// ---------------------------------------------------------------------------
-// outbound_webhook_deliveries
-// ---------------------------------------------------------------------------
 
 export const outboundWebhookDeliveries = sqliteTable(
   "outbound_webhook_deliveries",
@@ -343,10 +301,6 @@ export const outboundWebhookDeliveries = sqliteTable(
     index("idx_outbound_webhook_deliveries_webhook_id").on(table.webhook_id),
   ],
 );
-
-// ---------------------------------------------------------------------------
-// inbound_webhooks
-// ---------------------------------------------------------------------------
 
 export const inboundWebhooks = sqliteTable(
   "inbound_webhooks",
@@ -383,10 +337,6 @@ export const inboundWebhooks = sqliteTable(
     index("idx_inbound_webhooks_connection_id").on(table.connection_id),
   ],
 );
-
-// ---------------------------------------------------------------------------
-// inbound_webhook_events
-// ---------------------------------------------------------------------------
 
 export const inboundWebhookEvents = sqliteTable(
   "inbound_webhook_events",
@@ -517,10 +467,6 @@ export const connectionLeasedTokens = sqliteTable(
 // authorization code state machine is stored in `auth_verification`
 // via the plugin's internal adapter.
 
-// ---------------------------------------------------------------------------
-// audit_log (append-only audit trail)
-// ---------------------------------------------------------------------------
-
 export const auditLog = sqliteTable(
   "audit_log",
   {
@@ -548,10 +494,7 @@ export const auditLog = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// bulk_action_jobs (see pg/schema.ts for design notes)
-// ---------------------------------------------------------------------------
-
+// bulk_action_jobs: see pg/schema.ts for design notes
 export const bulkActionJobs = sqliteTable(
   "bulk_action_jobs",
   {
@@ -585,10 +528,7 @@ export const bulkActionJobs = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// rate_limit_windows (see pg/schema.ts for design notes)
-// ---------------------------------------------------------------------------
-
+// rate_limit_windows: see pg/schema.ts for design notes
 export const rateLimitWindows = sqliteTable(
   "rate_limit_windows",
   {
@@ -603,18 +543,10 @@ export const rateLimitWindows = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// settings (generic single-row-per-key KV for instance-wide flags)
-// ---------------------------------------------------------------------------
-
 export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
 });
-
-// ---------------------------------------------------------------------------
-// tenant_quotas (per-tenant resource caps)
-// ---------------------------------------------------------------------------
 
 export const tenantQuotas = sqliteTable("tenant_quotas", {
   tenant_id: text("tenant_id").primaryKey(),
@@ -625,10 +557,6 @@ export const tenantQuotas = sqliteTable("tenant_quotas", {
   rate_per_minute_limit: integer("rate_per_minute_limit"),
   updated_at: text("updated_at").notNull(),
 });
-
-// ---------------------------------------------------------------------------
-// event_log (SSE event persistence for replay)
-// ---------------------------------------------------------------------------
 
 export const eventLog = sqliteTable(
   "event_log",
@@ -665,16 +593,15 @@ export const eventLog = sqliteTable(
 // ---------------------------------------------------------------------------
 // Better Auth tables (auth_* prefix, isolated from marfa's own users table)
 //
-// These are owned and managed by the better-auth library; the schema mirrors
-// what `npx @better-auth/cli generate` produces, hand-translated to Drizzle
-// for both dialects. Column names use the camelCase keys better-auth expects.
-// ---------------------------------------------------------------------------
-
-// Timestamp columns use `integer({ mode: "timestamp" })` (Unix seconds)
-// so the better-auth Drizzle adapter — which forwards JS Date objects —
-// can round-trip without manual ISO conversion. Stored as INTEGER under
-// the hood; this deviates from marfa's TEXT-ISO convention but stays
+// Owned and managed by better-auth; mirrors `npx @better-auth/cli generate`,
+// hand-translated to Drizzle for both dialects. Column names use the camelCase
+// keys better-auth expects.
+//
+// Timestamp columns use `integer({ mode: "timestamp" })` (Unix seconds) so
+// the Drizzle adapter — which forwards JS Date objects — can round-trip without
+// manual ISO conversion. Deviates from marfa's TEXT-ISO convention but stays
 // localised to the auth_* island.
+// ---------------------------------------------------------------------------
 export const auth_user = sqliteTable(
   "auth_user",
   {
@@ -765,21 +692,16 @@ export const auth_verification = sqliteTable(
 // ---------------------------------------------------------------------------
 // @better-auth/oauth-provider plugin tables
 //
-// Four tables owned by the OAuth Provider plugin: client registrations,
-// consent grants, opaque access tokens, opaque refresh tokens.
-// Naming matches the auth_* convention; the plugin's model→table mapping
-// is wired explicitly in `auth/instance.ts` via the `schema` override.
+// Four tables: client registrations, consent grants, opaque access tokens,
+// opaque refresh tokens. Model→table mapping wired in `auth/instance.ts`.
 //
-// Cross-table foreign keys on `clientId` (the unique business key, not
-// the PK `id`) are NOT enforced at the DB level — SQLite supports FKs to
-// unique columns but the parity with PG is cleaner if we leave it as
-// application-enforced (the plugin's own queries maintain integrity).
-// Cascade behavior on auth_user / auth_session is preserved because
-// those reference the PK and work in both dialects.
+// FKs on `clientId` (the business key, not the PK) are application-enforced —
+// SQLite supports FKs to unique columns but leaving them out keeps parity with
+// PG cleaner. Cascade behavior on auth_user / auth_session is preserved where
+// those reference the PK.
 //
-// Token columns store the OUTPUT of `storeTokens.hash` — wired in
-// `auth/instance.ts` to `hashApiKey(token, salt)` so bearer middleware
-// can compute the same value at lookup time.
+// Token columns store the OUTPUT of `storeTokens.hash` (wired to
+// `hashApiKey(token, salt)`) so bearer middleware can compute the same value.
 // ---------------------------------------------------------------------------
 
 export const auth_oauth_client = sqliteTable(

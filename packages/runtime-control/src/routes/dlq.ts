@@ -213,7 +213,7 @@ export function registerDlqRoutes(
     try {
       for (const q of queues) {
         const queueId = await resolveQueueId(c.env, q.dlqName);
-        if (!queueId) continue; // queue not provisioned in this env — skip
+        if (!queueId) continue; // not provisioned in this env
         const messages = await pullMessages(c.env, queueId, {
           batchSize: 100,
           visibilityTimeoutMs: 5000,
@@ -315,7 +315,7 @@ export function registerDlqRoutes(
         if (!queueId) continue;
         const messages = await pullMessages(c.env, queueId, {
           batchSize: 100,
-          visibilityTimeoutMs: 30_000, // longer than peek; we may take time to send + ack
+          visibilityTimeoutMs: 30_000, // longer than peek — allows time to send + ack
         });
         for (const m of messages) {
           if (extractConnectionId(m.body) !== connectionId) continue;
@@ -344,9 +344,9 @@ export function registerDlqRoutes(
             await ackMessages(c.env, queueId, [m.lease_id]);
             replayed.push(m.cf_message_id);
           } catch {
-            // Send succeeded but ack failed — the message reached the
-            // main queue but is still in the DLQ. Surface as skipped
-            // so the operator knows to retry the ack manually.
+            // Send succeeded but ack failed — message is duplicated in the
+            // main queue and still visible in the DLQ. Surface so the
+            // operator can retry the ack deliberately.
             skipped.push({
               cf_message_id: m.cf_message_id,
               reason: "ack_failed",

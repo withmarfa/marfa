@@ -285,7 +285,6 @@ describe("Profile routes", () => {
       expect(body.username).toBe("alice");
       expect(body.email).toBe("alice@example.com");
       expect(body.email_verified).toBe(true);
-      // No avatar set yet → placeholder URL.
       expect(body.avatar_url).toBe("/profile/placeholder/alice.svg");
     });
 
@@ -383,8 +382,7 @@ describe("Profile routes", () => {
         handle: "frank",
         email: "frank@example.com",
       });
-      // a is now using the handle "eve"; b tries to take it.
-      void a;
+      void a; // a holds "eve"; b tries to claim it
       const res = await request(hosted.app, "PATCH", "/profile/me", {
         key: b.apiKey,
         body: { username: "eve" },
@@ -478,7 +476,6 @@ describe("Profile routes", () => {
         handle: "kate",
         email: "kate@example.com",
       });
-      // Set then clear.
       const png = Buffer.from(
         "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63000100000005000100" +
           "0d0a2db40000000049454e44ae426082",

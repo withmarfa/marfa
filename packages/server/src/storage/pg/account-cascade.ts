@@ -79,20 +79,9 @@ export async function pgDeleteAccountCascade(
   authUserId: string,
   cutoffIso: string,
 ): Promise<boolean> {
-  // The cascade is conceptually one transaction. We drive it via
-  // `db.transaction(...)` directly (not via `storage.runInTransaction`)
-  // so every Drizzle call in this block uses the same `tx` reserved
-  // connection. (The search-index cleanup inside `ItemStore.bulkPurge`
-  // runs on its own db handle and is best-effort with respect to this
-  // transaction; on rollback the affected items still exist so a
-  // residual FTS row is self-healing on the next purger tick.)
-  //
-  // RLS bypass: this is a privileged operation that crosses tenant
-  // boundaries (auth_user is in the auth_* island; the user's tenant data
-  // lives behind the per-tenant RLS policies). The store calls run on the
-  // wrapped instance which falls through to the base when no ALS context
-  // is installed; the purger doesn't install one, so the cascade runs as
-  // the connection owner and is not policy-gated.
+  // Runs as the connection owner (no ALS tenant context installed by the purger),
+  // bypassing per-tenant RLS. Search-index cleanup inside bulkPurge is best-effort
+  // with respect to this transaction — residual FTS rows are self-healing.
   return db.transaction(async (tx) => {
     // ---- 0. Race-safety re-check. ----------------------------------------
     // SELECT ... FOR UPDATE on the auth_user row. The lock blocks any
@@ -125,10 +114,8 @@ export async function pgDeleteAccountCascade(
 
     if (tenantId) {
       // ---- 2. Connection-tied artefacts. --------------------------------
-      // The full per-connection uninstall pipeline isn't reachable from
-      // here; do the minimal subset (token revocation + inbound webhook
-      // teardown). The `system.connection` items themselves are
-      // dropped in step 4 along with everything else tenant-scoped.
+      // The full uninstall pipeline isn't reachable from storage; do the
+      // minimal subset. system.connection items themselves drop in step 4.
       await tx
         .delete(connectionOauthTokens)
         .where(eq(connectionOauthTokens.tenant_id, tenantId));
@@ -149,10 +136,6 @@ export async function pgDeleteAccountCascade(
       await tx.delete(edges).where(eq(edges.tenant_id, tenantId));
 
       // ---- 4. Items bulk-purge (cascades metadata + versions). ----------
-      // Goes through ItemStore.bulkPurge so the search index is cleaned
-      // per item. The store call runs outside `tx` (different db
-      // handle); on rollback FTS may have entries for items the
-      // transaction restored — self-healing next sweep.
       const tenantItems = await tx
         .select({ id: items.id })
         .from(items)
@@ -173,10 +156,7 @@ export async function pgDeleteAccountCascade(
       await tx.delete(tenantQuotas).where(eq(tenantQuotas.tenant_id, tenantId));
     }
 
-    // ---- 7. auth_verification rows naming this user. -----------------------
-    // Catches the cancel token, plus any in-flight verify-email /
-    // reset-password tokens whose `value` is the user id. Identifier
-    // prefix isn't load-bearing; the value match covers every flow.
+    // ---- 7. auth_verification rows (cancel token + any in-flight reset/verify tokens). --
     await tx
       .delete(auth_verification)
       .where(eq(auth_verification.value, authUserId));

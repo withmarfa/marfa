@@ -709,6 +709,5 @@ describe("POST /dlq/replay", () => {
     expect(res.status).toBe(401);
   });
 
-  // Vitest unused-import guard
-  void vi;
+  void vi; // suppress unused-import warning
 });

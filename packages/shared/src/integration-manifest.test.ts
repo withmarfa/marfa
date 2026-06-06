@@ -292,11 +292,8 @@ describe("parseManifestSchemaMajor", () => {
 
 describe("Integration manifest JSON Schema artefact", () => {
   it("the committed JSON Schema matches the in-memory output of z.toJSONSchema (drift guard)", () => {
-    // Regenerate in-memory and byte-compare against the committed file.
-    // The codegen script invocation is identical to this — when this
-    // assertion fails after a Zod bump or schema edit, run
-    // `pnpm --filter @withmarfa/shared run generate:manifest-schema` and
-    // commit the delta.
+    // When this fails after a schema edit, run:
+    //   pnpm --filter @withmarfa/shared run generate:manifest-schema
     const expected =
       JSON.stringify(z.toJSONSchema(IntegrationManifestSchema), null, 2) + "\n";
     const actual = readFileSync(COMMITTED_JSON_SCHEMA_PATH, "utf8");

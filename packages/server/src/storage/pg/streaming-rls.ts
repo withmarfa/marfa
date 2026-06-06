@@ -91,26 +91,18 @@ export async function acquireStreamRls(
 ): Promise<StreamRlsContext> {
   const reserved = await client.reserve();
   try {
-    // Session-level (third arg `false` = not LOCAL). Persists for the
-    // life of this reserved connection — including across any nested
-    // transactions the storage layer opens internally.
+    // Session-level (`false` = not LOCAL) — persists for the reserved
+    // connection's lifetime, including across nested storage transactions.
     await reserved`SELECT set_config('marfa.tenant_id', ${tenantId}, false)`;
-    // Role name is hardcoded — direct DDL is safe; SET ROLE doesn't
-    // accept parameters.
+    // SET ROLE doesn't accept parameters; hardcoded role name is safe.
     await reserved.unsafe(`SET ROLE marfa_app`);
   } catch (err) {
-    // Setup failed — connection may be in an unknown state. Try to
-    // discard and release; on cascade failure, destroy. The caller
-    // sees the original error.
     await disposeReserved(reserved);
     throw err;
   }
 
-  // Drizzle's postgres-js driver reads `client.options.parsers` /
-  // `.serializers` once at construction (driver.js:18) — postgres-js's
-  // `reserve()` returns a fresh `Sql(handler)` that doesn't propagate
-  // `.options`. Patch it from the parent client so Drizzle can build
-  // its session. Same options object → identical parser config.
+  // postgres-js `reserve()` returns a fresh `Sql(handler)` without `.options`.
+  // Patch it from the parent client so Drizzle gets the same parser config.
   const reservedSql = reserved as unknown as PgClient;
   if (!(reservedSql as { options?: unknown }).options) {
     Object.defineProperty(reservedSql, "options", {
@@ -120,9 +112,6 @@ export async function acquireStreamRls(
       enumerable: false,
     });
   }
-  // Drizzle over the reserved connection. Same Sql surface for query
-  // methods; the reserved instance pins every query to one pool
-  // connection (postgres-js's reserve semantics).
   const streamDb = drizzle(reservedSql, {
     schema,
   }) as unknown as PgDb;
@@ -169,38 +158,9 @@ export async function withStreamRls<T>(
 }
 
 /**
- * Reset session state and release. If reset fails (broken connection,
- * unexpected error), destroy the connection so it never returns to
- * the pool carrying the tenant role + setting — a leaked connection
- * would be served to a future request and read another tenant's
- * rows. Catastrophic. The cost of destroy is one re-establishment;
- * the cost of a leak is unbounded.
- *
- * Scoped reset, not `DISCARD ALL`. The cleanup invariant is "no leaked
- * tenant context on connection return to pool" — that's narrower than
- * `DISCARD ALL`, which also drops every prepared statement on the session.
- * postgres.js caches statement names client-side per `Sql` instance and
- * reuses them across reservations of the same underlying connection; nuking
- * the server side without a client-side invalidation hook surfaces as
- * `prepared statement "<name>" does not exist` 500s on the next request
- * that touches the recycled connection (~20% POST /items failure rate under
- * concurrent SSE + writes). The two statements below clear exactly what was
- * set in `acquireStreamRls`:
- *
- *   - `RESET ROLE` — back to the pool's default owner role.
- *   - `SELECT set_config('marfa.tenant_id', '', false)` — empty the
- *     custom GUC. Plain `RESET marfa.tenant_id` would also work but
- *     `set_config` matches the form used at acquire time and avoids
- *     surprising error semantics if the GUC was never set on this
- *     connection (idempotent on either path).
- *
- * RLS policies read `current_setting('marfa.tenant_id')` at execute
- * time, not bind time, so any prepared statement compiled while the
- * session carried tenant A's GUC executes safely under tenant B once
- * the GUC flips — the cache is value-agnostic.
- *
- * Must run outside a transaction; streaming routes don't wrap their
- * cleanup in one.
+ * Scoped reset + release. On failure, destroy the connection rather than
+ * returning it to the pool with leaked tenant context. See module-level
+ * doc for the DISCARD ALL / prepared-statement rationale.
  */
 async function disposeReserved(
   reserved: Awaited<ReturnType<PgClient["reserve"]>>,
@@ -209,11 +169,9 @@ async function disposeReserved(
     await reserved.unsafe(`RESET ROLE`);
     await reserved`SELECT set_config('marfa.tenant_id', '', false)`;
   } catch (err) {
-    // Reset failed — connection is in an unknown state. Destroy
-    // rather than return-to-pool. Log loud: silent connection
-    // destruction is hard to operate; an operator seeing this once
-    // is fine, repeatedly is a real signal (Postgres connectivity
-    // issue, or worse, a state-leak path we haven't anticipated).
+    // Reset failed — destroy rather than return a poisoned connection.
+    // Repeated warnings here are a real signal (connectivity issue or
+    // an unanticipated state-leak path).
     console.warn(
       "[streaming-rls] session reset failed; destroying reserved connection",
       err,
@@ -221,10 +179,9 @@ async function disposeReserved(
     try {
       await reserved.end();
     } catch {
-      // Already disconnected. Nothing more to do.
+      // Already disconnected.
     }
     return;
   }
-  // Cleaned successfully — return to the pool.
   reserved.release();
 }

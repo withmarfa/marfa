@@ -37,19 +37,16 @@ async function mintFreshBearer(fixture: HostedModeFixture): Promise<string> {
 /**
  * SDK round-trip coverage for `client.auth.account.*`.
  *
- * Server-side coverage of the routes themselves lives at
- * `packages/server/src/routes/auth-account.test.ts`. The
- * point of these tests is the SDK's transport shim — request/response
- * shape serialization against a live server, exercised via the
- * hosted-mode fixture. Each test is a discrete one-method round-trip
- * rather than chaining all three through one sequence so a failure
- * points at the right method.
+ * Server-side route coverage lives at
+ * `packages/server/src/routes/auth-account.test.ts`. These tests exercise
+ * the SDK's transport shim — request/response shape serialization against a
+ * live server via the hosted-mode fixture. Each test is a discrete
+ * one-method round-trip so a failure points at the right method.
  *
- * The account-deletion routes silently skip email send when no
- * `emailTransport` is configured (test harness leaves it undefined).
- * The confirm/cancel tokens still land in `auth_verification`; tests
- * read them via `readLatestAccountVerification` in lieu of
- * intercepting an email.
+ * The deletion routes skip email send when no `emailTransport` is configured
+ * (the test harness leaves it undefined). Confirm/cancel tokens still land in
+ * `auth_verification`; tests read them via `readLatestAccountVerification`
+ * rather than intercepting an email.
  */
 
 describe("client.auth.account — hosted-mode round-trip", () => {
@@ -85,7 +82,6 @@ describe("client.auth.account — hosted-mode round-trip", () => {
 
     await fixture.client.auth.account.confirmDelete(token ?? "");
 
-    // Lifecycle store is the source of truth for deletion_state.
     const lifecycle = fixture.storage.accountLifecycle;
     expect(lifecycle).toBeTruthy();
     const state = await lifecycle?.getAccountLifecycleByEmail(fixture.email);
@@ -101,16 +97,10 @@ describe("client.auth.account — hosted-mode round-trip", () => {
     );
     await fixture.client.auth.account.confirmDelete(token ?? "");
 
-    // Sanity-check pre-state so the assertion below proves something.
     const lifecycle = fixture.storage.accountLifecycle;
     const before = await lifecycle?.getAccountLifecycleByEmail(fixture.email);
     expect(before?.deletion_state).toBe("pending_deletion");
 
-    // confirmDelete revokes every API key in the tenant as part of the
-    // deletion cascade. A real user recovering via SDK would need a
-    // freshly-issued bearer; reproduce that here. The link-based GET
-    // cancel path doesn't exercise the SDK, so the bearer-via-fresh-key
-    // path is the right shape for SDK round-trip coverage.
     const recoveryKey = await mintFreshBearer(fixture);
     const recoveryClient = new MarfaClient({
       url: "http://localhost",
@@ -126,10 +116,8 @@ describe("client.auth.account — hosted-mode round-trip", () => {
   });
 
   it("cancel called outside pending_deletion state surfaces a structured error", async () => {
-    // Account is in `active` state — never ran requestDelete/confirmDelete.
-    // Server returns 400 with code `not_pending_deletion`; the SDK
-    // transport deserializes as a ValidationError. Exercises the
-    // SDK's error-shape handling for the cancel route.
+    // Server returns 400 `not_pending_deletion` for an active account;
+    // SDK transport deserializes it as a ValidationError.
     await expect(fixture.client.auth.account.cancel()).rejects.toThrow(
       ValidationError,
     );

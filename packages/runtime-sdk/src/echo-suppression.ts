@@ -92,15 +92,12 @@ export function createEchoSuppression(
       const raw = await storage.get(key(externalId));
       if (!raw) return false;
       const record = raw as PendingWriteRecord;
-      // Lag window may exceed echo window; both check against the
-      // same record but the lag check uses a distinct deadline.
+      // lag window may be longer than the echo window; recalculate deadline.
       const lagDeadline = record.expires_at_ms - echoMs + lagMs;
       const now = now_ms();
       if (lagDeadline <= now) {
-        // Delete on expiry so a connector that writes to `external_id`
-        // and never reads it back via `shouldSkipReactive` doesn't leak
-        // storage. Mirroring the expire-on-read here closes the second
-        // access path without a periodic prune.
+        // Delete on expiry to close the second access path without a prune loop;
+        // a connector that never calls shouldSkipReactive would otherwise leak.
         await storage.delete(key(externalId));
         return false;
       }

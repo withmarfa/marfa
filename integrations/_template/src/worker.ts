@@ -1,11 +1,6 @@
 /**
  * Cloudflare Worker entrypoint for the template Integration.
- *
- * All integrations follow this same shape:
- *   1. Import handlers + registerHandlers() from ./handlers.
- *   2. Re-export PerConnectionState so the DO binding resolves.
- *   3. Export a default { fetch } for any HTTP routes the integration
- *      needs (most don't — most work flows through queues).
+ * All integrations follow this same shape.
  */
 import { PerConnectionState, registerHandlers } from "./_runtime.js";
 

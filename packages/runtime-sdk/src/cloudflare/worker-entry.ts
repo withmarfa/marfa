@@ -123,16 +123,8 @@ export function buildConsumerEnv(
       const stub = env.PER_CONNECTION_STATE.get(
         env.PER_CONNECTION_STATE.idFromName(connectionId),
       );
-      // The SDK's cursor + echo + idempotency helpers consume the
-      // CursorStorageAdapter shape directly; the DO's internal
-      // PerConnectionStateCore exposes that subset of
-      // DurableObjectStorage. We can't reach into the DO from
-      // outside, so we hand back a façade that proxies each KV
-      // call through a request to the DO's fetch handler. SDK
-      // helpers run in the Worker isolate (matches the in-memory
-      // test harness shape) and reach into the DO state only
-      // through setAlarm / setNextRunAt on the alarm path. Storage
-      // proxy below is simple per-key over fetch.
+      // The consumer isolate can't access DO storage directly; proxy
+      // each KV call via the DO's fetch handler instead.
       return makeStorageProxy(stub);
     },
     mintCredential: (connectionId: string) =>
@@ -199,9 +191,8 @@ export function createIntegrationWorker<
     },
     async queue(batch: MessageBatch<QueueMessage>, env: E) {
       const consumerEnv = buildConsumerEnv(env, config);
-      // Cloudflare types `MessageBatch.messages` as readonly; consumeBatch
-      // takes a mutable array. The function never mutates the array — slice
-      // produces a fresh mutable copy.
+      // MessageBatch.messages is readonly; consumeBatch takes a mutable array.
+      // slice() produces a mutable copy without copying elements.
       await consumeBatch(consumerEnv, batch.messages.slice());
     },
   };

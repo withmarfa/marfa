@@ -189,14 +189,8 @@ function backoffSecondsFor(attempts: number): number {
  *     `msg.ack()` (acked counter). These messages aren't ours to
  *     process; acking lets Cloudflare drop them from the queue.
  *
- * The `outcome` counters stay populated for telemetry — dashboards
- * keyed on `acked / retried / failed` read them. The function does not
- * throw on retry: per-message `retry()` informs Cloudflare directly.
- *
- * The `createItem` `(source, source_id)` idempotency contract is
- * genuinely useful regardless of queue semantics; per-message ack
- * closes the immediate retry window without removing the underlying
- * contract.
+ * `outcome` counters are for telemetry. The function never throws; per-message
+ * `retry()` informs Cloudflare directly.
  */
 export async function consumeBatch(
   env: ConsumerEnvironment,
@@ -255,21 +249,15 @@ export async function consumeBatch(
       continue;
     }
 
-    // Build the context once and reuse it on the permanent-failure
-    // activity emission. If `buildConnectionContext` itself throws (e.g.
-    // the credential mint fails), `ctx` stays null and the activity
-    // emission falls back to a fresh build — preserving the old
-    // semantics where an unmintable credential surfaces as a retry
-    // (since the throw happens inside `dispatchThrew`).
+    // ctx is null until buildConnectionContext succeeds; activity emit falls
+    // back to a fresh build if it stays null (e.g. credential mint throws).
     let ctx: ConnectionContext | null = null;
     let result: HandlerResult;
     let dispatchThrew = false;
-    // Captured separately for the `_failure_reason` stamp on permanent
-    // failure. `result.reason` carries the `"dispatch_threw: ..."` prefix
-    // because the activity-emit `detail.reason` path consumes that shape;
-    // the DLQ-stamp path uses the bare error message + class name so the
-    // flattened `<class>: <message> (attempts: <n>)` operator string
-    // isn't double-prefixed.
+    // Captured separately so the DLQ stamp uses the bare error message +
+    // class name. result.reason carries a "dispatch_threw: ..." prefix for
+    // the activity-emit path; the DLQ path wants the raw message to avoid
+    // a double-prefix in the flattened operator string.
     let thrownClassName: string | null = null;
     let thrownMessage: string | null = null;
     try {
@@ -280,14 +268,10 @@ export async function consumeBatch(
       thrownClassName =
         err instanceof Error ? err.constructor.name || "Error" : "unknown";
       thrownMessage = err instanceof Error ? err.message : String(err);
-      // Surface the throw via console.error. The activity-emit backstop
-      // below relies on a working ConnectionClient (Marfa reachable +
-      // runtime credential mintable); when the throw is a mint /
-      // credential-bootstrap failure, the backstop fails too and the
-      // message gets retried + DLQ'd in silence. console.error here is
-      // the only operator-visible signal in that degraded mode —
-      // wrangler tail / Cloudflare logs surface it before the retry
-      // ladder consumes the message.
+      // console.error is the only operator-visible signal when the throw is a
+      // mint failure (credential bootstrap) — the activity-emit backstop
+      // can't reach Marfa in that case either, so wrangler tail / CF logs
+      // is all there is before the retry ladder consumes the message.
       console.error(
         `[runtime-sdk:consumeBatch] dispatch threw on ${message.kind} for connection ${message.connection_id} (integration=${message.integration_name}, attempts=${String(msg.attempts)}): ${thrownClassName}: ${thrownMessage}`,
       );
@@ -319,25 +303,10 @@ export async function consumeBatch(
       continue;
     }
 
-    // Permanent failure — handler returned `retry: false`, OR dispatch
-    // threw on a retried attempt. Three best-effort observability steps:
-    //
-    //   1. Stamp `_failure_reason` and forward to the configured DLQ
-    //      producer. Operators peeking the DLQ see a real reason rather
-    //      than `null`.
-    //   2. Ack the original so it leaves the main queue.
-    //   3. Emit an `action_required` activity so the operator inbox
-    //      surfaces the failure.
-    //
-    // The DLQ forward, ack, and activity emit are independent — a
-    // failure in one does not block the others.
-    //
-    // At-least-once: if the DLQ send succeeds and the ack fails (or vice
-    // versa) the original message stays on the main queue and gets
-    // redelivered. On redelivery it'll fail again and produce a SECOND
-    // DLQ entry. This is intentional — losing the operator surface to a
-    // transient ack flake is worse than a duplicate DLQ entry, and the
-    // peek route already documents at-least-once semantics elsewhere.
+    // Permanent failure: stamp _failure_reason → DLQ forward → ack → activity emit.
+    // All three steps are independent. At-least-once: if the DLQ send succeeds
+    // and the ack fails, the original re-delivers and produces a second DLQ entry
+    // — intentional; a duplicate entry is preferable to a silent drop.
     const failureReason: FailureReason = {
       // On the throw path use the bare error message (not the
       // `dispatch_threw: …` prefixed `result.reason`) so the flattened
@@ -366,10 +335,7 @@ export async function consumeBatch(
     msg.ack();
     outcome.failed++;
     try {
-      // Reuse the dispatch-time ctx if we have it; only rebuild on the
-      // edge case where the original build threw and we still want to
-      // surface an activity (rare — the only path is "throw on retried
-      // attempt and the rebuild succeeds").
+      // Reuse ctx if available; rebuild only when the original build threw.
       const activityCtx = ctx ?? (await buildConnectionContext(env, message));
       await activityCtx.activity.emit({
         severity: "action_required",
@@ -381,8 +347,7 @@ export async function consumeBatch(
         },
       });
     } catch {
-      // Swallow — failing to emit the activity is itself logged at
-      // the runtime layer (Cloudflare logs).
+      // Swallow — activity emit failure is non-fatal.
     }
   }
 

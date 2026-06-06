@@ -91,9 +91,6 @@ describe("rate-limit middleware — cluster-shared cap", () => {
     const okCount = responses.filter((r) => r.status === 200).length;
     const rateLimitedCount = responses.filter((r) => r.status === 429).length;
 
-    // The shared store keeps the counter cluster-wide: 10 succeed,
-    // 2 hit 429. If the counter were per-instance, both apps would
-    // see independent caps of 10 and we'd see ~12 successes.
     expect(okCount).toBe(10);
     expect(rateLimitedCount).toBe(2);
   });

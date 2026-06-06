@@ -206,8 +206,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
 
     const session = await deps.auth.getSession(c.req.raw.headers);
     if (!session) {
-      // F10: preserve oauth_query → user returns to consent after sign-in.
-      // If the form was malformed (no oauth_query), fall back to bare /sign-in.
+      // Preserve oauth_query so the user returns to consent after sign-in.
       if (oauthQuery) {
         const returnTo = encodeURIComponent(`/auth/authorize?${oauthQuery}`);
         return c.redirect(`/auth/sign-in?return_to=${returnTo}`, 302);
@@ -219,13 +218,11 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       return c.text("Missing required form field: oauth_query", 400);
     }
 
-    // F1: parse `client_id` + `scope` from the verified `oauth_query`,
-    // NOT from form fields. The plugin signed the oauth_query — those
-    // values are tamper-evident. The form's `client_id` hidden field is
-    // for display only; the form's `scopes` checkboxes are the user's
-    // per-row selection (a subset of the signed scope set). Trusting the
-    // form would let a hostile POST write a projection for a different
-    // client than the one the user is actually approving.
+    // Parse `client_id` + `scope` from the verified `oauth_query`, NOT
+    // from form fields. The plugin signed the oauth_query — those values
+    // are tamper-evident. Trusting the form's client_id would let a
+    // hostile POST project a grant for a different client than the one
+    // the user is approving.
     const signedParams = new URLSearchParams(oauthQuery);
     const clientId = signedParams.get("client_id");
     const signedScopeStr = signedParams.get("scope") ?? "";
@@ -243,12 +240,11 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       .filter((v): v is string => typeof v === "string")
       .filter((s) => signedScopes.has(s));
 
-    // F2/F14: zero-scopes accept = deny. If the user submits with
-    // `accept=true` but no scope checkboxes ticked, the plugin would
-    // default to the originally-requested scope set (full grant) AND
-    // the Marfa projection would skip (so /security shows no grant
-    // while tokens are valid). Both outcomes are wrong. Treat as a
-    // deny + redirect back to consent with an error banner.
+    // Zero-scopes accept = deny. If the user submits `accept=true` with
+    // no checkboxes ticked, the plugin would default to the full originally-
+    // requested scope set AND the projection would skip — leaving /security
+    // showing no grant while tokens are valid. Treat as deny + redirect
+    // back with an error banner.
     if (accept && formScopes.length === 0) {
       return c.redirect(
         `/auth/authorize?${oauthQuery}&error=no_scopes_selected`,
@@ -259,13 +255,9 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const scopeStr = formScopes.join(" ");
 
     // Project system.connection + emit audit BEFORE proxying to the
-    // plugin. Best-effort — a projection failure must NOT block the
-    // user-facing consent flow (the OAuth token issuance will still
-    // succeed via the plugin; only the user-visible /security grant
-    // listing would be missing).
-    //
-    // F7: thread `client_ip` so the audit row carries it per CLAUDE.md
-    // client_ip threaded so the audit row carries the source address.
+    // plugin. Best-effort — a projection failure must not block the
+    // user-facing consent flow (OAuth token issuance still succeeds via
+    // the plugin; only the /security grant listing would be missing).
     if (accept) {
       try {
         await projectGrantOnConsent(deps.storage, {
@@ -325,11 +317,9 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           url?: string;
         };
         if (body.redirect && typeof body.url === "string") {
-          // F13: preserve plugin response headers on the 302
-          // normalisation. The plugin may set `Set-Cookie` (e.g. to
-          // refresh the session cookie) or other security headers; a
-          // bare `c.redirect(url)` constructs a fresh response and
-          // discards them.
+          // Preserve plugin response headers on the 302 normalisation —
+          // the plugin may set `Set-Cookie` (session refresh) or other
+          // security headers; a bare `c.redirect(url)` would discard them.
           const headers = new Headers(proxyResp.headers);
           headers.delete("content-type");
           headers.delete("content-length");
@@ -376,9 +366,8 @@ async function projectGrantOnConsent(
     tenantId = userRow?.tenant_id ?? undefined;
   }
 
-  // Look up existing projection. If present, this is a re-consent and we
-  // update the scopes in place. If absent, this is a first-time consent
-  // and we insert. Either way the audit row emits + publish event fires.
+  // Detect re-consent: update scopes in place if a projection exists,
+  // insert on first consent. Either way the audit row and publish fire.
   let grantItemId: string | null = null;
   if (typeof storage.oauthProvider?.findGrantItemId === "function") {
     grantItemId = await storage.oauthProvider.findGrantItemId({
@@ -394,17 +383,10 @@ async function projectGrantOnConsent(
   let priorScopes: string[] = [];
 
   if (grantItemId) {
-    // F6: route the update through `storage.items.update` instead of a
-    // raw SQL patch. items.update writes a `versions` snapshot (so
-    // re-consent appears in the row's version history), bumps
-    // `updated_at` + `version`, and lets the projection row behave like
-    // every other item under `/items?sort=updated_at`. Pre-fix, the
-    // `updateGrantScopes` storage helper bypassed all of that.
-    //
-    // Pre-fetch the existing row to (a) compute prior scopes for the
-    // F4 narrowing check and (b) make sure we PATCH (merge) rather than
-    // OVERWRITE properties — items.update does a properties merge, so
-    // unrelated extension data (if any) survives.
+    // Route the update through `storage.items.update` (not a raw SQL
+    // patch) so it writes a versions snapshot, bumps updated_at + version,
+    // and lets the row sort correctly under /items?sort=updated_at.
+    // Pre-fetch to compute prior scopes for the narrowing check below.
     const existing = await storage.items.get(grantItemId, tenantId);
     if (existing) {
       priorScopes = Array.isArray(existing.properties.scopes)
@@ -412,12 +394,10 @@ async function projectGrantOnConsent(
         : [];
     }
 
-    // F3: re-consent resets `status` to "active" + clears `revoked_at`.
-    // Without the reset, a re-consented row would keep its scopes
-    // updated but `status="revoked"` stuck → /security would hide the
-    // grant while the plugin issued tokens against it. Setting
-    // `revoked_at: undefined` makes JSON.stringify drop the key from
-    // the stored properties.
+    // Reset status + clear revoked_at on re-consent. Without this a
+    // re-consented row keeps status="revoked" — /security hides the grant
+    // while the plugin issues tokens against it. Setting revoked_at:
+    // undefined makes JSON.stringify drop the key from stored properties.
     const updated = await storage.items.update(
       grantItemId,
       {
@@ -440,12 +420,10 @@ async function projectGrantOnConsent(
     projectedItem = updated;
     eventType = "updated";
 
-    // F4: if the new scope set is a strict subset of the prior set
-    // (any prior scope is missing from new), the user has narrowed
-    // their consent. Existing access tokens were issued under the
-    // wider scope and should be revoked so RPs can't continue calling
-    // narrowed-away APIs. Refresh tokens are left intact — the next
-    // refresh will mint at the narrower scope.
+    // If the new scope set is narrower than the prior set, revoke
+    // existing access tokens — RPs must not continue calling narrowed-
+    // away APIs. Refresh tokens are left intact; they mint at the
+    // narrower scope on next refresh.
     if (
       typeof storage.oauthProvider?.revokeAccessTokensForGrant === "function"
     ) {
@@ -482,20 +460,13 @@ async function projectGrantOnConsent(
     eventType = "created";
   }
 
-  // F17: emit a pubsub event so webhook subscribers + SSE clients see
-  // the new / updated grant. Mirrors the canonical pattern in
-  // `routes/items.ts`. Device-flow's `createUserAppGrant` already does
-  // this for its insert path; code-flow consent was the missing site.
-  // Fire-and-forget — a publish failure (e.g. cycle-budget overflow)
-  // must NOT block the user-facing consent flow.
+  // Fire-and-forget — a publish failure must not block consent.
   void publish({
     type: eventType,
     item: projectedItem,
     tenantId,
   });
 
-  // Thread `client_ip` so every audit row carries the resolved client IP
-  // and operators can correlate grants with the source request.
   void storage.audit.log({
     tenant_id: tenantId ?? null,
     action: "auth.grant.created",
@@ -516,12 +487,11 @@ async function projectGrantOnConsent(
 // ---------------------------------------------------------------------------
 
 /**
- * F12: look up the full client row from the plugin's `auth_oauth_client`
- * table. Returns null when the row genuinely doesn't exist (unknown
- * `client_id` → callers 404). When the row exists but `name` is null
- * (a DCR client registered without `client_name`, which RFC 7591 §2
- * allows), the caller falls back to displaying the `client_id` itself
- * — we don't 404 a legitimate but unnamed client.
+ * Look up the full client row from the plugin's `auth_oauth_client` table.
+ * Returns null when the row doesn't exist (callers 404). When the row
+ * exists but `name` is null (a DCR client registered without `client_name`
+ * per RFC 7591 §2), the caller falls back to displaying the `clientId`
+ * rather than 404'ing a legitimate but unnamed client.
  */
 async function resolveClient(
   storage: Storage,
@@ -647,17 +617,16 @@ const CONSENT_TYPE_DESCRIPTIONS: Record<string, string> = {
 
 /**
  * Build the `{ typePattern: description }` map the renderer uses for
- * the plain-English hint per scope row. Three sources by kind (F11):
+ * the plain-English hint per scope row. Sources by kind:
  *
  *  - **Type** scopes → `TYPE_REGISTRY.get(typeId)?.description`
  *  - **Edge** scopes → `EDGE_TYPE_REGISTRY.get(edgeType)?.description`
  *  - **OIDC** scopes → `OIDC_SCOPE_DESCRIPTIONS` built-in map
- *  - **Metadata** scopes → skipped (operator-tooling scopes that don't
- *    need a UI description; the literal `metadata:read` etc. is
- *    self-explanatory to the audience that requests them)
+ *  - **Metadata** scopes → skipped (operator-tooling scopes; the literal
+ *    `metadata:read` etc. is self-explanatory to the audience that
+ *    requests them)
  *
- * Missing entries fall through to the renderer rendering just the
- * literal — never an error.
+ * Missing entries fall through — the renderer shows just the literal.
  */
 export function buildScopeDescriptions(
   scopes: ParsedScope[],
@@ -691,8 +660,6 @@ export function buildScopeDescriptions(
       continue;
     }
     if (s.kind === "metadata") continue;
-    // Same pattern for type scopes — curated copy first, registry
-    // description as fallback (covers custom types).
     const curated = CONSENT_TYPE_DESCRIPTIONS[s.typePattern];
     if (curated) {
       out[s.typePattern] = curated;

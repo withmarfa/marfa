@@ -355,21 +355,15 @@ const listDeliveriesRoute = createRoute({
 export function webhookRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  // POST /webhooks — create a new webhook
   router.openapi(createWebhookRoute, async (c) => {
-    // tenant_admin can manage own-tenant webhooks. Storage layer's
-    // list/get/update/delete already filter by `key.tenant_id`, so
-    // cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    // tenant_admin only. Storage filters by key.tenant_id, so cross-tenant
+    // attempts return WEBHOOK_NOT_FOUND rather than 403.
     const key = requireTenantAdmin(c);
 
-    // Per-tenant quota check. No-op for keys without tenant_id
-    // (single-tenant + platform admin). Throws 429 quota_exceeded if
-    // the new webhook would push the tenant past its ceiling.
     await enforceQuota(c, storage, "webhooks");
 
     const body = c.req.valid("json");
 
-    // URL validation beyond what Zod handles
     try {
       new URL(body.url);
     } catch {
@@ -379,7 +373,6 @@ export function webhookRoutes(storage: Storage) {
       );
     }
 
-    // Validate event types against known set
     for (const event of body.events) {
       if (!VALID_EVENTS.has(event)) {
         throw new MarfaError(
@@ -399,7 +392,6 @@ export function webhookRoutes(storage: Storage) {
       key.tenant_id,
     );
 
-    // Return full secret on creation so the caller can store it
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,
@@ -411,10 +403,7 @@ export function webhookRoutes(storage: Storage) {
     return c.json(webhook, 201);
   });
 
-  // GET /webhooks — list all webhooks
   router.openapi(listWebhooksRoute, async (c) => {
-    // tenant_admin can manage own-tenant webhooks. Storage layer filters
-    // by `key.tenant_id`, so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
     const webhooks = await storage.outboundWebhooks.list(key.tenant_id);
     return c.json(
@@ -428,10 +417,7 @@ export function webhookRoutes(storage: Storage) {
     );
   });
 
-  // GET /webhooks/:id — get a single webhook
   router.openapi(getWebhookRoute, async (c) => {
-    // tenant_admin can manage own-tenant webhooks. Storage layer filters
-    // by `key.tenant_id`, so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
     const { id } = c.req.valid("param");
     const webhook = await storage.outboundWebhooks.get(id, key.tenant_id);
@@ -441,10 +427,7 @@ export function webhookRoutes(storage: Storage) {
     return c.json({ ...webhook, secret: redactSecret(webhook.secret) }, 200);
   });
 
-  // PATCH /webhooks/:id — partial update
   router.openapi(updateWebhookRoute, async (c) => {
-    // tenant_admin can manage own-tenant webhooks. Storage layer filters
-    // by `key.tenant_id`, so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
@@ -454,7 +437,6 @@ export function webhookRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
 
-    // URL validation beyond what Zod handles
     if (body.url !== undefined) {
       try {
         new URL(body.url);
@@ -466,7 +448,6 @@ export function webhookRoutes(storage: Storage) {
       }
     }
 
-    // Validate event types against known set
     if (body.events !== undefined) {
       for (const event of body.events) {
         if (!VALID_EVENTS.has(event)) {
@@ -496,10 +477,7 @@ export function webhookRoutes(storage: Storage) {
     return c.json({ ...updated, secret: redactSecret(updated.secret) }, 200);
   });
 
-  // DELETE /webhooks/:id
   router.openapi(deleteWebhookRoute, async (c) => {
-    // tenant_admin can manage own-tenant webhooks. Storage layer filters
-    // by `key.tenant_id`, so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
     const { id } = c.req.valid("param");
 
@@ -520,10 +498,7 @@ export function webhookRoutes(storage: Storage) {
     return c.json({ ok: true as const }, 200);
   });
 
-  // GET /webhooks/:id/deliveries — recent delivery attempts
   router.openapi(listDeliveriesRoute, async (c) => {
-    // tenant_admin can manage own-tenant webhooks. Storage layer filters
-    // by `key.tenant_id`, so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
     const { id } = c.req.valid("param");
     const { limit } = c.req.valid("query");

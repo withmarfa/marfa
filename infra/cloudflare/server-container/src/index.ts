@@ -68,7 +68,6 @@ export class MarfaServerContainer extends Container<Env> {
   // value) once streaming + background-job continuity are validated.
   sleepAfter = cfEnv.CONTAINER_SLEEP_AFTER ?? "20m";
 
-  // Server config + secrets injected into the container process at launch.
   envVars = definedEnv({
     // Static (hosted) configuration.
     DB_DIALECT: "pg",

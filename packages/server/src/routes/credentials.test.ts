@@ -24,8 +24,6 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-// Unique-source suffix so callers don't 409 on duplicate `source` when
-// the helper runs more than once across suites in the same file.
 function uniqueSuffix(): string {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -99,7 +97,6 @@ describe("POST /credentials/oauth-provider — happy path", () => {
     const { credential_id } = (await res.json()) as { credential_id: string };
     expect(credential_id).toMatch(/^[a-z0-9-]+$/i);
 
-    // Fetch the underlying item to assert shape.
     const credential = await ctx.storage.items.get(credential_id);
     expect(credential?.type).toBe("system.credential");
     const props = credential?.properties as {
@@ -126,8 +123,6 @@ describe("POST /credentials/oauth-provider — happy path", () => {
     expect(typeof props.secret_encrypted).toBe("string");
     expect(props.secret_encrypted.length).toBeGreaterThan(0);
 
-    // The encrypted secret must round-trip back to the original via the
-    // same HKDF domain the OAuth proxy + callback paths use to decrypt.
     const plaintext = decryptSecret(
       props.secret_encrypted,
       SECRET_INFO.connectionOauthToken,
@@ -268,12 +263,10 @@ describe("POST /credentials/api-token — happy path", () => {
     });
     expect(typeof props.secret_encrypted).toBe("string");
     expect(props.secret_encrypted.length).toBeGreaterThan(0);
-    // Ciphertext must not contain the plaintext bearer anywhere.
     expect(props.secret_encrypted).not.toContain(
       VALID_API_TOKEN_BODY.api_token,
     );
 
-    // Round-trips through the same HKDF domain the proxy reads.
     const plaintext = decryptSecret(
       props.secret_encrypted,
       SECRET_INFO.connectionOauthToken,
@@ -356,7 +349,6 @@ describe("POST /credentials/api-token — happy path", () => {
       label: "Audit test (api)",
       upstream_base_url: VALID_API_TOKEN_BODY.upstream_base_url,
     });
-    // The bearer must never appear in the audit details.
     expect(JSON.stringify(row?.details ?? {})).not.toContain(
       VALID_API_TOKEN_BODY.api_token,
     );

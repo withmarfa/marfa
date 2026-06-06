@@ -115,9 +115,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     clientId: string,
     authUserId: string,
   ): Promise<void> {
-    // Cascade order: refresh tokens first (FK from access_token.refresh_id
-    // would CASCADE on delete, but the auth_oauth_access_token rows for
-    // this grant may have nullable refresh_id — delete both explicitly).
+    // access_token.refresh_id has a nullable FK — delete both explicitly.
     await this.db
       .delete(auth_oauth_access_token)
       .where(
@@ -134,7 +132,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
           eq(auth_oauth_refresh_token.userId, authUserId),
         ),
       );
-    // Also drop the consent row so the next /authorize attempt re-prompts.
     await this.db
       .delete(auth_oauth_consent)
       .where(
@@ -196,9 +193,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     const refreshId = generateId();
     const now = new Date();
     const accessExpires = new Date(now.getTime() + input.accessTtlMs);
-    // 30 days default for refresh — matches the plugin's
-    // refreshTokenExpiresIn default.
-    const refreshExpires = new Date(now.getTime() + 30 * 86_400_000);
+    const refreshExpires = new Date(now.getTime() + 30 * 86_400_000); // 30-day TTL matches plugin default
     const scopesJson = JSON.stringify(input.scopes);
     await this.db.insert(auth_oauth_refresh_token).values({
       id: refreshId,
@@ -326,7 +321,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       .limit(1);
     const row = rows[0];
     if (!row) return undefined;
-    // Better Auth's drizzle adapter stores `string[]` columns as JSON text.
     const parsed = safeJsonParse<unknown>(
       row.scopes,
       [],

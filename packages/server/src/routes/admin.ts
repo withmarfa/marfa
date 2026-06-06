@@ -552,16 +552,9 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       throw new MarfaError(ErrorCode.NOT_FOUND, `Tenant ${id} not found`);
     }
 
-    // Per-tenant stats. `items.stats(tenantId)` returns a state→count
-    // map for the named tenant. `tenantQuotas.count(id, resource)` is
-    // tenant-scoped and lives next to the quota-enforcement code; reuse
-    // it for blobs + storage_bytes rather than re-implementing the SQL.
-    //
-    // Custom type count is intentionally omitted from the per-tenant
-    // metrics — `TypeStore.countCustom` is instance-wide and there's no
-    // tenant-scoped equivalent yet. The instance-wide value lives on
-    // `GET /metrics` for platform admins; surfacing it here would
-    // imply a per-tenant breakdown that doesn't exist.
+    // Custom type count is omitted — `TypeStore.countCustom` is
+    // instance-wide with no tenant-scoped equivalent; surfacing it here
+    // would imply a per-tenant breakdown that doesn't exist.
     const [itemStats, blobsCount, storageBytes, recent] = await Promise.all([
       storage.items.stats(id),
       storage.tenantQuotas.count(id, "blobs"),

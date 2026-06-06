@@ -55,31 +55,23 @@ describe.skipIf(!isPg || !url)("streaming-rls cleanup", () => {
     const stmtName = `marfa_rls_test_${Math.random().toString(36).slice(2, 10)}`;
     const tenantId = "streaming-rls-cache-test";
     try {
-      // Create a session-level prepared statement directly. PREPARE
-      // is server-side; the statement lives until DEALLOCATE,
-      // DISCARD, or session close.
+      // PREPARE is server-side; lives until DEALLOCATE, DISCARD, or session close.
       await client.unsafe(`PREPARE ${stmtName} AS SELECT 1 AS one`);
 
-      // Sanity check — the statement is registered server-side.
       const pre = await client<
         { name: string }[]
       >`SELECT name FROM pg_prepared_statements WHERE name = ${stmtName}`;
       expect(pre.length).toBe(1);
 
-      // Acquire + release. With the scoped-reset fix the prepared
-      // statement should survive untouched.
       const ctx = await acquireStreamRls(client, tenantId);
       await ctx.release();
 
-      // The killing assertion — under DISCARD ALL this returns 0
-      // rows. Under the scoped reset it still returns 1.
+      // DISCARD ALL would nuke this; scoped reset must leave it intact.
       const post = await client<
         { name: string }[]
       >`SELECT name FROM pg_prepared_statements WHERE name = ${stmtName}`;
       expect(post.length).toBe(1);
     } finally {
-      // Best-effort cleanup; if the statement was already nuked the
-      // DEALLOCATE no-ops with an error we swallow.
       await client.unsafe(`DEALLOCATE ${stmtName}`).catch(() => undefined);
       await client.end();
     }
@@ -98,9 +90,6 @@ describe.skipIf(!isPg || !url)("streaming-rls cleanup", () => {
     const tenantId = "streaming-rls-invariant-test";
     try {
       const ctx = await acquireStreamRls(client, tenantId);
-      // During the stream: role is marfa_app + GUC is set. Query via
-      // the reserved connection (ctx.streamDb) — the parent client
-      // has no free slot while the reservation is held.
       const midRole = (await ctx.streamDb.execute(
         sql`SELECT current_user::text AS current_user`,
       )) as unknown as readonly { current_user: string }[];
@@ -112,9 +101,7 @@ describe.skipIf(!isPg || !url)("streaming-rls cleanup", () => {
 
       await ctx.release();
 
-      // After release: the parent client picks up the recycled
-      // connection. Role must be back to the pool's default owner
-      // (not marfa_app), and the tenant GUC must be empty.
+      // After release: recycled connection must have role reset and GUC cleared.
       const postRole = await client<
         { current_user: string }[]
       >`SELECT current_user::text`;

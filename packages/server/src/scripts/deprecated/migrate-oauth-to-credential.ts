@@ -89,8 +89,6 @@ export async function migrateOauthToCredential(
     failures: [],
   };
 
-  // Page through all system.connection items. The list call is bounded
-  // (200/page); iterate via cursor.
   let cursor: string | undefined;
   do {
     const page = await storage.items.list({
@@ -122,9 +120,8 @@ export async function migrateOauthToCredential(
       }
 
       try {
-        // Build the credential item. Encryption is synchronous and
-        // throws on key misconfiguration — surfaced per-row so one
-        // misconfigured key doesn't take down a multi-row run.
+        // encryptSecret throws on key misconfiguration; surfaced per-row
+        // so one bad row doesn't abort the rest of the migration.
         const secret_encrypted = encryptSecret(
           inline.oauth_client_secret,
           SECRET_INFO.connectionOauthToken,
@@ -150,8 +147,6 @@ export async function migrateOauthToCredential(
           undefined,
         );
 
-        // Strip the OAuth fields from the connection's configuration
-        // and set credential_ref. Other fields (if any) are preserved.
         const remainingConfig = stripOauthFields(props.configuration);
         const newProps: Record<string, unknown> = {
           ...connection.properties,
@@ -169,8 +164,6 @@ export async function migrateOauthToCredential(
           id: connection.id,
           reason: err instanceof Error ? err.message : String(err),
         });
-        // Per orchestrator's flag D: log + skip + continue. Don't let
-        // one bad row block the rest.
         console.error(
           `[migrate-oauth] connection ${connection.id} failed:`,
           err instanceof Error ? err.message : String(err),
@@ -231,8 +224,6 @@ function printReport(report: MigrationReport): void {
   console.log("------------------------------------------");
 }
 
-// CLI entry point — only fires when invoked directly via tsx, not when
-// imported by tests.
 const invokedDirectly =
   process.argv[1] !== undefined &&
   (process.argv[1].endsWith("migrate-oauth-to-credential.ts") ||

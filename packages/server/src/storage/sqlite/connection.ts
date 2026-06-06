@@ -87,8 +87,7 @@ export async function createConnection(sqlitePath: string): Promise<{
   // be applied separately.
   await client.executeMultiple(CREATE_FTS);
 
-  // Migration: add 'extra' column to FTS5 table for custom type property search.
-  // FTS5 does not support ALTER TABLE, so we detect the old schema and rebuild.
+  // FTS5 doesn't support ALTER TABLE; detect missing 'extra' column and rebuild.
   let needsFtsRebuild = false;
   try {
     await client.execute("SELECT extra FROM items_fts LIMIT 0");
@@ -96,7 +95,6 @@ export async function createConnection(sqlitePath: string): Promise<{
     needsFtsRebuild = true;
   }
   if (needsFtsRebuild) {
-    // 'extra' column doesn't exist — rebuild the FTS5 table
     await client.executeMultiple("DROP TABLE IF EXISTS items_fts");
     await client.executeMultiple(CREATE_FTS);
     // Re-index all items (extra defaults to empty since we don't have type context here)
@@ -142,5 +140,4 @@ export async function createConnection(sqlitePath: string): Promise<{
   };
 }
 
-// Re-export sql for sites that build raw SQL through drizzle's tag.
 export { sql };

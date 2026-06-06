@@ -294,7 +294,6 @@ const deleteExtensionRoute = createRoute({
 export function extensionRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  // GET /items/:id/extensions — list all namespaces (filtered by permissions)
   router.openapi(listExtensionsRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
@@ -320,7 +319,6 @@ export function extensionRoutes(storage: Storage) {
     return c.json({ extensions: filtered }, 200);
   });
 
-  // GET /items/:id/extensions/:namespace — read a specific namespace
   router.openapi(getExtensionRoute, async (c) => {
     requireAuth(c);
     const { id, namespace } = c.req.valid("param");
@@ -356,7 +354,6 @@ export function extensionRoutes(storage: Storage) {
     return c.json({ namespace, data }, 200);
   });
 
-  // PUT /items/:id/extensions/:namespace — write to a specific namespace
   router.openapi(setExtensionRoute, async (c) => {
     requireAuth(c);
     const { id, namespace } = c.req.valid("param");
@@ -396,9 +393,6 @@ export function extensionRoutes(storage: Storage) {
       );
     }
 
-    // The general permission gate runs for non-runtime writes. Runtime
-    // credentials bypass it on the connection.runtime namespace because
-    // the dedicated check above fully covers that case.
     if (namespace !== RUNTIME_NAMESPACE) {
       const perm =
         apiKey?.role === "admin"
@@ -418,7 +412,6 @@ export function extensionRoutes(storage: Storage) {
 
     const body = c.req.valid("json");
 
-    // Enforce extension data size limit (100KB per namespace)
     const serialized = JSON.stringify(body);
     if (serialized.length > 102_400) {
       throw new MarfaError(
@@ -441,7 +434,6 @@ export function extensionRoutes(storage: Storage) {
     return c.json({ extensions }, 200);
   });
 
-  // DELETE /items/:id/extensions/:namespace — remove a namespace
   router.openapi(deleteExtensionRoute, async (c) => {
     requireAuth(c);
     const { id, namespace } = c.req.valid("param");
@@ -456,9 +448,6 @@ export function extensionRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
-    // Same gate as setExtensionRoute — only the matching runtime
-    // credential may delete its own connection.runtime namespace;
-    // admins read-only.
     if (namespace === RUNTIME_NAMESPACE) {
       if (!apiKey?.is_runtime_credential) {
         throw new MarfaError(
@@ -478,7 +467,6 @@ export function extensionRoutes(storage: Storage) {
         `Namespace "${namespace}" is reserved`,
       );
     } else {
-      // Only admin or namespace owner can delete
       const isOwner = apiKey?.label === namespace;
       if (apiKey?.role !== "admin" && !isOwner) {
         const perm = resolveExtensionPermission(

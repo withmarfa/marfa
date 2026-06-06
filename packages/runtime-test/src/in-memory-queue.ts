@@ -110,8 +110,7 @@ export function createMessage<T>(body: T, attempts = 1): Message<T> {
   let retried = false;
   let retryDelaySeconds: number | undefined;
   let currentAttempts = attempts;
-  // Stable-ish ids so tests can correlate envelopes with mocks.
-  const id = `msg_${Math.random().toString(36).slice(2, 14)}`;
+  const id = `msg_${Math.random().toString(36).slice(2, 14)}`; // stable-ish for test correlation
   const timestamp = new Date();
   return {
     id,
@@ -126,10 +125,7 @@ export function createMessage<T>(body: T, attempts = 1): Message<T> {
     retry(opts?: { delaySeconds?: number }): void {
       retried = true;
       retryDelaySeconds = opts?.delaySeconds;
-      // Keep `attempts` consistent with the redelivered-envelope shape.
-      // The harness is single-pass so the bump only matters for
-      // assertions; the message isn't re-enqueued.
-      currentAttempts++;
+      currentAttempts++; // bump for assertion-side consistency (harness is single-pass)
     },
     acked(): boolean {
       return acked;

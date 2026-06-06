@@ -11,11 +11,6 @@ import type { items } from "./schema.js";
 import { extractSearchableText } from "../search-text.js";
 
 /**
- * Build a Postgres tsquery function call with prefix matching on the last token.
- * Quoted input ("exact phrase") uses phraseto_tsquery for exact phrase matching.
- * Unquoted input tokenizes, joins with &, and appends :* to the last token.
- */
-/**
  * Sanitize a token for use in to_tsquery — strip tsquery operators.
  */
 function sanitizeTsToken(token: string): string {
@@ -111,7 +106,6 @@ export class PgSearchStore implements SearchStore {
     const params: (string | number | boolean)[] = [];
     let paramIdx = 1;
 
-    // The tsquery parameter — build prefix-aware query
     const queryParam = `$${String(paramIdx++)}`;
     const { expr: tsqueryExpr, paramValue } = buildTsQueryExpr(
       query,
@@ -119,13 +113,8 @@ export class PgSearchStore implements SearchStore {
     );
     params.push(paramValue);
 
-    // Read the materialised search_vector column. The column is populated
-    // by `index()` at item write time; rows whose search_vector is NULL
-    // (un-backfilled, mid-migration) are invisible to search until the
-    // next write or the backfill UPDATE catches them.
     const tsvec = `i.search_vector`;
 
-    // Default: exclude trashed
     if (filters.state) {
       params.push(filters.state);
       conditions.push(`AND i.state = $${String(paramIdx++)}`);
@@ -160,8 +149,6 @@ export class PgSearchStore implements SearchStore {
       conditions.push(`AND i.type NOT LIKE 'system.%'`);
     }
 
-    // Tags filter — items must have ALL specified tags. Mirrors the
-    // jsonb-containment pattern from /items.
     if (filters.tags && filters.tags.length > 0) {
       for (const tag of filters.tags) {
         params.push(JSON.stringify([tag]));
@@ -169,10 +156,8 @@ export class PgSearchStore implements SearchStore {
       }
     }
 
-    // Type permission filtering
     if (filters.allowed_types) {
-      // Empty allowed_types means "no readable types" — see
-      // PgItemStore.list. Must filter to zero rows.
+      // Empty allowed_types means "no readable types" — must filter to zero rows (mirrors PgItemStore.list).
       if (filters.allowed_types.length === 0) {
         conditions.push("AND 1=0");
       } else {
@@ -189,7 +174,6 @@ export class PgSearchStore implements SearchStore {
       }
     }
 
-    // Advanced query language filter
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
       const {

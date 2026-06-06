@@ -474,7 +474,6 @@ async function syncLikedVideos(
   cursor: YoutubeCursor,
   config: ConnectionConfig,
 ): Promise<LikedSweepResult> {
-  // Resolve the liked-playlist id on first sweep.
   if (cursor.liked_playlist_id === null) {
     const params = new URLSearchParams();
     params.set("part", "contentDetails");
@@ -542,7 +541,6 @@ async function syncLikedVideos(
     return { upserted: 0, edges: 0, highestLikedAt: null };
   }
 
-  // Batch-of-50 hydrate via videos.list?id=<csv>.
   const likedAtById = new Map<string, string>();
   for (const { videoId, likedAt } of collected) {
     // First-write wins — the watermark walk visits newest-first, so the
@@ -580,7 +578,6 @@ async function syncLikedVideos(
           cursor.mappings.videos[v.id] = videoMarfaId;
         }
         upserted += 1;
-        // Wire channel parent-of video edge.
         const channelId = v.snippet?.channelId;
         if (typeof channelId === "string" && channelId.length > 0) {
           const channelMarfa = await ensureChannel(ctx, cursor, channelId);
@@ -762,7 +759,6 @@ async function syncUserPlaylists(
         continue;
       }
 
-      // Wire channel parent-of playlist (owning channel).
       const channelId = pl.snippet?.channelId;
       if (typeof channelId === "string" && channelId.length > 0) {
         const channelMarfa = await ensureChannel(ctx, cursor, channelId);
@@ -776,7 +772,6 @@ async function syncUserPlaylists(
         }
       }
 
-      // Optional deep walk — only when configured AND etag changed.
       if (config.materialise_playlists && etagChanged) {
         const walked = await materialisePlaylistVideos(
           ctx,
@@ -862,14 +857,12 @@ async function materialisePlaylistVideos(
           cursor.mappings.videos[v.id] = videoMarfaId;
         }
         upserted += 1;
-        // playlist parent-of video edge (optional, only on materialise).
         const ok = await safeCreateParentEdge(
           ctx,
           playlistMarfaId,
           videoMarfaId,
         );
         if (ok) edges += 1;
-        // Also wire the owning-channel edge if we don't already have it.
         const channelId = v.snippet?.channelId;
         if (typeof channelId === "string" && channelId.length > 0) {
           const channelMarfa = await ensureChannel(ctx, cursor, channelId);

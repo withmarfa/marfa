@@ -82,8 +82,6 @@ export class PgBulkActionJobStore implements BulkActionJobStore {
     workerId: string,
     now: string,
   ): Promise<BulkActionJobRow | null> {
-    // Single-statement atomic claim. Other processes' SELECT FOR UPDATE
-    // SKIP LOCKED will skip the row this process locks.
     const result = await this.db.execute(sql`
       UPDATE bulk_action_jobs
       SET status = 'in_progress',
@@ -152,9 +150,7 @@ export class PgBulkActionJobStore implements BulkActionJobStore {
   }
 
   async cancel(id: string, finishedAt: string): Promise<boolean> {
-    // CAS: only cancel if currently in a non-terminal state. Returns
-    // true if we actually flipped the row (i.e. caller's request had
-    // effect), false on already-terminal rows.
+    // Only cancels non-terminal rows; returns false if already in a terminal state.
     const result = await this.db
       .update(bulkActionJobs)
       .set({

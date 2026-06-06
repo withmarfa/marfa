@@ -86,15 +86,12 @@ export function createSupervisor(
   ): Promise<HandlerResult> {
     const registration = byName.get(envelope.integration_name);
     if (!registration) {
-      // No registration → ack the message and move on. Matches the
-      // hosted substrate's envelope-filter ack.
+      // Unknown integration — ack and skip, mirroring the hosted substrate.
       return { ok: true };
     }
     const message = envelope.message;
     const lockName = `connection-dispatch:${message.connection_id}`;
-    // SDK-side hop-budget refusal mirrors `consumeBatch`. Item-event
-    // messages whose hop_count meets/exceeds the budget get acked here so
-    // they don't even enter the lock dance.
+    // Ack over-budget item-event messages before the lock dance — mirrors consumeBatch.
     const hopBudget = SDK_DEFAULT_HOP_BUDGET;
     if (message.kind === "item-event" && message.cycle.hop_count >= hopBudget) {
       await emitHopBudgetActivity(message, hopBudget);
@@ -126,8 +123,7 @@ export function createSupervisor(
           cursorSnapshot: state.cursors,
         };
         const response = await config.executor.dispatch(registration, request);
-        // Apply cursor delta first — the next dispatch's snapshot should
-        // see the writes whether the result was ok or not.
+        // Apply cursor delta regardless of result — next dispatch must see these writes.
         if (
           Object.keys(response.cursorUpdates).length > 0 ||
           response.cursorDeletes.length > 0
@@ -143,11 +139,8 @@ export function createSupervisor(
         return response.result;
       },
     );
-    // `withJobLock` returns undefined when another instance / dispatch
-    // holds the lock. Mirror the hosted substrate's "another worker is
-    // already processing this" semantics by treating the message as
-    // ok-and-retry-soon: the caller (queue consumer) ack-and-moves-on,
-    // and the next scheduled fanout / webhook tick picks it up.
+    // withJobLock returns undefined when another instance holds the lock —
+    // treat as ok-and-retry-soon (same semantics as the hosted substrate).
     return result ?? { ok: true };
   }
 
@@ -156,11 +149,9 @@ export function createSupervisor(
     response: WorkerDispatchResponse,
   ): Promise<void> {
     if (response.result.ok) return;
-    // Surface permanent failure as a system.activity row + recent_errors
-    // tail. Retry semantics are pg-boss's job — the supervisor itself
-    // doesn't reschedule a message; instead a `{ ok: false, retry: true
-    // }` HandlerResult propagates back through the queue worker as a
-    // throw, and pg-boss applies its retry policy.
+    // Retry semantics are pg-boss's job: { ok: false, retry: true } propagates
+    // back as a throw; pg-boss applies its retry policy. Permanent failures get
+    // a system.activity row and a recent_errors entry.
     if (!response.result.retry) {
       const reason: FailureReason = {
         message: response.thrownMessage ?? response.result.reason,
@@ -195,8 +186,7 @@ export function createSupervisor(
           },
         });
       } catch {
-        // Best-effort — the recent_errors tail above is the primary
-        // operator signal.
+        // Best-effort; recent_errors entry is the primary operator signal.
       }
     }
   }
@@ -256,14 +246,10 @@ export function createSupervisor(
           }
         },
       );
-      // Register one schedule per integration that declares a cron.
       for (const reg of config.registrations) {
         if (!reg.scheduleCron) continue;
         const scheduleName = SCHEDULE_PREFIX + reg.name;
         await boss.createQueue(scheduleName);
-        // pg-boss invokes the work() callback when the cron fires; the
-        // callback fans out to the active local Connections for this
-        // integration. No payload needed.
         await boss.work(scheduleName, { batchSize: 1 }, async () => {
           await fanOutSchedule(storage, runtime, reg.name, Date.now());
         });
@@ -288,9 +274,7 @@ export function createSupervisor(
     },
     async enqueue(envelope) {
       if (!config.boss) {
-        // No queue → run synchronously. Useful in tests + as the
-        // single-process behaviour when an operator wants to verify a
-        // dispatch by hand without standing up pg-boss.
+        // No queue (test path or no-boss operator mode) — run synchronously.
         await dispatchForQueue(envelope);
         return;
       }

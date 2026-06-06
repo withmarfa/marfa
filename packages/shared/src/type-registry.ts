@@ -41,11 +41,9 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
   links: { type: "array", items_type: "string" },
 };
 
-// Internal mutable map — exposed as ReadonlyMap to prevent accidental mutation.
-// Holds both the canonical core.* types and the platform-internal system.*
-// set; the system set is also tracked separately via SYSTEM_TYPE_IDS so
-// downstream consumers (search default-exclude, lifecycle override, tier
-// rejection) can recognize them without re-classifying namespaces.
+// Mutable internally; exposed as ReadonlyMap. System types are tracked
+// separately via SYSTEM_TYPE_IDS so consumers (search exclude, lifecycle
+// override) can recognise them without re-classifying namespaces.
 const _registry = new Map<string, TypeSchema>(
   [...ALL_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [schema.id, schema]),
 );

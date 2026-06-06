@@ -346,9 +346,6 @@ export function connectionRoutes(storage: Storage, salt: string) {
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(installRoute, async (c) => {
-    // tenant_admin can install/uninstall own-tenant connections.
-    // Lookups + writes are scoped via `apiKey.tenant_id`, so cross-tenant
-    // attempts surface as NOT_FOUND.
     const apiKey = requireTenantAdmin(c);
     const {
       integration_id,
@@ -359,11 +356,9 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const tenantId = apiKey.tenant_id ?? undefined;
     const clientIp = c.var.clientIp;
 
-    // Manifests are platform-scoped (`tenant_id IS NULL`) — opt into
-    // the widening so a tenant_admin caller can install. The
-    // type-check on the next line stays as the authoritative gate; the
-    // resulting connection is stamped with the caller's tenant_id
-    // (passed through `input.tenantId` into the install pipeline).
+    // Manifests are platform-scoped (tenant_id IS NULL) — the widening
+    // lets a tenant_admin caller look them up; the resulting connection
+    // is stamped with the caller's tenant_id.
     const integration = await storage.items.get(integration_id, tenantId, {
       includePlatformScoped: true,
     });
@@ -399,9 +394,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
       ...(configuration !== undefined ? { configuration } : {}),
     });
 
-    // Best-effort: arm the schedule alarm if the manifest has a schedule
-    // trigger. Failures surface as system.activity action_required;
-    // install itself stays successful.
+    // Best-effort schedule arm — failures emit action_required activity; install stays successful.
     const controlPlaneUrl = process.env.MARFA_RUNTIME_CONTROL_URL;
     const runtimeBrokerKey = process.env.MARFA_RUNTIME_BROKER_KEY;
     if (controlPlaneUrl && runtimeBrokerKey) {
@@ -414,15 +407,8 @@ export function connectionRoutes(storage: Storage, salt: string) {
       });
     }
 
-    // Hydrate the new system.connection item and publish a `created`
-    // event onto pubsub. Without this the reactive-run bridge's
-    // cache-invalidation subscriber (subscribes to ITEM_CHANGED with
-    // typeFilter system.connection) never sees newly-installed
-    // connections, so its in-memory subscription map stays stale and
-    // the bridge fans out to nothing. The HTML consent flow at
-    // routes/integrations.ts has the same bug — fix landed alongside
-    // this one in a follow-up to keep this PR's diff scoped to the
-    // Emit an item event for the new connection so subscribers see it.
+    // Publish a `created` event for the new connection so the reactive-run bridge's
+    // cache-invalidation subscriber refreshes its in-memory subscription map.
     const connection = await storage.items.get(result.connection_id, tenantId);
     if (connection) {
       const metadata = await storage.metadata.get(connection.id);
@@ -438,10 +424,6 @@ export function connectionRoutes(storage: Storage, salt: string) {
   });
 
   r.openapi(previewEventRoute, async (c) => {
-    // Tenant-scoped preview of bridge fanout. tenant_admin so a tenant
-    // admin can debug their own connectors without needing platform creds;
-    // storage reads thread `apiKey.tenant_id` so cross-tenant probes 404
-    // on either the item or the filtered connection.
     const apiKey = requireTenantAdmin(c);
     const tenantId = apiKey.tenant_id ?? undefined;
     const body = c.req.valid("json");
@@ -455,10 +437,8 @@ export function connectionRoutes(storage: Storage, salt: string) {
       );
     }
 
-    // Construct the synthetic event the bridge would observe. `tenantId`
-    // is omitted in keys-mode self-host (no tenant scope on the request);
-    // the dispatch evaluator normalises both sides to null before
-    // comparing so the cross-tenant gate doesn't trip spuriously.
+    // tenantId is omitted for single-tenant self-hosts; the dispatch evaluator
+    // normalises both sides to null so the cross-tenant gate doesn't trip spuriously.
     const cycle = body.cycle ?? {};
     const event: ItemEventWithId = {
       type: body.event_type,
@@ -471,20 +451,14 @@ export function connectionRoutes(storage: Storage, salt: string) {
     const hopBudgetMax = await resolveHopBudget(tenantId);
     const hopCount = event.hopCount ?? 0;
     const isConnectorOriginated = event.originatingConnectionId != null;
-    // Mirror `pubsub.passesHopBudget`: a connector-originated event with
-    // hopCount=0 still counts as one hop so a malformed publish can't
-    // bypass the budget. Human-originated events pass at hop 0.
+    // Mirrors pubsub.passesHopBudget: connector-originated at hop 0 counts as 1
+    // so a malformed publish can't bypass the budget.
     const effectiveHopCount = isConnectorOriginated
       ? Math.max(hopCount, 1)
       : hopCount;
     const hopBudgetExceeded =
       isConnectorOriginated && effectiveHopCount > hopBudgetMax;
 
-    // Walk every active integration connection in the caller's tenant
-    // and decide what the bridge would do per-subscriber. The `connection_id`
-    // filter narrows the iteration to a single id; the route still
-    // distinguishes "subscriber exists" from "subscriber doesn't exist"
-    // via `subscription_inactive`.
     const envelopes: PreviewEventEnvelope[] = [];
     const considerSubscriber = (
       connectionId: string,
@@ -503,10 +477,8 @@ export function connectionRoutes(storage: Storage, salt: string) {
         });
         return;
       }
-      // Hop budget is event-wide: when the gate trips upstream of the
-      // bridge, NO envelope would be emitted for any subscriber. Surface
-      // it consistently per-row so the operator sees why every
-      // subscriber would be skipped.
+      // Hop budget is event-wide — surface the reason per-row so the operator
+      // sees why every subscriber is skipped, not just the first.
       if (hopBudgetExceeded) {
         envelopes.push({
           connection_id: connectionId,
@@ -568,11 +540,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
             properties: conn.properties,
             tenant_id: conn.tenant_id ?? null,
           });
-          // Skip non-subscribers (would-be `subscription_inactive` rows)
-          // for the unfiltered case — they're noise. The filtered case
-          // above keeps them so the operator gets actionable feedback
-          // when they pointed at the wrong id.
-          if (!entry) continue;
+          if (!entry) continue; // skip non-subscribers in the unfiltered walk — noise; filtered case includes them
           considerSubscriber(conn.id, entry);
         }
         if (!page.has_more || !page.cursor) break;
@@ -591,9 +559,6 @@ export function connectionRoutes(storage: Storage, salt: string) {
   });
 
   r.openapi(uninstallRoute, async (c) => {
-    // tenant_admin can install/uninstall own-tenant connections.
-    // Lookups + writes are scoped via `apiKey.tenant_id`, so cross-tenant
-    // attempts surface as NOT_FOUND.
     const apiKey = requireTenantAdmin(c);
     const { id: connectionId } = c.req.valid("param");
     const tenantId = apiKey.tenant_id ?? undefined;

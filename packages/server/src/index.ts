@@ -38,9 +38,7 @@ import {
 async function main() {
   const config = loadConfig();
 
-  // Log version info at startup and surface the same sha on `GET /` (§3.15).
-  // version.json is written at deploy time; in dev it's absent and we
-  // fall back to "dev". Empty / non-string sha values fall back too.
+  // version.json is written at deploy time; absent in dev (falls back to "dev").
   try {
     const versionPath = resolve(process.cwd(), "version.json");
     const raw = await readFile(versionPath, "utf-8");
@@ -85,15 +83,10 @@ async function main() {
   } else {
     blobBackend = new FilesystemBlobBackend(config.blobPath);
   }
-  // Enable SSE event persistence
   initEventLog(storage.eventLog, defaultCycleDetectionWiring(storage));
 
-  // Reactive-run bridge — opt-in via CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS
-  // + CLOUDFLARE_QUEUES_API_TOKEN. When unset, returns null and the
-  // server boots without the Cloudflare Queues hop (self-hoster path).
-  // When set, the bridge subscribes to pubsub and forwards `item-event`s
-  // to the per-integration queue producer for fanout to the owning
-  // per-Integration Worker.
+  // Opt-in via CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS + CLOUDFLARE_QUEUES_API_TOKEN;
+  // returns null (self-hoster path) when either is unset.
   const reactiveRunBridge = tryStartReactiveRunBridge(storage, {
     sendTimeoutMs: config.reactiveRunSendTimeoutMs,
   });
@@ -115,12 +108,6 @@ async function main() {
     );
   }
 
-  // Per-tenant retention fan-out is wired when the storage backend
-  // exposes a `tenants` store (always in production). The fan-out lists
-  // every tenant once per tick and runs each cleanup honouring the
-  // per-tenant override; a NULL-tenant sweep at the instance default
-  // catches single-tenant self-host items. Coordination locks are keyed
-  // per-tenant so multi-instance deployments don't double-process.
   const auditFanout: TenantFanout | undefined = storage.tenants
     ? { tenants: storage.tenants, configField: "audit_retention_days" }
     : undefined;
@@ -131,11 +118,7 @@ async function main() {
     ? { tenants: storage.tenants, configField: "trash_retention_days" }
     : undefined;
 
-  // Event log retention — clean up events older than the configured
-  // window (default 168h / 7d; override via MARFA_EVENT_LOG_RETENTION_HOURS,
-  // or per-tenant via TenantConfig.event_log_retention_hours).
-  // Advisory-locked per-tenant so multi-instance deployments run each
-  // sweep once per tick cluster-wide.
+  // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or per-tenant config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
   const runEventLogCleanup = () => {
     void runTenantCleanup({
@@ -157,8 +140,6 @@ async function main() {
   const eventLogCleanupDelay = setTimeout(runEventLogCleanup, 10_000);
   const eventLogCleanupInterval = setInterval(runEventLogCleanup, 3_600_000);
 
-  // Audit retention — run once after startup, then on a daily schedule.
-  // Per-tenant overrides via TenantConfig.audit_retention_days.
   const runAuditCleanup = () => {
     void runTenantCleanup({
       jobName: "audit-cleanup",
@@ -214,9 +195,7 @@ async function main() {
   );
   trashPurger.start();
 
-  // Drop expired better-auth `auth_session` rows on a periodic tick.
-  // Gated on the storage adapter exposing `authSessions` — test
-  // contexts that don't wire better-auth skip the job entirely.
+  // Gated on authSessions being wired; test contexts that skip better-auth omit it.
   const authSessionCleaner = storage.authSessions
     ? new AuthSessionCleaner(
         storage.authSessions,
@@ -227,9 +206,7 @@ async function main() {
     : undefined;
   authSessionCleaner?.start();
 
-  // Pending-delete purger. Gated on `accountLifecycle` being wired —
-  // production storage always wires it; bare test stubs that omit it
-  // skip the job.
+  // Gated on accountLifecycle being wired; test stubs that omit it skip this job.
   const pendingDeletePurger = storage.accountLifecycle
     ? new PendingDeletePurger(
         storage,
@@ -241,11 +218,8 @@ async function main() {
     : undefined;
   pendingDeletePurger?.start();
 
-  // Drop expired `rate_limit_windows` rows on a periodic tick. Expired
-  // rows aren't a correctness risk (the upsert path overwrites them
-  // transparently); the GC just keeps the table bounded. Cluster-
-  // coordinated via the named lock so multi-instance deployments don't
-  // double-process.
+  // GC keeps the table bounded; expired rows are correctness-safe (upsert path
+  // overwrites them transparently).
   const rateLimitCleaner = new RateLimitWindowCleaner(
     storage,
     config.rateLimitCleanupIntervalMs ?? 3_600_000,
@@ -254,11 +228,6 @@ async function main() {
   );
   rateLimitCleaner.start();
 
-  // In-process worker for async bulk_action jobs + periodic GC sweep
-  // over terminal rows. On PG the worker's `claimNext` uses
-  // `SELECT … FOR UPDATE SKIP LOCKED` so multi-instance deployments
-  // coordinate naturally; SQLite is single-process by design. The GC
-  // sweep is cluster-coordinated via `withJobLock`.
   const bulkActionWorker = new BulkActionWorker({ storage });
   await bulkActionWorker.start();
   const bulkActionGc = new BulkActionJobGcSweeper(
@@ -306,14 +275,9 @@ async function main() {
       : undefined,
   });
 
-  // OIDC signer (RSA keypair persisted in `settings`). Init at boot so
-  // the JWKS endpoint and id_token issuance can use it synchronously
-  // inside request handlers.
   const oidcSigner = await OidcSigner.init(storage);
 
-  // Boot the local integrations runtime when
-  // MARFA_INTEGRATION_RUNTIME=local (the default). Set the env var to
-  // "hosted" explicitly to delegate to the Cloudflare bridge instead.
+  // Default is "local"; set MARFA_INTEGRATION_RUNTIME=hosted to use Cloudflare instead.
   let localRuntime: LocalRuntimeBundle | null = null;
   if ((config.integrationRuntime ?? "local") === "local") {
     try {
@@ -368,7 +332,6 @@ async function main() {
     log("info", `Marfa server listening on port ${String(info.port)}`);
   });
 
-  // Graceful shutdown
   const shutdown = () => {
     log("info", "Shutting down...");
     webhookConsumer.stop();
@@ -386,9 +349,7 @@ async function main() {
     bulkActionGc.stop();
     if (reactiveRunBridge) {
       void reactiveRunBridge.stop().catch(() => {
-        // Bridge cleanup errors during shutdown are swallowed; the
-        // process is exiting anyway and the underlying coordination
-        // lock will release with the connection.
+        // Swallowed — the coordination lock releases with the connection anyway.
       });
     }
     if (localRuntime) {

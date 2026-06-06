@@ -1,5 +1,4 @@
-// Marfa types — the wire format for the Marfa API.
-// These interfaces define what goes over the network between server and clients.
+// Marfa wire types — the format shared between server and clients over the API.
 
 import type { ItemState, MergePolicy } from "@withmarfa/types";
 
@@ -54,10 +53,6 @@ export type TypePermission = "read" | "write" | "none";
 
 /** Per-namespace extension permission levels. */
 export type ExtensionPermission = "read" | "write";
-
-// ---------------------------------------------------------------------------
-// Core types
-// ---------------------------------------------------------------------------
 
 /** A Marfa item — the fundamental data record. */
 export interface Item {
@@ -161,14 +156,9 @@ export interface Version {
   device?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Edges — first-class typed relationships between items
-// ---------------------------------------------------------------------------
-
 /**
- * A typed edge between two items. Direction is spec-exact: source is the
- * "from" side of the relationship, target is the "to" side. See
- * `packages/types/core/edges/*.json` for semantics per edge type.
+ * A typed edge between two items. Direction: source is "from", target is "to".
+ * See `packages/types/core/edges/*.json` for semantics per edge type.
  */
 export interface Edge {
   id: string;

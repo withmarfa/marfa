@@ -68,9 +68,6 @@ describe("verification dispatch", () => {
   });
 
   it("ADAPTERS table has an entry for every method", () => {
-    // `google-channel` covers Google Workspace push notifications
-    // (Calendar / Drive / Gmail). `cloudflare-email` covers the
-    // withmarfa.inbox integration.
     expect(Object.keys(ADAPTERS).sort()).toEqual([
       "cloudflare-email",
       "github",
@@ -236,8 +233,7 @@ describe("verifyStripe", () => {
     const headers = new Headers({ "stripe-signature": await header(ts, body) });
     const r = await verifyStripe(body, headers, SECRET);
     expect(r.verified).toBe(true);
-    // The id is `<ts>.<first-16-of-v1>` per Stripe's documented retry
-    // contract. We just assert the shape, not the exact suffix.
+    // `<ts>.<first-16-of-v1>` per Stripe's documented retry contract.
     expect(r.external_delivery_id).toMatch(
       new RegExp(`^${ts}\\.[0-9a-f]{16}$`),
     );
@@ -324,10 +320,6 @@ describe("verifyGitHub", () => {
 // ---------------------------------------------------------------------------
 
 describe("verifyCloudflareEmail", () => {
-  // The adapter delegates to verifyHmacSha256 verbatim — the test
-  // surface mirrors the wire shape the Email Worker emits: JSON body
-  // signed with `X-Marfa-Signature` + Message-ID as `X-Marfa-Delivery-Id`.
-
   it("verifies a correctly-signed email envelope", async () => {
     const body = asBuffer(
       '{"from":{"address":"sender@example.com"},"subject":"hi","text_body":"hello"}',

@@ -42,15 +42,10 @@ export function createInMemoryStorage(): InMemoryStorage {
   return {
     get(key: string): Promise<unknown> {
       const v = data.get(key);
-      // Mirror DO storage: return a fresh snapshot per read so
-      // callers can't mutate the stored value via reference.
-      return Promise.resolve(v === undefined ? undefined : structuredClone(v));
+      return Promise.resolve(v === undefined ? undefined : structuredClone(v)); // DO parity: no shared refs
     },
     put(key: string, value: unknown): Promise<void> {
-      // Mirror DO storage: capture the value's shape at write time;
-      // subsequent caller mutations of `value` MUST NOT change what's
-      // persisted.
-      data.set(key, structuredClone(value));
+      data.set(key, structuredClone(value)); // capture shape at write time
       return Promise.resolve();
     },
     delete(key: string): Promise<boolean> {
@@ -70,9 +65,7 @@ export function createInMemoryStorage(): InMemoryStorage {
       return Promise.resolve(out);
     },
     snapshot(): ReadonlyMap<string, unknown> {
-      // Snapshot is a deep clone too — test-side mutation of the
-      // returned map (or its values) MUST NOT bleed into the live
-      // storage.
+      // Deep clone so test-side mutation of the snapshot can't bleed into storage.
       const out = new Map<string, unknown>();
       for (const [k, v] of data) out.set(k, structuredClone(v));
       return out;

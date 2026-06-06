@@ -58,14 +58,10 @@ export async function createPgTestStorage(options?: {
   maxPoolSize?: number;
 }): Promise<{ storage: Storage; cleanup: () => Promise<void> }> {
   const clone = await cloneTemplate();
-  // Cap the pool at 3 connections per test file. With parallel file
-  // execution + ~CPU-count workers, default max=10 exceeds Postgres's
-  // default `max_connections=100` quickly. 3 is plenty for one test
-  // file's typical concurrent query count.
-  //
-  // Skip the bootstrap SCHEMA_SQL apply — the cloned DB already has
-  // the schema baked in from the template. Saves hundreds of ms per
-  // storage creation under parallel load.
+  // Cap at 3 connections per test file. With ~CPU-count parallel workers,
+  // the default max=10 quickly exhausts Postgres's default max_connections=100.
+  // Skip bootstrap — the cloned DB already has the schema baked in from the
+  // template, saving hundreds of ms per storage creation under parallel load.
   const storage = await createPgStorage(clone.url, {
     ...options,
     maxPoolSize: options?.maxPoolSize ?? 3,
@@ -74,13 +70,11 @@ export async function createPgTestStorage(options?: {
   return {
     storage,
     cleanup: async () => {
-      // Kick storage.close() and clone.drop() in parallel, bounded by a
-      // 5s ceiling. The DROP uses WITH (FORCE) which terminates any
-      // lingering pool connections — so it doesn't actually depend on
-      // storage.close() succeeding cleanly. Pool-close can hang in
-      // pathological cases (in-flight SSE / export streams whose
-      // teardown the postgres-js client is awaiting), and we don't want
-      // that to block the DROP.
+      // Run close + drop in parallel, bounded by 5s. DROP uses WITH (FORCE)
+      // which terminates lingering pool connections — so it doesn't depend on
+      // storage.close() succeeding. Pool-close can hang when in-flight SSE /
+      // export streams delay postgres-js teardown; the timeout keeps afterAll
+      // hooks from blocking indefinitely.
       const closePromise = storage.close().catch(() => undefined);
       const dropPromise = clone.drop().catch(() => undefined);
       const bound = new Promise<void>((resolve) => {
@@ -156,17 +150,11 @@ export async function seedOauthBearer(
     };
   };
 
-  // Seed a synthetic auth_user if the caller didn't provide one. The
-  // bearer middleware doesn't actually need this row to exist (it reads
-  // from `auth_oauth_access_token`), but the FK on user_id requires
-  // it. Use a fixed-id row so re-seeds in the same test stay idempotent.
+  // Bearer middleware reads from auth_oauth_access_token, not auth_user,
+  // but the FK on user_id requires the row to exist.
   const authUserId =
     opts.authUserId ?? `auth_user_${Math.random().toString(36).slice(2, 10)}`;
   if (!opts.authUserId) {
-    // Use raw SQL via the storage escape hatches — auth_user.id is text
-    // and we want a deterministic synthetic id. Skip if a row already
-    // exists (unique email index would trip on a second test re-run
-    // otherwise).
     if (dialect === "sqlite") {
       const sqlite = storage as unknown as {
         __sqliteRun?: (sql: string, params: unknown[]) => Promise<unknown>;
@@ -185,9 +173,6 @@ export async function seedOauthBearer(
       const pg = storage as unknown as {
         __pgClient?: (sql: string, params?: unknown[]) => Promise<unknown>;
       };
-      // postgres-js's parameterized API expects primitives; convert Date
-      // → ISO string explicitly. The column is a TIMESTAMP and PG will
-      // coerce the string transparently.
       await pg.__pgClient?.(
         "INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES ($1, $2, $3, true, $4, $4, 'active') ON CONFLICT (id) DO NOTHING",
         [
@@ -200,11 +185,6 @@ export async function seedOauthBearer(
     }
   }
 
-  // Seed the client row. We rely on the schema export for typing.
-  // Both dialect tables have identical column names (mapped via the
-  // Drizzle adapter); the runtime values differ (boolean vs integer
-  // for `disabled` etc.). For simplicity we just write the minimum
-  // required fields.
   const schemaModule =
     dialect === "pg"
       ? await import("./storage/pg/schema.js")
@@ -226,9 +206,6 @@ export async function seedOauthBearer(
   } as Record<string, unknown>);
   await (insertOp.execute?.() ?? insertOp.run?.() ?? Promise.resolve());
 
-  // Project the system.connection app-grant. The /security page reads
-  // these directly; tests asserting on grant projection look for the
-  // resulting item id.
   const grant = await storage.items.create(
     {
       type: "system.connection",
@@ -270,13 +247,6 @@ export async function seedOauthBearer(
     accessTtlMs: 3600_000,
   });
 
-  // Optionally seed a `users` row tied to the auth_user so the bearer
-  // middleware's role projection picks it up. Requires a real tenant id
-  // (the column is NOT NULL and FK-references `tenants.id`) and a
-  // `UserStore` on the storage adapter — keys-mode self-host storage has
-  // no `users` store, so the role projection always falls back to
-  // `member` there. Tests opting in must use hosted-mode storage and
-  // create a tenant up-front.
   if (opts.userRole) {
     if (!storage.users) {
       throw new Error(
@@ -425,10 +395,6 @@ export async function createTestContext(
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
   const blobPath = join(tmpDir, "blobs");
 
-  // Thread `authMode` through to storage construction so tests overriding
-  // `authMode: "hosted"` get a UserStore (`storage.users`). The override
-  // reaches both storage and AppConfig, so a test needing `storage.users`
-  // just sets `authMode: "hosted"` rather than rolling its own context.
   const storageAuthMode: "keys" | "hosted" = overrides?.authMode ?? "keys";
   let storage: Storage;
   let pgCleanup: (() => Promise<void>) | undefined;
@@ -486,12 +452,9 @@ export async function createTestContext(
     oauthRedirectAllowlist: [],
     ...overrides,
   };
-  // Every test gets a real OIDC signer so id_token issuance and JWKS
-  // endpoints behave the same as production.
   const oidcSigner = await OidcSigner.init(storage);
   const app = createApp(storage, blobBackend, config, undefined, oidcSigner);
 
-  // Create a bootstrap admin key (unique per test context to avoid PG conflicts)
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_test_admin_key_${suffix}`;
   const keyHash = hashApiKey(rawKey, SALT);
@@ -501,20 +464,12 @@ export async function createTestContext(
       source: `test-admin-${suffix}`,
       role: "admin",
       type_permissions: {},
-      // Items created without an explicit `tier` default to the library
-      // tier. The test admin matches that default; tests that need feed
-      // items pass `tier: "feed"` on create.
       default_tier: "library",
-      // The bootstrap admin in tests stands in for the platform credential —
-      // tests need to register core.evaluator-* helper types and exercise
-      // system.* / handle paths.
+      // Tests need to register helper types and exercise system.* paths.
       is_platform: true,
     },
     keyHash,
   );
-  // Match what POST /keys would do on a real bootstrap call — stamp the
-  // bootstrap sentinel so subsequent POST /keys calls in this context
-  // require admin auth instead of re-entering bootstrap mode.
   await storage.settings.set("bootstrapped", "true");
 
   return {
@@ -524,10 +479,8 @@ export async function createTestContext(
     adminKey: rawKey,
     cleanup: async () => {
       if (pgCleanup) {
-        // PG path: closes the pool AND drops the cloned test database.
         await pgCleanup();
       } else {
-        // SQLite path: tmpdir DB, no DROP needed.
         try {
           await storage.close();
         } catch {
@@ -583,10 +536,8 @@ export function request(
     init.body = JSON.stringify(options.body);
   }
 
-  // Hono's `app.request(input, init, Env)` accepts a third arg that's
-  // merged into `c.env`. node-server normally provides `incoming.socket`
-  // there at runtime; in-process tests don't, so synthesise it when a
-  // peer is requested. This is the seam getClientIp reads.
+  // `c.env.incoming.socket` is normally provided by node-server at runtime;
+  // synthesise it here so getClientIp has a peer to read.
   const env = options?.peer
     ? { incoming: { socket: { remoteAddress: options.peer } } }
     : undefined;
@@ -631,7 +582,6 @@ export async function runBulkActionAsync(
     key,
   });
   if (res.status === 200) {
-    // dry_run path stayed synchronous.
     return {
       initialStatus: 200,
       result: (await res.json()) as BulkActionResult,
@@ -647,9 +597,6 @@ export async function runBulkActionAsync(
   }
   const queued = (await res.json()) as BulkActionJob;
 
-  // Drain the queue. The worker `runOnce()` claims at most one job
-  // per call; loop until it reports no work. In tests the loop body
-  // typically runs once.
   const worker = new BulkActionWorker({
     storage: ctx.storage,
     chunkSize: 100,

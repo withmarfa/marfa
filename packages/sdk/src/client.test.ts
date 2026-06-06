@@ -17,10 +17,6 @@ import {
 } from "./errors.js";
 import type { Item } from "@withmarfa/shared";
 
-// ---------------------------------------------------------------------------
-// Test setup: create a real Hono app, bootstrap an admin key, create SDK client
-// ---------------------------------------------------------------------------
-
 let client: MarfaClient;
 let testFetchFn: typeof globalThis.fetch;
 let adminKey: string;
@@ -91,7 +87,6 @@ beforeAll(async () => {
   testFetchFn = createTestFetch(app);
   const testFetch = testFetchFn;
 
-  // Bootstrap: create first admin key (no auth required)
   const bootstrapRes = await testFetch("http://localhost/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -110,9 +105,7 @@ beforeAll(async () => {
     fetch: testFetch,
   });
 
-  // The bulk_action endpoint is async — start the worker so SDK calls
-  // that poll for terminal state actually complete. Tight pollIntervalMs
-  // because tests want fast turnaround.
+  // Worker must be running for bulkAction() polls to reach terminal state.
   const bulkActionWorker = new BulkActionWorker({
     storage,
     pollIntervalMs: 25,
@@ -128,10 +121,6 @@ beforeAll(async () => {
 afterAll(() => {
   cleanup();
 });
-
-// ---------------------------------------------------------------------------
-// Helper
-// ---------------------------------------------------------------------------
 
 async function createNote(overrides?: Record<string, unknown>): Promise<Item> {
   return client.items.create({
@@ -190,7 +179,6 @@ describe("items", () => {
   it("deletes an item", async () => {
     const item = await createNote();
     await client.items.delete(item.id);
-    // Trashed items return 404 on GET
     await expect(client.items.get(item.id)).rejects.toThrow(NotFoundError);
   });
 
@@ -223,15 +211,10 @@ describe("items", () => {
 });
 
 // ---------------------------------------------------------------------------
-// items.upsert — natural-key 200/201 surfacing (PR A)
+// items.upsert — natural-key 200/201 surfacing
 // ---------------------------------------------------------------------------
 
 describe("items.upsert", () => {
-  // The server resolves a `(source, source_id)` POST as natural-key
-  // upsert: first call → 201 Created, second call with the same pair →
-  // 200 Updated. `request<T>` consumes that status; `upsert` surfaces it
-  // as `created: boolean`.
-
   it("returns created=true on a fresh natural-key insert (HTTP 201)", async () => {
     const sourceId = `upsert-fresh-${Date.now().toString()}`;
     const result = await client.items.upsert({
@@ -291,14 +274,13 @@ describe("conflict resolution", () => {
   it("auto-merges non-conflicting fields", async () => {
     const item = await createNote();
 
-    // First update changes title
     await client.items.update(
       item.id,
       { title: "Server title" },
       { expectedVersion: 1 },
     );
 
-    // Second update changes body with stale version — server auto-merges
+    // Stale version on a different field — server auto-merges.
     const result = await client.items.update(
       item.id,
       { body: "New body" },
@@ -311,21 +293,19 @@ describe("conflict resolution", () => {
   it("auto strategy resolves conflicting fields", async () => {
     const item = await createNote();
 
-    // First update changes title
     await client.items.update(
       item.id,
       { title: "Server title" },
       { expectedVersion: 1 },
     );
 
-    // Second update also changes title with stale version — real conflict
-    // Auto strategy: server's title wins, but non-conflicting changes preserved
+    // Stale version on the same field — real conflict. Auto: server's value
+    // wins on conflicting fields, non-conflicting changes are preserved.
     const result = await client.items.update(
       item.id,
       { title: "Client title", body: "Client body" },
       { expectedVersion: 1, conflict: "auto" },
     );
-    // After auto-merge: title = server's value, body = client's value
     expect(result.properties.title).toBe("Server title");
     expect(result.properties.body).toBe("Client body");
   });
@@ -578,7 +558,6 @@ describe("items.update expectedVersion", () => {
 
   it("lazy-fetches type only when keep_both_copies conflict needs it", async () => {
     const item = await createNote({ body: "Base" });
-    // Bump server version.
     await client.items.update(
       item.id,
       { body: "Server body" },
@@ -879,7 +858,6 @@ describe("keys", () => {
     });
     await client.keys.revoke(id);
 
-    // Revoked key should no longer authenticate
     const revokedClient = new MarfaClient({
       url: "http://localhost",
       apiKey: key,
@@ -905,7 +883,6 @@ describe("keys", () => {
     });
 
     expect(updated.id).toBe(id);
-    // source stays put — it's immutable
     expect(updated.source).toBe(source);
     expect(updated.label).toBe("renamed");
     expect(updated.default_tier).toBe("library");
@@ -1200,7 +1177,6 @@ describe("items.bulk", () => {
       code: "bulk_atomic_rollback",
     });
 
-    // Rollback verified — nothing with the tag should exist.
     const list = await client.items.list({ tags: [tag] });
     expect(list.data).toHaveLength(0);
   });
@@ -1319,7 +1295,6 @@ describe("items.createWithAttachments", () => {
     expect(result.attachments[0]!.type).toBe("core.file");
     expect(result.attachments[1]!.type).toBe("core.file");
 
-    // Order preserved: PNG before JPG.
     expect(
       (result.attachments[0]!.properties as { mime_type: string }).mime_type,
     ).toBe("image/png");
@@ -1327,7 +1302,6 @@ describe("items.createWithAttachments", () => {
       (result.attachments[1]!.properties as { mime_type: string }).mime_type,
     ).toBe("image/jpeg");
 
-    // blob_ref auto-stamped on each attachment.
     expect(
       (result.attachments[0]!.properties as { blob_ref: string }).blob_ref,
     ).toMatch(/^sha256:[a-f0-9]+$/);
@@ -1335,7 +1309,6 @@ describe("items.createWithAttachments", () => {
       (result.attachments[1]!.properties as { blob_ref: string }).blob_ref,
     ).toMatch(/^sha256:[a-f0-9]+$/);
 
-    // Each attachment has one `attached-to` edge pointing back at host.
     for (const att of result.attachments) {
       const edges = await client.items.edges(att.id, {
         edge_type: "attached-to",
@@ -1346,7 +1319,6 @@ describe("items.createWithAttachments", () => {
 
   it("partial-upload failure — throws and does NOT issue the bulk call", async () => {
     const { client: instrumented, counts } = makeInstrumentedClient({
-      // Fail the second blob upload (index 1).
       failBlobUploadAtIndex: 1,
     });
 

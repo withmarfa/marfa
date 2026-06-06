@@ -21,10 +21,8 @@ import type { AppConfig } from "../config.js";
 // Hono environment type (shared across all routes)
 // ---------------------------------------------------------------------------
 
-// Note: `extends Record<string, unknown>` — @hono/zod-openapi's router
-// generic requires this constraint. Pure interfaces don't satisfy it under
-// strict TypeScript (interfaces are open to external augmentation), so we
-// pull in the index signature explicitly.
+// `extends Record<string, unknown>` is required by @hono/zod-openapi's router
+// generic — pure interfaces don't satisfy it without the index signature.
 export interface AppEnv extends Record<string, unknown> {
   Variables: {
     apiKey: ApiKey | undefined;
@@ -368,13 +366,6 @@ export function authMiddleware(storage: Storage, salt: string) {
       });
       c.set("authType", "oauth");
 
-      // Stamp `last_used_at` on the projected `system.connection
-      // { kind: app }` row. Resolved on first call inside the debounce
-      // window via `storage.oauthProvider.findGrantItemId`, then cached
-      // by `(clientId, authUserId)` key in `oauthLastUsedCache` for the
-      // rest of the window. Fire-and-forget; failures are swallowed so
-      // stamping never blocks the request. If the lookup misses, we
-      // skip silently.
       if (oauthToken.userId) {
         void stampOAuthGrantLastUsedByGrantKey(storage, {
           tenantId: oauthTenantId,
@@ -386,7 +377,6 @@ export function authMiddleware(storage: Storage, salt: string) {
       return next();
     }
 
-    // API key
     if (token.startsWith(KEY_PREFIX)) {
       const hash = hashApiKey(token, salt);
       const stored = await storage.keys.validate(hash);
@@ -416,11 +406,8 @@ export function authMiddleware(storage: Storage, salt: string) {
       });
       c.set("authType", "api_key");
 
-      // Debounced last_used_at update. The DB layer (KeyStore.updateLastUsed)
-      // now enforces the real floor via a conditional UPDATE, so this in-memory
-      // cache is a per-instance round-trip skip rather than the source of
-      // truth — multiple instances can't write more often than once per
-      // DEBOUNCE_MS per key regardless of what's in any given instance's cache.
+      // DB-side conditional UPDATE is the authoritative floor; this cache
+      // skips the round-trip when this instance already wrote within DEBOUNCE_MS.
       const cacheKey = `key:${stored.id}`;
       const now = Date.now();
       const lastTracked = lastUsedCache.get(cacheKey) ?? 0;
@@ -432,7 +419,6 @@ export function authMiddleware(storage: Storage, salt: string) {
       return next();
     }
 
-    // Unknown token format
     c.set("apiKey", undefined);
     c.set("authType", undefined);
     return next();
@@ -440,7 +426,7 @@ export function authMiddleware(storage: Storage, salt: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Context-agnostic access control
+// Access control helpers (context-agnostic)
 // ---------------------------------------------------------------------------
 
 export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
@@ -529,14 +515,8 @@ export function checkTypeAccess(
     }
   }
 
-  // tenant_admin is admin-shaped within its own tenant. Application-
-  // layer tenant scoping and Postgres RLS at the DB layer keep
-  // tenant_admin reads/writes confined to its tenant_id; bypassing
-  // type_permissions here gives it the full type surface within that
-  // scope, matching admin's platform-wide behaviour. A tenant_admin
-  // key whose type_permissions are deliberately tightened belongs as
-  // `member` with explicit type_permissions instead — tenant_admin is
-  // the "full admin within tenant" tier.
+  // tenant_admin bypasses type_permissions — it is admin-shaped within its tenant,
+  // with RLS + app-layer scoping providing the isolation boundary.
   if (key.role === "admin" || key.role === "tenant_admin") return;
 
   const resolved = resolveTypePermission(type, key.type_permissions);
@@ -557,10 +537,8 @@ export function checkTypeAccess(
 export function computeTypeFilter(
   apiKey: ApiKey | undefined,
 ): string[] | undefined {
-  // tenant_admin sees the full type surface within its tenant —
-  // see `checkTypeAccess` for the rationale. Returning `undefined`
-  // here means "no filter"; tenant scoping is applied separately in
-  // the storage layer (item-store filters by `tenant_id`).
+  // admin / tenant_admin see the full type surface; tenant isolation is
+  // enforced separately at the storage layer.
   if (!apiKey || apiKey.role === "admin" || apiKey.role === "tenant_admin") {
     return undefined;
   }
@@ -571,12 +549,11 @@ export function computeTypeFilter(
       patterns.push(pattern);
     }
   }
-  // Empty array (no readable types) means "no items" — not "all items"
-  return patterns;
+  return patterns; // empty means "no items visible", not "all items"
 }
 
 // ---------------------------------------------------------------------------
-// Hono-specific wrappers (delegate to context-agnostic functions)
+// Hono-specific wrappers
 // ---------------------------------------------------------------------------
 
 export function requireAuth(c: Context<AppEnv>): ApiKey {

@@ -97,9 +97,6 @@ async function readCredentialConfig(
   storage: Storage,
   connection: Item,
 ): Promise<CredentialConfig> {
-  // Connection must reference a `system.credential` row via
-  // `properties.credential_ref`. All connections installed via the
-  // current pipeline have this field; reject anything without it.
   const props = connection.properties as { credential_ref?: string };
   const credentialRef = props.credential_ref;
   if (!credentialRef) {
@@ -176,10 +173,7 @@ async function readCredentialConfig(
         `Connection ${connection.id}'s credential_ref ${credentialRef} is not a usable kind:api_token — api_token_config.upstream_base_url is missing.`,
       );
     }
-    // Default to `Bearer` when no auth scheme is set, and treat
-    // anything outside the supported set as Bearer too — a missing or
-    // unrecognised scheme falls back rather than 500'ing on a
-    // misconfigured credential.
+    // Missing or unrecognized scheme falls back to Bearer rather than 500'ing.
     const SUPPORTED_SCHEMES: ApiTokenAuthScheme[] = [
       "Bearer",
       "Token",
@@ -236,9 +230,7 @@ function resolveUpstreamBaseUrl(
   const override = configuration?.upstream_base_url_override;
   if (typeof override === "string" && override.length > 0) {
     try {
-      // URL constructor throws on invalid input — surface as a clear
-      // misconfiguration error rather than silently falling back.
-      new URL(override);
+      new URL(override); // throws on invalid input
     } catch {
       throw new MarfaError(
         ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID,
@@ -499,7 +491,6 @@ async function withRefreshLock<T>(
   connectionId: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  // Wait on any in-process refresh for this connection.
   const pending = inFlightRefresh.get(connectionId);
   if (pending) {
     await pending;
@@ -557,9 +548,7 @@ async function markReauthRequired(
       },
       tenantId,
     );
-    // items.update may return a ConflictResponse instead of throwing
-    // on version mismatch. Surface that as an audit row rather than a
-    // silent miss.
+    // items.update returns a ConflictResponse instead of throwing on version mismatch.
     if ("conflict" in updated) {
       void storage.audit.log({
         client_ip: clientIp,
@@ -585,10 +574,6 @@ async function markReauthRequired(
     });
   }
 
-  // Emit a system.activity row. Keep the property set minimal — the
-  // type schema accepts severity + summary + connection_id; richer
-  // fields are optional. Tier follows the per-Connection feed_activity
-  // toggle (mirrors the items.ts logic).
   const integration =
     typeof connection.properties.integration_ref === "string"
       ? connection.properties.integration_ref
@@ -601,12 +586,8 @@ async function markReauthRequired(
           severity: "action_required",
           summary: `OAuth re-authorisation needed for ${integration}`,
           connection_id: connection.id,
-          // `detail` is `type: object` per system.activity.json — wrap
-          // the reason string into a structured payload so the schema
-          // validator accepts it.
-          detail: { reason },
+          detail: { reason }, // system.activity.detail requires an object, not a bare string
         },
-        // tier follows feed_activity flag — server stamps
         ...(connection.properties.feed_activity === true
           ? { tier: "feed" as const }
           : {}),
@@ -710,9 +691,6 @@ const PROACTIVE_REFRESH_LEEWAY_SEC = 60;
 export function connectionProxyRoutes(storage: Storage) {
   const r = new Hono<AppEnv>();
 
-  // Hono wildcard — catches every method + every path beneath
-  // `/connections/:id/proxy/`. We capture the upstream sub-path off
-  // `c.req.path`.
   r.all("/:id/proxy/*", async (c) => {
     const connectionId = c.req.param("id");
     const { tenantId, connection } = await requireConnectionProxyAccess(
@@ -723,19 +701,9 @@ export function connectionProxyRoutes(storage: Storage) {
 
     const config = await readCredentialConfig(storage, connection);
 
-    // Per-connection upstream_base_url override consulted before the
-    // credential's value. Lets multiple integrations sharing one OAuth
-    // credential target different upstream hosts (e.g. google.contacts
-    // on people.googleapis.com vs google.calendar/drive/tasks on
-    // www.googleapis.com sharing one google.* OAuth provider row).
-    // Only tenant-admin can install / configure a connection, so the
-    // trust model is unchanged from
-    // POST /credentials/api-token already accepting an arbitrary
-    // upstream_base_url.
     const effectiveBaseUrl = resolveUpstreamBaseUrl(connection, config);
 
-    // Derive upstream URL: strip the route prefix from the request path
-    // and prepend the configured upstream base URL.
+    // Strip the route prefix and append the upstream sub-path.
     const prefix = `/connections/${connectionId}/proxy`;
     const reqUrl = new URL(c.req.url);
     const upstreamPath = reqUrl.pathname.startsWith(prefix)
@@ -744,8 +712,7 @@ export function connectionProxyRoutes(storage: Storage) {
     const upstreamUrl =
       effectiveBaseUrl.replace(/\/+$/, "") + upstreamPath + reqUrl.search;
 
-    // Read body once — we may retry it after a refresh.
-    const bodyBytes = await c.req.raw.arrayBuffer();
+    const bodyBytes = await c.req.raw.arrayBuffer(); // read once; may be replayed after a refresh
 
     const method = c.req.method;
     let outcome: ProxyAttemptOutcome;
@@ -800,8 +767,6 @@ export function connectionProxyRoutes(storage: Storage) {
       // on 401 + retry once.
       // -----------------------------------------------------------------
 
-      // Look up the token row. tenantId-scoped read so cross-tenant
-      // requests against the same connection_id can't peek.
       let row = await storage.connectionOauthTokens.get(connectionId, tenantId);
       if (!row) {
         void storage.audit.log({
@@ -818,8 +783,6 @@ export function connectionProxyRoutes(storage: Storage) {
         );
       }
 
-      // Proactive refresh — when access_token expires inside the leeway
-      // window, refresh before issuing the call.
       const expiresAtMs = Date.parse(row.expires_at);
       const proactiveDue =
         Number.isFinite(expiresAtMs) &&
@@ -856,8 +819,7 @@ export function connectionProxyRoutes(storage: Storage) {
             `Refresh failed: ${result.reason}`,
           );
         }
-        // Re-read row so the caller sees rotated state.
-        row = await storage.connectionOauthTokens.get(connectionId, tenantId);
+        row = await storage.connectionOauthTokens.get(connectionId, tenantId); // re-read to pick up rotated token
         if (!row) {
           // Should be impossible — refresh just wrote.
           throw new MarfaError(
@@ -888,8 +850,8 @@ export function connectionProxyRoutes(storage: Storage) {
         accessToken,
       );
 
-      // Reactive refresh on 401. Single retry per call.
       if (outcome.status === 401) {
+        // reactive refresh — single retry
         const result = await withRefreshLock(storage, connectionId, () =>
           refreshAccessToken(storage, connectionId, config),
         );
@@ -920,7 +882,6 @@ export function connectionProxyRoutes(storage: Storage) {
             `Upstream 401 and refresh failed: ${result.reason}`,
           );
         }
-        // Retry once with the new access token.
         outcome = await performUpstreamCall(
           upstreamUrl,
           method,
@@ -941,13 +902,11 @@ export function connectionProxyRoutes(storage: Storage) {
       details: {
         method,
         upstream_status: outcome.status,
-        // Don't log path query — could contain bearer-equivalent secrets.
-        upstream_host: new URL(upstreamUrl).host,
+        upstream_host: new URL(upstreamUrl).host, // path omitted — may contain bearer-equivalent secrets
         credential_kind: config.kind,
       },
     });
 
-    // Return passthrough.
     return c.body(
       outcome.bodyBytes,
       outcome.status as 200,
@@ -958,11 +917,10 @@ export function connectionProxyRoutes(storage: Storage) {
   return r;
 }
 
-// Re-export for tests so they can short-circuit refresh via storage mocks.
+// Re-exported for tests; direct mutation of inFlightRefresh is forbidden.
 export const __internals = {
   refreshAccessToken,
   sha256Hex,
   PROACTIVE_REFRESH_LEEWAY_SEC,
-  // Exporting just for invariant checks; direct mutation is forbidden.
   generateProxyId: generateId,
 };

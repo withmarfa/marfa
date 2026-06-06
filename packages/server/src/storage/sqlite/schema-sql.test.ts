@@ -55,21 +55,18 @@ afterAll(() => {
 
 describe("SCHEMA_SQL equivalence", () => {
   it("produces the same schema as running migrations from 0000", async () => {
-    // DB 1: migrations applied via Drizzle's migrator.
     const migrationsPath = join(workDir, "migrations.db");
     await runSqliteMigrations(migrationsPath);
     const migrationsClient = createClient({ url: `file:${migrationsPath}` });
     const fromMigrations = await dumpSchema(migrationsClient);
     migrationsClient.close();
 
-    // DB 2: SCHEMA_SQL applied directly.
     const schemaSqlPath = join(workDir, "schema-sql.db");
     const schemaSqlClient = createClient({ url: `file:${schemaSqlPath}` });
     await schemaSqlClient.executeMultiple(SCHEMA_SQL);
     const fromSchemaSql = await dumpSchema(schemaSqlClient);
     schemaSqlClient.close();
 
-    // Both dumps must carry the same objects.
     const migrationsKeys = fromMigrations.map((r) => `${r.type}:${r.name}`);
     const schemaSqlKeys = fromSchemaSql.map((r) => `${r.type}:${r.name}`);
     expect(schemaSqlKeys).toEqual(migrationsKeys);
