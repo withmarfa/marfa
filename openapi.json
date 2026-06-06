@@ -5698,6 +5698,333 @@
         }
       }
     },
+    "/items/bulk-get": {
+      "post": {
+        "operationId": "bulkGetItems",
+        "tags": [
+          "Items"
+        ],
+        "summary": "Bulk get items by id",
+        "description": "Reads up to 100 items by id in one round-trip. Tenant-scoped and permission-filtered exactly like the single-item GET: ids the caller cannot read (other tenant, type not permitted, trashed, or missing) are silently omitted rather than erroring the whole request. Optional `include` hydrates edges, metadata, extensions, or system items inline.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Item ids to fetch (max 100)."
+                  },
+                  "include": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "edges",
+                        "metadata",
+                        "extensions",
+                        "system"
+                      ]
+                    },
+                    "description": "Extras to hydrate inline: edges, metadata, extensions, system. Mirrors the GET /items `include` tokens."
+                  }
+                },
+                "required": [
+                  "ids"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The readable subset of the requested items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "properties": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "nullable": true
+                            }
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "archived",
+                              "trashed",
+                              "revoked"
+                            ]
+                          },
+                          "tier": {
+                            "type": "string",
+                            "enum": [
+                              "library",
+                              "feed"
+                            ]
+                          },
+                          "tenant_id": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "version": {
+                            "type": "number"
+                          },
+                          "schema_version": {
+                            "type": "integer"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "source_id": {
+                            "type": "string"
+                          },
+                          "device": {
+                            "type": "string"
+                          },
+                          "capture_latitude": {
+                            "type": "number"
+                          },
+                          "capture_longitude": {
+                            "type": "number"
+                          },
+                          "timestamp": {
+                            "type": "string"
+                          },
+                          "created_at": {
+                            "type": "string"
+                          },
+                          "updated_at": {
+                            "type": "string"
+                          },
+                          "edges": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "edges": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string"
+                                      },
+                                      "tenant_id": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "source_id": {
+                                        "type": "string"
+                                      },
+                                      "target_id": {
+                                        "type": "string"
+                                      },
+                                      "edge_type": {
+                                        "type": "string"
+                                      },
+                                      "properties": {
+                                        "type": "object",
+                                        "additionalProperties": {
+                                          "nullable": true
+                                        }
+                                      },
+                                      "created_at": {
+                                        "type": "string"
+                                      },
+                                      "updated_at": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "source_id",
+                                      "target_id",
+                                      "edge_type",
+                                      "properties",
+                                      "created_at",
+                                      "updated_at"
+                                    ]
+                                  }
+                                },
+                                "has_more": {
+                                  "type": "boolean"
+                                },
+                                "next_cursor": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "edges",
+                                "has_more"
+                              ]
+                            }
+                          },
+                          "extensions": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "type",
+                          "properties",
+                          "state",
+                          "version",
+                          "schema_version",
+                          "source",
+                          "timestamp",
+                          "created_at",
+                          "updated_at"
+                        ]
+                      }
+                    },
+                    "metadata": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "extensions": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "nullable": true
+                            }
+                          }
+                        },
+                        "required": [
+                          "item_id",
+                          "tags",
+                          "extensions"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (too many ids, or a malformed id)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "validation_error",
+                            "invalid_id"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "unauthorized"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "details": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/items/{id}/extensions": {
       "get": {
         "operationId": "listItemExtensions",
