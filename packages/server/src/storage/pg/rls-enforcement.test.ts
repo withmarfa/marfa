@@ -1,23 +1,22 @@
 /**
- * T-025 part 2 — Postgres RLS connection-pool enforcement.
+ * Postgres RLS connection-pool enforcement.
  *
- * Verifies the request-level wiring actually filters cross-tenant
- * data via DB-layer RLS, not just the application-layer scoping.
+ * Verifies the request-level wiring actually filters cross-tenant data via
+ * DB-layer RLS, not just the application-layer scoping.
  *
  * Two test surfaces:
  *
- *   1. **Direct DB-layer.** Open a Drizzle transaction, run `SET
- *      LOCAL ROLE marfa_app; SELECT set_config('marfa.tenant_id',
- *      tenantA, true)`, then issue an *unscoped* `SELECT * FROM
- *      items` (no WHERE clause). RLS must filter to tenant A's rows.
- *      This proves the policies bite the role even when the
- *      application layer would have leaked.
+ *   1. **Direct DB-layer.** Open a Drizzle transaction, run `SET LOCAL
+ *      ROLE marfa_app; SELECT set_config('marfa.tenant_id', tenantA, true)`,
+ *      then issue an *unscoped* `SELECT * FROM items` (no WHERE clause).
+ *      RLS must filter to tenant A's rows. This proves the policies bite the
+ *      role even when the application layer would have leaked.
  *
- *   2. **End-to-end via the middleware.** Boot the test context
- *      with `rlsEnforce: true`, mint a tenant-bound key, request
- *      `/items/<other-tenant-item>` as tenant A → 404 (RLS denies
- *      the row, the route's `get(id, tenantId)` returns nothing).
- *      The middleware activates the role-switch wrapper.
+ *   2. **End-to-end via the middleware.** Boot the test context with
+ *      `rlsEnforce: true`, mint a tenant-bound key, request
+ *      `/items/<other-tenant-item>` as tenant A → 404 (RLS denies the row,
+ *      the route's `get(id, tenantId)` returns nothing). The middleware
+ *      activates the role-switch wrapper.
  *
  * SQLite skips — RLS is Postgres-only.
  */
@@ -35,7 +34,7 @@ import type { PgDb } from "./connection.js";
 const dialect = process.env.DB_DIALECT ?? "sqlite";
 const isPg = dialect === "pg";
 
-describe.skipIf(!isPg)("Postgres RLS enforcement (T-025 part 2)", () => {
+describe.skipIf(!isPg)("Postgres RLS enforcement", () => {
   describe("direct DB-layer", () => {
     let ctx: TestContext;
 

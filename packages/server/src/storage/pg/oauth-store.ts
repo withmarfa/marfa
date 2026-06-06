@@ -8,10 +8,10 @@ import type { PgDb } from "./connection.js";
 /**
  * Device-flow state machine + OAuth grant `last_used_at` stamping.
  *
- * T-131 narrowed this store: the OAuth-protocol surfaces (clients /
- * codes / tokens) moved to the @better-auth/oauth-provider plugin
- * tables (`auth_oauth_*`). The device-flow state machine stays here —
- * see `auth/oauth-provider.ts` §Caveats §1 for the rationale.
+ * This store is scoped to device-flow state. The OAuth-protocol surfaces
+ * (clients / codes / tokens) are owned by the @better-auth/oauth-provider
+ * plugin tables (`auth_oauth_*`). See `auth/oauth-provider.ts` for the
+ * rationale behind keeping device-flow here.
  */
 export class PgOAuthStore implements OAuthStore {
   constructor(private db: PgDb) {}
@@ -122,12 +122,11 @@ export class PgOAuthStore implements OAuthStore {
   }
 
   /**
-   * T-101: DB-side debounce for OAuth-grant `last_used_at`. Mirrors
-   * `KeyStore.updateLastUsed` in shape — the conditional WHERE makes
-   * the floor authoritative across instances. The middleware-side
-   * in-memory cache (`oauthLastUsedCache` in `middleware/auth.ts`)
-   * stays as a per-instance round-trip skip; this is the cluster-wide
-   * guarantee.
+   * DB-side debounce for OAuth-grant `last_used_at`. Mirrors
+   * `KeyStore.updateLastUsed` in shape — the conditional WHERE makes the
+   * floor authoritative across instances. The middleware-side in-memory
+   * cache (`oauthLastUsedCache` in `middleware/auth.ts`) stays as a
+   * per-instance round-trip skip; this is the cluster-wide guarantee.
    *
    * Differs from the api-key path because `last_used_at` for an OAuth
    * grant is a JSON property inside `items.properties`, not a top-level

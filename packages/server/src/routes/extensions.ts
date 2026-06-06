@@ -20,12 +20,12 @@ import {
 
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
 
-/** Workstream 3 Layer 1 PR 4: the `connection.runtime` namespace is
- *  reserved for the per-Connection runtime credential's hot state.
- *  Only credentials minted by the lease broker (is_runtime_credential
- *  + connection_id stamped) can write it; admin keys can read but not
- *  write so operators can inspect runtime state in the UI without
- *  corrupting it. */
+/** The `connection.runtime` namespace is reserved for the
+ *  per-Connection runtime credential's hot state. Only credentials
+ *  minted by the lease broker (is_runtime_credential + connection_id
+ *  stamped) can write it; admin keys can read but not write so
+ *  operators can inspect runtime state in the UI without corrupting
+ *  it. */
 const RUNTIME_NAMESPACE = "connection.runtime";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -371,11 +371,11 @@ export function extensionRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
-    // Workstream 3 Layer 1 PR 4: connection.runtime is the runtime
-    // credential's hot-state subtree. Only credentials minted by the
-    // lease broker may write it, and only to the matching connection's
-    // item. Admin keys can read but not write so operators can inspect
-    // runtime state in the UI without corrupting it.
+    // connection.runtime is the runtime credential's hot-state subtree.
+    // Only credentials minted by the lease broker may write it, and
+    // only to the matching connection's item. Admin keys can read but
+    // not write so operators can inspect runtime state without
+    // corrupting it.
     if (namespace === RUNTIME_NAMESPACE) {
       if (!apiKey?.is_runtime_credential) {
         throw new MarfaError(
@@ -456,9 +456,9 @@ export function extensionRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
-    // Workstream 3 Layer 1 PR 4: same gate as setExtensionRoute — only
-    // the matching runtime credential may delete its own
-    // connection.runtime namespace; admins read-only.
+    // Same gate as setExtensionRoute — only the matching runtime
+    // credential may delete its own connection.runtime namespace;
+    // admins read-only.
     if (namespace === RUNTIME_NAMESPACE) {
       if (!apiKey?.is_runtime_credential) {
         throw new MarfaError(

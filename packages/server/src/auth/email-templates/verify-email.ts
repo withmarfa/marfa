@@ -1,13 +1,13 @@
 /**
- * Email-verification template (Wave C PR2).
+ * Email-verification template.
  *
  * Sent on sign-up. Mirrors the magic-link template's mobile-first
  * shape (16px body, 44px tap target, inline styles only). Subject
  * intentionally specific so a busy inbox can scan it.
  *
  * Plain-text fallback included — Gmail downgrades to text/plain in
- * some preview surfaces, and accessibility tooling reads the
- * text part preferentially.
+ * some preview surfaces, and accessibility tooling reads the text part
+ * preferentially.
  */
 const ACCENT = "#1f6feb";
 const TEXT = "#1f2328";

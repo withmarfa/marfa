@@ -90,7 +90,7 @@ describe("POST /items", () => {
     );
   });
 
-  it("natural-key upsert: re-POST with same (source, source_id) updates in place (T-038)", async () => {
+  it("natural-key upsert: re-POST with same (source, source_id) updates in place", async () => {
     const first = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
@@ -246,14 +246,11 @@ describe("POST /items", () => {
   });
 });
 
-describe("POST /items — platform-credential gate (TSC42 §3/§4)", () => {
+describe("POST /items — platform-credential gate", () => {
   it("rejects a non-platform admin writing system.* even with explicit type_permissions", async () => {
-    // Pre-fix attack vector: a tenant admin (role admin, is_platform false)
-    // with `type_permissions: { "system.connection": "write" }` could mint
-    // system.connection rows because the admin-role bypass in
-    // `checkTypeAccess` returned early before any platform check ran. The
-    // gate now fires for writes to `core.*` / `system.*` / `marfa.*`
-    // independent of role; reads are unrestricted.
+    // Only platform credentials may write to `core.*`, `system.*`, or
+    // `marfa.*` types, regardless of role or type_permissions. The gate
+    // fires before any role bypass; reads are unrestricted.
     const tenantAdminKey = "marfa_k1_test_non_platform_admin";
     await ctx.storage.keys.create(
       {
@@ -670,7 +667,7 @@ describe("PATCH /items/:id", () => {
   });
 });
 
-describe("PATCH /items/:id — source_id mutation (T-118 precursor)", () => {
+describe("PATCH /items/:id — source_id mutation", () => {
   it("happy path: PATCH source_id updates the natural key + findBySourceId returns it", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,

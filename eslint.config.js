@@ -16,7 +16,7 @@ export default [
             "packages/*/vitest.config.ts",
             "integrations/*/tsup.config.ts",
             "integrations/*/vitest.config.ts",
-            // T-244: the withmarfa.inbox integration ships a nested
+            // The withmarfa.inbox integration ships a nested
             // Cloudflare Email Worker as its own workspace package
             // (`integrations/withmarfa-inbox/email-worker/`). Its
             // vitest.config.ts also falls through to the default
@@ -26,14 +26,10 @@ export default [
           // Default is 8; we have ~10 config files that fall through
           // to the default project (per-package tsup + vitest configs
           // across 6 packages + 1 integration + the root vitest +
-          // eslint configs). Bumped to 30 in T-236 (google-tasks),
-          // then 32 in T-237 (google-contacts), then 34 in T-241
-          // (todoist), then 36 in T-242 (readwise), then 38 in T-243
-          // (raindrop), then 41 in T-244 (withmarfa.inbox — adds the
-          // integration's tsup + vitest configs PLUS a sibling
-          // email-worker subpackage that contributes a vitest.config
-          // through the `integrations/*/email-worker/vitest.config.ts`
-          // allowDefaultProject glob).
+          // eslint configs). Raised to 43 to accommodate the in-tree
+          // integration configs plus the withmarfa.inbox email-worker
+          // subpackage that contributes a vitest.config through the
+          // `integrations/*/email-worker/vitest.config.ts` glob.
           maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 43,
         },
         tsconfigRootDir: import.meta.dirname,
@@ -91,8 +87,7 @@ export default [
       // throwaway harnesses, captures, and never-tracked files; they
       // sit in the repo tree but aren't part of the project's source
       // set. Without this ignore, lint trips on any `.ts` an agent
-      // drops there for local exploration (e.g. the validation
-      // harness from T-231 close-out).
+      // drops there for local exploration.
       "_local/",
       "_tmp/",
       "_ignore/",

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Marfa server — production container image for Cloudflare Containers (T-277).
+# Marfa server — production container image for Cloudflare Containers.
 #
 # Build context is the MONOREPO ROOT (the server's workspace deps —
 # @withmarfa/shared, @withmarfa/webhooks, @withmarfa/runtime-sdk — are built

@@ -1,23 +1,16 @@
 /**
- * T-015: cross-dialect FTS parity.
+ * Cross-dialect FTS parity.
  *
- * The two dialects have different mechanics — SQLite uses an FTS5
- * virtual table (`items_fts`) populated at write time; PG uses a
- * `tsvector`-typed column (`search_vector`) on `items` populated at
- * write time, queried via a GIN index. Pre-T-015, PG computed the
- * tsvector at query time over `properties::json` with `json_each_text`,
- * which:
- *   - Indexed every string property regardless of `searchable: false`
- *     declarations.
- *   - Did a per-request sequential scan with no functional GIN index.
- *
- * Both shapes now consult the shared `extractSearchableText` helper
- * for "what text contributes to FTS for this item", so the same
- * fixture should produce the same query results across dialects.
+ * The two dialects have different mechanics — SQLite uses an FTS5 virtual
+ * table (`items_fts`) populated at write time; PG uses a `tsvector`-typed
+ * column (`search_vector`) on `items` populated at write time, queried via
+ * a GIN index. Both consult the shared `extractSearchableText` helper for
+ * "what text contributes to FTS for this item", so the same fixture should
+ * produce the same query results across dialects.
  *
  * The suite runs against whichever dialect the test process targets
- * (`DB_DIALECT=sqlite` or `pg`). The CI matrix runs both, so a
- * regression in either dialect surfaces as a failed PR check.
+ * (`DB_DIALECT=sqlite` or `pg`). The CI matrix runs both, so a regression
+ * in either dialect surfaces as a failed PR check.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -50,7 +43,7 @@ async function search(query: string): Promise<SearchHit[]> {
   return body.results;
 }
 
-describe("FTS dialect parity (T-015)", () => {
+describe("FTS dialect parity", () => {
   it("indexes the four core fields end-to-end", async () => {
     const { item: a } = (await (
       await request(ctx.app, "POST", "/items", {
@@ -129,8 +122,8 @@ describe("FTS dialect parity (T-015)", () => {
     expect(publicHits.map((h) => h.item.id)).toContain(secretItem.id);
 
     // internal_secret content should NOT match — the field is
-    // searchable: false. Pre-T-015 PG would have surfaced it (every
-    // string property was indexed at query time).
+    // searchable: false. Without this, PG would index every string
+    // property at query time, bypassing the opt-out.
     const secretHits = await search("quagga");
     expect(secretHits.map((h) => h.item.id)).not.toContain(secretItem.id);
   });

@@ -1,11 +1,11 @@
 /**
  * Generate `SCHEMA_SQL` for the requested dialect from the Drizzle migrations.
  *
- * SCHEMA_SQL is the fresh-database bootstrap path (T-014) that runs every
- * server boot. It must always reflect what `pnpm migrate` would produce
- * starting from `0000`. This script removes the manual three-place sync
- * burden (T-145) by applying all migrations to a temporary database and
- * dumping the resulting schema into `src/storage/<dialect>/schema-sql.generated.ts`.
+ * SCHEMA_SQL is the fresh-database bootstrap path that runs every server
+ * boot. It must always reflect what `pnpm migrate` would produce starting
+ * from `0000`. This script removes the manual three-place sync burden by
+ * applying all migrations to a temporary database and dumping the resulting
+ * schema into `src/storage/<dialect>/schema-sql.generated.ts`.
  *
  * Usage:
  *   tsx scripts/generate-schema-sql.ts --dialect=sqlite
@@ -290,12 +290,12 @@ function buildPgRoleAndGrants(grants: PgGrant[]): {
   }
 
   const roleLines: string[] = [
-    "-- T-145: SCHEMA_SQL is auto-generated. The marfa_app role + grants are",
+    "-- SCHEMA_SQL is auto-generated. The marfa_app role + grants are",
     "-- reconstructed from information_schema because pg_dump --no-privileges",
     "-- strips them. The role is emitted first (RLS policies reference it);",
     "-- table grants are emitted after the pg_dump body (tables must exist).",
     "--",
-    "-- T-168: grant the connection user MEMBERSHIP in marfa_app so SET ROLE",
+    "-- The connection user needs MEMBERSHIP in marfa_app so SET ROLE",
     "-- succeeds during request handling. PG 16+ no longer auto-grants",
     "-- membership on CREATE ROLE; the creator gets admin option but must",
     "-- explicitly GRANT for the role to be settable via SET ROLE. The inner",
@@ -326,7 +326,7 @@ function buildPgRoleAndGrants(grants: PgGrant[]): {
   ];
 
   const grantLines: string[] = [
-    "-- Table grants on the marfa_app role (T-145; see role block above).",
+    "-- Table grants on the marfa_app role (see role block above).",
     "-- Schema-qualified (`public.x`) so the grants resolve regardless of",
     "-- search_path — pg_dump emits its CREATE TABLE statements with the",
     "-- `public.` prefix, and grants must match the qualified table for",
@@ -459,12 +459,13 @@ function transformPgStatement(stmt: string): string {
   // UNIQUEs, so dropping a PK cascades. Wrap in DO IF NOT EXISTS instead —
   // re-runs simply skip when an equivalent constraint already exists.
   //
-  // T-157: the guard is SEMANTIC, not name-based. It keys on `contype` +
-  // the column set, so an existing DB whose constraint label differs
+  // The guard is SEMANTIC, not name-based. It keys on `contype` + the
+  // column set, so an existing DB whose constraint label differs
   // (e.g. Postgres-default `_pkey` vs Drizzle's `_<table>_<cols>_pk`)
-  // still satisfies the guard and the ADD is correctly skipped. PK / UNIQUE / FK are detected by parsing the
-  // definition. CHECK / EXCLUDE fall through to a name-based fallback
-  // (the current schema emits neither — defensive only).
+  // still satisfies the guard and the ADD is correctly skipped. PK /
+  // UNIQUE / FK are detected by parsing the definition. CHECK / EXCLUDE
+  // fall through to a name-based fallback (the current schema emits
+  // neither — defensive only).
   const addConstraintMatch =
     /^ALTER TABLE (ONLY )?("?[\w.]+"?(?:\.[\w"]+)?)\s+ADD CONSTRAINT (\w+)\s+([\s\S]+?);?\s*$/im.exec(
       out,
@@ -497,10 +498,10 @@ function transformPgStatement(stmt: string): string {
 }
 
 /**
- * Build a semantic IF-NOT-EXISTS guard for an `ADD CONSTRAINT` statement
- * (T-157). The guard checks for an equivalent constraint by `contype` +
- * column set, NOT by `conname`, so an existing DB whose constraint has a
- * different label still satisfies the guard.
+ * Build a semantic IF-NOT-EXISTS guard for an `ADD CONSTRAINT` statement.
+ * The guard checks for an equivalent constraint by `contype` + column set,
+ * NOT by `conname`, so an existing DB whose constraint has a different
+ * label still satisfies the guard.
  *
  * Supported constraint types: PRIMARY KEY, UNIQUE, FOREIGN KEY. Anything
  * else (CHECK, EXCLUDE) falls back to a name-based guard — the current

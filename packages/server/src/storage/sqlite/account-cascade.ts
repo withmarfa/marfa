@@ -1,13 +1,13 @@
 /**
- * T-116: SQLite account hard-delete cascade.
+ * SQLite account hard-delete cascade.
  *
  * Mirrors pg/account-cascade.ts step-for-step. See that file for the
- * full design notes including the T-136 race-safety re-check at step 0.
+ * full design notes including the race-safety re-check at step 0.
  * The libsql adapter exposes the same Drizzle
  * `db.transaction(async tx => …)` shape as postgres-js, so the
  * end-to-end transactional guarantee is real.
  *
- * **T-136 note for SQLite:** there is no `FOR UPDATE` — better-sqlite3
+ * **Concurrency note for SQLite:** there is no `FOR UPDATE` — libsql
  * serialises all writes via the database file lock, so any concurrent
  * `cancelPendingDeletion` UPDATE on `auth_user` waits behind the
  * cascade transaction (or vice versa). The in-transaction re-check
@@ -41,7 +41,7 @@ export async function sqliteDeleteAccountCascade(
   cutoffIso: string,
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
-    // ---- 0. T-136 race-safety re-check. ----------------------------------
+    // ---- 0. Race-safety re-check. -----------------------------------------
     const lifecycleRow = await tx
       .select({
         deletion_state: auth_user.deletion_state,

@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 #
 # Set the three broker / API secrets a per-integration Worker needs on
-# first deploy (T-255). Without these the queue consumer's credential
-# mint throws on `undefined/lease/...`, the failure surfaces only via
-# console.error in `wrangler tail` (T-255 added the log line; before it
-# the failure was completely silent — no items landed, no activity
-# row, no operator signal).
+# first deploy. Without these the queue consumer's credential mint
+# throws on `undefined/lease/...`; the failure surfaces via
+# console.error in `wrangler tail`.
 #
 # Reads the three values from the calling shell's environment and runs
 # `wrangler secret put` for each against the target Worker + env. The

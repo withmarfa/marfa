@@ -32,14 +32,12 @@ export interface FieldDefinition {
   enum_values?: string[];
   items_type?: string;
   /**
-   * T-015: opt-out flag for full-text search indexing. When `false`,
-   * the field's content is excluded from FTS — both the SQLite FTS5
-   * `extra` column and the PG `search_vector` materialised tsvector.
-   * Defaults to `true` — a field without this flag is indexed. Only
-   * meaningful for `string`-typed fields; ignored elsewhere.
-   *
-   * Use case: types whose string fields carry secrets, opaque ids,
-   * or noisy content that shouldn't surface in search results.
+   * Opt-out flag for full-text search indexing. When `false`, the field's
+   * content is excluded from FTS — both the SQLite FTS5 `extra` column and
+   * the PG `search_vector` materialised tsvector. Defaults to `true` — a
+   * field without this flag is indexed. Only meaningful for `string`-typed
+   * fields; ignored elsewhere. Use this for fields that carry secrets,
+   * opaque ids, or noisy content that shouldn't surface in search results.
    */
   searchable?: boolean;
 }
@@ -109,10 +107,10 @@ export interface TypeSchema {
   version_policy?: VersionPolicy;
   merge_policy?: MergePolicy;
   /**
-   * Sibling-type compatibility declaration (TSC42 §3). When set, this type
-   * asserts a structural-superset relationship with the named target — every
-   * required field on the target is present here with a matching shape.
-   * Server verifies at registration; mismatched claims are rejected with
+   * Sibling-type compatibility declaration. When set, this type asserts a
+   * structural-superset relationship with the named target — every required
+   * field on the target is present here with a matching shape. Server
+   * verifies at registration; mismatched claims are rejected with
    * `compatible_with_violation`.
    */
   compatible_with?: string;

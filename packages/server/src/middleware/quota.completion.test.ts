@@ -1,8 +1,5 @@
 /**
- * T-052 follow-on (Wave B Part 2) — quota wiring completion.
- *
- * Coverage for the additions on top of the items + webhooks
- * enforcement that landed in Part 1:
+ * Quota wiring completion — coverage beyond items + webhooks:
  *
  *   - `POST /blobs` enforces both `blobs` (count) and
  *     `storage_bytes` (sum-of-sizes) ceilings.
@@ -67,7 +64,7 @@ async function mintTenantAdmin(
   return raw;
 }
 
-describe("T-052 quota wiring completion — POST /blobs", () => {
+describe("quota wiring — POST /blobs", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();
@@ -132,7 +129,7 @@ describe("T-052 quota wiring completion — POST /blobs", () => {
   });
 });
 
-describe("T-052 quota wiring completion — per-tenant rate ceiling", () => {
+describe("quota wiring — per-tenant rate ceiling", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();

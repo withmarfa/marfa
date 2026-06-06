@@ -10,7 +10,7 @@ import type { TestContext } from "../test-utils.js";
 import { PendingDeletePurger } from "../storage/retention.js";
 
 /**
- * T-116 — account-lifecycle deletion. Exercises the full happy path
+ * Account-lifecycle deletion tests. Exercises the full happy path
  * (initiate → confirm → pending state), both cancel paths (sign-in
  * link + session cookie), the bad-token / expired-token shapes, and
  * the purger's hard-delete cascade with audit redaction.
@@ -82,7 +82,7 @@ async function signIn(
   return { status: res.status, cookie };
 }
 
-describe("T-116 — account deletion routes", () => {
+describe("account deletion routes", () => {
   it("happy path: initiate, confirm, cancel via sign-in link", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     await signUpAndVerify(ctx, "alice@example.com");
@@ -118,9 +118,9 @@ describe("T-116 — account deletion routes", () => {
     expect(byEmail?.deletion_state).toBe("pending_deletion");
     expect(byEmail?.pending_deletion_at).toBeTruthy();
 
-    // Sign-in attempt is blocked. T-137 Option 2: response is a
-    // generic 401 indistinguishable from wrong-password / unknown-email
-    // so an observer can't enumerate pending-deletion accounts.
+    // Sign-in attempt is blocked. Response is a generic 401
+    // indistinguishable from wrong-password / unknown-email so an
+    // observer can't enumerate pending-deletion accounts.
     const blocked = await signIn(ctx, "alice@example.com");
     expect(blocked.status).toBe(401);
     // A cancel-by-link token should have been minted.
@@ -304,7 +304,7 @@ describe("T-116 — account deletion routes", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-136 — cascade race-safety re-check.
+// Cascade race-safety re-check.
 // ---------------------------------------------------------------------------
 //
 // The cascade re-reads `auth_user.deletion_state` + `pending_deletion_at`
@@ -320,7 +320,7 @@ describe("T-116 — account deletion routes", () => {
 //       the cascade with a cutoff that wouldn't have admitted the row.
 //       It must return `false` and leave the account alone.
 
-describe("T-136 — cascade race-safety", () => {
+describe("cascade race-safety", () => {
   it("cancel landing between list-due and cascade leaves the account intact", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     await signUpAndVerify(ctx, "race-cancel@example.com");
@@ -432,7 +432,8 @@ describe("T-136 — cascade race-safety", () => {
     // `deletion_state = 'pending_deletion'` and would skip the row
     // entirely. We need the purger to see the row as pending, THEN
     // have the cancel land between list-due and the per-account
-    // cascade — that's the actual T-136 race window.
+    // cascade — the precise race window the in-transaction re-check
+    // closes.
     //
     // We achieve this by wrapping `storage` in a proxy that intercepts
     // `listPendingDeletionDue` to fire `cancelPendingDeletion` as a
@@ -449,9 +450,8 @@ describe("T-136 — cascade race-safety", () => {
               if (p === "listPendingDeletionDue") {
                 return async (cutoffIso: string) => {
                   const due = await t.listPendingDeletionDue(cutoffIso);
-                  // Cancel between list-due and cascade. This is the
-                  // race window the production code closes via the
-                  // in-transaction re-check.
+                  // Cancel between list-due and cascade — the race
+                  // window the in-transaction re-check closes.
                   await t.cancelPendingDeletion(authUserId);
                   return due;
                 };
@@ -488,7 +488,7 @@ describe("T-136 — cascade race-safety", () => {
   });
 });
 // ---------------------------------------------------------------------------
-// T-137 — sign-in guard token reuse + audit-row hygiene.
+// Sign-in guard token reuse + audit-row hygiene.
 // ---------------------------------------------------------------------------
 
 async function countCancelTokens(
@@ -522,7 +522,7 @@ async function countCancelTokens(
   return rows[0]?.c ?? 0;
 }
 
-describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
+describe("sign-in guard cancel-token reuse + audit hygiene", () => {
   it("repeated sign-in attempts on a pending-deletion account reuse the same cancel token", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     await signUpAndVerify(ctx, "guard-reuse@example.com");
@@ -548,7 +548,7 @@ describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
     const authUserId = before?.auth_user_id ?? "";
 
     // Three sign-in attempts in a row. Each one hits the guard.
-    // T-137 Option 2: generic 401, not a themed 403.
+    // Response is a generic 401, not a themed 403.
     for (let i = 0; i < 3; i++) {
       const r = await signIn(ctx, "guard-reuse@example.com");
       expect(r.status).toBe(401);
@@ -560,7 +560,7 @@ describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
     expect(count).toBe(1);
   });
 
-  it("audit row for sign_in_blocked carries no plaintext email (T-139)", async () => {
+  it("audit row for sign_in_blocked carries no plaintext email", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     await signUpAndVerify(ctx, "guard-pii@example.com");
     const { cookie } = await signIn(ctx, "guard-pii@example.com");
@@ -588,8 +588,7 @@ describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
     expect(blocked.status).toBe(401);
 
     // The audit row's `details` must NOT carry the plaintext email.
-    // T-139 dropped `details: { email }` from this site. The audit
-    // write is fire-and-forget, so poll until the row appears.
+    // Audit writes are fire-and-forget, so poll until the row appears.
     const guardRow = await waitForAudit(
       () => ctx!.storage.audit.list({ resource_id: authUserId }),
       (page) =>
@@ -613,7 +612,7 @@ describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
     expect(Object.prototype.hasOwnProperty.call(details, "email")).toBe(false);
   });
 
-  it("guard 401 response is byte-indistinguishable from better-auth's wrong-password 401 (T-137 Option 2)", async () => {
+  it("guard 401 response is byte-indistinguishable from better-auth's wrong-password 401", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     // Two accounts: one stays active, one gets put into pending_deletion.
     await signUpAndVerify(ctx, "active@example.com");
@@ -688,16 +687,14 @@ describe("T-137 — sign-in guard cancel-token reuse + audit hygiene", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-141 — cancel-route honesty when cascade wins the race
+// Cancel-route honesty when cascade wins the race
 // ---------------------------------------------------------------------------
 //
-// T-136 closed the data-loss race in the cascade. T-141 closes the
-// user-facing-confirmation race: when the cascade commits between the
-// cancel route's pre-checks and its `cancelPendingDeletion` UPDATE, the
-// UPDATE matches zero rows. The route now branches on the boolean
-// return, rendering "already permanently deleted" / `{ok:false, code:
-// "already_purged"}` and writing a distinct audit action instead of
-// claiming the cancel succeeded.
+// When the cascade commits between the cancel route's pre-checks and its
+// `cancelPendingDeletion` UPDATE, the UPDATE matches zero rows. The route
+// branches on the boolean return, rendering "already permanently deleted"
+// / `{ok:false, code:"already_purged"}` and writing a distinct audit
+// action instead of claiming the cancel succeeded.
 
 async function reinsertCancelToken(
   storage: TestContext["storage"],
@@ -748,7 +745,7 @@ async function reinsertCancelToken(
   );
 }
 
-describe("T-141 — cancel route honesty when cascade wins the race", () => {
+describe("cancel route honesty when cascade wins the race", () => {
   it("GET cancel renders 'already deleted' page and writes the distinct audit action", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     await signUpAndVerify(ctx, "cascade-wins-link@example.com");
@@ -834,8 +831,7 @@ describe("T-141 — cancel route honesty when cascade wins the race", () => {
 
     // Get authUserId without going through the confirm endpoint —
     // confirm calls `markPendingDeletion`, which drops every
-    // auth_session for the user (T-116) and would invalidate our
-    // cookie. Flip the deletion columns directly via SQL so the
+    // auth_session for the user and would invalidate our cookie. Flip the deletion columns directly via SQL so the
     // session survives. The cancel route's pre-check still sees
     // `pending_deletion`; the rest of the flow is identical.
     const lifecycle = ctx.storage.accountLifecycle;
@@ -929,27 +925,20 @@ describe("T-141 — cancel route honesty when cascade wins the race", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-192 — full account-lifecycle exercise as a single arc.
+// Full account-lifecycle arc
 // ---------------------------------------------------------------------------
 //
-// Session 1 of the [[QA Pass — 2026-05-18]] deferred this — the
-// throwaway boot had no email backend and the test-side
-// `markEmailVerified` plumbing wasn't being driven through to the
-// full sequence. Individual segments are exercised by the suites
-// above (T-116 happy path / T-136 race / T-137 guard / T-139 audit /
-// T-141 honesty), but none of them walk the complete user arc:
+// Walks the complete user arc as a single test:
 //
 //   sign-up → verify → sign-in → request-delete → confirm → cancel →
 //   re-sign-in → re-request → confirm → purge → hard-deleted.
 //
-// This describe block runs that arc as one test, asserting at each
-// step. It deliberately re-asserts invariants already covered
-// piecewise — the value is the single readable thread an operator
-// (or future agent) can point at when asking "did the lifecycle
-// actually work end-to-end against this build?". Failures in any
-// step localise to a clear assertion in the arc.
+// Deliberately re-asserts invariants covered piecewise in the suites
+// above. The value is a single readable thread an operator can point
+// at to confirm the lifecycle works end-to-end against the current
+// build. Failures localise to a clear assertion in the arc.
 
-describe("T-192 — full account-lifecycle arc", () => {
+describe("full account-lifecycle arc", () => {
   it("sign-up → verify → sign-in → request → confirm → cancel → re-request → confirm → purge", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const email = "lifecycle@example.com";
@@ -980,7 +969,7 @@ describe("T-192 — full account-lifecycle arc", () => {
 
     // Step 4: confirm. State flips to pending_deletion; sessions are
     // dropped; cancel-by-link token gets minted on the next blocked
-    // sign-in attempt (T-137).
+    // sign-in attempt.
     const confirm1 = await request(
       ctx.app,
       "GET",
@@ -993,8 +982,8 @@ describe("T-192 — full account-lifecycle arc", () => {
     const authUserId = pending?.auth_user_id ?? "";
     expect(authUserId).toBeTruthy();
 
-    // Step 5: sign-in blocked. T-137 — generic 401 indistinguishable
-    // from wrong-password; cancel-by-link token minted side-effect.
+    // Step 5: sign-in blocked. Generic 401 indistinguishable from
+    // wrong-password; cancel-by-link token minted side-effect.
     const blocked = await signIn(ctx, email);
     expect(blocked.status).toBe(401);
     const cancelToken = await readLatestVerification(
@@ -1003,9 +992,8 @@ describe("T-192 — full account-lifecycle arc", () => {
     );
     expect(cancelToken).toBeTruthy();
 
-    // Step 6: cancel via link. Account back to active. T-141 doesn't
-    // fire here because cascade hasn't won — the audit row is the
-    // standard `delete_cancelled` shape.
+    // Step 6: cancel via link. Account back to active. No cascade race
+    // here — the audit row is the standard `delete_cancelled` shape.
     const cancelRes = await request(
       ctx.app,
       "GET",
@@ -1044,7 +1032,7 @@ describe("T-192 — full account-lifecycle arc", () => {
     expect(pending2?.deletion_state).toBe("pending_deletion");
 
     // Step 9: purge. Run the cascade against a cutoff 31 days in the
-    // future. T-136 invariant: re-check inside the transaction.
+    // future. The in-transaction re-check guards against stale state.
     const purger = new PendingDeletePurger(
       ctx.storage,
       30,
@@ -1056,12 +1044,12 @@ describe("T-192 — full account-lifecycle arc", () => {
     expect(purged).toBeGreaterThanOrEqual(1);
     expect(await lifecycle?.getAccountLifecycle(authUserId)).toBeNull();
 
-    // Step 10: audit hygiene (T-139). The earlier
-    // delete_requested / delete_confirmed / delete_cancelled rows
-    // are keyed by `resource_id = authUserId` and got redacted by
-    // the post-cascade sweep. The `hard_deleted` row survives
-    // (emitted inside the cascade transaction). Across every row
-    // assert no plaintext email leaks in the details payload.
+    // Step 10: audit hygiene. The earlier delete_requested /
+    // delete_confirmed / delete_cancelled rows are keyed by
+    // `resource_id = authUserId` and got redacted by the post-cascade
+    // sweep. The `hard_deleted` row survives (emitted inside the
+    // cascade transaction). Across every row assert no plaintext
+    // email leaks in the details payload.
     const audit = await ctx.storage.audit.list({ resource_id: authUserId });
     expect(audit.data.length).toBeGreaterThan(0);
     const hardDeleted = audit.data.find(

@@ -59,9 +59,9 @@ const searchRoute = createRoute({
         .enum(["library", "feed", "all"])
         .describe("Filter by tier; `all` or absent means unfiltered.")
         .optional(),
-      /** Opt-in inclusions, comma-separated. `system` includes the platform
+      /** Opt-in inclusions, comma-separated. `system` includes
        *  `system.*` records, which are excluded from search results by
-       *  default per TSC42 §4. */
+       *  default (operational items are not part of the user data tier). */
       include: z
         .string()
         .describe("Comma-separated opt-in inclusions, e.g. `system`.")
@@ -159,8 +159,7 @@ export function searchRoutes(storage: Storage) {
       typeof type === "string" && type.startsWith("system.");
     const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
 
-    // TSC42 §5 source-filter lever — only narrows when a specific type is
-    // requested.
+    // Source-filter lever — only narrows when a specific type is requested.
     const callerKeyForSearch = c.get("apiKey");
     const callerTenantIdForSearch = callerKeyForSearch?.tenant_id;
     const tenantConfigForSearch =

@@ -1,5 +1,5 @@
 /**
- * Password-reset email template (Wave C PR3 / T-033).
+ * Password-reset email template.
  *
  * Same shape as the magic-link / verify-email templates: mobile-first,
  * 16px body, 44px tap target, inline styles only. Plain-text fallback.

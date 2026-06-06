@@ -375,8 +375,8 @@ const updateItemRoute = createRoute({
              *  unique per tenant — server returns 409 `source_id_conflict`
              *  if another item already holds the target value. Idempotent
              *  no-op when the value matches the row's current source_id.
-             *  (T-118 — sync agent rename preserves item id by repointing
-             *  the path-derived natural key.) */
+             *  Repointing the natural key is how renames preserve item
+             *  continuity without creating a new row. */
             source_id: z.string().optional(),
             // Replace-all-for-specified-types semantics: any edge_type
             // listed wipes existing outbound edges of that type from
@@ -835,9 +835,9 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, type, "write");
     const tenantId = c.get("apiKey")?.tenant_id;
 
-    // T-052: per-tenant items quota. No-op for tenant-less keys (single-
-    // tenant + platform admin). Throws 429 quota_exceeded if this create
-    // would push the tenant past its items ceiling.
+    // Per-tenant items quota. No-op for tenant-less keys (single-tenant +
+    // platform admin). Throws 429 quota_exceeded if this create would push
+    // the tenant past its items ceiling.
     await enforceQuota(c, storage, "items");
 
     if (Array.isArray(body.tags) && body.tags.length > 100) {
@@ -847,8 +847,9 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
-    // TSC42 §5: schema-enforcement levers. Off by default; flipped on per
-    // type via tenant config or per-credential override.
+    // Schema-enforcement levers: source allow-list, strict-mode, and
+    // custom sources. Off by default; enabled per type via tenant config
+    // or per-credential override.
     const tenantConfig =
       tenantId && storage.tenants
         ? await storage.tenants.getConfig(tenantId)
@@ -857,14 +858,13 @@ export function itemRoutes(storage: Storage) {
 
     // source is non-forgeable: always stamped from the credential.
     // tier falls back to the credential default when absent.
-    // Final fallback is `tier: "library"` ("save it" — the curated layer is
-    // the intended default when neither caller nor credential expresses
-    // intent). TSC42 §1.
+    // Final fallback is `tier: "library"` — the curated layer is the
+    // intended default when neither caller nor credential expresses intent.
     const credential = c.get("apiKey");
     const stampedSource = credential?.source;
 
-    // Source allow-list (TSC42 §5): when configured for this type, the
-    // credential's source must be in the allowed list.
+    // Source allow-list: when configured for this type, the credential's
+    // source must appear in the allowed list.
     const allowedSources = getSourceAllowlist(enforcement, type);
     if (
       allowedSources !== null &&
@@ -877,10 +877,10 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
-    // Strict-mode lever (TSC42 §5): when configured for this type, unknown
-    // properties are rejected. Storage's own validateProperties runs in
-    // loose mode regardless; this pre-check catches strict-mode violations
-    // before any persistence work.
+    // Strict-mode lever: when configured for this type, unknown properties
+    // are rejected. Storage's own validateProperties runs in loose mode
+    // regardless; this pre-check catches strict-mode violations before any
+    // persistence work.
     if (
       isTypeInStrictMode(enforcement, type) &&
       getTypeSchema(type) !== undefined
@@ -899,8 +899,8 @@ export function itemRoutes(storage: Storage) {
         );
       }
     }
-    // TSC42 §4: `system.*` items have no tier; reject explicit values on
-    // write, and stamp `undefined` rather than the library default.
+    // `system.*` items have no tier; reject explicit values on write, and
+    // stamp `undefined` rather than the library default.
     const isSystemTypeWrite = SYSTEM_TYPE_IDS.has(type);
     if (isSystemTypeWrite && body.tier !== undefined) {
       throw new MarfaError(
@@ -913,15 +913,14 @@ export function itemRoutes(storage: Storage) {
       ? undefined
       : (body.tier ?? credential?.default_tier ?? "library");
 
-    // Workstream 2 PR 3 — documented TSC42 §4 exception. When a
-    // `system.activity` write references a `system.connection` whose
+    // `system.*` items normally have no tier, but `system.activity` is an
+    // exception: when the referenced `system.connection` has
     // `feed_activity === true`, the server stamps `tier: "feed"` so the
     // activity flows into the user's feed surface. Client tier writes
     // remain rejected by the block above; only the server makes this
     // decision, keyed off the per-Connection toggle. Connections without
     // `feed_activity` (default) leave tier undefined as for every other
-    // system.* write. Authority: Connections — Design Direction lines
-    // 178–186 (per-Connection feed-eligibility toggle on system.activity).
+    // system.* write.
     if (type === "system.activity") {
       const connectionId =
         typeof properties.connection_id === "string"
@@ -966,22 +965,19 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    // Natural-key upsert (T-038). When both `source` (stamped from the
-    // credential) and request `source_id` are present, look up an existing
-    // non-trashed row by (source, source_id) within the caller's tenant. If
-    // one matches, short-circuit to update so `POST /items` is idempotent on
-    // re-sync — the contract that lets inbound integration handlers recover
-    // from whole-batch retries (createItem-success / cursor-write-fail) without
-    // producing duplicates. Pattern matches Stripe / Notion / Readwise / Linear
-    // resource-level idempotency. Returns 200 on this branch (vs 201 on create)
-    // so the caller can distinguish the realised effect.
+    // Natural-key upsert. When both `source` (stamped from the credential)
+    // and request `source_id` are present, look up an existing non-trashed
+    // row by (source, source_id) within the caller's tenant. If one matches,
+    // short-circuit to update so `POST /items` is idempotent on re-sync —
+    // the contract that lets inbound integration handlers recover from
+    // whole-batch retries (createItem-success / cursor-write-fail) without
+    // producing duplicates. Returns 200 on this branch (vs 201 on create) so
+    // the caller can distinguish the realized effect.
     //
-    // Update semantics mirror the bulk-upsert path: properties / tier /
-    // timestamp via `ItemStore.update` (shallow-merge as elsewhere); tags via
-    // `metadata.set`; edges via `applyInlineEdges` (replace-by-edge-type).
-    // Fields only meaningful at create time (id, state, origin, device,
-    // capture_*) are ignored on the update branch — the existing row's id
-    // wins, the upstream's source_id is the authority.
+    // Update semantics: properties / tier / timestamp via `ItemStore.update`
+    // (shallow-merge); tags via `metadata.set`; edges via `applyInlineEdges`
+    // (replace-by-edge-type). Fields only meaningful at create time (id,
+    // state, device, capture_*) are ignored — the existing row's id wins.
     if (stampedSource && body.source_id) {
       const existing = await storage.items.findBySourceId(
         stampedSource,
@@ -1224,7 +1220,7 @@ export function itemRoutes(storage: Storage) {
     // validation occasionally drops enum strings (a quirk independent
     // of the schema being declared correctly); the raw query lookup is
     // the reliable source.
-    // TSC42 §1: the default query scope is unfiltered (library + feed).
+    // Default query scope is unfiltered (library + feed).
     //   ?tier=library  -> library only
     //   ?tier=feed     -> feed only
     //   ?tier=all or absent -> no filter
@@ -1253,7 +1249,7 @@ export function itemRoutes(storage: Storage) {
     const includeExtensions = includeSet.has("extensions");
     const includeSystemTypes = includeSet.has("system");
 
-    // TSC42 §4: `system.*` items are operational; default lists exclude them.
+    // `system.*` items are operational records; default lists exclude them.
     // Caller opts in via `?include=system` or by filtering for a specific
     // `system.<X>` type — that explicit selection bypasses the default
     // exclude clause regardless of the include flag.
@@ -1261,10 +1257,10 @@ export function itemRoutes(storage: Storage) {
       typeof type === "string" && type.startsWith("system.");
     const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
 
-    // TSC42 §5 source-filter lever: when configured for the requested
-    // type, narrow results to items whose source is in the allow-list.
-    // Only applies when a specific type filter is supplied — the lever is
-    // per-type, so filterless reads see no source narrowing.
+    // Source-filter lever: when configured for the requested type, narrow
+    // results to items whose source is in the allow-list. Only applies
+    // when a specific type filter is supplied — the lever is per-type, so
+    // filterless reads see no source narrowing.
     const callerKeyForRead = c.get("apiKey");
     const callerTenantIdForRead = callerKeyForRead?.tenant_id;
     const tenantConfigForRead =
@@ -1434,13 +1430,12 @@ export function itemRoutes(storage: Storage) {
 
     requireTypeAccess(c, item.type, "write");
 
-    // Natural-key uniqueness check (T-118 precursor). The `(source, source_id)`
-    // tuple is unique per tenant — the same constraint enforced at create time.
-    // Reject before the write so no partial state lands. PATCHing the value the
-    // item already carries is a no-op success (the lookup returns this item;
-    // we fall through). Cross-source isolation is automatic: `findBySourceId`
-    // scopes by `item.source`, so the same source_id literal coexisting under
-    // a different `source` never collides here.
+    // Natural-key uniqueness check. The `(source, source_id)` tuple is
+    // unique per tenant — the same constraint enforced at create time.
+    // Reject before the write so no partial state lands. PATCHing the value
+    // the item already carries is a no-op success. Cross-source isolation is
+    // automatic: `findBySourceId` scopes by `item.source`, so the same
+    // source_id literal under a different `source` never collides.
     if (
       hasSourceId &&
       body.source_id !== undefined &&
@@ -1870,10 +1865,9 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    // T-051 follow-on (Wave B Part 2): widened from `requireAdmin` to
-    // `requireTenantAdmin`. The purge is already tenant-scoped via
-    // the explicit `tenantId` thread below — tenant_admin sees only
-    // its own tenant's items.
+    // tenant_admin can purge own-tenant items. The purge is already
+    // tenant-scoped via the explicit `tenantId` thread below — tenant_admin
+    // sees only its own tenant's items.
     requireTenantAdmin(c);
     const tenantId = c.get("apiKey")?.tenant_id;
     // Edges carry no FK to items, so cascade cleanup must happen

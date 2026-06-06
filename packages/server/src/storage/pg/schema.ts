@@ -14,11 +14,10 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-// T-015: Drizzle doesn't have a first-class tsvector type, so we
-// declare a small customType. We never SELECT the column directly
-// (search reads use raw SQL via the unsafe path); declaring it lets
-// `drizzle-kit generate` emit the right migration shape and lets the
-// item-store INSERTs reference it.
+// Drizzle doesn't have a first-class tsvector type, so we declare a small
+// customType. We never SELECT the column directly (search reads use raw SQL
+// via the unsafe path); declaring it lets `drizzle-kit generate` emit the
+// right migration shape and lets the item-store INSERTs reference it.
 const tsvector = customType<{ data: string; driverData: string }>({
   dataType: () => "tsvector",
 });
@@ -32,10 +31,10 @@ export const tenants = pgTable("tenants", {
   name: text("name"),
   config: jsonb("config"),
   created_at: text("created_at").notNull(),
-  // T-117: operator-controlled tenant status. `'active'` (default) allows
-  // writes; `'suspended'` blocks them at the auth middleware. Reads pass
-  // through regardless. Platform-admin keys bypass the gate so operators
-  // can inspect a suspended tenant.
+  // Operator-controlled tenant status. `'active'` (default) allows writes;
+  // `'suspended'` blocks them at the auth middleware. Reads pass through
+  // regardless. Platform-admin keys bypass the gate so operators can
+  // inspect a suspended tenant.
   status: text("status").notNull().default("active"),
 });
 
@@ -57,9 +56,8 @@ export const users = pgTable(
     auth_user_id: text("auth_user_id").references(() => auth_user.id, {
       onDelete: "set null",
     }),
-    /** T-178: principal role projected onto OAuth bearer principals.
-     *  Defaults to `member`; operator elevates via SQL until a real
-     *  provisioning UI lands. Gates `requireTenantAdmin` /
+    /** Principal role projected onto OAuth bearer principals. Defaults to
+     *  `member`; operator elevates via SQL. Gates `requireTenantAdmin` /
      *  `requireAdmin` routes for OAuth-authenticated requests. */
     role: text("role").notNull().default("member"),
     created_at: text("created_at").notNull(),
@@ -95,9 +93,9 @@ export const items = pgTable(
     device: text("device"),
     capture_latitude: doublePrecision("capture_latitude"),
     capture_longitude: doublePrecision("capture_longitude"),
-    // T-015: materialised tsvector populated by the search store at
-    // write time. Nullable so backfilled rows can be detected
-    // mid-migration. Indexed via GIN below.
+    // Materialised tsvector populated by the search store at write time.
+    // Nullable so backfilled rows can be detected mid-migration. Indexed
+    // via GIN below.
     search_vector: tsvector("search_vector"),
   },
   (table) => [
@@ -221,9 +219,9 @@ export const apiKeys = pgTable(
 // blobs (metadata only — actual files on filesystem)
 // ---------------------------------------------------------------------------
 
-// T-049: see sqlite/schema.ts for the full design rationale. Composite
-// PK on (tenant_id, hash); empty-string sentinel for instance-wide /
-// platform-admin / single-tenant rows.
+// Blob metadata table. Composite PK on (tenant_id, hash); empty-string
+// sentinel for instance-wide / platform-admin / single-tenant rows.
+// See sqlite/schema.ts for the full design rationale.
 export const blobs = pgTable(
   "blobs",
   {
@@ -342,7 +340,7 @@ export const outboundWebhookDeliveries = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// inbound_webhooks (workstream 2 PR 5)
+// inbound_webhooks
 // ---------------------------------------------------------------------------
 
 export const inboundWebhooks = pgTable(
@@ -379,7 +377,7 @@ export const inboundWebhooks = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// inbound_webhook_events (workstream 2 PR 5)
+// inbound_webhook_events
 // ---------------------------------------------------------------------------
 
 export const inboundWebhookEvents = pgTable(
@@ -393,7 +391,7 @@ export const inboundWebhookEvents = pgTable(
     received_at: text("received_at").notNull(),
     payload: text("payload").notNull(),
     verified: integer("verified").notNull(),
-    // NULL = not yet processed. WS3's reactive runner stamps this when
+    // NULL = not yet processed. The reactive runner stamps this when
     // it finishes work; verified-but-not-processed rows are the queue.
     processed_at: text("processed_at"),
     // NULL = no error yet. Populated when retries are exhausted (DLQ).
@@ -413,7 +411,7 @@ export const inboundWebhookEvents = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// connection_oauth_tokens (workstream 2 PR 6)
+// connection_oauth_tokens
 //
 // Mirror of the SQLite table; see sqlite/schema.ts for the design notes.
 // ---------------------------------------------------------------------------
@@ -440,7 +438,7 @@ export const connectionOauthTokens = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// connection_leased_tokens (workstream 2 PR 7)
+// connection_leased_tokens
 //
 // Mirror of the SQLite table; see sqlite/schema.ts for the design notes.
 // ---------------------------------------------------------------------------
@@ -468,8 +466,8 @@ export const connectionLeasedTokens = pgTable(
   ],
 );
 
-// T-131: oauth_codes dropped — replaced by the
-// @better-auth/oauth-provider plugin's authorization code state machine.
+// oauth_codes was dropped — replaced by the @better-auth/oauth-provider
+// plugin's authorization code state machine.
 
 // ---------------------------------------------------------------------------
 // audit_log (append-only audit trail)
@@ -482,11 +480,11 @@ export const auditLog = pgTable(
     timestamp: text("timestamp").notNull(),
     key_id: text("key_id"),
     /**
-     * Tenant scope (T-041). Stamped from the calling api key's `tenant_id`
-     * (or `null` for system-initiated audits / bootstrap-admin keys with no
-     * tenant). Reads filter by this column when the caller is tenant-scoped;
-     * keys without a tenant (bootstrap admin) see all rows. Indexed because
-     * `GET /audit` filters here on every hosted-mode request.
+     * Tenant scope. Stamped from the calling api key's `tenant_id` (or
+     * `null` for system-initiated audits / bootstrap-admin keys with no
+     * tenant). Reads filter by this column when the caller is
+     * tenant-scoped; keys without a tenant (bootstrap admin) see all rows.
+     * Indexed because `GET /audit` filters here on every hosted-mode request.
      */
     tenant_id: text("tenant_id"),
     action: text("action").notNull(),
@@ -503,7 +501,7 @@ export const auditLog = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// bulk_action_jobs (T-218: async substrate for /items/bulk-actions)
+// bulk_action_jobs (async substrate for /items/bulk-actions)
 // ---------------------------------------------------------------------------
 
 // Job rows for the async bulk_action endpoint. POST /items/bulk-actions
@@ -552,16 +550,14 @@ export const bulkActionJobs = pgTable(
     index("idx_bulk_action_jobs_status").on(table.status),
     index("idx_bulk_action_jobs_tenant_id").on(table.tenant_id),
     index("idx_bulk_action_jobs_gc").on(table.status, table.finished_at),
-    // NULLS NOT DISTINCT is applied by migration 0061 (Drizzle 0.45.2's
+    // NULLS NOT DISTINCT is applied by a migration because Drizzle's
     // uniqueIndex builder doesn't expose .nullsNotDistinct() yet — only
-    // `unique()` constraints carry it, and those don't support WHERE).
+    // `unique()` constraints carry it, and those don't support WHERE.
     // Without it, two replays from a tenant-less admin credential
     // (tenant_id IS NULL) wouldn't conflict on the (NULL, key) pair
     // because PG defaults treat NULLs as distinct in unique indexes.
     // Idempotency would silently double-fire for the admin path.
-    // See T-218 conformance test "Idempotency-Key returns the same job
-    // id on replay". When drizzle-orm grows the API, fold this back into
-    // the index declaration.
+    // When drizzle-orm grows the API, fold this back into the declaration.
     uniqueIndex("idx_bulk_action_jobs_idempotency")
       .on(table.tenant_id, table.idempotency_key)
       .where(sql`idempotency_key IS NOT NULL`),
@@ -569,7 +565,7 @@ export const bulkActionJobs = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// rate_limit_windows (T-026: cluster-shared rate-limit + throttle counters)
+// rate_limit_windows (cluster-shared rate-limit + throttle counters)
 // ---------------------------------------------------------------------------
 
 // Single table backing two consumers:
@@ -612,7 +608,7 @@ export const settings = pgTable("settings", {
 });
 
 // ---------------------------------------------------------------------------
-// tenant_quotas (T-052: per-tenant resource caps)
+// tenant_quotas (per-tenant resource caps)
 // ---------------------------------------------------------------------------
 
 export const tenantQuotas = pgTable("tenant_quotas", {
@@ -650,8 +646,7 @@ export const eventLog = pgTable(
     edge_id: text("edge_id"),
     tenant_id: text("tenant_id"),
     payload: text("payload").notNull(),
-    // Cycle-detection metadata (workstream 2 PR 8); see sqlite/schema.ts
-    // for design notes.
+    // Cycle-detection metadata; see sqlite/schema.ts for design notes.
     originating_connection_id: text("originating_connection_id"),
     hop_count: integer("hop_count").notNull().default(0),
     created_at: text("created_at").notNull(),
@@ -688,16 +683,16 @@ export const auth_user = pgTable(
     image: text("image"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull(),
     updatedAt: timestamp("updated_at", { mode: "date" }).notNull(),
-    // T-116: account-lifecycle state. `'active'` (default) is the normal
-    // state; `'pending_deletion'` is set on confirm of a delete-account
-    // request and triggers the `PendingDeletePurger` hard-delete sweep
-    // after the grace window elapses. `pending_deletion_at` is the ISO
-    // timestamp stamped on confirm (NULL while active); the purger
-    // compares `pending_deletion_at + grace_days < now()` to gate the
-    // cascade. The TEXT/ISO shape on `pending_deletion_at` deviates
-    // from the auth_* island's timestamp(mode:date) convention because
-    // the column is read by the purger (`storage/retention.ts`) and the
-    // route layer, both of which work in ISO strings throughout.
+    // Account-lifecycle state. `'active'` (default) is the normal state;
+    // `'pending_deletion'` is set on confirm of a delete-account request
+    // and triggers the `PendingDeletePurger` hard-delete sweep after the
+    // grace window elapses. `pending_deletion_at` is the ISO timestamp
+    // stamped on confirm (NULL while active); the purger compares
+    // `pending_deletion_at + grace_days < now()` to gate the cascade.
+    // The TEXT/ISO shape on `pending_deletion_at` deviates from the auth_*
+    // island's timestamp(mode:date) convention because the column is read
+    // by the purger (`storage/retention.ts`) and the route layer, both of
+    // which work in ISO strings throughout.
     deletion_state: text("deletion_state").notNull().default("active"),
     pending_deletion_at: text("pending_deletion_at"),
   },
@@ -770,7 +765,7 @@ export const auth_verification = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// @better-auth/oauth-provider plugin tables (T-131)
+// @better-auth/oauth-provider plugin tables
 //
 // Four tables owned by the OAuth Provider plugin: client registrations,
 // consent grants, opaque access tokens, opaque refresh tokens.
@@ -927,7 +922,7 @@ export const auth_oauth_consent = pgTable(
   ],
 );
 
-// JWT signing keys (T-131). See sqlite/schema.ts for the rationale.
+// JWT signing keys. See sqlite/schema.ts for the rationale.
 export const auth_jwks = pgTable("auth_jwks", {
   id: text("id").primaryKey(),
   publicKey: text("public_key").notNull(),

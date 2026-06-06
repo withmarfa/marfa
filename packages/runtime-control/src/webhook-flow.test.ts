@@ -140,8 +140,8 @@ describe("webhook receive flow", () => {
       expect(enqueued.connection_id).toBe("conn_x");
       expect(enqueued.delivery_id).toBe("d_42");
       expect(enqueued.webhook_id).toBe("wh_1");
-      // T-009: integration_name stamped from the subscription's
-      // projected manifest name, not hardcoded to "".
+      // integration_name is stamped from the subscription's projected
+      // manifest name, not hardcoded to "".
       expect(enqueued.integration_name).toBe("withmarfa.test-webhook");
       // Wire format: body_base64, decoded by the SDK at the seam.
       expect(typeof enqueued.body_base64).toBe("string");
@@ -275,7 +275,7 @@ describe("webhook receive flow", () => {
     }
   });
 
-  it("verifies a valid GitHub HMAC delivery via the lifted dispatch table (T-009)", async () => {
+  it("verifies a valid GitHub HMAC delivery via the dispatch table", async () => {
     const queue = mockQueue();
     const kv = mockKv();
     const originalFetch = globalThis.fetch;
@@ -313,8 +313,7 @@ describe("webhook receive flow", () => {
         },
         env,
       );
-      // Pre-T-009: this would 401 with "verification_method_not_implemented_in_layer_1:github".
-      // Post-T-009: GitHub adapter is in the dispatch table; valid signature → 202.
+      // GitHub adapter is in the dispatch table; a valid signature yields 202.
       expect(res.status).toBe(202);
       expect(queue.calls).toHaveLength(1);
       const enqueued = queue.calls[0]!.body as Record<string, unknown>;
@@ -324,9 +323,7 @@ describe("webhook receive flow", () => {
     }
   });
 
-  // T-247: per-integration webhook-receipt queue routing.
-
-  it("routes to the per-integration producer when one is bound (T-247)", async () => {
+  it("routes to the per-integration producer when one is bound", async () => {
     const shared = mockQueue();
     const inbox = mockQueue();
     const originalFetch = globalThis.fetch;
@@ -375,7 +372,7 @@ describe("webhook receive flow", () => {
     }
   });
 
-  it("falls back to the shared queue when no dedicated binding exists (T-247)", async () => {
+  it("falls back to the shared queue when no dedicated binding exists", async () => {
     const shared = mockQueue();
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockMarfaFetch({
@@ -421,7 +418,7 @@ describe("webhook receive flow", () => {
     }
   });
 
-  it("returns 503 when neither the dedicated nor the shared binding is wired (T-247)", async () => {
+  it("returns 503 when neither the dedicated nor the shared binding is wired", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = mockMarfaFetch({
       subscriptions: [

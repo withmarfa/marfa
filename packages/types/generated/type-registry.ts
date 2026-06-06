@@ -287,7 +287,7 @@ const todoistTask: TypeSchema = {
 const withmarfaCapturedEmail: TypeSchema = {
   id: "withmarfa.captured_email",
   label: "Captured Email",
-  description: "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Maps onto `core.note` via `compatible_with` so cross-app readers see a title + body without knowing the captured-email shape. Attachment blob upload is gated on T-239; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
+  description: "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Maps onto `core.note` via `compatible_with` so cross-app readers see a title + body without knowing the captured-email shape. Attachment blob upload is not yet supported; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
   version: 1,
   fields: {
     from_address: { type: "string", description: "RFC 5321 envelope sender address, lower-cased (the `From:` header's address part).", required: true },
@@ -302,7 +302,7 @@ const withmarfaCapturedEmail: TypeSchema = {
     in_reply_to: { type: "string", description: "RFC 5322 `In-Reply-To:` header. Sets up thread inference for follow-up replies on the same conversation." },
     references: { type: "array", description: "RFC 5322 `References:` header, split on whitespace. Each entry a Message-ID of an ancestor in the conversation thread.", items_type: "string" },
     headers: { type: "object", description: "Selected subset of normalised lower-case header keys → values. Pruned at parse time to a documented allowlist (List-Id, List-Unsubscribe, X-Mailer, Reply-To, Return-Path); the raw header set is not retained to keep the item shape bounded." },
-    attachments: { type: "array", description: "Per-attachment metadata `{ filename, mime_type, size_bytes }`. Actual blob upload is gated on T-239 — v1 captures metadata only. A follow-on ticket wires `blob_ref` once the runtime SDK gains an upload primitive.", items_type: "object" },
+    attachments: { type: "array", description: "Per-attachment metadata `{ filename, mime_type, size_bytes }`. Blob upload is not yet supported — v1 captures metadata only. `blob_ref` will be wired in a follow-on once the runtime SDK gains an upload primitive.", items_type: "object" },
   },
   display_hints: { title_field: "subject", body_field: "text_body" },
 };
@@ -553,7 +553,7 @@ const googleTasksTask: TypeSchema = {
 const googleYoutubeChannel: TypeSchema = {
   id: "google.youtube.channel",
   label: "YouTube Channel",
-  description: "A YouTube channel — surfaced when the connected user has subscribed to it OR when it owns a liked video / user playlist (T-249). Captures upstream-fidelity channel metadata from the YouTube Data API v3 `channels` resource. `subscribed_at` carries the time the connected user subscribed (when known); for channels that are merely the owner of a liked video this field is absent.",
+  description: "A YouTube channel — surfaced when the connected user has subscribed to it or when it owns a liked video or user playlist. Captures channel metadata from the YouTube Data API v3 `channels` resource. `subscribed_at` carries the time the connected user subscribed (when known); absent when the channel was surfaced solely as the owner of a liked video or playlist.",
   version: 1,
   fields: {
     channel_id: { type: "string", description: "YouTube channel id — the stable handle used in canonical channel URLs (`https://www.youtube.com/channel/<channel_id>`). The external id on the cursor mapping.", required: true },
@@ -574,7 +574,7 @@ const googleYoutubeChannel: TypeSchema = {
 const googleYoutubePlaylist: TypeSchema = {
   id: "google.youtube.playlist",
   label: "YouTube Playlist",
-  description: "A YouTube playlist created by the connected user (T-249). Captures upstream-fidelity playlist metadata from the YouTube Data API v3 `playlists` resource. The owning channel is wired via a `parent-of` edge (channel = source, playlist = target). When the connection's `materialise_playlists` configuration flag is true, the per-playlist video walk wires additional `parent-of` edges from this playlist to each member video.",
+  description: "A YouTube playlist created by the connected user. Captures playlist metadata from the YouTube Data API v3 `playlists` resource. The owning channel is wired via a `parent-of` edge (channel = source, playlist = target). When the connection's `materialise_playlists` configuration flag is true, the per-playlist video walk wires additional `parent-of` edges from this playlist to each member video.",
   version: 1,
   fields: {
     playlist_id: { type: "string", description: "YouTube playlist id — used in canonical URLs (`https://www.youtube.com/playlist?list=<playlist_id>`). The external id on the cursor mapping.", required: true },
@@ -594,7 +594,7 @@ const googleYoutubePlaylist: TypeSchema = {
 const googleYoutubeVideo: TypeSchema = {
   id: "google.youtube.video",
   label: "YouTube Video",
-  description: "A YouTube video — liked by the connected user or surfaced via a walked user-created playlist (T-249). Mirrors the YouTube Data API v3 `videos` resource at upstream fidelity. `liked_at` is a property on the video (sourced from the liked-playlist item's `snippet.publishedAt`), NOT modelled as an edge.",
+  description: "A YouTube video — liked by the connected user or surfaced via a walked user-created playlist. Mirrors the YouTube Data API v3 `videos` resource. `liked_at` is a property on the video (sourced from the liked-playlist item's `snippet.publishedAt`), not modelled as an edge.",
   version: 1,
   fields: {
     video_id: { type: "string", description: "YouTube video id — the 11-character handle used in canonical watch URLs (`https://www.youtube.com/watch?v=<video_id>`). Used as the external id on the cursor mapping.", required: true },
@@ -859,7 +859,7 @@ export const ALL_TYPES: TypeSchema[] = [
 const systemActivity: TypeSchema = {
   id: "system.activity",
   label: "Activity",
-  description: "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorise, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the connector writes (a documented TSC42 §4 exception — see routes/items.ts). Lifecycle bounded to active | revoked. Has no tier by default.",
+  description: "User-meaningful telemetry emitted by an external-service connector at semantic boundaries — sync runs, errors, things that need user attention. Severity drives surfacing: `info` is routine, `warning` is operational, `error` is recoverable failure, `action_required` is surfaced as a Repairs-style inbox (the user has to do something — re-authorise, resolve a tombstone conflict, etc.). Per-Connection feed-eligibility lives on the emitting `system.connection.feed_activity`; when true, server stamps tier:'feed' on activity items the connector writes. Lifecycle bounded to active | revoked. Has no tier by default.",
   version: 1,
   fields: {
     connection_id: { type: "string", description: "Id of the emitting system.connection item", required: true },
@@ -885,7 +885,7 @@ const systemApp: TypeSchema = {
 const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
-  description: "An approved relationship between this Marfa tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorised — workstream 1) and `integration` (a hosted/local connector that reads or writes Marfa on the user's behalf — workstream 2). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (no client write path in WS2 — runtime executor lands in WS3).",
+  description: "An approved relationship between this Marfa tenant and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorised) and `integration` (a connected upstream service such as Google Calendar). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
   version: 1,
   fields: {
     kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "integration"] },
@@ -901,7 +901,7 @@ const systemConnection: TypeSchema = {
     direction: { type: "enum", description: "For kind: integration — does this integration read from, write to, or both", enum_values: ["read", "write", "both"] },
     triggers: { type: "array", description: "For kind: integration — array of trigger declarations. Each entry shape: { type: 'schedule' | 'webhook' | 'item-event' | 'manual', ...per-type config }. The Integration manifest constrains which trigger types are valid.", items_type: "object" },
     attached_device: { type: "string", description: "For kind: integration — id of a system.device item; set when the integration runs on a specific local device (e.g. a sync agent host)" },
-    runtime_status: { type: "enum", description: "For kind: integration — operational health, distinct from the universal lifecycle `status`. Server-stamped only in WS2 (no client write surface; runtime executor in WS3 is the legitimate writer).", enum_values: ["healthy", "degraded", "failing", "paused", "reauth_required"] },
+    runtime_status: { type: "enum", description: "For kind: integration — operational health, distinct from the universal lifecycle `status`. Server-stamped only (the runtime executor is the legitimate writer; there is no client write surface).", enum_values: ["healthy", "degraded", "failing", "paused", "reauth_required"] },
     last_sync_at: { type: "datetime", description: "For kind: integration — last successful sync run timestamp" },
     next_run_at: { type: "datetime", description: "For kind: integration — next scheduled run, when applicable" },
     last_error_at: { type: "datetime", description: "For kind: integration — most recent failure timestamp (cleared on next success)" },

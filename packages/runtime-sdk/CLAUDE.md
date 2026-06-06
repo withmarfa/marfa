@@ -4,12 +4,12 @@ The SDK that Connection integrations import. Provides the handler-registration A
 
 ## Layout
 
-Two exported entries (T-172 split):
+Two exported entries:
 
 - **`@withmarfa/runtime-sdk`** (root) — substrate-agnostic surface. Imported by integration handler modules and by both substrates. No dependency on `@cloudflare/workers-types` runtime symbols — handler code written against this entry is portable across substrates.
 - **`@withmarfa/runtime-sdk/cloudflare`** — Cloudflare-specific bootstrap. `createIntegrationWorker`, the `PerConnectionState` Durable Object class, the DO storage proxy, the worker entry. Imported only by the hosted-substrate per-Integration Workers.
 
-The split is the contract the Node-local runtime (`@withmarfa/server/src/integrations/local-runtime/`) leaned on: the local substrate imports the root entry and supplies its own concrete state / dispatch wiring, without dragging Workers-runtime types into the Node server bundle.
+The root/cloudflare split is enforced so the local runtime substrate (`@withmarfa/server/src/integrations/local-runtime/`) can import the root entry and supply its own concrete state / dispatch wiring without dragging Workers-runtime types into the Node server bundle.
 
 Inside `src/`:
 

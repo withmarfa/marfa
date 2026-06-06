@@ -10,7 +10,7 @@ import type { Storage } from "../storage/interface.js";
  * are left untouched.
  *
  * Used by `/items/bulk` upsert and the natural-key upsert short-circuit
- * on `POST /items` (T-038). Permissive — does not run the same
+ * on `POST /items`. Permissive — does not run the same
  * cardinality / type-constraint checks as `assertEdgesCanBeCreated`;
  * the bulk surface is best-effort and the natural-key short-circuit
  * matches that semantics for parity. Callers needing strict validation

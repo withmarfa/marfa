@@ -17,7 +17,7 @@ documented there in narrative comments.
 The `name` follows publisher-namespaced grammar (`<publisher>.<type>`).
 Per-service publisher families (`google.calendar`, `google.tasks`)
 share their first segment so subsequent integrations under the same
-upstream can reuse one OAuth credential (PR1 of T-231 wires this).
+upstream can reuse one OAuth credential.
 
 ## Handler shape
 
@@ -92,7 +92,7 @@ To install an OAuth-backed integration:
    provider name), exchanges the code, persists tokens encrypted
    under `SECRET_INFO.connectionOauthToken`.
 
-## Token-backed integrations (T-241)
+## Token-backed integrations
 
 Manifests whose upstream uses a static API token rather than an OAuth
 flow declare `token_requirements: { <capability>: "required" }` and
@@ -141,7 +141,7 @@ To install a token-backed integration end-to-end:
    `ctx.marfa.proxyRequest(...)`; the server stamps the bearer
    transparently.
 
-## Worker-to-Worker calls use Service Bindings, not HTTP fetch (T-250)
+## Worker-to-Worker calls use Service Bindings, not HTTP fetch
 
 When a Cloudflare Worker in this monorepo calls another Cloudflare
 Worker in the same account, declare a Service Binding in the caller's
@@ -150,8 +150,8 @@ never `fetch(<workers.dev URL>, ...)` or `fetch(<custom-domain>, ...)`.
 Service Bindings dispatch directly to the bound Worker's `fetch`
 handler with no DNS, TLS, or edge hop, so they:
 
-- sidestep custom-domain availability incidents (the 522 that
-  surfaced in T-244 was the trigger for T-250)
+- sidestep custom-domain availability incidents (522-class errors
+  from workers.dev URLs triggered this pattern)
 - avoid leaking deployment topology through `<service>.<account>.workers.dev`
   URLs
 - type-check the binding target at deploy time (`binding target not
@@ -169,7 +169,7 @@ The withmarfa-inbox Email Worker is the canonical example —
 `env.RUNTIME_CONTROL.fetch(...)` against
 `/webhooks/inbound/<CONNECTION_ID>`.
 
-## First-deploy operator setup (hosted substrate, T-255)
+## First-deploy operator setup (hosted substrate)
 
 Every per-Integration Worker needs three secrets set before the first
 queue dispatch will succeed:
@@ -184,10 +184,10 @@ queue dispatch will succeed:
   `MARFA_RUNTIME_BROKER_KEY` env.
 
 Without these the queue consumer's `mintCredential()` throws on the
-first dispatch with a URL like `undefined/lease/<id>/runtime`. T-255
-added a `console.error` line surfacing the failure via `wrangler tail`
+first dispatch with a URL like `undefined/lease/<id>/runtime`. A
+`console.error` line surfaces the failure via `wrangler tail`
 (grep for `[runtime-sdk:consumeBatch] dispatch threw`), but messages
-silently retry + go to DLQ; no items land, no `system.activity`
+silently retry and go to DLQ; no items land, no `system.activity`
 appears (the activity-emit path needs a working `ConnectionClient`
 that needs the broker secrets — circular dependency in the degraded
 mode). Failing-loud beats failing-silent: set the secrets first.

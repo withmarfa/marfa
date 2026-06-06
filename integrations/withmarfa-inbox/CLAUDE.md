@@ -52,8 +52,8 @@ This directory is one logical integration with two deployable Workers:
 
 - **`./src/`** — the standard per-Integration Worker (consumes
   `marfa-webhook-receipt-withmarfa-inbox-<env>` — its own dedicated
-  queue per T-247; CF Queues allow only one consumer per queue, so
-  every inbound-webhook integration gets its own). Bound under
+  queue; CF Queues allow only one consumer per queue, so every
+  inbound-webhook integration gets its own). Bound under
   `INTEGRATION_WITHMARFA_INBOX` in `wrangler.control.toml`. The control
   plane's webhook receipt route resolves the producer binding
   (`WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX`) by `integration_name`.
@@ -114,11 +114,9 @@ fresh item; the ring still dedupes within the handler's window.
 ## Attachments — metadata only (v1)
 
 The type schema's `attachments` field captures `{ filename,
-mime_type, size_bytes }` only. Actual blob upload requires the
-runtime SDK to ship an `uploadBlob` primitive (gated on
-[[T-239-runtime-sdk-upload-blob-primitive]]). Documented gap until
-that lands; a follow-on ticket wires `blob_ref` once the primitive
-exists.
+mime_type, size_bytes }` only. Actual blob upload requires the runtime
+SDK's `uploadBlob` primitive, which is not yet wired. `blob_ref` can
+be added once that primitive ships.
 
 ## DNS + Email Routing — operator setup
 
@@ -134,7 +132,7 @@ include:_spf.mx.cloudflare.net ~all`) is present on the
 2. **Email Routing rule.** Inside the `marfa.so` zone, create a
    custom-address rule: `capture@inbox.marfa.so` → "Send to Worker:
    `marfa-withmarfa-inbox-email-worker-staging`".
-3. **Deploy the Email Worker.** Use the T-251 wrapper:
+3. **Deploy the Email Worker.** Use the deploy wrapper:
    `scripts/deploy-worker.sh integrations/withmarfa-inbox/email-worker --env staging`
    after setting `CONNECTION_ID` (the `system.connection` id this
    Worker dispatches against) and `WEBHOOK_SECRET` (matches the
@@ -151,6 +149,5 @@ existing Worker, and Email Routing rules persist independently.
 Local validation does NOT require real DNS — the harness simulates
 the inbound by POSTing a signed payload directly to the staging
 server's `/runtime/webhook/:connection_id` endpoint, mimicking what
-the Email Worker would emit. The real end-to-end test (real DNS,
-real CF Email Routing, real email send from a real sender mailbox) is
-done as the final stage of the T-244 validation log.
+the Email Worker would emit. The real end-to-end test (real DNS, real CF Email Routing, real email
+send from a real sender mailbox) is done as a final validation stage.

@@ -225,7 +225,7 @@ describe("TrashPurger.runOnce — behavioural", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-050: per-tenant fan-out
+// Per-tenant fan-out
 // ---------------------------------------------------------------------------
 
 describe("TrashPurger fan-out — per-tenant retention overrides", () => {
@@ -435,7 +435,7 @@ describe("runTenantCleanup — audit and event-log fan-out", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-097: AuthSessionCleaner — drop expired better-auth session rows.
+// AuthSessionCleaner — drop expired better-auth session rows.
 // ---------------------------------------------------------------------------
 
 /**

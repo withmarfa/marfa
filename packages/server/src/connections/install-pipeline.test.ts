@@ -1,6 +1,5 @@
 /**
- * Direct tests of the install pipeline's compensating-write behaviour —
- * Layer 2 PR 1.
+ * Direct tests of the install pipeline's compensating-write behaviour.
  *
  * The HTTP-level happy path is covered by routes/integrations.test.ts.
  * These tests exercise rollback paths that are awkward to trigger
@@ -158,7 +157,7 @@ describe("performInstall — compensating writes on activity failure", () => {
     ]);
   });
 
-  it("rolls back when audit.log throws (T-012 — was fire-and-forget pre-fix)", async () => {
+  it("rolls back when audit.log throws", async () => {
     const calls: string[] = [];
     const stubStorage = {
       items: {
@@ -215,10 +214,8 @@ describe("performInstall — compensating writes on activity failure", () => {
       ),
     ).rejects.toThrow(/audit DB unavailable/);
 
-    // Pre-T-012 the audit failure was swallowed via `void`; the install
-    // returned success and the operator had no record. Post-T-012 the
-    // failure throws, the rollback walks the stack, and the connection
-    // is trashed.
+    // The audit failure throws, the rollback walks the stack, and the
+    // connection is trashed.
     expect(calls).toEqual([
       "create:connection",
       "create:credential",
@@ -229,18 +226,14 @@ describe("performInstall — compensating writes on activity failure", () => {
     ]);
   });
 
-  it("rollback walks compensations in reverse push order without mutating (T-012)", async () => {
-    // Pre-T-012 the rollback used `compensations.reverse()` which mutates
-    // in place. The fix iterates via a downward index — the array stays
-    // in push order, so any recovery code that re-invokes rollback walks
-    // the same reversed sequence each time.
+  it("rollback walks compensations in reverse push order without mutating", async () => {
+    // Rollback iterates via a downward index rather than calling
+    // `compensations.reverse()`, which would mutate in place. The array
+    // stays in push order so any recovery code that re-invokes rollback
+    // walks the same reversed sequence each time.
     //
-    // The public `performInstall` API only invokes rollback once internally
-    // on failure (then re-throws), so we verify the reverse-order property
-    // by failing partway through a multi-step install and asserting the
-    // observable call sequence. The array-immutability property is
-    // guaranteed by construction (no `.reverse()` call anywhere in the
-    // module — verified via grep in this PR).
+    // Verified by failing partway through a multi-step install and
+    // asserting the observable call sequence.
     const calls: string[] = [];
     const stubStorage = {
       items: {
@@ -433,7 +426,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     ).rejects.toThrow(/expected 'oauth_token' or 'api_token'/);
   });
 
-  it("accepts credential_ref pointing at a system.credential of kind 'api_token' (T-241)", async () => {
+  it("accepts credential_ref pointing at a system.credential of kind 'api_token'", async () => {
     const adminKey = await ctx.storage.keys
       .list()
       .then((keys) => keys.find((k) => k.role === "admin"));

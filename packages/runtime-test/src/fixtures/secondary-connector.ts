@@ -1,5 +1,5 @@
 /**
- * Secondary-connector fixture for the e2e flow test (T-023).
+ * Secondary-connector fixture for the e2e flow test.
  *
  * The e2e test composes two connectors in a chain: a primary that runs
  * a webhook handler and "publishes" a reactive item-event, and this
@@ -17,8 +17,7 @@ import {
 
 /** Stable name for the secondary integration. The e2e test installs a
  *  harness with this `integrationName` to pick up its messages off the
- *  shared queue (the consumer's envelope filter — T-009 — is what
- *  routes per-integration). */
+ *  shared queue (the consumer's envelope filter routes per-integration). */
 export const SECONDARY_INTEGRATION_NAME = "marfa.e2e-secondary";
 
 /** Cursor key the secondary handler writes its marker to. The test

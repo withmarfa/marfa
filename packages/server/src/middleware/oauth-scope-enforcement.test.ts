@@ -1,5 +1,5 @@
 /**
- * T-045 — OAuth scope grammar enforcement.
+ * OAuth scope grammar enforcement.
  *
  * The scope grammar in `@withmarfa/shared` parses `<type>:<verb>`,
  * `edge.<type>:<verb>`, `metadata:<verb>`, and `metadata.<sub>:<verb>`
@@ -7,10 +7,9 @@
  * `edge_permissions`, and `metadata_permissions` on a synthetic
  * member-tier `ApiKey` at token-resolve time.
  *
- * These tests are the load-bearing verification that the projection
- * actually gates the data plane — they exercise the four route
- * families end-to-end with narrow scopes and assert the correct
- * accept/reject shape per scope kind.
+ * These tests verify that the projection actually gates the data
+ * plane — they exercise the four route families end-to-end with narrow
+ * scopes and assert the correct accept/reject shape per scope kind.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { request, createTestContext, seedOauthBearer } from "../test-utils.js";
@@ -32,11 +31,10 @@ interface MintedToken {
 }
 
 /**
- * T-131: setup migrated to `seedOauthBearer` which writes into the
- * @better-auth/oauth-provider plugin's `auth_oauth_*` tables (the new
- * authoritative storage). Bearer middleware resolves the resulting
- * tokens identically to the old `oauth_tokens` path; the scope
- * projection it tests is unchanged.
+ * Setup uses `seedOauthBearer` which writes into the
+ * @better-auth/oauth-provider plugin's `auth_oauth_*` tables. Bearer
+ * middleware resolves the resulting tokens identically; the scope
+ * projection under test is unchanged.
  */
 async function mintOAuthToken(opts: {
   scopes: string[];
@@ -49,7 +47,7 @@ async function mintOAuthToken(opts: {
   return { rawToken: token, grantId };
 }
 
-describe("T-045 — OAuth scope grammar enforcement on the data plane", () => {
+describe("OAuth scope grammar enforcement on the data plane", () => {
   // -----------------------------------------------------------------------
   // Type scopes — `core.note:read`, `core.note:write`, etc.
   // -----------------------------------------------------------------------

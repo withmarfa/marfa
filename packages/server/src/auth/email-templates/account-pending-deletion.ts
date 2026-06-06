@@ -1,15 +1,13 @@
 /**
- * Account pending-deletion notification (T-116).
+ * Account pending-deletion notification.
  *
  * Sent immediately after the confirm-deletion link is clicked. The
  * account is now in `pending_deletion` and will be hard-deleted at the
  * end of the grace window. The included URL is a single cancel-by-link
  * token valid for the full grace window — clicking it restores the
- * account without needing to sign in.
- *
- * The body summarises what will be deleted and what's preserved
- * (audit row count + actor chain, with PII scrubbed) so the user can
- * make an informed call about cancelling.
+ * account without needing to sign in. The body summarises what will be
+ * deleted and what's preserved so the user can make an informed call
+ * about cancelling.
  */
 const ACCENT = "#1f6feb";
 const DANGER = "#a40e26";

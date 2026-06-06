@@ -1,5 +1,5 @@
 /**
- * Cloudflare Queues HTTP-pull client (T-084).
+ * Cloudflare Queues HTTP-pull client.
  *
  * The runtime-control Worker uses producer **bindings** for the hot
  * paths (webhook receipt, reactive run). For DLQ inspection /
@@ -39,8 +39,7 @@ export interface CfQueuesEnv {
 }
 
 export interface PulledMessage {
-  /** Cloudflare's internal message id — the correlation primitive
-   *  surfaced through this ticket. Operators reference it on the
+  /** Cloudflare's internal message id. Operators reference it on the
    *  `--message-ids` flag of replay. */
   cf_message_id: string;
   lease_id: string;

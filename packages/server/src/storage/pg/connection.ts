@@ -9,8 +9,7 @@ export type PgDb = ReturnType<typeof drizzle<typeof schema>>;
 export type PgClient = ReturnType<typeof postgres>;
 
 // SCHEMA_SQL is auto-generated from drizzle/pg/ migrations by
-// scripts/generate-schema-sql.ts; T-145 removed the manual three-place sync
-// burden. Imported above.
+// scripts/generate-schema-sql.ts. Imported above.
 
 export async function createConnection(
   connectionString: string,
@@ -31,10 +30,10 @@ export async function createConnection(
   },
 ): Promise<{
   /**
-   * Drizzle instance wrapped with the per-request context proxy
-   * (T-025 part 2). Storage classes consume this so per-request
-   * transactions (set up by the RLS middleware) transparently
-   * substitute. Use for everything except Better Auth.
+   * Drizzle instance wrapped with the per-request context proxy.
+   * Storage classes consume this so per-request transactions (set up
+   * by the RLS middleware) transparently substitute. Use for everything
+   * except Better Auth.
    */
   db: PgDb;
   /**
@@ -59,29 +58,28 @@ export async function createConnection(
   // Apply schema — use advisory lock to prevent concurrent DDL race conditions.
   //
   // SCHEMA_SQL is auto-generated from the Drizzle migrations under
-  // drizzle/pg/ by scripts/generate-schema-sql.ts (T-145). It's the
-  // fresh-database bootstrap path used when the server starts against an
-  // empty database. Schema changes go through a Drizzle migration; the
-  // SCHEMA_SQL refresh runs automatically as a post-step of
-  // `pnpm migrate:pg:generate`.
+  // drizzle/pg/ by scripts/generate-schema-sql.ts. It's the fresh-database
+  // bootstrap path used when the server starts against an empty database.
+  // Schema changes go through a Drizzle migration; the SCHEMA_SQL refresh
+  // runs automatically as a post-step of `pnpm migrate:pg:generate`.
   //
   // The FTS5 virtual table in sqlite/connection.ts remains inline because
   // Drizzle Kit cannot express it; it has no equivalent here.
   //
-  // RLS (T-025) — the per-table `marfa_app` role + CRUD grants + tenant-
-  // isolation policies are part of SCHEMA_SQL (migrations 0035 / 0037 /
-  // 0040). Activation is gated by `MARFA_RLS_ENFORCE=true`, wired via the
-  // per-request context proxy + `rls-tenant-context.ts` middleware. With
-  // the flag unset (the default) all queries fall through to the unwrapped
-  // base instance and run as the connection owner — RLS bypassed by virtue
-  // of ownership. Single-tenant self-hosts are unaffected.
+  // RLS — the per-table `marfa_app` role + CRUD grants + tenant-isolation
+  // policies are part of SCHEMA_SQL. Activation is gated by
+  // `MARFA_RLS_ENFORCE=true`, wired via the per-request context proxy +
+  // `rls-tenant-context.ts` middleware. With the flag unset (the default)
+  // all queries fall through to the unwrapped base instance and run as the
+  // connection owner — RLS bypassed by virtue of ownership. Single-tenant
+  // self-hosts are unaffected.
   if (!options?.skipBootstrap) {
     await client.unsafe(`SELECT pg_advisory_lock(42)`);
     try {
       await client.unsafe(SCHEMA_SQL);
       // Stamp Drizzle's `__drizzle_migrations` table so a follow-up
-      // `pnpm migrate` against this bootstrapped DB short-circuits as a no-op
-      // (T-014). Idempotent — only stamps when the table is empty.
+      // `pnpm migrate` against this bootstrapped DB short-circuits as a
+      // no-op. Idempotent — only stamps when the table is empty.
       await stampPgDrizzleMigrations(client);
     } finally {
       await client.unsafe(`SELECT pg_advisory_unlock(42)`);

@@ -24,7 +24,7 @@ import {
 
 /**
  * Headers that propagate the cycle metadata from a connector reaction
- * back to the Marfa server (T-039). Mirror the server's
+ * back to the Marfa server. Mirror the server's
  * `middleware/cycle.ts:CYCLE_HEADERS` constant. Cross-package contract —
  * change in lockstep.
  */
@@ -46,10 +46,10 @@ export interface ConnectionClientOptions {
   /** Custom fetch for testing — defaults to globalThis.fetch. */
   fetch?: typeof fetch;
   /**
-   * Parent cycle metadata for this run (T-039). When the connector is
-   * reacting to an `ItemEventMessage`, pass `message.cycle`. When it's
-   * a fresh schedule / webhook trigger (or any other non-reactive
-   * source), pass `null`. The client stamps `X-Marfa-Cycle-Origin` /
+   * Parent cycle metadata for this run. When the connector is reacting
+   * to an `ItemEventMessage`, pass `message.cycle`. When it's a fresh
+   * schedule / webhook trigger (or any other non-reactive source), pass
+   * `null`. The client stamps `X-Marfa-Cycle-Origin` /
    * `X-Marfa-Cycle-Hop` on every mutating request, computing the next
    * hop via `nextHopMetadata(cycleParent, connection_id)`.
    *
@@ -66,8 +66,8 @@ export interface CreateItemInput {
   edges?: Record<string, string[]>;
   /** Upstream's stable identifier for this entity. Combined with the
    *  server-stamped `source` (from the runtime credential), enables the
-   *  natural-key idempotency contract on `POST /items` (T-038): a re-POST
-   *  of the same `(source, source_id)` short-circuits to update instead of
+   *  natural-key idempotency contract on `POST /items`: a re-POST of the
+   *  same `(source, source_id)` short-circuits to update instead of
    *  creating a duplicate. Inbound integrations re-syncing from upstream
    *  feeds should always set this so whole-batch retries
    *  (createItem-success / cursor-write-fail) recover cleanly. */
@@ -107,9 +107,8 @@ export interface ListItemsPage {
  *  `core.task` auto-archive handler hits `archived`. */
 export type ItemState = "active" | "archived" | "trashed";
 
-/** Input to `ConnectionClient.uploadBlob` (T-239). Bytes-only in v1;
- *  pass a `ReadableStream` and the SDK rejects at the boundary
- *  (server-side streaming is a paired follow-up). */
+/** Input to `ConnectionClient.uploadBlob`. Bytes-only; pass a
+ *  `ReadableStream` and the SDK rejects at the boundary. */
 export interface UploadBlobInput {
   /** Raw bytes. Workers handlers typically pass `Uint8Array` (e.g.
    *  `new Uint8Array(await response.arrayBuffer())`) or `ArrayBuffer`
@@ -121,8 +120,8 @@ export interface UploadBlobInput {
   mime_type: string;
 }
 
-/** Response from `ConnectionClient.uploadBlob` (T-239). Mirrors the
- *  server's `POST /blobs` wire shape exactly — no envelope. Stamp
+/** Response from `ConnectionClient.uploadBlob`. Mirrors the server's
+ *  `POST /blobs` wire shape exactly — no envelope. Stamp
  *  `properties.blob_ref = result.hash` directly on item writes. */
 export interface UploadBlobResult {
   /** Content-addressed reference: `sha256:<hex>`. Stable across
@@ -138,9 +137,9 @@ export class ConnectionClient {
   private readonly refreshCredential: () => Promise<RuntimeCredential>;
   private readonly fetchImpl: typeof fetch;
   /**
-   * Parent cycle metadata for this run, captured at construction time
-   * (T-039). The client stamps `X-Marfa-Cycle-Origin` /
-   * `X-Marfa-Cycle-Hop` on every mutating request via
+   * Parent cycle metadata for this run, captured at construction time.
+   * The client stamps `X-Marfa-Cycle-Origin` / `X-Marfa-Cycle-Hop` on
+   * every mutating request via
    * `nextHopMetadata(this.cycleParent, this.credential.connection_id)`.
    * `null` for handlers triggered by schedule / webhook (fresh chain
    * head); set to `message.cycle` for handlers triggered by an
@@ -157,12 +156,9 @@ export class ConnectionClient {
   }
 
   async createItem(input: CreateItemInput): Promise<ItemResource> {
-    // T-087: server returns `{ item, metadata }` for `POST /items`;
-    // unwrap so callers see the bare `ItemResource` like every other
-    // method on this client. `transitionItem` already does the same.
-    // Pre-fix this method returned the wrapper as `ItemResource`, so
-    // `created.id` was `undefined` at the call site (visible in the
-    // github-webhooks "bookmark undefined" activity title).
+    // Server returns `{ item, metadata }` for `POST /items`; unwrap so
+    // callers see the bare `ItemResource` like every other method on
+    // this client.
     const wrapped = await this.request<{ item: ItemResource } | ItemResource>(
       "POST",
       "/items",
@@ -178,10 +174,7 @@ export class ConnectionClient {
     try {
       // Same unwrap shape as `createItem` / `transitionItem`: the
       // server returns `GET /items/:id` as `{ item, metadata }`, not
-      // the bare ItemResource. Pre-fix every handler that read
-      // `item.id` / `item.properties.<x>` saw `undefined` (visible
-      // during T-236's hosted Marfa walkthrough — the outbound task
-      // landed on Google with `title: null` and `notes: "[marfa-id:undefined]"`).
+      // the bare ItemResource.
       const wrapped = await this.request<{ item: ItemResource } | ItemResource>(
         "GET",
         `/items/${id}`,
@@ -201,8 +194,7 @@ export class ConnectionClient {
     patch: Partial<CreateItemInput>,
   ): Promise<ItemResource> {
     // Server returns `PATCH /items/:id` as `{ item, metadata }` — same
-    // unwrap shape as the other Item-returning methods. Without this,
-    // callers reading the returned `item.id` see `undefined`.
+    // unwrap shape as the other Item-returning methods.
     const wrapped = await this.request<{ item: ItemResource } | ItemResource>(
       "PATCH",
       `/items/${id}`,
@@ -336,26 +328,21 @@ export class ConnectionClient {
   }
 
   /**
-   * Upload bytes as a content-addressed Marfa blob (T-239). Forwards
-   * to the server's `POST /blobs` route using this connection's
-   * runtime credential — tenant scoping, dedup, and per-tenant
-   * `blobs` + `storage_bytes` quotas are enforced server-side. The
-   * returned `hash` is the canonical `sha256:<hex>` reference: stamp
-   * it onto item properties (e.g. `properties.blob_ref` on
-   * `core.file`) on a subsequent `createItem` / `updateItem`.
+   * Upload bytes as a content-addressed Marfa blob. Forwards to the
+   * server's `POST /blobs` route using this connection's runtime
+   * credential — tenant scoping, dedup, and per-tenant `blobs` +
+   * `storage_bytes` quotas are enforced server-side. The returned
+   * `hash` is the canonical `sha256:<hex>` reference: stamp it onto
+   * item properties (e.g. `properties.blob_ref` on `core.file`) on
+   * a subsequent `createItem` / `updateItem`.
    *
-   * **Bytes only in v1.** `ReadableStream` is rejected at the SDK
-   * boundary because the server-side route currently buffers via
-   * `c.req.arrayBuffer()` anyway — a stream input would mislead
-   * callers into assuming back-pressure. Worker memory is the real
-   * ceiling; pair with a per-handler size cap (Drive uses 25 MB).
-   * Lifting that ceiling requires paired server-side streaming +
-   * a stream-accepting overload — flagged as a follow-up.
+   * **Bytes only.** `ReadableStream` is rejected at the SDK boundary
+   * because the server-side route buffers via `c.req.arrayBuffer()` —
+   * a stream input would mislead callers into assuming back-pressure.
    *
    * **No cycle headers.** `POST /blobs` doesn't publish events
-   * through `pubsub.publish`, so the cycle metadata serves no
-   * purpose on this route — it's a storage write, not an
-   * event-emitting mutation.
+   * through `pubsub.publish`, so cycle metadata serves no purpose
+   * here — it's a storage write, not an event-emitting mutation.
    */
   async uploadBlob(input: UploadBlobInput): Promise<UploadBlobResult> {
     const body = toUploadBytes(input.content);
@@ -383,10 +370,10 @@ export class ConnectionClient {
     path: string,
     body?: unknown,
   ): Promise<T> {
-    // T-039: stamp cycle headers on mutating requests so the server's
+    // Stamp cycle headers on mutating requests so the server's
     // `cycleMiddleware` can resolve `c.var.cycle` and the resulting
     // publishes carry attribution. Read-only verbs (GET/HEAD/OPTIONS)
-    // don't trigger publishes — no need to bloat the headers there.
+    // don't trigger publishes — no need to include them there.
     // `nextHopMetadata` is called ONCE per request: the SDK never
     // pre-increments `this.cycleParent`. Multiple requests in the same
     // run all derive from the same parent (each gets `parent.hop + 1`)

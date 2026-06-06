@@ -1,8 +1,7 @@
 /**
  * Forgot-password page renderer for `/auth/forgot-password`.
  *
- * Wave C PR3 / T-033. Server-rendered HTML, uses the shared auth-page
- * layout (PR4). Three states:
+ * Server-rendered HTML, uses the shared auth-page layout. Three states:
  *
  *   - `form` — initial render. Single email field, submit button,
  *     "Sign in instead" link.

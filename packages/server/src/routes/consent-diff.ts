@@ -1,5 +1,5 @@
 /**
- * Re-consent diff (Wave C PR5 / T-032).
+ * Re-consent diff.
  *
  * Pure function. Given the scope set the user previously approved on
  * this client and the scope set the client is requesting now, returns

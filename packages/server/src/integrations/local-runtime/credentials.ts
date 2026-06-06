@@ -40,9 +40,9 @@ interface IntegrationProperties {
  * Throws when:
  *   - the Connection doesn't exist
  *   - the Connection isn't of kind `integration`
- *   - the Connection's `state` isn't `"active"` (T-175 — symmetric with
+ *   - the Connection's `state` isn't `"active"` — symmetric with
  *     the HTTP-side mint gate; a revoked Connection cannot mint and
- *     therefore cannot run handlers)
+ *     therefore cannot run handlers
  */
 export async function mintLocalRuntimeCredential(
   storage: Storage,
@@ -67,7 +67,7 @@ export async function mintLocalRuntimeCredential(
   }
 
   // Carry manifest-declared extension grants alongside the always-on
-  // `connection.runtime: write`. The CF path does this in
+  // `connection.runtime: write`. The hosted substrate does this in
   // `install-pipeline.ts` for each per-Worker mint; we do it inline
   // because the local substrate doesn't have a long-lived credential
   // record.

@@ -26,7 +26,6 @@ ENVIRONMENT = "dev"
 # ---- Durable Object: per-Connection state --------------------------------
 # The DO class lives in @withmarfa/runtime-sdk; each integration namespaces
 # it locally. The class_name must match the export from the SDK.
-# (PR 2 wires this binding.)
 #
 # [[durable_objects.bindings]]
 # name = "PER_CONNECTION_STATE"
@@ -37,16 +36,15 @@ ENVIRONMENT = "dev"
 # new_sqlite_classes = ["PerConnectionState"]
 
 # ---- Queues: consumers ---------------------------------------------------
-# (PR 3 wires these. Each integration consumes its slice of the queue;
-# the producer envelopes messages with `integration_name`.)
+# Each integration consumes its slice of the queue; the producer envelopes
+# messages with `integration_name`.
 #
-# Note on DLQ access (T-084): the per-Integration Worker does NOT need
-# a consumer binding for the `*-dlq` queues. DLQ inspection and replay
-# happen via Cloudflare's account-scoped HTTP-pull API, used by the
-# runtime-control Worker's `POST /dlq/peek` + `POST /dlq/replay`
-# routes. Consumer bindings are reserved for the *main* queues each
-# Integration processes; DLQ messages re-enter the main queue via
-# replay, where the existing consumer picks them up normally.
+# Per-Integration Workers do NOT need a consumer binding for the
+# `*-dlq` queues. DLQ inspection and replay happen via Cloudflare's
+# account-scoped HTTP-pull API, used by the runtime-control Worker's
+# `POST /dlq/peek` + `POST /dlq/replay` routes. Consumer bindings are
+# reserved for the main queues; DLQ messages re-enter the main queue
+# via replay, where the existing consumer picks them up normally.
 #
 # [[queues.consumers]]
 # queue = "marfa-webhook-receipt"

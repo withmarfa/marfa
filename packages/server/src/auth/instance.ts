@@ -28,12 +28,6 @@ type DrizzleAdapterDb = Parameters<typeof drizzleAdapter>[0];
  * Constructs the better-auth instance. Plug into the storage factories'
  * `__betterAuthDb` / `__betterAuthDialect` handles. Consumed by `app.ts`
  * to mount the catch-all handler under `/auth/*`.
- *
- * Sign-in methods land in PR-sized chunks per the workstream-1 plan:
- *   PR 1 — email + password
- *   PR 2 — passkey + magic link (this addition)
- *   PR 3 — generic OIDC client (federated)
- *   PR 5 — OIDC provider (Marfa as IdP)
  */
 
 export type EmailTransport = (params: {
@@ -95,21 +89,20 @@ export interface MarfaAuthOptions {
     discoveryUrl?: string;
     scopes?: string[];
   }[];
-  /** Wave C PR2: turn on `requireEmailVerification` + `sendOnSignUp`.
-   *  Default: auto-detect from `marfaEmailTransport` — on when a real
-   *  backend (`cloudflare` / `smtp`) is wired, off when the transport is
-   *  `none` or missing. Tests pass `true` explicitly to exercise the
-   *  verify flow without booting a real transport; production
-   *  deployments rely on the auto-detect. */
+  /** Whether to require email verification on sign-up. Default:
+   *  auto-detect from `marfaEmailTransport` — on when a real backend
+   *  (`cloudflare` / `smtp`) is wired, off when the transport is `none`
+   *  or missing. Tests pass `true` explicitly; production deployments
+   *  rely on the auto-detect. */
   requireEmailVerification?: boolean;
-  /** T-131: Storage handle threaded into the OAuth Provider plugin's
+  /** Storage handle threaded into the OAuth Provider plugin's
    *  `clientReference`, `customAccessTokenClaims`, and `hooks.after`
    *  matchers. Needed for the `system.connection` projection of the
    *  plugin's grant lifecycle and the tenant_id binding on issued tokens. */
   storage?: Storage;
-  /** T-131: per-process API key salt — shared with the bearer middleware
-   *  so the plugin's `storeTokens.hash` and the middleware's hash output
-   *  match, letting the middleware look up `auth_oauth_access_token.token`
+  /** Per-process API key salt — shared with the bearer middleware so the
+   *  plugin's `storeTokens.hash` and the middleware's hash output match,
+   *  letting the middleware look up `auth_oauth_access_token.token`
    *  directly by computing the same hash. */
   apiKeySalt?: string;
 }
@@ -173,10 +166,10 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           account: pgSchema.auth_account,
           verification: pgSchema.auth_verification,
           passkey: pgSchema.auth_passkey,
-          // T-131: OAuth Provider plugin tables (mapped via Better Auth
-          // model names → our auth_oauth_* Drizzle tables). The plugin
-          // queries through these names; the snake_case DB columns are
-          // resolved by the adapter automatically.
+          // OAuth Provider plugin tables (mapped via Better Auth model
+          // names → our auth_oauth_* Drizzle tables). The plugin queries
+          // through these names; the snake_case DB columns are resolved
+          // by the adapter automatically.
           oauthClient: pgSchema.auth_oauth_client,
           oauthAccessToken: pgSchema.auth_oauth_access_token,
           oauthRefreshToken: pgSchema.auth_oauth_refresh_token,
@@ -200,15 +193,13 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   const transport = options.emailTransport ?? defaultLogTransport;
   const richTransport = options.marfaEmailTransport;
 
-  // Wave C PR2: only flip `requireEmailVerification` when a real email
-  // backend is wired. With the `none` backend (or no rich transport at
-  // all) the verification email can't actually deliver — turning the
-  // flag on would 500 every sign-up. Graceful degradation: pre-PR1
-  // (no transport) and unconfigured-PR1 (`none`) deployments keep the
-  // pre-PR2 auto-sign-in behaviour. As soon as the operator wires
-  // `MARFA_EMAIL_BACKEND=cloudflare` (or `smtp`) and restarts, verification
-  // turns on automatically. Callers (e.g. tests) can override the
-  // auto-detect via `options.requireEmailVerification`.
+  // Only flip `requireEmailVerification` when a real email backend is
+  // wired. With the `none` backend (or no rich transport at all) the
+  // verification email can't deliver — turning the flag on would 500
+  // every sign-up. As soon as the operator wires
+  // `MARFA_EMAIL_BACKEND=cloudflare` (or `smtp`) and restarts,
+  // verification turns on automatically. Callers (e.g. tests) can
+  // override the auto-detect via `options.requireEmailVerification`.
   const emailVerificationEnabled =
     options.requireEmailVerification ??
     (richTransport !== undefined && richTransport.backend !== "none");
@@ -227,13 +218,12 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     basePath: "/auth",
     secret: options.secret,
     trustedOrigins: options.trustedOrigins,
-    // T-078: suppress the ERROR-level log Better Auth emits when a
-    // `request-password-reset` hits a non-existent email. The forgot-
-    // password wrapper deliberately swallows that case to honour the
-    // no-enumeration invariant (always 302 with `?sent=1`); BA's own
-    // logger fires synchronously inside the handler, so the only seam
-    // to keep operator logs clean is BA's logger config. Pass every
-    // other line through to the structured `log` helper.
+    // Suppress the ERROR-level log Better Auth emits when a
+    // `request-password-reset` hits a non-existent email. The
+    // forgot-password wrapper deliberately swallows that case to honour
+    // the no-enumeration invariant (always 302 with `?sent=1`); BA's
+    // own logger fires synchronously, so the only seam to keep operator
+    // logs clean is BA's logger config. Pass every other line through.
     logger: {
       disabled: false,
       level: "info",
@@ -261,38 +251,33 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       enabled: true,
       // Auto-sign-in after sign-up keeps the consent flow seamless when
       // a brand-new account approves an OAuth client on first visit.
-      // With `requireEmailVerification: true` (Wave C PR2, conditional
-      // on a real email backend below) better-auth sets
+      // With `requireEmailVerification: true` better-auth sets
       // `shouldSkipAutoSignIn` so sign-up succeeds with
       // `{ token: null, user }` and NO Set-Cookie — the user must
       // verify before any session lands.
       autoSignIn: true,
-      // Default off per the workstream-1 brief; flips on when the
-      // `MARFA_AUTH_ALLOW_SIGNUP` env var is set.
+      // Default off; flips on when the `MARFA_AUTH_ALLOW_SIGNUP` env var
+      // is set.
       disableSignUp: !options.allowSignup,
-      // Wave C PR2: every new sign-up must verify their email before
-      // signing in — but only when a real email backend is actually
-      // configured. The `none` backend (or no transport at all) would
-      // 500 every sign-up. Migration 0042 (PG) / 0035 (SQLite) marks
-      // accounts predating the requirement as verified so turning on a
-      // real backend doesn't lock them out.
+      // Every new sign-up must verify their email before signing in —
+      // but only when a real email backend is configured. The `none`
+      // backend (or no transport at all) would 500 every sign-up.
+      // Migration 0042 (PG) / 0035 (SQLite) marks accounts predating
+      // the requirement as verified so existing users aren't locked out.
       requireEmailVerification: emailVerificationEnabled,
-      // Wave C PR3 / T-033: 1h reset-token TTL. Long enough for a
-      // user to switch tabs / inboxes, short enough to bound the
-      // single-use replay window.
+      // 1h reset-token TTL. Long enough for a user to switch tabs /
+      // inboxes, short enough to bound the single-use replay window.
       resetPasswordTokenExpiresIn: 3600,
-      // Wave C PR3: revoke every other session on password reset.
-      // The user is reauthenticated on the reset surface itself; any
-      // pre-existing devices need to re-sign-in. Useful belt against
-      // a session that's already drifted somewhere unexpected.
+      // Revoke every other session on password reset. The user is
+      // reauthenticated on the reset surface itself; any pre-existing
+      // devices need to re-sign-in.
       revokeSessionsOnPasswordReset: true,
-      // Wave C PR3 / T-033: send the password-reset email through
-      // the rich Marfa transport. The hook overrides better-auth's
-      // default URL to point at our themed `/auth/reset-password`
-      // page directly (skipping better-auth's intermediate GET that
-      // redirects to a callbackURL). Token validation happens on
-      // the POST handler — invalid / expired tokens render our
-      // failure state.
+      // Send the password-reset email through the rich Marfa transport.
+      // The hook overrides better-auth's default URL to point at our
+      // themed `/auth/reset-password` page directly (skipping
+      // better-auth's intermediate GET that redirects to a callbackURL).
+      // Token validation happens on the POST handler — invalid / expired
+      // tokens render the failure state.
       sendResetPassword: async ({ user, token }) => {
         const ourUrl = `${options.baseURL.replace(/\/$/, "")}/auth/reset-password?token=${encodeURIComponent(token)}`;
         if (richTransport && richTransport.backend !== "none") {
@@ -341,9 +326,8 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         });
       },
     },
-    // Wave C PR2: fire the verification email on every sign-up — but
-    // only when a real backend is configured (graceful degradation
-    // for self-hosts that haven't wired a transport yet).
+    // Fire the verification email on every sign-up — but only when a
+    // real backend is configured.
     emailVerification: {
       sendOnSignUp: emailVerificationEnabled,
       // 1 hour TTL on verification tokens. Long enough for the user
@@ -401,13 +385,12 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         // Trust the same origins as cookie-credentialed requests.
         origin: options.baseURL,
       }),
-      // T-131: JWT plugin for id_token signing. The oauth-provider
-      // plugin requires it (id_tokens are always JWT) unless
-      // `disableJwtPlugin: true` is set on oauth-provider — which
-      // forces id_tokens to HS256 with the client_secret, breaking
-      // public PKCE clients that have no secret. The jwt plugin
-      // auto-generates an RSA key pair on first use and stores it in
-      // its own `auth_jwks` table.
+      // JWT plugin for id_token signing. The oauth-provider plugin
+      // requires it (id_tokens are always JWT) unless
+      // `disableJwtPlugin: true` is set — which forces id_tokens to
+      // HS256 with the client_secret, breaking public PKCE clients that
+      // have no secret. Auto-generates an RSA key pair on first use,
+      // stored in `auth_jwks`.
       jwt(),
       ...(options.storage && options.apiKeySalt
         ? [

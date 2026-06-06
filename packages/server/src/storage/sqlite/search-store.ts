@@ -5,9 +5,9 @@ import { filterToRawSql } from "../filter-sql.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToItem, rowToMetadata } from "./helpers.js";
 import type { items } from "./schema.js";
-// T-015: shared FTS text extractor — both dialects consult this so
-// the indexed surface is identical (same fields, same `searchable: false`
-// opt-outs, same long-tail ordering).
+// Shared FTS text extractor — both dialects consult this so the indexed
+// surface is identical (same fields, same `searchable: false` opt-outs,
+// same long-tail ordering).
 import { extractSearchableText } from "../search-text.js";
 
 /**
@@ -102,7 +102,7 @@ export class SqliteSearchStore implements SearchStore {
 
     // Type permission filtering
     if (filters.allowed_types) {
-      // T-045: empty allowed_types means "no readable types" — see
+      // Empty allowed_types means "no readable types" — see
       // SqliteItemStore.list. Must filter to zero rows.
       if (filters.allowed_types.length === 0) {
         conditions.push("AND 1=0");

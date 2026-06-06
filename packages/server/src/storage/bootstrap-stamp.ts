@@ -1,5 +1,5 @@
 /**
- * Bootstrap-path migration stamping (T-014).
+ * Bootstrap-path migration stamping.
  *
  * The server's storage layer has two parallel install paths:
  *

@@ -143,6 +143,6 @@ dead_letter_queue = "marfa-webhook-receipt-google-drive-prod-dlq"
 # Required for the queue consumer to mint per-Connection runtime
 # credentials via the control plane's `/lease/:connection_id/runtime`
 # broker. Without them the consumer throws on first dispatch and the
-# error surfaces only via console.error (T-255). Use the helper at
+# error surfaces only via console.error. Use the helper at
 # `infra/cloudflare/scripts/init-integration-worker-secrets.sh` to
 # set all three from your local secrets.env on first deploy.

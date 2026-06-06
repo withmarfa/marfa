@@ -5,7 +5,7 @@ import type { PgDb } from "../storage/pg/connection.js";
 import type { AppEnv } from "./auth.js";
 
 /**
- * T-025 part 2: Postgres RLS request-level enforcement.
+ * Postgres RLS request-level enforcement.
  *
  * Wraps each tenant-bounded request in a transaction with `SET LOCAL
  * ROLE marfa_app` and `set_config('marfa.tenant_id', $tenant, true)`,
@@ -14,7 +14,7 @@ import type { AppEnv } from "./auth.js";
  * (`request-context.ts:wrapDbWithRequestContext`) consults the ALS
  * on every storage operation, so all queries flow through the
  * reserved connection that carries the role + tenant_id and are
- * therefore subject to the per-table RLS policies (T-025 part 1).
+ * therefore subject to the per-table RLS policies.
  *
  * **Mount AFTER auth + cycle, BEFORE routes.** The middleware reads
  * `c.var.apiKey?.tenant_id`. Auth must have populated the api key
@@ -46,8 +46,8 @@ import type { AppEnv } from "./auth.js";
  * archive export (`/export`) hold the response open for an arbitrary
  * duration — wrapping them in a transaction would hold a pool
  * connection open for the same duration. They're exempted by URL
- * pattern HERE, but they are NOT bypass paths for RLS overall: T-146
- * closes the gap by applying session-level (`SET`, not `SET LOCAL`)
+ * pattern HERE, but they are NOT bypass paths for RLS overall: the
+ * streaming routes apply session-level (`SET`, not `SET LOCAL`)
  * `marfa.tenant_id` + `SET ROLE marfa_app` on a dedicated pool
  * connection inside the route itself (see
  * `storage/pg/streaming-rls.ts`). The exemption keeps the long-lived

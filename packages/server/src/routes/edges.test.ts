@@ -307,7 +307,7 @@ describe("PATCH /edges/:id — properties only", () => {
 
   it("emits an audit row on success", async () => {
     // Sibling POST and DELETE handlers emit `edge.create` / `edge.delete`
-    // audit rows; PATCH was the one missing this in the post-T-027 sweep.
+    // audit rows; this verifies PATCH emits one too.
     const source = await createItem();
     const target = await createItem();
     const create = await request(ctx.app, "POST", "/edges", {
@@ -326,7 +326,7 @@ describe("PATCH /edges/:id — properties only", () => {
     });
     expect(patch.status).toBe(200);
 
-    // Audit insert is fire-and-forget (T-079). Poll briefly for the row.
+    // Audit insert is fire-and-forget. Poll briefly for the row.
     const auditData = await waitForAudit(
       async () => {
         const auditRes = await request(ctx.app, "GET", "/audit?limit=20", {

@@ -77,8 +77,8 @@ export function createApp(
   emailTransport?: MarfaEmailTransport,
   oidcSigner?: OidcSigner,
   /**
-   * T-173 — optional Hono sub-app mounted at the root path before any
-   * auth middleware. The local-runtime substrate uses this to expose
+   * Optional Hono sub-app mounted at the root path before any auth
+   * middleware. The local-runtime substrate uses this to expose
    * `POST /runtime/webhook/:connection_id` without going through the
    * bearer-token gate (verification happens at the route via the
    * subscription's HMAC secret).
@@ -106,8 +106,8 @@ export function createApp(
   // Structured logging (wraps entire request lifecycle)
   app.use("*", loggerMiddleware());
 
-  // T-275: stamp request_id / key_id / tenant_id onto the active OTel span
-  // and mark 5xx as span errors. Pure no-op when OpenTelemetry is disabled
+  // Stamp request_id / key_id / tenant_id onto the active OTel span and
+  // mark 5xx as span errors. Pure no-op when OpenTelemetry is disabled
   // (no active span). After the logger so `requestId` is already set.
   app.use("*", otelCorrelationMiddleware());
 
@@ -203,32 +203,32 @@ export function createApp(
   );
   app.route("/health", healthRoutes(storage, blobBackend, config));
 
-  // T-173: local-runtime substrate routes (POST /runtime/webhook/:id).
-  // Mounted before any auth middleware so the public webhook receipt
-  // endpoint stays unauthenticated — verification happens inside the
-  // route via the subscription's HMAC secret.
+  // Local-runtime substrate routes (POST /runtime/webhook/:id). Mounted
+  // before any auth middleware so the public webhook receipt endpoint
+  // stays unauthenticated — verification happens inside the route via
+  // the subscription's HMAC secret.
   if (localRuntimeApp) {
     app.route("/", localRuntimeApp);
   }
 
-  // T-131: OAuth 2.1 / OIDC discovery — owned by the @better-auth/oauth-provider
+  // OAuth 2.1 / OIDC discovery — owned by the @better-auth/oauth-provider
   // plugin. The plugin auto-mounts the docs under its basePath (`/auth`)
   // but per RFC 8414 / OIDC Discovery, RPs probe the bare-root paths.
   // The plugin ships exportable helpers that re-publish the same metadata
   // at the root. JWKS stays at the plugin's `/auth/jwks` — the discovery
   // doc points there, so RPs that read the doc will follow correctly.
 
-  // Wave C PR4: shared auth-page stylesheet. Public — anyone landing
-  // on `/auth/sign-in` must be able to fetch the CSS without a
-  // session cookie. Mounted BEFORE authMiddleware AND before the
-  // better-auth catch-all so `/auth/static/auth.css` resolves to the
-  // static handler rather than falling through to `/auth/*`.
+  // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
+  // must be able to fetch the CSS without a session cookie. Mounted BEFORE
+  // authMiddleware AND before the better-auth catch-all so
+  // `/auth/static/auth.css` resolves to the static handler rather than
+  // falling through to `/auth/*`.
   app.route("/auth/static", authStaticRoutes());
 
   // Resolve the effective client IP once per request and stash it on
-  // `c.var.clientIp` (T-027). Runs BEFORE auth so audit rows emitted
-  // from auth-side paths (e.g. token revocation) and route handlers
-  // alike can attribute the originator without re-resolving each time.
+  // `c.var.clientIp`. Runs BEFORE auth so audit rows emitted from
+  // auth-side paths (e.g. token revocation) and route handlers alike
+  // can attribute the originator without re-resolving each time.
   app.use("*", clientIpMiddleware(config.trustedProxyCidrs));
 
   // Auth middleware runs BEFORE rate limiting so the limiter can key on
@@ -236,32 +236,30 @@ export function createApp(
   // still fall through to IP-based limiting inside rateLimitMiddleware.
   app.use("*", authMiddleware(storage, config.apiKeySalt));
 
-  // T-117: tenant-suspension write-guard. Sits AFTER `authMiddleware`
-  // so the credential is resolved when this runs. Rejects every non-GET
-  // request from a non-platform credential whose tenant is suspended
-  // with HTTP 403 `tenant_suspended`. Reads pass through; platform-
-  // admin keys bypass so operators can manage a suspended tenant.
+  // Tenant-suspension write-guard. Sits AFTER `authMiddleware` so the
+  // credential is resolved when this runs. Rejects every non-GET request
+  // from a non-platform credential whose tenant is suspended with HTTP 403
+  // `tenant_suspended`. Reads pass through; platform-admin keys bypass so
+  // operators can manage a suspended tenant.
   app.use("*", tenantSuspensionMiddleware(storage));
 
-  // T-116: block sign-ins on accounts in `pending_deletion`. Mounted
-  // AFTER the tenant suspension guard so suspended-tenant rejection
-  // still wins. Only triggers on the better-auth sign-in paths —
-  // every other path is a pass-through.
+  // Block sign-ins on accounts in `pending_deletion`. Mounted AFTER the
+  // tenant suspension guard so suspended-tenant rejection still wins.
+  // Only triggers on the better-auth sign-in paths — every other path
+  // is a pass-through.
   app.use(
     "*",
     accountDeletionGuardMiddleware(storage, emailTransport, config.authBaseUrl),
   );
 
-  // Cycle metadata resolution (T-039, T-144). Reads X-Marfa-Cycle-Origin /
+  // Cycle metadata resolution. Reads X-Marfa-Cycle-Origin /
   // X-Marfa-Cycle-Hop headers (a connector continuing a chain) or falls
   // back to the api key's connection binding (a connector kicking off a
   // chain). Mounted AFTER auth because the fallback path reads
-  // `c.var.apiKey`. T-144: the resolved cycle is written to BOTH
-  // `c.var.cycle` (diagnostic) AND `cycleRequestContext` (AsyncLocalStorage)
-  // so `publish()` in `pubsub.ts` reads it automatically — routes no
-  // longer thread `...c.var.cycle` into every publish call. The reactive-
-  // run bridge self-suppresses and `passesHopBudget` attributes by origin
-  // off the ALS-resolved value.
+  // `c.var.apiKey`. The resolved cycle is written to BOTH `c.var.cycle`
+  // (diagnostic) AND `cycleRequestContext` (AsyncLocalStorage) so
+  // `publish()` in `pubsub.ts` reads it automatically — routes do not
+  // thread `...c.var.cycle` into every publish call.
   app.use("*", cycleMiddleware());
 
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS
@@ -282,9 +280,9 @@ export function createApp(
           // (e.g. `/auth/device/token` MUST precede `/auth/device`,
           // and `/auth/sign-in/magic-link` MUST precede `/auth/sign-in`).
           //
-          // Auth-endpoint caps (T-095): calibrated for realistic human
-          // retry patterns plus iterative smoke testing. The global
-          // default (1000/window) bounds anything else.
+          // Auth-endpoint caps calibrated for realistic human retry
+          // patterns plus iterative smoke testing. The global default
+          // (1000/window) bounds anything else.
           //
           // Device-flow polling (`/auth/device/token`) gets its own
           // budget independent of the sign-in / token-exchange paths:
@@ -307,13 +305,11 @@ export function createApp(
           "/auth/forgot-password": 15,
           "/auth/reset-password": 30,
           "/auth/verify-email/resend": 15,
-          // F8 (T-131 review-sweep): cap the plugin's `/auth/oauth2/*`
-          // endpoints. Pre-fix, every plugin endpoint inherited the
-          // global default (1000/min) — particularly bad for DCR
-          // (`/auth/oauth2/register`) which is unauthenticated and
-          // could be used to spam-fill `auth_oauth_client`. Specific
-          // prefixes appear BEFORE broader siblings per the
-          // insertion-order match rule.
+          // Cap the OAuth2 plugin endpoints (`/auth/oauth2/*`). Without
+          // this, every plugin endpoint inherits the global default
+          // (1000/min) — particularly bad for DCR (`/auth/oauth2/register`)
+          // which is unauthenticated. Specific prefixes appear BEFORE
+          // broader siblings per the insertion-order match rule.
           //
           // `/auth/authorize/decision` (Marfa proxy) precedes
           // `/auth/authorize` (Marfa consent render).
@@ -325,30 +321,27 @@ export function createApp(
           "/auth/oauth2/authorize": 30,
           "/auth/authorize/decision": 30,
           "/auth/authorize": 60,
-          // s1 (T-131 review-sweep): `"/auth/token": 60` was the
-          // homegrown OAuth surface's token endpoint; T-131 deleted
-          // that route and the plugin lives at `/auth/oauth2/token`.
-          // The dead prefix never matched but cluttered the table.
+          // The old `/auth/token` route has been removed; the plugin lives
+          // at `/auth/oauth2/token`. This entry is intentionally absent
+          // to avoid a dead prefix in the table.
         },
         trustedProxyCidrs: config.trustedProxyCidrs,
-        // T-052 follow-on (Wave B Part 2): per-tenant rate ceiling on
-        // top of the per-credential window. Reads
-        // tenant_quotas.rate_per_minute_limit (with env fallback) via
-        // a 60s in-process cache. No-op for tenant-less keys.
+        // Per-tenant rate ceiling on top of the per-credential window.
+        // Reads tenant_quotas.rate_per_minute_limit (with env fallback)
+        // via a 60s in-process cache. No-op for tenant-less keys.
         storage,
         tenantDefaultRatePerMinute: config.defaultQuotaRatePerMinute ?? null,
       }),
     );
   }
 
-  // T-025 part 2: Postgres RLS request-level enforcement. Wraps each
-  // tenant-bounded request in a transaction with `SET LOCAL ROLE
-  // marfa_app` and `set_config('marfa.tenant_id', $tenant, true)` so
-  // the per-table RLS policies (T-025 part 1) actually filter
-  // queries. Pass-through when `MARFA_RLS_ENFORCE=false` (the
-  // default), when storage is SQLite (`pgDb` undefined), or when the
-  // request has no tenant on its api key (platform admin / public
-  // routes). See `middleware/rls-tenant-context.ts` for the full
+  // Postgres RLS request-level enforcement. Wraps each tenant-bounded
+  // request in a transaction with `SET LOCAL ROLE marfa_app` and
+  // `set_config('marfa.tenant_id', $tenant, true)` so the per-table RLS
+  // policies actually filter queries. Pass-through when
+  // `MARFA_RLS_ENFORCE=false`, when storage is SQLite (`pgDb` undefined),
+  // or when the request has no tenant on its api key (platform admin /
+  // public routes). See `middleware/rls-tenant-context.ts` for the full
   // contract — including the streaming-response exemption.
   app.use(
     "*",
@@ -385,42 +378,34 @@ export function createApp(
       // for log correlation. Falls back to the basic callable for
       // tests that don't construct a full transport.
       marfaEmailTransport: emailTransport,
-      // T-131: storage + salt are needed by the @better-auth/oauth-provider
-      // plugin (storeTokens.hash matches Marfa's hashApiKey, clientReference
+      // storage + salt are needed by the @better-auth/oauth-provider plugin
+      // (storeTokens.hash matches Marfa's hashApiKey, clientReference
       // resolves tenant_id, hooks.after projects grants into system.connection).
       storage,
       apiKeySalt: config.apiKeySalt,
-      // Wave C PR2: opt-in override for `requireEmailVerification`.
-      // When unset, the auth layer auto-detects from the transport
-      // (on for `cloudflare`/`smtp`, off for `none`/missing).
+      // Opt-in override for `requireEmailVerification`. When unset, the
+      // auth layer auto-detects from the transport (on for
+      // `cloudflare`/`smtp`, off for `none`/missing).
       ...(config.authRequireEmailVerification !== undefined && {
         requireEmailVerification: config.authRequireEmailVerification,
       }),
     });
   }
 
-  // T-131: bare-root discovery (RFC 8414 + OIDC Discovery). The plugin
-  // auto-publishes the same metadata at `/auth/.well-known/*` via its
-  // basePath, but most RPs only probe the bare-root paths. These two
-  // helpers re-publish the same response payload. The discovery doc
-  // points RPs at the actual endpoint paths (e.g. `/auth/oauth2/token`,
-  // `/auth/jwks`) — no further root aliasing is needed.
+  // Bare-root discovery (RFC 8414 + OIDC Discovery). The plugin auto-publishes
+  // the same metadata at `/auth/.well-known/*` via its basePath, but most RPs
+  // only probe the bare-root paths. These two helpers re-publish the same
+  // response payload. The discovery doc points RPs at the actual endpoint paths
+  // (e.g. `/auth/oauth2/token`, `/auth/jwks`) — no further root aliasing is needed.
   //
-  // T-158: the plugin's helper does NOT advertise the device-code grant
-  // type or the `device_authorization_endpoint` field (RFC 8628 §4) by
-  // default. Marfa owns the device-flow surface at `/auth/device` +
-  // `/auth/device/token`, so we wrap the plugin's response and inject
-  // both before returning. The plugin DOES expose a `grantTypes` config
-  // option that flows through to `grant_types_supported`, but passing
-  // the URN there causes the plugin's `/auth/oauth2/token` dispatcher
-  // (`@better-auth/oauth-provider@1.6.9` `dist/index.mjs:300-318`) to
-  // attempt to handle the device-code grant and 400 with
-  // `unsupported_grant_type` since none of its three case branches
-  // match. The URN's correct dispatch target is the Marfa-owned
-  // `/auth/device/token` endpoint, which RPs discover via the
-  // `device_authorization_endpoint` field we add here. Augmenting the
-  // metadata in app.ts — rather than passing `grantTypes` to the
-  // plugin — keeps the plugin's token endpoint behaviour intact.
+  // The plugin's helper does NOT advertise the device-code grant type or the
+  // `device_authorization_endpoint` field (RFC 8628 §4) by default. Marfa owns
+  // the device-flow surface at `/auth/device` + `/auth/device/token`, so we
+  // wrap the plugin's response and inject both before returning. Passing the
+  // device-code URN via the plugin's `grantTypes` config causes its token
+  // endpoint to 400 with `unsupported_grant_type` — the plugin has no case
+  // branch for it. Augmenting the metadata here keeps the plugin's token
+  // endpoint behaviour intact.
   if (auth) {
     // Cast once into the shape both helpers want — they each declare a
     // narrow `api` requirement (`getOAuthServerConfig` vs `getOpenIdConfig`).
@@ -489,9 +474,9 @@ export function createApp(
   app.route("/search", searchRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend, config.maxBlobSize));
-  // T-074: profile endpoints. Mounted after /blobs so the avatar set
-  // path can reuse the blob layer; the placeholder SVG endpoint is
-  // public (no auth) but lives under /profile for path locality.
+  // Profile endpoints. Mounted after /blobs so the avatar set path can
+  // reuse the blob layer; the placeholder SVG endpoint is public (no
+  // auth) but lives under /profile for path locality.
   app.route(
     "/profile",
     profileRoutes(storage, blobBackend, config.maxBlobSize),
@@ -505,11 +490,11 @@ export function createApp(
   );
   app.route("/tenants", tenantRoutes(storage));
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
-  // T-146: streaming routes receive `rlsEnforce` + `pgClient` so they
-  // can apply session-level RLS on a dedicated pool connection for
-  // the stream's lifetime — closing the bypass that the per-request
-  // transaction middleware can't cover. SQLite + tenant-less callers
-  // continue to run on the owner connection (no DB-level fence).
+  // Streaming routes receive `rlsEnforce` + `pgClient` so they can apply
+  // session-level RLS on a dedicated pool connection for the stream's
+  // lifetime — closing the bypass that the per-request transaction
+  // middleware can't cover. SQLite + tenant-less callers continue to run
+  // on the owner connection (no DB-level fence).
   const streamingRoutesOptions = {
     rlsEnforce: config.rlsEnforce ?? false,
     pgClient: (storage.pgClient as PgClient | undefined) ?? null,
@@ -522,25 +507,24 @@ export function createApp(
   if (config.authMode === "hosted" && storage.users && storage.tenants) {
     app.route("/auth", userAuthRoutes(storage));
   }
-  // T-116: account-lifecycle routes — initiate / confirm / cancel.
-  // Mounted BEFORE the better-auth catch-all so the explicit handlers
-  // win for `/auth/account/*`.
+  // Account-lifecycle routes — initiate / confirm / cancel. Mounted
+  // BEFORE the better-auth catch-all so the explicit handlers win for
+  // `/auth/account/*`.
   app.route(
     "/auth",
     authAccountRoutes(storage, auth, emailTransport, config.authBaseUrl),
   );
-  // T-131: `/auth/authorize` consent page (the @better-auth/oauth-provider
-  // plugin's `consentPage` redirect target). Mounted BEFORE the better-auth
-  // catch-all so this explicit GET handler wins over the plugin's own
-  // mounted endpoints under /auth/oauth2/*.
+  // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
+  // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all
+  // so this explicit GET handler wins over the plugin's own endpoints under
+  // /auth/oauth2/*.
   app.route("/auth", authConsentRoutes({ storage, auth }));
-  // T-158: Marfa-owned DCR endpoint. Sits in front of the plugin's
-  // `/auth/oauth2/register` for two reasons: (1) the plugin's body
-  // schema rejects the device-code URN at validation time, (2) the
-  // plugin's write path goes through Better Auth's Drizzle adapter
-  // which mishandles `string[]` columns on the PG provider (HTTP 500
-  // on every authorization_code DCR). See `routes/oauth-register.ts`
-  // for the full why and the upstream source references.
+  // Marfa-owned DCR endpoint. Sits in front of the plugin's
+  // `/auth/oauth2/register` because: (1) the plugin's body schema rejects
+  // the device-code URN at validation time, and (2) the plugin's write path
+  // through Better Auth's Drizzle adapter mishandles `string[]` columns on
+  // the PG provider. See `routes/oauth-register.ts` for the upstream source
+  // references.
   if (storage.oauthProvider) {
     app.route(
       "/auth",
@@ -567,7 +551,7 @@ export function createApp(
   // /connections/:id/inbound-webhooks. Mounted before /webhooks so the
   // public receipt path /webhooks/inbound/:id resolves correctly.
   app.route("/connections", inboundWebhookSubscriptionRoutes(storage));
-  // Connection OAuth proxy (workstream 2 PR 6) — POST/GET/etc.
+  // Connection OAuth proxy — POST/GET/etc.
   // /connections/:id/proxy/* forwards to the connection's configured
   // upstream URL with Authorization: Bearer <decrypted access_token>.
   app.route("/connections", connectionProxyRoutes(storage));
@@ -582,8 +566,8 @@ export function createApp(
     }),
   );
   app.route("/oauth/callback", oauthCallbackRoutes(storage));
-  // Leased bearer tokens (workstream 2 PR 7) — issuance + revoke + list
-  // under /connections/:id/lease-tokens; introspection at
+  // Leased bearer tokens — issuance + revoke + list under
+  // /connections/:id/lease-tokens; introspection at
   // /lease-tokens/validate (separate router so it can be reached by
   // upstream services that don't otherwise touch /connections).
   app.route("/connections", connectionLeasedTokenRoutes(storage));
@@ -597,7 +581,7 @@ export function createApp(
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
-  // T-117: operator surface — `my platform` CLI calls into these.
+  // Operator surface — `my platform` CLI calls into these.
   app.route(
     "/admin",
     adminRoutes(storage, {

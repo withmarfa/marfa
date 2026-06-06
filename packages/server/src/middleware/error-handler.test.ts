@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, type TestContext } from "../test-utils.js";
 
-describe("error handler — malformed and empty bodies (T-077)", () => {
+describe("error handler — malformed and empty bodies", () => {
   let ctx: TestContext;
 
   beforeAll(async () => {

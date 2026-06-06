@@ -39,16 +39,15 @@ class_name = "PerConnectionState"
 tag = "v1"
 new_sqlite_classes = ["PerConnectionState"]
 
-# T-103: DLQ producer binding so the consumer wrapper can stamp
+# DLQ producer binding so the consumer wrapper can stamp
 # `_failure_reason` on permanent failures before they leave the
 # operator's peekable surface.
 #
-# T-247: consume from a per-integration webhook-receipt queue, NOT
-# the shared `marfa-webhook-receipt-staging`. CF Queues allow only
-# one consumer per queue; `withmarfa.github-webhooks` already owns the
-# shared queue's slot. The control plane routes by `integration_name`
-# to the matching producer binding (`WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX`
-# in wrangler.control.toml).
+# Consumes from a per-integration webhook-receipt queue. CF Queues
+# allow only one consumer per queue; a shared queue would collide with
+# other webhook integrations. The control plane routes by
+# `integration_name` to the matching producer binding
+# (`WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX` in wrangler.control.toml).
 [[env.staging.queues.producers]]
 binding = "WEBHOOK_RECEIPT_DLQ_QUEUE"
 queue = "marfa-webhook-receipt-withmarfa-inbox-staging-dlq"

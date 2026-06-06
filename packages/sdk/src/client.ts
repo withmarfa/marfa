@@ -121,7 +121,7 @@ export interface UpdateOptions {
    * stamped `source`. The server enforces `(source, source_id)` uniqueness
    * per tenant — a collision returns HTTP 409 `source_id_conflict`. PATCHing
    * the value the item already carries is a no-op success. Used by the
-   * sync agent (T-118) to preserve item identity through file renames.
+   * sync agent to preserve item identity through file renames.
    */
   source_id?: string;
   /**
@@ -195,10 +195,10 @@ export interface MetadataInput {
 }
 
 /**
- * Compact API-key summary returned by the admin keys-list route
- * (T-117). The full `ApiKey` shape carries permission maps; the
- * operator surface deliberately surfaces only the identifying fields +
- * timestamps needed for emergency revocation.
+ * Compact API-key summary returned by the admin keys-list route. The
+ * full `ApiKey` shape carries permission maps; the operator surface
+ * deliberately surfaces only the identifying fields + timestamps needed
+ * for emergency revocation.
  */
 export interface TenantApiKeySummary {
   id: string;
@@ -238,11 +238,10 @@ export interface BulkItemInput {
 export type BulkMode = "upsert" | "create_only";
 
 /**
- * Input to `client.items.createWithAttachments(...)` (T-100). Wraps the
- * existing blob-upload + `items.bulk` pattern: upload each attachment's
- * blob, then issue one atomic bulk call containing the host item and the
- * `core.file.*` items with inline `attached-to` edges from each
- * attachment back to the host.
+ * Input to `client.items.createWithAttachments(...)`. Wraps the existing
+ * blob-upload + `items.bulk` pattern: upload each attachment's blob, then
+ * issue one atomic bulk call containing the host item and the `core.file.*`
+ * items with inline `attached-to` edges from each attachment back to the host.
  */
 export interface CreateWithAttachmentsInput {
   /** The host item — the thing the attachments are attached *to* (note,
@@ -258,8 +257,8 @@ export interface CreateWithAttachmentsInput {
    *  still issues one `items.bulk` call with just the host item. */
   attachments: CreateWithAttachmentsAttachment[];
   /** Edge type from each attachment back to the host. Defaults to
-   *  `"attached-to"` (the canonical attachment edge — T-108). Override
-   *  for app-specific semantics like `"cover-image"`. */
+   *  `"attached-to"`. Override for app-specific semantics like
+   *  `"cover-image"`. */
   edgeType?: string;
 }
 
@@ -607,13 +606,12 @@ export class MarfaClient {
      * fresh create (HTTP 201) or a natural-key match update (HTTP 200).
      *
      * `POST /items` accepts a `(source, source_id)` pair as a stable
-     * natural key (T-038): a second POST with the same pair updates the
-     * existing row in place rather than 409ing. The wire shape returned
-     * is `{ item }` regardless — the only signal of "created vs updated"
-     * is the HTTP status code, which `transport.request` consumes
-     * internally. This method threads the status out so callers can
-     * surface the distinction (e.g. CLI `Created.` vs `Updated
-     * (natural-key match).`).
+     * natural key: a second POST with the same pair updates the existing
+     * row in place rather than 409ing. The wire shape returned is
+     * `{ item }` regardless — the only signal of "created vs updated" is
+     * the HTTP status code, which `transport.request` consumes internally.
+     * This method threads the status out so callers can surface the
+     * distinction (e.g. CLI `Created.` vs `Updated (natural-key match).`).
      *
      * Use `items.create` when the caller does not need the distinction —
      * the wire shape is identical.
@@ -779,11 +777,11 @@ export class MarfaClient {
 
     /**
      * Create a host item plus a set of attached `core.file.*` items in
-     * one call (T-100). Wraps the existing `blobs.upload` + `items.bulk`
+     * one call. Wraps the existing `blobs.upload` + `items.bulk`
      * primitives: each attachment's blob is uploaded concurrently, then a
      * single atomic bulk call writes the host and the attachments
      * together with inline `attached-to` edges from each attachment back
-     * to the host (matching T-108's spec direction).
+     * to the host.
      *
      * **Partial-failure contract.** Blob uploads run concurrently via
      * `Promise.all`. On upload failure, throws with the failing
@@ -950,11 +948,10 @@ export class MarfaClient {
           );
         }
       }
-      // T-218: the server returns 200 for dry-run (synchronous) and
-      // 202 + a BulkActionJob envelope for everything else. The default
-      // shape of `bulkAction()` keeps callers blissfully unaware — poll
-      // internally and resolve with the same BulkActionResult shape
-      // they got before the async refactor.
+      // The server returns 200 for dry-run (synchronous) and 202 + a
+      // BulkActionJob envelope for everything else. `bulkAction()` polls
+      // internally and resolves with the same BulkActionResult shape
+      // regardless, keeping callers unaware of the async job lifecycle.
       const { data, status } = await this.transport.requestWithStatus<
         BulkActionResult | BulkActionJob
       >("POST", "/items/bulk-actions", { body: input });
@@ -999,14 +996,14 @@ export class MarfaClient {
     },
 
     /**
-     * T-218: low-level companion to `bulkAction()`. Fires the POST and
-     * returns the initial job envelope without polling. Callers wanting
-     * explicit control over the lifecycle (a UI that wants to surface
-     * progress directly, an LLM tool returning the job id, etc.) drive
-     * polling themselves via `bulkActionStatus`. Dry-run requests are
-     * still synchronous on the server; this method throws with a
-     * descriptive error if `dry_run: true` is set so callers don't
-     * silently lose their result.
+     * Low-level companion to `bulkAction()`. Fires the POST and returns
+     * the initial job envelope without polling. Callers wanting explicit
+     * control over the lifecycle (a UI that wants to surface progress
+     * directly, an LLM tool returning the job id, etc.) drive polling
+     * themselves via `bulkActionStatus`. Dry-run requests are still
+     * synchronous on the server; this method throws with a descriptive
+     * error if `dry_run: true` is set so callers don't silently lose
+     * their result.
      */
     bulkActionAsync: async (input: BulkActionInput): Promise<BulkActionJob> => {
       if (input.action === "purge") {
@@ -1043,7 +1040,7 @@ export class MarfaClient {
       return data;
     },
 
-    /** T-218: poll a bulk_action job by id. Single GET — no polling. */
+    /** Poll a bulk_action job by id. Single GET — no polling loop. */
     bulkActionStatus: (jobId: string): Promise<BulkActionJob> =>
       this.transport.request<BulkActionJob>(
         "GET",
@@ -1051,7 +1048,7 @@ export class MarfaClient {
         { timeoutMs: 5_000 },
       ),
 
-    /** T-218: request cancellation of a bulk_action job. Idempotent —
+    /** Request cancellation of a bulk_action job. Idempotent —
      *  already-terminal jobs return their existing state unchanged. */
     bulkActionCancel: (jobId: string): Promise<BulkActionJob> =>
       this.transport.request<BulkActionJob>(
@@ -1595,8 +1592,8 @@ export class MarfaClient {
     /**
      * Preview the wire envelopes the reactive-run bridge would emit for
      * a synthetic item-event, without dispatching anything. Operator
-     * debugging surface (T-083): given an existing item id and an event
-     * type, the route returns one row per subscribing connection — either
+     * debugging surface: given an existing item id and an event type, the
+     * route returns one row per subscribing connection — either
      * `would_dispatch: true` with the synthesised envelope, or
      * `would_dispatch: false` with a `dispatch_reason` (`self_event`,
      * `cross_tenant`, `hop_budget_exceeded`, `subscription_inactive`).
@@ -1620,7 +1617,7 @@ export class MarfaClient {
   // ---- Tenants (admin) ----
 
   /** Tenant-scoped configuration. Carries the three optional schema-
-   * enforcement levers (TSC42 §5: `strict_mode`, `source_allowlist`,
+   * enforcement levers (`strict_mode`, `source_allowlist`,
    * `source_filter`) and the per-tenant cleanup-job overrides
    * (`audit_retention_days`, `event_log_retention_hours`,
    * `trash_retention_days`). All endpoints are admin-only. */
@@ -1639,19 +1636,14 @@ export class MarfaClient {
       });
     },
 
-    /** Per-tenant resource quotas (T-052). Empty / missing limits fall
-     *  back to the instance defaults from env. Quotas are platform-
-     *  admin-managed. */
+    /** Per-tenant resource quotas. Empty / missing limits fall back to
+     *  the instance defaults from env. Quotas are platform-admin-managed. */
     quotas: {
       /**
        * Read the calling tenant's quota row. Resolves the tenant from
        * the bearer's `tenant_id`; rejects with 400 when the credential
        * is tenant-less (platform admin, single-tenant self-host
        * bootstrap). Use `getById` instead in that case.
-       *
-       * Wave B Part 4 follow-on: ships alongside T-015's release tag.
-       * The route landed in Wave B Part 2 (`GET /tenants/me/quotas`)
-       * and was usable via raw HTTP until this method.
        */
       getOwn: async (): Promise<TenantQuota> => {
         return this.transport.request<TenantQuota>("GET", "/tenants/me/quotas");
@@ -1686,7 +1678,7 @@ export class MarfaClient {
     },
   };
 
-  // ---- Admin (T-117) ----
+  // ---- Admin ----
 
   /**
    * Operator-level admin surface — the `my admin` CLI command tree's
@@ -1777,11 +1769,10 @@ export class MarfaClient {
 
     accountDeletion: {
       /**
-       * Force a one-shot run of the pending-delete purger (T-124).
-       * Returns the number of accounts purged this tick. Useful when
-       * an account has just passed its grace window and the operator
-       * doesn't want to wait for the next scheduled sweep (default
-       * cadence: 1 hour).
+       * Force a one-shot run of the pending-delete purger. Returns the
+       * number of accounts purged this tick. Useful when an account has
+       * just passed its grace window and the operator doesn't want to
+       * wait for the next scheduled sweep (default cadence: 1 hour).
        *
        * Idempotent: re-running with no eligible rows returns 0. Only
        * sweeps accounts already past `pending_deletion_at + grace_days`
@@ -1800,10 +1791,10 @@ export class MarfaClient {
     },
   };
 
-  // ---- Auth (T-116) ----
+  // ---- Auth ----
 
   /**
-   * Account-lifecycle surface (T-116).
+   * Account-lifecycle surface.
    *
    * The data plane (every other namespace on the client) authenticates
    * with a bearer token; these account-management endpoints accept
@@ -1850,7 +1841,7 @@ export class MarfaClient {
     },
   };
 
-  // ---- Profile (T-074) ----
+  // ---- Profile ----
 
   /**
    * The calling user's profile. `system.profile` is a virtual type —

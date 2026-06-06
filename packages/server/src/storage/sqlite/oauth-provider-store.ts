@@ -1,6 +1,6 @@
 /**
- * T-131: thin read helpers over the @better-auth/oauth-provider plugin's
- * tables. See `interface.ts` (`OauthProviderStore`) for the contract.
+ * Thin read helpers over the @better-auth/oauth-provider plugin's tables.
+ * See `interface.ts` (`OauthProviderStore`) for the contract.
  *
  * The plugin owns writes to `auth_oauth_client` and `auth_oauth_consent`;
  * we only read here for the consent-page render and the projection
@@ -146,11 +146,10 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   }
 
   /**
-   * T-131 follow-on (refresh-replay): delete ONLY access tokens for a
-   * grant; leaves refresh tokens + consent intact. The plugin's own
-   * deleteMany on stale-refresh deals with refresh-token cleanup —
-   * this complements by nuking access tokens issued from the same
-   * (now-poisoned) chain.
+   * Delete ONLY access tokens for a grant; leaves refresh tokens + consent
+   * intact. The plugin's own deleteMany on stale-refresh handles refresh-token
+   * cleanup — this complements by revoking access tokens issued from the same
+   * poisoned chain.
    */
   async revokeAccessTokensForGrant(
     clientId: string,
@@ -167,11 +166,10 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   }
 
   /**
-   * T-131 follow-on (refresh-replay): look up a refresh row by hashed
-   * token. The plugin's `storeTokens.hash` matches the bearer middleware's
-   * `hashApiKey(token, salt)` so callers compute the same hash to find
-   * the row. Returns null if the token doesn't exist (e.g. cleaned up
-   * by a prior pass).
+   * Look up a refresh row by hashed token. The plugin's `storeTokens.hash`
+   * matches the bearer middleware's `hashApiKey(token, salt)` so callers
+   * compute the same hash to find the row. Returns null if the token
+   * doesn't exist (e.g. cleaned up by a prior pass).
    */
   async findRefreshTokenGrantKey(
     tokenHash: string,
@@ -277,10 +275,9 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   }
 
   /**
-   * T-131 follow-on: resolve the projected `system.connection { kind: "app" }`
-   * item id for (tenantId, clientId, authUserId). Single-row lookup via
-   * json_extract predicates on properties. Returns null if no projection
-   * row exists.
+   * Resolve the projected `system.connection { kind: "app" }` item id for
+   * (tenantId, clientId, authUserId). Single-row lookup via json_extract
+   * predicates on properties. Returns null if no projection row exists.
    */
   async findGrantItemId(opts: {
     tenantId: string | null;
@@ -307,11 +304,10 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     return rows[0]?.id ?? null;
   }
 
-  // T-131 review-sweep Commit 2 / F6: `updateGrantScopes` was dropped.
-  // The re-consent path now routes through `storage.items.update` so
-  // the projection participates in versions snapshots + publish events
-  // like every other item. See `projectGrantOnConsent` in
-  // `routes/auth-consent.ts`.
+  // `updateGrantScopes` was dropped. The re-consent path routes through
+  // `storage.items.update` so the projection participates in version
+  // snapshots and publish events like every other item.
+  // See `projectGrantOnConsent` in `routes/auth-consent.ts`.
 
   async getPriorConsent(
     clientId: string,

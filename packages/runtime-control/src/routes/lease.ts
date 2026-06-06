@@ -11,19 +11,14 @@ import { MarfaServerClient } from "../marfa-client.js";
  *     control plane authenticates with MARFA_RUNTIME_BROKER_KEY (a
  *     long-lived `is_platform: true` key bound as a secret).
  *
- *     Layer 1 PR 4 ships this endpoint with manifest-derived
- *     permissions defaulting to `*: write` — Layer 2's install
- *     pipeline narrows them per the manifest's declared scopes. The
+ *     Permissions default to `*: write` on all three axes. The
  *     integration Worker calls this on every queue message; the
  *     per-Connection DO caches the result with TTL ≤ 5 min so the
  *     broker isn't hit on the hot path.
  *
  *   POST /lease/:connection_id/oauth/:capability_id
- *     Stub for Layer 2 — proxies a leased-token request to Marfa's
- *     existing `/connections/:id/lease-tokens` route. Layer 2 wires
- *     the install-time manifest persistence that captures
- *     `oauth_requirements.<capability_id> === "leased"`; until then
- *     the broker returns 501.
+ *     Not yet implemented. Returns 501 until install-time manifest
+ *     persistence captures `oauth_requirements.<capability_id>`.
  */
 export function registerLeaseRoutes(
   app: Hono<{ Bindings: ControlPlaneEnv }>,
@@ -75,10 +70,7 @@ export function registerLeaseRoutes(
         // `extension_permissions` default to `{}`, which blocks every
         // `createEdge` / extension write, so a `type_permissions`-only
         // credential could write items but silently fail edge and
-        // extension writes. Manifest-projected permissions (each
-        // Connection's credential carrying exactly the per-manifest map
-        // rather than wildcard) is a separate refinement filed as the
-        // long-term follow-on on T-260.
+        // extension writes.
         type_permissions: { "*": "write" },
         edge_permissions: { "*": "write" },
         extension_permissions: { "*": "write" },
@@ -111,7 +103,7 @@ export function registerLeaseRoutes(
       {
         error: "not_implemented",
         message:
-          "Leased OAuth token broker lands in Layer 2 once manifest persistence captures oauth_requirements.<capability_id>.",
+          "Leased OAuth token broker is not yet implemented. It requires manifest persistence to capture oauth_requirements.<capability_id>.",
         connection_id: connectionId,
         capability_id: capabilityId,
       },

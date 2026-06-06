@@ -1,11 +1,11 @@
 /**
- * T-218: generic exponential-backoff poll helper used by
+ * Generic exponential-backoff poll helper used by
  * `client.items.bulkAction` to drive async-job lifecycles.
  *
- * Re-usable across future async-job endpoints — current default of
- * 250 → 500 → 1000 → 2000ms suits a job-table-backed substrate where
- * the worker picks up a new job within ~500ms of the INSERT. Callers
- * can tune via `pollIntervalMs` / `maxWaitMs` / `maxPollIntervalMs`.
+ * Reusable across async-job endpoints — the default 250 → 500 → 1000
+ * → 2000ms schedule suits a job-table-backed substrate where the worker
+ * picks up a new job within ~500ms of the INSERT. Callers can tune via
+ * `pollIntervalMs` / `maxWaitMs` / `maxPollIntervalMs`.
  */
 
 export interface PollOptions {

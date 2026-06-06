@@ -103,7 +103,7 @@ describe("local-runtime connection walker", () => {
     const conn2 = await createConnection({ integrationItemId: localId });
     // Hosted-only integration's Connection must NOT be walked.
     await createConnection({ integrationItemId: hostedId });
-    // Revoked Connection must be skipped (item-level state gate, T-175).
+    // Revoked Connection must be skipped — the walker only fans out to active Connections.
     await createConnection({ integrationItemId: localId, state: "revoked" });
 
     const enqueued: SchedulerEnvelope[] = [];

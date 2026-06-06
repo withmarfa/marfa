@@ -1,5 +1,5 @@
 /**
- * Tests for the T-051 tenant_admin role + helper.
+ * Tests for the tenant_admin role and helper.
  *
  * Two layers of coverage:
  *
@@ -152,8 +152,8 @@ describe("tenant_admin integration — widened routes", () => {
     // tenant_admin is not platform; their minted key MUST not be platform
     expect(minted.is_platform).toBe(false);
 
-    // Stored row carries the tenant_admin's tenant_id (T-051: stamped
-    // automatically from caller).
+    // Stored row carries the tenant_admin's tenant_id, stamped
+    // automatically from the caller.
     const stored = await ctx.storage.keys.get(minted.id);
     expect(stored?.tenant_id).toBe(tenantA.id);
   });

@@ -35,15 +35,15 @@ async function mintFreshBearer(fixture: HostedModeFixture): Promise<string> {
 }
 
 /**
- * T-123 — SDK round-trip coverage for `client.auth.account.*`.
+ * SDK round-trip coverage for `client.auth.account.*`.
  *
  * Server-side coverage of the routes themselves lives at
- * `packages/server/src/routes/auth-account.test.ts` (T-116). The
+ * `packages/server/src/routes/auth-account.test.ts`. The
  * point of these tests is the SDK's transport shim — request/response
  * shape serialization against a live server, exercised via the
- * hosted-mode fixture (T-123 harness lift). Each test is a discrete
- * one-method round-trip rather than chaining all three through one
- * sequence so a failure points at the right method.
+ * hosted-mode fixture. Each test is a discrete one-method round-trip
+ * rather than chaining all three through one sequence so a failure
+ * points at the right method.
  *
  * The account-deletion routes silently skip email send when no
  * `emailTransport` is configured (test harness leaves it undefined).
@@ -52,7 +52,7 @@ async function mintFreshBearer(fixture: HostedModeFixture): Promise<string> {
  * intercepting an email.
  */
 
-describe("client.auth.account — hosted-mode round-trip (T-123)", () => {
+describe("client.auth.account — hosted-mode round-trip", () => {
   let fixture: HostedModeFixture;
 
   beforeEach(async () => {
@@ -106,11 +106,11 @@ describe("client.auth.account — hosted-mode round-trip (T-123)", () => {
     const before = await lifecycle?.getAccountLifecycleByEmail(fixture.email);
     expect(before?.deletion_state).toBe("pending_deletion");
 
-    // confirmDelete revoked every API key in the tenant (T-116
-    // cascade). A real user recovering via SDK would need a freshly-
-    // issued bearer; reproduce that here. The link-based GET cancel
-    // path doesn't exercise the SDK, so the bearer-via-fresh-key path
-    // is the right shape for SDK round-trip coverage.
+    // confirmDelete revokes every API key in the tenant as part of the
+    // deletion cascade. A real user recovering via SDK would need a
+    // freshly-issued bearer; reproduce that here. The link-based GET
+    // cancel path doesn't exercise the SDK, so the bearer-via-fresh-key
+    // path is the right shape for SDK round-trip coverage.
     const recoveryKey = await mintFreshBearer(fixture);
     const recoveryClient = new MarfaClient({
       url: "http://localhost",

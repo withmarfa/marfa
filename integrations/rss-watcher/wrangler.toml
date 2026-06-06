@@ -44,7 +44,7 @@ new_sqlite_classes = ["PerConnectionState"]
 binding = "SCHEDULED_POLL_QUEUE"
 queue = "marfa-scheduled-poll-rss-watcher-staging"
 
-# T-103: DLQ producer binding so the consumer wrapper can stamp
+# DLQ producer binding so the consumer wrapper can stamp
 # `_failure_reason` on permanent failures before they leave the
 # operator's peekable surface.
 [[env.staging.queues.producers]]

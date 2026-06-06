@@ -41,21 +41,15 @@ export interface AppConfig {
   rateLimitEnabled: boolean;
   enableHsts: boolean;
   /**
-   * T-025 part 1: when `true`, the application connects to Postgres as
-   * the `marfa_app` role with `SET LOCAL marfa.tenant_id = '<id>'` per
-   * request, so RLS policies enforce tenant isolation at the DB layer
-   * (defense-in-depth beneath the application-layer scoping). Default
-   * `false` keeps existing single-tenant self-hosts unchanged.
-   *
-   * Part 1 (this commit) lands the schema scaffold (role, grants,
-   * policies). The actual connection-pool wiring — wrapping every
-   * request handler in a transaction with `SET LOCAL ROLE marfa_app`
-   * after auth — lands in T-025 part 2. Until then this flag is read
-   * at startup and surfaced to operators but does not yet change
-   * connection behaviour. Documented in `packages/server/CLAUDE.md`.
+   * When `true`, wraps each tenant-bounded Postgres request in a
+   * transaction with `SET LOCAL ROLE marfa_app` and
+   * `SET LOCAL marfa.tenant_id = '<id>'` so RLS policies enforce
+   * tenant isolation at the DB layer (defense-in-depth beneath the
+   * application-layer scoping). Defaults to `true`. See
+   * `packages/server/CLAUDE.md` under "Postgres RLS".
    *
    * Optional on the type so test contexts that construct AppConfig
-   * literals continue to compile; defaults to `false`.
+   * literals continue to compile.
    */
   rlsEnforce?: boolean;
   auditRetentionDays: number;
@@ -76,34 +70,31 @@ export interface AppConfig {
    *  purger. `0` disables the job. Default: 60. */
   trashRetentionDays: number;
   trashPurgeIntervalMs: number;
-  /** T-097: cadence (ms) for the better-auth session cleanup sweep —
-   *  drops `auth_session` rows whose `expires_at` has passed. Default
+  /** Cadence (ms) for the better-auth session cleanup sweep — drops
+   *  `auth_session` rows whose `expires_at` has passed. Default
    *  3_600_000 (1h); env override `AUTH_SESSION_CLEANUP_INTERVAL_MS`.
    *  No retention-window knob — Better Auth itself owns the TTL.
-   *
-   *  Optional on the type so test contexts that construct AppConfig
-   *  literals don't have to supply it; `index.ts` applies the 1h
-   *  fallback. */
+   *  Optional on the type; `index.ts` applies the 1h fallback. */
   authSessionCleanupIntervalMs?: number;
-  /** T-116: grace window between `auth.account.delete_confirmed` and the
-   *  hard-delete cascade. `0` disables the purger entirely. Env override
-   *  `MARFA_ACCOUNT_DELETION_GRACE_DAYS`. Default 30. */
+  /** Grace window (days) between `auth.account.delete_confirmed` and
+   *  the hard-delete cascade. `0` disables the purger entirely. Env
+   *  override `MARFA_ACCOUNT_DELETION_GRACE_DAYS`. Default 30. */
   accountDeletionGraceDays?: number;
-  /** T-116: cadence (ms) for the pending-delete purger sweep. Env
-   *  override `MARFA_ACCOUNT_DELETION_PURGE_INTERVAL_MS`. Default 1h. */
+  /** Cadence (ms) for the pending-delete purger sweep. Env override
+   *  `MARFA_ACCOUNT_DELETION_PURGE_INTERVAL_MS`. Default 1h. */
   accountDeletionPurgeIntervalMs?: number;
-  /** T-026: cadence (ms) for the `rate_limit_windows` GC sweep that drops
-   *  rows past their `expires_at`. Default 3_600_000 (1h); env override
+  /** Cadence (ms) for the `rate_limit_windows` GC sweep that drops rows
+   *  past their `expires_at`. Default 3_600_000 (1h); env override
    *  `MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
    *  applies the 1h fallback when unset. */
   rateLimitCleanupIntervalMs?: number;
-  /** T-218: how long a terminal `bulk_action_jobs` row survives before
-   *  the GC sweep drops it. Counted against `finished_at`. Default
-   *  7 days; env override `MARFA_BULK_ACTION_JOB_RETENTION_MS`. Set to
-   *  `0` to disable the sweep entirely (the table grows unbounded). */
+  /** How long a terminal `bulk_action_jobs` row survives before the GC
+   *  sweep drops it. Counted against `finished_at`. Default 7 days; env
+   *  override `MARFA_BULK_ACTION_JOB_RETENTION_MS`. Set to `0` to
+   *  disable the sweep entirely (the table grows unbounded). */
   bulkActionJobRetentionMs?: number;
-  /** T-218: cadence (ms) for the `bulk_action_jobs` GC sweep. Default
-   *  3_600_000 (1h); env override `MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS`. */
+  /** Cadence (ms) for the `bulk_action_jobs` GC sweep. Default 3_600_000
+   *  (1h); env override `MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS`. */
   bulkActionJobGcIntervalMs?: number;
   errorWebhookUrl: string;
   /** Per-fetch timeout (ms) for error-webhook delivery in
@@ -125,24 +116,23 @@ export interface AppConfig {
    *  bootstrap (`POST /connections/:id/oauth/start`). Comma-separated
    *  via `MARFA_OAUTH_REDIRECT_ALLOWLIST`. Empty list disables enforcement
    *  — convenient for self-hosted dev but an open-redirect risk in
-   *  hosted mode (T-010), so production deployments must set this. */
+   *  hosted mode, so production deployments must set this. */
   oauthRedirectAllowlist: string[];
   /** Issuer URL the better-auth instance is reached at — protocol + host
    *  (and port). Drives cookie domains and the OAuth issuer field on the
    *  discovery doc. Defaults to `http://localhost:<port>` if unset. */
   authBaseUrl: string;
   /** When `true`, the email + password sign-up endpoint is enabled.
-   *  Default `false` per workstream-1 sign-up policy — single-user
-   *  self-hosted instances enable this only for the initial admin account. */
+   *  Default `false` — single-user self-hosted instances enable this
+   *  only for the initial admin account. */
   authAllowSignup: boolean;
   /** Shared secret for cookie signing. Required in production; falls back
    *  to a per-process ephemeral secret in dev. */
   authSecret: string;
-  /** Wave C PR2: explicit override for `requireEmailVerification`. When
-   *  `undefined`, the auth layer auto-detects from the configured email
-   *  transport (on for `cloudflare`/`smtp`, off for `none`/missing). When
-   *  set, takes precedence over the auto-detect — primarily a test
-   *  hook (env-driven config never sets it). */
+  /** Explicit override for `requireEmailVerification`. When `undefined`,
+   *  the auth layer auto-detects from the configured email transport (on
+   *  for `cloudflare`/`smtp`, off for `none`/missing). When set, takes
+   *  precedence — primarily a test hook (env-driven config never sets it). */
   authRequireEmailVerification?: boolean;
   /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
    *  into the generic-oauth plugin. Parsed from the `MARFA_OIDC_PROVIDERS`
@@ -163,11 +153,10 @@ export interface AppConfig {
    *  API-contract version. */
   versionSha?: string;
   /**
-   * T-052 default per-tenant quota ceilings. NULL = unlimited (no
-   * enforcement). Each is read from a corresponding env var
-   * (`MARFA_DEFAULT_QUOTA_*`); per-tenant overrides via
-   * `tenant_quotas` rows take precedence. Optional on the type so
-   * existing test contexts continue to compile.
+   * Default per-tenant quota ceilings. NULL = unlimited (no enforcement).
+   * Each is read from a corresponding env var (`MARFA_DEFAULT_QUOTA_*`);
+   * per-tenant overrides via `tenant_quotas` rows take precedence.
+   * Optional on the type so existing test contexts continue to compile.
    */
   defaultQuotaItems?: number | null;
   defaultQuotaWebhooks?: number | null;
@@ -205,17 +194,17 @@ export interface AppConfig {
   smtpPass?: string;
   smtpSecure?: boolean;
   /**
-   * Integration runtime substrate (T-173 + T-174). `"hosted"` runs
-   * against the Cloudflare control plane + per-Integration Workers
-   * (set `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` +
-   * `CLOUDFLARE_QUEUES_API_TOKEN`). `"local"` runs the in-process Node
-   * substrate (`pg-boss` for scheduling, `worker_thread` pool for
-   * handler execution); requires Postgres.
+   * Integration runtime substrate. `"hosted"` runs against the
+   * Cloudflare control plane + per-Integration Workers (set
+   * `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` + `CLOUDFLARE_QUEUES_API_TOKEN`).
+   * `"local"` runs the in-process Node substrate (`pg-boss` for
+   * scheduling, `worker_thread` pool for handler execution); requires
+   * Postgres.
    *
-   * Default flipped to `"local"` in T-174 so fresh self-host
-   * `docker compose up` works without a Cloudflare account. Hosted
-   * Marfa deployments + any operator that wants the Cloudflare path
-   * sets the env var explicitly to `"hosted"`.
+   * Defaults to `"local"` — fresh self-host `docker compose up` works
+   * without a Cloudflare account. Hosted Marfa deployments + any
+   * operator that wants the Cloudflare path sets the env var explicitly
+   * to `"hosted"`.
    *
    * Optional on the type so test contexts constructing `AppConfig`
    * literals don't have to supply it; `index.ts` applies the
@@ -223,20 +212,17 @@ export interface AppConfig {
    */
   integrationRuntime?: "hosted" | "local";
   /**
-   * OpenTelemetry (T-275). The instrumentation bootstrap
+   * OpenTelemetry configuration. The instrumentation bootstrap
    * (`src/instrumentation.ts`) reads its toggle + exporter config from the
    * environment directly because it must run before `loadConfig` (and
    * before any instrumented module loads). These fields exist so the rest
    * of the server can read the *resolved* OTel config from the single
    * config source — they are NOT the wiring path for the SDK itself.
    *
-   * Default OFF. "On for hosted" is a deploy-config fact (the hosted
-   * container sets `MARFA_OTEL_ENABLED=true`), not a code default — safer
-   * for self-hosters, consistent with how `emailBackend` / `integrationRuntime`
-   * default to the inert value. Standard `OTEL_EXPORTER_OTLP_*` env vars are
-   * honored directly for endpoint + headers (operators expect them; PostHog's
-   * own docs hand out exactly these names); `MARFA_OTEL_*` carries Marfa
-   * policy (toggle, sampling). Optional on the type so `AppConfig` literals
+   * Default OFF. Deployed hosted containers set `MARFA_OTEL_ENABLED=true`.
+   * Standard `OTEL_EXPORTER_OTLP_*` env vars carry endpoint + headers;
+   * `MARFA_OTEL_*` carries Marfa policy (toggle, sampling). Optional on
+   * the type so `AppConfig` literals
    * in tests keep compiling.
    */
   otelEnabled?: boolean;
@@ -276,7 +262,7 @@ const DEFAULT_EVENT_LOG_RETENTION_HOURS = 168;
  * Exported for direct unit testing.
  */
 /**
- * T-052: parses a quota env var. Returns null for unset / empty (the
+ * Parses a quota env var. Returns null for unset / empty (the
  * "unlimited" sentinel) and a parsed integer otherwise. Negative or
  * non-integer values log a warning and fall back to null.
  */
@@ -393,10 +379,9 @@ export function loadConfig(): AppConfig {
     ),
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
-    // T-146: default flipped from `false` to `true`. RLS now enforces
-    // by default; explicit opt-out is `MARFA_RLS_ENFORCE=false`. The
-    // SQLite dialect is unaffected — the middleware skips when
-    // `storage.pgDb` is undefined regardless of this flag.
+    // RLS enforces by default; explicit opt-out is `MARFA_RLS_ENFORCE=false`.
+    // SQLite is unaffected — the middleware skips when `storage.pgDb` is
+    // undefined regardless of this flag.
     rlsEnforce: process.env.MARFA_RLS_ENFORCE !== "false",
     auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
     auditCleanupIntervalMs: envNumber(
@@ -514,19 +499,12 @@ export function loadConfig(): AppConfig {
 }
 
 /**
- * Parse `MARFA_INTEGRATION_RUNTIME` (T-173 + T-174). Unset → `"local"` —
- * fresh self-hosters using `docker compose up` pick up the Node
- * substrate without needing a Cloudflare account. Hosted Marfa + any
- * deployment that wants the Cloudflare path sets the env var
- * explicitly to `"hosted"`. Unknown values warn and fall back to the
- * default so a typo doesn't silently start the wrong substrate.
- *
- * Operator action when migrating from T-173 (default was `"hosted"`)
- * to T-174 (default is `"local"`): if your deployment relied on the
- * Cloudflare-side runtime AND your config did not set
- * `MARFA_INTEGRATION_RUNTIME` explicitly, set it to `"hosted"` before
- * the upgrade. Existing Atlas plists / Cloudflare Containers configs
- * that already set the var explicitly are unaffected.
+ * Parse `MARFA_INTEGRATION_RUNTIME`. Unset → `"local"` — fresh
+ * self-hosters using `docker compose up` pick up the Node substrate
+ * without needing a Cloudflare account. Hosted Marfa + any deployment
+ * that wants the Cloudflare path sets the env var explicitly to
+ * `"hosted"`. Unknown values warn and fall back to `"local"` so a
+ * typo doesn't silently start the wrong substrate.
  */
 export function parseIntegrationRuntime(
   raw: string | undefined,

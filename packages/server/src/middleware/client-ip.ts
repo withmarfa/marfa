@@ -144,7 +144,7 @@ export type { CidrRange };
 
 /**
  * Resolve the client IP once per request and stash it on
- * `c.var.clientIp` for downstream consumers (T-027).
+ * `c.var.clientIp` for downstream consumers.
  *
  * Centralising the resolution means routes don't have to thread the
  * `trustedProxyCidrs` config or call `getClientIp(c, ...)` themselves

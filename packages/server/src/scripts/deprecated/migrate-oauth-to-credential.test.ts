@@ -1,5 +1,5 @@
 /**
- * Tests for the OAuth-config-to-system.credential migration — Layer 2 PR 4.
+ * Tests for the OAuth-config-to-system.credential migration.
  *
  * Covers:
  *   - Happy path: connection with full inline OAuth config → system.credential

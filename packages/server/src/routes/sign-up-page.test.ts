@@ -81,7 +81,7 @@ describe("renderSignUpPage", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("Wave C PR4: links to /auth/static/auth.css and carries no inline <style>", () => {
+  it("links to /auth/static/auth.css and carries no inline <style>", () => {
     const html = renderSignUpPage({ returnTo: "/" });
     expect(html).toContain(
       '<link rel="stylesheet" href="/auth/static/auth.css">',
@@ -252,10 +252,10 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     expect(res.headers.get("location")).toContain("error=email_invalid");
   });
 
-  it("Wave C PR2: redirects to /auth/verify-email on successful sign-up (no auto-sign-in cookie)", async () => {
+  it("redirects to /auth/verify-email on successful sign-up (no auto-sign-in cookie)", async () => {
     // With requireEmailVerification: true, better-auth suppresses
     // autoSignIn — sign-up returns 200 + { token: null, user } and
-    // no Set-Cookie. Our wrapper detects the missing cookie and
+    // no Set-Cookie. The wrapper detects the missing cookie and
     // redirects to the verify-email page so the user knows what to
     // do next.
     ctx = await createTestContext({
@@ -286,12 +286,11 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(false);
   });
 
-  it("Wave C PR2: duplicate sign-up follows the generic-duplicate-response path (no email enumeration)", async () => {
-    // better-auth flips `shouldReturnGenericDuplicateResponse` when
-    // `requireEmailVerification: true` — duplicate sign-ups return 200
-    // (with no cookie) so an attacker can't probe whether an address
-    // has an account. Our wrapper forwards that as a verify-email
-    // redirect, identical to a fresh sign-up.
+  it("duplicate sign-up follows the generic-duplicate-response path (no email enumeration)", async () => {
+    // With requireEmailVerification: true, better-auth returns 200
+    // (no cookie) on duplicate sign-ups so an attacker can't probe
+    // whether an address has an account. The wrapper forwards that as
+    // a verify-email redirect, identical to a fresh sign-up.
     ctx = await createTestContext({
       authAllowSignup: true,
       authRequireEmailVerification: true,
@@ -310,10 +309,9 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     const second = await postSignUpForm(ctx, {
       email: "carol@example.com",
       name: "Carol Again",
-      // T-074: a different (non-colliding) handle so the wrapper's
-      // pre-validation pass doesn't bail with handle_taken before
-      // even calling Better Auth — exercising the real generic-
-      // duplicate-response branch downstream of provisioning skip.
+      // A different (non-colliding) handle so the wrapper's pre-validation
+      // pass doesn't bail with handle_taken before calling Better Auth —
+      // exercising the real generic-duplicate-response branch.
       username: "carol-two",
       password: "correct horse",
       password_confirm: "correct horse",
@@ -326,7 +324,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // T-074: username gating at sign-up.
+  // Username gating at sign-up.
   //
   // Each invariant here protects an attack class:
   //
@@ -338,7 +336,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
   //     leaves an orphan auth_user)
   // -------------------------------------------------------------------------
 
-  it("T-074: redirects to error=missing_field when username is blank", async () => {
+  it("redirects to error=missing_field when username is blank", async () => {
     ctx = await createTestContext({
       authAllowSignup: true,
       authRequireEmailVerification: true,
@@ -355,7 +353,7 @@ describe("POST /auth/sign-up (form wrapper)", () => {
     expect(res.headers.get("location")).toContain("error=missing_field");
   });
 
-  it("T-074: redirects to error=handle_invalid on a malformed username", async () => {
+  it("redirects to error=handle_invalid on a malformed username", async () => {
     ctx = await createTestContext({
       authAllowSignup: true,
       authRequireEmailVerification: true,
@@ -401,12 +399,12 @@ describe("POST /auth/sign-up (form wrapper)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-074: hosted-mode-only sign-up coverage.
+// Hosted-mode-only sign-up coverage.
 //
 // The username-collision check + the tenant + users-row provisioning step
-// only fire when storage.users is wired (i.e. hosted mode). The default
-// createTestContext is keys mode, so these tests stand up a hosted
-// fixture inline.
+// only fire when storage.users is wired (hosted mode). The default
+// createTestContext is keys mode, so these tests stand up a hosted fixture
+// inline.
 // ---------------------------------------------------------------------------
 
 interface HostedSignUpContext {
@@ -503,7 +501,7 @@ async function postHostedSignUp(
   );
 }
 
-describe("POST /auth/sign-up — hosted-mode T-074 invariants", () => {
+describe("POST /auth/sign-up — hosted-mode invariants", () => {
   let hosted: HostedSignUpContext | undefined;
 
   afterEach(async () => {

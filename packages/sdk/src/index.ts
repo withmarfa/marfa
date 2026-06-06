@@ -21,13 +21,11 @@ export type {
   BulkEdgeInputItem,
   BulkEdgeResult,
   BulkEdgeResultEntry,
-  // T-100 — createWithAttachments helper.
   CreateWithAttachmentsInput,
   CreateWithAttachmentsAttachment,
   CreateWithAttachmentsResult,
-  // T-117 — admin keys list response shape.
   TenantApiKeySummary,
-  // SDK parity — credential-loading primitive for `MarfaClient.fromSecureStorage`.
+  // Credential-loading primitive for `MarfaClient.fromSecureStorage`.
   SecureStorage,
 } from "./client.js";
 
@@ -76,10 +74,8 @@ export type {
   ItemState,
   MergePolicy,
   MergeStrategy,
-  // T-074 — system.profile wire shapes.
   Profile,
   UpdateProfileInput,
-  // T-117 — admin tenant types.
   Tenant,
   TenantStatus,
   TenantMetrics,

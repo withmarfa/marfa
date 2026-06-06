@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
 
 /**
- * Wave C PR2 — `renderVerifyEmailPage` covers the four states of the
- * `/auth/verify-email` surface (pending / success / failure / resent).
- * Handler-side smoke (POST-then-redirect, token forwarding) lives in
- * email-verification.test.ts; this file asserts the HTML shape directly.
+ * `renderVerifyEmailPage` covers the four states of the `/auth/verify-email`
+ * surface (pending / success / failure / resent). Handler-side smoke
+ * (POST-then-redirect, token forwarding) lives in email-verification.test.ts;
+ * this file asserts the HTML shape directly.
  */
 
 describe("renderVerifyEmailPage", () => {

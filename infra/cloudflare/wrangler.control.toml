@@ -12,7 +12,7 @@ compatibility_flags = ["nodejs_compat"]
 # infra/cloudflare/README.md.
 #
 # This file carries `$<VAR>`-style template tokens for operator-specific
-# values (T-252) — never edit them inline. Deploy via
+# values — never edit them inline. Deploy via
 # `infra/cloudflare/scripts/deploy-control.sh <env>`, which reads the
 # values from environment variables and renders a temp file before
 # invoking `wrangler deploy`. Required vars:
@@ -59,15 +59,15 @@ ENVIRONMENT = "prod"
 CLOUDFLARE_ACCOUNT_ID = "${CLOUDFLARE_ACCOUNT_ID}"
 
 # ---------------------------------------------------------------------------
-# Queue producers — wired in PR 3 of Layer 1; scheduled-poll added by T-084.
+# Queue producers.
 # webhook-receipt   — produced by control plane on verified inbound;
 #                     consumed by per-Integration Workers
 # reactive-run      — produced by the server-side reactive-run-bridge;
 #                     consumed by per-Integration Workers
-# scheduled-poll    — bound for DLQ replay (T-084). When an operator
-#                     replays a `marfa-scheduled-poll-<env>-dlq` message,
-#                     it gets re-enqueued onto this main queue. Not used
-#                     on hot paths today.
+# scheduled-poll    — bound for DLQ replay. When an operator replays a
+#                     `marfa-scheduled-poll-<env>-dlq` message, it gets
+#                     re-enqueued onto this main queue. Not used on hot
+#                     paths today.
 # ---------------------------------------------------------------------------
 
 [[env.staging.queues.producers]]
@@ -82,10 +82,10 @@ queue = "marfa-reactive-run-staging"
 binding = "SCHEDULED_POLL_QUEUE"
 queue = "marfa-scheduled-poll-staging"
 
-# T-247 — per-integration webhook-receipt queue producers. The route
-# in `webhooks.ts` resolves the binding by `integration_name`. Each
-# integration that ships a `webhook` trigger lands a binding here
-# AND a `[[env.<env>.queues.consumers]]` block in its own wrangler.toml
+# Per-integration webhook-receipt queue producers. The route in
+# `webhooks.ts` resolves the binding by `integration_name`. Each
+# integration that ships a `webhook` trigger lands a binding here AND
+# a `[[env.<env>.queues.consumers]]` block in its own wrangler.toml
 # pointing at the same queue.
 #
 # The shared `WEBHOOK_RECEIPT_QUEUE` above stays as the fallback for
@@ -115,7 +115,7 @@ queue = "marfa-reactive-run-prod"
 binding = "SCHEDULED_POLL_QUEUE"
 queue = "marfa-scheduled-poll-prod"
 
-# T-247 — prod mirror of the per-integration webhook-receipt producers.
+# Prod mirror of the per-integration webhook-receipt producers.
 [[env.prod.queues.producers]]
 binding = "WEBHOOK_RECEIPT_QUEUE_WITHMARFA_INBOX"
 queue = "marfa-webhook-receipt-withmarfa-inbox-prod"
@@ -145,8 +145,8 @@ id = "${CONTROL_PLANE_PROD_KV_ID}"
 # ---------------------------------------------------------------------------
 # Service bindings — control plane → per-Integration Workers.
 # Used by:
-#   - POST /connections/:id/arm-schedule (T-085) → /arm-schedule
-#   - POST /connections/:id/verify       (T-082) → /verify
+#   - POST /connections/:id/arm-schedule → /arm-schedule
+#   - POST /connections/:id/verify       → /verify
 # Each in-tree integration that ships as a deployed Worker gets a
 # binding here AND a corresponding entry in the routes'
 # `resolveServiceBinding` switch (`arm-schedule.ts`, `verify.ts`).
@@ -223,8 +223,7 @@ service = "marfa-integration-withmarfa-inbox-staging"
 # `packages/runtime-control/src/wrangler-control-config.test.ts`
 # parses this file with a strict TOML parser and asserts both invariants
 # (every dispatch entry → a binding in both envs; no duplicate `binding`
-# keys inside one `[[env.X.services]]` block — the failure mode that
-# silently dropped google.drive's staging binding pre-T-245).
+# keys inside one `[[env.X.services]]` block).
 
 [[env.prod.services]]
 binding = "INTEGRATION_RSS_WATCHER"
@@ -275,26 +274,21 @@ binding = "INTEGRATION_WITHMARFA_INBOX"
 service = "marfa-integration-withmarfa-inbox-prod"
 
 # ---------------------------------------------------------------------------
-# R2 — Layer 2 wires this for large inbound webhook bodies (>256KB).
+# R2 — large inbound webhook bodies (>256KB) spill here.
 #
 # Secrets (set via `wrangler secret put` per env):
 #   - MARFA_API_URL              (every env)
-#   - MARFA_RUNTIME_BROKER_KEY   (PR 4 — server-issued long-lived key the
+#   - MARFA_RUNTIME_BROKER_KEY   (server-issued long-lived key the
 #                                control plane uses to mint per-Connection
 #                                runtime credentials)
-#   - CLOUDFLARE_QUEUES_API_TOKEN (T-084 — account-scoped CF API token
-#                                  with `queues_read` + `queues_write`
+#   - CLOUDFLARE_QUEUES_API_TOKEN  account-scoped CF API token with
+#                                  `queues_read` + `queues_write`
 #                                  permissions. Used by the DLQ
 #                                  peek/replay routes' HTTP-pull client.
-#                                  Per-Worker-instance secret; the token
-#                                  itself can be the same one the staging
-#                                  server's plist already carries —
-#                                  reuse the value, separate `wrangler
-#                                  secret put` per env.)
 #
 # Vars (set in [env.<env>.vars] above):
 #   - ENVIRONMENT
-#   - CLOUDFLARE_ACCOUNT_ID  (T-084 — same account_id hardcoded at the
-#                             top of this file. The DLQ HTTP-pull client
-#                             reads it via env so tests can swap it.)
+#   - CLOUDFLARE_ACCOUNT_ID  (same account_id used throughout; the DLQ
+#                             HTTP-pull client reads it via env so tests
+#                             can swap it)
 # ---------------------------------------------------------------------------

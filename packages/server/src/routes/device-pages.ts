@@ -8,9 +8,8 @@
  * `verification_uri_complete` link the CLI prints can land the user
  * directly at consent).
  *
- * Wave C PR4: layout extraction. Inline `<style>` block dropped;
- * the pages now reference the shared stylesheet at
- * `/auth/static/auth.css` via the `renderAuthLayout` helper.
+ * Pages reference the shared stylesheet at `/auth/static/auth.css`
+ * via the `renderAuthLayout` helper.
  */
 
 import type { ParsedScope } from "@withmarfa/shared";

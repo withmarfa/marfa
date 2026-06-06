@@ -1,9 +1,9 @@
 # todoist
 
-Bidirectional sync between Todoist and Marfa. First instance of the
-**token-credential install seam** (T-241 PR1) — no OAuth dance; the
-user's Todoist API token is supplied at install via
-`POST /credentials/api-token` and the proxy stamps it transparently.
+Bidirectional sync between Todoist and Marfa. Uses the
+**token-credential install seam** — no OAuth dance; the user's
+Todoist API token is supplied at install via `POST /credentials/api-token`
+and the proxy stamps it transparently.
 
 ## Identity
 
@@ -65,7 +65,7 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 }
 ```
 
-## Deterministic temp_id + uuid idempotency (T-020)
+## Deterministic temp_id + uuid idempotency
 
 Outbound `item_add` commands carry two deterministic fields, both
 derived from the Marfa item id:
@@ -111,8 +111,5 @@ manifest with a `webhook` trigger + a verifier in
 
 ## Validation
 
-The end-to-end validation log against a test Todoist account lives
-on the bottom of [T-241-todoist-integration](https://github.com/withmarfa/marfa/issues?q=T-241).
-The local harness at `_local/validate-todoist.ts`
-drives the production handler code against the real API for both
-directions.
+The local harness at `_local/validate-todoist.ts` drives the
+production handler code against the real API for both directions.

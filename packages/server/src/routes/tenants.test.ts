@@ -235,8 +235,8 @@ describe("Tenant config — hosted mode", () => {
     expect(getBody.enforcement.strict_mode.types).toEqual(["core.note"]);
     expect(getBody.audit_retention_days).toBe(45);
 
-    // T-079: audit side effect is fire-and-forget — use the shared
-    // poll helper instead of an inline retry.
+    // Audit write is fire-and-forget — use the shared poll helper
+    // instead of an inline retry.
     const auditResult = await waitForAudit(
       () =>
         hosted.storage.audit.list({

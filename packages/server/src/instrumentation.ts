@@ -1,5 +1,5 @@
 /**
- * OpenTelemetry bootstrap (T-275).
+ * OpenTelemetry bootstrap.
  *
  * MUST be loaded before any instrumented module, via Node's `--import`:
  *   prod: `node --import ./dist/instrumentation.js dist/index.js`

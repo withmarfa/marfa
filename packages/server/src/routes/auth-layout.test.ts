@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { renderAuthLayout } from "./auth-layout.js";
 
 /**
- * Wave C PR4 — `renderAuthLayout` is the shared scaffold. Tests cover:
+ * `renderAuthLayout` is the shared scaffold. Tests cover:
  *   - Document shape (DOCTYPE / html / head / body)
  *   - Title rendered + escaped
  *   - Stylesheet `<link>` points at /auth/static/auth.css

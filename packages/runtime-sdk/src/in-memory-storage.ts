@@ -1,9 +1,8 @@
 /**
  * Minimal in-memory implementation of `CursorStorageAdapter` for unit
- * tests. The full @withmarfa/runtime-test in-memory mocks (DO, Queues,
- * KV) ship in PR 5; this is a tiny shim so PR 2's tests can exercise
- * the SDK's storage-backed pieces (cursor store, echo suppression,
- * per-connection state core) without pulling in a heavier harness.
+ * tests. A lightweight shim for exercising the SDK's storage-backed
+ * pieces (cursor store, echo suppression, per-connection state core)
+ * without pulling in the full runtime-test harness.
  */
 import type { CursorStorageAdapter } from "./cursor-store.js";
 

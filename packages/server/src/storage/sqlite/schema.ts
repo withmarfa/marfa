@@ -18,10 +18,10 @@ export const tenants = sqliteTable("tenants", {
   name: text("name"),
   config: text("config"),
   created_at: text("created_at").notNull(),
-  // T-117: operator-controlled tenant status. `'active'` (default) allows
-  // writes; `'suspended'` blocks them at the auth middleware. Reads pass
-  // through regardless. Platform-admin keys bypass the gate so operators
-  // can inspect a suspended tenant.
+  // Operator-controlled tenant status. `'active'` (default) allows writes;
+  // `'suspended'` blocks them at the auth middleware. Reads pass through
+  // regardless. Platform-admin keys bypass the gate so operators can
+  // inspect a suspended tenant.
   status: text("status").notNull().default("active"),
 });
 
@@ -43,10 +43,10 @@ export const users = sqliteTable(
     auth_user_id: text("auth_user_id").references(() => auth_user.id, {
       onDelete: "set null",
     }),
-    /** T-178: principal role projected onto OAuth bearer principals.
-     *  Defaults to `member`; operator elevates via SQL until a real
-     *  provisioning UI lands. Gates `requireTenantAdmin` /
-     *  `requireAdmin` routes for OAuth-authenticated requests. */
+    /** Principal role projected onto OAuth bearer principals. Defaults
+     *  to `member`; operator elevates via SQL until a provisioning UI
+     *  lands. Gates `requireTenantAdmin` / `requireAdmin` routes for
+     *  OAuth-authenticated requests. */
     role: text("role").notNull().default("member"),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
@@ -200,7 +200,7 @@ export const apiKeys = sqliteTable(
 // blobs (metadata only — actual files on filesystem)
 // ---------------------------------------------------------------------------
 
-// T-049: blob rows are per-tenant. Same `hash` can appear under multiple
+// Blob rows are per-tenant. The same `hash` can appear under multiple
 // tenant_ids; the file system / S3 backend dedupes physically (one file
 // per hash), but the blobs table carries one row per (tenant_id, hash) so
 // cross-tenant reads of `/blobs/:hash` resolve to the caller's row only —
@@ -345,7 +345,7 @@ export const outboundWebhookDeliveries = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// inbound_webhooks (workstream 2 PR 5)
+// inbound_webhooks
 // ---------------------------------------------------------------------------
 
 export const inboundWebhooks = sqliteTable(
@@ -371,8 +371,8 @@ export const inboundWebhooks = sqliteTable(
     // submitted manifest's webhook_verification.method. Each row's
     // dispatch is keyed off this value at receipt.
     verification_method: text("verification_method").notNull(),
-    // Non-null when verification_method === 'custom'. WS3 wires
-    // resolution; in WS2 the custom adapter is a no-op stub.
+    // Non-null when verification_method === 'custom'. The custom
+    // verification adapter resolves the handler at dispatch time.
     verification_adapter_id: text("verification_adapter_id"),
     events: text("events").notNull().default("[]"),
     disabled: integer("disabled").notNull().default(0),
@@ -385,7 +385,7 @@ export const inboundWebhooks = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// inbound_webhook_events (workstream 2 PR 5)
+// inbound_webhook_events
 // ---------------------------------------------------------------------------
 
 export const inboundWebhookEvents = sqliteTable(
@@ -401,9 +401,9 @@ export const inboundWebhookEvents = sqliteTable(
     received_at: text("received_at").notNull(),
     payload: text("payload").notNull(),
     verified: integer("verified").notNull(),
-    // NULL = not yet processed. Set when WS3's reactive runner finishes
+    // NULL = not yet processed. Set when the reactive runner finishes
     // work for this event. Verified-but-not-processed rows are the
-    // queue (see idx_inbound_webhook_events_pending).
+    // pending queue (see idx_inbound_webhook_events_pending).
     processed_at: text("processed_at"),
     // NULL = no error yet. Populated when retries are exhausted (DLQ).
     processing_error: text("processing_error"),
@@ -422,7 +422,7 @@ export const inboundWebhookEvents = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// connection_oauth_tokens (workstream 2 PR 6)
+// connection_oauth_tokens
 //
 // One row per `system.connection` of kind `integration` whose
 // connector authenticates with a token-bearing OAuth grant. The proxy route
@@ -472,7 +472,7 @@ export const connectionOauthTokens = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// connection_leased_tokens (workstream 2 PR 7)
+// connection_leased_tokens
 //
 // Short-TTL bearer tokens issued for the four exception cases the OAuth
 // proxy doesn't fit (multipart streaming, WebSocket, SDK lock-in, non-HTTP).
@@ -513,9 +513,9 @@ export const connectionLeasedTokens = sqliteTable(
   ],
 );
 
-// T-131: oauth_codes dropped — replaced by the
-// @better-auth/oauth-provider plugin's authorization code state machine
-// (stored in `auth_verification` via the plugin's internal adapter).
+// oauth_codes is dropped — the @better-auth/oauth-provider plugin's
+// authorization code state machine is stored in `auth_verification`
+// via the plugin's internal adapter.
 
 // ---------------------------------------------------------------------------
 // audit_log (append-only audit trail)
@@ -528,7 +528,7 @@ export const auditLog = sqliteTable(
     timestamp: text("timestamp").notNull(),
     key_id: text("key_id"),
     /**
-     * Tenant scope (T-041). Stamped from the calling api key's `tenant_id`
+     * Tenant scope. Stamped from the calling api key's `tenant_id`
      * (or `null` for system-initiated audits / bootstrap-admin keys with no
      * tenant). Reads filter by this column when the caller is tenant-scoped;
      * keys without a tenant (bootstrap admin) see all rows. Indexed because
@@ -549,7 +549,7 @@ export const auditLog = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// bulk_action_jobs (T-218 — see pg/schema.ts for design notes)
+// bulk_action_jobs (see pg/schema.ts for design notes)
 // ---------------------------------------------------------------------------
 
 export const bulkActionJobs = sqliteTable(
@@ -586,7 +586,7 @@ export const bulkActionJobs = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// rate_limit_windows (T-026 — see pg/schema.ts for design notes)
+// rate_limit_windows (see pg/schema.ts for design notes)
 // ---------------------------------------------------------------------------
 
 export const rateLimitWindows = sqliteTable(
@@ -613,7 +613,7 @@ export const settings = sqliteTable("settings", {
 });
 
 // ---------------------------------------------------------------------------
-// tenant_quotas (T-052: per-tenant resource caps)
+// tenant_quotas (per-tenant resource caps)
 // ---------------------------------------------------------------------------
 
 export const tenantQuotas = sqliteTable("tenant_quotas", {
@@ -641,12 +641,11 @@ export const eventLog = sqliteTable(
     edge_id: text("edge_id"),
     tenant_id: text("tenant_id"),
     payload: text("payload").notNull(),
-    // Cycle-detection metadata (workstream 2 PR 8). The connection
-    // whose action set off this chain of events; null for events
-    // originating from a human caller. hop_count starts at 0 on
-    // human-initiated events and increments on each reactive
-    // publish; pubsub.publish drops events whose hop_count would
-    // exceed the tenant's `max_event_hop_budget`.
+    // Cycle-detection metadata: the connection whose action set off this
+    // chain of events; null for events originating from a human caller.
+    // hop_count starts at 0 on human-initiated events and increments on
+    // each reactive publish; pubsub.publish drops events whose hop_count
+    // would exceed the tenant's `max_event_hop_budget`.
     originating_connection_id: text("originating_connection_id"),
     hop_count: integer("hop_count").notNull().default(0),
     created_at: text("created_at").notNull(),
@@ -688,10 +687,10 @@ export const auth_user = sqliteTable(
     image: text("image"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
-    // T-116: account-lifecycle state. See the PG sibling schema for the
-    // full design note. `pending_deletion_at` stays TEXT/ISO to match
-    // the rest of marfa's timestamp convention; the purger compares
-    // strings without round-tripping through Date.
+    // Account-lifecycle state. `pending_deletion_at` stays TEXT/ISO to
+    // match the rest of the timestamp convention; the purger compares
+    // strings without round-tripping through Date. See pg/schema.ts for
+    // the full design note.
     deletion_state: text("deletion_state").notNull().default("active"),
     pending_deletion_at: text("pending_deletion_at"),
   },
@@ -764,7 +763,7 @@ export const auth_verification = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
-// @better-auth/oauth-provider plugin tables (T-131)
+// @better-auth/oauth-provider plugin tables
 //
 // Four tables owned by the OAuth Provider plugin: client registrations,
 // consent grants, opaque access tokens, opaque refresh tokens.
@@ -913,9 +912,9 @@ export const auth_oauth_consent = sqliteTable(
   ],
 );
 
-// JWT signing keys (T-131). One row per rotation; the most recent
-// non-expired row is the active signer. Used by the @better-auth/jwt
-// plugin which the oauth-provider needs for id_token issuance.
+// JWT signing keys. One row per rotation; the most recent non-expired
+// row is the active signer. Used by the @better-auth/jwt plugin which
+// the oauth-provider needs for id_token issuance.
 export const auth_jwks = sqliteTable("auth_jwks", {
   id: text("id").primaryKey(),
   publicKey: text("public_key").notNull(),

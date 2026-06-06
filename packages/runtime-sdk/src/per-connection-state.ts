@@ -33,7 +33,7 @@ export interface PerConnectionInternalState {
   // Storage adapter — DurableObjectStorage on Cloudflare; Postgres-backed
   // or in-memory in the local runtime / tests. The adapter satisfies
   // CursorStorageAdapter (a subset of DurableObjectStorage). list() is
-  // optional and only used by the echo prune helpers in PR 5+.
+  // optional and only used by the echo prune helpers.
   storage: CursorStorageAdapter & {
     list?: (options: {
       prefix?: string;

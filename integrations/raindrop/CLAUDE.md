@@ -1,9 +1,9 @@
 # raindrop
 
-Inbound-only sync of Raindrop bookmarks + collections. Consumes the
-T-241 PR1 token-credential install seam. Raindrop's REST API accepts
+Inbound-only sync of Raindrop bookmarks + collections. Uses the
+token-credential install seam. Raindrop's REST API accepts
 `Authorization: Bearer <key>` (the default `auth_scheme`), so no
-T-246 override is needed at install time.
+`auth_scheme` override is needed at install time.
 
 ## Identity
 
@@ -18,10 +18,9 @@ credential. Long-lived; no expiry. Raindrop's REST API accepts
 `Authorization: Bearer <token>` for both Test Tokens and OAuth
 tokens — the substrate's default scheme works.
 
-If a future ticket adds OAuth support, the client_id + client_secret
-already supplied at session start can be folded into a `kind:
-oauth_token` credential alongside the Test Token path. For this
-round, Test Token only.
+If OAuth support is added, the client_id + client_secret can be folded
+into a `kind: oauth_token` credential alongside the Test Token path.
+For now, Test Token only.
 
 ## Sentinel ids
 
@@ -50,8 +49,8 @@ Per `CURSOR_KEY = "main"` in the `connection.runtime` extension:
 
 `last_created_at` watermark is on `created`, not `lastUpdate` — the
 upstream's `sort` only accepts `-created`, so edits to old items
-aren't caught on subsequent sweeps. This is a known limitation worth
-documenting; a future ticket can fold in a per-id `lastUpdate` check.
+aren't caught on subsequent sweeps. This is a known limitation; a
+future pass can fold in a per-id `lastUpdate` check.
 
 ## Field renames
 
@@ -75,9 +74,9 @@ Two edge patterns, both `parent-of`:
 2. **Raindrop → containing collection**: the collection is the
    parent. Built on first raindrop write.
 
-Both flow through `ctx.marfa.createEdge` (T-242 SDK addition).
-Idempotent in the sense that duplicate edges return 409 / no-op from
-the substrate; the handler swallows those silently.
+Both flow through `ctx.marfa.createEdge`.
+Duplicate edges return 409 / no-op from the substrate; the handler
+swallows those silently.
 
 ## Non-destructive validation
 
@@ -85,10 +84,10 @@ The harness asserts:
 
 - **Pre-flight invariant** — `GET /rest/v1/raindrops/0?search=#marfa-validation`
   returns zero items. Otherwise stale test data from a prior run
-  exists, and the harness aborts.
+  exists and the harness aborts.
 - **CREATE only against synthetic data** — a `Marfa Validation`
   collection + raindrops tagged `marfa-validation`. Every created id
-  is recorded in a `DESTRUCTIVE_OK` allowlist (Set<string>).
+  is recorded in a `DESTRUCTIVE_OK` allowlist (`Set<string>`).
 - **DELETE gated** — every DELETE checks the id against the allowlist;
   any unrecognised id throws and aborts the run.
 - **Read-only on existing data** — no PUT / PATCH / DELETE against

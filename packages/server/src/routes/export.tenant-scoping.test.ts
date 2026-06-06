@@ -1,7 +1,5 @@
 /**
- * T-053 — tenant-scoped data export.
- *
- * Coverage:
+ * Tenant-scoped data export coverage:
  *
  *   - tenant_admin's self-export returns only the calling tenant's
  *     rows. Other tenants' items, even when present in the same DB,
@@ -67,7 +65,7 @@ async function readNdjsonItems(res: Response): Promise<string[]> {
     });
 }
 
-describe("T-053 tenant-scoped export — tenant_admin self-export", () => {
+describe("tenant-scoped export — tenant_admin self-export", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();
@@ -132,7 +130,7 @@ describe("T-053 tenant-scoped export — tenant_admin self-export", () => {
   });
 });
 
-describe("T-053 tenant-scoped export — platform admin", () => {
+describe("tenant-scoped export — platform admin", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();
@@ -172,7 +170,7 @@ describe("T-053 tenant-scoped export — platform admin", () => {
     expect(res.status).toBe(200);
 
     // Audit row stamped with the warning shape. The audit insert is
-    // fire-and-forget (T-079), so poll briefly for the row to appear.
+    // fire-and-forget, so poll briefly for the row to appear.
     const audit = await waitForAudit(
       () => ctx.storage.audit.list({ action: "export.tenant" }),
       (result) => result.data.length > 0,
@@ -184,7 +182,7 @@ describe("T-053 tenant-scoped export — platform admin", () => {
   });
 });
 
-describe("T-053 archive — manifest tenant_id round-trip", () => {
+describe("archive — manifest tenant_id round-trip", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();

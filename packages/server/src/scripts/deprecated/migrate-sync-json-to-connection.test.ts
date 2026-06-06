@@ -1,5 +1,5 @@
 /**
- * Tests for the sync.json → Connection migration — Layer 3 PR 4.
+ * Tests for the sync.json → Connection migration.
  *
  * Covers:
  *   - Happy path: sync.json present → system.integration created (or

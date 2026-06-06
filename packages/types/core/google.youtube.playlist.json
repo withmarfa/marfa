@@ -1,7 +1,7 @@
 {
   "id": "google.youtube.playlist",
   "label": "YouTube Playlist",
-  "description": "A YouTube playlist created by the connected user (T-249). Captures upstream-fidelity playlist metadata from the YouTube Data API v3 `playlists` resource. The owning channel is wired via a `parent-of` edge (channel = source, playlist = target). When the connection's `materialise_playlists` configuration flag is true, the per-playlist video walk wires additional `parent-of` edges from this playlist to each member video.",
+  "description": "A YouTube playlist created by the connected user. Captures playlist metadata from the YouTube Data API v3 `playlists` resource. The owning channel is wired via a `parent-of` edge (channel = source, playlist = target). When the connection's `materialise_playlists` configuration flag is true, the per-playlist video walk wires additional `parent-of` edges from this playlist to each member video.",
   "version": 1,
   "fields": {
     "playlist_id": {

@@ -1,5 +1,5 @@
 /**
- * T-040 part 2 — soak harness for the reactive-run bridge fanout.
+ * Soak harness for the reactive-run bridge fanout.
  *
  * Drives realistic load against a deployed Marfa instance: registers a
  * synthetic Integration manifest, installs ≥50 subscribing connections,
@@ -9,12 +9,11 @@
  * the server" output at the end of the run).
  *
  * Pre-requirements (verify before running):
- *   - The reactive-run bridge is wired in `packages/server/src/index.ts`
- *     (PR feat/wave-a-substrate-bringup, T-040 part 1).
+ *   - The reactive-run bridge is wired in `packages/server/src/index.ts`.
  *   - The deployment carries the JSON install endpoint
  *     `POST /connections/install`.
  *   - The server's CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS +
- *     CLOUDFLARE_QUEUES_API_TOKEN are set (T-233 — JSON map of
+ *     CLOUDFLARE_QUEUES_API_TOKEN are set (JSON map of
  *     integration_name → producer URL); on boot the server logs
  *     "Reactive-run bridge started".
  *
@@ -28,8 +27,6 @@
  * on `@withmarfa/sdk` so it doesn't drag SDK build state into the server
  * package's devDependencies. The wire shapes are stable; the explicit
  * fetch is honest about what's going on the wire.
- *
- * Findings get pasted into T-040 Notes manually after the run.
  */
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -83,7 +80,7 @@ function syntheticManifest(name: string): Record<string, unknown> {
     name,
     version: "1.0.0",
     publisher: "Marfa",
-    description: "T-040 soak harness — synthetic subscriber",
+    description: "soak harness — synthetic subscriber",
     direction: "read",
     triggers: [{ type: "item-event" }],
     target_types: ["core.note"],
@@ -147,7 +144,7 @@ async function main(): Promise<void> {
   const manifestName = `acme.soak-fanout-${runTag}`;
 
   console.log("======================================================");
-  console.log("T-040 reactive-run bridge soak harness");
+  console.log("Reactive-run bridge soak harness");
   console.log("======================================================");
   console.log(`URL:                ${config.url}`);
   console.log(`Connections:        ${String(config.connectionCount)}`);
@@ -290,9 +287,7 @@ async function main(): Promise<void> {
   console.log(
     "Cleanup: the script does not uninstall its connections — leave them",
   );
-  console.log(
-    "for inspection, then `my connections uninstall <id>` (Wave A step 8)",
-  );
+  console.log("for inspection, then `my connections uninstall <id>`");
   console.log(
     "or revoke the seed admin credentials manually if rotating staging.",
   );

@@ -15,8 +15,8 @@ let integrationId: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  // T-022: lease-token capability gating now resolves the manifest from
-  // the connection's integration_ref. Register one up front.
+  // Lease-token capability gating resolves the manifest from the
+  // connection's integration_ref. Register one up front.
   const reg = await request(ctx.app, "POST", "/integrations", {
     key: ctx.adminKey,
     body: { manifest: VALID_MANIFEST },
@@ -176,7 +176,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects when the connection has no integration_ref (T-022)", async () => {
+  it("rejects when the connection has no integration_ref", async () => {
     const orphanRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
@@ -195,9 +195,6 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
     expect(body.error.code).toBe("missing_required_field");
   });
 
-  // Layer 2 PR 2: preferred path — capability gating against the
-  // manifest persisted under integration_ref (no inline manifest in
-  // the request body).
   it("gates capabilities via integration_ref-resolved manifest", async () => {
     // 1. Register the integration.
     const regRes = await request(ctx.app, "POST", "/integrations", {
@@ -249,10 +246,10 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-018 — runtime credential (integration: source) can manage own leases
+// Runtime credential (integration: source) can manage own leases
 // ---------------------------------------------------------------------------
 
-describe("connector runtime credential — integration: source (T-018)", () => {
+describe("connector runtime credential — integration: source", () => {
   it("issues a lease when called with the connection's runtime credential", async () => {
     const connectionId = await createConnection();
     // Mint a runtime credential exactly like the install pipeline does:
@@ -282,9 +279,9 @@ describe("connector runtime credential — integration: source (T-018)", () => {
         body: { capability_id: "drive.upload" },
       },
     );
-    // Pre-T-018 the access check matched only `oauth:<connectionId>` —
-    // the install pipeline's `integration:<connectionId>` source got
-    // 403'd. Post-fix the runtime credential is admitted.
+    // The access check admits both `oauth:<connectionId>` and
+    // `integration:<connectionId>` sources so the runtime credential
+    // the install pipeline mints can manage its own leases.
     expect(res.status).toBe(201);
   });
 

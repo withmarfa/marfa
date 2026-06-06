@@ -1,5 +1,5 @@
 /**
- * In-process reactive-run bridge for the local runtime (T-173).
+ * In-process reactive-run bridge for the local runtime.
  *
  * The Cloudflare bridge (`reactive-run-bridge.ts`) drains the in-process
  * pubsub and POSTs envelopes to Cloudflare Queues. The local-runtime

@@ -52,14 +52,14 @@ curl -X POST "https://<your-tunnel>.trycloudflare.com/webhooks/inbound/<connecti
   -d "$BODY"
 ```
 
-A successful delivery returns 202 and enqueues onto `WEBHOOK_RECEIPT_QUEUE`. With no per-Integration Worker subscribed yet (Layer 3), the message sits in the queue until consumed or expires. Use `wrangler queues consumer` to peek.
+A successful delivery returns 202 and enqueues onto `WEBHOOK_RECEIPT_QUEUE`. With no per-Integration Worker subscribed yet, the message sits in the queue until consumed or expires. Use `wrangler queues consumer` to peek.
 
 ## Named-tunnel (stable hostname)
 
-Once you tire of the `*.trycloudflare.com` URL changing on every restart, set up a named tunnel — see [tunnel.config.example.yml](tunnel.config.example.yml) for the YAML shape. The config goes at `~/.cloudflared/<name>.yml` and `cloudflared tunnel run <name>` brings it up against the same host:port. Layer 1 acceptance verification doesn't require the named-tunnel path.
+Once you tire of the `*.trycloudflare.com` URL changing on every restart, set up a named tunnel — see [tunnel.config.example.yml](tunnel.config.example.yml) for the YAML shape. The config goes at `~/.cloudflared/<name>.yml` and `cloudflared tunnel run <name>` brings it up against the same host:port.
 
 ## Troubleshooting
 
 - **403 from `/system/runtime-credentials`:** the Marfa caller credential needs `is_platform: true`. The bootstrap admin key has it; an arbitrary admin key minted later does NOT unless you pass `is_platform: true` at create time.
 - **503 `control_plane_misconfigured` from `/webhooks/inbound`:** set `MARFA_API_URL` and `MARFA_RUNTIME_BROKER_KEY` in `wrangler dev`'s env (either via `.dev.vars` or the wrangler CLI). The broker key is whatever long-lived `is_platform: true` admin key the control plane should authenticate as.
-- **404 `no_subscriptions`:** you haven't created an `inbound_webhook` row for the `connection_id`. Use the existing `POST /connections/:id/inbound-webhooks` route (workstream 2 PR 5).
+- **404 `no_subscriptions`:** you haven't created an `inbound_webhook` row for the `connection_id`. Use the existing `POST /connections/:id/inbound-webhooks` route.

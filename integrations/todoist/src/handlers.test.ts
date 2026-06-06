@@ -415,7 +415,7 @@ describe("Todoist handlers — outbound (item-event)", () => {
     expect(cursor.mappings.td_9001).toBe("itm_alpha");
   });
 
-  it("retrying with the same Marfa item id reproduces the same temp_id + uuid (T-020 idempotency rail)", async () => {
+  it("retrying with the same Marfa item id reproduces the same temp_id + uuid (command-level idempotency)", async () => {
     const first = await __internals.deriveTempId("itm_idem");
     const second = await __internals.deriveTempId("itm_idem");
     const firstUuid = await __internals.deriveCommandUuid("itm_idem");

@@ -17,8 +17,7 @@
  *     scope — one channel per Connection. Channels expire at 24
  *     hours by default (max 7 days for full Drive). Renewal cron
  *     runs inside the schedule trigger with zero-downtime ordering
- *     (new channel first, then stop old) — same shape as Calendar
- *     PR4.
+ *     (new channel first, then stop old) — same shape as Calendar.
  *   - **Initial sync via `files.list`.** Paginates through the
  *     user's Drive (filtered by `trashed=false`). A throwaway test
  *     account is small; production deployments would want a
@@ -26,7 +25,7 @@
  *   - **Blob handling — `metadata` and `all-files` modes.**
  *     `download_mode = "metadata"` (the default) reads file metadata
  *     into Marfa `google.drive.file` items with `blob_ref` absent.
- *     `download_mode = "all-files"` (T-239) downloads non-Google-native
+ *     `download_mode = "all-files"` downloads non-Google-native
  *     files within the per-file size ceiling and uploads the bytes
  *     into the Marfa blob store via `ctx.marfa.uploadBlob`; those land
  *     as `core.file` with `properties.blob_ref = sha256:<hex>`.
@@ -116,9 +115,7 @@ export const FILES_FIELDS = [
   // 400 `Invalid field selection`. Both are kept as TYPE fields on
   // `google.drive.file.json` because the type doc treats them as
   // "future fidelity" placeholders; the handler reads them
-  // optionally with `?.` so a missing field is harmless. Surfaced
-  // by the T-238 TS-harness when `files.list` 400'd on every cold-
-  // start sweep — patch lands inside PR #304.
+  // optionally with `?.` so a missing field is harmless.
 ].join(",");
 
 /**

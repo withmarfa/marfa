@@ -4,7 +4,7 @@ import type { TestContext } from "../test-utils.js";
 import { renderResetPasswordPage } from "./reset-password-page.js";
 
 /**
- * Wave C PR3 / T-033 — reset-password page renderer + handler smoke.
+ * Reset-password page renderer + handler smoke.
  * The full token round-trip (forgot → email → reset → sign-in) lives
  * in `password-reset.test.ts`; this file covers the renderer states +
  * the form-side validation paths.

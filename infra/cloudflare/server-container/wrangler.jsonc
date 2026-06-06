@@ -1,4 +1,4 @@
-// Marfa server — Cloudflare Containers Worker front (T-277).
+// Marfa server — Cloudflare Containers Worker front.
 //
 // TEMPLATE: the placeholder tokens below are rendered by
 // `infra/cloudflare/scripts/deploy-server-container.sh <staging|prod>` (the
@@ -30,7 +30,7 @@
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["MarfaServerContainer"] }
   ],
-  // Front-Worker CPU ceiling (cost-safety, T-278). Bounds the Worker, not the
+  // Front-Worker CPU ceiling (cost-safety). Bounds the Worker, not the
   // container; the container's cost is governed by instance_type x awake-time
   // x max_instances.
   "limits": { "cpu_ms": 30000 },

@@ -308,12 +308,11 @@ describe("google-youtube handleSchedule", () => {
           respond: () => jsonResponse(videosHydrated),
         },
         {
-          // T-258 regression: subscriptions.list must NOT carry
-          // `order=` — YouTube Data API v3 only accepts
-          // `alphabetical|relevance|unread` and rejects everything
-          // else (`order=newest` → 400). Matcher asserts the param
-          // is absent; a regression that re-adds it falls through to
-          // the no-route 500.
+          // subscriptions.list must NOT carry `order=` — YouTube Data
+          // API v3 only accepts `alphabetical|relevance|unread` and
+          // rejects everything else (`order=newest` → 400). Matcher
+          // asserts the param is absent; a regression that re-adds it
+          // falls through to the no-route 500.
           match: (p) => p.includes("/subscriptions?") && !p.includes("order="),
           respond: () => jsonResponse(subscriptions),
         },

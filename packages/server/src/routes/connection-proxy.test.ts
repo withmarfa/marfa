@@ -73,9 +73,9 @@ async function createCredential(
 }
 
 /**
- * Build a connection backed by a freshly-minted system.credential. Post-T-022
- * the proxy refuses to read OAuth config from inline `configuration`, so
- * every test connection must reference a credential item.
+ * Build a connection backed by a freshly-minted system.credential. The
+ * proxy reads OAuth config from the credential item, not from inline
+ * `configuration`, so every test connection must reference a credential item.
  */
 async function createConnection(opts?: {
   credentialId?: string;
@@ -288,8 +288,6 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
     expect(res.status).toBe(404);
   });
 
-  // Layer 2 PR 4: preferred path — OAuth config resolved via
-  // credential_ref pointing at a system.credential item.
   it("resolves OAuth config via credential_ref when set (preferred path)", async () => {
     // 1. Create a system.credential with the encrypted client secret.
     const credRes = await request(ctx.app, "POST", "/items", {
@@ -585,7 +583,7 @@ describe("POST /connections/:id/proxy/* — audit", () => {
 // ---------------------------------------------------------------------------
 
 describe("POST /connections/:id/proxy/* — misconfiguration", () => {
-  it("returns 422 OAUTH_PROXY_UPSTREAM_INVALID when credential_ref is missing (T-022)", async () => {
+  it("returns 422 OAUTH_PROXY_UPSTREAM_INVALID when credential_ref is missing", async () => {
     const connectionId = await createConnection({ skipCredential: true });
     await seedToken(connectionId);
 
@@ -600,7 +598,7 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
     expect(err.error.code).toBe("oauth_proxy_upstream_invalid");
   });
 
-  it("returns 422 when credential_ref doesn't resolve to a system.credential (T-022)", async () => {
+  it("returns 422 when credential_ref doesn't resolve to a system.credential", async () => {
     const connectionId = await createConnection({
       credentialId: "0192abcd-ef00-7000-8000-000000000099",
     });
@@ -617,16 +615,14 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
     expect(err.error.code).toBe("oauth_proxy_upstream_invalid");
   });
 
-  // T-235: defence-in-depth. The install pipeline already enforces
-  // same-tenant `credential_ref` at install-time, so any
-  // legitimately-installed connection points at a credential in its
-  // own tenant. If a future bypass of that validation ever lands a
-  // cross-tenant `credential_ref`, the proxy MUST refuse to decrypt —
-  // otherwise an attacker who can write a connection row in their own
-  // tenant could exfiltrate another tenant's OAuth secret. The fence
-  // here is `readOAuthConfig` threading `connection.tenant_id` into
-  // the credential lookup.
-  it("refuses to resolve a cross-tenant credential_ref (T-235)", async () => {
+  // Defence-in-depth: the install pipeline already enforces same-tenant
+  // `credential_ref` at install-time, so any legitimately-installed
+  // connection points at a credential in its own tenant. If a future
+  // bypass of that validation ever lands a cross-tenant `credential_ref`,
+  // the proxy MUST refuse to decrypt — otherwise an attacker who can
+  // write a connection row in their own tenant could exfiltrate another
+  // tenant's OAuth secret.
+  it("refuses to resolve a cross-tenant credential_ref", async () => {
     if (!ctx.storage.tenants) return;
     const tenantA = await ctx.storage.tenants.create("t235-proxy-A");
     const tenantB = await ctx.storage.tenants.create("t235-proxy-B");
@@ -705,7 +701,7 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Runtime-credential proxy access (widened gate from T-236 substrate fix)
+// Runtime-credential proxy access
 // ---------------------------------------------------------------------------
 
 describe("POST /connections/:id/proxy/* — runtime credentials", () => {
@@ -790,7 +786,7 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
 });
 
 // ---------------------------------------------------------------------------
-// kind: api_token branch (T-241)
+// kind: api_token branch
 // ---------------------------------------------------------------------------
 
 async function createApiTokenCredential(opts?: {
@@ -857,7 +853,7 @@ async function createApiTokenConnection(opts?: {
   return body.item.id;
 }
 
-describe("POST /connections/:id/proxy/* — kind:api_token (T-241)", () => {
+describe("POST /connections/:id/proxy/* — kind:api_token", () => {
   it("stamps the static bearer verbatim on the upstream call (no token row, no refresh)", async () => {
     const connectionId = await createApiTokenConnection({
       upstream_base_url: "https://api.todoist.com",
@@ -968,10 +964,10 @@ describe("POST /connections/:id/proxy/* — kind:api_token (T-241)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// kind: api_token + auth_scheme (T-246)
+// kind: api_token + auth_scheme
 // ---------------------------------------------------------------------------
 
-describe("POST /connections/:id/proxy/* — kind:api_token auth_scheme (T-246)", () => {
+describe("POST /connections/:id/proxy/* — kind:api_token auth_scheme", () => {
   it("stamps `Authorization: Token <key>` when auth_scheme is 'Token' (Readwise)", async () => {
     const connectionId = await createApiTokenConnection({
       upstream_base_url: "https://readwise.io",
@@ -1044,10 +1040,10 @@ describe("POST /connections/:id/proxy/* — kind:api_token auth_scheme (T-246)",
     expect(res.status).toBe(200);
   });
 
-  it("defaults to Bearer when api_token_config carries no auth_scheme (backward-compat with T-241 PR1 credentials)", async () => {
+  it("defaults to Bearer when api_token_config carries no auth_scheme", async () => {
     const connectionId = await createApiTokenConnection({
       api_token: "default_scheme_token",
-      // auth_scheme deliberately omitted — pre-T-246 credential shape.
+      // auth_scheme deliberately omitted — no scheme set on credential.
     });
 
     installFetchScript([
@@ -1069,10 +1065,10 @@ describe("POST /connections/:id/proxy/* — kind:api_token auth_scheme (T-246)",
 });
 
 // ---------------------------------------------------------------------------
-// T-254 — per-connection upstream_base_url override
+// Per-connection upstream_base_url override
 // ---------------------------------------------------------------------------
 
-describe("POST /connections/:id/proxy/* — upstream_base_url_override (T-254)", () => {
+describe("POST /connections/:id/proxy/* — upstream_base_url_override", () => {
   it("routes via connection.properties.configuration.upstream_base_url_override when set, ignoring the credential's upstream_base_url", async () => {
     // Mint a credential whose upstream_base_url points at host A.
     const credentialId = await createCredential({

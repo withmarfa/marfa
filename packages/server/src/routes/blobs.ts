@@ -351,11 +351,11 @@ export function blobRoutes(
       );
     }
 
-    // T-052 follow-on (Wave B Part 2): enforce per-tenant blobs +
-    // storage_bytes ceilings. enforceQuota is a no-op for tenant-less
-    // keys (single-tenant self-hosts, platform admin) so the existing
-    // instance-wide flow is unaffected. Both checks run against the
-    // same tenant_id so they're either both present or both absent.
+    // Enforce per-tenant blobs + storage_bytes ceilings. enforceQuota is
+    // a no-op for tenant-less keys (single-tenant self-hosts, platform
+    // admin) so the instance-wide flow is unaffected. Both checks run
+    // against the same tenant_id so they're either both present or both
+    // absent.
     await enforceQuota(c, storage, "blobs", 1);
     await enforceQuota(c, storage, "storage_bytes", data.length);
 
@@ -368,9 +368,9 @@ export function blobRoutes(
       await blobBackend.put(hash, data, mimeType);
     }
 
-    // T-049: register the metadata row scoped to the caller's tenant.
-    // Empty-string sentinel for instance-wide / single-tenant / platform-
-    // admin uploads. Different tenants uploading the same hash bytes get
+    // Register the metadata row scoped to the caller's tenant. Empty-
+    // string sentinel for instance-wide / single-tenant / platform-admin
+    // uploads. Different tenants uploading the same hash bytes get
     // separate rows; the storage backend dedupes the physical file.
     const blobTenantId = c.get("apiKey")?.tenant_id ?? "";
     await storage.blobs.register(
@@ -407,7 +407,7 @@ export function blobRoutes(
       return new Response(null, { status: 400 });
     }
 
-    // T-049: tenant-scoped lookup. Cross-tenant probes return 404.
+    // Tenant-scoped lookup. Cross-tenant probes return 404.
     const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
     if (!record) {
       return new Response(null, { status: 404 });
@@ -434,7 +434,7 @@ export function blobRoutes(
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
-    // T-049: tenant-scoped lookup. Cross-tenant probes return 404.
+    // Tenant-scoped lookup. Cross-tenant probes return 404.
     const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
     if (!record) {
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
@@ -473,7 +473,7 @@ export function blobRoutes(
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
-    // T-049: tenant-scoped lookup. Cross-tenant probes return 404.
+    // Tenant-scoped lookup. Cross-tenant probes return 404.
     const record = await storage.blobs.get(hash, apiKey.tenant_id ?? "");
     if (!record) {
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");

@@ -4,8 +4,7 @@
  * Uses `MARFA_RUNTIME_BROKER_KEY` (a long-lived `is_platform: true` API
  * key bound to the control-plane Worker as a secret). Calls the
  * server's `/system/inbound-webhook-subscriptions/:connection_id` and
- * `/system/runtime-credentials` endpoints — both PR 4 server-side
- * additions.
+ * `/system/runtime-credentials` endpoints.
  */
 
 export interface InboundSubscription {
@@ -18,9 +17,9 @@ export interface InboundSubscription {
   verification_adapter_id?: string;
   /**
    * Manifest name (e.g. `acme.calendar-sync`) projected from the
-   * connection's integration_ref by the server's lookup endpoint
-   * (T-009). The control plane stamps this on the queue message
-   * envelope so the per-Integration Worker filter accepts it.
+   * connection's integration_ref by the server's lookup endpoint.
+   * The control plane stamps this on the queue message envelope so
+   * the per-Integration Worker filter accepts it.
    */
   integration_name?: string;
   events: string[];
@@ -49,8 +48,8 @@ export class MarfaServerClient {
   }
 
   /**
-   * Look up the verify-route inputs for a Connection (T-082). Forwards
-   * the operator's bearer to the server, which gates on `is_platform: true`
+   * Look up the verify-route inputs for a Connection. Forwards the
+   * operator's bearer to the server, which gates on `is_platform: true`
    * and validates the connection exists, is `kind: integration`, and is
    * active. Returns 401/403/404/400 as a tagged result so the route can
    * surface the right status to the operator.
@@ -92,8 +91,8 @@ export class MarfaServerClient {
   }
 
   /**
-   * Look up the DLQ-route inputs for a Connection (T-084). Forwards
-   * the operator's bearer to the server, which gates on `is_platform: true`
+   * Look up the DLQ-route inputs for a Connection. Forwards the
+   * operator's bearer to the server, which gates on `is_platform: true`
    * and confirms the connection exists. Unlike `getVerifyContext`, this
    * does NOT narrow by kind or state — DLQ inspection is most relevant
    * precisely when a connection is unhealthy. Returns 401/403/404 as a
@@ -142,9 +141,9 @@ export class MarfaServerClient {
 
   /**
    * List system.activity rows tagged with a connection_id since a given
-   * timestamp (T-082). Forwards the operator's bearer so the server's
-   * tenant scoping applies — operators see only their tenant's rows
-   * unless they're using a platform credential.
+   * timestamp. Forwards the operator's bearer so the server's tenant
+   * scoping applies — operators see only their tenant's rows unless
+   * they're using a platform credential.
    */
   async listActivitySince(
     connectionId: string,

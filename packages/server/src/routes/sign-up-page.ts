@@ -14,9 +14,8 @@
  * successful sign-up sets a session cookie immediately and the user
  * lands on `return_to` already authenticated.
  *
- * Wave C PR4: layout extraction. Inline `<style>` block dropped;
- * the page now references the shared stylesheet at
- * `/auth/static/auth.css` via the `renderAuthLayout` helper.
+ * References the shared stylesheet at `/auth/static/auth.css` via
+ * the `renderAuthLayout` helper; no inline `<style>` block.
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
@@ -36,7 +35,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   email_invalid: "That email address looks malformed.",
   email_exists: "An account with that email already exists. Sign in instead.",
   signup_failed: "Couldn't create the account. Try again.",
-  // T-074: username (handle) gating at signup.
+  // Username (handle) error messages.
   handle_invalid:
     "Usernames must be 3-32 lowercase letters, numbers, or hyphens (no leading/trailing hyphens).",
   handle_reserved: "That username is reserved. Try another.",

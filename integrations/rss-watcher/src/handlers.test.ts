@@ -204,8 +204,9 @@ describe("RSS Watcher schedule handler", () => {
       source_url: "https://example.com/feed",
       author: "Author One",
     });
-    // T-038: every bookmark stamps the upstream entry id as source_id so
-    // POST /items can short-circuit a whole-batch retry to update.
+    // Every bookmark stamps the upstream entry id as source_id so
+    // POST /items can short-circuit a whole-batch retry to update
+    // rather than create a duplicate.
     expect(created[0]!.source_id).toBe("entry-1");
     expect(created[1]!.source_id).toBe("entry-2");
 

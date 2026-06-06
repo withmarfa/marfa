@@ -1,6 +1,6 @@
 /**
  * `POST /runtime/webhook/:connection_id` — webhook receipt endpoint for
- * the local runtime substrate (T-173).
+ * the local runtime substrate.
  *
  * Replaces the Cloudflare runtime-control Worker's `/webhooks/inbound/:
  * connection_id` endpoint when `MARFA_INTEGRATION_RUNTIME=local`. Same

@@ -6,10 +6,10 @@
  * implementation that runs in Cloudflare Workers also runs here.
  *
  * The cross-runtime parity claim is structural: both runtimes import
- * THIS code path (no separate `node:crypto` adapter). Workers-side
- * coverage is exercised by `runtime-control`'s existing test suite,
- * which depends on this package post-T-035. Drift between the two is
- * impossible because there's no second implementation to drift from.
+ * this code path (no separate `node:crypto` adapter). Workers-side
+ * coverage is exercised by `runtime-control`'s test suite. Drift
+ * between the two is impossible because there is no second
+ * implementation to drift from.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -61,16 +61,16 @@ describe("verification dispatch", () => {
     }
   });
 
-  it("isVerificationMethod rejects unknown methods, including dropped 'custom'", () => {
+  it("isVerificationMethod rejects unknown methods, including the unsupported 'custom' method", () => {
     expect(isVerificationMethod("custom")).toBe(false);
     expect(isVerificationMethod("rot13")).toBe(false);
     expect(isVerificationMethod("")).toBe(false);
   });
 
   it("ADAPTERS table has an entry for every method", () => {
-    // T-231 added `google-channel` for Google Workspace push
-    // notifications (Calendar / Drive / Gmail). T-244 added
-    // `cloudflare-email` for the withmarfa.inbox integration.
+    // `google-channel` covers Google Workspace push notifications
+    // (Calendar / Drive / Gmail). `cloudflare-email` covers the
+    // withmarfa.inbox integration.
     expect(Object.keys(ADAPTERS).sort()).toEqual([
       "cloudflare-email",
       "github",
@@ -320,7 +320,7 @@ describe("verifyGitHub", () => {
 });
 
 // ---------------------------------------------------------------------------
-// cloudflare-email (T-244)
+// cloudflare-email
 // ---------------------------------------------------------------------------
 
 describe("verifyCloudflareEmail", () => {

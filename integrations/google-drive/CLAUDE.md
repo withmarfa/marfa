@@ -2,10 +2,10 @@
 
 Inbound-only Google Drive (v3 API) integration. Fourth instance of
 the `google.*` publisher family. Two ingest modes: `metadata`
-(default — file metadata only) and `all-files` (T-239 — bytes
-ingested into the Marfa blob store and stamped as `blob_ref` on
-`core.file` items). `glob:<pattern>` is declared but still falls
-through to `metadata` semantics pending a separate follow-on.
+(default — file metadata only) and `all-files` (bytes ingested into
+the Marfa blob store and stamped as `blob_ref` on `core.file` items).
+`glob:<pattern>` is declared but still falls through to `metadata`
+semantics pending a separate follow-on.
 
 ## Identity
 
@@ -37,8 +37,7 @@ created by this app) or `drive` (full Drive access).
   channel per Connection. Renewal cron runs inside the schedule
   trigger — zero-downtime ordering (create new channel first, then
   stop old). Same shape as Calendar's `events/watch` pattern; the
-  `google-channel` webhook adapter from T-231 PR4 verifies the
-  channel token.
+  `google-channel` webhook adapter verifies the channel token.
 - **Initial sync via `files.list`** — paginated under
   `q=trashed=false`. Capped at 50 pages × 100 = 5000 files on first
   connect to keep the seed bounded; production deployments would
@@ -125,10 +124,9 @@ Two modes, picked via `connection.properties.configuration.download_mode`:
   configured ceiling, the handler proxies
   `GET /drive/v3/files/{id}?alt=media` to download the bytes,
   buffers them in the Worker, then calls
-  `ctx.marfa.uploadBlob({ content, mime_type })` (T-239). On
-  success the item lands as `core.file` with
-  `properties.blob_ref = sha256:<hex>` — a real, retrievable
-  blob ref.
+  `ctx.marfa.uploadBlob({ content, mime_type })`. On success the
+  item lands as `core.file` with `properties.blob_ref = sha256:<hex>`
+  — a real, retrievable blob ref.
 
 **Programmatic invariant** consumers can rely on:
 `typeof item.properties.blob_ref === "string"` ⇔ bytes are

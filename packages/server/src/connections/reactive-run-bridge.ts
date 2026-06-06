@@ -1,49 +1,40 @@
 /**
  * Reactive-run bridge — drains the in-process item-event stream and
  * forwards each event to the Cloudflare Queues HTTP producer endpoint
- * (Layer 1 default transport for the hosted runtime).
+ * (the default transport for the hosted runtime).
  *
- * SELF-HOSTER SWAP POINT: Layer 2 (install pipeline) is where the
- * bridge transport becomes pluggable for self-hosters who don't have
- * Cloudflare Queues — Postgres LISTEN/NOTIFY, in-process consumers, or
- * a polling integration runtime are the candidates. Don't add the
- * abstraction now; just file the comment so the swap point is obvious.
+ * Self-hosters who don't have Cloudflare Queues can swap the transport
+ * at the bridge layer — Postgres LISTEN/NOTIFY, in-process consumers,
+ * or a polling integration runtime are the candidates.
  *
  * The bridge is OPT-IN: it only runs when both
  * `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` and `CLOUDFLARE_QUEUES_API_TOKEN`
  * are set. Self-hoster instances leave both unset and the bridge is a
  * no-op startup-time function. Server tests skip the bridge.
  *
- * T-233 — per-integration reactive-run queues. Each integration that
- * declares an `item-event` trigger has its own producer URL; the
- * bridge resolves `integration_name` → URL at fanout time. The prior
- * shared-queue `CLOUDFLARE_QUEUES_REACTIVE_RUN_URL` shape couldn't
- * coexist with more than one outbound integration because Cloudflare
- * Queues only allow one consumer per queue — the runtime-sdk's
- * queue-consumer filter silently acked + dropped messages addressed
- * to integrations other than the consumer-claiming Worker. The per-
- * integration shape mirrors the existing scheduled-poll +
- * webhook-receipt families.
+ * Per-integration queues — each integration that declares an
+ * `item-event` trigger has its own producer URL; the bridge resolves
+ * `integration_name` → URL at fanout time. Cloudflare Queues only
+ * allows one consumer per queue — a shared queue silently drops
+ * messages addressed to any integration other than the
+ * consumer-claiming Worker. The per-integration shape mirrors the
+ * existing scheduled-poll + webhook-receipt families.
  *
- * Concurrency: a single worker drains the subscription and posts to
- * Cloudflare Queues. The bridge is gated by
- * `coordination.withJobLock("reactive-run-bridge", ...)` so multi-
- * instance deployments only run one drainer.
+ * Concurrency: the bridge is gated by
+ * `coordination.withJobLock("reactive-run-bridge", ...)` so
+ * multi-instance deployments only run one drainer.
  *
  * Cycle metadata flows through verbatim: the queue message envelope
- * carries `originating_connection_id` and `hop_count` so the integration
- * SDK can refuse to re-publish at budget.
+ * carries `originating_connection_id` and `hop_count` so the
+ * integration SDK can refuse to re-publish at budget.
  *
- * Layer 2 PR 3 — subscription registry. The bridge maintains an
- * in-memory map of `connection_id → { integration_name, ... }` for every
- * `system.connection` of kind `integration` whose
- * Integration manifest declares at least one `item-event` trigger. Each
- * inbound event fans out to one queue message per subscribing connection
- * with `integration_name` populated. Cache invalidation: a separate
- * subscriber listens for `system.connection` lifecycle events
- * (created/updated/deleted) and refreshes the affected entry. The
- * existing pubsub publishes these for every `items.create` /
- * `items.update` / `items.delete` so no new emission is needed.
+ * Subscription registry — the bridge maintains an in-memory map of
+ * `connection_id → { integration_name, ... }` for every
+ * `system.connection` of kind `integration` whose manifest declares at
+ * least one `item-event` trigger. Each inbound event fans out to one
+ * queue message per subscribing connection. Cache invalidation: a
+ * separate subscriber listens for `system.connection` lifecycle events
+ * (created/updated/deleted) and refreshes the affected entry.
  */
 import { Pool } from "undici";
 import { publish, subscribe, type ItemEventWithId } from "../pubsub.js";
@@ -57,16 +48,16 @@ import {
 } from "./envelope.js";
 
 /**
- * T-171 — Per-subscriber failure tracking thresholds.
+ * Per-subscriber failure tracking thresholds.
  *
- * Two layers compose:
- *   - Layer 1 (in-memory cooldown): absorb transient blips. A subscriber
- *     that fails `COOLDOWN_THRESHOLD` consecutive event-loops (each loop
- *     is up to `maxAttempts` network retries) enters a `COOLDOWN_MS`
- *     quiet window during which the bridge skips dispatch silently.
- *     Reset on the next successful (2xx) publish. Cap stops indefinite
- *     extension if events keep firing.
- *   - Layer 2 (persistent terminal state): a subscriber that fails
+ * Two stages compose:
+ *   - In-memory cooldown: absorbs transient blips. A subscriber that
+ *     fails `COOLDOWN_THRESHOLD` consecutive event-loops (each loop is
+ *     up to `maxAttempts` network retries) enters a `COOLDOWN_MS` quiet
+ *     window during which the bridge skips dispatch silently. Reset on
+ *     the next successful (2xx) publish. Cap stops indefinite extension
+ *     if events keep firing.
+ *   - Persistent terminal state: a subscriber that fails
  *     `ESCALATION_THRESHOLD` consecutive event-loops gets its underlying
  *     `system.connection` item flipped to `runtime_status: "failing"`,
  *     and a `system.activity` row of severity `action_required` is
@@ -76,7 +67,7 @@ import {
  *
  * Counts are event-loops, not network attempts — one count represents
  * one full `sendOne` retry exhaustion (5 attempts + exponential backoff)
- * or one immediate 4xx rejection (T-171 treats both as failures).
+ * or one immediate 4xx rejection (both treated as failures).
  */
 const COOLDOWN_THRESHOLD = 3;
 const ESCALATION_THRESHOLD = 10;
@@ -102,7 +93,7 @@ type SendOneResult = "success" | "rejected";
 
 export interface BridgeConfig {
   /**
-   * T-233 — resolves the Cloudflare Queues producer URL for a given
+   * Resolves the Cloudflare Queues producer URL for a given
    * `integration_name`. The bridge calls this for every fanout target.
    *
    * Return `null` for an unmapped integration — the bridge logs an
@@ -124,34 +115,35 @@ export interface BridgeConfig {
   maxAttempts?: number;
   /**
    * Per-fetch timeout in milliseconds for the queue producer call. A slow
-   * Cloudflare Queues endpoint would otherwise stall the bridge while
-   * fanning out (T-013). Production wires this from
-   * `AppConfig.reactiveRunSendTimeoutMs` (env `MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS`);
-   * unset falls back to `DEFAULT_SEND_TIMEOUT_MS`. On timeout the failure
-   * is logged and surfaced as `system.activity` of severity error, then
-   * fanout continues to the next subscriber.
+   * Cloudflare Queues endpoint would otherwise stall the bridge during
+   * fanout. Production wires this from
+   * `AppConfig.reactiveRunSendTimeoutMs` (env
+   * `MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS`); unset falls back to
+   * `DEFAULT_SEND_TIMEOUT_MS`. On timeout the failure is logged and
+   * surfaced as `system.activity` of severity error, then fanout
+   * continues to the next subscriber.
    */
   sendTimeoutMs?: number;
   /**
-   * T-171 — consecutive `sendOne` rejections before the in-memory
-   * cooldown gate arms. Each `consecutiveFailures` tick represents one
-   * exhausted retry loop (or one immediate 4xx). Default 3.
+   * Consecutive `sendOne` rejections before the in-memory cooldown gate
+   * arms. Each tick represents one exhausted retry loop (or one
+   * immediate 4xx). Default 3.
    */
   failureCooldownThreshold?: number;
   /**
-   * T-171 — consecutive `sendOne` rejections before the underlying
+   * Consecutive `sendOne` rejections before the underlying
    * `system.connection` item is flipped to `runtime_status: "failing"`
    * and a `system.activity action_required` row is emitted. Default 10.
    */
   failureEscalationThreshold?: number;
   /**
-   * T-171 — cooldown window (ms) the bridge skips dispatch after a
-   * subscriber crosses `failureCooldownThreshold`. Default 60_000.
+   * Cooldown window (ms) the bridge skips dispatch after a subscriber
+   * crosses `failureCooldownThreshold`. Default 60_000.
    */
   failureCooldownMs?: number;
   /**
-   * T-171 — upper bound (ms from now) on cooldown extension when failures
-   * keep arriving. Each new failure extends the window; this caps total
+   * Upper bound (ms from now) on cooldown extension when failures keep
+   * arriving. Each new failure extends the window; this caps total
    * extension so a busy event stream can't push cooldown arbitrarily far
    * into the future. Default 5 minutes.
    */
@@ -208,8 +200,8 @@ export function tryStartReactiveRunBridge(
 }
 
 /**
- * T-233 — read `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` and build a
- * resolver from it. JSON map: `{ "integration.name": "https://..." }`.
+ * Read `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` and build a resolver from
+ * it. JSON map: `{ "integration.name": "https://..." }`.
  *
  * Returns null when:
  *   - The env var is unset or empty string (self-hoster path).
@@ -271,12 +263,9 @@ const SUBSCRIPTION_LOAD_PAGE_SIZE = 200;
  * Walk every system.connection item and build the initial subscription
  * map. Called at bridge startup.
  *
- * T-013: paginate via the storage cursor until exhausted. The previous
- * single-page read silently dropped any tenant's 201st+ connection from
- * fanout — the comment claimed it was "bounded ... low-cardinality even
- * at scale" but this was a soft 200-cap with no warning, no metric, no
- * log. Now we walk every page and emit a per-tenant subscription count
- * at startup so an operator can see what loaded.
+ * Paginates via the storage cursor until exhausted so no connections
+ * are silently dropped from fanout. Emits a subscription count at
+ * startup so an operator can see what loaded.
  */
 async function loadSubscriptions(
   storage: Storage,
@@ -315,16 +304,15 @@ async function loadSubscriptions(
 
 function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
   const fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
-  // T-135 + T-233: bounded keep-alive Pool per queue ORIGIN. Per-
-  // integration queue URLs may live at different origins, so the map is
-  // keyed by `new URL(url).origin`. In practice every Cloudflare
-  // queue for a given account shares the same `api.cloudflare.com`
-  // origin so the map usually has one entry, but the shape supports
-  // multi-origin without changes. Lazy creation: first send to a new
-  // origin spawns its Pool; stop() closes them all.
+  // Bounded keep-alive Pool per queue ORIGIN. Per-integration queue URLs
+  // may live at different origins, so the map is keyed by
+  // `new URL(url).origin`. In practice every Cloudflare queue for a
+  // given account shares the same `api.cloudflare.com` origin so the
+  // map usually has one entry, but the shape supports multi-origin
+  // without changes. Lazy creation: first send to a new origin spawns
+  // its Pool; stop() closes them all.
   //
-  // When config.fetch is injected (test path), bypass Pool entirely so
-  // existing tests keep working with their mocked fetch.
+  // When config.fetch is injected (test path), bypass Pool entirely.
   const pools: Map<string, Pool> | null = config.fetch ? null : new Map();
   const ensurePool = (origin: string): Pool | null => {
     if (!pools) return null;
@@ -339,18 +327,17 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
     pools.set(origin, pool);
     return pool;
   };
-  // T-233 — dedup set for "no queue URL mapped for this integration"
-  // operator-visible activity rows. Without this the bridge would emit
-  // one row per fanout event for a misconfigured integration, drowning
-  // the action_required surface. Reset only on process restart;
-  // operators are expected to flip the env var, restart, and pick up
-  // the new mapping (env-config gaps don't hot-reload).
+  // Dedup set for "no queue URL mapped for this integration" activity
+  // rows. Without this the bridge would emit one row per fanout event
+  // for a misconfigured integration, flooding the action_required
+  // surface. Reset only on process restart; operators are expected to
+  // flip the env var, restart, and pick up the new mapping.
   const unmappedIntegrationsReported = new Set<string>();
   const subscriptions = new Map<string, SubscriptionEntry>();
-  // T-171: per-subscriber failure tracking. Lives alongside subscriptions
-  // and shares its lifecycle — entries are cleaned up when a subscription
-  // is dropped (cache invalidation), reset on a successful (2xx) publish,
-  // and increment + cooldown + escalate on `sendOne` rejection.
+  // Per-subscriber failure tracking. Lives alongside subscriptions and
+  // shares its lifecycle — entries are cleaned up when a subscription
+  // is dropped (cache invalidation), reset on a successful (2xx)
+  // publish, and increment + cooldown + escalate on `sendOne` rejection.
   const subscriberFailures = new Map<string, SubscriberFailureState>();
   let running = false;
   let stopRequested = false;
@@ -387,8 +374,8 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
       tenant_id: item.tenant_id ?? null,
     });
     if (entry) {
-      // T-171: when a subscriber re-enters the registry (e.g. operator
-      // flips runtime_status off "failing"), clear any stale failure
+      // When a subscriber re-enters the registry (e.g. an operator
+      // clears runtime_status off "failing"), clear any stale failure
       // bookkeeping so dispatch starts fresh.
       subscriberFailures.delete(connectionId);
       subscriptions.set(connectionId, entry);
@@ -556,24 +543,23 @@ function createBridge(storage: Storage, config: BridgeConfig): BridgeRuntime {
  * events it produced (cycle prevention is upstream via hop_count, but
  * this is the cheaper, earlier check).
  *
- * Tenant scoping (T-042): enforced at the bridge layer. Each subscription
- * entry carries its connection's `tenant_id`; the fanout loop drops events
+ * Tenant scoping: enforced at the bridge layer. Each subscription entry
+ * carries its connection's `tenant_id`; the fanout loop drops events
  * whose `event.tenantId` doesn't match the subscriber's tenant. The
  * downstream Worker still authenticates with a per-Connection runtime
- * credential, so the API permission gate remains as the inner backstop —
- * and cross-tenant work doesn't pay the queue / Worker cost. Single-
- * tenant self-hosted: every connection and event are tenantless (null),
- * the gate trivially passes (null === null).
+ * credential, so the API permission gate remains as the inner backstop
+ * — and cross-tenant work doesn't pay the queue / Worker cost.
+ * Single-tenant self-hosted: every connection and event are tenantless
+ * (null), the gate trivially passes (null === null).
  *
- * T-036 (parallel fanout): subscribers receive concurrently via
+ * Parallel fanout: subscribers receive concurrently via
  * `Promise.allSettled`. A sequential `await` per subscriber would let
- * a slow / wedged subscriber whose 5s per-fetch timeout (T-013) is
- * firing impose that latency on every other subscriber behind it.
- * Parallel dispatch decouples subscribers; per-subscriber retry,
- * timeout, and error-isolation paths from T-013 apply inside each task. At very high
- * subscriber counts (a few hundred per tenant) we'd want bounded
- * concurrency to avoid overwhelming Cloudflare Queues; that's a
- * separate optimisation worth filing if/when needed.
+ * a slow / wedged subscriber impose its full per-fetch timeout latency
+ * on every other subscriber behind it. Parallel dispatch decouples
+ * subscribers; per-subscriber retry, timeout, and error-isolation paths
+ * apply inside each task. At very high subscriber counts (a few hundred
+ * per tenant) we'd want bounded concurrency to avoid overwhelming
+ * Cloudflare Queues; that's a separate optimisation.
  */
 async function fanoutEvent(
   event: ItemEventWithId,
@@ -593,11 +579,11 @@ async function fanoutEvent(
     // with `POST /connections/preview-event` via the `evaluateDispatch`
     // helper — same code, same semantics, two callers.
     if (!evaluateDispatch(event, entry).would_dispatch) continue;
-    // T-171 Layer 1 — cooldown gate. A subscriber currently in cooldown
-    // is skipped silently for this event (no `sendOne`, no log line, no
+    // Cooldown gate. A subscriber currently in cooldown is skipped
+    // silently for this event (no `sendOne`, no log line, no
     // system.activity). Absorbs transient blips without polluting stderr
     // or filling the audit trail with retry storms. The next event past
-    // `cooldownUntil` retries the subscriber; the failure state is
+    // `cooldownUntil` retries the subscriber; failure state is
     // preserved so a still-broken subscriber escalates further.
     const failureState = subscriberFailures.get(entry.connection_id);
     if (
@@ -606,13 +592,12 @@ async function fanoutEvent(
     ) {
       continue;
     }
-    // T-233 — resolve the per-integration queue URL. An unmapped
-    // integration is an env-config gap on the server, not a connection
-    // health issue: log error, emit a one-time `action_required`
-    // activity row per integration per process lifetime, skip dispatch
-    // for this event. Subscriber failure ladder is intentionally NOT
-    // incremented — the connection is fine; the operator just hasn't
-    // pointed the bridge at this integration's queue yet.
+    // Resolve the per-integration queue URL. An unmapped integration is
+    // an env-config gap on the server, not a connection health issue:
+    // log error, emit a one-time `action_required` activity row per
+    // integration per process lifetime, skip dispatch for this event.
+    // Subscriber failure ladder is intentionally NOT incremented — the
+    // connection is fine; the env-var just hasn't been set yet.
     const queueUrl = config.resolveQueueUrl(entry.integration_name);
     if (queueUrl === null) {
       await handleUnmappedIntegration(
@@ -624,17 +609,17 @@ async function fanoutEvent(
       continue;
     }
     const body = buildQueueMessageBody(event, entry);
-    // T-013: each subscriber's send is wrapped in a per-fetch timeout
-    // and an isolated try/catch. A slow / wedged Cloudflare Queues
-    // endpoint for one subscriber doesn't break the rest. T-036:
-    // each task is launched immediately so subscribers fan out in
-    // parallel; allSettled below waits for every one.
+    // Each subscriber's send is wrapped in a per-fetch timeout and an
+    // isolated try/catch. A slow / wedged Cloudflare Queues endpoint
+    // for one subscriber doesn't break the rest. Each task is launched
+    // immediately so subscribers fan out in parallel; allSettled below
+    // waits for every one.
     const task = sendOne(body, queueUrl, config, fetchImpl, ensurePool).then(
       (result) => {
         if (result === "success") {
-          // T-171: a successful publish resets the failure ladder. The
-          // next failure starts at 1 again rather than picking up from
-          // wherever we'd accumulated to.
+          // A successful publish resets the failure ladder. The next
+          // failure starts at 1 rather than picking up from the
+          // accumulated count.
           subscriberFailures.delete(entry.connection_id);
         }
         // 4xx rejections (`result === "rejected"`) intentionally leave
@@ -662,14 +647,12 @@ async function fanoutEvent(
 }
 
 /**
- * T-233 — handle a fanout target whose integration has no queue URL
- * mapped in the bridge's resolver. Logged loudly every time (the bug
- * matters); the operator-visible `system.activity` row is deduped per
- * integration per process lifetime so a misconfigured integration
- * doesn't drown the action_required surface.
- *
- * Best-effort throughout; the bridge must never crash on an env-config
- * gap.
+ * Handle a fanout target whose integration has no queue URL mapped in
+ * the bridge's resolver. Logged loudly every time; the operator-visible
+ * `system.activity` row is deduped per integration per process lifetime
+ * so a misconfigured integration doesn't flood the action_required
+ * surface. Best-effort throughout; the bridge must never crash on an
+ * env-config gap.
  */
 async function handleUnmappedIntegration(
   entry: SubscriptionEntry,
@@ -706,13 +689,12 @@ async function handleUnmappedIntegration(
 }
 
 /**
- * T-171 — handle a `sendOne` rejection: log, surface to operators via
- * `system.activity`, increment the in-memory counter, arm cooldown at
- * `COOLDOWN_THRESHOLD`, escalate to persistent `runtime_status: failing`
- * at `ESCALATION_THRESHOLD`.
- *
- * Best-effort throughout: a follow-up storage write that fails must
- * never crash the drainer.
+ * Handle a `sendOne` rejection: log, surface to operators via
+ * `system.activity`, increment the in-memory failure counter, arm
+ * cooldown at `COOLDOWN_THRESHOLD`, escalate to persistent
+ * `runtime_status: failing` at `ESCALATION_THRESHOLD`. Best-effort
+ * throughout: a follow-up storage write that fails must never crash
+ * the drainer.
  */
 async function handleSubscriberFailure(
   entry: SubscriptionEntry,
@@ -751,7 +733,7 @@ async function handleSubscriberFailure(
     // Don't crash the drainer over a follow-up activity write.
   }
 
-  // T-171 failure-ladder bookkeeping.
+  // Failure-ladder bookkeeping.
   const cooldownThreshold =
     config.failureCooldownThreshold ?? COOLDOWN_THRESHOLD;
   const escalationThreshold =
@@ -776,12 +758,12 @@ async function handleSubscriberFailure(
     cooldownUntil,
   });
 
-  // T-171 Layer 2 — persistent escalation. Once we cross the
-  // escalation threshold of consecutive event-loop failures, flip the
-  // underlying connection item to `runtime_status: failing` and emit a
-  // single action_required activity row. `buildEntryForConnection` then
-  // drops the subscriber from the registry on the next refresh; recovery
-  // requires an operator to clear the field.
+  // Persistent escalation. Once we cross the escalation threshold of
+  // consecutive event-loop failures, flip the underlying connection item
+  // to `runtime_status: failing` and emit a single action_required
+  // activity row. `buildEntryForConnection` then drops the subscriber
+  // from the registry on the next refresh; recovery requires an
+  // operator to clear the field.
   if (consecutiveFailures === escalationThreshold) {
     await markSubscriberFailing(
       storage,
@@ -880,11 +862,11 @@ async function sendOne(
   const maxAttempts = config.maxAttempts ?? 5;
   const timeoutMs = config.sendTimeoutMs ?? DEFAULT_SEND_TIMEOUT_MS;
   const url = new URL(queueUrl);
-  // T-233 — Pool is keyed by origin; lazy-create when the bridge first
-  // sends to a previously-unseen origin. Same Pool serves every send
-  // to that origin for the bridge's lifetime; stop() closes them all.
-  // In the test path (config.fetch injected) ensurePool returns null
-  // and we use the direct fetch branch below.
+  // Pool is keyed by origin; lazy-create when the bridge first sends to
+  // a previously-unseen origin. Same Pool serves every send to that
+  // origin for the bridge's lifetime; stop() closes them all. In the
+  // test path (config.fetch injected) ensurePool returns null and we
+  // use the direct fetch branch below.
   const pool = ensurePool(url.origin);
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();

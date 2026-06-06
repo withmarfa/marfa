@@ -29,9 +29,10 @@ export interface QueueMessageBody {
 export interface SubscriptionEntry {
   connection_id: string;
   integration_name: string;
-  /** Tenant scope (T-042). Read from `connection.tenant_id` so callers
-   *  can drop cross-tenant fanout cheaply. Single-tenant self-hosts leave
-   *  this null on every connection — the gate trivially passes. */
+  /** Tenant scope for cross-tenant fanout suppression. Read from
+   *  `connection.tenant_id` so the bridge can drop cross-tenant events
+   *  cheaply. Single-tenant self-hosts leave this null on every
+   *  connection — the gate trivially passes. */
   tenant_id: string | null;
 }
 
@@ -53,16 +54,16 @@ interface ManifestTrigger {
 /**
  * Inspect a connection's manifest and return a SubscriptionEntry when
  * the connection should receive item-event fanout. Returns null when:
- *   - The connection's item-level `state` isn't `active` (T-175 — gate
- *     on the canonical lifecycle field, not just `properties.status`)
+ *   - The connection's item-level `state` isn't `active` (gate on the
+ *     canonical lifecycle field, not just `properties.status`)
  *   - The connection isn't of kind `integration`
  *   - The connection has no integration_ref
  *   - The integration_ref doesn't resolve to a system.integration
  *   - The manifest is invalid (validateManifest rejects it)
  *   - The manifest declares no `item-event` trigger
  *   - The connection's `properties.status` is set and not `active`
- *   - The connection's `properties.runtime_status` is `failing` (T-171 —
- *     subscriber tripped the sustained-failure escalation in the bridge;
+ *   - The connection's `properties.runtime_status` is `failing` (the
+ *     subscriber tripped the bridge's sustained-failure escalation;
  *     dispatch stays gated until an operator clears the field or
  *     transitions it back to a non-failing value)
  */
@@ -75,12 +76,12 @@ export async function buildEntryForConnection(
     tenant_id?: string | null;
   },
 ): Promise<SubscriptionEntry | null> {
-  // T-175: item-level state gate. Both layers must hold —
-  // `state === "active"` (canonical lifecycle) AND `properties.status`
-  // either unset or `active` (application-layer runtime status).
-  // Checking only the latter would let a Connection transitioned to
-  // `state: revoked` (via the uninstall pipeline) but retaining
-  // `properties.status: active` keep firing reactive runs.
+  // Both lifecycle layers must hold — `state === "active"` (canonical
+  // item lifecycle) AND `properties.status` either unset or `active`
+  // (application-layer runtime status). Checking only the latter would
+  // let a Connection whose item state was transitioned to `revoked`
+  // (via the uninstall pipeline) but whose `properties.status` was left
+  // as `active` keep firing reactive runs.
   if (connection.state !== undefined && connection.state !== "active") {
     return null;
   }

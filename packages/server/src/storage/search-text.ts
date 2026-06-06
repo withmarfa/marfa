@@ -4,10 +4,10 @@ import {
 } from "@withmarfa/shared";
 
 /**
- * The four core search fields. Both dialects index these as named
- * columns (SQLite FTS5) or named contributors to the materialised
- * tsvector (PG). Any of them can be opted out via `searchable: false`
- * on the type's field definition (T-015).
+ * The four core search fields. Both dialects index these as named columns
+ * (SQLite FTS5) or named contributors to the materialised tsvector (PG).
+ * Any of them can be opted out via `searchable: false` on the type's field
+ * definition.
  */
 export const CORE_FTS_FIELDS = [
   "title",
@@ -34,22 +34,22 @@ export interface SearchableText {
 }
 
 /**
- * T-015: dialect-agnostic FTS text extractor. Both `SqliteSearchStore`
- * and `PgSearchStore` consult this so the indexed surface is identical
- * across dialects — same fields, same `searchable: false` opt-outs,
- * same long-tail ordering. The extractor is the single source of truth
- * for "what text contributes to FTS for this item."
+ * Dialect-agnostic FTS text extractor. Both `SqliteSearchStore` and
+ * `PgSearchStore` consult this so the indexed surface is identical across
+ * dialects — same fields, same `searchable: false` opt-outs, same long-tail
+ * ordering. The extractor is the single source of truth for "what text
+ * contributes to FTS for this item."
  *
- * - Core fields (title, body, description, name) are always candidates,
- *   but a type may opt any of them out via `searchable: false` on its
- *   field definition. The opt-out flag defaults to `true` for backward
- *   compat — existing types with no flag are unchanged.
- * - The `extra` slot collects every string field that isn't a core
- *   field and isn't `searchable: false`. Field ordering follows the
- *   `getSearchableStringFields` registry traversal so PG and SQLite
- *   indices stay byte-identical for the same input.
- * - Non-string property values are silently ignored (the store layer
- *   handles validation; FTS is opportunistic).
+ * - Core fields (title, body, description, name) are always candidates, but
+ *   a type may opt any of them out via `searchable: false` on its field
+ *   definition. The opt-out flag defaults to `true` — existing types with no
+ *   flag are unchanged.
+ * - The `extra` slot collects every string field that isn't a core field and
+ *   isn't `searchable: false`. Field ordering follows the
+ *   `getSearchableStringFields` registry traversal so PG and SQLite indices
+ *   stay byte-identical for the same input.
+ * - Non-string property values are silently ignored (the store layer handles
+ *   validation; FTS is opportunistic).
  */
 export function extractSearchableText(
   properties: Record<string, unknown>,

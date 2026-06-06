@@ -22,7 +22,7 @@ import {
 } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
-// Connection leased tokens (workstream 2 PR 7)
+// Connection leased tokens
 //
 // Issue short-TTL bearer tokens for the four exception cases the OAuth
 // proxy doesn't fit (multipart streaming, WebSocket, SDK lock-in,
@@ -35,10 +35,8 @@ import {
 // is returned ONCE on issue. The validate endpoint hashes a presented
 // bearer to look up the row.
 //
-// WS2 placeholder: the manifest is supplied with each lease request.
-// WS3's runtime install pipeline will store the manifest at install
-// time; the lease route can then read it from storage rather than
-// the request body.
+// The manifest is resolved server-side from the connection's
+// `integration_ref` → `system.integration` item.
 // ---------------------------------------------------------------------------
 
 const LEASE_TTL_DEFAULT_SEC = 900; // 15 min
@@ -50,8 +48,7 @@ function hashLease(raw: string): string {
 
 /**
  * A credential source string that scopes the credential to a specific
- * connection. Two prefixes mint connection-scoped credentials today
- * (T-018):
+ * connection. Two prefixes mint connection-scoped credentials:
  *
  *   - `oauth:<connectionId>` — the synthetic ApiKey constructed by the
  *     auth middleware for an OAuth `marfa_at_*` access token. The token
@@ -105,10 +102,9 @@ async function requireConnectionAccess(
   const isConnector = isConnectionScopedSource(key.source, connectionId);
   // Defence-in-depth: any non-admin / non-connector credential MUST carry
   // a resolved `tenant_id`. Without it, the storage call sites below
-  // treat `undefined` tenantId as cross-tenant (the same fall-through
-  // that T-004 closes upstream). Refuse here so a future caller that
-  // forgets to stamp tenant_id can't quietly bypass scoping on this
-  // route. Runtime credentials and OAuth bearers issued for this
+  // treat `undefined` tenantId as cross-tenant. Refuse here so a future
+  // caller that forgets to stamp tenant_id can't quietly bypass scoping
+  // on this route. Runtime credentials and OAuth bearers issued for this
   // connection are exempt — their `connection_id` / source-prefix
   // binding is its own scope, and self-hosted (single-tenant) deploys
   // legitimately leave `tenant_id` unset on those.
@@ -393,8 +389,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     const body = c.req.valid("json");
 
     // Manifest is resolved server-side from the connection's
-    // `integration_ref` → `system.integration` item. The inline-manifest
-    // fallback was dropped in T-022.
+    // `integration_ref` → `system.integration` item.
     const { manifest } = await resolveConnectionManifest(
       storage,
       connectionId,

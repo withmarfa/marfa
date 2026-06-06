@@ -39,30 +39,28 @@ export interface AppEnv extends Record<string, unknown> {
     config: AppConfig;
     /**
      * Effective client IP for the current request, resolved once via
-     * `getClientIp` and stashed by `clientIpMiddleware` (T-027). Routes
-     * thread this into `audit.log({ client_ip: c.var.clientIp ?? null })`
-     * so every audit row carries the originator's IP. `null` when the
-     * peer cannot be determined (synthetic test contexts) or when the
-     * caller is not behind a Hono request (system-initiated audits go
-     * through the storage layer directly with `client_ip: null`).
+     * `getClientIp` and stashed by `clientIpMiddleware`. Routes thread
+     * this into `audit.log({ client_ip: c.var.clientIp ?? null })` so
+     * every audit row carries the originator's IP. `null` when the peer
+     * cannot be determined (synthetic test contexts) or when the caller
+     * is not behind a Hono request (system-initiated audits go through
+     * the storage layer directly with `client_ip: null`).
      */
     clientIp: string | null;
     /**
-     * Cycle metadata for events published from this request (T-039).
-     * Resolved by `cycleMiddleware` after auth from either the inbound
+     * Cycle metadata for events published from this request. Resolved
+     * by `cycleMiddleware` after auth from either the inbound
      * `X-Marfa-Cycle-Origin` / `X-Marfa-Cycle-Hop` headers (a connector
      * reacting to a parent event — the SDK threads them via
      * `ConnectionClient.request()`) or from the caller's api key when
      * the headers are absent (the chain head).
      *
-     * **T-144 — diagnostic exposure only.** `publish()` and
-     * `publishEdge()` in `pubsub.ts` read the resolved cycle from
-     * `cycleRequestContext` (AsyncLocalStorage) automatically; routes
-     * do NOT thread this through. The `c.var.cycle` binding remains
-     * available for diagnostic reads (preview surfaces, audit
-     * enrichment, the existing `cycle.test.ts` assertion path) and
-     * stays in lockstep with the ALS — `cycleMiddleware` writes both
-     * from the same resolved value.
+     * `publish()` and `publishEdge()` in `pubsub.ts` read the resolved
+     * cycle from `cycleRequestContext` (AsyncLocalStorage) automatically;
+     * routes do NOT thread this through. The `c.var.cycle` binding
+     * remains available for diagnostic reads (preview surfaces, audit
+     * enrichment) and stays in lockstep with the ALS — `cycleMiddleware`
+     * writes both from the same resolved value.
      *
      * **Never `null`.** A human-issued chain head is `{
      * originatingConnectionId: null, hopCount: 0 }` (the explicit
@@ -122,7 +120,7 @@ export function touchLastUsedCache(
 }
 
 // ---------------------------------------------------------------------------
-// OAuth grant `last_used_at` debounce — module-scoped (T-098, T-101)
+// OAuth grant `last_used_at` debounce — module-scoped
 // ---------------------------------------------------------------------------
 
 /**
@@ -132,20 +130,19 @@ export function touchLastUsedCache(
  * through the middleware) can share the same throttle. Keys are
  * `oauth:<connection_item_id>`; values are millisecond timestamps.
  *
- * **First-line short-circuit, not the floor.** T-101 added a DB-side
- * conditional UPDATE in `OAuthStore.updateLastUsedAt`, mirroring the
- * api-key path: the row only writes when the existing
- * `properties.last_used_at` is older than `DEBOUNCE_MS`. That makes
- * the debounce authoritative across instances. This in-memory cache
- * stays to skip a DB round-trip when the calling instance has already
- * stamped inside the window — same role as the api-key middleware's
- * closure-local cache.
+ * **First-line short-circuit, not the floor.** The DB layer uses a
+ * conditional UPDATE in `OAuthStore.updateLastUsedAt`, writing only
+ * when the existing `properties.last_used_at` is older than
+ * `DEBOUNCE_MS`. That makes the debounce authoritative across
+ * instances. This in-memory cache stays to skip a DB round-trip when
+ * the calling instance has already stamped inside the window — same
+ * role as the api-key middleware's closure-local cache.
  */
 const oauthLastUsedCache = new Map<string, number>();
 
 /**
- * T-098: stamp `last_used_at` on the underlying `system.connection`
- * (kind: app) for an OAuth grant. Two-layer debounce (T-101):
+ * Stamp `last_used_at` on the underlying `system.connection`
+ * (kind: app) for an OAuth grant. Two-layer debounce:
  *
  *   1. Module-scoped in-memory cache (`oauthLastUsedCache`) — skips
  *      the DB round-trip when this instance has already stamped
@@ -186,21 +183,20 @@ export async function stampOAuthGrantLastUsed(
 }
 
 /**
- * T-131 follow-on: stamp `last_used_at` keyed by (tenantId, clientId,
- * authUserId) instead of a pre-resolved `connection_item_id`.
+ * Stamp `last_used_at` keyed by (tenantId, clientId, authUserId)
+ * instead of a pre-resolved `connection_item_id`.
  *
- * The bearer middleware (and any future caller without an item id in
- * hand) needs this because the plugin's `auth_oauth_access_token` row
- * doesn't carry a FK to the projected `system.connection`. We resolve
- * the item id on first call inside the debounce window, then call the
- * existing `stampOAuthGrantLastUsed`. Both lookups + stamp share the
- * same `oauthLastUsedCache`, so per-request cost is one cheap Map
- * lookup once the cache is warm.
+ * The bearer middleware needs this because the plugin's
+ * `auth_oauth_access_token` row doesn't carry a FK to the projected
+ * `system.connection`. We resolve the item id on first call inside the
+ * debounce window, then call the existing `stampOAuthGrantLastUsed`.
+ * Both lookups + stamp share the same `oauthLastUsedCache`, so
+ * per-request cost is one cheap Map lookup once the cache is warm.
  *
- * Cache key shape differs from `stampOAuthGrantLastUsed`'s `oauth:<id>`
- * (`oauth-grantkey:<client>:<user>`), so the two keyspaces don't collide
- * but a write through either path correctly skips a second write within
- * the same window.
+ * Cache key shape (`oauth-grantkey:<client>:<user>`) differs from
+ * `stampOAuthGrantLastUsed`'s `oauth:<id>`, so the two keyspaces don't
+ * collide but a write through either path correctly skips a second write
+ * within the same window.
  *
  * Fire-and-forget; failures swallowed.
  */
@@ -327,9 +323,9 @@ export function authMiddleware(storage: Storage, salt: string) {
       const metadataPermissions = scopesToMetadataPermissions(
         oauthToken.scopes,
       );
-      // T-074: OIDC literals (openid / profile / email) project onto a
-      // separate field consumed only by /oauth/userinfo. They never
-      // bleed into type / edge / metadata permission maps.
+      // OIDC literals (openid / profile / email) project onto a separate
+      // field consumed only by /oauth/userinfo. They never bleed into
+      // type / edge / metadata permission maps.
       const oidcScopes = Array.from(scopesToOidcScopes(oauthToken.scopes));
       // Tenant id from the plugin's referenceId column (= our clientReference
       // output, which returns the user's tenant_id at consent time).
@@ -341,12 +337,12 @@ export function authMiddleware(storage: Storage, salt: string) {
       const createdAtIso = oauthToken.createdAtMs
         ? new Date(oauthToken.createdAtMs).toISOString()
         : new Date().toISOString();
-      // T-178: project the underlying user's role onto the synthetic
-      // principal so admin-gated routes (`/keys`, `/admin/*`) work for
+      // Project the underlying user's role onto the synthetic principal
+      // so admin-gated routes (`/keys`, `/admin/*`) work for
       // OAuth-authenticated admins. `is_platform` stays hardcoded false
       // — platform-admin is an operator-tier flag exclusive to API keys
       // with explicit `is_platform: true`; OAuth tokens never claim it.
-      // Falls back to `member` when no Marfa `users` row maps to the
+      // Falls back to `member` when no `users` row maps to the
       // auth_user (an unmapped auth_user, or a token whose user was
       // hard-deleted mid-session).
       let projectedRole: "admin" | "tenant_admin" | "member" = "member";
@@ -372,18 +368,13 @@ export function authMiddleware(storage: Storage, salt: string) {
       });
       c.set("authType", "oauth");
 
-      // T-131 follow-on: stamp `last_used_at` on the projected
-      // `system.connection { kind: app }` row. Resolved on first call
-      // inside the debounce window via `storage.oauthProvider.findGrantItemId`,
-      // then cached by `(clientId, authUserId)` key in
-      // `oauthLastUsedCache` for the rest of the window. Fire-and-forget;
-      // failures are swallowed so stamping never blocks the request.
-      //
-      // The `system.connection` projection lands at consent time (POST
-      // /auth/authorize/decision in routes/auth-consent.ts) and for the
-      // device-flow at /auth/device/consent — every issued token has a
-      // matching projection by the time it's used. If the lookup misses
-      // (e.g. a race), we skip silently.
+      // Stamp `last_used_at` on the projected `system.connection
+      // { kind: app }` row. Resolved on first call inside the debounce
+      // window via `storage.oauthProvider.findGrantItemId`, then cached
+      // by `(clientId, authUserId)` key in `oauthLastUsedCache` for the
+      // rest of the window. Fire-and-forget; failures are swallowed so
+      // stamping never blocks the request. If the lookup misses, we
+      // skip silently.
       if (oauthToken.userId) {
         void stampOAuthGrantLastUsedByGrantKey(storage, {
           tenantId: oauthTenantId,
@@ -468,9 +459,9 @@ export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
 }
 
 /**
- * Tenant-bounded admin gate (T-051). Admits both `admin` (platform admin,
- * full instance authority) and `tenant_admin` (tenant-bounded admin
- * within own `tenant_id`). Used for routes that genuinely belong inside a
+ * Tenant-bounded admin gate. Admits both `admin` (platform admin, full
+ * instance authority) and `tenant_admin` (tenant-bounded admin within
+ * own `tenant_id`). Used for routes that genuinely belong inside a
  * tenant — own keys, webhooks, types, connections, extensions, blobs,
  * export. Routes that need platform authority (system config, cross-tenant
  * ops, platform-credential mint) keep `checkAdmin` / `requireAdmin`.
@@ -485,8 +476,8 @@ export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
  *     `tenant_id` from `key.tenant_id` (the storage layer typically does
  *     this; verify on each callsite).
  *
- * Once T-025 (Postgres RLS) lands, the DB layer enforces this independently
- * — but until then the application layer is the load-bearing fence and
+ * The DB-layer Postgres RLS policies enforce tenant isolation
+ * independently; the application layer is the additional fence and
  * every tenant_admin-accepting route must thread `tenant_id` correctly.
  */
 export function checkTenantAdmin(apiKey: ApiKey | undefined): ApiKey {
@@ -538,16 +529,14 @@ export function checkTypeAccess(
     }
   }
 
-  // T-051 follow-on (Wave B Part 2): tenant_admin is admin-shaped
-  // within its own tenant. The application-layer tenant scoping +
-  // T-025 RLS at the DB layer keep tenant_admin reads/writes
-  // confined to its tenant_id; bypassing type_permissions here gives
-  // it the full type surface within that scope, matching admin's
-  // platform-wide behaviour. A tenant_admin key whose
-  // type_permissions are deliberately tightened (e.g. to delegate
-  // only `core.note`) belongs as `member` with explicit
-  // type_permissions instead — tenant_admin is the "full admin
-  // within tenant" tier.
+  // tenant_admin is admin-shaped within its own tenant. Application-
+  // layer tenant scoping and Postgres RLS at the DB layer keep
+  // tenant_admin reads/writes confined to its tenant_id; bypassing
+  // type_permissions here gives it the full type surface within that
+  // scope, matching admin's platform-wide behaviour. A tenant_admin
+  // key whose type_permissions are deliberately tightened belongs as
+  // `member` with explicit type_permissions instead — tenant_admin is
+  // the "full admin within tenant" tier.
   if (key.role === "admin" || key.role === "tenant_admin") return;
 
   const resolved = resolveTypePermission(type, key.type_permissions);
@@ -618,11 +607,11 @@ export function requireTypeAccess(
 
 /**
  * Enforces a per-edge-type permission check. Admin and tenant_admin
- * keys always pass (tenant_admin is admin-shaped within its tenant
- * — see `checkTypeAccess` for the layered-helper rationale, T-051
- * follow-on / Wave B Part 2). Non-admin keys (member + OAuth-derived
- * synthetic keys) need either the specific edge-type permission or
- * the `*` wildcard at the requested level (write covers read).
+ * keys always pass (tenant_admin is admin-shaped within its tenant —
+ * see `checkTypeAccess` for the layered-helper rationale). Non-admin
+ * keys (member + OAuth-derived synthetic keys) need either the
+ * specific edge-type permission or the `*` wildcard at the requested
+ * level (write covers read).
  *
  * Throws EDGE_PERMISSION_DENIED (403) on failure — the discriminator
  * code lets SDK clients route `forbidden` differently from

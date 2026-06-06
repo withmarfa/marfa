@@ -92,8 +92,8 @@ async function main() {
   // + CLOUDFLARE_QUEUES_API_TOKEN. When unset, returns null and the
   // server boots without the Cloudflare Queues hop (self-hoster path).
   // When set, the bridge subscribes to pubsub and forwards `item-event`s
-  // to the per-integration queue producer (T-233) for fanout to the
-  // owning per-Integration Worker.
+  // to the per-integration queue producer for fanout to the owning
+  // per-Integration Worker.
   const reactiveRunBridge = tryStartReactiveRunBridge(storage, {
     sendTimeoutMs: config.reactiveRunSendTimeoutMs,
   });
@@ -115,14 +115,12 @@ async function main() {
     );
   }
 
-  // T-050 — per-tenant retention fan-out is wired when the storage
-  // backend exposes a `tenants` store (i.e. always, in current
-  // codebase shape). The fan-out lists every tenant once per tick and
-  // runs each cleanup honouring the per-tenant override; a NULL-tenant
-  // sweep at the instance default catches single-tenant self-host
-  // items. Coordination locks are keyed per-tenant so multi-instance
-  // deployments don't double-process. Tests set `storage.tenants`
-  // explicitly for parity; production always has it.
+  // Per-tenant retention fan-out is wired when the storage backend
+  // exposes a `tenants` store (always in production). The fan-out lists
+  // every tenant once per tick and runs each cleanup honouring the
+  // per-tenant override; a NULL-tenant sweep at the instance default
+  // catches single-tenant self-host items. Coordination locks are keyed
+  // per-tenant so multi-instance deployments don't double-process.
   const auditFanout: TenantFanout | undefined = storage.tenants
     ? { tenants: storage.tenants, configField: "audit_retention_days" }
     : undefined;
@@ -216,9 +214,9 @@ async function main() {
   );
   trashPurger.start();
 
-  // T-097: drop expired better-auth `auth_session` rows on a periodic
-  // tick. Gated on the storage adapter exposing `authSessions` (test
-  // contexts that don't wire better-auth skip the job entirely).
+  // Drop expired better-auth `auth_session` rows on a periodic tick.
+  // Gated on the storage adapter exposing `authSessions` — test
+  // contexts that don't wire better-auth skip the job entirely.
   const authSessionCleaner = storage.authSessions
     ? new AuthSessionCleaner(
         storage.authSessions,
@@ -229,9 +227,9 @@ async function main() {
     : undefined;
   authSessionCleaner?.start();
 
-  // T-116: pending-delete purger. Gated on `accountLifecycle` being
-  // wired (production storage always wires it; bare test stubs that
-  // omit it skip the job).
+  // Pending-delete purger. Gated on `accountLifecycle` being wired —
+  // production storage always wires it; bare test stubs that omit it
+  // skip the job.
   const pendingDeletePurger = storage.accountLifecycle
     ? new PendingDeletePurger(
         storage,
@@ -243,11 +241,11 @@ async function main() {
     : undefined;
   pendingDeletePurger?.start();
 
-  // T-026: drop expired `rate_limit_windows` rows on a periodic tick.
-  // Expired rows aren't a correctness risk (the upsert path overwrites
-  // them transparently); the GC just keeps the table bounded across the
-  // long tail of one-shot windows. Cluster-coordinated via the named
-  // lock so multi-instance deployments don't double-process.
+  // Drop expired `rate_limit_windows` rows on a periodic tick. Expired
+  // rows aren't a correctness risk (the upsert path overwrites them
+  // transparently); the GC just keeps the table bounded. Cluster-
+  // coordinated via the named lock so multi-instance deployments don't
+  // double-process.
   const rateLimitCleaner = new RateLimitWindowCleaner(
     storage,
     config.rateLimitCleanupIntervalMs ?? 3_600_000,
@@ -256,13 +254,11 @@ async function main() {
   );
   rateLimitCleaner.start();
 
-  // T-218: in-process worker for async bulk_action jobs + periodic GC
-  // sweep over terminal rows. On PG the worker's `claimNext` uses
+  // In-process worker for async bulk_action jobs + periodic GC sweep
+  // over terminal rows. On PG the worker's `claimNext` uses
   // `SELECT … FOR UPDATE SKIP LOCKED` so multi-instance deployments
   // coordinate naturally; SQLite is single-process by design. The GC
-  // sweep is cluster-coordinated via the standard `withJobLock`
-  // pattern (mirrors the rate-limit cleaner) so two servers don't
-  // double-delete.
+  // sweep is cluster-coordinated via `withJobLock`.
   const bulkActionWorker = new BulkActionWorker({ storage });
   await bulkActionWorker.start();
   const bulkActionGc = new BulkActionJobGcSweeper(
@@ -310,15 +306,14 @@ async function main() {
       : undefined,
   });
 
-  // T-090: OIDC signer (RSA keypair persisted in `settings`). Init at
-  // boot so the JWKS endpoint and id_token issuance can use it
-  // synchronously inside request handlers.
+  // OIDC signer (RSA keypair persisted in `settings`). Init at boot so
+  // the JWKS endpoint and id_token issuance can use it synchronously
+  // inside request handlers.
   const oidcSigner = await OidcSigner.init(storage);
 
-  // T-173 + T-174 — boot the local integrations runtime when
-  // MARFA_INTEGRATION_RUNTIME=local (default). Set the env var to
-  // "hosted" explicitly to delegate to the Cloudflare bridge above
-  // instead.
+  // Boot the local integrations runtime when
+  // MARFA_INTEGRATION_RUNTIME=local (the default). Set the env var to
+  // "hosted" explicitly to delegate to the Cloudflare bridge instead.
   let localRuntime: LocalRuntimeBundle | null = null;
   if ((config.integrationRuntime ?? "local") === "local") {
     try {
@@ -330,7 +325,7 @@ async function main() {
         log(
           "warn",
           "Local integration runtime enabled but no integrations declare `runtime_compatibility: ['local']` and ship dist/local.js. " +
-            "T-174 lands the per-integration entries.",
+            "Set MARFA_INTEGRATION_RUNTIME=hosted to use the Cloudflare substrate instead.",
         );
       }
       const PgBossModule = (await import("pg-boss")) as unknown as {
@@ -403,12 +398,11 @@ async function main() {
     server.close(() => {
       storage
         .close()
-        // T-275: flush + shut down OpenTelemetry before exit so the final
-        // batch of logs/traces isn't lost on the ephemeral hosted container
-        // (scale-to-zero SIGTERM). No-op when OTel is disabled. Accessed via
-        // an inline cast rather than the ambient `declare global` so the
-        // per-entry .d.ts build (which doesn't see instrumentation.ts's
-        // augmentation) stays typed.
+        // Flush + shut down OpenTelemetry before exit so the final batch
+        // of logs/traces isn't lost on the ephemeral hosted container
+        // (scale-to-zero SIGTERM). No-op when OTel is disabled. Accessed
+        // via an inline cast rather than the ambient `declare global` so
+        // the per-entry .d.ts build stays typed.
         .then(() =>
           (
             globalThis as {

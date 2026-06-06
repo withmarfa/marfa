@@ -1,5 +1,5 @@
 /**
- * T-049 — blob storage tenant scoping.
+ * Blob storage tenant scoping.
  *
  * Cross-tenant probes for the same hash bytes return 404 even though the
  * underlying file is shared via content-addressed deduplication. Each
@@ -39,7 +39,7 @@ async function mintTenantAdmin(
   return raw;
 }
 
-describe("blobs — tenant scoping (T-049)", () => {
+describe("blobs — tenant scoping", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();

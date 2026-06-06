@@ -5,7 +5,7 @@ Scripts and templates for the Connections runtime substrate. The runtime stack i
 ## Layout
 
 - `wrangler.control.toml` — control-plane Worker config (`@withmarfa/runtime-control`). One Worker per env: `dev` (default), `staging`, `prod`. Carries `REPLACE_WITH_*` placeholders (account-id var, route hostnames, KV namespace ids) and example domains — fill these in for your own account before deploying. `account_id` itself is intentionally absent; Wrangler reads it from `CLOUDFLARE_ACCOUNT_ID` in the environment.
-- `wrangler.integration.template.toml` — copy this into each `integrations/<name>/` once Layer 3 starts. Defaults to per-env (`dev`/`staging`/`prod`) Worker names that follow `marfa-integration-<name>[-env]`.
+- `wrangler.integration.template.toml` — copy this into each `integrations/<name>/` when adding a new Integration Worker. Defaults to per-env (`dev`/`staging`/`prod`) Worker names that follow `marfa-integration-<name>[-env]`.
 - `provision.ts` — idempotent script that creates Queues, KV namespaces, R2 buckets via the Cloudflare REST API. Run once per env; safe to re-run.
 - `tunnel.config.example.yml` — local-dev tunnel template. Copy to `tunnel.config.yml` (gitignored), fill in tunnel UUID + handle.
 - `cloudflare-api.ts` — thin REST client used by `provision.ts`. No third-party deps.
@@ -36,7 +36,7 @@ Each run creates (idempotent — checks existence first):
 - 1 KV namespace per env: `marfa-control-idempotency-<env>` for the control plane's short-lived idempotency cache.
 - 1 R2 bucket per env: `marfa-runtime-payloads-<env>` for inbound webhook bodies > 256KB.
 
-The script prints resource IDs at the end — paste these into the relevant `wrangler.*.toml` bindings (PR 3 wires the Queues + KV bindings; Layer 2 wires R2).
+The script prints resource IDs at the end — paste these into the relevant `wrangler.*.toml` bindings (Queues + KV + R2).
 
 ## Required secrets
 
@@ -60,7 +60,7 @@ The control plane logs a structured WARN at fetch-handler boot (cold start) if `
 1. `pnpm --filter @withmarfa/runtime-control dev` — boots the control plane on `localhost:8787` via `wrangler dev`.
 2. In a second terminal, `cloudflared tunnel --url http://localhost:8787` — assigns a `*.trycloudflare.com` URL.
 3. Configure the Marfa server's per-Connection `inbound_webhook` row to deliver to the tunnel URL.
-4. Trigger a webhook from the upstream service; the control plane verifies and (eventually — PR 3) enqueues onto the local-mode queue.
+4. Trigger a webhook from the upstream service; the control plane verifies and enqueues onto the local-mode queue.
 
 For a stable hostname, use the named-tunnel flow in `tunnel.config.example.yml`.
 
@@ -72,7 +72,7 @@ Once provisioning has run and bindings are in `wrangler.*.toml`:
 # Control plane
 pnpm --filter @withmarfa/runtime-control deploy --env staging
 
-# A specific integration (Layer 3)
+# A specific integration
 pnpm --filter @withmarfa/integration-<name> deploy --env staging
 ```
 

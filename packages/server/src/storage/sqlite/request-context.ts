@@ -2,16 +2,16 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { DrizzleDb } from "./connection.js";
 
 /**
- * Per-request DB substitution for SQLite transactions (T-071).
+ * Per-request DB substitution for SQLite transactions.
  *
- * The libsql driver (which replaced better-sqlite3) supports genuine async
- * transactions, but only when queries are issued through the transaction
- * object Drizzle hands to the `db.transaction(async (tx) => ...)` callback.
- * Queries issued through the outer `db` while a transaction is in flight
- * land on a *different* connection that doesn't see the in-flight writes
- * (and hits SQLITE_BUSY on writes because the tx connection holds the
- * writer lock). The challenge is threading `tx` to every store method
- * without changing every signature in the storage layer.
+ * The libsql driver supports genuine async transactions, but only when
+ * queries are issued through the transaction object Drizzle hands to the
+ * `db.transaction(async (tx) => ...)` callback. Queries issued through
+ * the outer `db` while a transaction is in flight land on a different
+ * connection that doesn't see the in-flight writes (and hits SQLITE_BUSY
+ * on writes because the tx connection holds the writer lock). The
+ * challenge is threading `tx` to every store method without changing
+ * every signature in the storage layer.
  *
  * This module mirrors the PG version (`storage/pg/request-context.ts`):
  *

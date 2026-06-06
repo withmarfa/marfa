@@ -15,7 +15,7 @@ const KEEPALIVE_INTERVAL_MS = 30_000;
 const REPLAY_BATCH_SIZE = 500;
 
 /**
- * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable T-146
+ * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable
  * session-level RLS on a dedicated pool connection for the lifetime
  * of the SSE stream. Without both set the route runs on the owner
  * connection — used for SQLite, for tenant-less callers (platform
@@ -41,10 +41,10 @@ export function eventRoutes(
     const lastEventId = c.req.header("Last-Event-ID");
     const allowedTypes = computeTypeFilter(apiKey);
 
-    // T-146: dedicated-connection session-level RLS for the stream's
-    // lifetime. Acquired lazily inside `start` so a setup failure
-    // surfaces through the stream (the route still returns 200; the
-    // failure aborts the stream cleanly). Tenant-less callers, SQLite,
+    // Acquire a dedicated pool connection and apply session-level RLS for
+    // the stream's lifetime. Acquired lazily inside `start` so a setup
+    // failure surfaces through the stream (the route still returns 200;
+    // the failure aborts the stream cleanly). Tenant-less callers, SQLite,
     // and the RLS-disabled instance fall back to the owner connection.
     const stream = new ReadableStream({
       async start(controller) {
@@ -94,11 +94,10 @@ export function eventRoutes(
           try {
             controller.enqueue(encoder.encode(data));
           } catch {
-            // T-146: enqueue failed → controller is gone. Drive
-            // cleanup() immediately so the reserved RLS connection
-            // is released rather than waiting for the next pump
-            // tick (which on an idle stream could be indefinite).
-            // `cleanup()` is itself idempotent.
+            // Enqueue failed — controller is gone. Drive cleanup()
+            // immediately so the reserved RLS connection is released
+            // rather than waiting for the next pump tick (which on an
+            // idle stream could be indefinite). `cleanup()` is idempotent.
             cleanup();
           }
         };
@@ -117,12 +116,10 @@ export function eventRoutes(
         const cleanup = () => {
           state.closed = true;
           clearInterval(keepAlive);
-          // T-146: release the RLS-pinned connection on every
-          // termination path. Idempotent — safe to call from multiple
-          // exit points (pump completion, error, abort, terminal
-          // catchup event, server shutdown). The cleanup closure is
-          // the single chokepoint; everything that closes the stream
-          // calls it.
+          // Release the RLS-pinned connection on every termination path.
+          // Idempotent — safe to call from multiple exit points (pump
+          // completion, error, abort, terminal catchup event, server
+          // shutdown). The cleanup closure is the single chokepoint.
           releaseRls();
         };
 
@@ -236,13 +233,11 @@ export function eventRoutes(
           }
           if (afterId !== null) {
             const afterIdResolved = afterId;
-            // T-146: replay reads `storage.eventLog` — RLS-policy-
-            // guarded tables. Install the ALS context so reads flow
-            // through the reserved connection that carries
-            // `marfa.tenant_id` + `marfa_app` role. The live pumps
-            // (`pump` / `pumpEdges`) below don't touch storage —
-            // they read from in-memory pubsub iterators — and so
-            // don't need the ALS scope.
+            // Replay reads from RLS-guarded tables. Install the ALS
+            // context so reads flow through the reserved connection
+            // that carries the tenant_id and the app role. The live
+            // pumps (`pump` / `pumpEdges`) read from in-memory pubsub
+            // iterators and don't need the ALS scope.
             const replay = async () => {
               try {
                 // Detect stale cursors — clients whose `Last-Event-ID`

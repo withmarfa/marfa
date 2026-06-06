@@ -16,7 +16,7 @@ import {
 } from "../crypto/secret-encryption.js";
 
 // ---------------------------------------------------------------------------
-// Connection OAuth proxy (workstream 2 PR 6)
+// Connection OAuth proxy
 //
 // `POST /connections/:id/proxy/*` — let a connector (or a tenant admin)
 // make an outbound HTTP call to an external service through a single
@@ -38,8 +38,6 @@ import {
 // All HTTP verbs route through here — proxies have to be method-agnostic.
 // The OpenAPI spec deliberately omits this route; the upstream's schema
 // is unknown at our layer, so a placeholder doc would be misleading.
-// (Documented in PR 6 description as a WS2 placeholder; WS3's manifest
-// runtime can declare upstream paths and re-introduce a structured spec.)
 // ---------------------------------------------------------------------------
 
 interface OAuthConfig {
@@ -55,7 +53,7 @@ interface OAuthConfig {
  * HTTP Authorization scheme stamped on `kind:api_token` proxy calls.
  * Most modern APIs use `Bearer`; Readwise's REST API requires `Token`;
  * `Basic` is included for upstreams that present the token as a
- * basic-auth password. T-246.
+ * basic-auth password.
  */
 type ApiTokenAuthScheme = "Bearer" | "Token" | "Basic";
 
@@ -76,8 +74,8 @@ type CredentialConfig = OAuthConfig | ApiTokenConfig;
  * Read the upstream + secret config for a Connection.
  *
  * The connection must reference a `system.credential` item via
- * `properties.credential_ref`. Two credential kinds are accepted
- * (T-241), returned as a discriminated union:
+ * `properties.credential_ref`. Two credential kinds are accepted,
+ * returned as a discriminated union:
  *
  *   - **`kind: "oauth_token"`** — `oauth_provider_config` carries the
  *     non-secret OAuth fields (`upstream_base_url`, `oauth_token_url`,
@@ -91,24 +89,17 @@ type CredentialConfig = OAuthConfig | ApiTokenConfig;
  *
  * Both shapes encrypt under the `connectionOauthToken` HKDF domain.
  *
- * The transition-period inline-config fallback (reading
- * `connection.properties.configuration` for plaintext OAuth fields,
- * including the client_secret) was dropped in T-022 once Layer 2
- * migrations had run. The migration script at
- * `src/scripts/deprecated/migrate-oauth-to-credential.ts` is what
- * installed `credential_ref` on every existing connection.
+ * The connection must have a `credential_ref` — all connections
+ * installed via the current pipeline do. Connections without one
+ * are rejected with OAUTH_PROXY_UPSTREAM_INVALID.
  */
 async function readCredentialConfig(
   storage: Storage,
   connection: Item,
 ): Promise<CredentialConfig> {
   // Connection must reference a `system.credential` row via
-  // `properties.credential_ref`. The transition-period inline-config
-  // fallback (reading `properties.configuration` for plaintext OAuth
-  // fields, including the client_secret) was dropped in T-022 — Layer 2
-  // migrations have run and no production caller now depends on it.
-  // The previous fallback was the lingering exposure for plaintext
-  // provider secrets sitting on `system.connection` rows.
+  // `properties.credential_ref`. All connections installed via the
+  // current pipeline have this field; reject anything without it.
   const props = connection.properties as { credential_ref?: string };
   const credentialRef = props.credential_ref;
   if (!credentialRef) {
@@ -117,13 +108,12 @@ async function readCredentialConfig(
       `Connection ${connection.id} has no credential_ref. Install the connection via /integrations/:id/install or move its inline OAuth config to a system.credential item.`,
     );
   }
-  // T-235: thread the connection's tenant into the credential lookup.
-  // The install pipeline at `connections/install-pipeline.ts:166-186`
-  // already validates `credentialRef` is in the caller's tenant before
-  // stamping it onto the connection, so any legitimately-installed
-  // reference IS in the same tenant. The fence here is defence-in-depth
-  // — if a future code path bypasses the install validation, a
-  // malformed reference can't reach into another tenant's credentials.
+  // Thread the connection's tenant into the credential lookup.
+  // The install pipeline already validates `credentialRef` is in the
+  // caller's tenant before stamping it onto the connection, so any
+  // legitimately-installed reference IS in the same tenant. This fence
+  // is defence-in-depth — a malformed reference can't reach into
+  // another tenant's credentials.
   const credential = await storage.items.get(
     credentialRef,
     connection.tenant_id ?? undefined,
@@ -186,7 +176,7 @@ async function readCredentialConfig(
         `Connection ${connection.id}'s credential_ref ${credentialRef} is not a usable kind:api_token — api_token_config.upstream_base_url is missing.`,
       );
     }
-    // T-246: default to `Bearer` when no auth scheme is set, and treat
+    // Default to `Bearer` when no auth scheme is set, and treat
     // anything outside the supported set as Bearer too — a missing or
     // unrecognised scheme falls back rather than 500'ing on a
     // misconfigured credential.
@@ -219,7 +209,7 @@ async function readCredentialConfig(
 }
 
 /**
- * T-254 — resolve the effective upstream base URL for a proxy call.
+ * Resolve the effective upstream base URL for a proxy call.
  *
  * Consults `connection.properties.configuration.upstream_base_url_override`
  * first; falls back to the credential's `upstream_base_url`. Malformed
@@ -551,8 +541,8 @@ async function markReauthRequired(
   connection: Item,
   tenantId: string | undefined,
   reason: string,
-  /** Resolved client IP for the audit trail (T-027). Threaded from the
-   *  route handler that owns the Hono context. */
+  /** Resolved client IP for the audit trail. Threaded from the route
+   *  handler that owns the Hono context. */
   clientIp: string | null,
 ): Promise<void> {
   try {
@@ -580,9 +570,9 @@ async function markReauthRequired(
       });
     }
   } catch (err) {
-    // Best-effort — runtime_status is server-stamped in WS2 so any
-    // failure here is a storage-level fault, not a caller fault.
-    // Surface in audit log so operators can investigate.
+    // Best-effort — runtime_status is server-stamped so any failure
+    // here is a storage-level fault, not a caller fault. Surface in
+    // audit log so operators can investigate.
     void storage.audit.log({
       client_ip: clientIp,
       tenant_id: tenantId ?? null,
@@ -663,9 +653,7 @@ async function requireConnectionProxyAccess(
   //      mint time, so the gate matches on that pair rather than the
   //      free-form source string. Without this widening, every
   //      hosted-substrate integration Worker's `ctx.marfa.proxyRequest`
-  //      call 403s on dispatch — surfaced by T-236's hosted Marfa
-  //      walkthrough (the first integration to drive the proxy under
-  //      a broker-minted credential in production).
+  //      call 403s on dispatch.
   const isConnector =
     key.source === `oauth:${connectionId}` ||
     (key.is_runtime_credential === true && key.connection_id === connectionId);
@@ -735,13 +723,13 @@ export function connectionProxyRoutes(storage: Storage) {
 
     const config = await readCredentialConfig(storage, connection);
 
-    // T-254: per-connection override consulted before the credential's
-    // upstream_base_url. Lets multiple integrations sharing one OAuth
+    // Per-connection upstream_base_url override consulted before the
+    // credential's value. Lets multiple integrations sharing one OAuth
     // credential target different upstream hosts (e.g. google.contacts
     // on people.googleapis.com vs google.calendar/drive/tasks on
     // www.googleapis.com sharing one google.* OAuth provider row).
-    // Per-connection; only tenant-admin can install / configure a
-    // connection, so the trust model is unchanged from
+    // Only tenant-admin can install / configure a connection, so the
+    // trust model is unchanged from
     // POST /credentials/api-token already accepting an arbitrary
     // upstream_base_url.
     const effectiveBaseUrl = resolveUpstreamBaseUrl(connection, config);
@@ -764,11 +752,10 @@ export function connectionProxyRoutes(storage: Storage) {
 
     if (config.kind === "api_token") {
       // -----------------------------------------------------------------
-      // Static-API-token branch (T-241). The bearer is in `config` —
-      // no token row to look up, no refresh primitive. Stamp it
-      // verbatim. On upstream 401, surface 401 + flip the connection
-      // to reauth_required (operator must reinstall with a fresh
-      // token).
+      // Static API-token branch. The bearer is in `config` — no token
+      // row to look up, no refresh primitive. Stamp it verbatim. On
+      // upstream 401, surface 401 + flip the connection to
+      // reauth_required (operator must reinstall with a fresh token).
       // -----------------------------------------------------------------
       outcome = await performUpstreamCall(
         upstreamUrl,

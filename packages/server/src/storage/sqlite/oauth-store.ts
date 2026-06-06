@@ -8,10 +8,10 @@ import type { DrizzleDb } from "./connection.js";
 /**
  * Device-flow state machine + OAuth grant `last_used_at` stamping.
  *
- * T-131 narrowed this store: the OAuth-protocol surfaces (clients /
- * codes / tokens) moved to the @better-auth/oauth-provider plugin
- * tables (`auth_oauth_*`). The device-flow state machine stays here —
- * see `auth/oauth-provider.ts` §Caveats §1 for the rationale.
+ * The OAuth-protocol surfaces (clients / codes / tokens) are owned by
+ * the @better-auth/oauth-provider plugin tables (`auth_oauth_*`). The
+ * device-flow state machine stays here — see `auth/oauth-provider.ts`
+ * §Caveats §1 for the rationale.
  */
 export class SqliteOAuthStore implements OAuthStore {
   constructor(private db: DrizzleDb) {}
@@ -126,15 +126,15 @@ export class SqliteOAuthStore implements OAuthStore {
   }
 
   /**
-   * T-101: DB-side debounce for OAuth-grant `last_used_at`. See the
-   * pg `updateLastUsedAt` docstring — the conditional WHERE makes
+   * DB-side debounce for OAuth-grant `last_used_at`. See the pg
+   * `updateLastUsedAt` docstring — the conditional WHERE makes
    * cluster-wide debounce authoritative; the middleware's in-memory
    * cache stays as the per-instance round-trip skip on top.
    *
-   * SQLite uses `json_set` to merge `last_used_at` into the
-   * `properties` text blob in place, and `json_extract` to read the
-   * existing value for the conditional check. ISO-8601 timestamps
-   * sort correctly as text, so the comparison is a plain `<`.
+   * SQLite uses `json_set` to merge `last_used_at` into the `properties`
+   * text blob in place, and `json_extract` to read the existing value for
+   * the conditional check. ISO-8601 timestamps sort correctly as text,
+   * so the comparison is a plain `<`.
    */
   async updateLastUsedAt(
     connectionItemId: string,

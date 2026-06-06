@@ -18,15 +18,15 @@
  * Resources created:
  *   - Queues:  marfa-webhook-receipt-<env>, marfa-scheduled-poll-<env>,
  *              marfa-reactive-run-<env> (+ -dlq variants)
- *   - Per-integration reactive-run queues (T-233):
+ *   - Per-integration reactive-run queues:
  *              marfa-reactive-run-<integration>-<env> (+ -dlq)
  *              for every integration in REACTIVE_RUN_INTEGRATIONS that
  *              declares an `item-event` trigger.
- *   - Per-integration webhook-receipt queues (T-247):
+ *   - Per-integration webhook-receipt queues:
  *              marfa-webhook-receipt-<integration>-<env> (+ -dlq)
  *              for every integration in WEBHOOK_RECEIVING_INTEGRATIONS
  *              that declares a `webhook` trigger.
- *   - Per-integration scheduled-poll queues (T-240):
+ *   - Per-integration scheduled-poll queues:
  *              marfa-scheduled-poll-<integration>-<env> (+ -dlq)
  *              for every integration in SCHEDULED_POLL_INTEGRATIONS that
  *              declares a `schedule` trigger.
@@ -56,20 +56,19 @@ function isEnv(s: string): s is Env {
  * Each integration declares its triggers; the registry filters into
  * three families consumed below:
  *
- *   - **Reactive-run** (T-233): integrations with `item-event`
- *     trigger get `marfa-reactive-run-<slug>-<env>` (+ DLQ). The
- *     server's `reactive-run-bridge` routes envelopes per
- *     `integration_name` to the matching producer URL.
- *   - **Webhook-receipt** (T-247): integrations with `webhook`
- *     trigger AND a dedicated `webhookQueueBinding` get
- *     `marfa-webhook-receipt-<slug>-<env>` (+ DLQ). Integrations
- *     without the binding stay on the shared queue
- *     (`withmarfa.github-webhooks` today).
- *   - **Scheduled-poll** (T-240): integrations with `schedule`
- *     trigger get `marfa-scheduled-poll-<slug>-<env>` (+ DLQ). The
- *     slug uses `scheduledPollSlugFor()` to honour pre-existing
- *     consumer-side naming conventions (some drop the publisher
- *     prefix, some keep it).
+ *   - **Reactive-run**: integrations with an `item-event` trigger get
+ *     `marfa-reactive-run-<slug>-<env>` (+ DLQ). The server's
+ *     `reactive-run-bridge` routes envelopes per `integration_name` to
+ *     the matching producer URL.
+ *   - **Webhook-receipt**: integrations with a `webhook` trigger AND a
+ *     dedicated `webhookQueueBinding` get
+ *     `marfa-webhook-receipt-<slug>-<env>` (+ DLQ). Integrations without
+ *     the binding stay on the shared queue (`withmarfa.github-webhooks`
+ *     today).
+ *   - **Scheduled-poll**: integrations with a `schedule` trigger get
+ *     `marfa-scheduled-poll-<slug>-<env>` (+ DLQ). The slug uses
+ *     `scheduledPollSlugFor()` to honour per-integration naming
+ *     overrides (some drop the publisher prefix, some keep it).
  *
  * Slug for reactive-run + webhook-receipt mirrors the existing
  * `queueSlug()` helper (`integration_name.replace('.','-')`); for
@@ -117,42 +116,38 @@ async function provisionQueues(
     `marfa-webhook-receipt-${env}-dlq`,
     `marfa-scheduled-poll-${env}`,
     `marfa-scheduled-poll-${env}-dlq`,
-    // The shared `marfa-reactive-run-${env}` (+ DLQ) is the
-    // single-consumer queue. T-233 splits reactive-run per integration;
-    // the shared queue + DLQ stay declared here while the
-    // task-auto-archive connection still drains through it. Once that
-    // drain completes, the shared queue can be removed from this list.
+    // The shared `marfa-reactive-run-${env}` (+ DLQ) is kept while any
+    // connection still drains through the shared queue. Once all
+    // connections have moved to their per-integration queues, this
+    // entry can be removed from this list.
     `marfa-reactive-run-${env}`,
     `marfa-reactive-run-${env}-dlq`,
   ];
-  // T-233 — per-integration reactive-run queues. Each integration with
-  // an `item-event` trigger gets its own queue + DLQ; the server's
-  // bridge routes envelopes per `integration_name` to the matching
-  // queue URL. The integration name's publisher dot is replaced with
-  // a hyphen for the queue slug because Cloudflare Queues reject dot
-  // characters in queue names.
+  // Per-integration reactive-run queues. Each integration with an
+  // `item-event` trigger gets its own queue + DLQ; the server's bridge
+  // routes envelopes per `integration_name` to the matching queue URL.
+  // The integration name's publisher dot is replaced with a hyphen for
+  // the queue slug because Cloudflare Queues reject dot characters.
   for (const integration of REACTIVE_RUN_INTEGRATIONS) {
     const slug = queueSlug(integration.name);
     wanted.push(`marfa-reactive-run-${slug}-${env}`);
     wanted.push(`marfa-reactive-run-${slug}-${env}-dlq`);
   }
-  // T-247 — per-integration webhook-receipt queues. Each integration
-  // with a `webhook` trigger AND a dedicated binding gets its own
-  // queue + DLQ; the control plane's webhook route resolves a
-  // per-integration producer binding and writes verified deliveries
-  // there (single-consumer pattern). Webhook integrations without a
+  // Per-integration webhook-receipt queues. Each integration with a
+  // `webhook` trigger AND a dedicated binding gets its own queue + DLQ;
+  // the control plane's webhook route resolves a per-integration producer
+  // binding and writes verified deliveries there. Integrations without a
   // binding (e.g. github-webhooks today) stay on the shared queue.
   for (const integration of WEBHOOK_RECEIVING_INTEGRATIONS) {
     const slug = queueSlug(integration.name);
     wanted.push(`marfa-webhook-receipt-${slug}-${env}`);
     wanted.push(`marfa-webhook-receipt-${slug}-${env}-dlq`);
   }
-  // T-240 — per-integration scheduled-poll queues. Each integration
-  // with a `schedule` trigger gets its own queue + DLQ; the
-  // integration's own Worker consumes from it on each cron tick. The
-  // slug honours the registry's per-integration `scheduledPollQueueSlug`
-  // override because some consumer wrangler.toml entries dropped the
-  // publisher prefix (see InTreeIntegration JSDoc for the history).
+  // Per-integration scheduled-poll queues. Each integration with a
+  // `schedule` trigger gets its own queue + DLQ; the integration's
+  // Worker consumes from it on each cron tick. The slug uses the
+  // registry's per-integration `scheduledPollQueueSlug` override because
+  // some consumer wrangler.toml entries dropped the publisher prefix.
   for (const integration of SCHEDULED_POLL_INTEGRATIONS) {
     const slug = scheduledPollSlugFor(integration);
     wanted.push(`marfa-scheduled-poll-${slug}-${env}`);
@@ -321,14 +316,13 @@ async function main(): Promise<void> {
   console.log("Done. Resource IDs (for wrangler.*.toml bindings):");
   console.log(JSON.stringify(out, null, 2));
 
-  // T-233 — pre-built CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS map for the
-  // server's env. The server reads this at boot to route reactive item-
-  // event envelopes per `integration_name` (see
-  // packages/server/src/connections/reactive-run-bridge.ts). Operator
-  // pastes the value below into the staging/prod env (Atlas plist, K8s
-  // secret, etc.). One URL per integration; new integrations need an
-  // entry in REACTIVE_RUN_INTEGRATIONS at the top of this script + a
-  // re-run.
+  // Pre-built CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS map for the server's
+  // env. The server reads this at boot to route reactive item-event
+  // envelopes per `integration_name` (see
+  // packages/server/src/connections/reactive-run-bridge.ts). Paste the
+  // value below into the staging/prod env. One URL per integration; new
+  // integrations need an entry in REACTIVE_RUN_INTEGRATIONS at the top
+  // of this script + a re-run.
   const reactiveRunUrls: Record<string, string> = {};
   for (const integration of REACTIVE_RUN_INTEGRATIONS) {
     const queueName = `marfa-reactive-run-${queueSlug(integration.name)}-${env}`;
@@ -339,17 +333,15 @@ async function main(): Promise<void> {
       );
       continue;
     }
-    // Map key is the FULL integration_name (with dot) — that's what
+    // Map key is the full integration_name (with dot) — that's what
     // the server's bridge resolver looks up against the envelope's
-    // `integration_name` field. Queue NAME drops the dot for CF's
-    // naming rule; the URL embeds the queue ID, not the name.
+    // `integration_name` field. The queue name drops the dot to satisfy
+    // Cloudflare's naming rules; the URL embeds the queue ID, not the name.
     reactiveRunUrls[integration.name] =
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/queues/${queueId}/messages`;
   }
   console.log("");
-  console.log(
-    "T-233 — CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS (paste into server env):",
-  );
+  console.log("CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS (paste into server env):");
   console.log(JSON.stringify(reactiveRunUrls));
 }
 

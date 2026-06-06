@@ -1,9 +1,9 @@
 /**
  * Worker-side unit tests for the envelope-builder, signing path, and
- * Service-Binding dispatch shape (T-250). End-to-end (real MIME →
- * real CF Email Routing → real bound Worker) lives in the validation
- * harness at `_local/validate-withmarfa-inbox.ts`; this file covers the
- * pure functions + the dispatch contract.
+ * Service-Binding dispatch shape. End-to-end (real MIME → real CF
+ * Email Routing → real bound Worker) lives in the validation harness
+ * at `_local/validate-withmarfa-inbox.ts`; this file covers the pure
+ * functions + the dispatch contract.
  */
 import { describe, it, expect, vi } from "vitest";
 import workerHandler, { __internals } from "./index.js";
@@ -164,10 +164,10 @@ describe("hmacSha256Hex", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Service-Binding dispatch shape (T-250)
+// Service-Binding dispatch shape
 // ---------------------------------------------------------------------------
 
-describe("email() — Service-Binding dispatch (T-250)", () => {
+describe("email() — Service-Binding dispatch", () => {
   // Build a fake `ForwardableEmailMessage` shaped enough that
   // postal-mime parses the raw stream and the handler reaches the
   // dispatch step.
@@ -192,8 +192,8 @@ describe("email() — Service-Binding dispatch (T-250)", () => {
   const RFC822 = [
     "From: sender@example.com",
     "To: capture@inbox.marfa.so",
-    "Subject: T-250 dispatch smoke",
-    "Message-ID: <t250-smoke@example.com>",
+    "Subject: Service-Binding dispatch smoke",
+    "Message-ID: <sb-dispatch-smoke@example.com>",
     "Date: Sun, 24 May 2026 20:00:00 +0000",
     "Content-Type: text/plain; charset=utf-8",
     "",
@@ -228,15 +228,15 @@ describe("email() — Service-Binding dispatch (T-250)", () => {
     // Headers: signature shape + delivery id from Message-ID
     expect(sent.headers.get("Content-Type")).toBe("application/json");
     expect(sent.headers.get("X-Marfa-Delivery-Id")).toBe(
-      "<t250-smoke@example.com>",
+      "<sb-dispatch-smoke@example.com>",
     );
     expect(sent.headers.get("X-Marfa-Signature")).toMatch(
       /^sha256=[0-9a-f]{64}$/,
     );
     // Body: a parseable envelope with the expected subject
     const body = await sent.json<{ subject: string; message_id: string }>();
-    expect(body.subject).toBe("T-250 dispatch smoke");
-    expect(body.message_id).toBe("<t250-smoke@example.com>");
+    expect(body.subject).toBe("Service-Binding dispatch smoke");
+    expect(body.message_id).toBe("<sb-dispatch-smoke@example.com>");
   });
 
   it("ACKs (returns without throwing) when the binding rejects with a non-2xx", async () => {

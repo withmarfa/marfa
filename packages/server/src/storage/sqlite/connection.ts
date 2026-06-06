@@ -80,8 +80,7 @@ export async function createConnection(sqlitePath: string): Promise<{
 
   // Create tables via raw SQL (idempotent — CREATE TABLE IF NOT EXISTS).
   // SCHEMA_SQL is auto-generated from drizzle/sqlite/ migrations by
-  // scripts/generate-schema-sql.ts; T-145 removed the manual three-place
-  // sync burden (Drizzle schema → migrations → SCHEMA_SQL).
+  // scripts/generate-schema-sql.ts; see that script for details.
   await client.executeMultiple(SCHEMA_SQL);
   // The remaining hand-written block is the FTS5 virtual table — Drizzle
   // Kit cannot express FTS5, so it never appears in any migration and must
@@ -126,10 +125,10 @@ export async function createConnection(sqlitePath: string): Promise<{
   }
 
   // Stamp Drizzle's `__drizzle_migrations` table so a follow-up
-  // `pnpm migrate` against this bootstrapped DB short-circuits as a no-op
-  // (T-014). Without this, migrate replays from 0000 and several DROP /
-  // ALTER migrations error against tables / objects the bootstrap shape
-  // never had. Idempotent — only stamps when the table is empty.
+  // `pnpm migrate` against this bootstrapped DB short-circuits as a no-op.
+  // Without this, migrate replays from 0000 and several DROP / ALTER
+  // migrations error against tables the bootstrap shape never had.
+  // Idempotent — only stamps when the table is empty.
   await stampSqliteDrizzleMigrations(client);
 
   const db = drizzle(client, { schema });

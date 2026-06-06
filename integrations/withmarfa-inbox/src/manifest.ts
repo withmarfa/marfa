@@ -26,7 +26,7 @@
  * (e.g. `capture-<tenant_slug>@inbox.marfa.so`) is a future ticket
  * once Marfa onboards a second tenant.
  *
- * Attachment blob upload is gated on T-239; v1 captures attachment
+ * Attachment blob upload is not yet wired; v1 captures attachment
  * metadata only.
  */
 import type { IntegrationManifest } from "@withmarfa/shared";

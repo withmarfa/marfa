@@ -37,7 +37,7 @@ export const ItemSchema = z.object({
    * Tenant scope. Storage queries are tenant-scoped at the SQL layer, so
    * for ordinary callers this always matches the caller's own tenant. The
    * field is informational; cross-tenant infrastructure (the reactive-run
-   * bridge — T-042) reads this off the row to gate fanout. Mirrors the
+   * bridge) reads this off the row to gate fanout. Mirrors the
    * `Edge.tenant_id` shape.
    */
   tenant_id: z.string().nullable().optional(),

@@ -196,9 +196,6 @@ describe("isValidTypeIdentifier", () => {
   });
 
   it("accepts multi-segment publisher types (publisher.foo.bar)", () => {
-    // The `google.*` integration family needs `google.calendar.event` and
-    // friends. Pre-T-231 this was capped at exactly two segments for
-    // non-reserved roots; cap lifted alongside the Google Calendar build.
     expect(isValidTypeIdentifier("google.calendar.event")).toBe(true);
     expect(isValidTypeIdentifier("google.tasks.task")).toBe(true);
     expect(isValidTypeIdentifier("acme.deeply.nested.type")).toBe(true);

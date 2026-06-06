@@ -10,12 +10,12 @@
 // fail the schema-sql-freshness CI check.
 
 export const SCHEMA_SQL = `
--- T-145: SCHEMA_SQL is auto-generated. The marfa_app role + grants are
+-- SCHEMA_SQL is auto-generated. The marfa_app role + grants are
 -- reconstructed from information_schema because pg_dump --no-privileges
 -- strips them. The role is emitted first (RLS policies reference it);
 -- table grants are emitted after the pg_dump body (tables must exist).
 --
--- T-168: grant the connection user MEMBERSHIP in marfa_app so SET ROLE
+-- The connection user needs MEMBERSHIP in marfa_app so SET ROLE
 -- succeeds during request handling. PG 16+ no longer auto-grants
 -- membership on CREATE ROLE; the creator gets admin option but must
 -- explicitly GRANT for the role to be settable via SET ROLE. The inner
@@ -1446,7 +1446,7 @@ CREATE POLICY versions_tenant_isolation ON public.versions TO marfa_app USING ((
    FROM public.items
   WHERE ((items.id = versions.item_id) AND ((items.tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (items.tenant_id IS NULL))))));
 
--- Table grants on the marfa_app role (T-145; see role block above).
+-- Table grants on the marfa_app role (see role block above).
 -- Schema-qualified (\`public.x\`) so the grants resolve regardless of
 -- search_path — pg_dump emits its CREATE TABLE statements with the
 -- \`public.\` prefix, and grants must match the qualified table for

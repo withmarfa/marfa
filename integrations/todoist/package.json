@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Bidirectional Todoist connector. Schedule trigger polls Todoist's Sync API for incremental task updates; item-event trigger pushes Marfa core.task / todoist.task mutations back via REST + Sync API commands. First instance of the token-credential install seam (T-241 PR1).",
+  "description": "Bidirectional Todoist connector. Schedule trigger polls Todoist's Sync API for incremental task updates; item-event trigger pushes Marfa core.task / todoist.task mutations back via REST + Sync API commands.",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

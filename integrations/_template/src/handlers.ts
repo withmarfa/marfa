@@ -5,7 +5,7 @@
  *
  * No external service calls — by design. This integration's purpose is
  * to exercise the substrate (cursor + activity + connection client)
- * during Layer 1 acceptance.
+ * in isolation.
  */
 import {
   registerScheduleHandler,
@@ -68,15 +68,13 @@ export async function handleItemEvent(
   // Demonstrate cycle metadata propagation. A real integration would
   // refuse to act when the hop count is at the budget.
   //
-  // Cycle-metadata contract (T-037): if your handler ever publishes a
-  // downstream event whose cycle metadata is exposed to a publish API
-  // that takes `originating_connection_id` and `hop_count`, use
+  // When a handler publishes a downstream event that carries cycle
+  // metadata (`originating_connection_id` and `hop_count`), use
   // `nextHopMetadata` from `@withmarfa/runtime-sdk` to compute the
   // metadata. Never roll your own — getting the origin propagation or
-  // the hop_count increment off-by-one breaks cycle prevention. Today
-  // none of the SDK's `ctx.marfa.*` calls accept cycle metadata
-  // directly, so this contract is forward-looking for any future SDK
-  // surface that does.
+  // the hop_count increment off-by-one breaks cycle prevention. The
+  // SDK's `ctx.marfa.*` calls do not yet accept cycle metadata
+  // directly; this contract applies to any future SDK surface that does.
   await ctx.activity.emit({
     severity: "info",
     summary: `Template saw item.${message.event_type} (hop=${String(

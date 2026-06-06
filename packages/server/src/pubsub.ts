@@ -5,8 +5,8 @@ import { cycleRequestContext } from "./cycle-context.js";
 import type { EventLogStore, Storage } from "./storage/interface.js";
 
 /**
- * Cycle-detection metadata carried on every published event (workstream
- * 2 PR 8). The chain is detected through two fields:
+ * Cycle-detection metadata carried on every published event.
+ * The chain is detected through two fields:
  *
  *   - `originatingConnectionId` is set when the chain was kicked off by
  *     a connector (not a human). It propagates verbatim down the chain.
@@ -17,17 +17,16 @@ import type { EventLogStore, Storage } from "./storage/interface.js";
  * Events originating from a human caller MUST resolve to
  * `{ originatingConnectionId: null, hopCount: 0 }`.
  *
- * **T-144 — request-scoped resolution.** Callers don't thread cycle
- * metadata explicitly on every `publish(...)`. `cycleMiddleware` stores
- * the resolved cycle in `cycleRequestContext` at request entry;
- * `publish` and `publishEdge` consult it automatically. The optional
+ * **Request-scoped resolution.** Callers don't thread cycle metadata
+ * explicitly on every `publish(...)`. `cycleMiddleware` stores the
+ * resolved cycle in `cycleRequestContext` at request entry; `publish`
+ * and `publishEdge` consult it automatically. The optional
  * `originatingConnectionId` / `hopCount` fields on event args remain
- * supported as an **explicit override** for the rare server-internal
- * publish that needs to synthesise its own cycle (e.g. assigning a
- * fresh origin to a chain that wasn't connector-driven). If either
- * field is present, the explicit values win; otherwise the ALS is
- * consulted; outside any request (background workers) the resolver
- * falls through to the human sentinel.
+ * supported as an explicit override for the rare server-internal publish
+ * that needs to synthesise its own cycle. If either field is present,
+ * the explicit values win; otherwise the ALS is consulted; outside any
+ * request (background workers) the resolver falls through to the human
+ * sentinel.
  */
 export interface CycleMetadata {
   originatingConnectionId?: string | null;
@@ -35,7 +34,7 @@ export interface CycleMetadata {
 }
 
 /**
- * Resolve the cycle metadata to stamp on an emitted event (T-144).
+ * Resolve the cycle metadata to stamp on an emitted event.
  *
  * Order:
  *
@@ -148,8 +147,8 @@ export function __resetCycleDetectionForTests(): void {
 }
 
 /**
- * Helper for connector reaction handlers (workstream 3 wires this in;
- * exported here so the contract is in one place). Returns the cycle
+ * Helper for connector reaction handlers (exported here so the contract
+ * is in one place). Returns the cycle
  * metadata to stamp on a downstream event when reacting to a parent —
  * propagates `originatingConnectionId` (taking the parent's, or stamping
  * the current connector's if the chain starts here) and increments
@@ -269,7 +268,7 @@ function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
 /**
  * Resolve the per-tenant hop budget without invoking the publish path.
  * Public counterpart to the module-private `getHopBudget` so debug
- * surfaces (T-083 preview-event) can report what the budget would be
+ * surfaces (e.g. preview-event) can report what the budget would be
  * for a tenant. Falls back to `DEFAULT_HOP_BUDGET` in keys-mode (no
  * tenant scope) and when the wiring isn't initialised (tests).
  */
@@ -284,7 +283,7 @@ export async function resolveHopBudget(
  * does, fire the overflow hook and return false so the caller skips
  * persistence + emission. Returns true on the happy path.
  *
- * Attribution by `originatingConnectionId !== null` (T-008) — NOT by
+ * Attribution is by `originatingConnectionId !== null` — NOT by
  * `hopCount`. A misbehaving (or hostile) wire-level publish that ships
  * `hopCount: 0` plus an `originatingConnectionId` set would otherwise
  * short-circuit the budget. The contract per `nextHopMetadata` is

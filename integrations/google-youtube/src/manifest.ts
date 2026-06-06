@@ -41,7 +41,7 @@
  *
  * YouTube Data API is hosted at `https://www.googleapis.com`, same
  * host as Calendar / Tasks / Drive — the shared google.* credential
- * row works without a T-254 per-connection
+ * row works without a per-connection
  * `upstream_base_url_override`.
  */
 import type { IntegrationManifest } from "@withmarfa/shared";

@@ -1,14 +1,12 @@
 /**
- * Freshness test for `infra/cloudflare/wrangler.control.toml` (T-245).
+ * Freshness test for `infra/cloudflare/wrangler.control.toml`.
  *
  * Two invariants pinned here:
  *
  *   1. **Strict TOML parses cleanly.** Wrangler's parser is lenient and
- *      silently accepts duplicate keys inside an array-of-tables entry —
- *      the failure mode that hid the missing `INTEGRATION_GOOGLE_DRIVE`
- *      binding on hosted-staging between T-238 merging and T-245
- *      landing. A strict parser (`smol-toml`) throws on the same input,
- *      so this test fails loud the moment anyone re-introduces the
+ *      silently accepts duplicate keys inside an array-of-tables entry.
+ *      A strict parser (`smol-toml`) throws on the same input, so this
+ *      test fails loud the moment anyone re-introduces the
  *      duplicate-binding bug.
  *
  *   2. **Every dispatch entry has a service binding in both envs.** The
@@ -83,15 +81,15 @@ interface WranglerControlConfig {
 }
 
 /**
- * T-247: per-integration webhook-receipt queue bindings. Each entry
- * has both a `binding` field (matched against `webhooks.ts`'s
- * `resolveWebhookQueueProducer` switch) and an `integration_name`
- * field (the dispatch key the runtime-control route resolves
- * against). The freshness test asserts both halves are in sync:
+ * Per-integration webhook-receipt queue bindings. Each entry has both
+ * a `binding` field (matched against `webhooks.ts`'s
+ * `resolveWebhookQueueProducer`) and an `integration_name` field (the
+ * dispatch key the runtime-control route resolves against). The
+ * freshness test asserts both halves are in sync:
  *   - every binding referenced in the resolver has a producer in
  *     wrangler.control.toml.
- *   - every producer in wrangler.control.toml has a matching switch
- *     case in the resolver.
+ *   - every producer in wrangler.control.toml has a matching case in
+ *     the resolver.
  */
 const WEBHOOK_RECEIPT_PRODUCERS = integrationsWithTrigger("webhook")
   .filter((i) => i.webhookQueueBinding)
@@ -102,14 +100,13 @@ const WEBHOOK_RECEIPT_PRODUCERS = integrationsWithTrigger("webhook")
 
 function loadConfig(): WranglerControlConfig {
   const text = readFileSync(WRANGLER_CONTROL_TOML_PATH, "utf8");
-  // `smol-toml` is strict: duplicate keys inside an array-of-tables
-  // entry throw on parse. The throw is the load-bearing invariant —
-  // any future "Just append my new binding to the last entry" mistake
-  // fails CI loudly.
+  // `smol-toml` throws on duplicate keys inside array-of-tables entries.
+  // The throw is the load-bearing invariant — a "just append to the last
+  // entry" mistake fails CI loudly.
   return parseToml(text) as WranglerControlConfig;
 }
 
-describe("wrangler.control.toml — structural freshness (T-245)", () => {
+describe("wrangler.control.toml — structural freshness", () => {
   it("parses cleanly under a strict TOML parser (no duplicate keys)", () => {
     expect(() => loadConfig()).not.toThrow();
   });
@@ -162,7 +159,7 @@ describe("wrangler.control.toml — structural freshness (T-245)", () => {
     }
   });
 
-  it("declares every per-integration webhook-receipt producer in staging + prod (T-247)", () => {
+  it("declares every per-integration webhook-receipt producer in staging + prod", () => {
     const config = loadConfig();
     for (const env of ["staging", "prod"] as const) {
       const producers = config.env?.[env]?.queues?.producers ?? [];

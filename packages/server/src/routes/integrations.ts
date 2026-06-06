@@ -1,18 +1,17 @@
 /**
- * Integration registry — workstream 3 Layer 2 PR 1.
+ * Integration registry.
  *
  * Persists Integration manifests as `system.integration` items so that:
  *   - `system.connection.integration.integration_ref` resolves
- *     to a stable item id at runtime (replacing WS2's inline-manifest path
- *     in routes/inbound-webhooks.ts and routes/connection-leased-tokens.ts —
- *     PR 2 of Layer 2 swaps those reads to the registry).
+ *     to a stable item id at runtime (replacing the older inline-manifest
+ *     path in routes/inbound-webhooks.ts and routes/connection-leased-tokens.ts).
  *   - The install pipeline (this file's GET/POST /integrations/:id/install)
  *     can mint a connection bound to a specific manifest version.
  *
  * Sibling-per-version model — registering the same manifest_name at a new
  * manifest_version creates a new sibling item rather than mutating the
  * existing one. Connections installed against v1.0 keep pointing at the
- * v1.0 item even after v1.1 lands; upgrade is an explicit Layer 3 concern.
+ * v1.0 item even after v1.1 lands; upgrade is an explicit caller concern.
  *
  * Registration is platform-credential gated (is_platform: true) — the
  * marketplace publisher (or the orchestrator's CLI) is the legitimate

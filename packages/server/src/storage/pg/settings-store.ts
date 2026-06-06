@@ -27,7 +27,7 @@ export class PgSettingsStore implements SettingsStore {
   async claim(key: string, value: string): Promise<boolean> {
     // INSERT ... ON CONFLICT DO NOTHING RETURNING — postgres-js returns the
     // inserted rows, or an empty array on conflict. Atomic claim under
-    // concurrent inserts (T-007).
+    // concurrent inserts.
     const rows = await this.db
       .insert(settings)
       .values({ key, value })

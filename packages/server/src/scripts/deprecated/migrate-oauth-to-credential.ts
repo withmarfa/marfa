@@ -1,5 +1,5 @@
 /**
- * One-shot data migration — Layer 2 PR 4.
+ * One-shot data migration.
  *
  * Walks every `system.connection` of kind `integration`,
  * extracts the OAuth provider config from `properties.configuration`,

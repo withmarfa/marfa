@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Skeleton Integration showing minimal end-to-end runtime-sdk usage. Not a real connector — exists so Layer 3 has a concrete starting point and the substrate can be exercised in isolation.",
+  "description": "Skeleton Integration showing minimal end-to-end runtime-sdk usage. Not a real connector — exists so new integrations have a concrete starting point and the substrate can be exercised in isolation.",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

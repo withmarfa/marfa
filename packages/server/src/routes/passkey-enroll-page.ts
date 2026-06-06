@@ -1,9 +1,9 @@
 /**
  * Passkey enrol page renderer for `/auth/passkey/enroll`.
  *
- * Wave C PR6 / T-034. Server-rendered HTML, uses the shared auth-page
- * layout (PR4). Auth-gated upstream (the route handler redirects to
- * /auth/sign-in when no session cookie is present).
+ * Server-rendered HTML, uses the shared auth-page layout. Auth-gated
+ * upstream (the route handler redirects to /auth/sign-in when no session
+ * cookie is present).
  *
  * The page wires a JS-only "Register passkey" button. Browsers
  * without WebAuthn / not running in a secure context see a fallback

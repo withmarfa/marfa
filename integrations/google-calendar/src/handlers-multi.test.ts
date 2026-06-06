@@ -1,9 +1,8 @@
 /**
  * Multi-calendar + configurable-target-type handler tests.
  *
- * The legacy single-calendar tests live in `handlers.test.ts` and
- * deliberately stay unchanged — they assert the pre-T-231 behaviour the
- * default (no-configuration) connection still produces.
+ * The single-calendar tests live in `handlers.test.ts` and assert the
+ * behaviour a default (no-configuration) connection produces.
  *
  * Coverage here:
  *   - Inbound: schedule with two selected calendars iterates each with
@@ -358,7 +357,7 @@ describe("handleItemEvent — multi-calendar outbound", () => {
     // selected calendar.
     expect(proxyCalls[0]?.method).toBe("POST");
     expect(proxyCalls[0]?.path).toContain("/calendars/primary/events");
-    // Deterministic id stamped onto the payload (T-020 idempotency).
+    // Deterministic id stamped onto the payload for idempotent retries.
     const postBody = proxyCalls[0]?.body as { id?: string };
     expect(typeof postBody.id).toBe("string");
     expect((postBody.id ?? "").length).toBe(64); // SHA-256 hex digest

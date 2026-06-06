@@ -9,13 +9,15 @@ import type {
 import { bulkActionJobs } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
-/** T-218: SQLite implementation of the bulk_action job substrate.
+/**
+ * SQLite implementation of the bulk_action job substrate.
  *
  * SQLite is single-process; there's no `FOR UPDATE SKIP LOCKED`. The
  * worker loop runs in-process inside one Node process, so a plain
  * subquery-bounded UPDATE on the oldest queued row is sufficient to
  * avoid double-claiming. The lone failure mode (process crashes
- * mid-execution) is covered by `recoverStale` on boot — same as PG. */
+ * mid-execution) is covered by `recoverStale` on boot — same as PG.
+ */
 export class SqliteBulkActionJobStore implements BulkActionJobStore {
   constructor(private db: DrizzleDb) {}
 

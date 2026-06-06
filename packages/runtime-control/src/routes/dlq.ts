@@ -10,7 +10,7 @@ import {
 } from "../cf-queues-pull.js";
 
 /**
- * DLQ peek + replay routes (T-084).
+ * DLQ peek + replay routes.
  *
  *   POST /dlq/peek    body: { connection_id, since?, limit? }
  *   POST /dlq/replay  body: { connection_id, message_ids? }
@@ -18,7 +18,7 @@ import {
  * Both require a platform credential. runtime-control has no DB
  * access, so the gate is enforced by forwarding the operator's bearer
  * to the server's `GET /system/connections/:id/dlq-context` endpoint
- * (T-082-style precedent — same pattern as verify.ts).
+ * (same pattern as verify.ts).
  *
  * Substrate: Cloudflare Queues HTTP-pull (`cf-queues-pull.ts`). The
  * runtime-control Worker is not registered as a queue consumer for the
@@ -34,16 +34,16 @@ import {
  * **At-least-once.** Replay is not idempotent across invocations. If
  * an operator passes the same `cf_message_id` twice across two replay
  * calls, and both calls find the message before it's acked, it lands
- * in the main queue twice. Consistent with the ticket's "destructive"
- * framing — the CLI confirmation gate is the operator-side guardrail.
+ * in the main queue twice. The CLI confirmation gate is the
+ * operator-side guardrail.
  *
  * Filtering: server-side, on `body.connection_id`, after the pull.
  * The pull API doesn't filter by message contents. DLQs should be
  * small in practice — if they aren't, paginate (chain pulls) in this
- * handler. Not built today; flagged for a follow-up if load justifies.
+ * handler.
  *
- * Cross-connection peek (admin-style "everything stuck") is out of
- * scope for T-084.
+ * Cross-connection peek (admin-style "everything stuck") is not
+ * currently supported.
  */
 
 interface DlqQueueDescriptor {
@@ -96,13 +96,13 @@ function extractFailureReason(message: PulledMessage): string | null {
   // Best-effort. CF Queues messages don't carry a first-class
   // failure-reason field, so we look in three conventional places:
   //   1. body._failure_reason as a structured object — the runtime-sdk
-  //      consumer wrapper stamps this on permanent failure (T-103).
+  //      consumer wrapper stamps this on permanent failure.
   //      Shape: `{ message, class_name, attempts, failed_at }`. We
   //      flatten to "<class>: <message> (attempts: <n>)" for the
   //      `failure_reason` string field. The full structured shape is
   //      still readable on `body._failure_reason` itself.
-  //   2. body._failure_reason as a string — older convention / external
-  //      producers that stamp a flat string.
+  //   2. body._failure_reason as a string — external producers that
+  //      stamp a flat string.
   //   3. metadata.failure_reason — Cloudflare-native if it ever lands.
   // null when none of the above is present.
   if (message.body && typeof message.body === "object") {

@@ -66,13 +66,13 @@ function isSourceDedupViolation(err: unknown): boolean {
   return false;
 }
 import { detectConflict } from "../conflict.js";
-// T-015: when an items.* method opens a transaction and subsequently
-// calls searchStore.{index,remove}, the searchStore writes need to
-// flow through the same connection as the parent INSERT/UPDATE — or
-// they block on the row lock the parent holds. Installing `tx` in
-// the ALS at the start of the tx callback makes the proxy route the
-// searchStore's `db.execute(...)` through the same tx. Same mechanic
-// as the T-025 RLS middleware uses for inbound requests.
+// When an items.* method opens a transaction and subsequently calls
+// searchStore.{index,remove}, the searchStore writes need to flow through
+// the same connection as the parent INSERT/UPDATE — or they block on the
+// row lock the parent holds. Installing `tx` in the ALS at the start of
+// the tx callback makes the proxy route the searchStore's `db.execute(...)`
+// through the same tx. Same mechanic as the RLS middleware uses for inbound
+// requests.
 import { pgRequestContext } from "./request-context.js";
 import { items, metadata } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -129,9 +129,9 @@ export class PgItemStore implements ItemStore {
     const state = input.state ?? SYSTEM_DEFAULT_STATE;
 
     return await this.db.transaction(async (tx) => {
-      // T-015: install tx in ALS so searchStore.index uses the same
-      // connection. Otherwise the proxy falls through to baseDb and
-      // the search-vector UPDATE blocks on the parent INSERT's lock.
+      // Install tx in ALS so searchStore.index uses the same connection.
+      // Otherwise the proxy falls through to baseDb and the
+      // search-vector UPDATE blocks on the parent INSERT's lock.
       return pgRequestContext.run({ tx }, async () => {
         if (input.source && input.source_id) {
           const dedupConditions = [
@@ -348,8 +348,8 @@ export class PgItemStore implements ItemStore {
     }
 
     if (filters.allowed_types) {
-      // T-045: empty allowed_types means "no readable types" — must filter
-      // to zero rows. See SqliteItemStore.list for the rationale.
+      // Empty allowed_types means "no readable types" — must filter to zero
+      // rows. See SqliteItemStore.list for the rationale.
       if (filters.allowed_types.length === 0) {
         conditions.push(sql`1=0`);
       } else {
@@ -447,7 +447,7 @@ export class PgItemStore implements ItemStore {
     tenantId?: string,
   ): Promise<Item | ConflictResponse> {
     return await this.db.transaction(async (tx) => {
-      // T-015: same tx-context propagation as create() — searchStore.{index,remove}
+      // Same tx-context propagation as create() — searchStore.{index,remove}
       // calls inside this block need the parent tx in ALS.
       return pgRequestContext.run({ tx }, async () => {
         const [row] = await tx
@@ -691,11 +691,11 @@ export class PgItemStore implements ItemStore {
       ).map((row) => row.id);
       if (scopedIds.length === 0) return 0;
 
-      // T-015: search_vector lives on items as a column; the DELETE
-      // below cascades it. No need to call searchStore.remove explicitly
-      // (each call would be a redundant UPDATE and a per-id round-trip).
-      // SQLite's path keeps the explicit remove because items_fts is a
-      // separate FTS5 virtual table — different storage class.
+      // search_vector lives on items as a column; the DELETE below cascades
+      // it. No need to call searchStore.remove explicitly (each call would
+      // be a redundant UPDATE and a per-id round-trip). SQLite's path keeps
+      // the explicit remove because items_fts is a separate FTS5 virtual
+      // table — different storage class.
       await tx.delete(items).where(inArray(items.id, scopedIds));
       return scopedIds.length;
     });
@@ -709,7 +709,7 @@ export class PgItemStore implements ItemStore {
       eq(items.state, "trashed"),
       lt(items.updated_at, beforeDate),
     ];
-    // T-050 — tenantId === null filters to rows where tenant_id IS NULL.
+    // tenantId === null filters to rows where tenant_id IS NULL.
     if (tenantId === null) {
       baseConditions.push(isNull(items.tenant_id));
     } else if (tenantId !== undefined) {
@@ -722,7 +722,7 @@ export class PgItemStore implements ItemStore {
       if (idRows.length === 0) return 0;
 
       const ids = idRows.map((row) => row.id);
-      // T-015: search_vector cascades with the items row — see bulkPurge.
+      // search_vector cascades with the items row — see bulkPurge.
       await tx.delete(items).where(inArray(items.id, ids));
       return ids.length;
     });

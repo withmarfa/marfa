@@ -2,8 +2,7 @@
  * Manifest for the Raindrop inbound integration
  * (`raindrop.bookmarks`).
  *
- * Token-credential consumer of the T-241 PR1 substrate. Uses
- * Raindrop's REST API (`GET /rest/v1/collections`,
+ * Uses Raindrop's REST API (`GET /rest/v1/collections`,
  * `GET /rest/v1/collections/childrens`, `GET /rest/v1/raindrops/0`)
  * as the inbound rail. Outbound is out of scope (`direction: "read"`).
  *

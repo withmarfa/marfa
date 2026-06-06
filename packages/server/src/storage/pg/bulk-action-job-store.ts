@@ -9,7 +9,7 @@ import type {
 import { bulkActionJobs } from "./schema.js";
 import type { PgDb } from "./connection.js";
 
-/** T-218: PG implementation of the bulk_action job substrate.
+/** PG implementation of the bulk_action job substrate.
  *
  * Single-process atomic claim uses `UPDATE … WHERE id IN (SELECT … FOR
  * UPDATE SKIP LOCKED LIMIT 1) RETURNING …` — same pattern as

@@ -1,7 +1,7 @@
 {
   "id": "google.youtube.channel",
   "label": "YouTube Channel",
-  "description": "A YouTube channel — surfaced when the connected user has subscribed to it OR when it owns a liked video / user playlist (T-249). Captures upstream-fidelity channel metadata from the YouTube Data API v3 `channels` resource. `subscribed_at` carries the time the connected user subscribed (when known); for channels that are merely the owner of a liked video this field is absent.",
+  "description": "A YouTube channel — surfaced when the connected user has subscribed to it or when it owns a liked video or user playlist. Captures channel metadata from the YouTube Data API v3 `channels` resource. `subscribed_at` carries the time the connected user subscribed (when known); absent when the channel was surfaced solely as the owner of a liked video or playlist.",
   "version": 1,
   "fields": {
     "channel_id": {

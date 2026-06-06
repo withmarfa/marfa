@@ -11,7 +11,7 @@ let integrationId: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  // T-022: subscriptions resolve the manifest from the connection's
+  // Subscriptions resolve the manifest from the connection's
   // integration_ref → system.integration item. Register one up front so
   // every test connection points at a real id.
   const reg = await request(ctx.app, "POST", "/integrations", {
@@ -138,10 +138,9 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     expect(created.secret_redacted.startsWith("****")).toBe(true);
   });
 
-  it("rejects when the connection has no integration_ref (T-022)", async () => {
-    // Create a connection with NO integration_ref — post-T-022 the
-    // route refuses with MISSING_REQUIRED_FIELD instead of falling
-    // through to the inline manifest path.
+  it("rejects when the connection has no integration_ref", async () => {
+    // Create a connection with NO integration_ref — the route refuses
+    // with MISSING_REQUIRED_FIELD; there is no inline manifest fallback.
     const orphanRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
@@ -168,7 +167,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     expect(body.error.code).toBe("missing_required_field");
   });
 
-  it("rejects when integration_ref doesn't resolve (T-022)", async () => {
+  it("rejects when integration_ref doesn't resolve", async () => {
     const orphanRefId = "0192abcd-ef00-7000-8000-000000000099";
     const connectionId = await createConnection(orphanRefId);
     const res = await request(
@@ -207,9 +206,9 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects the dropped 'custom' verification method at registration time (T-011)", async () => {
-    // Post-T-011 the manifest comes from the registered integration, so
-    // the rejection happens at /integrations registration. Verify that
+  it("rejects the 'custom' verification method at registration time", async () => {
+    // The manifest comes from the registered integration, so the
+    // rejection happens at /integrations registration. Verify that
     // path here so the regression watch stays in this file's scope.
     const res = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
@@ -227,9 +226,6 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     expect(res.status).toBe(400);
   });
 
-  // Layer 2 PR 2: preferred path — connection bound to a real
-  // system.integration item; manifest resolved server-side, body omits
-  // it entirely.
   it("creates a subscription via integration_ref without inline manifest", async () => {
     // 1. Register an Integration via the registry.
     const regRes = await request(ctx.app, "POST", "/integrations", {
@@ -387,7 +383,7 @@ describe("POST /webhooks/inbound/:id (public)", () => {
   it("returns 410 for a disabled subscription", async () => {
     const connectionId = await createConnection();
     const sub = await createSubscription(connectionId);
-    // Disable directly via storage — no PATCH route in WS2.
+    // Disable directly via storage — no PATCH route exposed.
     await ctx.storage.inboundWebhooks.setDisabled(sub.id, true);
 
     const body = '{"x":1}';
@@ -398,7 +394,7 @@ describe("POST /webhooks/inbound/:id (public)", () => {
     expect(res.status).toBe(410);
   });
 
-  it("verified=true row leaves processed_at NULL (WS3 picks up later)", async () => {
+  it("verified=true row leaves processed_at NULL (pending dispatch)", async () => {
     const connectionId = await createConnection();
     const sub = await createSubscription(connectionId);
     const body = '{"event":"x"}';

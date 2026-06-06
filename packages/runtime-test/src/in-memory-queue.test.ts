@@ -25,7 +25,7 @@ describe("createInMemoryQueue", () => {
     expect(q.size()).toBe(1);
   });
 
-  it("drainMessages wraps every payload in a Message<T> envelope (T-043 D1)", async () => {
+  it("drainMessages wraps every payload in a Message<T> envelope", async () => {
     const q = createInMemoryQueue<{ kind: string }>();
     await q.send({ kind: "a" });
     await q.send({ kind: "b" });

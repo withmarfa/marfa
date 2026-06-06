@@ -1,7 +1,7 @@
 /**
- * Wave B Part 2 — tenant_admin completeness pass.
+ * tenant_admin completeness coverage.
  *
- * Coverage for the additions on top of the T-051 base:
+ * Covers:
  *
  *   - `checkTypeAccess` and `computeTypeFilter` admit `tenant_admin`
  *     with the same bypass admin gets — `tenant_admin` is the

@@ -9,7 +9,7 @@
  *     token URLs, client_id, encrypted client_secret, optional default
  *     scope, upstream base URL).
  *
- *   - `POST /credentials/api-token` (T-241) — `kind: "api_token"`.
+ *   - `POST /credentials/api-token` — `kind: "api_token"`.
  *     Carries an upstream service's API base URL + a user-supplied
  *     bearer token. For integrations whose upstream uses a static API
  *     token rather than OAuth (Todoist, Readwise, Raindrop, …). No
@@ -63,7 +63,7 @@ const OAuthProviderCredentialRequestSchema = z.object({
    * `{ access_type: "offline", prompt: "consent" }` for Google to
    * guarantee a `refresh_token` on the code exchange. Merged with
    * (and overridden by) the caller's `extra_params` on the start
-   * route. T-259.
+   * route.
    */
   authorize_extra_params: z
     .record(z.string().max(64), z.string().max(2048))
@@ -78,12 +78,11 @@ const OAuthProviderCredentialResponseSchema = z.object({
  * Auth-header schemes the proxy can stamp on `kind:api_token` calls.
  * Most modern APIs use `Bearer`; Readwise's REST API requires `Token`;
  * `Basic` is included for completeness. Anything more exotic (query
- * params, multi-header schemes) remains a future extension. T-246.
+ * params, multi-header schemes) remains a future extension.
  *
  * No Zod default is applied — the field is genuinely optional on the
- * wire so an omitted body matches the T-241 PR1 credential shape on
- * disk (no `auth_scheme` field). The proxy's read path defaults to
- * `Bearer` when the field is absent.
+ * wire. The proxy's read path defaults to `Bearer` when the field is
+ * absent.
  */
 const ApiTokenAuthSchemeSchema = z.enum(["Bearer", "Token", "Basic"]);
 
@@ -301,9 +300,7 @@ export function credentialRoutes(storage: Storage) {
     );
 
     // Persist `auth_scheme` only when explicitly supplied — a missing
-    // field defaults to `Bearer` at proxy-read time. Keeps the shape
-    // backward-compatible with the api_token credentials minted under
-    // T-241 PR1 (no `auth_scheme` field on disk).
+    // field defaults to `Bearer` at proxy-read time.
     const apiTokenConfig: Record<string, unknown> = {
       upstream_base_url: body.upstream_base_url,
     };

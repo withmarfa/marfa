@@ -1,7 +1,7 @@
 {
   "id": "withmarfa.captured_email",
   "label": "Captured Email",
-  "description": "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Maps onto `core.note` via `compatible_with` so cross-app readers see a title + body without knowing the captured-email shape. Attachment blob upload is gated on T-239; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
+  "description": "An email captured by the withmarfa.inbox integration via Cloudflare Email Routing → Email Worker → webhook. Parsed MIME landed as a structured item. Maps onto `core.note` via `compatible_with` so cross-app readers see a title + body without knowing the captured-email shape. Attachment blob upload is not yet supported; v1 captures attachment metadata (filename, mime_type, size_bytes) only.",
   "version": 1,
   "compatible_with": ["core.note"],
   "fields": {
@@ -56,7 +56,7 @@
     },
     "attachments": {
       "type": "array",
-      "description": "Per-attachment metadata `{ filename, mime_type, size_bytes }`. Actual blob upload is gated on T-239 — v1 captures metadata only. A follow-on ticket wires `blob_ref` once the runtime SDK gains an upload primitive.",
+      "description": "Per-attachment metadata `{ filename, mime_type, size_bytes }`. Blob upload is not yet supported — v1 captures metadata only. `blob_ref` will be wired in a follow-on once the runtime SDK gains an upload primitive.",
       "items_type": "object"
     }
   },

@@ -25,7 +25,7 @@
  *     `blob_ref` absent. The Drive-side checksums (`md5`, `sha256`)
  *     and file id are still captured as independent properties.
  *   - `all-files` — downloadable files get their bytes ingested via
- *     `ctx.marfa.uploadBlob` (T-239). On success the item lands as
+ *     `ctx.marfa.uploadBlob`. On success the item lands as
  *     `core.file` with `properties.blob_ref = sha256:<hex>`.
  *     Google-native types (`application/vnd.google-apps.*`),
  *     files over the configurable size ceiling, and per-file
@@ -94,7 +94,7 @@ interface ChannelState {
 interface ConnectionConfig {
   target_type: string;
   /** `metadata` (default) | `all-files` | `glob:<pattern>`.
-   *  `metadata` and `all-files` are both wired (T-239); `glob:<pattern>`
+   *  `metadata` and `all-files` are both wired; `glob:<pattern>`
    *  is declared but still falls through to `metadata` semantics
    *  pending a separate ticket. Typed as `string` because `glob:`
    *  is open-ended. */
@@ -376,7 +376,7 @@ interface SweepCounts {
 }
 
 /**
- * Per-run breakdown of `all-files` blob-ingest outcomes (T-239).
+ * Per-run breakdown of `all-files` blob-ingest outcomes.
  * - `files_with_blob` — bytes successfully uploaded; item lands as
  *   `core.file` with `properties.blob_ref = sha256:<hex>`.
  * - `skipped_google_native` — Google-native types
@@ -772,7 +772,7 @@ export function registerHandlers(): void {
 
 /**
  * Outcome of attempting to ingest a Drive file's bytes into the
- * Marfa blob store (T-239). Drives both the per-run counters and the
+ * Marfa blob store. Drives both the per-run counters and the
  * `targetType` decision in `buildFileInput` — `core.file` requires
  * a `blob_ref`, so we only emit it on `ingested`; every other
  * outcome routes to `google.drive.file` with `blob_ref` absent.
@@ -977,8 +977,8 @@ function buildFileInput(
     properties.sha256_checksum = file.sha256Checksum;
   if (file.etag !== undefined) properties.etag = file.etag;
 
-  // Type-routing: `blob_ref` means "bytes retrievable from the Marfa
-  // blob store" (T-239). `core.file` requires it; `google.drive.file`
+  // Type-routing: `blob_ref` means bytes are retrievable from the Marfa
+  // blob store. `core.file` requires it; `google.drive.file`
   // accepts it as optional. We emit `core.file` only when bytes were
   // successfully ingested; every other path routes to
   // `google.drive.file` with `blob_ref` absent. The

@@ -629,8 +629,7 @@ async function syncSubscriptions(
   // accepts `alphabetical | relevance | unread`), so we walk every
   // page every sweep. The per-item watermark skip below keeps the
   // upsert work bounded; mapping-based dedup
-  // (`cursor.mappings.channels`) keeps repeated subscriptions cheap
-  // (T-258).
+  // (`cursor.mappings.channels`) keeps repeated subscriptions cheap.
   for (let page = 0; page < MAX_PAGES_PER_SWEEP; page++) {
     const params = new URLSearchParams();
     params.set("part", SUBSCRIPTIONS_PART);
@@ -653,7 +652,7 @@ async function syncSubscriptions(
       // every page and per-item filter (no early-termination
       // short-circuit). Mapping-based dedup below keeps the upsert
       // work bounded; this branch keeps the proxy traffic bounded
-      // too once a sub has been seen once (T-258).
+      // too once a sub has been seen once.
       if (watermark !== null && subscribedAt <= watermark) continue;
       if (highestSubscribedAt === null || subscribedAt > highestSubscribedAt) {
         highestSubscribedAt = subscribedAt;

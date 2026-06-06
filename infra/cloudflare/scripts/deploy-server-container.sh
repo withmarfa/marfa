@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploy the Marfa server Worker front + Container (T-277) by rendering the
+# Deploy the Marfa server Worker front + Container by rendering the
 # templated server-container/wrangler.jsonc against env-specific values and
 # invoking `wrangler deploy`. Mirrors deploy-control.sh's envsubst approach,
 # but the env profile (name, route, vars) is computed here per <staging|prod>

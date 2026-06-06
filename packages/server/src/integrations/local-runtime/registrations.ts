@@ -1,5 +1,5 @@
 /**
- * In-tree integration loader for the local runtime (T-173).
+ * In-tree integration loader for the local runtime.
  *
  * Each integration that opts into the local substrate ships a
  * `local.ts` entry alongside the existing `worker.ts`. The shape is:
@@ -19,11 +19,9 @@
  * worker thread then `await import()`s the same `dist/local.js` on
  * startup so handlers register inside the thread too.
  *
- * T-173 ships the loader machinery without any in-tree opt-ins — the
- * per-integration `local.ts` entries land in T-174. The server boots
- * the substrate with an empty registration list when no integrations
- * have opted in, which is a no-op until T-174 adds entries. This keeps
- * the substrate flippable independently of the integration-side work.
+ * The server boots the substrate with an empty registration list when
+ * no integrations have opted in, which is a no-op. The substrate is
+ * flippable independently of whether any integrations have a local entry.
  */
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";

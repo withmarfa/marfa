@@ -62,12 +62,11 @@ const METADATA_SCOPE_DESCRIPTIONS: Record<string, string> = {
 };
 
 /**
- * **T-074: standard OIDC scope literals.** Surfaced on the consent
- * screen so end-users see what the third-party app is asking for.
- * Mirrors what `/oauth/userinfo` actually returns when each scope is
- * granted. The literal `openid` is the OIDC marker that indicates the
- * client wants an ID token / userinfo lookup at all; `profile` and
- * `email` gate the field set.
+ * Standard OIDC scope literals surfaced on the consent screen so
+ * end-users see what the third-party app is asking for. Mirrors what
+ * `/oauth/userinfo` actually returns when each scope is granted. The
+ * literal `openid` is the OIDC marker that indicates the client wants an
+ * ID token / userinfo lookup; `profile` and `email` gate the field set.
  */
 const OIDC_SCOPE_DESCRIPTIONS: Record<string, string> = {
   openid: "Confirm your identity",
@@ -87,18 +86,15 @@ function sha256(input: string): string {
  * Persist (or refresh) a `kind: app` connection through `ItemStore`. Routes
  * through `ItemStore.create` on first consent and `ItemStore.update` on
  * re-consent so the row gets full ItemStore treatment: `tenant_id`
- * stamping (T-004), search indexing, metadata-row insertion (so subsequent
- * setTags / setExtension actually write), versions snapshot on re-consent,
- * the `created`/`updated` event emission, and `source` / `origin`
- * stamping (T-005). Returns the connection-item id + whether the call
+ * stamping, search indexing, metadata-row insertion, versions snapshot on
+ * re-consent, the `created`/`updated` event emission, and `source` /
+ * `origin` stamping. Returns the connection-item id + whether the call
  * created vs updated the projection.
  *
- * F15 (T-131 review-sweep): pre-fix, this function ALWAYS inserted —
- * device-flow re-approval of the same client created duplicate
- * `system.connection` rows. Now uses `findGrantItemId` to detect the
- * re-consent case and routes through `items.update` (same shape as the
- * code-flow consent's `projectGrantOnConsent`). F3-equivalent treatment:
- * status flips to "active" + `revoked_at` is cleared on re-consent.
+ * Uses `findGrantItemId` to detect the re-consent case and routes through
+ * `items.update` (same shape as the code-flow consent's
+ * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
+ * cleared on re-consent to avoid stale-revoked projections.
  *
  * `tenantId` resolves from the consenting Better Auth user's marfa `users`
  * row in hosted mode; in single-tenant mode (no `users` store) the grant
@@ -113,13 +109,12 @@ async function createUserAppGrant(
   scopes: string[],
   source: "marfa/oauth/authorize" | "marfa/oauth/device",
 ): Promise<{ id: string; created: boolean }> {
-  // T-144: cycle metadata flows through `cycleRequestContext` (set by
-  // `cycleMiddleware`) — `publish()` reads it automatically, so this
-  // path doesn't thread cycle explicitly.
+  // Cycle metadata flows through `cycleRequestContext` (set by
+  // `cycleMiddleware`) — `publish()` reads it automatically.
   let tenantId: string | undefined;
   if (storage.users) {
-    // T-074: lookup by Better Auth user id (the canonical bridge);
-    // the `users` table keys on auth user id, not email.
+    // Lookup by Better Auth user id (the canonical bridge); the
+    // `users` table keys on auth user id, not email.
     const user = await storage.users.getByAuthUserId(consentingUser.id);
     tenantId = user?.tenant_id;
     if (!tenantId) {
@@ -185,7 +180,7 @@ async function createUserAppGrant(
       properties: {
         kind: "app",
         client_id: clientId,
-        // T-131: store the consenting auth_user id so cascade revoke
+        // Store the consenting auth_user id so cascade revoke
         // (/auth/grants/:id/revoke → revokeTokensForGrant(clientId, userId))
         // and the device-flow terminal step (which needs (clientId, userId)
         // to mint tokens against the plugin's tables) can find the user.
@@ -225,13 +220,12 @@ export function authRoutes(
   const router = new Hono<AppEnv>();
   const knownTypes = Array.from(TYPE_REGISTRY.keys());
 
-  // Wave C PR3 / T-033: per-email throttle on `/auth/forgot-password`.
-  // 3 requests per email per hour. Sits on top of the per-IP rate
-  // limit configured in `middleware/rate-limit.ts` — per-IP bounds a
+  // Per-email throttle on `/auth/forgot-password`: 3 requests per email
+  // per hour. Sits on top of the per-IP rate limit — per-IP bounds a
   // noisy client; per-email bounds the address itself so a burst from
-  // many IPs can't drown one user's inbox. T-026 moved the counter
-  // into `storage.rateLimits`; cluster-shared on Postgres, in-process
-  // on SQLite single-process self-hosts.
+  // many IPs can't drown one user's inbox. Counter lives in
+  // `storage.rateLimits`: cluster-shared on Postgres, in-process on
+  // SQLite single-process self-hosts.
   const forgotPasswordThrottle = new PerEmailThrottle(storage, {
     limit: 3,
     windowMs: 60 * 60 * 1000,
@@ -271,15 +265,13 @@ export function authRoutes(
   }
 
   // -----------------------------------------------------------------------
-  // T-131: /auth/tokens (GET / DELETE / PATCH) handlers removed.
+  // /auth/tokens (GET / DELETE / PATCH) handlers are not present.
   //
-  // The homegrown surface exposed individual-access-token management
-  // — list, revoke-by-id, reduce-scope. Under @better-auth/oauth-provider
-  // tokens are short-lived (1h default), rotate on every refresh, and
-  // are revoked at the grant level (`/oauth2/revoke` for a single
-  // token-in-hand; `/auth/grants/:id/revoke` for the whole grant).
-  // Individual-token management was admin/debug-only surface with no
-  // CLI / SDK / sandbox consumers — dropped outright.
+  // Under @better-auth/oauth-provider tokens are short-lived (1h default),
+  // rotate on every refresh, and are revoked at the grant level
+  // (`/oauth2/revoke` for a single token-in-hand; `/auth/grants/:id/revoke`
+  // for the whole grant). Individual-token management had no CLI / SDK /
+  // sandbox consumers.
   // -----------------------------------------------------------------------
 
   // -----------------------------------------------------------------------
@@ -293,10 +285,10 @@ export function authRoutes(
 
   router.get("/grants", async (c) => {
     const key = requireAuth(c);
-    // T-021: tenant-scope the listing. Admin keys can list cross-tenant
-    // (their `tenant_id` is undefined by design); any other credential
-    // must carry a resolved tenant_id, otherwise the storage call would
-    // fall through and return every tenant's grants.
+    // Tenant-scope the listing. Admin keys can list cross-tenant (their
+    // `tenant_id` is undefined by design); any other credential must
+    // carry a resolved tenant_id, otherwise the storage call would fall
+    // through and return every tenant's grants.
     const isAdmin = key.role === "admin" || key.is_platform;
     if (!isAdmin && !key.tenant_id) {
       throw new MarfaError(
@@ -364,10 +356,10 @@ export function authRoutes(
       },
       tenantId,
     );
-    // T-131: cascade-revoke through the plugin's tables. The system.connection
-    // properties carry `client_id` + (after projection lands) `user_id` —
-    // we use those to delete every access + refresh token for this grant
-    // and drop the consent row so the next /authorize prompt re-consents.
+    // Cascade-revoke through the plugin's tables. The system.connection
+    // properties carry `client_id` + `user_id` — use those to delete
+    // every access + refresh token for this grant and drop the consent
+    // row so the next /authorize prompt re-consents.
     const clientId =
       typeof props.client_id === "string" ? props.client_id : undefined;
     const authUserId =
@@ -379,10 +371,9 @@ export function authRoutes(
     ) {
       await storage.oauthProvider.revokeTokensForGrant(clientId, authUserId);
     }
-    // T-131: emit the audit row. Fire-and-forget (audit failures must
-    // never break the user-facing revoke flow). Emitted from this
-    // explicit Marfa handler rather than the plugin hook, which fires
-    // from a token-in-hand context without `client_id`.
+    // Emit the audit row. Fire-and-forget — audit failures must never
+    // break the user-facing revoke flow. Emitted here rather than from
+    // the plugin hook, which fires without `client_id`.
     void storage.audit.log({
       tenant_id: tenantId ?? null,
       action: "auth.grant.revoked",
@@ -559,10 +550,8 @@ export function authRoutes(
         const single = response.headers.get("set-cookie");
         if (single) redirectHeaders.append("set-cookie", single);
       }
-      // Wave C PR8 — audit-row on the success path. Don't await:
-      // audit failures shouldn't block sign-in. `auth.sign_in.success`
-      // shape: `{ email, method }`. `client_ip` auto-stamped from
-      // `c.var.clientIp` by middleware contract.
+      // Audit-row on the success path. Don't await — audit failures
+      // shouldn't block sign-in.
       void storage.audit.log({
         action: "auth.sign_in.success",
         resource_type: "auth_user",
@@ -573,8 +562,8 @@ export function authRoutes(
       return new Response(null, { status: 302, headers: redirectHeaders });
     }
 
-    // Wave C PR8 — audit-row on the failure path. Captures the
-    // reason from better-auth's error body where possible.
+    // Audit-row on the failure path. Captures the reason from
+    // better-auth's error body where possible.
     void storage.audit.log({
       action: "auth.sign_in.failed",
       resource_type: "auth_user",
@@ -719,10 +708,10 @@ export function authRoutes(
       return errorRedirect("email_invalid");
     }
 
-    // T-074: pre-validate username BEFORE creating an auth_user row.
-    // Any failure here means we never call Better Auth — no orphan to
-    // roll back. Reserved → invalid → collision, in that order so the
-    // user gets the most-specific error.
+    // Pre-validate username BEFORE creating an auth_user row. Any
+    // failure here means we never call Better Auth — no orphan to roll
+    // back. Reserved → invalid → collision, in that order so the user
+    // gets the most-specific error.
     const usernameLower = usernameRaw.toLowerCase();
     if (isReservedHandle(usernameLower)) {
       return errorRedirect("handle_reserved");
@@ -761,7 +750,7 @@ export function authRoutes(
     const response = await auth.handler(upstream);
 
     if (response.ok) {
-      // T-074: provision the Marfa tenant + users row atomically with the
+      // Provision the Marfa tenant + users row atomically with the
       // Better Auth account. Reads the new auth_user.id from the
       // upstream response body. Better Auth returns 200 with
       // `{ token, user: { id, email, ... } }` on success — `token` may
@@ -786,15 +775,13 @@ export function authRoutes(
             );
           }
           provisionedAuthUserId = authUserId;
-          // T-074 + Wave C PR2 interaction: with
-          // `requireEmailVerification: true`, Better Auth's
-          // generic-duplicate-response shape returns the existing
-          // user's id (the no-enumeration invariant). If that user
-          // already has a Marfa `users` row we skip provisioning —
-          // they're a returning duplicate and the verify-email page is
-          // the right next stop. The handle they typed in this attempt
-          // is silently ignored (no-op) since they've already claimed
-          // theirs at the original signup.
+          // With `requireEmailVerification: true`, Better Auth's
+          // generic-duplicate-response shape returns the existing user's
+          // id (the no-enumeration invariant). If that user already has
+          // a Marfa `users` row we skip provisioning — they're a
+          // returning duplicate and the verify-email page is the right
+          // next stop. The handle typed in this attempt is silently
+          // ignored since they've already claimed theirs at signup.
           const existing = await storage.users.getByAuthUserId(authUserId);
           if (!existing) {
             const tenant = await storage.tenants.create(nameStr);
@@ -833,8 +820,8 @@ export function authRoutes(
         return errorRedirect("signup_failed");
       }
 
-      // Wave C PR8 — audit the sign-up. Don't await: audit failures
-      // shouldn't block the user's redirect.
+      // Audit the sign-up. Don't await — audit failures shouldn't
+      // block the user's redirect.
       void storage.audit.log({
         action: "auth.sign_up",
         resource_type: "auth_user",
@@ -843,8 +830,8 @@ export function authRoutes(
         details: { email: emailStr, username: usernameLower },
       });
       // autoSignIn=true on the auth instance means the response carries
-      // a session cookie — UNLESS `requireEmailVerification: true`
-      // (Wave C PR2) is set, in which case better-auth returns 200 with
+      // a session cookie — UNLESS `requireEmailVerification: true` is
+      // set, in which case better-auth returns 200 with
       // `{ token: null, user }` and no Set-Cookie. We branch on the
       // cookie presence: if absent, redirect to the verify-email page
       // so the user can watch for the inbox arrival; if present, land
@@ -908,7 +895,7 @@ export function authRoutes(
   });
 
   // -----------------------------------------------------------------------
-  // Email verification (Wave C PR2)
+  // Email verification
   // -----------------------------------------------------------------------
   //
   // Three observable surfaces:
@@ -986,9 +973,9 @@ export function authRoutes(
     const response = await auth.handler(upstream);
 
     if (response.ok) {
-      // Wave C PR8 — audit the successful email verification.
-      // resource_id is the token prefix (correlation handle) since
-      // we don't have the user_id at this layer.
+      // Audit the successful email verification. resource_id is the
+      // token prefix (correlation handle) since we don't have the
+      // user_id at this layer.
       void storage.audit.log({
         action: "auth.email.verified",
         resource_type: "auth_user",
@@ -1100,7 +1087,7 @@ export function authRoutes(
   });
 
   // -----------------------------------------------------------------------
-  // Forgot password + reset (Wave C PR3 / T-033)
+  // Forgot password + reset
   // -----------------------------------------------------------------------
   //
   // Surfaces:
@@ -1192,10 +1179,10 @@ export function authRoutes(
       // Soft-fail.
     }
 
-    // Wave C PR8 — audit every reset-request attempt regardless of
-    // upstream outcome. Captures the email + IP for rate-monitoring;
-    // operators can correlate with `auth.password_reset.completed`
-    // to spot abandoned flows.
+    // Audit every reset-request attempt regardless of upstream outcome.
+    // Captures the email + IP for rate-monitoring; operators can
+    // correlate with `auth.password_reset.completed` to spot abandoned
+    // flows.
     void storage.audit.log({
       action: "auth.password_reset.requested",
       resource_type: "auth_user",
@@ -1287,12 +1274,8 @@ export function authRoutes(
     const response = await auth.handler(upstream);
 
     if (response.ok) {
-      // Wave C PR8 — audit the successful reset.
-      // `revokeSessionsOnPasswordReset: true` already nuked any other
-      // sessions for this user. Audit row captures the action + IP;
-      // we don't have the user_id at this layer (better-auth
-      // performed the reset internally) so resource_id is the token
-      // prefix as a correlation handle.
+      // Audit the successful reset. resource_id is the token prefix as
+      // a correlation handle — user_id isn't available at this layer.
       void storage.audit.log({
         action: "auth.password_reset.completed",
         resource_type: "auth_user",
@@ -1320,7 +1303,7 @@ export function authRoutes(
   });
 
   // -----------------------------------------------------------------------
-  // Security page + session/grant revocation (Wave C PR7 / T-031)
+  // Security page + session/grant revocation
   // -----------------------------------------------------------------------
   //
   // Surfaces:
@@ -1394,7 +1377,7 @@ export function authRoutes(
     //    existing DELETE handler.
     let tenantId: string | undefined;
     if (storage.users) {
-      // T-074: lookup by Better Auth user id (the canonical bridge).
+      // Lookup by Better Auth user id (the canonical bridge).
       const userRow = await storage.users.getByAuthUserId(sessionUser.id);
       tenantId = userRow?.tenant_id;
     }
@@ -1403,11 +1386,10 @@ export function authRoutes(
       state: "active",
       tenantId,
     });
-    // T-131: per-grant client-name lookup from the plugin's
-    // auth_oauth_client table. Worst-case N small queries; for the
-    // page-load scale this is fine and avoids a batch-list read of
-    // every client across every tenant. If the page grows hot, swap
-    // for a single IN-clause batch read.
+    // Per-grant client-name lookup from the plugin's auth_oauth_client
+    // table. Worst-case N small queries; for the page-load scale this
+    // is fine. If the page grows hot, swap for a single IN-clause
+    // batch read.
     const grants: SecurityPageGrant[] = [];
     for (const item of grantItems.data) {
       const props = item.properties;
@@ -1455,7 +1437,7 @@ export function authRoutes(
 
     let tenantId: string | undefined;
     if (storage.users) {
-      // T-074: lookup by Better Auth user id (the canonical bridge).
+      // Lookup by Better Auth user id (the canonical bridge).
       const userRow = await storage.users.getByAuthUserId(sessionUser.id);
       tenantId = userRow?.tenant_id;
     }
@@ -1474,10 +1456,10 @@ export function authRoutes(
       { properties: { ...props, status: "revoked", revoked_at: now } },
       tenantId,
     );
-    // T-131: cascade-revoke via plugin tables (see DELETE /grants/:id for
-    // the rationale). Falls through silently if the grant predates the
-    // projection wiring — the system.connection state flip is still the
-    // authoritative user-facing signal.
+    // Cascade-revoke via plugin tables (same logic as DELETE /grants/:id).
+    // Falls through silently if the grant has no client_id/user_id —
+    // the system.connection state flip is still the authoritative
+    // user-facing signal.
     const clientId =
       typeof props.client_id === "string" ? props.client_id : undefined;
     const authUserId =
@@ -1489,7 +1471,7 @@ export function authRoutes(
     ) {
       await storage.oauthProvider.revokeTokensForGrant(clientId, authUserId);
     }
-    // T-131: audit emission (see DELETE /grants/:id for rationale).
+    // Emit the audit row (same shape as DELETE /grants/:id).
     void storage.audit.log({
       tenant_id: tenantId ?? null,
       action: "auth.grant.revoked",
@@ -1577,7 +1559,7 @@ export function authRoutes(
   });
 
   // -----------------------------------------------------------------------
-  // Passkey enrol (Wave C PR6 / T-034)
+  // Passkey enrol
   // -----------------------------------------------------------------------
   //
   // GET /auth/passkey/enroll — auth-gated HTML page that runs the
@@ -1616,8 +1598,8 @@ export function authRoutes(
 
   // Shared device-flow init handler. Reachable from JSON callers (the
   // Marfa CLI / SDK shape) and from RFC 8628 §3.1 form-encoded callers
-  // (the protocol-canonical shape, T-190). Both produce the same
-  // device-code envelope.
+  // (the protocol-canonical shape). Both produce the same device-code
+  // envelope.
   const initDeviceFlow = async (
     c: Context,
     clientId: string | null,
@@ -1752,15 +1734,14 @@ export function authRoutes(
     const rawCode = url.searchParams.get("user_code") ?? "";
     const error = url.searchParams.get("error") ?? undefined;
 
-    // T-093 follow-on: if the URL carries a user_code (i.e. the user
-    // followed `verification_uri_complete`) and there's no error to
-    // surface, jump straight to the consent screen — skipping the
-    // manual "Continue" click on a form that's already pre-filled.
-    // The consent route 302s to /auth/sign-in if there's no session
-    // yet (preserving the user_code via return_to), so this stays
-    // safe — no auto-approval, just one fewer tap. Falls through to
-    // the form if the code is empty/garbled or an error is being
-    // surfaced.
+    // If the URL carries a user_code (i.e. the user followed
+    // `verification_uri_complete`) and there's no error to surface,
+    // jump straight to the consent screen — skipping the manual
+    // "Continue" click on a form that's already pre-filled. The
+    // consent route 302s to /auth/sign-in if there's no session yet
+    // (preserving the user_code via return_to), so this is safe —
+    // no auto-approval, just one fewer tap. Falls through to the form
+    // if the code is empty/garbled or an error is being surfaced.
     const normalised = normaliseUserCode(
       rawCode.trim().toUpperCase().replace(/\s+/g, ""),
     );
@@ -1796,7 +1777,7 @@ export function authRoutes(
     if (new Date(row.expires_at).getTime() < Date.now()) {
       return c.redirect(`/auth/device?error=expired_code`, 302);
     }
-    // T-131: client lookup migrated to plugin tables.
+    // Client lookup reads the plugin's auth_oauth_client table.
     const client = await storage.oauthProvider?.getClient(row.client_id);
     if (!client) {
       throw new MarfaError(ErrorCode.INVALID_CLIENT, "Unknown client_id");
@@ -1820,7 +1801,7 @@ export function authRoutes(
       } else {
         const fallback =
           METADATA_SCOPE_DESCRIPTIONS[s.typePattern] ??
-          // T-074: OIDC literals (openid / profile / email).
+          // OIDC literals (openid / profile / email).
           OIDC_SCOPE_DESCRIPTIONS[s.typePattern];
         if (fallback) descriptions[s.typePattern] = fallback;
       }
@@ -2010,8 +1991,8 @@ export function authRoutes(
       );
     }
 
-    // T-131: terminal token issuance. The plugin owns the canonical
-    // token storage tables (`auth_oauth_access_token`,
+    // Terminal token issuance. The plugin owns the canonical token
+    // storage tables (`auth_oauth_access_token`,
     // `auth_oauth_refresh_token`); we mint into them directly so the
     // bearer middleware resolves device-flow tokens identically to
     // authorization-code-flow tokens. The hash function (`hashApiKey`)
@@ -2040,10 +2021,9 @@ export function authRoutes(
     // `connection_item_id` comes from the server-controlled
     // `oauth_device_codes` row written by the device-code approve
     // handler — never user-supplied — so a wrong-type result is not
-    // reachable today. T-235 adds the type check as a defence-in-depth
-    // belt: if a future change to the approve handler ever stamped a
-    // non-`system.connection` id, the code below would otherwise
-    // silently mint an orphan token from whatever properties it found.
+    // reachable today. The type check is defence-in-depth: a future
+    // change to the approve handler that stamped a non-`system.connection`
+    // id would otherwise silently mint an orphan token.
     const deviceGrant = await storage.items.get(row.connection_item_id);
     if (deviceGrant?.type !== "system.connection") {
       throw new Error(
@@ -2080,7 +2060,7 @@ export function authRoutes(
       accessTtlMs: ACCESS_TOKEN_TTL_MS,
     });
 
-    // T-098: stamp last_used_at on the underlying grant — best-effort.
+    // Stamp last_used_at on the underlying grant — best-effort.
     await stampOAuthGrantLastUsed(
       storage,
       row.connection_item_id,
@@ -2176,9 +2156,9 @@ function buildSignInRedirect(params: {
  *  authoritative origin for the upstream dispatch is the auth instance
  *  itself.
  */
-/** Wave C PR7 — map the `?notice=` query param on /auth/security to
- *  the flash banner the page renders. Unknown codes resolve to
- *  `undefined` (no banner) rather than 500ing. */
+/** Map the `?notice=` query param on /auth/security to the flash banner
+ *  the page renders. Unknown codes resolve to `undefined` (no banner)
+ *  rather than 500ing. */
 function parseNotice(
   raw: string | null,
 ): { kind: "success" | "error"; text: string } | undefined {

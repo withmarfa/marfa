@@ -1,5 +1,5 @@
 /**
- * T-116: SQLite account-lifecycle store. Mirrors the PG sibling — see
+ * SQLite account-lifecycle store. Mirrors the PG sibling — see
  * pg/account-lifecycle-store.ts for the design notes. `markPendingDeletion`
  * is wrapped in `db.transaction(...)` so the lifecycle flip + key
  * revocation + session drop are atomic on the libsql side.
@@ -45,11 +45,9 @@ export class SqliteAccountLifecycleStore implements AccountLifecycleStore {
   }
 
   async cancelPendingDeletion(authUserId: string): Promise<boolean> {
-    // T-141: surface rows-affected to the route layer so the
-    // "Account restored" confirmation only renders when the UPDATE
-    // actually flipped a row. The libsql `ResultSet` exposes
-    // `rowsAffected` — same property `event-log-store` / `audit-store`
-    // already read on cleanup deletes.
+    // Surface rows-affected to the route layer so the "Account restored"
+    // confirmation only renders when the UPDATE actually flipped a row.
+    // The libsql `ResultSet` exposes `rowsAffected`.
     const result = await this.db
       .update(auth_user)
       .set({ deletion_state: "active", pending_deletion_at: null })

@@ -26,29 +26,25 @@ import {
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 // ---------------------------------------------------------------------------
-// Connection management routes (T-046 / PR A; T-040 install JSON sibling;
-// T-083 preview-event).
-//
-// Today this file owns three operations:
+// Connection management routes. This file owns three operations:
 //
 //   - `POST /connections/install` — JSON sibling of the HTML consent
 //     flow at `POST /integrations/:id/install`. Skips the browser consent
 //     screen so operators and tooling can install non-interactively.
-//     Used by the T-040 soak seeder and the CLI's
-//     `my connections install` command. Calls `performInstall` directly.
+//     Calls `performInstall` directly.
 //
 //   - `POST /connections/:id/uninstall` — orchestrated uninstall of an
-//     `integration` connection. Revokes runtime
-//     credentials, drops upstream OAuth tokens, revokes leased tokens,
-//     disables inbound webhooks, transitions the system.connection to
-//     revoked, and emits a system.activity row — all in one place. See
-//     `connections/uninstall-pipeline.ts` for the step-by-step rationale.
+//     `integration` connection. Revokes runtime credentials, drops
+//     upstream OAuth tokens, revokes leased tokens, disables inbound
+//     webhooks, transitions the system.connection to revoked, and emits
+//     a system.activity row. See `connections/uninstall-pipeline.ts`
+//     for the step-by-step rationale.
 //
-//   - `POST /connections/preview-event` (T-083) — render the wire
-//     envelopes the reactive-run bridge would emit for a synthetic
-//     item-event, without dispatch. Pure server-side transform; uses
-//     the shared helpers in `connections/envelope.ts` so the bridge and
-//     the preview surface compute the same shape.
+//   - `POST /connections/preview-event` — render the wire envelopes the
+//     reactive-run bridge would emit for a synthetic item-event, without
+//     dispatch. Pure server-side transform; uses the shared helpers in
+//     `connections/envelope.ts` so the bridge and the preview surface
+//     compute the same shape.
 //
 // Auth model: `requireTenantAdmin` on every route. Tenant admins
 // operate on their own tenant's connections (storage lookups + writes
@@ -75,12 +71,11 @@ const InstallRequestSchema = z.object({
    *  `google.calendar` + `google.tasks`) share one OAuth client config.
    *  Create such credentials via `POST /credentials/oauth-provider`. */
   credential_ref: z.string().optional(),
-  /** T-254 — optional seed for the new connection's
-   *  `properties.configuration` bag. Free-form per-integration knobs
-   *  (e.g. `upstream_base_url_override` for connections sharing one
-   *  OAuth credential across different upstream hosts). Merged over
-   *  the empty default at install time so callers don't need a
-   *  follow-on `PATCH /items/:id` round-trip. */
+  /** Optional seed for the new connection's `properties.configuration`
+   *  bag. Free-form per-integration knobs (e.g. `upstream_base_url_override`
+   *  for connections sharing one OAuth credential across different upstream
+   *  hosts). Merged over the empty default at install time so callers
+   *  don't need a follow-on `PATCH /items/:id` round-trip. */
   configuration: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -221,7 +216,7 @@ interface IntegrationProperties {
 }
 
 // ---------------------------------------------------------------------------
-// `POST /connections/preview-event` (T-083) — render the QueueMessageBody
+// `POST /connections/preview-event` — render the QueueMessageBody
 // envelopes the reactive-run bridge would emit for a synthetic event,
 // without dispatch. Pure server-side transform. Operator debugging surface.
 // ---------------------------------------------------------------------------
@@ -351,7 +346,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(installRoute, async (c) => {
-    // T-051: tenant_admin can install/uninstall own-tenant connections.
+    // tenant_admin can install/uninstall own-tenant connections.
     // Lookups + writes are scoped via `apiKey.tenant_id`, so cross-tenant
     // attempts surface as NOT_FOUND.
     const apiKey = requireTenantAdmin(c);
@@ -427,7 +422,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
     // the bridge fans out to nothing. The HTML consent flow at
     // routes/integrations.ts has the same bug — fix landed alongside
     // this one in a follow-up to keep this PR's diff scoped to the
-    // path that ships in Wave A.
+    // Emit an item event for the new connection so subscribers see it.
     const connection = await storage.items.get(result.connection_id, tenantId);
     if (connection) {
       const metadata = await storage.metadata.get(connection.id);
@@ -443,10 +438,10 @@ export function connectionRoutes(storage: Storage, salt: string) {
   });
 
   r.openapi(previewEventRoute, async (c) => {
-    // T-083: tenant-scoped preview of bridge fanout. tenant_admin so a
-    // tenant admin can debug their own connectors without needing platform
-    // creds; storage reads thread `apiKey.tenant_id` so cross-tenant
-    // probes 404 on either the item or the filtered connection.
+    // Tenant-scoped preview of bridge fanout. tenant_admin so a tenant
+    // admin can debug their own connectors without needing platform creds;
+    // storage reads thread `apiKey.tenant_id` so cross-tenant probes 404
+    // on either the item or the filtered connection.
     const apiKey = requireTenantAdmin(c);
     const tenantId = apiKey.tenant_id ?? undefined;
     const body = c.req.valid("json");
@@ -596,7 +591,7 @@ export function connectionRoutes(storage: Storage, salt: string) {
   });
 
   r.openapi(uninstallRoute, async (c) => {
-    // T-051: tenant_admin can install/uninstall own-tenant connections.
+    // tenant_admin can install/uninstall own-tenant connections.
     // Lookups + writes are scoped via `apiKey.tenant_id`, so cross-tenant
     // attempts surface as NOT_FOUND.
     const apiKey = requireTenantAdmin(c);

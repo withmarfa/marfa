@@ -328,9 +328,9 @@ describe("Google Calendar handlers — outbound (item-event)", () => {
     expect(r).toEqual({ ok: true });
     expect(proxyCalls[0]!.method).toBe("POST");
     expect(proxyCalls[0]!.path).toMatch(/calendars\/primary\/events$/);
-    // T-020: a deterministic id is stamped onto the POST payload
-    // so a retry of the same handler invocation reaches Calendar
-    // with the same id (Calendar then 409s instead of duplicating).
+    // A deterministic id is stamped onto the POST payload so a retry
+    // of the same handler invocation reaches Calendar with the same
+    // id (Calendar then 409s instead of duplicating).
     const sentBody = proxyCalls[0]!.body as { id?: string };
     expect(typeof sentBody.id).toBe("string");
     expect(sentBody.id).toMatch(/^[0-9a-f]{64}$/);
@@ -341,15 +341,15 @@ describe("Google Calendar handlers — outbound (item-event)", () => {
     expect(cursor.mappings.gevt_new).toBe("mit_new");
   });
 
-  it("recovers idempotently when Calendar 409s on a retried POST (T-020)", async () => {
+  it("recovers idempotently when Calendar 409s on a retried POST", async () => {
     // Cloudflare Queues retries the whole batch when the handler
     // doesn't ack cleanly. If the original attempt POSTed
     // successfully but crashed before the cursor write persisted,
-    // the retry sees no mapping and re-POSTs. Without the T-020
-    // deterministic-id fix, the retry would create a duplicate
-    // Calendar event. With the fix, Calendar 409s on the duplicate
-    // id and the handler GET-s the event Calendar already holds,
-    // records the mapping, and returns ok=true — no duplicate.
+    // the retry sees no mapping and re-POSTs. Without a deterministic
+    // id, the retry would create a duplicate Calendar event. With it,
+    // Calendar 409s on the duplicate id and the handler GET-s the
+    // event Calendar already holds, records the mapping, and returns
+    // ok=true — no duplicate.
     const item: ItemResource = {
       id: "mit_retry",
       type: "core.event",
@@ -405,10 +405,10 @@ describe("Google Calendar handlers — outbound (item-event)", () => {
     expect(emitted.at(-1)?.properties?.summary).toMatch(/idempotent recovery/);
   });
 
-  it("derives the same deterministic id across retries (T-020)", async () => {
-    // Sanity check: two invocations for the same Marfa item id MUST
-    // stamp the same Calendar id, otherwise the 409 idempotency
-    // path can't fire.
+  it("derives the same deterministic id across retries", async () => {
+    // Sanity check: two invocations for the same item id MUST stamp
+    // the same Calendar id, otherwise the 409 idempotency path
+    // can't fire.
     const item: ItemResource = {
       id: "mit_stable",
       type: "core.event",

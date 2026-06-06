@@ -3,8 +3,8 @@
  * + stop) driven from the schedule handler, plus the `handleWebhook`
  * receipt path that triggers an immediate per-calendar re-sync.
  *
- * These tests deliberately do NOT modify any pre-T-231 fixtures or
- * legacy-mode behaviour — push notifications only activate when the
+ * These tests do not modify single-calendar-mode fixtures — push
+ * notifications only activate when the
  * connection's configuration carries both `selected_calendar_ids` AND
  * an `inbound_webhook_url`.
  *

@@ -30,7 +30,7 @@ export type ScheduleHandler = (
 /**
  * Webhook handlers receive a decoded `WebhookHandlerInput` — `body` is an
  * `ArrayBuffer` rather than the wire-format `body_base64` string. The
- * dispatcher (`dispatchMessage`) does the decode at the seam (T-009).
+ * dispatcher (`dispatchMessage`) does the decode at the seam.
  */
 export type WebhookHandler = (
   ctx: ConnectionContext,
@@ -98,7 +98,7 @@ export async function dispatchMessage(
           reason: "no_webhook_handler_registered",
         };
       }
-      // T-009: decode the wire-format body_base64 once at the seam.
+      // Decode the wire-format body_base64 once at the seam.
       // Handlers always receive the runtime form with `body: ArrayBuffer`.
       const input: WebhookHandlerInput = {
         delivery_id: message.delivery_id,

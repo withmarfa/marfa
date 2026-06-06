@@ -5,15 +5,15 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
- * T-026 — per-email throttle (now backed by `storage.rateLimits`).
+ * Per-email throttle backed by `storage.rateLimits`. The counter is
+ * shared via the storage layer, so the test exercises the end-to-end
+ * integration: throttle → store → upsert → re-read.
  *
- * Same scenarios as the pre-T-026 in-memory tests: cap behaviour,
- * lowercase normalisation, window expiry, per-email isolation. The
- * counter is shared via the storage layer, so the test exercises the
- * end-to-end integration: throttle → store → upsert → re-read.
+ * Covers: cap behaviour, lowercase normalisation, window expiry,
+ * per-email isolation, and cross-instance counter sharing.
  *
- * Each test uses a fresh `Storage` (the SQLite-backed test context)
- * so the rate_limit_windows rows don't bleed across cases.
+ * Each test uses a fresh `Storage` so the rate_limit_windows rows
+ * don't bleed across cases.
  */
 
 let ctx: TestContext | undefined;

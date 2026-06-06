@@ -1,13 +1,13 @@
 /**
- * Magic-link email template (Wave C PR1).
+ * Magic-link email template.
  *
  * Mobile-first, single-column. 16px body, 44px tap target on the CTA.
  * Inline styles only — most clients strip <style> blocks. Subject
  * specific (not "Action required") so a busy inbox can scan it.
  *
  * Plain-text fallback included — Gmail downgrades to text/plain in
- * some preview surfaces, and accessibility tooling reads the
- * text part preferentially.
+ * some preview surfaces, and accessibility tooling reads the text part
+ * preferentially.
  */
 const ACCENT = "#1f6feb";
 const TEXT = "#1f2328";

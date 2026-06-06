@@ -1,19 +1,18 @@
 import type { TypeSchema, FieldDefinition } from "@withmarfa/types";
 
 /**
- * Classifies the diff between two type schemas (TSC42 §7).
+ * Classifies the diff between two type schemas.
  *
  * - `noop` — schemas are structurally identical; submitting again is rejected.
  * - `patch` — descriptive-only change (label, description, field
  *   descriptions). Same version permitted on re-submission.
- * - `minor` — additive change (optional field added). Requires a version
- *   bump.
+ * - `minor` — additive change (optional field added). Requires a version bump.
  * - `major` — breaking change (field removed, type changed, or required-
  *   tightened). Requires a version bump.
  *
- * Integer versions (the current wire shape) collapse minor and major into
- * "must bump", but the classifier still returns the granular class so error
- * messages and SDK telemetry can surface it.
+ * Integer versions collapse minor and major into "must bump", but the
+ * classifier still returns the granular class so error messages and SDK
+ * telemetry can surface it.
  */
 export type DiffClass = "noop" | "patch" | "minor" | "major";
 

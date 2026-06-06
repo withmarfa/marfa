@@ -2,16 +2,15 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { PgDb } from "./connection.js";
 
 /**
- * Per-request DB substitution for Postgres RLS (T-025 part 2).
+ * Per-request DB substitution for Postgres RLS.
  *
- * The RLS pattern requires every storage operation issued during a
- * request to flow through ONE connection — the same connection that
- * carries `SET LOCAL ROLE marfa_app` and `SET LOCAL marfa.tenant_id =
- * '<id>'`. Drizzle's `db.transaction()` returns a transaction object
- * (`tx`) that meets that contract: every query issued through `tx`
- * uses the transaction's reserved connection. The challenge is
- * threading `tx` to every store method without changing every
- * signature in the storage layer.
+ * The RLS pattern requires every storage operation issued during a request
+ * to flow through ONE connection — the same connection that carries
+ * `SET LOCAL ROLE marfa_app` and `SET LOCAL marfa.tenant_id = '<id>'`.
+ * Drizzle's `db.transaction()` returns a transaction object (`tx`) that
+ * meets that contract: every query issued through `tx` uses the
+ * transaction's reserved connection. The challenge is threading `tx` to
+ * every store method without changing every signature in the storage layer.
  *
  * This module provides two primitives:
  *

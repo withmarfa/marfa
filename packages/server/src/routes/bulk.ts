@@ -303,11 +303,10 @@ const bulkActionRoute = createRoute({
   },
 });
 
-// T-218: poll endpoint for a queued / running / terminal job. The job
-// envelope is identical to what `POST /items/bulk-actions` returns
-// initially; subsequent calls reflect the worker's progress until the
-// row reaches a terminal status. Auth: the originating credential or
-// an admin.
+// Poll endpoint for a queued / running / terminal job. The job envelope
+// is identical to what `POST /items/bulk-actions` returns initially;
+// subsequent calls reflect the worker's progress until the row reaches
+// a terminal status. Auth: the originating credential or an admin.
 const bulkActionStatusRoute = createRoute({
   method: "get",
   path: "/bulk-actions/jobs/{id}",
@@ -354,8 +353,8 @@ const bulkActionStatusRoute = createRoute({
   },
 });
 
-// T-218: request cancellation. Idempotent — already-terminal rows
-// return their final state without mutation. The worker observes the
+// Request cancellation. Idempotent — already-terminal rows return
+// their final state without mutation. The worker observes the
 // `cancelled` flag between chunks and stops; the response from this
 // endpoint surfaces the row as-of-now, which may still show
 // `in_progress` if the worker hasn't yet observed the flag.
@@ -427,7 +426,7 @@ interface BulkItemResult {
  * edge semantics.
  */
 // applyInlineEdges lives in _edges-inline.ts (shared with the natural-key
-// upsert short-circuit on POST /items per T-038).
+// upsert short-circuit on POST /items).
 
 /**
  * Process a single bulk-upsert input. Caller decides the transaction
@@ -820,18 +819,16 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
-    // Non-dry-run: T-218 async substrate. INSERT a job row carrying the
-    // frozen matched ids + the auth context; respond 202; the in-process
-    // worker (see packages/server/src/bulk-actions/worker.ts) picks the
-    // row up and runs it.
+    // Non-dry-run async path: INSERT a job row carrying the frozen matched
+    // ids + the auth context; respond 202; the in-process worker
+    // (packages/server/src/bulk-actions/worker.ts) picks the row up and
+    // runs it.
     //
     // `emit_events` is stored on the row (worker honours it) but not
-    // fired here. The historic synchronous endpoint fired per-item
-    // events after every mutation; the worker does the same once
-    // implemented in `runChunk`. For v1 of T-218, emit_events is a
-    // no-op — runner.ts intentionally drops the flag. Documented as a
-    // known regression vs the synchronous shape; revisit if a real
-    // consumer needs it before launch.
+    // fired here. The synchronous endpoint fired per-item events after
+    // every mutation; the worker does the same once implemented in
+    // `runChunk`. For now, emit_events is a no-op — runner.ts
+    // intentionally drops the flag.
     void emitEvents;
     const idempotencyKey = c.req.header("Idempotency-Key") ?? null;
     const apiKeyId = c.get("apiKey")?.id ?? null;

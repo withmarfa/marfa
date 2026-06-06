@@ -1,6 +1,6 @@
 /**
- * T-026: SQLite rate-limit / throttle counter store. Mirrors the PG
- * sibling step-for-step; see pg/rate-limit-store.ts for design notes.
+ * SQLite rate-limit / throttle counter store. Mirrors the PG sibling
+ * step-for-step; see pg/rate-limit-store.ts for design notes.
  *
  * SQLite is single-process by file lock so "cluster-shared" collapses
  * to "still correct in-process". The same upsert codepath ships on both

@@ -9,7 +9,7 @@ import type { Storage } from "../../storage/interface.js";
 import { grandfatherProfilesT074 } from "./grandfather-profiles-t074.js";
 
 /**
- * T-074: grandfather script coverage.
+ * Coverage for the profile grandfather script.
  *
  * Failure modes this catches:
  *

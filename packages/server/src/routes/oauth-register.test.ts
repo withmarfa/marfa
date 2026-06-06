@@ -3,8 +3,8 @@ import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
- * T-158: tests for the Marfa-owned `POST /auth/oauth2/register` endpoint
- * that fronts the @better-auth/oauth-provider plugin's DCR. See
+ * Tests for the Marfa-owned `POST /auth/oauth2/register` endpoint that
+ * fronts the @better-auth/oauth-provider plugin's DCR. See
  * `oauth-register.ts` for the why-we-override doc-block.
  *
  * Coverage:
@@ -28,11 +28,10 @@ afterEach(async () => {
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
-describe("POST /auth/oauth2/register (T-158)", () => {
+describe("POST /auth/oauth2/register", () => {
   it("returns 201 for grant_types: ['authorization_code']", async () => {
-    // Gap 3 — pre-T-158 this path went through the plugin's DCR and
-    // 500-ed on PG (string[] columns mishandled by Better Auth's
-    // Drizzle adapter). Now routes through the Marfa override.
+    // Routes through the Marfa override; the plugin's DCR would 500 on
+    // PG due to mishandled string[] columns in Better Auth's Drizzle adapter.
     ctx = await createTestContext({ authAllowSignup: false });
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
@@ -88,10 +87,10 @@ describe("POST /auth/oauth2/register (T-158)", () => {
   });
 
   it("registered client is discoverable via the device-flow initiation path", async () => {
-    // The roundtrip that broke before T-158: a row written by DCR has
-    // to be readable by `storage.oauthProvider.getClient` (which
-    // safeJsonParse's `redirect_uris`). The Marfa override writes the
-    // column in the JSON-encoded shape the reader expects.
+    // A row written by DCR must be readable by
+    // `storage.oauthProvider.getClient` (which safeJsonParse's
+    // `redirect_uris`). The Marfa override writes the column in the
+    // JSON-encoded shape the reader expects.
     ctx = await createTestContext({ authAllowSignup: false });
     const regRes = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {

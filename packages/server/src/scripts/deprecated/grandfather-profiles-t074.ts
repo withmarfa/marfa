@@ -1,5 +1,5 @@
 /**
- * T-074 — Grandfather profile rows for existing users.
+ * Grandfather profile rows for existing users.
  *
  * The migration `0044_users_profile_columns.sql` (PG) /
  * `0037_users_profile_columns.sql` (SQLite) does the schema-mechanical

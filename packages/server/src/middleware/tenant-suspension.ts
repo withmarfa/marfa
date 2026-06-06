@@ -1,5 +1,5 @@
 /**
- * T-117 — tenant-suspension write-guard middleware.
+ * Tenant-suspension write-guard middleware.
  *
  * Sits AFTER `authMiddleware` in the middleware chain. After credential
  * resolution, for every non-GET request, if the credential's tenant is

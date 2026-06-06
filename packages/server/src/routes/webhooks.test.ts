@@ -12,10 +12,9 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-// T-079: audit writes in the route handlers are fire-and-forget
+// Audit writes in the route handlers are fire-and-forget
 // (`void storage.audit.log(...)`). Under Postgres the write is
-// genuinely async — use the shared `waitForAudit` helper from
-// test-utils.
+// genuinely async — use the shared `waitForAudit` helper.
 async function waitForAuditEntry(filter: {
   action: string;
   resource_id: string;

@@ -14,9 +14,9 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
     {},
     "audit_log.details",
   );
-  // T-027: client_ip is persisted alongside the rest of details for
-  // schema compatibility (audit_log.details is JSON, no migration); the
-  // typed interface lifts it back to a top-level field on the read path.
+  // client_ip is persisted inside the details JSON blob for schema
+  // compatibility (no migration needed); the typed interface lifts it
+  // back to a top-level field on the read path.
   const ipRaw = details.client_ip;
   const client_ip =
     typeof ipRaw === "string" && ipRaw.length > 0 ? ipRaw : null;
@@ -45,7 +45,7 @@ export class SqliteAuditStore implements AuditStore {
     client_ip?: string | null;
     details?: Record<string, unknown>;
   }): Promise<void> {
-    // T-027: fold the typed `client_ip` into the JSON `details` blob.
+    // Fold the typed `client_ip` into the JSON `details` blob.
     // Persisting alongside the existing details keeps the schema stable
     // (no migration needed) while exposing IP as a typed field on read.
     const detailsBlob: Record<string, unknown> = { ...(entry.details ?? {}) };
@@ -95,10 +95,10 @@ export class SqliteAuditStore implements AuditStore {
     if (filters.until) {
       conditions.push(lte(auditLog.timestamp, filters.until));
     }
-    // T-041: tenant scope. When the caller is tenant-scoped (filter
-    // explicitly set), restrict to rows with matching `tenant_id`. When
-    // omitted, no tenant filter is applied — bootstrap-admin reads on
-    // self-hosted, plus the cleanup job which is currently global.
+    // Tenant scope: when the caller is tenant-scoped (filter explicitly
+    // set), restrict to rows with matching `tenant_id`. When omitted,
+    // no tenant filter is applied — bootstrap-admin reads on self-hosted,
+    // plus the cleanup job which is currently global.
     if (filters.tenant_id !== undefined && filters.tenant_id !== null) {
       conditions.push(eq(auditLog.tenant_id, filters.tenant_id));
     }
@@ -143,7 +143,7 @@ export class SqliteAuditStore implements AuditStore {
     const cutoff = new Date(
       Date.now() - retentionDays * 24 * 60 * 60 * 1000,
     ).toISOString();
-    // T-050 — three filter shapes (see PgAuditStore.cleanup).
+    // Three filter shapes (see PgAuditStore.cleanup).
     const tenantClause =
       tenantId === undefined
         ? undefined
@@ -159,9 +159,8 @@ export class SqliteAuditStore implements AuditStore {
   }
 
   async redactForUser(authUserId: string): Promise<number> {
-    // T-116: see pg/audit-store.ts for the full design note. LIKE-prefilter
-    // narrows the scan; in-memory parse + exact-equality recursion is the
-    // truth.
+    // LIKE-prefilter narrows the scan; in-memory parse + exact-equality
+    // recursion is the truth. See pg/audit-store.ts for the full design note.
     const sentinel = JSON.stringify({
       redacted: true,
       user_id_sha256: createHash("sha256").update(authUserId).digest("hex"),

@@ -66,17 +66,16 @@ export interface ConsumerEnvironment {
   /** Integration name from the manifest (envelope filter). */
   integrationName: string;
   /**
-   * Tenant id this Worker instance is scoped to (T-017). Per-Worker stamp
-   * configured at deploy time. When set, the consumer cross-checks every
-   * incoming `message.tenant_id` against it and acks-and-skips any
-   * mismatched message — defence in depth against a misrouted (or
-   * maliciously-crafted) cross-tenant message that already passed the
-   * `connection_id` gate. Optional only to keep self-host setups where
-   * the tenant column is null wire-compatible.
+   * Tenant id this Worker instance is scoped to. Configured at deploy
+   * time. When set, the consumer cross-checks every incoming
+   * `message.tenant_id` against it and acks-and-skips any mismatched
+   * message — defence in depth against a misrouted cross-tenant message
+   * that already passed the `connection_id` gate. Optional only to keep
+   * self-host setups where the tenant column is null wire-compatible.
    */
   tenantId?: string;
   /**
-   * Defensive ceiling for cycle hop count (T-008). When set, the consumer
+   * Defensive ceiling for cycle hop count. When set, the consumer
    * refuses to dispatch a reactive `item-event` whose `cycle.hop_count`
    * meets or exceeds it. The server already drops over-budget events
    * before they hit the queue, but a non-pubsub producer could enqueue
@@ -84,17 +83,16 @@ export interface ConsumerEnvironment {
    */
   hopBudget?: number;
   /**
-   * Resolve a DLQ producer binding for a given message kind (T-103). On
+   * Resolve a DLQ producer binding for a given message kind. On
    * permanent failure the wrapper sends an enriched copy of the message
    * (carrying `_failure_reason`) to the resolved DLQ before acking the
    * original. Returning `null` (or omitting the resolver entirely) means
-   * ack + activity emit only — the message is effectively dropped from
+   * ack + activity emit only — the message is dropped from
    * operator-peekable surfaces with no DLQ copy.
    *
    * Routing by `message.kind` (webhook / schedule / item-event) lets a
-   * Worker that consumes multiple queue families (e.g. task-auto-archive
-   * consumes both `schedule` and `item-event`) wire the matching DLQ for
-   * each family.
+   * Worker that consumes multiple queue families wire the matching DLQ
+   * for each family.
    */
   dlqProducerFor?: (kind: QueueMessage["kind"]) => DlqProducer | null;
 }
@@ -113,12 +111,11 @@ export async function buildConnectionContext(
   message: QueueMessage,
 ): Promise<ConnectionContext> {
   const credential = await env.mintCredential(message.connection_id);
-  // T-039: thread the parent cycle into the ConnectionClient so every
-  // mutating call back into Marfa stamps the cycle headers. Schedule /
-  // webhook handlers start a fresh chain (cycleParent: null —
-  // `nextHopMetadata` sees it and stamps the connector as the chain
-  // head); item-event handlers inherit the parent's cycle from the
-  // queue message.
+  // Thread the parent cycle into the ConnectionClient so every mutating
+  // call back into Marfa stamps the cycle headers. Schedule / webhook
+  // handlers start a fresh chain (cycleParent: null — `nextHopMetadata`
+  // stamps the connector as the chain head); item-event handlers
+  // inherit the parent's cycle from the queue message.
   const cycleParent = message.kind === "item-event" ? message.cycle : null;
   const client = new ConnectionClient({
     apiUrl: env.apiUrl,
@@ -163,15 +160,13 @@ function backoffSecondsFor(attempts: number): number {
 }
 
 /**
- * Process a Cloudflare Queue batch with per-message ack/retry (T-043).
+ * Process a Cloudflare Queue batch with per-message ack/retry.
  *
  * A single batch-level verdict would make Cloudflare retry the WHOLE
- * batch on any retry, re-running messages that already succeeded — the
- * upstream cause of the duplicate-write hazards T-020 (Calendar
- * outbound) and T-038 (server-side natural-key idempotency) defend
- * against. Per-message ack — `Message.ack()` and `Message.retry({
- * delaySeconds })` — closes the hazard at its source: a partial-batch
- * failure only retries the failures.
+ * batch on any retry, re-running messages that already succeeded — a
+ * source of duplicate-write hazards. Per-message ack — `Message.ack()`
+ * and `Message.retry({ delaySeconds })` — closes the hazard at its
+ * source: a partial-batch failure only retries the failures.
  *
  * Per-message decision tree:
  *
@@ -198,11 +193,10 @@ function backoffSecondsFor(attempts: number): number {
  * keyed on `acked / retried / failed` read them. The function does not
  * throw on retry: per-message `retry()` informs Cloudflare directly.
  *
- * T-020's deterministic-id workaround for outbound Calendar writes
- * stays as belt-and-braces. The contract "createItem with `(source,
- * source_id)` is idempotent" is genuinely useful regardless of queue
- * semantics; per-message ack closes the immediate window without
- * removing the underlying contract.
+ * The `createItem` `(source, source_id)` idempotency contract is
+ * genuinely useful regardless of queue semantics; per-message ack
+ * closes the immediate retry window without removing the underlying
+ * contract.
  */
 export async function consumeBatch(
   env: ConsumerEnvironment,
@@ -223,10 +217,10 @@ export async function consumeBatch(
       outcome.acked++;
       continue;
     }
-    // T-017: defence-in-depth tenant check. The connection_id gate is
-    // the primary line of defence; this is the secondary one. A
-    // misrouted message that targets the wrong tenant gets acked and
-    // skipped without ever invoking the handler.
+    // Defence-in-depth tenant check. The connection_id gate is the
+    // primary line of defence; this is the secondary one. A misrouted
+    // message that targets the wrong tenant gets acked and skipped
+    // without ever invoking the handler.
     if (
       env.tenantId !== undefined &&
       message.tenant_id !== undefined &&
@@ -236,8 +230,8 @@ export async function consumeBatch(
       outcome.acked++;
       continue;
     }
-    // T-008: SDK-side cycle-budget refusal. The server drops events past
-    // its own budget before they hit the queue, but a non-pubsub queue
+    // SDK-side cycle-budget refusal. The server drops events past its
+    // own budget before they hit the queue, but a non-pubsub queue
     // producer could enqueue without applying the gate. Refuse here as
     // a defensive ceiling and surface the failure as an action_required
     // activity so an operator can see the loop.
@@ -271,10 +265,10 @@ export async function consumeBatch(
     let result: HandlerResult;
     let dispatchThrew = false;
     // Captured separately for the `_failure_reason` stamp on permanent
-    // failure (T-103). `result.reason` carries the `"dispatch_threw: ..."`
-    // prefix because the activity-emit `detail.reason` path consumes that
-    // shape; the DLQ-stamp path uses the bare error message + class name so
-    // the flattened `<class>: <message> (attempts: <n>)` operator string
+    // failure. `result.reason` carries the `"dispatch_threw: ..."` prefix
+    // because the activity-emit `detail.reason` path consumes that shape;
+    // the DLQ-stamp path uses the bare error message + class name so the
+    // flattened `<class>: <message> (attempts: <n>)` operator string
     // isn't double-prefixed.
     let thrownClassName: string | null = null;
     let thrownMessage: string | null = null;
@@ -286,15 +280,14 @@ export async function consumeBatch(
       thrownClassName =
         err instanceof Error ? err.constructor.name || "Error" : "unknown";
       thrownMessage = err instanceof Error ? err.message : String(err);
-      // T-255: surface the throw via console.error. The activity-emit
-      // backstop below relies on a working ConnectionClient (Marfa
-      // reachable + runtime credential mintable); when the throw is a
-      // mint / credential-bootstrap failure, the backstop fails too and
-      // the message gets retried + DLQ'd in silence. console.error here
-      // is the only operator-visible signal in that degraded mode —
+      // Surface the throw via console.error. The activity-emit backstop
+      // below relies on a working ConnectionClient (Marfa reachable +
+      // runtime credential mintable); when the throw is a mint /
+      // credential-bootstrap failure, the backstop fails too and the
+      // message gets retried + DLQ'd in silence. console.error here is
+      // the only operator-visible signal in that degraded mode —
       // wrangler tail / Cloudflare logs surface it before the retry
-      // ladder consumes the message. Keeps the existing activity-emit
-      // path for the healthy-Marfa case where it still works.
+      // ladder consumes the message.
       console.error(
         `[runtime-sdk:consumeBatch] dispatch threw on ${message.kind} for connection ${message.connection_id} (integration=${message.integration_name}, attempts=${String(msg.attempts)}): ${thrownClassName}: ${thrownMessage}`,
       );
@@ -330,11 +323,11 @@ export async function consumeBatch(
     // threw on a retried attempt. Three best-effort observability steps:
     //
     //   1. Stamp `_failure_reason` and forward to the configured DLQ
-    //      producer (T-103). Operators peeking the DLQ via
-    //      `cf-queues-pull` see a real reason rather than `null`.
+    //      producer. Operators peeking the DLQ see a real reason rather
+    //      than `null`.
     //   2. Ack the original so it leaves the main queue.
-    //   3. Emit an `action_required` activity so the Repairs-style
-    //      inbox surfaces the failure.
+    //   3. Emit an `action_required` activity so the operator inbox
+    //      surfaces the failure.
     //
     // The DLQ forward, ack, and activity emit are independent — a
     // failure in one does not block the others.

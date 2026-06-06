@@ -7,7 +7,7 @@ import type {
 } from "@opentelemetry/sdk-trace-base";
 
 /**
- * "5% baseline + 100% on errors" trace sampling (T-275).
+ * "5% baseline + 100% on errors" trace sampling.
  *
  * Head-based sampling (`TraceIdRatioBasedSampler`) decides at span *start*,
  * before the handler runs — so it can't know a request will error and would

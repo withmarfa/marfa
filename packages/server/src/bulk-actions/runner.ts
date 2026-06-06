@@ -1,11 +1,11 @@
 /**
- * T-218: per-action execution for the bulk_action worker.
+ * Per-action execution for the bulk_action worker.
  *
  * Each `run<Action>Chunk` takes a slice of matched item ids (default
  * chunk size 100) plus the action input and runs it inside one shared
  * `storage.runInTransaction`. The transaction boundary is what wins
- * the perf vs the old per-item transactions; the SQL inside the
- * transaction can stay per-row.
+ * the perf vs per-item transactions; the SQL inside the transaction
+ * can stay per-row.
  *
  * Authorisation: the worker passes the job's `tenant_id` explicitly
  * to every storage method. RLS, if enforced, is belt-and-braces —

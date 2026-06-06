@@ -1,8 +1,7 @@
 /**
  * Verify-email page renderer for `/auth/verify-email`.
  *
- * Wave C PR2. Server-rendered HTML, uses the shared auth-page layout
- * (PR4). Three states:
+ * Server-rendered HTML, uses the shared auth-page layout. Four states:
  *
  *   - `pending` — no token in the URL (or empty). Shown after sign-up
  *     while the user goes to check their inbox. Optional resend form.

@@ -1,5 +1,5 @@
 /**
- * One-shot data migration — Layer 3 PR 4 (sync re-presentation).
+ * One-shot data migration — sync re-presentation.
  *
  * Re-presents an existing `~/.marfa/sync.json` configuration as a
  * `system.connection` (kind: integration,

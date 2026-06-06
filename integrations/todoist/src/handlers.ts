@@ -25,16 +25,15 @@
  *       a body subset (content, description, priority, labels, due).
  *     - Mapping-unknown + active → Sync `item_add` command with a
  *       deterministic `temp_id` (SHA-256 hex of `marfa:<item.id>`)
- *       and deterministic `uuid` for command-level idempotency
- *       (T-020 deterministic-id rail). On `sync_status.<uuid> ===
- *       "ok"`, read the real id from `temp_id_mapping`. On error
- *       payload `error_code: 22` (`ALREADY_EXISTS`) — which Todoist
- *       returns when the same uuid is replayed — the prior write
- *       already landed, so we re-derive by listing recently-added
- *       tasks and matching on content + temp_id sentinel. Belt-and-
- *       braces: the deterministic uuid is the primary idempotency
- *       rail (Todoist returns the original `temp_id_mapping`); the
- *       sentinel is the fallback.
+ *       and deterministic `uuid` for command-level idempotency. On
+ *       `sync_status.<uuid> === "ok"`, read the real id from
+ *       `temp_id_mapping`. On error payload `error_code: 22`
+ *       (`ALREADY_EXISTS`) — which Todoist returns when the same uuid
+ *       is replayed — the prior write already landed, so we re-derive
+ *       by listing recently-added tasks and matching on content +
+ *       temp_id sentinel. Belt-and-braces: the deterministic uuid is
+ *       the primary idempotency rail (Todoist returns the original
+ *       `temp_id_mapping`); the sentinel is the fallback.
  *
  *     Lag-window guard runs ahead of every outbound action — recent
  *     inbound writes for the same external id defer with retry=true.
@@ -161,7 +160,7 @@ async function sha256Hex(input: string): Promise<string> {
 
 /** Deterministic temp_id for the Sync API's item_add command. Two runs
  *  of the same outbound for the same Marfa item produce the same
- *  temp_id; Todoist's per-uuid idempotency rail returns the original
+ *  temp_id, so Todoist's per-uuid idempotency rail returns the original
  *  command's result instead of creating a duplicate. */
 function deriveTempId(marfa_id: string): Promise<string> {
   return sha256Hex(`marfa:temp_id:${marfa_id}`);
@@ -411,8 +410,8 @@ export async function handleItemEvent(
     return { ok: true };
   }
 
-  // Create path — Sync API with deterministic temp_id + uuid (T-020).
-  // The deterministic uuid means a retry sees the original command's
+  // Create path — Sync API with deterministic temp_id + uuid. The
+  // deterministic uuid means a retry sees the original command's
   // result via Todoist's command-level idempotency rail; the
   // temp_id_mapping resolves the server-side id either way.
   const temp_id = await deriveTempId(item.id);

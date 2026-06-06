@@ -77,7 +77,7 @@ describe("validateManifest", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("rejects the dropped 'custom' verification method (T-011)", () => {
+  it("rejects the 'custom' verification method (removed from the schema)", () => {
     const result = validateManifest({
       ...VALID_MANIFEST,
       webhook_verification: { method: "custom", adapter_id: "x" },

@@ -97,11 +97,10 @@ export async function createPgTestStorage(options?: {
 }
 
 /**
- * T-131: seed an OAuth-bearer token end-to-end for tests that need
- * the bearer middleware to resolve an OAuth-issued token. Mirrors what
- * the old `storage.oauth.createClient` + `items.create` + `createToken`
- * three-step setup produced, but writes into the @better-auth/oauth-provider
- * plugin's tables (`auth_oauth_client`, `auth_oauth_access_token`).
+ * Seed an OAuth-bearer token end-to-end for tests that need the bearer
+ * middleware to resolve an OAuth-issued token. Writes into the
+ * @better-auth/oauth-provider plugin's tables (`auth_oauth_client`,
+ * `auth_oauth_access_token`).
  *
  * Returns the raw access token (with `marfa_at_` prefix) and the
  * system.connection item id. The bearer middleware looks the token up
@@ -114,9 +113,9 @@ export async function createPgTestStorage(options?: {
  *                           (defaults to undefined — keys-mode self-host)
  * @param opts.authUserId    Better Auth user id; if absent a synthetic
  *                           one is seeded into `auth_user`.
- * @param opts.userRole      T-178: optionally seed a `users` row bound
- *                           to the `auth_user` with this role. Without
- *                           it, no `users` row is created and the bearer
+ * @param opts.userRole      Optionally seed a `users` row bound to the
+ *                           `auth_user` with this role. Without it, no
+ *                           `users` row is created and the bearer
  *                           middleware falls back to `member` projection.
  *                           Hosted-mode storage only (no-op when the
  *                           storage doesn't expose `users`).
@@ -271,13 +270,13 @@ export async function seedOauthBearer(
     accessTtlMs: 3600_000,
   });
 
-  // T-178: optionally seed a `users` row tied to the auth_user so the
-  // bearer middleware's role projection picks it up. Requires a real
-  // tenant id (the column is NOT NULL and FK-references `tenants.id`)
-  // and a `UserStore` on the storage adapter — keys-mode self-host
-  // storage has no `users` store, so the role projection always falls
-  // back to `member` there. Tests opting in must use hosted-mode
-  // storage and create a tenant up-front.
+  // Optionally seed a `users` row tied to the auth_user so the bearer
+  // middleware's role projection picks it up. Requires a real tenant id
+  // (the column is NOT NULL and FK-references `tenants.id`) and a
+  // `UserStore` on the storage adapter — keys-mode self-host storage has
+  // no `users` store, so the role projection always falls back to
+  // `member` there. Tests opting in must use hosted-mode storage and
+  // create a tenant up-front.
   if (opts.userRole) {
     if (!storage.users) {
       throw new Error(
@@ -302,12 +301,11 @@ export async function seedOauthBearer(
 }
 
 /**
- * Wave C PR2 helper. With `requireEmailVerification: true` the auth
- * instance blocks sign-in until `auth_user.email_verified` is `true`.
- * Tests that exercise the post-sign-in flow (consent, OAuth, etc.)
- * call this between sign-up and sign-in to mark the test account
- * verified. Equivalent to a user clicking the verification link, but
- * without the round-trip through the email transport.
+ * Mark a user's email verified. With `requireEmailVerification: true`
+ * the auth instance blocks sign-in until `auth_user.email_verified` is
+ * `true`. Tests that exercise the post-sign-in flow (consent, OAuth,
+ * etc.) call this between sign-up and sign-in to skip the email
+ * round-trip.
  *
  * Safe to call when the user doesn't exist — the UPDATE simply
  * affects zero rows.
@@ -342,17 +340,16 @@ export async function markEmailVerified(
 }
 
 /**
- * Wave C PR3 / T-033 test helper. Reads the latest reset-password
- * verification token from `auth_verification`. Better-auth keys these
- * rows as `identifier = "reset-password:${token}"` and `value =
- * userId`. Returns the most-recently-created token across any user;
- * tests typically have one in flight at a time. Returns `null` when
- * no row matches.
+ * Read the latest reset-password verification token from
+ * `auth_verification`. Better-auth keys these rows as
+ * `identifier = "reset-password:${token}"` and `value = userId`.
+ * Returns the most-recently-created token across any user; tests
+ * typically have one in flight at a time. Returns `null` when no row
+ * matches.
  *
  * The hook in `instance.ts` builds the email URL itself, so tests
- * can't intercept the HTTP send — instead they read the token from
- * the DB and submit it through the same `POST /auth/reset-password`
- * the user would.
+ * read the token from the DB and submit it directly to
+ * `POST /auth/reset-password`.
  */
 export async function readLatestResetToken(
   storage: Storage,
@@ -385,15 +382,13 @@ export async function readLatestResetToken(
 }
 
 /**
- * T-079 — retry-poll helper for fire-and-forget audit assertions.
+ * Retry-poll helper for fire-and-forget audit assertions.
  *
  * Most route handlers emit audit rows via `void storage.audit.log(...)`
- * — the audit insert is intentionally off the critical path so it
- * doesn't add latency to every API call. Tests that immediately query
- * audit after the action will sometimes win the race against the
- * pending insert (typically on SQLite) and sometimes lose it
- * (consistently on slower PG). Rather than make `audit.log` awaitable
- * for production, tests poll briefly until the row appears.
+ * — the audit insert is off the critical path. Tests that immediately
+ * query audit after an action may lose the race against the pending
+ * insert. Rather than make `audit.log` awaitable for production, tests
+ * poll briefly until the row appears.
  *
  * Pass either:
  *   - `{ filter }` — runs `storage.audit.list(filter)` until at least
@@ -430,11 +425,10 @@ export async function createTestContext(
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
   const blobPath = join(tmpDir, "blobs");
 
-  // T-178: thread `authMode` through to storage construction so tests
-  // overriding `authMode: "hosted"` get a UserStore (`storage.users`).
-  // The override reaches both storage and AppConfig, so a test needing
-  // `storage.users` just sets `authMode: "hosted"` rather than rolling
-  // its own context.
+  // Thread `authMode` through to storage construction so tests overriding
+  // `authMode: "hosted"` get a UserStore (`storage.users`). The override
+  // reaches both storage and AppConfig, so a test needing `storage.users`
+  // just sets `authMode: "hosted"` rather than rolling its own context.
   const storageAuthMode: "keys" | "hosted" = overrides?.authMode ?? "keys";
   let storage: Storage;
   let pgCleanup: (() => Promise<void>) | undefined;
@@ -492,8 +486,8 @@ export async function createTestContext(
     oauthRedirectAllowlist: [],
     ...overrides,
   };
-  // T-090: every test gets a real OIDC signer so id_token issuance and
-  // JWKS endpoints behave the same as production.
+  // Every test gets a real OIDC signer so id_token issuance and JWKS
+  // endpoints behave the same as production.
   const oidcSigner = await OidcSigner.init(storage);
   const app = createApp(storage, blobBackend, config, undefined, oidcSigner);
 
@@ -507,9 +501,9 @@ export async function createTestContext(
       source: `test-admin-${suffix}`,
       role: "admin",
       type_permissions: {},
-      // TSC42 §1: items created without an explicit `tier` default to the
-      // library tier ("save it"). The test admin matches that default;
-      // tests that need feed items pass `tier: "feed"` on create.
+      // Items created without an explicit `tier` default to the library
+      // tier. The test admin matches that default; tests that need feed
+      // items pass `tier: "feed"` on create.
       default_tier: "library",
       // The bootstrap admin in tests stands in for the platform credential —
       // tests need to register core.evaluator-* helper types and exercise
@@ -560,9 +554,9 @@ export function request(
     key?: string;
     /**
      * Peer remote address — synthesised onto Hono's `c.env.incoming.socket`
-     * so `clientIpMiddleware` (T-027) sees a deterministic value. Without
-     * this, `app.request()` produces a context with no peer and tests
-     * can't exercise the audit-row IP stamping path.
+     * so `clientIpMiddleware` sees a deterministic value. Without this,
+     * `app.request()` produces a context with no peer and tests can't
+     * exercise the audit-row IP stamping path.
      */
     peer?: string;
   },
@@ -600,13 +594,13 @@ export function request(
 }
 
 /**
- * T-218: drive `POST /items/bulk-actions` through to a terminal state
+ * Drive `POST /items/bulk-actions` through to a terminal state
  * synchronously for tests. The async endpoint returns 202 + a job
  * envelope; this helper drains the in-process worker by calling
  * `runOnce()` until the queue is empty, then GETs the final job state,
- * and returns the unwrapped `BulkActionResult` so existing test
- * assertions on `succeeded` / `matched` / `ids` / `errors` /
- * `blob_hashes_referenced` continue to work without restructuring.
+ * and returns the unwrapped `BulkActionResult` so test assertions on
+ * `succeeded` / `matched` / `ids` / `errors` / `blob_hashes_referenced`
+ * work without restructuring.
  *
  * For dry_run requests the server stays synchronous; the helper just
  * passes through the 200 response.

@@ -4,7 +4,7 @@ import type { TestContext } from "../test-utils.js";
 import { renderForgotPasswordPage } from "./forgot-password-page.js";
 
 /**
- * Wave C PR3 / T-033 — forgot-password page renderer + handler smoke.
+ * Forgot-password page renderer + handler smoke.
  * Token round-trip via the live email transport is exercised in
  * `password-reset.test.ts`; this file covers the renderer states + the
  * route-side throttle/soft-fail invariants.
@@ -167,7 +167,7 @@ describe("POST /auth/forgot-password (form wrapper)", () => {
     expect(res.headers.get("location")).toContain("sent=1");
   });
 
-  it("T-078: emits no ERROR log when the email doesn't exist", async () => {
+  it("emits no ERROR log when the email doesn't exist", async () => {
     ctx = await createTestContext();
     const captured: string[] = [];
     const original = process.stdout.write.bind(process.stdout);
