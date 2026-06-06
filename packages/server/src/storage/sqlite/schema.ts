@@ -325,8 +325,10 @@ export const inboundWebhooks = sqliteTable(
     // submitted manifest's webhook_verification.method. Each row's
     // dispatch is keyed off this value at receipt.
     verification_method: text("verification_method").notNull(),
-    // Non-null when verification_method === 'custom'. The custom
-    // verification adapter resolves the handler at dispatch time.
+    // Intentionally nullable: only set when verification_method === 'custom',
+    // naming the adapter that resolves the handler at dispatch time. The
+    // built-in methods (hmac-sha256, slack, stripe, github) are self-describing
+    // and leave this undefined — a null here is the normal case, not missing data.
     verification_adapter_id: text("verification_adapter_id"),
     events: text("events").notNull().default("[]"),
     disabled: integer("disabled").notNull().default(0),

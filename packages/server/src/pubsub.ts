@@ -294,6 +294,26 @@ export async function resolveHopBudget(
  * explicit-override resolution from `resolveCycleForPublish`); callers
  * must not pass the raw event's optional fields.
  */
+/**
+ * Resolve the hop count the budget gate should enforce against. For
+ * connector-originated events (origin set) it applies a floor of 1 so a
+ * malformed wire publish that stamps origin but leaves hopCount at 0
+ * doesn't slip past the budget. ALS-driven propagation means in-process
+ * callers can't produce this shape, but a tampered inbound header still
+ * can — so the floor stays as wire-tampering defence. Human-originated
+ * events (no origin) pass their hopCount through unchanged.
+ *
+ * Shared by `passesHopBudget` and the `POST /connections/preview-event`
+ * hypothetical-event reasoning so the two can't drift.
+ */
+export function computeEffectiveHopCount(cycle: {
+  originatingConnectionId: string | null;
+  hopCount: number;
+}): number {
+  const isConnectorOriginated = cycle.originatingConnectionId != null;
+  return isConnectorOriginated ? Math.max(cycle.hopCount, 1) : cycle.hopCount;
+}
+
 async function passesHopBudget(
   event: PubsubEvent,
   cycle: { originatingConnectionId: string | null; hopCount: number },
@@ -301,14 +321,7 @@ async function passesHopBudget(
   const isConnectorOriginated = cycle.originatingConnectionId != null;
   // Human-originated events (no origin, no hops) bypass the budget.
   if (!isConnectorOriginated && cycle.hopCount === 0) return true;
-  // Connector chains: enforce a floor of 1 so a malformed wire publish
-  // that stamps origin but leaves hopCount at 0 doesn't slip past the
-  // budget. ALS-driven propagation means in-process callers can't
-  // produce this shape, but a tampered inbound header still can — so
-  // the guard stays as wire-tampering defence.
-  const effectiveHopCount = isConnectorOriginated
-    ? Math.max(cycle.hopCount, 1)
-    : cycle.hopCount;
+  const effectiveHopCount = computeEffectiveHopCount(cycle);
   const budget = await getHopBudget(event.tenantId);
   if (effectiveHopCount <= budget) return true;
   if (onHopOverflow) {

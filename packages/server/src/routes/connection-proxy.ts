@@ -1,11 +1,6 @@
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
-import {
-  MarfaError,
-  ErrorCode,
-  generateId,
-  type Item,
-} from "@withmarfa/shared";
+import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -535,6 +530,12 @@ async function markReauthRequired(
   /** Resolved client IP for the audit trail. Threaded from the route
    *  handler that owns the Hono context. */
   clientIp: string | null,
+  /** Optional remediation hint surfaced as a structured field on the
+   *  activity row's `detail` — e.g. operator reinstall instructions.
+   *  Kept out of `reason` so the human-readable cause stays a clean
+   *  one-liner and downstream consumers can render the remediation
+   *  separately. */
+  remediation?: string,
 ): Promise<void> {
   try {
     const updated = await storage.items.update(
@@ -586,7 +587,8 @@ async function markReauthRequired(
           severity: "action_required",
           summary: `OAuth re-authorisation needed for ${integration}`,
           connection_id: connection.id,
-          detail: { reason }, // system.activity.detail requires an object, not a bare string
+          // system.activity.detail requires an object, not a bare string.
+          detail: { reason, ...(remediation ? { remediation } : {}) },
         },
         ...(connection.properties.feed_activity === true
           ? { tier: "feed" as const }
@@ -739,9 +741,9 @@ export function connectionProxyRoutes(storage: Storage) {
           storage,
           connection,
           tenantId,
-          reason +
-            " — reinstall the connection with a fresh token via POST /credentials/api-token + POST /connections/install.",
+          reason,
           c.get("clientIp") ?? null,
+          "Reinstall the connection with a fresh token via POST /credentials/api-token + POST /connections/install.",
         );
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
@@ -922,5 +924,4 @@ export const __internals = {
   refreshAccessToken,
   sha256Hex,
   PROACTIVE_REFRESH_LEEWAY_SEC,
-  generateProxyId: generateId,
 };

@@ -10,9 +10,13 @@
  * `MARFA_AUTH_ALLOW_SIGNUP=false`. Single-user self-hosted instances
  * flip the flag on for the initial admin account, then back off.
  *
- * autoSignIn is enabled in the Better Auth instance config, so a
- * successful sign-up sets a session cookie immediately and the user
- * lands on `return_to` already authenticated.
+ * Two post-sign-up paths depending on whether email verification is on:
+ *   - Verification off — `autoSignIn` sets a session cookie immediately
+ *     and the user lands on `return_to` already authenticated.
+ *   - Verification on (`requireEmailVerification: true`) — Better Auth
+ *     skips auto-sign-in and the wrapper handler 302s to
+ *     `/auth/verify-email` instead, where the user clicks the emailed
+ *     link before they can sign in.
  *
  * References the shared stylesheet at `/auth/static/auth.css` via
  * the `renderAuthLayout` helper; no inline `<style>` block.
