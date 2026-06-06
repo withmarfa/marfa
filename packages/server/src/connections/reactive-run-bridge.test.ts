@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { tryStartReactiveRunBridge } from "./reactive-run-bridge.js";
+import {
+  tryStartReactiveRunBridge,
+  __test_internals,
+} from "./reactive-run-bridge.js";
 import type { Storage } from "../storage/interface.js";
 
 const STORAGE_STUB = {
@@ -217,5 +220,38 @@ describe("reactive-run-bridge — Pool transport", () => {
     });
     expect(bridge).not.toBeNull();
     await bridge?.stop();
+  });
+});
+
+describe("reactive-run-bridge — cooldown escalation", () => {
+  const { computeCooldownUntil } = __test_internals;
+  const NOW = 1_000_000;
+  const COOLDOWN = 60_000;
+  const MAX = 300_000; // 5 × COOLDOWN
+  const THRESHOLD = 3;
+
+  it("arms the first cooldown at the base window", () => {
+    expect(computeCooldownUntil(THRESHOLD, THRESHOLD, COOLDOWN, MAX, NOW)).toBe(
+      NOW + COOLDOWN,
+    );
+  });
+
+  it("extends the window with each consecutive failure past the threshold", () => {
+    expect(
+      computeCooldownUntil(THRESHOLD + 1, THRESHOLD, COOLDOWN, MAX, NOW),
+    ).toBe(NOW + 2 * COOLDOWN);
+    expect(
+      computeCooldownUntil(THRESHOLD + 2, THRESHOLD, COOLDOWN, MAX, NOW),
+    ).toBe(NOW + 3 * COOLDOWN);
+  });
+
+  it("saturates at cooldownMaxMs for a subscriber that keeps failing", () => {
+    // The previous implementation always returned NOW + COOLDOWN, so the
+    // window never reached the cap no matter how many events failed.
+    for (let failures = THRESHOLD + 4; failures < THRESHOLD + 50; failures++) {
+      expect(
+        computeCooldownUntil(failures, THRESHOLD, COOLDOWN, MAX, NOW),
+      ).toBe(NOW + MAX);
+    }
   });
 });

@@ -439,12 +439,6 @@ export class SqliteItemStore implements ItemStore {
     input: UpdateItemInput,
     tenantId?: string,
   ): Promise<Item | ConflictResponse> {
-    // Pre-fetch ancestor outside transaction so we can await the async store method
-    const ancestor =
-      input.version !== undefined
-        ? await this.versionStore.getByVersion(id, input.version)
-        : null;
-
     const whereClause = this.tenantWhere(id, tenantId);
 
     return await this.db.transaction(async (tx) => {
@@ -550,6 +544,16 @@ export class SqliteItemStore implements ItemStore {
           }),
         });
       }
+
+      // Resolve the ancestor version inside the same transaction (passing
+      // `tx`) so it's consistent with the item row read above — mirrors the
+      // Postgres path. `input.version` is known-defined here: the omitted and
+      // equal-version cases returned in the branch above.
+      const ancestor = await this.versionStore.getByVersion(
+        id,
+        input.version,
+        tx,
+      );
 
       if (!ancestor) {
         return {

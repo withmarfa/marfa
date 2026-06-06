@@ -7,6 +7,11 @@ import { items } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToVersion } from "./helpers.js";
 
+/** The base Drizzle handle or a transaction handle from `db.transaction`. */
+type TxOrDb =
+  | DrizzleDb
+  | Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
+
 export class SqliteVersionStore implements VersionStore {
   constructor(private db: DrizzleDb) {}
 
@@ -46,8 +51,13 @@ export class SqliteVersionStore implements VersionStore {
     return rows.map(rowToVersion);
   }
 
-  async getByVersion(itemId: string, version: number): Promise<Version | null> {
-    const row = await this.db
+  async getByVersion(
+    itemId: string,
+    version: number,
+    tx?: TxOrDb,
+  ): Promise<Version | null> {
+    const executor = tx ?? this.db;
+    const row = await executor
       .select()
       .from(versions)
       .where(and(eq(versions.item_id, itemId), eq(versions.version, version)))
