@@ -687,6 +687,24 @@ async function handleUnmappedIntegration(
  * throughout: a follow-up storage write that fails must never crash
  * the drainer.
  */
+/**
+ * Cooldown window end for a failing subscriber. The window grows with each
+ * consecutive failure past the cooldown threshold, so a subscriber that
+ * fails every event escalates toward `cooldownMaxMs` rather than getting the
+ * same short `cooldownMs` window each time, then saturates at the cap. The
+ * counter resets to zero on the first success, which clears the cooldown.
+ */
+function computeCooldownUntil(
+  consecutiveFailures: number,
+  cooldownThreshold: number,
+  cooldownMs: number,
+  cooldownMaxMs: number,
+  now: number,
+): number {
+  const steps = Math.max(1, consecutiveFailures - cooldownThreshold + 1);
+  return now + Math.min(cooldownMs * steps, cooldownMaxMs);
+}
+
 async function handleSubscriberFailure(
   entry: SubscriptionEntry,
   err: unknown,
@@ -733,11 +751,13 @@ async function handleSubscriberFailure(
   const consecutiveFailures = prev.consecutiveFailures + 1;
   let cooldownUntil = prev.cooldownUntil;
   if (consecutiveFailures >= cooldownThreshold) {
-    // Each subsequent failure within the cooldown extends the window,
-    // capped at cooldownMaxMs from now so events that keep firing
-    // don't push the window arbitrarily far into the future.
-    const now = Date.now();
-    cooldownUntil = Math.min(now + cooldownMs, now + cooldownMaxMs);
+    cooldownUntil = computeCooldownUntil(
+      consecutiveFailures,
+      cooldownThreshold,
+      cooldownMs,
+      cooldownMaxMs,
+      Date.now(),
+    );
   }
   subscriberFailures.set(entry.connection_id, {
     consecutiveFailures,
@@ -917,4 +937,5 @@ async function sendOne(
 export const __test_internals = {
   loadSubscriptions,
   buildEntryForConnection,
+  computeCooldownUntil,
 };
