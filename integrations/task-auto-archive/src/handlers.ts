@@ -156,7 +156,9 @@ async function runSweep(
   await ctx.cursor.write(CURSOR_KEY, cursorBlob);
 
   await ctx.activity.emit({
-    severity: archived === 0 ? "info" : "info",
+    // Archiving due tasks is the integration's normal, expected work —
+    // both the nothing-due and archived-N outcomes are steady-state info.
+    severity: "info",
     summary:
       archived === 0
         ? `task-auto-archive sweep — nothing due (${triggerLabel})`

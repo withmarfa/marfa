@@ -175,7 +175,7 @@ function deriveCommandUuid(marfa_id: string): Promise<string> {
 
 /** Content-hash for echo suppression. Includes every field a
  *  round-trip might touch. */
-function contentHashForItem(item: TodoistItem): string {
+async function contentHashForItem(item: TodoistItem): Promise<string> {
   const canonical = JSON.stringify({
     content: item.content ?? "",
     description: stripSentinel(item.description ?? ""),
@@ -193,13 +193,11 @@ function contentHashForItem(item: TodoistItem): string {
     section_id: item.section_id ?? null,
     parent_id: item.parent_id ?? null,
   });
-  // 32-char hex prefix is plenty for collision resistance at the
-  // scale of one user's task list.
-  let hash = 0;
-  for (let i = 0; i < canonical.length; i++) {
-    hash = (hash * 31 + canonical.charCodeAt(i)) | 0;
-  }
-  return (hash >>> 0).toString(16);
+  // SHA-256, truncated to 32 hex chars. A 32-bit non-cryptographic hash
+  // hits ~50% collision odds around 65k distinct items, and a collision
+  // makes echo-suppression skip a real update — so use the same digest
+  // already relied on for temp_id / command_uuid.
+  return (await sha256Hex(canonical)).slice(0, 32);
 }
 
 function stripSentinel(description: string): string {
@@ -284,7 +282,7 @@ export async function handleSchedule(
       continue;
     }
 
-    const hash = contentHashForItem(item);
+    const hash = await contentHashForItem(item);
     if (await ctx.echo.shouldSkipReactive(item.id, hash)) {
       skippedEcho += 1;
       continue;
@@ -399,7 +397,10 @@ export async function handleItemEvent(
     }
     const updatedRaw: unknown = await resp.json();
     const updated = updatedRaw as TodoistItem;
-    await ctx.echo.trackOutboundWrite(externalId, contentHashForItem(updated));
+    await ctx.echo.trackOutboundWrite(
+      externalId,
+      await contentHashForItem(updated),
+    );
     await ctx.activity.emit({
       severity: "info",
       summary: `todoist outbound: updated task ${externalId}`,
@@ -452,7 +453,7 @@ export async function handleItemEvent(
     cursor.mappings[real_id] = item.id;
     await ctx.echo.trackOutboundWrite(
       real_id,
-      contentHashForItem({ id: real_id, ...args }),
+      await contentHashForItem({ id: real_id, ...args }),
     );
     await ctx.cursor.write(CURSOR_KEY, cursor);
     await ctx.activity.emit({

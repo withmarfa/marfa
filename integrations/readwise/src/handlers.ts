@@ -258,7 +258,12 @@ export async function handleSchedule(
       const raw: unknown = await response.json();
       payload = raw as ExportResponse;
     } catch (err) {
-      return reportFailure(ctx, "readwise /export parse failed", err, true);
+      // A corrupt/unparseable response is a real upstream problem, not a
+      // transient blip — surface it as action_required even though we
+      // still retry, so it doesn't hide in the steady-state info stream.
+      return reportFailure(ctx, "readwise /export parse failed", err, true, {
+        severity: "action_required",
+      });
     }
 
     for (const book of payload.results ?? []) {
@@ -374,9 +379,10 @@ async function reportFailure(
   summary: string,
   err: unknown,
   retry: boolean,
+  opts?: { severity?: "info" | "action_required" | "error" },
 ): Promise<HandlerResult> {
   await ctx.activity.emit({
-    severity: retry ? "info" : "action_required",
+    severity: opts?.severity ?? (retry ? "info" : "action_required"),
     summary,
     detail: { error: errorMessage(err) },
   });
