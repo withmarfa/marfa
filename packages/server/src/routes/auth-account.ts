@@ -30,7 +30,7 @@ import { renderAuthLayout } from "./auth-layout.js";
 import { setNoStore } from "./no-store.js";
 
 const CONFIRM_TTL_MS = 60 * 60 * 1000; // 1 hour
-const CANCEL_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const CONFIRM_IDENTIFIER_PREFIX = "account-delete:";
 const CANCEL_IDENTIFIER_PREFIX = "account-cancel:";
@@ -74,6 +74,7 @@ export function authAccountRoutes(
   auth: MarfaAuth | undefined,
   emailTransport: MarfaEmailTransport | undefined,
   baseURL: string,
+  graceDays: number,
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
@@ -183,7 +184,9 @@ export function authAccountRoutes(
 
     // Mint cancel token.
     const cancelToken = newToken();
-    const cancelExpiresAt = new Date(Date.now() + CANCEL_TTL_MS);
+    // The cancel link must stay valid for the whole grace window so the
+    // user can restore any time before the purger hard-deletes.
+    const cancelExpiresAt = new Date(Date.now() + graceDays * MS_PER_DAY);
     await insertVerification(storage, {
       identifier: `${CANCEL_IDENTIFIER_PREFIX}${cancelToken}`,
       value: authUserId,
@@ -200,7 +203,6 @@ export function authAccountRoutes(
     }
 
     const cancelUrl = `${baseURL.replace(/\/$/, "")}/auth/account/cancel?token=${encodeURIComponent(cancelToken)}`;
-    const graceDays = 30;
     if (emailTransport && email) {
       const rendered = renderAccountPendingDeletionEmail({
         url: cancelUrl,
