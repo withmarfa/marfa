@@ -148,13 +148,8 @@ function buildContext(opts: BuildOpts): BuiltContext {
         input.content instanceof Uint8Array
           ? input.content
           : new Uint8Array(input.content);
-      // Deterministic content-addressed hash mirrors the server.
-      // Uses Web Crypto (SubtleCrypto) so this works in both the
-      // Node test runtime and the Workers production runtime —
-      // no Node-only `crypto.createHash` dependency.
-      // Copy into a fresh, plain ArrayBuffer view to satisfy
-      // SubtleCrypto's BufferSource (rejects SharedArrayBuffer-
-      // backed views in some TS lib configurations).
+      // Uses SubtleCrypto so this works in both Node and Workers runtimes.
+      // Copy into a fresh ArrayBuffer to avoid SharedArrayBuffer rejection.
       const copy = new Uint8Array(bytes.byteLength);
       copy.set(bytes);
       const digest = await globalThis.crypto.subtle.digest("SHA-256", copy);

@@ -134,8 +134,8 @@ describe("consumeBatch", () => {
     const m2 = makeMsg(SCHED({ integration_name: "other" }));
     const m3 = makeMsg(SCHED({ integration_name: "demo" }));
     const outcome = await consumeBatch(makeEnv(), [m1, m2, m3]);
-    // Other-integration messages are acked (so they leave the shared
-    // queue) but not dispatched — the handler only fires for our two.
+    // Other-integration messages are acked to leave the shared queue,
+    // not dispatched — the handler fires only for the two matching.
     expect(outcome.acked).toBe(3);
     expect(outcome.retried).toBe(0);
     expect(dispatched).toBe(2);
@@ -154,7 +154,7 @@ describe("consumeBatch", () => {
     expect(outcome).toEqual({ acked: 0, retried: 1, failed: 0 });
     expect(m.retried).toBe(true);
     expect(m.acked).toBe(false);
-    // Backoff: first attempt → 2^0 = 1 second.
+    // First attempt → 2^0 = 1 s backoff.
     expect(m.retryDelaySeconds).toBe(1);
   });
 
@@ -482,10 +482,8 @@ describe("consumeBatch — DLQ failure-reason enrichment", () => {
       };
     };
     expect(sentBody._failure_reason.class_name).toBe("CustomFailure");
-    // Bare error message — the wrapper's `dispatch_threw:` prefix on
-    // `result.reason` is intentionally stripped from the DLQ stamp so the
-    // flattened peek string isn't double-prefixed
-    // (`CustomFailure: dispatch_threw: ...`).
+    // Bare error message — dispatch_threw prefix is stripped from the DLQ stamp
+    // to avoid a double-prefix in the flattened peek string.
     expect(sentBody._failure_reason.message).toBe("upstream rejected");
     expect(sentBody._failure_reason.attempts).toBe(2);
   });

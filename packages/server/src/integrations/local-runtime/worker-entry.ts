@@ -150,10 +150,8 @@ async function main(): Promise<void> {
   if (!isBootData(workerData)) {
     throw new Error("workerData missing handlerModulePath");
   }
-  // The integration's `local.ts` calls `registerHandlers()` on import,
-  // seeding the runtime-sdk handler registry. Any throw here surfaces to
-  // the supervisor via the worker's `error` event so the pool can take
-  // the bad thread out of rotation.
+  // local.ts calls registerHandlers() on import. A throw surfaces via the
+  // worker `error` event so the pool can replace the bad thread.
   await import(workerData.handlerModulePath);
   parentPort.on("message", (raw: unknown) => {
     void (async () => {
@@ -180,7 +178,6 @@ async function main(): Promise<void> {
       }
     })();
   });
-  // Ready signal — the pool waits for this before sending dispatches.
   parentPort.postMessage({ kind: "ready" });
 }
 

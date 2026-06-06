@@ -146,7 +146,7 @@ async function cfRequest<T>(
   try {
     envelope = text ? (JSON.parse(text) as ApiEnvelope<T>) : undefined;
   } catch {
-    // Non-JSON response — treat as failure.
+    // Non-JSON — fall through to the error throw below.
   }
   if (!res.ok || !envelope?.success) {
     const detail = envelope?.errors.length

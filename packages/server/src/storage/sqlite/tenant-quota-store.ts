@@ -107,10 +107,9 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
       return row?.c ?? 0;
     }
     if (resource === "storage_bytes") {
-      // SUM(size) across the tenant's blob metadata rows. The storage
-      // backend dedupes the physical file by hash, so this counts every
-      // blob row whose tenant_id matches — different tenants uploading
-      // the same hash each see the row in their own scope.
+      // Counts every blob row for this tenant. The storage backend dedupes
+      // physical files by hash, but each tenant owns their own row so the
+      // same hash uploaded by two tenants counts against both.
       const row = await this.db
         .select({ s: sql<number>`coalesce(sum(${blobs.size}), 0)` })
         .from(blobs)
@@ -118,8 +117,8 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
         .get();
       return row?.s ?? 0;
     }
-    // rate_per_minute is enforced via the rate-limit middleware's
-    // sliding-window counter, not via tenant_quotas.count.
+    // rate_per_minute is enforced by the rate-limit middleware, not via a
+    // count query — no DB row to sum here.
     return 0;
   }
 }

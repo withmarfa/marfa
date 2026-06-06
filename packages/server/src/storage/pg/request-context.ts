@@ -78,23 +78,12 @@ export const pgRequestContext = new AsyncLocalStorage<PgRequestContext>();
  * code paths that intentionally bypass the per-request context.
  */
 export function wrapDbWithRequestContext(baseDb: PgDb): PgDb {
-  // The proxy target is the base db itself — non-method access
-  // (e.g. `db._.session` for internals) falls through correctly,
-  // and method access is redirected via the `get` trap below.
   return new Proxy(baseDb, {
     get(target, prop) {
       const ctx = pgRequestContext.getStore();
-      // `tx` and `baseDb` differ in TS surface (PgTransaction vs
-      // PostgresJsDatabase) but are runtime-compatible for the
-      // storage-layer surface area; the cast lets the proxy's
-      // `get` trap forward through either uniformly.
+      // PgTransaction and PostgresJsDatabase differ in TS surface but
+      // are runtime-compatible for the storage-layer surface area.
       const source: object = ctx?.tx ?? target;
-      // Methods on Drizzle's db are typically returned bound to the
-      // instance (the query builder retains internal state). Reflect
-      // already returns them bound to `source` here; nothing further
-      // to do. Reflect.get is typed as `any`, so route through
-      // `unknown` explicitly to keep the proxy's `get` trap clean
-      // for lint without changing the runtime semantics.
       const value: unknown = Reflect.get(source, prop, source) as unknown;
       return value;
     },

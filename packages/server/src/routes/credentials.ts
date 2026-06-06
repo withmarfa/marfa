@@ -237,10 +237,7 @@ export function credentialRoutes(storage: Storage) {
     const key = requireTenantAdmin(c);
     const body = c.req.valid("json");
 
-    // Let encryption failures propagate as 500 — matches the pattern in
-    // routes/oauth-callback.ts where the same call is unguarded. A failed
-    // encrypt here is a server-config bug (missing MARFA_SECRET_KEY), not a
-    // user-input bug; surfacing 500 is the honest signal.
+    // Encryption failures propagate as 500 — a missing MARFA_SECRET_KEY is a server-config bug, not a caller bug.
     const secret_encrypted = encryptSecret(
       body.oauth_client_secret,
       SECRET_INFO.connectionOauthToken,
@@ -291,16 +288,11 @@ export function credentialRoutes(storage: Storage) {
     const key = requireTenantAdmin(c);
     const body = c.req.valid("json");
 
-    // Same encryption domain as OAuth client secrets + access/refresh
-    // tokens — keeps every connection-scoped secret under one HKDF tag
-    // so rotating the master key sweeps everything at once.
     const secret_encrypted = encryptSecret(
       body.api_token,
       SECRET_INFO.connectionOauthToken,
     );
 
-    // Persist `auth_scheme` only when explicitly supplied — a missing
-    // field defaults to `Bearer` at proxy-read time.
     const apiTokenConfig: Record<string, unknown> = {
       upstream_base_url: body.upstream_base_url,
     };
@@ -321,9 +313,6 @@ export function credentialRoutes(storage: Storage) {
       key.tenant_id ?? undefined,
     );
 
-    // Never log the api_token plaintext — only its existence. The
-    // upstream_base_url is non-secret (it's documented on the
-    // integration's manifest); the label is operator-supplied.
     void storage.audit.log({
       key_id: key.id,
       client_ip: c.get("clientIp") ?? null,

@@ -172,9 +172,6 @@ export class ConnectionClient {
 
   async getItem(id: string): Promise<ItemResource | null> {
     try {
-      // Same unwrap shape as `createItem` / `transitionItem`: the
-      // server returns `GET /items/:id` as `{ item, metadata }`, not
-      // the bare ItemResource.
       const wrapped = await this.request<{ item: ItemResource } | ItemResource>(
         "GET",
         `/items/${id}`,
@@ -193,8 +190,6 @@ export class ConnectionClient {
     id: string,
     patch: Partial<CreateItemInput>,
   ): Promise<ItemResource> {
-    // Server returns `PATCH /items/:id` as `{ item, metadata }` — same
-    // unwrap shape as the other Item-returning methods.
     const wrapped = await this.request<{ item: ItemResource } | ItemResource>(
       "PATCH",
       `/items/${id}`,
@@ -370,16 +365,10 @@ export class ConnectionClient {
     path: string,
     body?: unknown,
   ): Promise<T> {
-    // Stamp cycle headers on mutating requests so the server's
-    // `cycleMiddleware` can resolve `c.var.cycle` and the resulting
-    // publishes carry attribution. Read-only verbs (GET/HEAD/OPTIONS)
-    // don't trigger publishes — no need to include them there.
-    // `nextHopMetadata` is called ONCE per request: the SDK never
-    // pre-increments `this.cycleParent`. Multiple requests in the same
-    // run all derive from the same parent (each gets `parent.hop + 1`)
-    // — that's deliberate. The runtime contract is "this connector's
-    // run is one logical hop"; per-request increments would conflate
-    // an N-call handler with an N-deep chain.
+    // Cycle headers go on mutating requests only (GET/HEAD don't trigger publishes).
+    // nextHopMetadata is called once per request — all calls in a run share
+    // the same parent, which is intentional: the run is one logical hop,
+    // not one hop per API call.
     const isMutating = method !== "GET" && method !== "HEAD";
     return this.fetchJson<T>(method, path, {
       contentType: body !== undefined ? "application/json" : undefined,
@@ -429,8 +418,7 @@ export class ConnectionClient {
 
     let res = await doFetch();
     if (res.status === 401) {
-      // Single-flight refresh: cache miss / expired. Refresh and retry
-      // exactly once; persistent 401 surfaces as MarfaApiError.
+      // Refresh once on 401; persistent 401 surfaces as MarfaApiError.
       this.credential = await this.refreshCredential();
       res = await doFetch();
     }
@@ -448,17 +436,10 @@ export class ConnectionClient {
 }
 
 /**
- * Coerce a caller-supplied `content` value into a `BodyInit` the
- * Workers / Node `fetch` accepts as a raw-bytes body. Rejects
- * anything that isn't bytes — strings, streams, nulls all surface a
- * clear `MarfaApiError` at the SDK boundary rather than being
- * silently misinterpreted by `fetch`.
- *
- * Returned shape:
- * - `Buffer` (Node) passes through (it is also a `Uint8Array` at
- *   runtime, but `Buffer.from(buf.buffer, ...)` would copy unnecessarily).
- * - `Uint8Array` passes through.
- * - `ArrayBuffer` wraps in a `Uint8Array` view.
+ * Coerce `content` into a `Uint8Array` the Workers / Node `fetch` accepts as
+ * a raw-bytes body. Rejects non-bytes (strings, streams, null) with a clear
+ * `MarfaApiError` rather than letting `fetch` silently misinterpret the input.
+ * `Buffer` (Node) is also a `Uint8Array` at runtime and passes through.
  */
 function toUploadBytes(content: UploadBlobInput["content"]): Uint8Array {
   if (content instanceof Uint8Array) return content;

@@ -6,25 +6,12 @@
  * on the connection's capture address, an Email Worker parses MIME +
  * signs the JSON envelope, and POSTs it to the server's webhook
  * receipt endpoint. The connection's subscription secret is the
- * shared HMAC key.
- *
- * Per-delivery flow:
- *   1. Email Routing matches `capture@inbox.marfa.so` → Email Worker.
- *   2. Worker parses MIME, builds a JSON envelope.
- *   3. Worker HMACs the body with the per-connection subscription
- *      secret (`WEBHOOK_SECRET` Worker secret).
- *   4. POST to `https://staging.marfa.so/runtime/webhook/<connection_id>`
- *      with `X-Marfa-Signature: sha256=<hex>` and
- *      `X-Marfa-Delivery-Id: <Message-ID>`.
- *   5. The server verifies via the `cloudflare-email` adapter,
- *      idempotency-checks on `(connection_id, Message-ID)`, enqueues
- *      a `WebhookMessage`.
- *   6. This handler parses the envelope, builds a
- *      `withmarfa.captured_email` item with `source_id = Message-ID`.
+ * shared HMAC key. Full per-delivery pipeline documented in
+ * `email-worker/src/index.ts`.
  *
  * Tenant routing (v1): single capture address. Multi-tenant routing
- * (e.g. `capture-<tenant_slug>@inbox.marfa.so`) is a future ticket
- * once Marfa onboards a second tenant.
+ * (e.g. `capture-<tenant_slug>@inbox.marfa.so`) is deferred until
+ * Marfa onboards a second tenant.
  *
  * Attachment blob upload is not yet wired; v1 captures attachment
  * metadata only.

@@ -1,15 +1,3 @@
-/**
- * Per-tenant quota enforcement.
- *
- * Cases:
- *  - Webhook quota set to 2; third POST returns 429 with shape
- *    `{ code: "quota_exceeded", details: { resource, limit, current } }`.
- *  - Item quota set to 3; fourth POST returns 429.
- *  - Tenant-less platform admin (no tenant_id on key) bypasses quotas
- *    entirely — no enforcement applies.
- *  - GET / PUT `/tenants/:id/quotas` admin routes round-trip.
- */
-
 import { describe, it, expect, afterEach } from "vitest";
 import {
   createTestContext,

@@ -91,27 +91,19 @@ async function runPurgeChunk({
   const errors: BulkActionErrorEntry[] = [];
   const blob_hashes = new Set<string>();
   await storage.runInTransaction(async () => {
-    // Collect blob hashes from each item's properties for the response
-    // envelope's `blob_hashes_referenced` count. Items not found in the
-    // tenant scope are silently skipped (bulkPurge filters by tenantId).
     const items = await storage.items.getMany(ids, tenantId ?? undefined);
     for (const item of items.values()) {
       collectBlobHashes(item.properties, blob_hashes);
     }
-    // One DELETE per direction over the full chunk, then one DELETE on
-    // items. Three statements instead of 3 × ids.length.
+    // One DELETE per direction + one DELETE on items = 3 statements instead
+    // of 3 × ids.length.
     try {
       await storage.edges.deleteBySourceBatch(ids);
       await storage.edges.deleteByTargetBatch(ids);
       const purged = await storage.items.bulkPurge(ids, tenantId ?? undefined);
-      // Only ids that actually existed in the tenant are counted as
-      // succeeded. Ids that were not in scope are silently dropped —
-      // bulkPurge returns the count of rows actually deleted.
-      // For per-id success reporting we use the `items` we read above;
-      // anything in `items` is in-scope and successfully purged.
+      // Ids in `items` were in-scope and purged; ids absent from the map
+      // weren't found in the tenant and surface as not-found errors.
       for (const id of items.keys()) succeeded.push(id);
-      // Ids that weren't in the items map but were in `ids` failed to
-      // resolve — log as not-found errors for visibility.
       const seen = new Set(items.keys());
       for (const id of ids) {
         if (!seen.has(id)) {
@@ -122,12 +114,8 @@ async function runPurgeChunk({
           });
         }
       }
-      // `purged` is reported up through the chunk outcome via succeeded
-      // length, not separately — keep the shape simple.
       void purged;
     } catch (err) {
-      // Whole-chunk failure: every id failed. Annotate each with the
-      // shared error.
       const entry = toErrorEntry("", err);
       for (const id of ids) {
         errors.push({ id, code: entry.code, message: entry.message });

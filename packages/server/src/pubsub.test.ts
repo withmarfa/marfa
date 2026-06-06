@@ -325,7 +325,7 @@ describe("defaultCycleDetectionWiring — overflow emits system.activity", () =>
 // §3.9 — getHopBudget caches per-tenant lookups
 // ---------------------------------------------------------------------------
 
-describe("defaultCycleDetectionWiring — per-tenant hop-budget cache (§3.9)", () => {
+describe("defaultCycleDetectionWiring — per-tenant hop-budget cache", () => {
   it("does not hit storage.tenants.getConfig twice for the same tenant within the TTL window", async () => {
     let getConfigCalls = 0;
     // Fake a storage shape with just enough surface for the wiring.

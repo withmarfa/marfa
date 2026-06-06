@@ -15,8 +15,6 @@ let integrationId: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  // Lease-token capability gating resolves the manifest from the
-  // connection's integration_ref. Register one up front.
   const reg = await request(ctx.app, "POST", "/integrations", {
     key: ctx.adminKey,
     body: { manifest: VALID_MANIFEST },
@@ -118,7 +116,6 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
     expect(body.connection_id).toBe(connectionId);
     expect(typeof body.lease_token).toBe("string");
     expect(body.lease_token).toMatch(/^marfa_lt_/);
-    // Plaintext is not stored — the storage row holds a SHA-256 hash.
     const row = await ctx.storage.connectionLeasedTokens.get(body.id);
     expect(row).not.toBeNull();
     expect(row?.lease_token_hash).toBe(sha256(body.lease_token));
@@ -252,8 +249,6 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
 describe("connector runtime credential — integration: source", () => {
   it("issues a lease when called with the connection's runtime credential", async () => {
     const connectionId = await createConnection();
-    // Mint a runtime credential exactly like the install pipeline does:
-    // source = `integration:<connectionId>`, connection_id stamped.
     const rawKey = `marfa_k1_runtime_test_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.createRuntimeCredential(
@@ -279,9 +274,6 @@ describe("connector runtime credential — integration: source", () => {
         body: { capability_id: "drive.upload" },
       },
     );
-    // The access check admits both `oauth:<connectionId>` and
-    // `integration:<connectionId>` sources so the runtime credential
-    // the install pipeline mints can manage its own leases.
     expect(res.status).toBe(201);
   });
 
@@ -306,7 +298,6 @@ describe("connector runtime credential — integration: source", () => {
       undefined,
     );
 
-    // Try to issue a lease on connection B — must be refused.
     const res = await request(
       ctx.app,
       "POST",
@@ -334,7 +325,6 @@ describe("GET /connections/:id/lease-tokens & revoke", () => {
       await issueLease(connectionId)
     ).json()) as CreatedConnectionLeasedToken;
 
-    // Revoke one.
     const revoke = await request(
       ctx.app,
       "POST",
@@ -424,9 +414,6 @@ describe("POST /lease-tokens/validate", () => {
     const created = (await (
       await issueLease(connectionId)
     ).json()) as CreatedConnectionLeasedToken;
-    // Mutate via storage interface directly so we don't need a route.
-    // The store has no setter, so we issue a SQLite/PG raw query through
-    // the storage's escape hatch where available.
     const sqliteRun = (
       ctx.storage as unknown as {
         __sqliteRun?: (q: string, p: unknown[]) => Promise<unknown>;

@@ -113,8 +113,7 @@ export function registerWebhookReceiptRoute(
 
     const rawBody = await c.req.arrayBuffer();
 
-    // Try each subscription; first that verifies wins. Disabled
-    // subscriptions are skipped silently.
+    // First subscription that verifies wins; disabled ones are skipped.
     let matched: {
       subscriptionId: string;
       deliveryId: string;
@@ -145,10 +144,7 @@ export function registerWebhookReceiptRoute(
       return c.json({ error: "verification_failed", reason: lastReason }, 401);
     }
 
-    // Idempotency: short-circuit on a recent matching delivery. The
-    // window lives on the connection's `connection.runtime.idempotency`
-    // map; per-Connection scoping means delivery ids only need to be
-    // unique within the connection.
+    // Short-circuit on a recent matching delivery; delivery ids are scoped per-connection.
     const idempotencyKey = `${matched.subscriptionId}:${matched.deliveryId}`;
     const { isDuplicate } = await checkAndRecordIdempotency(
       storage,

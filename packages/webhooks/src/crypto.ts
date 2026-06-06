@@ -37,8 +37,6 @@ export async function hmacSha256Hex(
   return bufferToHex(sigBuf);
 }
 
-/** Convert an ArrayBuffer (or its sigBuf return) to a lowercase hex
- *  string. */
 export function bufferToHex(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let hex = "";
@@ -46,9 +44,7 @@ export function bufferToHex(buf: ArrayBuffer): string {
   return hex;
 }
 
-/** Constant-time string comparison. Avoids the trivial timing-leak
- *  shortcut of plain `==`. Both inputs MUST be the same length —
- *  callers length-check before calling. */
+/** Both inputs MUST be the same length — callers length-check before calling. */
 export function constantTimeEqualsString(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -58,8 +54,7 @@ export function constantTimeEqualsString(a: string, b: string): boolean {
   return diff === 0;
 }
 
-/** Constant-time hex comparison. Lower-cases both sides first so
- *  callers don't have to. */
+/** Case-insensitive constant-time hex comparison. */
 export function constantTimeEqualsHex(a: string, b: string): boolean {
   return constantTimeEqualsString(a.toLowerCase(), b.toLowerCase());
 }

@@ -228,16 +228,8 @@ export function integrationRoutes(
   salt: string,
   auth?: MarfaAuth,
 ) {
-  // Two routers mounted at the same prefix:
-  //   - `apiRouter` carries the OpenAPI-registered JSON CRUD surface.
-  //   - `htmlRouter` carries the HTML consent/install flow (plain Hono,
-  //     not OpenAPI — the response is HTML, not JSON, so the OpenAPI
-  //     spec doesn't describe it; same precedent as routes/auth-pages.ts'
-  //     /authorize handlers).
-  // Mixing OpenAPI routes and plain Hono routes on a single
-  // OpenAPIHono instance was observed to cause Hono's body parser to
-  // misroute requests during testing — splitting keeps each surface's
-  // request lifecycle clean.
+  // Split: apiRouter (OpenAPI JSON CRUD) and htmlRouter (HTML install flow, plain Hono).
+  // Mixing the two on one OpenAPIHono instance was observed to misroute bodies in tests.
   const apiRouter = createOpenAPIRouter<AppEnv>();
   const htmlRouter = new Hono<AppEnv>();
 
@@ -261,12 +253,6 @@ export function integrationRoutes(
     }
     const manifest = result.manifest;
 
-    // Sibling-per-version uniqueness — manifest_name + manifest_version is
-    // the dedupe key per tenant. The items list filter keeps the check
-    // cheap; a future PR could promote it to a partial unique index if
-    // registration volume grows.
-    // Use the filter grammar in @withmarfa/shared (ParseFilter) — `eq` is
-    // the equality operator, not `=`.
     const existing = await storage.items.list({
       tenantId: apiKey.tenant_id,
       type: "system.integration",
@@ -325,14 +311,7 @@ export function integrationRoutes(
     const filter = query.manifest_name
       ? `properties.manifest_name eq "${query.manifest_name}"`
       : undefined;
-    // The integration catalogue is the marketplace surface — manifests
-    // are registered by platform credentials (is_platform: true), which
-    // carry `tenant_id: null`. The default tenant-equality fence on
-    // `items.list` would hide every such row from in-tenant callers,
-    // so opt this catalogue read into the platform-scoped widening.
-    // The flag is local to catalogue list endpoints; the generic
-    // /items route and other tenant-scoped reads remain strictly
-    // equality-fenced.
+    // Platform-scoped manifests (tenant_id IS NULL) are invisible to in-tenant callers without this flag.
     const items = await storage.items.list({
       tenantId: apiKey.tenant_id,
       includePlatformScoped: true,
@@ -346,10 +325,7 @@ export function integrationRoutes(
   apiRouter.openapi(getRoute, async (c) => {
     const apiKey = requireAuth(c);
     const id = c.req.valid("param").id;
-    // Catalogue manifests are platform-scoped (tenant_id IS NULL) — opt
-    // into the widening so tenant members can resolve them. The
-    // type-check on the next line stays as the authoritative gate; only
-    // genuine `system.integration` items pass.
+    // Platform-scoped manifests (tenant_id IS NULL) — widen so tenant members can resolve them.
     const item = await storage.items.get(id, apiKey.tenant_id, {
       includePlatformScoped: true,
     });
@@ -395,14 +371,10 @@ export function integrationRoutes(
   async function resolveInstallCaller(
     c: Context<AppEnv>,
   ): Promise<InstallCaller | Response> {
-    // Bearer path wins when present — preserves the existing test +
-    // operator paths verbatim (no behavioural change for Authorization-
-    // header callers).
     const apiKey = c.get("apiKey");
     if (apiKey) {
       return { apiKeyId: apiKey.id, tenantId: apiKey.tenant_id };
     }
-    // Session path — browser navigation with a cookie but no Bearer.
     if (auth) {
       const session = await auth.getSession(c.req.raw.headers);
       if (session) {
@@ -416,14 +388,7 @@ export function integrationRoutes(
         };
       }
     }
-    // Unauthenticated. Two shapes:
-    //   - Authorization header sent but bearer middleware rejected it
-    //     → 401 (API-client failure shape; the bug-report's
-    //     "still returns 401" negative test).
-    //   - No Authorization header → browser navigation; redirect to
-    //     /auth/sign-in with the install URL preserved as `return_to`
-    //     so the user lands back on the consent screen after signing
-    //     in.
+    // Authorization header rejected → 401. No header → redirect to sign-in with return_to.
     if (c.req.header("authorization")) {
       throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
     }
@@ -439,8 +404,6 @@ export function integrationRoutes(
     const caller = await resolveInstallCaller(c);
     if (caller instanceof Response) return caller;
     const id = c.req.param("id");
-    // Catalogue manifests are platform-scoped — widen the lookup. See
-    // the JSON `getRoute` handler above for the same pattern.
     const item = await storage.items.get(id, caller.tenantId, {
       includePlatformScoped: true,
     });
@@ -452,16 +415,8 @@ export function integrationRoutes(
     }
     const props = item.properties as unknown as IntegrationProperties;
 
-    // Optional `?credential_ref=<id>` pre-arm — when present, validate
-    // it resolves to a same-tenant `system.credential` of `kind:
-    // oauth_token` (the same constraints the install pipeline enforces)
-    // before passing it through to the renderer as a hidden form
-    // field. Validating here keeps the POST surface unchanged and
-    // surfaces a clean 4xx if the operator wired a bad reference,
-    // rather than letting the install proceed and failing deep in
-    // OAuth start. NOT widened to `includePlatformScoped: true` —
-    // credentials are tenant-scoped by design (see the credentials
-    // route docstring); cross-tenant reuse is explicitly not supported.
+    // ?credential_ref= pre-arm: validate the credential before rendering so the
+    // operator gets a clean 4xx rather than a deep install failure.
     const credentialRefParam = c.req.query("credential_ref");
     let credentialRefHint: string | undefined;
     let credentialRefLabel: string | undefined;
@@ -504,8 +459,6 @@ export function integrationRoutes(
     const caller = await resolveInstallCaller(c);
     if (caller instanceof Response) return caller;
     const id = c.req.param("id");
-    // Catalogue manifests are platform-scoped — widen the lookup. See
-    // the JSON `getRoute` handler above for the same pattern.
     const item = await storage.items.get(id, caller.tenantId, {
       includePlatformScoped: true,
     });
@@ -517,18 +470,10 @@ export function integrationRoutes(
     }
     const props = item.properties as unknown as IntegrationProperties;
 
-    // Form-encoded submission from the consent screen. `decision=approve`
-    // proceeds; anything else (or absent) is treated as a denial and
-    // returns a 200 explainer page.
     const formData = await c.req.parseBody();
     const decision = formData.decision;
     const labelOverride =
       typeof formData.label === "string" ? formData.label : "";
-    // Optional credential_ref carried as a hidden form field — used when
-    // the consent screen was pre-armed with an existing OAuth provider
-    // credential to reuse (e.g. installing a second Google service onto
-    // an account that already has google.calendar). When absent the
-    // install pipeline behaves as today.
     const credentialRefOverride =
       typeof formData.credential_ref === "string" &&
       formData.credential_ref.length > 0
@@ -553,11 +498,7 @@ export function integrationRoutes(
         : {}),
     });
 
-    // Publish a `created` event for the new system.connection so the
-    // reactive-run bridge's cache-invalidation subscriber picks it up.
-    // Same fix as the JSON install route at routes/connections.ts —
-    // both routes call the same install-pipeline, both need to feed
-    // pubsub for the bridge to fan out to newly-installed connectors.
+    // Same pubsub publish as the JSON install route — the bridge needs it to discover new connections.
     const connection = await storage.items.get(
       installed.connection_id,
       caller.tenantId ?? undefined,
@@ -575,9 +516,6 @@ export function integrationRoutes(
     return c.html(renderInstalledPage(installed));
   });
 
-  // Mount the HTML router on the API router so callers see one
-  // mountable handler. apiRouter.route() forwards unmatched paths into
-  // htmlRouter; OpenAPI registration on apiRouter is unaffected.
   apiRouter.route("/", htmlRouter);
 
   return apiRouter;

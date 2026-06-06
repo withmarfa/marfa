@@ -284,7 +284,7 @@ export class PgItemStore implements ItemStore {
       if (filters.type.endsWith(".*")) {
         conditions.push(like(items.type, filters.type.slice(0, -1) + "%"));
       } else {
-        // Include subtypes: core.entity matches core.entity, core.entity.person, etc.
+        // Include subtypes: `core.entity` also matches `core.entity.person`, etc.
         const typeClause = or(
           eq(items.type, filters.type),
           like(items.type, filters.type + ".%"),
@@ -322,7 +322,6 @@ export class PgItemStore implements ItemStore {
       conditions.push(sql`${items.type} NOT LIKE 'system.%'`);
     }
 
-    // Timestamp range filters — uses COALESCE(timestamp, created_at) as effective date
     if (filters.since) {
       conditions.push(
         sql`COALESCE(${items.timestamp}, ${items.created_at}) >= ${filters.since}`,
@@ -334,7 +333,6 @@ export class PgItemStore implements ItemStore {
       );
     }
 
-    // Tags filter — items must have ALL specified tags (Postgres jsonb containment)
     if (filters.tags && filters.tags.length > 0) {
       for (const tag of filters.tags) {
         conditions.push(
@@ -472,7 +470,6 @@ export class PgItemStore implements ItemStore {
         const now = new Date().toISOString();
         const deviceId = row.device ?? undefined;
 
-        // Fast path: version omitted — always merge, no conflict detection
         if (input.version === undefined || row.version === input.version) {
           const latestTs = await this.versionStore.getLatestTimestamp(id, tx);
           if (
@@ -542,7 +539,6 @@ export class PgItemStore implements ItemStore {
           });
         }
 
-        // Conflict detection path — look up the ancestor version
         const ancestor = await this.versionStore.getByVersion(
           id,
           input.version,
@@ -578,7 +574,6 @@ export class PgItemStore implements ItemStore {
           } satisfies ConflictResponse;
         }
 
-        // Auto-merge
         const mergeLatestTs = await this.versionStore.getLatestTimestamp(
           id,
           tx,
@@ -672,8 +667,7 @@ export class PgItemStore implements ItemStore {
       );
     }
 
-    // Cascade: metadata and versions are deleted via ON DELETE CASCADE.
-    // Search index must be removed explicitly.
+    // metadata and versions cascade; search index must be removed explicitly.
     await this.db.delete(items).where(this.tenantWhere(id, tenantId));
     await this.searchStore.remove(id);
   }
@@ -691,11 +685,9 @@ export class PgItemStore implements ItemStore {
       ).map((row) => row.id);
       if (scopedIds.length === 0) return 0;
 
-      // search_vector lives on items as a column; the DELETE below cascades
-      // it. No need to call searchStore.remove explicitly (each call would
-      // be a redundant UPDATE and a per-id round-trip). SQLite's path keeps
-      // the explicit remove because items_fts is a separate FTS5 virtual
-      // table — different storage class.
+      // search_vector is a column on items and is deleted with the row.
+      // No explicit searchStore.remove needed here (unlike SQLite, where
+      // items_fts is a separate virtual table that must be cleaned manually).
       await tx.delete(items).where(inArray(items.id, scopedIds));
       return scopedIds.length;
     });
@@ -722,7 +714,7 @@ export class PgItemStore implements ItemStore {
       if (idRows.length === 0) return 0;
 
       const ids = idRows.map((row) => row.id);
-      // search_vector cascades with the items row — see bulkPurge.
+      // search_vector cascades — see bulkPurge.
       await tx.delete(items).where(inArray(items.id, ids));
       return ids.length;
     });
@@ -763,7 +755,7 @@ export class PgItemStore implements ItemStore {
       throw new MarfaError(ErrorCode.INVALID_TRANSITION, error);
     }
 
-    // State transitions always create a version snapshot
+    // State transitions always snapshot current properties.
     await this.versionStore.create(
       id,
       row.version,

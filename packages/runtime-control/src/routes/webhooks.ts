@@ -149,11 +149,9 @@ export function registerWebhookRoutes(
       );
     }
 
-    // Try each subscription; first that verifies wins. Most connections
-    // have exactly one subscription so the loop usually runs once. The
-    // `ADAPTERS` table from `@withmarfa/webhooks` covers all supported
-    // methods — unknown methods (the manifest schema rejects them at
-    // install time) get a clear routing failure.
+    // First subscription that verifies wins. Most connections have one.
+    // Unknown methods (rejected at install time by manifest schema)
+    // get a clear routing failure rather than a silent skip.
     let matched: {
       sub: (typeof subscriptions)[number];
       deliveryId: string;
@@ -219,8 +217,7 @@ export function registerWebhookRoutes(
       );
     }
 
-    // Idempotency: drop deliveries we've already enqueued in the recent
-    // past. KV TTL (3600s) bounds the cache size.
+    // Idempotency: KV TTL (3600s) bounds the window.
     if (env.IDEMPOTENCY_KV) {
       const key = `${matched.sub.id}:${matched.deliveryId}`;
       const existing = await env.IDEMPOTENCY_KV.get(key);
@@ -238,14 +235,14 @@ export function registerWebhookRoutes(
       await env.IDEMPOTENCY_KV.put(key, "1", { expirationTtl: 3600 });
     }
 
-    // Headers → plain object for the queue message envelope.
+    // Flatten headers for the queue message envelope.
     const headerMap: Record<string, string> = {};
     c.req.raw.headers.forEach((value, key) => {
       headerMap[key] = value;
     });
 
-    // Body as base64 so it survives JSON serialization. The SDK's
-    // WebhookMessage.body is ArrayBuffer; the consumer decodes.
+    // Base64-encode so the body survives JSON serialisation through the queue.
+    // The SDK consumer decodes to ArrayBuffer at the seam.
     const bodyBytes = new Uint8Array(rawBody);
     let bodyString = "";
     for (const byte of bodyBytes) {

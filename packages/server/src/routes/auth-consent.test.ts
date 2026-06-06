@@ -7,15 +7,13 @@
  *   - GET /auth/authorize 4xxs when the plugin's signed query (`sig`)
  *     or `client_id` is missing
  *   - POST /auth/authorize/decision without a session redirects to /auth/sign-in
- *
- * Additional cases:
- *   - F1: POST decision projection reads client_id from oauth_query, not the form
- *   - F2: POST decision accept=true with zero scopes → 302 to consent w/ error
- *   - F7: auth.grant.created audit row carries client_ip
- *   - F9: GET /authorize render carries Cache-Control: no-store
- *   - F10: POST decision without session preserves oauth_query in return_to
- *   - F12: GET /authorize renders 200 for clients with null `client_name`
- *     (DCR registration without `client_name` is RFC 7591-compliant)
+ *   - POST decision reads client_id from oauth_query, not the form
+ *   - POST decision accept=true with zero scopes → 302 to consent with error
+ *   - auth.grant.created audit row carries client_ip
+ *   - GET /authorize render carries Cache-Control: no-store
+ *   - POST decision without session preserves oauth_query in return_to
+ *   - GET /authorize renders 200 for clients with null client_name
+ *     (DCR registration without client_name is RFC 7591-compliant)
  */
 import { describe, it, expect, afterEach } from "vitest";
 import {

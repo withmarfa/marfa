@@ -373,7 +373,7 @@ const introspectLeaseRoute = createRoute({
 });
 
 // ---------------------------------------------------------------------------
-// Lease management routes (mounted under /connections)
+// Routes (mounted under /connections)
 // ---------------------------------------------------------------------------
 
 export function connectionLeasedTokenRoutes(storage: Storage) {
@@ -388,8 +388,6 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     );
     const body = c.req.valid("json");
 
-    // Manifest is resolved server-side from the connection's
-    // `integration_ref` → `system.integration` item.
     const { manifest } = await resolveConnectionManifest(
       storage,
       connectionId,
@@ -413,7 +411,6 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
       );
     }
 
-    // Generate an opaque 32-byte hex bearer. Hashed at rest.
     const rawLease = `marfa_lt_${randomBytes(32).toString("hex")}`;
     const id = generateId();
     const expiresAt = new Date(Date.now() + ttlSec * 1000).toISOString();

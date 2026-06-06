@@ -139,10 +139,7 @@ function resolveCycle(c: Context<AppEnv>): {
         hopCount: parsedHop,
       };
     }
-    // Header pair present but malformed — fall through to the api-key-
-    // derived chain-head shape rather than rejecting the request. The
-    // budget gate still applies; a malformed cycle header doesn't get
-    // to bypass attribution.
+    // Malformed pair — fall through to api-key chain-head; budget gate still applies.
   }
 
   const apiKey = c.get("apiKey");

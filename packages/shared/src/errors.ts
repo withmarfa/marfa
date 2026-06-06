@@ -325,10 +325,7 @@ export function httpStatus(code: ErrorCode): number {
   return STATUS_MAP[code];
 }
 
-/**
- * Structured error with code, HTTP status, and optional details.
- * Used throughout the server and SDK for consistent error handling.
- */
+/** Structured error thrown by the server and SDK. Carries a typed code and HTTP status. */
 export class MarfaError extends Error {
   readonly code: ErrorCode;
   readonly status: number;
@@ -346,7 +343,6 @@ export class MarfaError extends Error {
     this.details = details;
   }
 
-  /** Serializes to the standard error response format. */
   toResponse(): ErrorResponse {
     const response: ErrorResponse = {
       error: {

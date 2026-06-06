@@ -221,8 +221,4 @@ describe("rate-limit per-path caps for /auth/oauth2/*", () => {
     }
     expect(observed429).toBe(false);
   });
-
-  // Dead /auth/token entry has been removed from pathLimits. No
-  // behavioral test — the path doesn't exist and the rate-limit
-  // middleware runs before route matching.
 });

@@ -85,7 +85,7 @@ async function start(): Promise<void> {
   let tracerProvider: Shutdownable | undefined;
   let loggerProvider: Shutdownable | undefined;
 
-  // ---- Traces: AlwaysOn sampler + redaction + error/baseline export gate ----
+  // ---- Traces ----
   if (tracesEndpoint) {
     const [
       { NodeTracerProvider },
@@ -132,7 +132,7 @@ async function start(): Promise<void> {
     });
   }
 
-  // ---- Logs: redaction + OTLP export (PostHog in hosted) ----
+  // ---- Logs ----
   if (logsEndpoint) {
     const [
       { LoggerProvider, BatchLogRecordProcessor },

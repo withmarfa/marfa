@@ -86,14 +86,8 @@ async function readAuthorizeConfig(
       "Connection has no credential_ref — cannot start OAuth flow",
     );
   }
-  // Thread the connection's tenant into the credential lookup. Both call
-  // sites for `readAuthorizeConfig` resolve the connection through an
-  // untenanted lookup (admin start route, unauthenticated provider
-  // callback) — once the connection is in hand, its `tenant_id` is the
-  // load-bearing input to fence the credential resolution. The install
-  // pipeline enforces same-tenant `credential_ref` on create, so any
-  // legitimately-installed reference is in the same tenant; this is
-  // defence-in-depth.
+  // Fence the credential lookup by the connection's tenant_id — defence-in-depth
+  // against a cross-tenant credential_ref that bypassed the install-pipeline check.
   const credential = await storage.items.get(
     credentialRef,
     connection.tenant_id ?? undefined,
@@ -128,10 +122,7 @@ async function readAuthorizeConfig(
       "Connection's credential is missing required OAuth provider config (kind:oauth_token + oauth_authorize_url + oauth_token_url + oauth_client_id + secret_encrypted)",
     );
   }
-  // Defensively validate the shape (Record<string, string>) so a malformed
-  // JSON value on the credential row doesn't poison the authorize URL with
-  // `undefined`-stringified values. Anything that isn't a plain object of
-  // string→string is treated as absent.
+  // Validate shape — a malformed JSON value on the credential row would otherwise stringify as "undefined".
   let authorize_extra_params: Record<string, string> | null = null;
   if (
     cfg.authorize_extra_params &&
@@ -330,15 +321,10 @@ export interface OAuthStartOptions {
 }
 
 function canonicaliseRedirect(uri: string): string {
-  // RFC 3986 canonical form: lower-case scheme + host, default-port
-  // collapsed, query/fragment dropped (we compare full URLs but allow-list
-  // entries should be the registered redirect URIs without query strings).
   try {
     const url = new URL(uri);
     url.hash = "";
     url.search = "";
-    // Drop trailing slash on path-only-host URLs to match common
-    // registration formats (`https://app.example.com` ≡ `https://app.example.com/`).
     let normalised = url.toString();
     if (normalised.endsWith("/") && url.pathname === "/") {
       normalised = normalised.slice(0, -1);
@@ -381,9 +367,6 @@ export function oauthStartRoutes(
   r.post("/:id/oauth/start", async (c) => {
     requireAuth(c);
     const apiKey = c.get("apiKey");
-    // Reuse the platform-or-admin role gate from app.ts patterns —
-    // the install pipeline mints connections as a platform-credential
-    // operation, so OAuth bootstrap is similarly admin-only.
     if (!apiKey || (apiKey.role !== "admin" && !apiKey.is_platform)) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
@@ -423,10 +406,7 @@ export function oauthStartRoutes(
       typeof body.scope === "string" && body.scope.length > 0
         ? body.scope
         : (config.oauth_default_scope ?? "");
-    // PKCE: generate a fresh verifier per flow. base64url of 32 random
-    // bytes yields 43 characters, comfortably within RFC 7636 §4.1's
-    // 43–128 char range.
-    const codeVerifier = randomBytes(32).toString("base64url");
+    const codeVerifier = randomBytes(32).toString("base64url"); // 43 chars, within RFC 7636 §4.1 range
     const codeChallenge = createHash("sha256")
       .update(codeVerifier)
       .digest("base64url");
@@ -444,11 +424,7 @@ export function oauthStartRoutes(
       code_challenge_method: "S256",
     });
     if (scope.length > 0) params.set("scope", scope);
-    // Credential-baked defaults go in FIRST, caller's override SECOND.
-    // The latter wins per-key (each `params.set` overwrites). This lets
-    // a credential carry defaults like `access_type=offline` +
-    // `prompt=consent` so every consumer gets the right params without
-    // having to specify them each time.
+    // Credential defaults go first; caller's extra_params override per-key.
     if (config.authorize_extra_params) {
       for (const [k, v] of Object.entries(config.authorize_extra_params)) {
         params.set(k, v);
@@ -493,9 +469,7 @@ export function oauthCallbackRoutes(
   storage: Storage,
   options: OAuthCallbackOptions = {},
 ) {
-  // Resolve fetch per-request (not at module load) so tests stubbing
-  // globalThis.fetch take effect — same pattern as connection-proxy.ts
-  // which calls bare `fetch(...)` directly.
+  // Resolve per-request so test stubs of globalThis.fetch take effect.
   const resolveFetch = (): typeof fetch =>
     options.fetch ?? globalThis.fetch.bind(globalThis);
   const r = new Hono<AppEnv>();
@@ -505,7 +479,6 @@ export function oauthCallbackRoutes(
     const state = c.req.query("state");
     const upstreamError = c.req.query("error");
 
-    // Provider-side error (user denied, scope rejected, etc.).
     if (typeof upstreamError === "string" && upstreamError.length > 0) {
       const desc = c.req.query("error_description") ?? "";
       const reason = `${provider} returned error=${upstreamError}${desc ? `: ${desc}` : ""}`;
@@ -566,9 +539,7 @@ export function oauthCallbackRoutes(
       return c.html(renderErrorPage(reason, 400), 400);
     }
 
-    // Every flow carries a code_verifier in the state envelope. A missing
-    // verifier means the state was issued by a hostile caller or a stale
-    // code path — refuse outright rather than attempting a non-PKCE exchange.
+    // Missing verifier means hostile state or stale code path — refuse rather than attempt non-PKCE exchange.
     if (typeof envelope.code_verifier !== "string") {
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
@@ -610,9 +581,6 @@ export function oauthCallbackRoutes(
       );
     }
 
-    // Persist tokens — both encrypted under SECRET_INFO.connectionOauthToken
-    // so the existing /connections/:id/proxy/* path picks them up
-    // unmodified.
     const tenantId = (connection.properties as { tenant_id?: string })
       .tenant_id;
     await storage.connectionOauthTokens.upsert({

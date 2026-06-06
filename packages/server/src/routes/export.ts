@@ -167,9 +167,6 @@ export function exportRoutes(
 
     const query = c.req.valid("query");
 
-    // Resolve the target tenant up front so it's available to the audit
-    // log and both downstream paths (archive + NDJSON). The resolver
-    // throws on cross-tenant attempts.
     const tenantId = resolveExportTenant(
       c.get("apiKey"),
       query.target_tenant_id,
@@ -201,9 +198,6 @@ export function exportRoutes(
       },
     });
 
-    // Archive export: ?format=archive. The handler re-resolves the
-    // tenant from the same param (single source of truth) but the
-    // audit row is already written.
     if (query.format === "archive") {
       return handleArchiveExport(c, storage, blobBackend, options);
     }
@@ -231,12 +225,6 @@ export function exportRoutes(
     const allowedTypes = getTypeFilter(c);
     const encoder = new TextEncoder();
 
-    // When the caller has a tenant_id and RLS enforcement is on, pin a
-    // dedicated pool connection for the stream and apply session-level
-    // role + tenant_id. Storage reads then flow through that connection
-    // and are filtered at the DB layer. Tenant-less callers (platform
-    // admin / single-tenant self-host) and SQLite skip — same semantics
-    // as the non-streaming RLS middleware.
     const stream = new ReadableStream({
       async start(controller) {
         const rlsCtx =
@@ -283,12 +271,6 @@ export function exportRoutes(
           }
         }
       },
-      // Hono / node-server invokes `cancel` when the consumer detaches
-      // (client disconnect mid-stream). The `start` body's `finally`
-      // already releases the RLS context on the normal completion
-      // path; this cancel hook is the explicit disconnect path. Both
-      // converge on `controller.close` → start's finally → release().
-      // Idempotent release means a double-fire is safe.
     });
 
     return new Response(stream, {
@@ -341,24 +323,17 @@ async function handleArchiveExport(
   const since = c.req.query("since");
   const until = c.req.query("until");
   const source = c.req.query("source");
-  // Resolve the target tenant (caller's own, or the platform admin's
-  // explicit target). The audit row in the parent handler already
-  // captured the export action; the manifest below stamps the resolved
-  // tenant_id for restore-side verification.
   const tenantId = resolveExportTenant(
     c.get("apiKey"),
     c.req.query("target_tenant_id"),
   );
   const allowedTypes = getTypeFilter(c);
 
-  // Dedicated-connection session-level RLS for the collect pass.
-  // Same shape as the NDJSON path above.
   const rlsCtx =
     options.rlsEnforce && options.pgClient !== null && tenantId
       ? await acquireStreamRls(options.pgClient, tenantId)
       : null;
 
-  // Pass 1: Collect all items as NDJSON and gather blob hashes
   const lines: string[] = [];
   const blobHashes = new Set<string>();
   const blobMeta: Record<string, { mime_type: string; size: number }> = {};
@@ -389,9 +364,7 @@ async function handleArchiveExport(
           : undefined;
       } while (cursor);
 
-      // Resolve blob metadata from the database. Lookup is tenant-scoped
-      // using the export caller's tenant_id. Platform admins on
-      // single-tenant self-hosts pass `""` (the instance-wide sentinel).
+      // Blob metadata lookup uses tenant_id; single-tenant self-hosts pass "" as the instance-wide sentinel.
       for (const hash of blobHashes) {
         const record = await storage.blobs.get(hash, tenantId ?? "");
         if (record) {
@@ -410,13 +383,7 @@ async function handleArchiveExport(
     }
   }
 
-  // Blob *bytes* fetched below come from the BlobBackend (filesystem
-  // / S3), not Postgres — so they don't need the RLS context. The
-  // session has already been released at this point.
-
-  // Build manifest. tenant_id is the resolved scope of this export —
-  // the calling tenant or the platform admin's target_tenant_id; null
-  // for single-tenant self-hosts.
+  // Blob bytes come from the BlobBackend (not Postgres), so no RLS context needed here.
   const manifest: ArchiveManifest = {
     version: 1,
     format: "marfa-archive-v1",
@@ -427,7 +394,6 @@ async function handleArchiveExport(
     blobs: blobMeta,
   };
 
-  // Pack tar.gz
   const pack = tar.pack();
   const gzip = createGzip();
   const passthrough = new PassThrough();

@@ -108,11 +108,8 @@ export function accountDeletionGuardMiddleware(
       return next();
     }
 
-    // Token reuse: look for an existing valid cancel token bound to this
-    // auth_user_id and reuse it if present. The user may have lost the
-    // original email, but issuing a brand-new token on every attempt
-    // enables a spam vector — reuse caps auth_verification table growth
-    // at one row per (account, TTL).
+    // Reuse an existing valid token rather than minting a new one on every
+    // attempt — caps table growth and limits the spam vector.
     const nowMs = Date.now();
     let token = await findExistingValidCancelToken(
       storage,
@@ -130,10 +127,6 @@ export function accountDeletionGuardMiddleware(
       );
     }
 
-    // Cooldown: skip the email send when inside the per-account cooldown
-    // window. The themed page still renders and the audit row still
-    // writes, so the user-facing signal arrives via the page; the email
-    // channel is rate-limited to one per cooldown window per account.
     const lastSent = lastSendMs.get(lifecycle.auth_user_id);
     const cooldownActive =
       lastSent !== undefined && nowMs - lastSent < cooldownMs;
@@ -143,9 +136,7 @@ export function accountDeletionGuardMiddleware(
         url,
         deletionDate: lifecycle.pending_deletion_at?.slice(0, 10),
       });
-      // Fire-and-forget — a transport failure must not affect the
-      // gate. The audit row + the themed page already deliver the
-      // critical user-facing signal.
+      // Fire-and-forget — transport failure must not block the gate.
       void emailTransport.send({
         to: email,
         subject: rendered.subject,
@@ -157,8 +148,6 @@ export function accountDeletionGuardMiddleware(
       lastSendMs.set(lifecycle.auth_user_id, nowMs);
     }
 
-    // No plaintext email in audit details — the auth_user_id in
-    // resource_id correlates back via the auth_user row when needed.
     void storage.audit.log({
       action: "auth.account.sign_in_blocked_pending_deletion",
       resource_type: "auth_account",
@@ -226,7 +215,7 @@ async function extractEmail(rawReq: Request): Promise<string | null> {
       return typeof e === "string" ? e.trim().toLowerCase() : null;
     }
   } catch {
-    // Malformed body — let downstream surface the error normally.
+    // Malformed body — let the request handler surface the error.
   }
   return null;
 }
@@ -324,10 +313,7 @@ async function insertCancelToken(
       __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
     };
     if (!pgStorage.__pgClient) return;
-    // `client.unsafe(query, params)` in postgres-js doesn't accept Date
-    // binds via parameterised query (the prepared-statement path treats
-    // params as primitives). Send ISO strings; the TIMESTAMP column
-    // accepts them.
+    // postgres-js parameterised queries don't accept Date; send ISO strings instead.
     await pgStorage.__pgClient(
       `INSERT INTO auth_verification
         (id, identifier, value, expires_at, created_at, updated_at)
@@ -346,7 +332,7 @@ async function insertCancelToken(
       __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
     };
     if (!sqliteStorage.__sqliteRun) return;
-    // SQLite encodes timestamps as unix-second INTEGERs.
+    // SQLite stores timestamps as unix-second integers.
     await sqliteStorage.__sqliteRun(
       `INSERT INTO auth_verification
         (id, identifier, value, expires_at, created_at, updated_at)

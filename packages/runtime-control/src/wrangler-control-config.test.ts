@@ -100,10 +100,7 @@ const WEBHOOK_RECEIPT_PRODUCERS = integrationsWithTrigger("webhook")
 
 function loadConfig(): WranglerControlConfig {
   const text = readFileSync(WRANGLER_CONTROL_TOML_PATH, "utf8");
-  // `smol-toml` throws on duplicate keys inside array-of-tables entries.
-  // The throw is the load-bearing invariant — a "just append to the last
-  // entry" mistake fails CI loudly.
-  return parseToml(text) as WranglerControlConfig;
+  return parseToml(text) as WranglerControlConfig; // throws on duplicate keys
 }
 
 describe("wrangler.control.toml — structural freshness", () => {

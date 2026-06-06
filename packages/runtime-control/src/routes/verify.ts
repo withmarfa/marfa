@@ -187,8 +187,6 @@ export function registerVerifyRoute(
       "",
     );
 
-    // 1. Validate connection exists, kind=integration, status=active +
-    //    enforce is_platform: true (the verify-context endpoint gates).
     const ctxResult = await marfa.getVerifyContext(
       connectionId,
       operatorBearer,
@@ -215,7 +213,6 @@ export function registerVerifyRoute(
       return c.json({ error: code, message: ctxResult.message }, httpStatus);
     }
 
-    // 2. Build the synthetic envelope.
     const cycleInput = event.cycle ?? {};
     const envelope = buildVerifyEnvelope({
       integrationName: ctxResult.integration_name,
@@ -230,7 +227,6 @@ export function registerVerifyRoute(
       },
     });
 
-    // 3. Dispatch via service binding.
     const binding = resolveServiceBinding(c.env, ctxResult.integration_name);
     if (!binding) {
       return c.json(
@@ -292,13 +288,9 @@ export function registerVerifyRoute(
       );
     }
 
-    // 4. Poll system.activity for rows tagged with the connection,
-    //    since dispatch. Single fetch — the handler ran synchronously,
-    //    so anything it emitted via `ctx.activity.emit(...)` should be
-    //    written by now. A second poll with a small delay would be
-    //    belt-and-braces but adds latency and complexity for a debug
-    //    surface; keep it lean and let the operator re-run if the
-    //    activity sink lagged.
+    // Single activity poll — the handler ran synchronously, so its
+    // emit()s should be written by now. If the sink lagged, the operator
+    // can re-run; a second poll with a delay would add latency for a debug path.
     let activity: ActivityRow[];
     try {
       const rows = await marfa.listActivitySince(
@@ -321,12 +313,8 @@ export function registerVerifyRoute(
       });
     }
 
-    // 5. Items created — derive from activity rows where the row's
-    //    `properties.detail.created_item_ids` (or similar) carries them.
-    //    Today no in-tree connector emits this shape on its
-    //    `system.activity` writes, so the field is reserved as a future
-    //    extension point. Surface as an empty array now; populate when
-    //    the connector contract grows the field.
+    // items_created: reserved for when connectors stamp `created_item_ids`
+    // on their system.activity rows. No in-tree connector does so yet.
     const itemsCreated: string[] = [];
 
     return c.json({

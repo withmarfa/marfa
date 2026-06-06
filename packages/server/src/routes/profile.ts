@@ -406,13 +406,11 @@ export function profileRoutes(
     return { user, authEmail };
   }
 
-  // GET /profile/me
   router.openapi(getProfileRoute, async (c) => {
     const { user, authEmail } = await resolveOwnProfile(c);
     return c.json(buildProfile(user, authEmail), 200);
   });
 
-  // PATCH /profile/me
   router.openapi(updateProfileRoute, async (c) => {
     const { user } = await resolveOwnProfile(c);
     if (!storage.users) {
@@ -457,8 +455,8 @@ export function profileRoutes(
       }
     }
 
-    // Profile-field patch — only apply if at least one field is in the
-    // body, to avoid stamping `updated_at` on a no-op call.
+    // Skip the update entirely when no profile fields changed, to avoid
+    // stamping `updated_at` on a no-op PATCH.
     const profilePatch: {
       first_name?: string | null;
       last_name?: string | null;
@@ -481,7 +479,6 @@ export function profileRoutes(
       updatedUser = await userStore.updateProfile(user.id, profilePatch);
     }
 
-    // Audit row — operator-visible record of every profile change.
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,
@@ -501,7 +498,6 @@ export function profileRoutes(
     return c.json(buildProfile(updatedUser, authEmail), 200);
   });
 
-  // POST /profile/me/avatar
   router.openapi(setAvatarRoute, async (c) => {
     const { user } = await resolveOwnProfile(c);
     if (!storage.users) {
@@ -509,7 +505,6 @@ export function profileRoutes(
     }
     const userStore = storage.users;
 
-    // Pre-buffer Content-Length check — same pattern as /blobs.
     const declaredLength = Number(c.req.header("Content-Length"));
     if (Number.isFinite(declaredLength) && declaredLength > maxBlobSize) {
       throw new MarfaError(
@@ -555,11 +550,9 @@ export function profileRoutes(
       );
     }
 
-    // Quota gate (same as /blobs). No-op for tenant-less keys.
     await enforceQuota(c, storage, "blobs", 1);
     await enforceQuota(c, storage, "storage_bytes", data.length);
 
-    // Hash + store.
     const hex = createHash("sha256").update(data).digest("hex");
     const hash = `sha256:${hex}`;
     if (!(await blobBackend.exists(hash))) {
@@ -593,7 +586,6 @@ export function profileRoutes(
     return c.json(buildProfile(updatedUser, authEmail), 200);
   });
 
-  // DELETE /profile/me/avatar
   router.openapi(deleteAvatarRoute, async (c) => {
     const { user } = await resolveOwnProfile(c);
     if (!storage.users) {

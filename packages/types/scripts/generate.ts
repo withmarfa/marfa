@@ -114,14 +114,12 @@ if (shadowViolations.length > 0) {
   process.exit(1);
 }
 
-// Sort: parents before children (no parent first, then by depth)
 schemas.sort((a, b) => {
   const depthA = a.id.split(".").length;
   const depthB = b.id.split(".").length;
   return depthA - depthB;
 });
 
-// Generate variable name from type ID: core.media.book -> coreMediaBook
 function varName(id: string): string {
   return id
     .split(".")
@@ -130,8 +128,7 @@ function varName(id: string): string {
     .replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
-// Map JSON schema type+format to TypeScript FieldDefinition type.
-// JSON schemas use type:"string" + format:"url", but FieldDefinition uses type:"url" directly.
+// JSON schemas use type:"string" + format:"url"; FieldDefinition uses type:"url" directly.
 const FORMAT_TO_TYPE: Record<string, string> = {
   url: "url",
   email: "email",
@@ -139,7 +136,6 @@ const FORMAT_TO_TYPE: Record<string, string> = {
   date: "date",
 };
 
-// Generate field definition as TypeScript object literal
 function fieldLiteral(field: JsonField, isRequired: boolean): string {
   const effectiveType =
     (field.format && FORMAT_TO_TYPE[field.format]) ?? field.type;
@@ -160,8 +156,6 @@ function fieldLiteral(field: JsonField, isRequired: boolean): string {
   return `{ ${parts.join(", ")} }`;
 }
 
-// Build output — a self-contained ES module that imports schema-shape
-// interfaces from src/ and exports the ALL_TYPES array plus individual consts.
 const lines: string[] = [];
 lines.push("// Auto-generated from core/*.json — do not edit manually.");
 lines.push("// Run `pnpm --filter @withmarfa/types generate` to regenerate.");
@@ -169,11 +163,9 @@ lines.push("");
 lines.push('import type { TypeSchema } from "../src/schema-types.js";');
 lines.push("");
 
-// Build schema map for parent field resolution
 const schemaMap = new Map<string, JsonSchema>();
 for (const s of schemas) schemaMap.set(s.id, s);
 
-// Resolve all fields for a type (own + inherited from parent chain)
 function resolveFields(schema: JsonSchema): {
   fields: Record<string, JsonField>;
   required: Set<string>;
@@ -193,7 +185,6 @@ function resolveFields(schema: JsonSchema): {
   return { fields, required };
 }
 
-// Resolve display_hints — own wins, else nearest ancestor with hints
 function resolveDisplayHints(schema: JsonSchema): JsonDisplayHints | undefined {
   let current: JsonSchema | undefined = schema;
   while (current) {
@@ -231,7 +222,6 @@ function resolveMergePolicy(schema: JsonSchema): JsonMergePolicy | undefined {
   return out;
 }
 
-// Emit each type
 for (const schema of schemas) {
   const name = varName(schema.id);
   const { fields: resolvedFields, required: resolvedRequired } =
@@ -290,7 +280,6 @@ for (const schema of schemas) {
   lines.push("");
 }
 
-// ALL_TYPES array
 lines.push("export const ALL_TYPES: TypeSchema[] = [");
 for (const schema of schemas) {
   lines.push(`  ${varName(schema.id)},`);
@@ -332,17 +321,12 @@ for (const schema of systemSchemas) {
 lines.push("];");
 lines.push("");
 
-// Write output
 mkdirSync(outDir, { recursive: true });
 const outPath = join(outDir, "type-registry.ts");
 writeFileSync(outPath, lines.join("\n") + "\n");
 console.log(
   `Generated ${String(schemas.length)} core types + ${String(systemSchemas.length)} system types -> ${outPath}`,
 );
-
-// ---------------------------------------------------------------------------
-// Edge types
-// ---------------------------------------------------------------------------
 
 interface JsonFieldLike {
   type: string;
@@ -380,7 +364,6 @@ function loadEdgeSchemas(): JsonEdgeSchema[] {
 
 const edgeSchemas: JsonEdgeSchema[] = loadEdgeSchemas();
 
-// Variable name: parent-of -> parentOf, in-thread -> inThread, authored-by -> authoredBy
 function edgeVarName(id: string): string {
   return id
     .split("-")

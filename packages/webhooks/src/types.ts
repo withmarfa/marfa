@@ -34,20 +34,15 @@ export interface VerifyResult {
   external_delivery_id?: string;
 }
 
-/** Verifier signature. Async because Web Crypto's `subtle` API is
- *  async; callers `await` the result. Body is `ArrayBuffer` (Web
- *  Crypto's native input type — server-side callers convert from
- *  `Buffer` once at the route boundary). */
+/** Body is `ArrayBuffer` — Web Crypto's native type. Server-side callers
+ *  convert from `Buffer` once at the route boundary. */
 export type Verifier = (
   rawBody: ArrayBuffer,
   headers: Headers,
   secret: string,
 ) => Promise<VerifyResult>;
 
-/** Set of recognised verification methods. Mirrors the discriminated
- *  union arm in the Integration manifest's `webhook_verification`
- *  field. This list is intentionally closed; the manifest schema does
- *  not accept a `custom` arm. */
+/** Closed set — the manifest schema does not accept a `custom` arm. */
 export const VERIFICATION_METHODS = [
   "hmac-sha256",
   "slack",

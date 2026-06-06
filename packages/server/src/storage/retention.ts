@@ -123,9 +123,6 @@ export class TrashPurger {
 
   private async poll(): Promise<void> {
     try {
-      // Per-tenant fan-out paths grab their own per-tenant locks
-      // inside runOnce; the global path holds a single cluster-wide
-      // lock here.
       const deleted = this.fanout
         ? await this.runOnce()
         : this.coordination
@@ -405,7 +402,6 @@ async function runTenantFanout(opts: {
 }): Promise<number> {
   const tenants = await opts.fanout.tenants.list();
   let total = 0;
-  // Per-tenant scopes — each honours the tenant override when set.
   for (const tenant of tenants) {
     const config = await opts.fanout.tenants.getConfig(tenant.id);
     const override = config?.[opts.fanout.configField];
@@ -471,9 +467,6 @@ export async function runTenantCleanup(opts: {
 }): Promise<number> {
   const nowFn = opts.nowFn ?? (() => new Date());
   if (!opts.fanout) {
-    // Global path (no fanout) — the single-tenant self-host sweep.
-    // The cleanup methods take retention values directly (not
-    // pre-computed cutoffs); pass through.
     if (opts.instanceDefault <= 0) return 0;
     const fn = (): Promise<number> => opts.sweep(opts.instanceDefault);
     if (!opts.coordination) return fn();
@@ -502,10 +495,8 @@ export async function runTenantCleanup(opts: {
     );
     if (deleted) total += deleted;
   }
-  // Quiet a TS unused-var warning: nowFn is reserved for future
-  // pre-computed-cutoff variants. The audit/eventLog stores compute
-  // their own cutoffs from the retention argument, so we don't use
-  // it today.
+  // nowFn reserved for future pre-computed-cutoff variants; audit/eventLog
+  // stores compute their own cutoffs from the retention value directly.
   void nowFn;
   return total;
 }

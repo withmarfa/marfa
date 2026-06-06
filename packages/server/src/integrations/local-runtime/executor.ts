@@ -76,16 +76,10 @@ class WorkerSlot {
       resolveReady = res;
       rejectReady = rej;
     });
-    // The pool eager-spawns slots at construction (see WorkerPool ctor)
-    // and only awaits `ready` on the first dispatch. If a worker dies
-    // before that — module-load error in the integration's local.js,
-    // missing handler module path, runtime-sdk import failure, etc. —
-    // the `error` listener below rejects `ready` with no awaiter, which
-    // Node 15+ treats as an unhandled rejection and (by default) kills
-    // the process. Attach a no-op catch here so the eager-spawn never
-    // crashes the server; the legitimate consumer in dispatch() still
-    // sees the rejection (multiple .then/.catch on one promise observe
-    // independently).
+    // Eager-spawn can produce an unhandled rejection if a worker dies before
+    // the first dispatch awaits `ready` (e.g. bad module path). A no-op catch
+    // here prevents process termination; the real consumer in dispatch() still
+    // observes the rejection independently.
     this.ready.catch(() => undefined);
     let resolveExited!: () => void;
     this.exited = new Promise<void>((res) => {
@@ -165,11 +159,8 @@ class WorkerPool {
     if (this.terminated) {
       throw new Error("worker pool already terminated");
     }
-    // Round-robin pick a slot whose previous dispatch (if any) has
-    // resolved. The supervisor's advisory lock ensures one dispatch per
-    // Connection at a time across the whole system, but two different
-    // Connections can be in flight simultaneously, so we may need to
-    // wait briefly for a free slot.
+    // Round-robin: two different Connections can be in flight at once despite
+    // the per-Connection advisory lock, so we may need to skip busy slots.
     for (let attempt = 0; attempt < this.slots.length * 2; attempt++) {
       const idx = this.cursor % this.slots.length;
       this.cursor++;
@@ -183,24 +174,18 @@ class WorkerPool {
       await slot.ready;
       try {
         const response = await slot.send(request);
-        // Crash-on-dispatch (worker emitted "exit" mid-await) replaces
-        // the slot for the next caller. The flow-analysis lint thinks
-        // `slot.isDead` is always false here because we checked it at
-        // line 165, but the worker can transition to dead via the
-        // async "exit" listener during `slot.send`.
+        // Worker may have transitioned to dead during slot.send() via the async
+        // "exit" listener; replace it for the next caller.
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (slot.isDead) this.slots[idx] = this.spawn();
         return response;
       } catch (err) {
-        // Same async-transition reason as above.
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (slot.isDead) this.slots[idx] = this.spawn();
         throw err;
       }
     }
-    // Every slot was busy; fall back to the first slot and queue behind
-    // its in-flight dispatch. This is the only place the pool blocks
-    // beyond the natural per-Connection serialisation.
+    // All slots were busy — queue behind the first slot's in-flight dispatch.
     const slot = this.slots[0];
     if (!slot) throw new Error("worker pool is empty");
     await slot.ready;
@@ -255,9 +240,6 @@ export function createExecutor(config: ExecutorConfig = {}): Executor {
 
   return {
     async dispatch(registration, request) {
-      // Test-mode short-circuit. The supervisor still gates with the
-      // advisory lock + cursor plumbing; only the worker_thread boundary
-      // is skipped.
       if (registration.directDispatch) {
         return registration.directDispatch(request);
       }

@@ -231,7 +231,7 @@ export async function grandfatherProfilesT074(
   const userStore = storage.users;
   const tenantStore = storage.tenants;
 
-  // Pass 1: orphan auth_user rows → create tenant + users + admin key.
+  // Pass 1: orphan auth_user rows that have no users row yet.
   const authUsers = await listAuthUsers(storage);
   for (const au of authUsers) {
     report.auth_users_scanned += 1;
@@ -245,7 +245,6 @@ export async function grandfatherProfilesT074(
         // here for those.
         continue;
       }
-      // Provision a fresh tenant + user row + admin api key.
       const candidate = candidateFromEmail(au.email);
       const handle = await pickFreeHandle(storage, candidate);
       const tenant = await tenantStore.create(au.name ?? au.email);
@@ -257,8 +256,6 @@ export async function grandfatherProfilesT074(
         handle,
         auth_user_id: au.id,
       });
-      // Mint an admin key for the tenant — same shape as the sign-up
-      // wrapper does. Stamps an audit row too.
       const rawKey = generateRawKey();
       await storage.keys.create(
         {
@@ -284,8 +281,7 @@ export async function grandfatherProfilesT074(
     }
   }
 
-  // Pass 2: existing users rows with NULL handle → set handle from
-  // the joined auth_user.email.
+  // Pass 2: existing users rows that have auth_user_id but null handle.
   const needsHandle = await listUsersNeedingHandle(storage);
   for (const row of needsHandle) {
     try {

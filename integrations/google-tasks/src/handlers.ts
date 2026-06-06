@@ -615,7 +615,6 @@ function buildTaskInput(
     }
     return { type: targetType, properties };
   }
-  // Upstream-fidelity target.
   if (task.position !== undefined) properties.position = task.position;
   if (task.parent !== undefined) properties.parent = task.parent;
   if (task.webViewLink !== undefined) {

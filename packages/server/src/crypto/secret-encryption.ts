@@ -29,8 +29,7 @@ class SecretCryptoError extends Error {
  * The key is derived from `MARFA_AUTH_SECRET` via HKDF-SHA256, with a
  * caller-supplied `info` string that scopes derivations: rotating
  * `MARFA_AUTH_SECRET` invalidates ALL stored ciphertexts (callers must
- * re-encrypt as part of a key rotation runbook — flagged as a backlog
- * item alongside this PR).
+ * re-encrypt as part of a key rotation runbook).
  *
  * On-disk shape: a single hex-encoded string with the layout
  *   [12 bytes IV][16 bytes auth tag][N bytes ciphertext]

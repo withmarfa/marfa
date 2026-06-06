@@ -1132,7 +1132,6 @@ export function itemRoutes(storage: Storage) {
       return { item: created, metadata: meta };
     });
 
-    // Hydrate edges onto the response (always on single-item write/read).
     const hydrated = await hydrateEdgesForItem(storage, item.id);
     const itemWithEdges = { ...item, edges: hydrated };
 
@@ -1160,7 +1159,6 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  // GET /items/stats — item counts grouped by state
   router.openapi(getItemStatsRoute, async (c) => {
     requireAuth(c);
     const tenantId = c.get("apiKey")?.tenant_id;
@@ -1169,7 +1167,6 @@ export function itemRoutes(storage: Storage) {
     return c.json(stats, 200);
   });
 
-  // GET /items — list
   router.openapi(listItemsRoute, async (c) => {
     requireAuth(c);
 
@@ -1196,11 +1193,7 @@ export function itemRoutes(storage: Storage) {
       ? tagsParam.split(",").map((t) => t.trim())
       : undefined;
 
-    // URL shorthand: `?edge[X]=Y` (outbound) and `?backref[X]=Y` (inbound)
-    // get translated into filter clauses and AND-composed with any existing
-    // `filter=` param. Multiple shorthand params are joined with AND — the
-    // parser rejects mixing AND and OR in a single expression, so any existing
-    // OR in `filter=` disqualifies the shorthand; document as a known limit.
+    // ?edge[X]=Y and ?backref[X]=Y shorthands are AND-composed with any existing filter= param.
     const rawQuery = new URL(c.req.raw.url).searchParams;
     const edgeClauses: string[] = [];
     const shorthandRe = /^(edge|backref)\[([^\]]+)\]$/;
@@ -1216,14 +1209,7 @@ export function itemRoutes(storage: Storage) {
         ? `${filter} AND ${edgeClauses.join(" AND ")}`
         : edgeClauses.join(" AND ");
     }
-    // Read tier from the raw query string. zod-openapi's query
-    // validation occasionally drops enum strings (a quirk independent
-    // of the schema being declared correctly); the raw query lookup is
-    // the reliable source.
-    // Default query scope is unfiltered (library + feed).
-    //   ?tier=library  -> library only
-    //   ?tier=feed     -> feed only
-    //   ?tier=all or absent -> no filter
+    // Read tier from the raw query string — zod-openapi occasionally drops enum strings.
     const rawTier = c.req.query("tier");
     const tier: "library" | "feed" | undefined =
       rawTier === "library"
@@ -1231,13 +1217,6 @@ export function itemRoutes(storage: Storage) {
         : rawTier === "feed"
           ? "feed"
           : undefined;
-    // `include` accepts a comma-separated list. Lists are lean by default;
-    // each value is an opt-in hydration:
-    //   metadata    — tags sidecar (extensions always live under `extensions`
-    //                 per this endpoint's schema, not nested in metadata).
-    //   edges       — outbound edges grouped by edge type.
-    //   extensions  — namespaced extension data (filtered by caller
-    //                 permissions, same rule as `GET /items/:id/extensions`).
     const includeSet = new Set(
       (query.include ?? "")
         .split(",")
@@ -1249,18 +1228,11 @@ export function itemRoutes(storage: Storage) {
     const includeExtensions = includeSet.has("extensions");
     const includeSystemTypes = includeSet.has("system");
 
-    // `system.*` items are operational records; default lists exclude them.
-    // Caller opts in via `?include=system` or by filtering for a specific
-    // `system.<X>` type — that explicit selection bypasses the default
-    // exclude clause regardless of the include flag.
+    // system.* excluded by default; caller opts in via ?include=system or a specific system.* type filter.
     const typeIsSystemTarget =
       typeof type === "string" && type.startsWith("system.");
     const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
 
-    // Source-filter lever: when configured for the requested type, narrow
-    // results to items whose source is in the allow-list. Only applies
-    // when a specific type filter is supplied — the lever is per-type, so
-    // filterless reads see no source narrowing.
     const callerKeyForRead = c.get("apiKey");
     const callerTenantIdForRead = callerKeyForRead?.tenant_id;
     const tenantConfigForRead =
@@ -1346,8 +1318,6 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  // GET /items/:id — get single. Always hydrates outbound edges (capped per
-  // type) so callers see relationships without a second round-trip.
   router.openapi(getItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -1372,7 +1342,6 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  // PATCH /items/:id — update with conflict detection
   router.openapi(updateItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -1475,9 +1444,6 @@ export function itemRoutes(storage: Storage) {
             );
           }
         }
-        // Dual gate: item-type write is already enforced above;
-        // edge-type write applies whether we're adding targets or
-        // wiping the type entirely (the action is mutating the set).
         requireEdgePermission(c, edgeType, "write");
       }
     }
@@ -1567,12 +1533,7 @@ export function itemRoutes(storage: Storage) {
         return updated;
       }
 
-      // Replace-all-for-specified-types: delete every existing outbound
-      // edge of the listed edge_type first (so cardinality/cycle checks see
-      // the post-delete state), then batched validate, then recreate.
-      // Validation already ran above so this pass should not see constraint
-      // errors outside of concurrent mutation, which the pg transaction rolls
-      // back naturally.
+      // Replace-all per edge type: delete existing edges first so cardinality checks see post-delete state.
       if (hasEdges && body.edges) {
         for (const edgeType of Object.keys(body.edges)) {
           await storage.edges.deleteBySource(id, edgeType);
@@ -1637,11 +1598,6 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  // DELETE /items/:id — soft delete
-  // Cascade-on-delete semantics: outbound edges with cascade_on_delete=cascade
-  // (parent-of in the core set) recursively soft-delete their targets;
-  // block edges (none in the core set, but custom types may use them) reject
-  // the delete outright. Orphan is the no-op default.
   router.openapi(deleteItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -1651,18 +1607,12 @@ export function itemRoutes(storage: Storage) {
     requireAuth(c);
     const tid = c.get("apiKey")?.tenant_id;
 
-    // Gate on the item's type BEFORE entering the cascade-delete
-    // transaction. Without this check any authenticated credential
-    // could trash any item regardless of its `type_permissions`.
-    // Mirrors the PATCH /items handler above.
     const targetItem = await storage.items.get(id, tid);
     if (!targetItem) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     requireTypeAccess(c, targetItem.type, "write");
 
-    // Walk the edge graph + delete inside the tx. Snapshots feed the
-    // post-commit publish loop below.
     const snapshots = await storage.runInTransaction(async () => {
       const toDelete = await planCascadeDelete(storage.edges, id);
       const snaps = await Promise.all(
@@ -1674,9 +1624,7 @@ export function itemRoutes(storage: Storage) {
       return snaps;
     });
 
-    // Publish one deleted event per item (post-order: leaves first).
-    // Webhook side effects must fire post-commit so a rollback cannot
-    // leak a `deleted` event for items that were never actually trashed.
+    // Publish post-commit — a rollback must never leak a `deleted` event.
     for (const snapshot of snapshots) {
       if (snapshot) {
         await publish({
@@ -1724,7 +1672,6 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  // PUT /items/:id/metadata — full replacement
   router.openapi(putMetadataRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -1761,7 +1708,6 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  // PATCH /items/:id/metadata — set-union merge
   router.openapi(patchMetadataRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -1778,7 +1724,6 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const tags = body.tags;
 
-    // Pre-merge bounds check on incoming arrays
     if (Array.isArray(tags) && tags.length > 100) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -1808,7 +1753,6 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  // POST /items/:id/tags
   router.openapi(addTagsRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -1825,8 +1769,6 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const tags = body.tags;
 
-    // Check the 100-tag cap BEFORE writing. Validating after the write
-    // would let over-limit tags persist even though the error is thrown.
     const existingMeta = await storage.metadata.get(id);
     const projectedCount = new Set([...existingMeta.tags, ...tags]).size;
     if (projectedCount > 100) {
@@ -1858,20 +1800,15 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  // DELETE /items/:id/purge — permanently delete a trashed item (admin only)
   router.openapi(purgeItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    // tenant_admin can purge own-tenant items. The purge is already
-    // tenant-scoped via the explicit `tenantId` thread below — tenant_admin
-    // sees only its own tenant's items.
     requireTenantAdmin(c);
     const tenantId = c.get("apiKey")?.tenant_id;
-    // Edges carry no FK to items, so cascade cleanup must happen
-    // explicitly before the item row goes.
+    // Edges have no FK to items — explicit cleanup required before purge.
     await storage.edges.deleteBySource(id);
     await storage.edges.deleteByTarget(id);
     await storage.items.purge(id, tenantId);
@@ -1886,7 +1823,6 @@ export function itemRoutes(storage: Storage) {
     return c.json({ ok: true as const }, 200);
   });
 
-  // DELETE /items/:id/tags/:tag
   router.openapi(removeTagRoute, async (c) => {
     const { id, tag: rawTag } = c.req.valid("param");
     if (!isValidId(id)) {

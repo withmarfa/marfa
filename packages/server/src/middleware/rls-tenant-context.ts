@@ -119,14 +119,9 @@ export function rlsTenantContextMiddleware(options: RlsMiddlewareOptions) {
     // Case 3: tenant-bounded — wrap downstream in a transaction with
     // SET LOCAL ROLE marfa_app + tenant_id.
     await db.transaction(async (tx) => {
-      // `set_config` is the parameterised form of `SET LOCAL` and is
-      // therefore postgres-js-binding safe. The third arg `true`
-      // makes it transaction-local (cleared at COMMIT/ROLLBACK).
       await tx.execute(
         sql`SELECT set_config('marfa.tenant_id', ${tenantId}, true)`,
       );
-      // Role name is hardcoded (not user-controlled) — direct DDL is
-      // safe; SET LOCAL ROLE doesn't accept parameters.
       await tx.execute(sql`SET LOCAL ROLE marfa_app`);
 
       await pgRequestContext.run({ tx }, async () => {

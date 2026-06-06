@@ -225,7 +225,6 @@ export async function handleSchedule(
     last_inbound_at: null,
   };
 
-  // Channel renewal — only when an inbound webhook URL is configured.
   if (config.inbound_webhook_url !== null) {
     await ensureChannel(ctx, cursor, config.inbound_webhook_url);
   }
@@ -240,7 +239,6 @@ export async function handleSchedule(
     download_failed: 0,
   };
 
-  // Cold start: seed pageToken + initial files.list pass.
   if (!cursor.seeded || cursor.pageToken === null) {
     const tokenResp = await ctx.marfa.proxyRequest(
       "GET",
@@ -265,7 +263,6 @@ export async function handleSchedule(
     }
     cursor.pageToken = tokenBody.startPageToken;
 
-    // Initial files.list seed.
     const initial = await initialFilesListSweep(ctx, cursor, config);
     totalUpserted += initial.upserted;
     totalSkippedEcho += initial.skipped;
@@ -274,9 +271,7 @@ export async function handleSchedule(
     cursor.seeded = true;
   }
 
-  // Incremental: changes.list with the stored pageToken. After the
-  // cold-start branch above, cursor.pageToken is always a string —
-  // the explicit annotation makes the loop body type-clean.
+  // After the cold-start branch above cursor.pageToken is always a string.
   let pageToken: string = cursor.pageToken;
   for (;;) {
     const params = new URLSearchParams();
@@ -514,7 +509,6 @@ async function applyChange(
 
   const marfa_id = cursor.mappings[fileId];
 
-  // Tombstone: removed OR trashed.
   if (change.removed === true || change.file?.trashed === true) {
     if (marfa_id !== undefined) {
       try {
@@ -870,8 +864,6 @@ async function ingestBlobIfNeeded(
       ceiling: config.max_file_size_bytes,
     };
   }
-  // Bytes pass via the OAuth proxy — same credential the rest of
-  // the integration uses; no separate plumbing needed.
   const mimeType = file.mimeType ?? "application/octet-stream";
   let resp: Response;
   try {
@@ -977,20 +969,12 @@ function buildFileInput(
     properties.sha256_checksum = file.sha256Checksum;
   if (file.etag !== undefined) properties.etag = file.etag;
 
-  // Type-routing: `blob_ref` means bytes are retrievable from the Marfa
-  // blob store. `core.file` requires it; `google.drive.file`
-  // accepts it as optional. We emit `core.file` only when bytes were
-  // successfully ingested; every other path routes to
-  // `google.drive.file` with `blob_ref` absent. The
-  // `configuredTargetType` is the operator's preferred default — we
-  // downgrade away from `core.file` rather than synthesise a fake
-  // `blob_ref` that doesn't resolve via `GET /blobs/{ref}`.
+  // Emit `core.file` only when bytes were ingested — `blob_ref` is required
+  // by that type. Every other outcome routes to `google.drive.file` with
+  // `blob_ref` absent rather than synthesising a ref that doesn't resolve.
   if (blob.status === "ingested") {
     properties.blob_ref = blob.hash;
     if (file.webViewLink !== undefined) properties.url = file.webViewLink;
-    // Honour `core.file` when the bytes are real; otherwise prefer
-    // `google.drive.file` for the fuller fidelity (Drive-specific
-    // fields like `drive_file_id`, `web_view_link`).
     const type =
       configuredTargetType === "core.file" ? "core.file" : DEFAULT_TARGET_TYPE;
     return { type, properties };

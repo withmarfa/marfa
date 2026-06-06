@@ -155,17 +155,12 @@ export default {
       return;
     }
 
-    // Success — quiet log at info-level. Useful for tailing the
-    // Worker logs during validation.
+    // Quiet success log — useful when tailing Worker logs.
     console.log(
       `[email-worker] dispatched env=${env.ENVIRONMENT ?? "unknown"} delivery=${deliveryId} subject="${envelope.subject.slice(0, 80)}"`,
     );
   },
 };
-
-// ---------------------------------------------------------------------------
-// Envelope construction
-// ---------------------------------------------------------------------------
 
 export function buildEnvelope(
   message: { from: string; to: string },
@@ -220,8 +215,7 @@ function extractAttachments(
   if (!Array.isArray(attachments)) return [];
   const out: EmailEnvelope["attachments"] = [];
   for (const a of attachments) {
-    // Require a non-null filename and a mimeType — skip incomplete
-    // entries silently (inline parts with no filename, etc.).
+    // Skip inline parts with no filename or MIME type.
     if (
       typeof a.filename !== "string" ||
       a.filename.length === 0 ||
@@ -232,13 +226,12 @@ function extractAttachments(
     }
     let sizeBytes: number;
     if (typeof a.content === "string") {
-      // Approximate base64 → byte length without decoding.
+      // Approximate base64 → byte length without decoding the content.
       sizeBytes = Math.floor((a.content.length * 3) / 4);
     } else if (a.content instanceof ArrayBuffer) {
       sizeBytes = a.content.byteLength;
     } else {
-      // Uint8Array.
-      sizeBytes = a.content.byteLength;
+      sizeBytes = a.content.byteLength; // Uint8Array
     }
     out.push({
       filename: a.filename,
@@ -276,15 +269,11 @@ function filterHeaders(headers: Header[] | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const h of headers) {
     if (typeof h.key !== "string" || typeof h.value !== "string") continue;
-    // postal-mime's `Header.key` is already lowercased per the type.
+    // postal-mime lowercases `Header.key`; the allowlist is lower-keyed to match.
     if (HEADER_ALLOWLIST.has(h.key)) out[h.key] = h.value;
   }
   return out;
 }
-
-// ---------------------------------------------------------------------------
-// HMAC
-// ---------------------------------------------------------------------------
 
 async function hmacSha256Hex(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -304,10 +293,6 @@ async function hmacSha256Hex(secret: string, message: string): Promise<string> {
   for (const b of bytes) hex += b.toString(16).padStart(2, "0");
   return hex;
 }
-
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
 
 function describeError(err: unknown): string {
   if (err instanceof Error) return `${err.name}: ${err.message}`;

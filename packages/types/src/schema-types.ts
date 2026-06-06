@@ -1,5 +1,4 @@
-// Schema shape — describes how a Marfa type schema is structured.
-// Data (the core type JSON files) lives alongside; generated output wires them together.
+// Type schema shape — data lives in core/*.json; generated output in generated/.
 
 /**
  * Lifecycle states for items. Defined at the metadata layer, universal across
@@ -10,7 +9,6 @@
  */
 export type ItemState = "active" | "archived" | "trashed" | "revoked";
 
-/** Supported field types in a type schema. */
 export type FieldType =
   | "string"
   | "number"
@@ -24,7 +22,6 @@ export type FieldType =
   | "array"
   | "object";
 
-/** Defines a single field within a type schema. */
 export interface FieldDefinition {
   type: FieldType;
   description?: string;
@@ -42,7 +39,6 @@ export interface FieldDefinition {
   searchable?: boolean;
 }
 
-/** Per-type version retention policy (overrides global defaults). */
 export interface VersionPolicy {
   recent_days?: number;
   daily_snapshot_days?: number;
@@ -95,7 +91,6 @@ export interface MergePolicy {
   default?: MergeStrategy;
 }
 
-/** A complete type schema — the data contract for a Marfa type. */
 export interface TypeSchema {
   id: string;
   parent?: string;
@@ -115,10 +110,6 @@ export interface TypeSchema {
    */
   compatible_with?: string;
 }
-
-// ---------------------------------------------------------------------------
-// Edge types
-// ---------------------------------------------------------------------------
 
 /**
  * Cardinality of an edge type. Enforced at edge-creation time.
@@ -144,10 +135,6 @@ export type EdgeCardinality =
  */
 export type EdgeCascade = "cascade" | "orphan" | "block";
 
-/**
- * A complete edge type schema. Describes one named relationship kind —
- * constraints, cascade, property shape.
- */
 export interface EdgeTypeSchema {
   id: string;
   label?: string;

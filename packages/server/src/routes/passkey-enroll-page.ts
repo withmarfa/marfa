@@ -38,10 +38,6 @@ export function renderPasskeyEnrollPage(
 ): string {
   const safeEmail = escapeHtml(params.email);
 
-  // The page-level inline JS handles the click → MarfaPasskey.enroll()
-  // round-trip and toggles status banners. Capability probe hides
-  // the button entirely on unsupported browsers; we render a
-  // fallback paragraph that's only visible in that case.
   const inlineScript = `
 (function () {
   function show(id) { var el = document.getElementById(id); if (el) el.hidden = false; }
@@ -55,10 +51,6 @@ export function renderPasskeyEnrollPage(
     hide('passkey-success');
   }
 
-  // Capability detection. Hide the button + show the fallback if not
-  // supported. We do this in JS rather than server-side because UA
-  // sniffing is unreliable; WebAuthn support depends on the actual
-  // browser + secure-context.
   if (!window.MarfaPasskey || !window.MarfaPasskey.isSupported()) {
     hide('passkey-button');
     show('passkey-unsupported');

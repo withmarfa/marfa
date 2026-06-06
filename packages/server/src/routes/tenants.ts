@@ -339,7 +339,7 @@ export function tenantRoutes(storage: Storage) {
     );
   });
 
-  // Platform-admin only — setting another tenant's caps is cross-tenant authority.
+  // Platform-admin only — reading another tenant's caps is cross-tenant authority.
   router.openapi(getQuotasRoute, async (c) => {
     requireAdmin(c);
     const { id } = c.req.valid("param");

@@ -263,9 +263,8 @@ export async function handleSchedule(
 
     for (const book of payload.results ?? []) {
       if (book.is_deleted === true) {
-        // Read-only constraint: we never propagate Readwise deletes
-        // into Marfa trash for highlights or books. tombstone_mapping
-        // is `ignore` on the manifest. Skip the row.
+        // Read-only constraint: tombstone_mapping is `ignore` — Readwise
+        // deletes are never propagated into Marfa trash.
         continue;
       }
       const bookKey = String(book.user_book_id);
@@ -315,10 +314,8 @@ export async function handleSchedule(
             });
             highlightMarfaId = created.id;
             cursor.highlight_mappings[highlightKey] = highlightMarfaId;
-            // Only create the parent-of edge on first write. On
-            // subsequent updates the edge already exists; the SDK
-            // would 409 / no-op anyway, but skipping is the cleaner
-            // contract.
+            // Only create the edge on first write — on updates it already
+            // exists and the SDK would 409/no-op anyway.
             try {
               await ctx.marfa.createEdge({
                 source_id: bookMarfaId,
@@ -353,8 +350,6 @@ export async function handleSchedule(
     pagesFetched += 1;
   } while (pageCursor !== null && pagesFetched < MAX_PAGES);
 
-  // Advance the watermark to the sweep start so the next poll picks
-  // up anything updated during this sweep on the next cycle.
   cursor.updated_after = sweepStartedAt;
   cursor.last_inbound_at = sweepStartedAt;
   await ctx.cursor.write(CURSOR_KEY, cursor);

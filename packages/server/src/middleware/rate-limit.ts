@@ -74,7 +74,6 @@ export function rateLimitMiddleware(
   }, config.windowMs * 2);
   cleanupInterval.unref();
 
-  // Expose cleanup for graceful shutdown
   (
     cleanupInterval as unknown as { _rateLimitCleanup: true }
   )._rateLimitCleanup = true;
@@ -115,7 +114,6 @@ export function rateLimitMiddleware(
       apiKey?.id ?? getClientIp(c, config.trustedProxyCidrs) ?? "anon";
     const path = c.req.path;
 
-    // Determine limit for this path
     let limit = config.defaultLimit;
     for (const [prefix, pathLimit] of Object.entries(config.pathLimits)) {
       if (path.startsWith(prefix)) {

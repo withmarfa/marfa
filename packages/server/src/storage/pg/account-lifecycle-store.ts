@@ -54,10 +54,8 @@ export class PgAccountLifecycleStore implements AccountLifecycleStore {
   }
 
   async cancelPendingDeletion(authUserId: string): Promise<boolean> {
-    // Surface rows-affected so the "Account restored" confirmation only
-    // renders when the UPDATE actually flipped a row. `.returning()` is
-    // cheap (single PK column) and matches the Drizzle-PG pattern used
-    // elsewhere for confirm-on-write.
+    // `.returning()` tells us whether the UPDATE flipped a row, so the
+    // "Account restored" confirmation only renders on actual state changes.
     const rows = await this.db
       .update(auth_user)
       .set({ deletion_state: "active", pending_deletion_at: null })

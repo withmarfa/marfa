@@ -172,8 +172,8 @@ export async function performUninstall(
 
   // -------------------------------------------------------------------
   // Step 6: transition system.connection state to revoked.
-  // The system.* lifecycle override only allows active → revoked, which
-  // matches the precondition asserted in step 1.
+  // active → revoked is the only allowed system.* lifecycle transition,
+  // matching the precondition asserted in step 1.
   // -------------------------------------------------------------------
   await storage.items.transition(input.connectionId, "revoked", input.tenantId);
 

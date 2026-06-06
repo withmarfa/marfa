@@ -1,21 +1,14 @@
 import type { TypePermission } from "./types.js";
 
-// ---------------------------------------------------------------------------
-// Timestamp validation
-// ---------------------------------------------------------------------------
-
-// Full ISO 8601 with timezone: 2026-03-15T14:30:00Z or 2026-03-15T14:30:00+05:00
+// Full ISO 8601 with timezone (e.g. 2026-03-15T14:30:00Z)
 const STRICT_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
 
-// Flexible: full datetime, date-only (2026-03-15), or month-only (2026-03)
+// Also accepts date-only (2026-03-15) and year-month (2026-03)
 const FLEXIBLE_TIMESTAMP =
   /^\d{4}(-\d{2}(-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?)?)?$/;
 
-/**
- * Returns true if the value is a valid ISO 8601 timestamp.
- * Accepts full datetime with timezone, date-only, or year-month.
- */
+/** Returns true if `value` is a valid ISO 8601 timestamp (full datetime, date-only, or year-month). */
 export function isValidTimestamp(value: string): boolean {
   if (!FLEXIBLE_TIMESTAMP.test(value)) return false;
   // Date constructor silently rolls over invalid dates (Feb 30 → Mar 2).
@@ -34,10 +27,7 @@ export function isValidTimestamp(value: string): boolean {
   return true;
 }
 
-/**
- * Returns true if the value is a strict ISO 8601 timestamp with timezone.
- * Used for system fields like created_at and updated_at.
- */
+/** Returns true if `value` is a strict ISO 8601 timestamp with timezone (used for system fields). */
 export function isValidStrictTimestamp(value: string): boolean {
   if (!STRICT_TIMESTAMP.test(value)) return false;
   const d = new Date(value);
@@ -55,10 +45,6 @@ export function isValidBlobHash(value: string): boolean {
   return BLOB_HASH.test(value);
 }
 
-// ---------------------------------------------------------------------------
-// URL validation
-// ---------------------------------------------------------------------------
-
 /** Returns true if the value is a valid URL. */
 export function isValidUrl(value: string): boolean {
   try {
@@ -69,11 +55,7 @@ export function isValidUrl(value: string): boolean {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Email validation
-// ---------------------------------------------------------------------------
-
-// Basic format check — not exhaustive, but catches obvious problems.
+// Basic format check — not exhaustive.
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Returns true if the value looks like a valid email address. */
@@ -81,21 +63,13 @@ export function isValidEmail(value: string): boolean {
   return EMAIL.test(value);
 }
 
-// ---------------------------------------------------------------------------
-// BCP 47 language code validation
-// ---------------------------------------------------------------------------
-
-// Matches primary language tag with optional subtags: en, en-US, zh-Hans, pt-BR
+// BCP 47: primary tag + optional subtags, e.g. en, en-US, zh-Hans
 const BCP47 = /^[a-z]{2,3}(-[A-Za-z]{2,8})*$/;
 
 /** Returns true if the value is a plausible BCP 47 language code. */
 export function isValidLanguageCode(value: string): boolean {
   return BCP47.test(value);
 }
-
-// ---------------------------------------------------------------------------
-// Type identifier validation
-// ---------------------------------------------------------------------------
 
 // Type identifiers: dot-separated segments. Min 2 segments.
 // Segments: lowercase alphanumeric, underscores, hyphens. Max 128 characters.

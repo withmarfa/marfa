@@ -149,7 +149,6 @@ describe("tenant-scoped export — platform admin", () => {
       tenantB,
     );
 
-    // ctx.adminKey is platform admin — no tenant_id.
     const res = await request(
       ctx.app,
       "GET",
@@ -169,8 +168,6 @@ describe("tenant-scoped export — platform admin", () => {
     });
     expect(res.status).toBe(200);
 
-    // Audit row stamped with the warning shape. The audit insert is
-    // fire-and-forget, so poll briefly for the row to appear.
     const audit = await waitForAudit(
       () => ctx.storage.audit.list({ action: "export.tenant" }),
       (result) => result.data.length > 0,
@@ -204,9 +201,6 @@ describe("archive — manifest tenant_id round-trip", () => {
     const arrayBuf = await res.arrayBuffer();
     const buf = Buffer.from(arrayBuf);
     expect(buf.length).toBeGreaterThan(0);
-    // We don't ungzip+untar in this test (would pull in test deps);
-    // instead we round-trip via /admin/restore-archive in the next
-    // test, which exercises the full manifest extraction.
   });
 
   it("admin-archive rejects mismatching manifest.tenant_id", async () => {
@@ -219,14 +213,12 @@ describe("archive — manifest tenant_id round-trip", () => {
       tenantA,
     );
 
-    // Tenant A exports an archive.
     const exportRes = await request(ctx.app, "GET", "/export?format=archive", {
       key: wsAdminA,
     });
     expect(exportRes.status).toBe(200);
     const archive = await exportRes.arrayBuffer();
 
-    // Platform admin attempts to restore into tenant B.
     const restoreRes = await ctx.app.request(
       `/admin/restore-archive?target_tenant_id=${tenantB}`,
       {

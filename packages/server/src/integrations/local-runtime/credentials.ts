@@ -66,11 +66,9 @@ export async function mintLocalRuntimeCredential(
     );
   }
 
-  // Carry manifest-declared extension grants alongside the always-on
-  // `connection.runtime: write`. The hosted substrate does this in
-  // `install-pipeline.ts` for each per-Worker mint; we do it inline
-  // because the local substrate doesn't have a long-lived credential
-  // record.
+  // Carry manifest-declared extension grants alongside connection.runtime:write.
+  // The local substrate mints inline (no long-lived credential record),
+  // mirroring what install-pipeline.ts does for the hosted substrate.
   const extension_permissions: Record<string, "read" | "write"> = {
     "connection.runtime": "write",
   };
@@ -88,10 +86,8 @@ export async function mintLocalRuntimeCredential(
   const rawKey = KEY_PREFIX + randomBytes(32).toString("hex");
   const keyHash = hashApiKey(rawKey, salt);
   const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-  // `source` is uniqueness-checked per tenant by `createRuntimeCredential`
-  // so concurrent / sequential mints for the same Connection can't
-  // collide. The suffix (8 hex chars) is plenty to avoid clashes within
-  // the credential's short TTL window.
+  // source is unique-checked per tenant; the random suffix prevents collisions
+  // within the credential's short TTL window.
   const suffix = randomBytes(4).toString("hex");
 
   await storage.keys.createRuntimeCredential(

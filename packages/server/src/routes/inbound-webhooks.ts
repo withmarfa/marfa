@@ -39,9 +39,7 @@ function rowToWire(
   row: InboundWebhookRow,
   rawSecret?: string,
 ): InboundWebhook | CreatedInboundWebhook {
-  // Verification method is validated at write time (manifest
-  // validateManifest gates the input via the discriminated union) so
-  // the cast here is safe; we widen for the wire type.
+  // Cast is safe: validation at write time (validateManifest) enforced the discriminated union.
   const verification_method = row.verification_method as
     | "hmac-sha256"
     | "slack"
@@ -85,9 +83,6 @@ async function requireConnectionAccess(
   connectionId: string,
 ): Promise<{ tenantId: string | undefined }> {
   const key = requireAuth(c);
-  // Admin (member-level + admin role) keys can manage any connection in
-  // their tenant. Connector credentials (OAuth tokens) carry source
-  // `oauth:<connectionId>`; we accept that shape directly.
   const tenantId = key.tenant_id ?? undefined;
   const connection = await storage.items.get(connectionId, tenantId);
   if (connection?.type !== "system.connection") {
@@ -408,21 +403,15 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     );
     const body = c.req.valid("json");
 
-    // Manifest is resolved server-side from the connection's
-    // `integration_ref` → `system.integration` item.
     const { manifest } = await resolveConnectionManifest(
       storage,
       connectionId,
       tenantId,
     );
 
-    // Stamp method on the new row from the validated manifest. The
-    // `verification_adapter_id` column is always undefined — no current
-    // verification method uses it.
     const verification_method = manifest.webhook_verification.method;
     const verification_adapter_id: string | undefined = undefined;
 
-    // Fresh 32-byte hex secret, encrypted at rest.
     const rawSecret = randomBytes(32).toString("hex");
     const secret_encrypted = encryptSecret(
       rawSecret,
@@ -606,9 +595,6 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
   r.openapi(receiveInboundWebhookRoute, async (c) => {
     const { id } = c.req.valid("param");
 
-    // Public unauth endpoint — no requireAuth call. Tenant scoping is
-    // off the connection_id stamped on the row at subscription time;
-    // receipt itself is public.
     const subscription = await storage.inboundWebhooks.getAny(id);
     if (!subscription) {
       throw new MarfaError(
@@ -633,12 +619,7 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
       );
     }
 
-    // Read the raw body as ArrayBuffer — HMAC over altered bytes fails,
-    // so any framework re-serialisation MUST NOT happen between the
-    // bytes-on-the-wire and the verifier input. The verifier package
-    // (`@withmarfa/webhooks`) takes ArrayBuffer natively (Web
-    // Crypto's input type); we keep the same buffer for the JSON
-    // payload column via TextDecoder.
+    // Raw ArrayBuffer — framework re-serialisation would invalidate the HMAC. Same buffer feeds JSON decoding.
     const rawBody = await c.req.raw.arrayBuffer();
 
     let secret: string;
@@ -661,10 +642,6 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
     const result = await adapter(rawBody, c.req.raw.headers, secret);
 
     const now = new Date().toISOString();
-    // Fall back to the row id when the adapter doesn't surface a
-    // delivery id — for first delivery this is unique; on a retry the
-    // sender should reach again with the same external id (and that
-    // adapter would surface it).
     const externalDeliveryId = result.external_delivery_id ?? generateId();
 
     const written = await storage.inboundWebhookEvents.insert({
@@ -684,7 +661,6 @@ export function inboundWebhookReceiptRoutes(storage: Storage) {
       );
     }
 
-    // 200 ack on verified receipt — fresh OR duplicate (idempotent).
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,

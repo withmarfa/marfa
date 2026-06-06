@@ -47,12 +47,8 @@ export function createErrorHandler(config: {
       return jsonResponse({ error }, err.status, err.code);
     }
 
-    // Malformed JSON (`{not valid json`) and empty bodies on routes
-    // that declare a JSON validator. Hono's validator throws an
-    // `HTTPException` with the literal message "Malformed JSON in
-    // request body" before user middleware runs. Surface as our
-    // typed 400 so the conformance suite's adversarial probes don't
-    // see 500s and operator logs aren't noisy with false incidents.
+    // Hono's validator throws HTTPException("Malformed JSON in request body") before
+    // user middleware runs; surface this as a typed 400 rather than a 500.
     if (
       err instanceof HTTPException &&
       err.message === "Malformed JSON in request body"
@@ -69,8 +65,6 @@ export function createErrorHandler(config: {
       );
     }
 
-    // Other HTTPExceptions (e.g. forwarded from Hono internals)
-    // surface their own status. Wrap in our error envelope.
     if (err instanceof HTTPException) {
       const code = err.status >= 500 ? "internal_error" : "validation_error";
       return jsonResponse(
@@ -80,8 +74,7 @@ export function createErrorHandler(config: {
       );
     }
 
-    // Defensive: a `SyntaxError` thrown directly by `JSON.parse` (not
-    // wrapped by Hono's validator) should also map to 400.
+    // SyntaxError thrown directly by JSON.parse (not wrapped by Hono's validator).
     if (err instanceof SyntaxError) {
       return jsonResponse(
         {
@@ -95,9 +88,7 @@ export function createErrorHandler(config: {
       );
     }
 
-    // Zod schema validation failures that escaped the route-level
-    // validator. Duck-typed by `name` so we don't take a direct zod
-    // dep here.
+    // ZodError that escaped the route-level validator; duck-typed to avoid a direct dep.
     if (
       typeof err === "object" &&
       (err as { name?: string }).name === "ZodError"
@@ -119,9 +110,8 @@ export function createErrorHandler(config: {
       stack: err instanceof Error ? err.stack : undefined,
     });
 
-    // Record the exception on the active OTel span and mark it errored,
-    // so it always exports (the error-aware sampler forces 100% on
-    // errors). API-only + null-guarded — a pure no-op when OTel is off.
+    // Mark span as errored so the error-aware sampler forces 100% export on this trace.
+    // API-only + null-guarded — no-op when OTel is off.
     const span = trace.getActiveSpan();
     if (span) {
       if (err instanceof Error) span.recordException(err);
