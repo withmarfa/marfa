@@ -7,12 +7,11 @@
  * loses syntax highlighting inside the literal but the runtime
  * shape is bytewise identical to a real `auth.css`.
  *
- * Wave C PR4 established this file. The consent-polish pass tightens
- * the design tokens, refines typography, and introduces the
- * consent-page primitives (clean section labels, toggle switches,
- * hairline-divided rows). The shared shell — sign-in / sign-up /
- * verify-email / forgot-password / reset-password / device-flow /
- * security — picks up the typographic + token polish automatically.
+ * Stylesheet for all auth surfaces. Design tokens, typography, and
+ * consent-page primitives (section labels, toggle switches, hairline-
+ * divided rows) live here. All auth shells share these styles — sign-in,
+ * sign-up, verify-email, forgot-password, reset-password, device-flow,
+ * and security pages.
  */
 
 export const AUTH_CSS = `/*
@@ -670,8 +669,8 @@ details.section[open] > summary .section__chevron {
   color: var(--ink);
 }
 
-/* Wave C PR7 / T-031 — security page row layout. Used inside
-   .section blocks for connected-apps + active-sessions lists. */
+/* Security page row layout. Used inside .section blocks for
+   connected-apps + active-sessions lists. */
 .row {
   display: flex;
   align-items: flex-start;

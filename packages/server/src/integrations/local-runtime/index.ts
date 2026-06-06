@@ -1,5 +1,5 @@
 /**
- * Local integrations runtime — public entry point (T-173).
+ * Local integrations runtime — public entry point.
  *
  * Boots when `MARFA_INTEGRATION_RUNTIME=local`; replaces the Cloudflare
  * substrate (Workers + Queues + Durable Objects + KV) with an in-process
@@ -80,9 +80,8 @@ export interface StartLocalRuntimeOptions {
  * caller can stop it on shutdown.
  *
  * Returns `null` when `config.integrationRuntime` is `"hosted"` —
- * the caller stays on the existing Cloudflare-side bridge. Default
- * from T-174 onwards is `"local"`; set the env var explicitly to
- * `"hosted"` to opt out.
+ * the caller stays on the Cloudflare-side bridge. The default is
+ * `"local"`; set the env var explicitly to `"hosted"` to opt out.
  *
  * Throws when `DB_DIALECT=sqlite` is paired with
  * `MARFA_INTEGRATION_RUNTIME=local`: the local substrate requires

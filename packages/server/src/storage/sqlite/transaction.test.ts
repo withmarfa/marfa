@@ -1,11 +1,9 @@
 /**
- * T-071 — proves `runInTransaction` is genuinely transactional on SQLite.
+ * Proves `runInTransaction` is genuinely transactional on SQLite.
  *
- * Pre-T-071 this was a silent no-op for async bodies on better-sqlite3:
- * the body ran statement-by-statement with no `BEGIN`/`COMMIT` bracket,
- * so a thrown error left half-applied state on disk. With libsql + the
- * AsyncLocalStorage routing in `request-context.ts`, every store call
- * inside `fn` flows through the active tx and rolls back together.
+ * With libsql + the AsyncLocalStorage routing in `request-context.ts`,
+ * every store call inside `fn` flows through the active transaction
+ * and rolls back together on throw.
  *
  * Two tests cover the contract:
  *   1. Throw mid-tx → both writes roll back.
@@ -19,7 +17,7 @@ import { join } from "node:path";
 import { createSqliteStorage } from "./index.js";
 import type { Storage } from "../interface.js";
 
-describe("SqliteStorage.runInTransaction (T-071)", () => {
+describe("SqliteStorage.runInTransaction", () => {
   let tmpDir: string;
   let storage: Storage;
 

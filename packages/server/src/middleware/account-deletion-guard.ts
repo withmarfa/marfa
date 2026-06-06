@@ -1,5 +1,5 @@
 /**
- * T-116 — sign-in pre-check for accounts in `pending_deletion`.
+ * Sign-in pre-check for accounts in `pending_deletion`.
  *
  * Sits AFTER `tenantSuspensionMiddleware` and BEFORE the better-auth
  * catch-all in `app.ts`. Triggers only on the sign-in endpoints
@@ -12,14 +12,13 @@
  *   1. Clone the request body, extract `email`.
  *   2. Look up `accountLifecycle.getAccountLifecycleByEmail(email)`.
  *   3. If the account is `'pending_deletion'`:
- *      a. Reuse an existing valid cancel token if one is present (T-137);
+ *      a. Reuse an existing valid cancel token if one is present;
  *         otherwise mint a fresh one (30d TTL) and insert it.
  *      b. Dispatch the `account-delete-cancel` email — gated by a
- *         per-account cooldown (T-137) so repeated sign-in attempts
- *         can't flood the targeted user's inbox or burn CF Email
- *         quota.
- *      c. Audit `auth.account.sign_in_blocked_pending_deletion` (operator-visible
- *         only — no PII in details, T-139).
+ *         per-account cooldown so repeated sign-in attempts can't
+ *         flood the targeted user's inbox or burn email quota.
+ *      c. Audit `auth.account.sign_in_blocked_pending_deletion`
+ *         (operator-visible only — no PII in details).
  *      d. Return a generic 401 with better-auth's wrong-credentials
  *         shape; do NOT call `next()` — better-auth has no
  *         `deletion_state` awareness and would mint a session on
@@ -66,7 +65,7 @@ const CANCEL_IDENTIFIER_PREFIX = "account-cancel:";
  * any non-negative integer milliseconds. **`0` means "no cooldown"** —
  * every sign-in attempt fires a fresh email send. Useful for tests +
  * rare operator-debug scenarios; in production this restores the
- * spam vector T-137 closes, so don't set it to 0 outside of tests.
+ * spam vector the cooldown closes, so don't set it to 0 outside of tests.
  * Negative or malformed values fall back to the default.
  */
 const DEFAULT_CANCEL_EMAIL_COOLDOWN_MS = 60 * 60 * 1000;
@@ -109,11 +108,11 @@ export function accountDeletionGuardMiddleware(
       return next();
     }
 
-    // T-137 token reuse: look for an existing valid cancel token bound
-    // to this auth_user_id; reuse if present. The user may have lost
-    // the original email, but issuing a brand-new token on every attempt
-    // is what enables the spam vector — token reuse caps the
-    // auth_verification table growth at one row per (account, TTL).
+    // Token reuse: look for an existing valid cancel token bound to this
+    // auth_user_id and reuse it if present. The user may have lost the
+    // original email, but issuing a brand-new token on every attempt
+    // enables a spam vector — reuse caps auth_verification table growth
+    // at one row per (account, TTL).
     const nowMs = Date.now();
     let token = await findExistingValidCancelToken(
       storage,
@@ -131,11 +130,10 @@ export function accountDeletionGuardMiddleware(
       );
     }
 
-    // T-137 cooldown: skip the email send when we're inside the
-    // per-account cooldown window. The themed page still renders + the
-    // audit row still writes, so the user-facing signal arrives via the
-    // page; the email channel is rate-limited to one per cooldown
-    // window per account.
+    // Cooldown: skip the email send when inside the per-account cooldown
+    // window. The themed page still renders and the audit row still
+    // writes, so the user-facing signal arrives via the page; the email
+    // channel is rate-limited to one per cooldown window per account.
     const lastSent = lastSendMs.get(lifecycle.auth_user_id);
     const cooldownActive =
       lastSent !== undefined && nowMs - lastSent < cooldownMs;
@@ -159,7 +157,7 @@ export function accountDeletionGuardMiddleware(
       lastSendMs.set(lifecycle.auth_user_id, nowMs);
     }
 
-    // T-139: no plaintext email in audit details — the auth_user_id in
+    // No plaintext email in audit details — the auth_user_id in
     // resource_id correlates back via the auth_user row when needed.
     void storage.audit.log({
       action: "auth.account.sign_in_blocked_pending_deletion",
@@ -169,7 +167,7 @@ export function accountDeletionGuardMiddleware(
     });
 
     // Generic 401 matching better-auth's wrong-credentials response
-    // shape (T-137). Indistinguishable from the unknown-email and
+    // shape. Indistinguishable from the unknown-email and
     // active-wrong-password paths in body shape, status, statusText,
     // and content-type — so a network observer comparing responses
     // cannot enumerate pending-deletion accounts. The user-facing
@@ -234,11 +232,10 @@ async function extractEmail(rawReq: Request): Promise<string | null> {
 }
 
 /**
- * T-137: probe `auth_verification` for an existing valid cancel token
- * bound to this `auth_user_id`. Returns the token suffix (without the
+ * Probe `auth_verification` for an existing valid cancel token bound
+ * to this `auth_user_id`. Returns the token suffix (without the
  * `account-cancel:` prefix) when found, else null. Uses Drizzle's
- * query builder on both dialects — fully parameterised, mirrors the
- * T-138 fix to the analogous helper in `routes/auth-account.ts`.
+ * query builder on both dialects — fully parameterised.
  */
 async function findExistingValidCancelToken(
   storage: Storage,

@@ -165,7 +165,7 @@ describe("GET /audit", () => {
     expect(res.status).toBe(400);
   });
 
-  it("captures the resolved client IP on rows produced by route handlers (T-027)", async () => {
+  it("captures the resolved client IP on rows produced by route handlers", async () => {
     // Issue an authenticated POST that emits an audit row, with a
     // synthetic peer IP. No TRUSTED_PROXY_CIDRS — peer is the only
     // trusted source. The audit row must carry that peer.
@@ -180,8 +180,8 @@ describe("GET /audit", () => {
 
     // Look up the audit row for the item we just created — most reliable
     // way to find our own row vs. unrelated noise from other tests.
-    // T-079: poll briefly because `audit.log` is fire-and-forget — under
-    // PG the insert sometimes lands after this GET would otherwise return.
+    // Poll briefly because `audit.log` is fire-and-forget — under PG the
+    // insert sometimes lands after this GET would otherwise return.
     const body = await waitForAudit(
       async () => {
         const listRes = await request(
@@ -241,7 +241,7 @@ describe("GET /audit", () => {
     }
   });
 
-  it("tenant-scopes reads (T-041): bootstrap admin (no tenant_id) sees every row", async () => {
+  it("tenant-scopes reads: bootstrap admin (no tenant_id) sees every row", async () => {
     // Seed three rows directly into the audit store: one for tenant A, one
     // for tenant B, one bootstrap-shape (tenant_id null). The bootstrap
     // admin in the test context has no tenant_id, so `GET /audit` must
@@ -312,7 +312,7 @@ describe("GET /audit", () => {
     // Route-layer end-to-end: mint a tenant-scoped admin key, hit
     // GET /audit, assert it sees only tenant-A rows. Verifies the
     // `tenant_id: callerTenantId` line in the route handler hasn't
-    // regressed back to the pre-T-041 unfiltered shape.
+    // regressed back to an unfiltered shape.
     const tenantAKey = "marfa_k1_test_tenant_a_admin";
     await ctx.storage.keys.create(
       {
@@ -349,7 +349,7 @@ describe("GET /audit", () => {
   // see its admin key wiped. Keep this test LAST in the describe
   // block — fresh-context tests must not run before any test that
   // relies on the file-level fixture.
-  it("honours TRUSTED_PROXY_CIDRS when stamping the audit IP (T-027)", async () => {
+  it("honours TRUSTED_PROXY_CIDRS when stamping the audit IP", async () => {
     // Stand up a fresh app whose config trusts 10.0.0.0/8 as a proxy
     // CIDR. A request whose peer is in 10.0.0.0/8 and whose
     // x-forwarded-for ends in `203.0.113.7` should produce an audit
@@ -368,7 +368,7 @@ describe("GET /audit", () => {
       expect(res.status).toBe(201);
       const created = (await res.json()) as { item: { id: string } };
 
-      // T-079: same fire-and-forget audit race — poll until the row lands.
+      // Same fire-and-forget audit race — poll until the row lands.
       const body = await waitForAudit(
         async () => {
           const listRes = await request(

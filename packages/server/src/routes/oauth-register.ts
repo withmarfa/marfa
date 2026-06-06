@@ -1,5 +1,5 @@
 /**
- * T-158: Marfa-owned Dynamic Client Registration endpoint.
+ * Marfa-owned Dynamic Client Registration endpoint.
  *
  * Fronts the @better-auth/oauth-provider plugin's `/auth/oauth2/register`
  * endpoint with our own handler. The Marfa handler is mounted BEFORE the
@@ -40,11 +40,10 @@
  * `getClient` reads) are unchanged: they only need the JSON-encoded
  * column shape we now write consistently.
  *
- * **Acceptance criteria covered (T-158):**
- *   - 201 with credentials for `grant_types: ["authorization_code"]`
- *     (gap 3 — no plugin path → no 500).
+ * **Acceptance criteria:**
+ *   - 201 with credentials for `grant_types: ["authorization_code"]`.
  *   - 201 with credentials for `grant_types: ["urn:...device_code"]`
- *     (gap 2 — Marfa's Zod accepts the URN).
+ *     (Marfa's Zod accepts the device-code URN).
  *
  * (Gap 1 — `device_code` in `grant_types_supported` and the
  * `device_authorization_endpoint` field — is handled separately by the

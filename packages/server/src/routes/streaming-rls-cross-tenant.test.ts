@@ -1,19 +1,17 @@
 /**
- * T-146 — cross-tenant isolation regression for streaming routes
+ * Cross-tenant isolation regression for streaming routes
  * (`/events` SSE + `/export` NDJSON + `/export?format=archive`).
  *
  * The transaction-based RLS middleware exempts streaming routes by URL
  * prefix because a long-lived transaction would pin a pool connection.
- * T-146 closes that gap by applying session-level `SET ROLE marfa_app`
- * + `marfa.tenant_id` on a dedicated pool connection for each stream
- * (see `storage/pg/streaming-rls.ts`). This test verifies that
- * defence-in-depth bites: a tenant A credential cannot read tenant B
- * items through any streaming surface, even with broad
- * `type_permissions` that pass the application-layer filter.
+ * Session-level role + tenant_id on a dedicated pool connection closes
+ * that gap (see `storage/pg/streaming-rls.ts`). This test verifies
+ * that the isolation holds: a tenant A credential cannot read tenant B
+ * items through any streaming surface, even with broad `type_permissions`
+ * that pass the application-layer filter.
  *
  * Postgres-only — RLS is a PG feature. SQLite skips via the `isPg`
- * guard but exercises the same routes in the in-tree test suite
- * elsewhere.
+ * guard but exercises the same routes in the in-tree test suite elsewhere.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -98,7 +96,7 @@ async function readSse(
 }
 
 describe.skipIf(!isPg)(
-  "T-146 streaming RLS cross-tenant regression (PG only)",
+  "streaming RLS cross-tenant regression (PG only)",
   () => {
     let ctx: TestContext;
     const tenantA = `t146-a-${Math.random().toString(36).slice(2, 10)}`;
@@ -112,8 +110,8 @@ describe.skipIf(!isPg)(
     let cursorBeforeItems: bigint;
 
     beforeAll(async () => {
-      // rlsEnforce: true is now the default (T-146), but pass explicitly
-      // here so the test is self-documenting.
+      // rlsEnforce: true is the default, but pass explicitly here so
+      // the test is self-documenting.
       ctx = await createTestContext({ rlsEnforce: true });
       initEventLog(ctx.storage.eventLog);
 
@@ -122,11 +120,9 @@ describe.skipIf(!isPg)(
 
       // Warmup events: post a throwaway item per tenant so each tenant
       // has at least one event_log row BEFORE the real test items.
-      // We then capture the high-water mark and use it as the SSE
-      // replay cursor — this sidesteps the `catchup_too_old` gate
-      // (which fires when the cursor predates min_retained_id for
-      // that tenant) while still exercising the replay path the
-      // T-146 helper guards.
+      // Capture the high-water mark and use it as the SSE replay cursor
+      // to sidestep the `catchup_too_old` gate while still exercising
+      // the replay path.
       await request(ctx.app, "POST", "/items", {
         key: keyA,
         body: { type: "core.note", properties: { body: "warmup A" } },

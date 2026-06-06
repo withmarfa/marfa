@@ -7,14 +7,13 @@ import {
 import type { TestContext } from "../test-utils.js";
 
 /**
- * Wave C PR3 / T-033 — full forgot-password + reset round-trip.
+ * Full forgot-password + reset round-trip.
  * Sign up, request reset, read the token from auth_verification (no
  * email transport in tests; the hook just logs), submit the reset,
  * sign in with the new password.
  *
  * Also exercises better-auth's `revokeSessionsOnPasswordReset: true`
- * — pre-existing sessions for the user are dropped on successful
- * reset.
+ * — pre-existing sessions for the user are dropped on successful reset.
  */
 
 let ctx: TestContext | undefined;
@@ -43,7 +42,7 @@ async function postForm(
   );
 }
 
-describe("Wave C PR3: full forgot → reset → sign-in flow", () => {
+describe("full forgot → reset → sign-in flow", () => {
   it("user can reset their password and sign in with the new one", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
 

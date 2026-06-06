@@ -2,10 +2,9 @@
  * Per-email throttle for password-reset (and similar email-keyed)
  * requests.
  *
- * Wave C PR3 / T-033 shipped the in-memory version. T-026 moved the
- * counter into `storage.rateLimits` (shared via Postgres in multi-
- * instance deployments; correct in-process on SQLite single-process
- * self-hosts) so the throttle holds cluster-wide.
+ * The counter lives in `storage.rateLimits` (shared via Postgres in
+ * multi-instance deployments; correct in-process on SQLite
+ * single-process self-hosts) so the throttle is cluster-wide.
  *
  * Sits on top of the per-IP rate limit (`middleware/rate-limit.ts`).
  * Per-IP bounds noisy clients; per-email bounds the address itself —

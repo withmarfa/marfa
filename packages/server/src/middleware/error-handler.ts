@@ -119,9 +119,9 @@ export function createErrorHandler(config: {
       stack: err instanceof Error ? err.stack : undefined,
     });
 
-    // T-275: record the exception on the active OTel span and mark it
-    // errored, so it always exports (the error-aware sampler forces 100%
-    // on errors). API-only + null-guarded — a pure no-op when OTel is off.
+    // Record the exception on the active OTel span and mark it errored,
+    // so it always exports (the error-aware sampler forces 100% on
+    // errors). API-only + null-guarded — a pure no-op when OTel is off.
     const span = trace.getActiveSpan();
     if (span) {
       if (err instanceof Error) span.recordException(err);

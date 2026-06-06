@@ -5,7 +5,7 @@ import { tenantQuotas, items, outboundWebhooks, blobs } from "./schema.js";
 import type { PgDb } from "./connection.js";
 
 /**
- * T-052 per-tenant quota store (Postgres). Counts via COUNT(*)::int.
+ * Per-tenant quota store (Postgres). Counts via COUNT(*)::int.
  * See sqlite/tenant-quota-store.ts for design notes.
  */
 export class PgTenantQuotaStore implements TenantQuotaStore {

@@ -1,7 +1,7 @@
 import type { TypeSchema } from "@withmarfa/shared";
 
 /**
- * Authoring helper for declaring custom Marfa types in TypeScript (TSC42 §7).
+ * Authoring helper for declaring custom Marfa types in TypeScript.
  *
  * The function is a no-op at runtime — it returns its input unchanged. Its
  * value is at the type level: `defineType` constrains the argument to a

@@ -1,5 +1,5 @@
 /**
- * Supervisor for the local integrations runtime (T-173).
+ * Supervisor for the local integrations runtime.
  *
  * The supervisor is the cross-cutting orchestrator that ties together
  * pg-boss (scheduling + queue), the executor (worker_thread pool +
@@ -22,8 +22,7 @@
  *      `recent_errors` tail.
  *
  * The retry / dlq semantics mirror `runtime-sdk/queue-consumer.ts`'s
- * `consumeBatch` (which the hosted substrate runs). Documented in the
- * parity sheet.
+ * `consumeBatch` (which the hosted substrate runs).
  */
 import {
   ConnectionClient,
@@ -93,7 +92,7 @@ export function createSupervisor(
     }
     const message = envelope.message;
     const lockName = `connection-dispatch:${message.connection_id}`;
-    // T-008 SDK-side hop-budget refusal mirrors `consumeBatch`. Item-event
+    // SDK-side hop-budget refusal mirrors `consumeBatch`. Item-event
     // messages whose hop_count meets/exceeds the budget get acked here so
     // they don't even enter the lock dance.
     const hopBudget = SDK_DEFAULT_HOP_BUDGET;

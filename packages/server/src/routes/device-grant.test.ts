@@ -33,14 +33,14 @@ afterEach(async () => {
 const ORIGIN = "http://localhost:0";
 
 async function createClient(c: TestContext): Promise<string> {
-  // T-131: POST /auth/clients is gone — the @better-auth/oauth-provider
-  // plugin owns DCR at /auth/oauth2/register. For the device-flow tests
-  // we shortcut by writing the auth_oauth_client row directly; the
-  // device-flow handlers only need a valid client_id business key.
+  // The @better-auth/oauth-provider plugin owns DCR at
+  // /auth/oauth2/register. For the device-flow tests we shortcut by
+  // writing the auth_oauth_client row directly; the device-flow handlers
+  // only need a valid client_id business key.
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
   if (!c.storage.betterAuthDb) {
-    throw new Error("createClient (T-131): storage.betterAuthDb missing");
+    throw new Error("createClient: storage.betterAuthDb missing");
   }
   const schemaModule =
     c.storage.betterAuthDialect === "pg"
@@ -138,8 +138,8 @@ async function signInAndCookie(
       body: JSON.stringify({ email, password, name: "Tester" }),
     }),
   );
-  // Wave C PR2: requireEmailVerification blocks sign-in until the
-  // verify link is clicked. Stand-in for that here.
+  // requireEmailVerification blocks sign-in until the verify link is
+  // clicked. Stand-in for that here.
   await markEmailVerified(c.storage, email);
   const signIn = await c.app.fetch(
     new Request(`${ORIGIN}/auth/sign-in/email`, {
@@ -168,9 +168,9 @@ describe("POST /auth/device — initiate", () => {
     expect(result.device_code).toMatch(/^marfa_dc_/);
     expect(result.user_code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
     expect(result.verification_uri).toMatch(/\/auth\/device$/);
-    // T-096: complete URI must carry the issued user_code (URL-encoded
-    // since the canonical form has a hyphen) so the verification page
-    // can pre-fill from `?user_code=`.
+    // Complete URI must carry the issued user_code (URL-encoded since
+    // the canonical form has a hyphen) so the verification page can
+    // pre-fill from `?user_code=`.
     expect(result.verification_uri_complete).toBe(
       `${result.verification_uri}?user_code=${encodeURIComponent(result.user_code)}`,
     );
@@ -205,14 +205,12 @@ describe("POST /auth/device — initiate", () => {
     expect(res.status).toBe(400);
   });
 
-  // T-190: RFC 8628 §3.1 specifies the init request as
+  // RFC 8628 §3.1 specifies the init request as
   // `application/x-www-form-urlencoded`. Any client following the RFC
-  // literally must work end-to-end; QA Session 1 caught this hopping
-  // straight into the user-code submission branch and returning the
-  // wrong shape. Coverage below pins the form-encoded init path
-  // alongside the existing JSON init shape and the existing
-  // user-code submission path.
-  it("accepts an RFC 8628 form-encoded init request (T-190)", async () => {
+  // literally must work end-to-end; a form-encoded init request was
+  // previously routing into the user-code submission branch and
+  // returning the wrong shape.
+  it("accepts an RFC 8628 form-encoded init request", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await createClient(ctx);
     const res = await ctx.app.fetch(
@@ -244,7 +242,7 @@ describe("POST /auth/device — initiate", () => {
     expect(body.interval).toBe(5);
   });
 
-  it("rejects a form-encoded init with unknown client_id (T-190)", async () => {
+  it("rejects a form-encoded init with unknown client_id", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const res = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/device`, {
@@ -279,7 +277,7 @@ describe("GET /auth/device — verification form", () => {
     expect(html).not.toContain('role="alert"');
   });
 
-  it("redirects canonical-shape user_code straight to consent (T-086 follow-on)", async () => {
+  it("redirects canonical-shape user_code straight to consent", async () => {
     // verification_uri_complete pre-fill UX: when the URL carries a
     // well-formed code, skip the manual "Continue" tap and route the
     // user straight to /auth/device/consent. The consent route handles
@@ -578,9 +576,8 @@ describe("POST /auth/device/consent — approve / deny", () => {
     expect(items.data[0]!.id).toBe(grantId);
 
     // Audit reflects re-consent: 2 rows, second has `created: false`.
-    // Audit inserts are fire-and-forget (T-079) — poll briefly until both
-    // rows land. Under parallel test execution the 50ms hard-sleep this
-    // used to rely on isn't always enough.
+    // Audit inserts are fire-and-forget — poll briefly until both rows
+    // land. Under parallel test execution a hard-sleep isn't reliable.
     const storage = ctx.storage;
     const audits = await waitForAudit(
       () =>
@@ -690,16 +687,13 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
     expect(body.error).toBe("invalid_request");
   });
 
-  // T-235: defence-in-depth. The token-issuance handler resolves
+  // Defence-in-depth. The token-issuance handler resolves
   // `connection_item_id` (set at consent-approve time) and treats the
   // resulting item as a `system.connection` grant — pulling scopes,
-  // client_id, user_id, tenant_id out of its properties. Pre-T-235 the
-  // handler skipped the type check, so a corrupted `connection_item_id`
-  // pointing at any non-grant item would have silently minted a token
-  // with whatever scopes that item happened to carry. The check below
-  // pins the new guard: a wrong-type item produces a clear-message
-  // failure, no token issued.
-  it("rejects token issuance when connection_item_id resolves to a non-system.connection item (T-235)", async () => {
+  // client_id, user_id, tenant_id out of its properties. A corrupted
+  // `connection_item_id` pointing at any non-grant item must not silently
+  // mint a token with whatever scopes that item happened to carry.
+  it("rejects token issuance when connection_item_id resolves to a non-system.connection item", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await createClient(ctx);
     const initResult = await initiate(ctx, clientId);
@@ -710,7 +704,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
     const decoyNote = await ctx.storage.items.create(
       {
         type: "core.note",
-        properties: { body: "T-235 decoy — must not become a grant" },
+        properties: { body: "decoy note — must not become a grant" },
       },
       undefined,
     );

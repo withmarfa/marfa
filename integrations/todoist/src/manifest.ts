@@ -1,7 +1,7 @@
 /**
  * Manifest for the Todoist bidirectional integration (`todoist`).
  *
- * First instance of the token-credential install seam (T-241 PR1).
+ * Uses the token-credential install seam.
  * `token_requirements: { todoist: "required" }` declares the
  * dependency on a `system.credential` of kind `api_token` whose
  * `api_token_config.upstream_base_url` is `https://api.todoist.com`.
@@ -18,10 +18,9 @@
  *     incremental delta of items + temp_id_mapping for any commands
  *     issued. Cursor persists `sync_token` for the next call.
  *   - **Outbound create** — `POST /api/v1/sync` with one `item_add`
- *     command carrying `temp_id = SHA-256("marfa:<item.id>")` (T-020
- *     deterministic-id rail) and a deterministic `uuid` for
- *     command-level idempotency. The Sync response's
- *     `temp_id_mapping` resolves the server-side id.
+ *     command carrying `temp_id = SHA-256("marfa:<item.id>")` and a
+ *     deterministic `uuid` for command-level idempotency. The Sync
+ *     response's `temp_id_mapping` resolves the server-side id.
  *   - **Outbound update** — `POST /api/v1/tasks/{id}` (REST). Simpler
  *     than the Sync `item_update` command for singletons.
  *   - **Outbound complete (trash)** — `POST /api/v1/tasks/{id}/close`
@@ -43,7 +42,7 @@ export const TODOIST_MANIFEST: IntegrationManifest = {
   manifest_schema_version: "1.1.0",
   publisher: "todoist",
   description:
-    "Bidirectional sync between Todoist and Marfa. Polls Todoist's Sync API for incremental task changes on a 10-minute schedule and writes Marfa-side mutations back via the REST API + Sync commands. First instance of the token-credential install seam.",
+    "Bidirectional sync between Todoist and Marfa. Polls Todoist's Sync API for incremental task changes on a 10-minute schedule and writes Marfa-side mutations back via the REST API + Sync commands.",
   direction: "both",
   runtime_compatibility: ["hosted", "local"],
   // `todoist.task` is the upstream-fidelity type (full Todoist field

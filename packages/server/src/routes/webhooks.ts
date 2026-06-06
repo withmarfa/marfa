@@ -357,12 +357,12 @@ export function webhookRoutes(storage: Storage) {
 
   // POST /webhooks — create a new webhook
   router.openapi(createWebhookRoute, async (c) => {
-    // T-051: tenant_admin can manage own-tenant webhooks. Storage
-    // layer's list/get/update/delete already filter by `key.tenant_id`,
-    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    // tenant_admin can manage own-tenant webhooks. Storage layer's
+    // list/get/update/delete already filter by `key.tenant_id`, so
+    // cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
 
-    // T-052: per-tenant quota check. No-op for keys without tenant_id
+    // Per-tenant quota check. No-op for keys without tenant_id
     // (single-tenant + platform admin). Throws 429 quota_exceeded if
     // the new webhook would push the tenant past its ceiling.
     await enforceQuota(c, storage, "webhooks");
@@ -413,9 +413,8 @@ export function webhookRoutes(storage: Storage) {
 
   // GET /webhooks — list all webhooks
   router.openapi(listWebhooksRoute, async (c) => {
-    // T-051: tenant_admin can manage own-tenant webhooks. Storage
-    // layer's list/get/update/delete already filter by `key.tenant_id`,
-    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    // tenant_admin can manage own-tenant webhooks. Storage layer filters
+    // by `key.tenant_id`, so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
     const webhooks = await storage.outboundWebhooks.list(key.tenant_id);
     return c.json(
@@ -431,9 +430,8 @@ export function webhookRoutes(storage: Storage) {
 
   // GET /webhooks/:id — get a single webhook
   router.openapi(getWebhookRoute, async (c) => {
-    // T-051: tenant_admin can manage own-tenant webhooks. Storage
-    // layer's list/get/update/delete already filter by `key.tenant_id`,
-    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    // tenant_admin can manage own-tenant webhooks. Storage layer filters
+    // by `key.tenant_id`, so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
     const { id } = c.req.valid("param");
     const webhook = await storage.outboundWebhooks.get(id, key.tenant_id);
@@ -445,9 +443,8 @@ export function webhookRoutes(storage: Storage) {
 
   // PATCH /webhooks/:id — partial update
   router.openapi(updateWebhookRoute, async (c) => {
-    // T-051: tenant_admin can manage own-tenant webhooks. Storage
-    // layer's list/get/update/delete already filter by `key.tenant_id`,
-    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    // tenant_admin can manage own-tenant webhooks. Storage layer filters
+    // by `key.tenant_id`, so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
@@ -501,9 +498,8 @@ export function webhookRoutes(storage: Storage) {
 
   // DELETE /webhooks/:id
   router.openapi(deleteWebhookRoute, async (c) => {
-    // T-051: tenant_admin can manage own-tenant webhooks. Storage
-    // layer's list/get/update/delete already filter by `key.tenant_id`,
-    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    // tenant_admin can manage own-tenant webhooks. Storage layer filters
+    // by `key.tenant_id`, so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
     const { id } = c.req.valid("param");
 
@@ -526,9 +522,8 @@ export function webhookRoutes(storage: Storage) {
 
   // GET /webhooks/:id/deliveries — recent delivery attempts
   router.openapi(listDeliveriesRoute, async (c) => {
-    // T-051: tenant_admin can manage own-tenant webhooks. Storage
-    // layer's list/get/update/delete already filter by `key.tenant_id`,
-    // so cross-tenant attempts return WEBHOOK_NOT_FOUND.
+    // tenant_admin can manage own-tenant webhooks. Storage layer filters
+    // by `key.tenant_id`, so cross-tenant attempts return WEBHOOK_NOT_FOUND.
     const key = requireTenantAdmin(c);
     const { id } = c.req.valid("param");
     const { limit } = c.req.valid("query");

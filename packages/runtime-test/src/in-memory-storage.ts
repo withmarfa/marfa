@@ -9,27 +9,20 @@
  * a handler tested against this storage will behave identically when
  * promoted to a real DO.
  *
- * **By-value semantics on put + get (T-257).** Real Cloudflare DO
- * storage serialises every value to bytes on `put` and deserialises
- * on `get` — there is no shared reference between the caller's input
- * and the stored value, and no shared reference between two
- * successive `get`s of the same key. The in-memory adapter mirrors
- * that contract via `structuredClone` on both ends. Without this,
- * handlers that mutate a cursor object in-place leak the mutation
- * back into the stored map (and into every subsequent reader),
- * which works in tests but breaks the moment the handler hits real
- * DO storage. T-257 surfaced this through `integrations/readwise`'s
- * `second sweep uses persisted watermark + no-ops on empty payload`
- * test: the test captured a cursor read as a reference, then a
- * second sweep mutated the same underlying object, then the test's
- * assertion compared the now-mutated reference against the URL the
- * second sweep built before its mutation — passing only when the
- * two sweeps ran within the same wall-clock millisecond.
+ * **By-value semantics on put + get.** Real Cloudflare DO storage
+ * serialises every value to bytes on `put` and deserialises on `get` —
+ * there is no shared reference between the caller's input and the
+ * stored value, and no shared reference between two successive `get`s
+ * of the same key. The in-memory adapter mirrors that contract via
+ * `structuredClone` on both ends. Without this, handlers that mutate a
+ * cursor object in-place leak the mutation back into the stored map (and
+ * into every subsequent reader), which works in tests but breaks the
+ * moment the handler hits real DO storage.
  *
- * `structuredClone` is the natural primitive because (a) it's what
- * DO storage uses internally and (b) it handles every shape the
- * runtime-sdk persists today (cursors, idempotency rings, echo
- * bloom filters) without ad-hoc JSON-roundtrip caveats.
+ * `structuredClone` is the natural primitive because it matches what
+ * DO storage uses internally and handles every shape the runtime-sdk
+ * persists today (cursors, idempotency rings, echo bloom filters)
+ * without ad-hoc JSON-roundtrip caveats.
  */
 import type { CursorStorageAdapter } from "@withmarfa/runtime-sdk";
 

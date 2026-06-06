@@ -1,5 +1,5 @@
 /**
- * Tests for the reactive-run bridge's subscription registry — Layer 2 PR 3.
+ * Tests for the reactive-run bridge's subscription registry.
  *
  * The structural tests in reactive-run-bridge.test.ts cover env-var
  * gating. These exercise:
@@ -171,11 +171,12 @@ describe("buildEntryForConnection", () => {
     expect(entry).toBeNull();
   });
 
-  it("returns null when item-level state is revoked (T-175)", async () => {
+  it("returns null when item-level state is revoked", async () => {
     // Connection was active at create time, then the uninstall pipeline
     // transitioned its item-level `state` to `revoked` while leaving
-    // `properties.status` untouched. Pre-T-175 the bridge would still
-    // fanout to it because only the `properties.status` gate ran.
+    // `properties.status` untouched. Without the item-level state gate
+    // the bridge would still fanout to it via the properties.status
+    // check alone.
     const intId = await createIntegration(
       manifest({ name: "acme.state-revoked-skip" }),
     );
@@ -217,10 +218,10 @@ describe("buildEntryForConnection", () => {
     expect(entry).toBeNull();
   });
 
-  it("returns null when runtime_status is failing (T-171)", async () => {
-    // A subscriber that the bridge marked `runtime_status: failing` after
-    // sustained dispatch failures is gated out of the registry — no more
-    // event-time fanout to a connection the bridge already gave up on.
+  it("returns null when runtime_status is failing", async () => {
+    // A subscriber marked `runtime_status: failing` after sustained
+    // dispatch failures is gated out of the registry — no more
+    // event-time fanout to a connection the bridge has already given up on.
     const intId = await createIntegration(
       manifest({ name: "acme.runtime-failing-skip" }),
     );
@@ -262,10 +263,9 @@ describe("loadSubscriptions", () => {
     );
   });
 
-  it("paginates past the first 200 connections (T-013)", async () => {
-    // Pre-T-013 the loader did one storage.items.list with limit=200;
-    // any tenant's 201st+ connection silently dropped from the
-    // subscription map. Seed 250 subscribing connections and assert
+  it("paginates past the first 200 connections", async () => {
+    // The loader paginates until exhausted rather than stopping at
+    // the first page. Seed 250 subscribing connections and assert
     // every one is in the map after load.
     const integrationId = await createIntegration(
       manifest({ name: "acme.load-subs-paginate" }),
@@ -362,7 +362,7 @@ describe("bridge fanout via in-process pubsub", () => {
     await bridge!.stop();
   });
 
-  it("a slow subscriber doesn't stall fanout to others (T-013)", async () => {
+  it("a slow subscriber doesn't stall fanout to others", async () => {
     const intSlow = await createIntegration(
       manifest({ name: "acme.fanout-slow" }),
     );
@@ -434,12 +434,10 @@ describe("bridge fanout via in-process pubsub", () => {
     await bridge!.stop();
   });
 
-  it("does not fan out cross-tenant — events for tenant A skip subscribers in tenant B (T-042)", async () => {
-    // Pre-T-042: every subscribing connection received every event
-    // regardless of tenant; the cross-tenant guard relied on the
-    // downstream Worker's per-Connection runtime credential failing the
-    // API permission gate. The bridge now drops cross-tenant fanout
-    // ahead of the queue producer.
+  it("does not fan out cross-tenant — events for tenant A skip subscribers in tenant B", async () => {
+    // Cross-tenant fanout is suppressed at the bridge layer, before the
+    // queue producer, rather than relying on the downstream Worker's
+    // per-Connection runtime credential failing the API permission gate.
     //
     // `items.tenant_id` is nullable with no FK in this codebase (the
     // `tenants` table FK exists on `users` and api keys but not on items),
@@ -551,13 +549,11 @@ describe("bridge fanout via in-process pubsub", () => {
     await bridge!.stop();
   });
 
-  it("fans out to fast subscribers in parallel — they don't wait on a wedged subscriber's timeout (T-036)", async () => {
-    // Tighter than the T-013 test: this asserts ten healthy
-    // subscribers all complete *while* the wedged subscriber is still
-    // in its 200ms timeout window. That's only true if fanout is
-    // concurrent. Pre-T-036 sequential fanout would gate the
-    // healthy subscribers behind the wedged subscriber's full
-    // timeout — fast latency would be ≥ 200ms instead of ≪ 100ms.
+  it("fans out to fast subscribers in parallel — they don't wait on a wedged subscriber's timeout", async () => {
+    // Asserts that ten healthy subscribers all complete *while* the
+    // wedged subscriber is still in its 200ms timeout window. That's
+    // only true if fanout is concurrent — sequential fanout would gate
+    // healthy subscribers behind the wedged one's full timeout.
     const intSlow = await createIntegration(
       manifest({ name: "acme.par-slow" }),
     );
@@ -639,9 +635,8 @@ describe("bridge fanout via in-process pubsub", () => {
     // And every fast subscriber's delivery must have happened well
     // before the slow timeout would have completed in a sequential
     // model. Half-of-the-timeout is a generous bound to absorb
-    // test-container jitter; pre-T-036 sequential fanout could not
-    // satisfy this for any subscriber positioned behind the wedged
-    // one in the iteration order.
+    // test-container jitter; sequential fanout could not satisfy this
+    // for any subscriber positioned behind the wedged one.
     for (const [connId, ts] of captured.fastDeliverAt) {
       void connId;
       const latency = ts - publishAt;
@@ -652,7 +647,7 @@ describe("bridge fanout via in-process pubsub", () => {
   });
 });
 
-describe("bridge failure-tracking (T-171)", () => {
+describe("bridge failure-tracking", () => {
   // Common test rig: a subscriber whose fetch always rejects, paired with
   // a healthy subscriber so we can verify the cooldown gate is targeted
   // (the healthy peer keeps receiving fanout while the failing peer is in
@@ -756,7 +751,7 @@ describe("bridge failure-tracking (T-171)", () => {
     await new Promise((r) => setTimeout(r, 250));
   }
 
-  it("Layer 1: arms cooldown after N consecutive failures and skips dispatch within the window", async () => {
+  it("arms cooldown after N consecutive failures and skips dispatch within the window", async () => {
     const rig = await makeFailureRig({
       failureCooldownThreshold: 3,
       // Long cooldown vs. test wall-clock — ensures the gate stays armed
@@ -784,10 +779,10 @@ describe("bridge failure-tracking (T-171)", () => {
     }
   });
 
-  it("Layer 2: flips runtime_status to failing and emits action_required activity at the escalation threshold", async () => {
+  it("flips runtime_status to failing and emits action_required activity at the escalation threshold", async () => {
     const rig = await makeFailureRig({
-      failureCooldownThreshold: 999, // skip Layer 1 noise
-      failureCooldownMs: 1, // cooldowns clear quickly if Layer 1 fires
+      failureCooldownThreshold: 999, // skip cooldown noise
+      failureCooldownMs: 1, // cooldowns clear quickly if the gate fires
       failureEscalationThreshold: 3,
     });
     try {
@@ -857,7 +852,7 @@ describe("bridge failure-tracking (T-171)", () => {
   });
 
   it("operator recovery: flipping runtime_status off failing re-enables dispatch via cache invalidation", async () => {
-    // After Layer 2 escalation, the subscriber is gated out of the
+    // After persistent escalation, the subscriber is gated out of the
     // registry. Updating the connection (e.g. operator transitions
     // runtime_status to "healthy") fires the invalidation listener →
     // refreshConnection → buildEntryForConnection re-evaluates → the
@@ -902,7 +897,7 @@ describe("bridge failure-tracking (T-171)", () => {
   });
 });
 
-// T-233 — per-integration queue URL resolution. The bridge calls
+// Per-integration queue URL resolution. The bridge calls
 // `config.resolveQueueUrl(integration_name)` per fanout target. If the
 // resolver returns null, the dispatch is skipped (no fetch attempted),
 // the connection's failure ladder is NOT incremented (env-config gap,
@@ -910,7 +905,7 @@ describe("bridge failure-tracking (T-171)", () => {
 // `system.activity` row is created per integration per process
 // lifetime — repeat events for the same integration log loudly but
 // don't spam the operator's activity surface.
-describe("T-233 — unmapped integration handling", () => {
+describe("bridge — unmapped integration handling", () => {
   it("skips dispatch + emits a single activity row when the integration has no mapped queue URL", async () => {
     const intUnmapped = await createIntegration(
       manifest({ name: "acme.unmapped-integration" }),

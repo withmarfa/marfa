@@ -207,7 +207,7 @@ describe("scopeCovers", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-074: OIDC scope literals (openid / profile / email).
+// OIDC scope literals (openid / profile / email).
 //
 // These don't carry a verb suffix — they're the standard OIDC scopes
 // consumed only by `/oauth/userinfo` to gate field visibility. The
@@ -220,7 +220,7 @@ describe("scopeCovers", () => {
 //      unintended write access.
 // ---------------------------------------------------------------------------
 
-describe("OIDC scope literals (T-074)", () => {
+describe("OIDC scope literals", () => {
   for (const literal of ["openid", "profile", "email"] as const) {
     it(`parses ${literal} as kind=oidc with operation=none`, () => {
       expect(parseScope(literal)).toEqual({

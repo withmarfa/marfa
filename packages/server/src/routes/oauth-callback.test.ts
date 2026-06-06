@@ -1,21 +1,16 @@
 /**
  * Cross-tenant safety belt for the OAuth bootstrap start route.
  *
- * T-235 threads the connection's `tenant_id` into the credential
- * lookup inside `readAuthorizeConfig`. Pre-T-235 the helper called
- * `storage.items.get(credentialRef)` with no tenant fence — if a
- * connection in tenant A ever ended up with a `credential_ref`
- * pointing at a credential in tenant B (a future bypass of the
- * install pipeline's same-tenant validation), the start route would
- * decrypt tenant-B's `oauth_client_id` and embed it in the
- * authorize URL it returned to the caller. The fix tenant-fences
- * the lookup so cross-tenant references resolve to null and the
- * route returns OAUTH_PROXY_UPSTREAM_INVALID instead.
+ * The credential lookup inside `readAuthorizeConfig` is fenced by the
+ * connection's `tenant_id`. Without this fence, if a connection in tenant
+ * A held a `credential_ref` pointing at a credential in tenant B, the start
+ * route would decrypt tenant B's `oauth_client_id` and embed it in the
+ * authorize URL. The fence ensures cross-tenant references resolve to null
+ * and the route returns OAUTH_PROXY_UPSTREAM_INVALID instead.
  *
- * The route's own connection lookup is unfenced by design (only
- * admin / platform callers reach it), so this test seeds the
- * cross-tenant shape through the storage layer and calls the route
- * as the platform admin.
+ * The route's own connection lookup is unfenced by design (only admin /
+ * platform callers reach it), so this test seeds the cross-tenant shape
+ * through the storage layer and calls the route as the platform admin.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -34,7 +29,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("POST /connections/:id/oauth/start — cross-tenant credential guard (T-235)", () => {
+describe("POST /connections/:id/oauth/start — cross-tenant credential guard", () => {
   it("refuses to resolve a cross-tenant credential_ref even for a platform admin caller", async () => {
     if (!ctx.storage.tenants) return;
     const tenantA = await ctx.storage.tenants.create("t235-oauth-start-A");
@@ -153,7 +148,7 @@ describe("POST /connections/:id/oauth/start — cross-tenant credential guard (T
   });
 });
 
-describe("POST /connections/:id/oauth/start — credential authorize_extra_params (T-259)", () => {
+describe("POST /connections/:id/oauth/start — credential authorize_extra_params", () => {
   async function seedConnection(opts: {
     tenant_label: string;
     authorize_extra_params?: Record<string, string>;

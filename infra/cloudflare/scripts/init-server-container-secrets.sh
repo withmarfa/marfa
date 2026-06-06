@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Set the secrets for the Marfa server Container Worker (T-277). Mirrors
+# Set the secrets for the Marfa server Container Worker. Mirrors
 # init-integration-worker-secrets.sh. The Worker must already exist (deploy
 # once first); after setting secrets, re-run the deploy so the container
 # restarts and picks them up as process env (envVars reads `env` at launch).

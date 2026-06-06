@@ -45,7 +45,7 @@ export interface UninstallInput {
   tenantId?: string;
   /** id of the system.connection item to uninstall. */
   connectionId: string;
-  /** Resolved client IP (T-027). Threaded into the audit row. */
+  /** Resolved client IP. Threaded into the audit row. */
   clientIp?: string | null;
 }
 
@@ -203,7 +203,7 @@ export async function performUninstall(
   );
 
   // -------------------------------------------------------------------
-  // Step 8: audit log. Awaited (T-012).
+  // Step 8: audit log. Awaited — failures are not silently swallowed.
   // -------------------------------------------------------------------
   await storage.audit.log({
     key_id: input.apiKeyId,

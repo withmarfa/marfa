@@ -1,15 +1,13 @@
 /**
- * Cancel-link email for a sign-in attempt on a pending-delete account
- * (T-116, copy revised under T-137 Option 2).
+ * Cancel-link email for a sign-in attempt on a pending-delete account.
  *
- * The middleware blocks the sign-in with a generic 401 — this email
- * is now the **sole** user-facing signal that something happened. Copy
- * is framed accordingly: "someone attempted sign-in" rather than "you
- * got blocked." The cancel link is valid for the full grace window;
- * clicking it restores the account so the user can sign in normally
- * on the next attempt. If the recipient didn't try to sign in, the
- * email frames "ignore this" as a first-class option — the deletion
- * proceeds on schedule.
+ * The deletion-guard middleware blocks the sign-in with a generic 401 —
+ * this email is the sole user-facing signal that something happened.
+ * Copy is framed as "someone attempted sign-in" rather than "you got
+ * blocked." The cancel link is valid for the full grace window; clicking
+ * it restores the account so the user can sign in normally on the next
+ * attempt. If the recipient didn't try to sign in, the email frames
+ * "ignore this" as a first-class option — the deletion proceeds on schedule.
  */
 const ACCENT = "#1f6feb";
 const TEXT = "#1f2328";

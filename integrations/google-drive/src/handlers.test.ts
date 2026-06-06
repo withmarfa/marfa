@@ -399,10 +399,10 @@ describe("google-drive handleWebhook", () => {
 });
 
 // ---------------------------------------------------------------------------
-// download_mode = "all-files" (T-239)
+// download_mode = "all-files"
 //
 // Three byte-ingest outcomes coexist in one run: a PDF gets uploaded
-// + stamped as core.file with sha256 blob_ref; a Google-native file
+// and stamped as core.file with sha256 blob_ref; a Google-native file
 // is skipped silently with a run-summary counter; an oversize file is
 // skipped per-file. Both skip kinds emit `info` activity (no
 // action_required noise for "we couldn't fetch this"); per-file
@@ -441,7 +441,7 @@ function allFilesConnectionRecord(
   };
 }
 
-describe("google-drive handleSchedule — all-files mode (T-239)", () => {
+describe("google-drive handleSchedule — all-files mode", () => {
   it("uploads bytes for downloadable files and stamps blob_ref (default target_type = google.drive.file)", async () => {
     const { ctx, created, uploads, emitted } = buildContext({
       connectionRecord: allFilesConnectionRecord(),

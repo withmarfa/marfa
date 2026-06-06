@@ -32,14 +32,13 @@ const TEST_API_KEY_SALT = "test-salt";
  *   `auth_user` resolution. Mirrors the inline pattern in
  *   `client.test.ts`.
  *
- * - `createHostedModeFixture()` — the hosted-mode bring-up (T-123).
- *   Boots the server in `authMode: 'hosted'`, runs a sign-up through
- *   the wrapped form endpoint (which provisions the
- *   `tenants` + `users` bridge atomically), flips
- *   `auth_user.email_verified = TRUE` directly so sign-in is unblocked,
- *   then mints a `tenant_admin` API key bound to the new user's
- *   tenant. The returned client uses that key as bearer; the
- *   account-lifecycle routes resolve the bridge and recover the
+ * - `createHostedModeFixture()` — the hosted-mode bring-up. Boots the
+ *   server in `authMode: 'hosted'`, runs a sign-up through the wrapped
+ *   form endpoint (which provisions the `tenants` + `users` bridge
+ *   atomically), flips `auth_user.email_verified = TRUE` directly so
+ *   sign-in is unblocked, then mints a `tenant_admin` API key bound to
+ *   the new user's tenant. The returned client uses that key as bearer;
+ *   the account-lifecycle routes resolve the bridge and recover the
  *   `auth_user.id` for `requestDelete` / `confirmDelete` / `cancel`.
  *
  * The two fixtures share a `baseConfig` so they don't drift on

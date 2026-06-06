@@ -1,14 +1,11 @@
 /**
- * Lease route (T-260) — pins the runtime-credential mint shape, in
- * particular that the broker mints with **wildcard write on all three
- * permission axes** (`type_permissions`, `edge_permissions`,
- * `extension_permissions`). Pre-T-260 only `type_permissions` was set,
- * so the per-Connection runtime credential could write items but
- * silently failed every `createEdge` / extension-namespace write —
- * `edge_permissions` and `extension_permissions` both default to
- * `{}` and block the call. T-249's `google.youtube` was the first
- * integration manifest to declare `permissions.edge: { "parent-of":
- * "write" }` and surfaced the gap.
+ * Lease route — pins the runtime-credential mint shape, in particular
+ * that the broker mints with **wildcard write on all three permission
+ * axes** (`type_permissions`, `edge_permissions`,
+ * `extension_permissions`). All three axes must be granted because
+ * `edge_permissions` and `extension_permissions` both default to `{}`
+ * and block the call — a credential with only `type_permissions` can
+ * write items but silently fails every `createEdge` / extension write.
  *
  * The test patches `globalThis.fetch` to capture the body the broker
  * POSTs to Marfa's `/system/runtime-credentials` endpoint, then asserts
@@ -65,7 +62,7 @@ function buildTestEnv(): ControlPlaneEnv {
   } as unknown as ControlPlaneEnv;
 }
 
-describe("POST /lease/:connection_id/runtime (T-260)", () => {
+describe("POST /lease/:connection_id/runtime", () => {
   let originalFetch: typeof fetch;
   beforeEach(() => {
     originalFetch = globalThis.fetch;

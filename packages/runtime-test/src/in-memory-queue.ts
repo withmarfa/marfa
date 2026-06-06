@@ -7,19 +7,15 @@
  *   - implements the producer-side `send` (just appends to a list)
  *   - exposes `drain()` which returns the accumulated payloads so
  *     tests can pass them straight to the SDK's `consumeBatch`
- *     (current consumer takes plain `QueueMessage[]`)
  *   - exposes `drainMessages()` which returns the same payloads wrapped
  *     in Cloudflare-shaped `Message<T>` envelopes — `body`, `ack()`,
  *     `retry({ delaySeconds })`, `attempts` — plus the test-only
- *     `acked()` / `retried()` introspection helpers (T-043 D1).
+ *     `acked()` / `retried()` introspection helpers.
  *
- * The two drains coexist deliberately. Existing tests that pre-date
- * per-message ack pass `q.drain()` to `consumeBatch` and keep working;
- * tests that need to assert "message #2 was retried, #1 + #3 acked"
- * work against `q.drainMessages()`. PR 17 (T-043 D2) flips
- * `consumeBatch` to accept `Message<QueueMessage>[]` and migrates every
- * call site; until then, the additive shape lets the harness change
- * land without touching the consumer logic.
+ * The two drains coexist deliberately: `drain()` returns raw payloads
+ * for simpler tests; `drainMessages()` returns per-message envelopes
+ * for tests that need to assert "message #2 was retried, #1 + #3
+ * acked".
  */
 
 /**
@@ -32,9 +28,9 @@
  * **Lifecycle.** A fresh envelope reports `acked() === false`,
  * `retried() === false`, `attempts === 1`. Calling `ack()` flips
  * `acked()` to true. Calling `retry()` flips `retried()` to true and
- * bumps `attempts` so a hypothetical re-deliver sees `attempts === 2`.
- * Either method is idempotent — calling `ack()` twice doesn't double-
- * count, and a redelivered envelope's `attempts` is the running total.
+ * bumps `attempts`. Either method is idempotent — calling `ack()` twice
+ * doesn't double-count, and a redelivered envelope's `attempts` is the
+ * running total.
  */
 export interface Message<T> {
   /**
@@ -85,15 +81,12 @@ export interface Message<T> {
 export interface InMemoryQueue<T = unknown> {
   send(body: T, opts?: { contentType?: "json" | "text" | "v8" }): Promise<void>;
   /** Test-only — returns and clears the buffered payloads (unwrapped).
-   *  Pre-existing entry point; current `consumeBatch` accepts the raw
-   *  payload array. PR 17 (T-043 D2) will switch the consumer to
-   *  `drainMessages()`. */
+   *  Use when the test only needs raw bodies, not per-message tracking. */
   drain(): T[];
   /**
    * Test-only — returns and clears the buffered payloads wrapped in
-   * `Message<T>` envelopes (T-043 D1). Use this to exercise per-message
-   * ack/retry shapes; `drain()` stays the right call for backwards-
-   * compat with the current `consumeBatch` signature.
+   * `Message<T>` envelopes. Use this when the test needs to assert
+   * per-message ack/retry outcomes.
    */
   drainMessages(): Message<T>[];
   /** Test-only — peek at buffered payloads without clearing. */
@@ -117,8 +110,7 @@ export function createMessage<T>(body: T, attempts = 1): Message<T> {
   let retried = false;
   let retryDelaySeconds: number | undefined;
   let currentAttempts = attempts;
-  // Cloudflare assigns these per-delivery; the harness picks stable-ish
-  // values so tests can correlate envelopes with mocks if they need to.
+  // Stable-ish ids so tests can correlate envelopes with mocks.
   const id = `msg_${Math.random().toString(36).slice(2, 14)}`;
   const timestamp = new Date();
   return {
@@ -134,10 +126,9 @@ export function createMessage<T>(body: T, attempts = 1): Message<T> {
     retry(opts?: { delaySeconds?: number }): void {
       retried = true;
       retryDelaySeconds = opts?.delaySeconds;
-      // Keep `attempts` consistent with what Cloudflare exposes on the
-      // redelivered envelope. The test harness is single-pass, so this
-      // bump only matters for assertions; the message isn't actually
-      // re-enqueued.
+      // Keep `attempts` consistent with the redelivered-envelope shape.
+      // The harness is single-pass so the bump only matters for
+      // assertions; the message isn't re-enqueued.
       currentAttempts++;
     },
     acked(): boolean {

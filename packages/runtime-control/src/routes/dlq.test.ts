@@ -1,5 +1,5 @@
 /**
- * DLQ route tests (T-084).
+ * DLQ route tests.
  *
  * Stubs `globalThis.fetch` to mock both:
  *   - The Marfa server `/system/connections/:id/dlq-context` lookup
@@ -397,7 +397,7 @@ describe("POST /dlq/peek", () => {
     expect(body.error).toBe("cf_queues_not_configured");
   });
 
-  it("flattens a structured `body._failure_reason` to '<class>: <message> (attempts: <n>)' (T-103)", async () => {
+  it("flattens a structured `body._failure_reason` to '<class>: <message> (attempts: <n>)'", async () => {
     const env: ControlPlaneEnv = {
       MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",
@@ -447,7 +447,7 @@ describe("POST /dlq/peek", () => {
     );
   });
 
-  it("still accepts the legacy string `body._failure_reason` (T-103 back-compat)", async () => {
+  it("still accepts a flat string `body._failure_reason`", async () => {
     const env: ControlPlaneEnv = {
       MARFA_API_URL: "https://server.invalid",
       CLOUDFLARE_QUEUES_API_TOKEN: "tok",

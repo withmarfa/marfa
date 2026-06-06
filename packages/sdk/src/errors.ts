@@ -109,10 +109,10 @@ export class ConflictError extends MarfaError {
 }
 
 /**
- * T-218: an async `bulkAction` job reached `status: 'cancelled'` (the
- * caller, or another credential with admin, DELETE'd the job mid-run).
- * The envelope carries the partial-count state; the SDK surfaces it
- * via this error subclass so callers can react explicitly.
+ * An async `bulkAction` job reached `status: 'cancelled'` — the job was
+ * DELETEd mid-run by the caller or another admin credential. The envelope
+ * carries the partial-count state; the SDK surfaces it via this error
+ * subclass so callers can react explicitly.
  */
 export class BulkJobCancelledError extends MarfaError {
   readonly jobId: string;
@@ -139,10 +139,10 @@ export class BulkJobCancelledError extends MarfaError {
 }
 
 /**
- * T-218: an async `bulkAction` job reached `status: 'failed'` — the
- * worker hit an unrecoverable error (typically a storage-level
- * problem). The `error` field on the envelope carries the underlying
- * reason; surfaced via this subclass.
+ * An async `bulkAction` job reached `status: 'failed'` — the worker hit
+ * an unrecoverable error (typically a storage-level problem). The `error`
+ * field on the envelope carries the underlying reason; surfaced via this
+ * subclass.
  */
 export class BulkJobFailedError extends MarfaError {
   readonly jobId: string;

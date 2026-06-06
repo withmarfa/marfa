@@ -47,7 +47,7 @@ const outDir = resolve(import.meta.dirname, "..", "generated");
 
 // Load all schemas — skip dormant stubs (_deferred: true). Top-level core/*.json
 // is the regular type set; core/system/*.json is the platform-internal
-// `system.*` set (TSC42 §4) which gets emitted into a separate registry.
+// `system.*` set which gets emitted into a separate registry.
 const coreFiles = readdirSync(coreDir).filter((f) => f.endsWith(".json"));
 const schemas: JsonSchema[] = coreFiles
   .map((f) => {
@@ -298,10 +298,10 @@ for (const schema of schemas) {
 lines.push("];");
 lines.push("");
 
-// system.* set (TSC42 §4) — emitted as a separate registry; the consuming
-// runtime registers these alongside ALL_TYPES but tracks them separately so
-// search defaults can exclude them and the lifecycle override
-// (`active | revoked`) applies only to this set.
+// system.* set — emitted as a separate registry; the consuming runtime
+// registers these alongside ALL_TYPES but tracks them separately so search
+// defaults can exclude them and the bounded lifecycle (`active | revoked`)
+// applies only to this set.
 for (const schema of systemSchemas) {
   const name = varName(schema.id);
   lines.push(`const ${name}: TypeSchema = {`);

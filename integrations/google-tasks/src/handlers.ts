@@ -11,9 +11,10 @@
  *   - **No `channels.watch`.** Tasks API publishes no push-notification
  *     surface. The schedule trigger (every 10 minutes) is the only
  *     inbound rail. No webhook handler is registered.
- *   - **No client-supplied IDs on insert.** Calendar's T-020 SHA-256-
- *     deterministic-id idempotency does not work on Tasks (Google
- *     rejects client `id` on `tasks.insert`). The idempotency rail
+ *   - **No client-supplied IDs on insert.** The SHA-256 deterministic-id
+ *     idempotency used by the Calendar integration does not work on
+ *     Tasks (Google rejects client `id` on `tasks.insert`). The
+ *     idempotency rail
  *     here is a sentinel string in `notes` ("[marfa-id:<itemId>]"); the
  *     handler scans the target list for an existing task carrying the
  *     sentinel before issuing a fresh insert, so a retry mid-handler

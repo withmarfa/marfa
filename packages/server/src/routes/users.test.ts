@@ -110,7 +110,7 @@ interface User {
   provider_id: string;
   tenant_id: string;
   handle?: string | null;
-  // T-074: email + avatar_url dropped from `users`; auth_user.email is
+  // email + avatar_url are not on the `users` table; auth_user.email is
   // canonical. The /auth/me wire shape no longer returns email — callers
   // reach for /profile/me (joined to auth_user).
 }

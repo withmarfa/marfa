@@ -32,8 +32,7 @@ interface ErrorResponse {
 
 /**
  * Create a real `system.connection` item the mint endpoint can resolve.
- * Post-T-175 the mint endpoint requires the Connection to exist and be
- * `state: active`; pre-T-175 tests passed arbitrary connection_id strings.
+ * The mint endpoint requires the Connection to exist and be `state: active`.
  */
 async function createActiveConnection(): Promise<string> {
   const item = await ctx.storage.items.create(
@@ -70,7 +69,7 @@ describe("POST /system/runtime-credentials", () => {
     expect(body.expires_at).toBeDefined();
   });
 
-  it("T-175: refuses to mint for a non-existent connection_id", async () => {
+  it("refuses to mint for a non-existent connection_id", async () => {
     const res = await request(ctx.app, "POST", "/system/runtime-credentials", {
       key: ctx.adminKey,
       body: {
@@ -82,7 +81,7 @@ describe("POST /system/runtime-credentials", () => {
     expect(res.status).toBe(404);
   });
 
-  it("T-175: refuses to mint for a revoked connection", async () => {
+  it("refuses to mint for a revoked connection", async () => {
     const connectionId = await createActiveConnection();
     // Transition the connection to revoked — system.connection lifecycle
     // is active|revoked only; the standard transition path is the
@@ -182,10 +181,8 @@ describe("connection.runtime extension gate", () => {
   let runtimeKeyId: string;
 
   beforeAll(async () => {
-    // Create a real system.connection — T-175 added an item-level
-    // active-state gate to the mint endpoint, so this can no longer be
-    // a placeholder core.note. (Pre-T-175 the gate keyed only off the
-    // credential's connection_id stamp matching the URL :id.)
+    // Create a real system.connection — the mint endpoint requires an
+    // active-state item of type system.connection, not a placeholder.
     connectionId = await createActiveConnection();
 
     const suffix = Math.random().toString(36).slice(2, 10);
@@ -338,8 +335,8 @@ describe("connection.runtime extension gate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /system/connections/:id/verify-context (T-082) — control-plane lookup
-// for the runtime-control verify route. Platform-credential gated; resolves
+// GET /system/connections/:id/verify-context — control-plane lookup for
+// the runtime-control verify route. Platform-credential gated; resolves
 // integration_name + tenant_id from the connection's integration_ref.
 // ---------------------------------------------------------------------------
 
@@ -527,10 +524,10 @@ describe("GET /system/connections/:id/verify-context", () => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /system/connections/:id/dlq-context (T-084) — control-plane lookup
-// for the runtime-control DLQ peek/replay routes. Platform-credential gated.
-// Sibling of verify-context but does NOT narrow by kind or state — DLQs are
-// often inspected precisely because the connection is unhealthy.
+// GET /system/connections/:id/dlq-context — control-plane lookup for
+// the runtime-control DLQ peek/replay routes. Platform-credential gated.
+// Sibling of verify-context but does NOT narrow by kind or state — DLQs
+// are often inspected precisely because the connection is unhealthy.
 // ---------------------------------------------------------------------------
 
 describe("GET /system/connections/:id/dlq-context", () => {

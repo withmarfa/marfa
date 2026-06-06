@@ -48,10 +48,9 @@ export interface ItemFilters {
   type?: string;
   state?: ItemState;
   source?: string;
-  /** Multi-source filter (TSC42 §5 source-filter lever). When set, results
-   *  are narrowed to items whose `source` is in the array. `source` and
-   *  `sources` may both be set; the single-source filter is AND'd with the
-   *  multi-source filter. */
+  /** Multi-source filter. When set, results are narrowed to items whose
+   *  `source` is in the array. `source` and `sources` may both be set;
+   *  the single-source filter is AND'd with the multi-source filter. */
   sources?: string[];
   /** Restrict to a specific tier. Omit for the default unfiltered scope. */
   tier?: "library" | "feed";
@@ -77,7 +76,7 @@ export interface SearchFilters {
   state?: ItemState;
   /** Tier filter, matching `/items`. Omit for unfiltered. */
   tier?: "library" | "feed";
-  /** Multi-source filter (TSC42 §5 source-filter lever). */
+  /** Multi-source filter. Narrows results to items whose `source` is in the array. */
   sources?: string[];
   /** Mirrors `ItemFilters.exclude_system_types`. */
   exclude_system_types?: boolean;
@@ -206,7 +205,7 @@ export interface ItemStore {
    * than `beforeDate` (an ISO 8601 timestamp). Cleans the search index
    * for each row. Returns the number of rows deleted.
    *
-   * `tenantId` semantics (T-050):
+   * `tenantId` semantics:
    * - `undefined` — every row older than the cutoff.
    * - `string` — only rows where `tenant_id` matches.
    * - `null` — only rows where `tenant_id IS NULL` (single-tenant
@@ -328,10 +327,9 @@ export interface KeyStore {
   list(): Promise<ApiKey[]>;
   get(id: string): Promise<ApiKey | null>;
   /**
-   * T-117: list a single tenant's active (non-revoked) API keys. The
-   * `my admin keys list <tenant>` operator surface uses this so a
-   * platform-admin can discover keys for emergency revocation. Returns
-   * an empty array when the tenant has no keys.
+   * List a single tenant's active (non-revoked) API keys. Used by the
+   * platform-admin operator surface to discover keys for emergency
+   * revocation. Returns an empty array when the tenant has no keys.
    */
   listForTenant(tenantId: string): Promise<ApiKey[]>;
   /**
@@ -355,7 +353,7 @@ export interface KeyStore {
 }
 
 /**
- * Per-tenant blob metadata store (T-049).
+ * Per-tenant blob metadata store.
  *
  * **Tenant scoping.** The `blobs` table has a composite PK on
  * `(tenant_id, hash)`; the same hash can appear under multiple tenant_ids
@@ -470,7 +468,7 @@ export interface WebhookDeliveryStore {
 }
 
 // ---------------------------------------------------------------------------
-// Inbound webhook subsystem (workstream 2 PR 5)
+// Inbound webhook subsystem
 // ---------------------------------------------------------------------------
 
 /**
@@ -549,13 +547,13 @@ export interface InboundWebhookEventStore {
    * Reset a row for manual replay from DLQ. Sets retry_count back to 0,
    * processing_error to null, next_attempt_at to the supplied
    * timestamp — bringing the row back into the pending partial-index
-   * window for WS3's reactive runner to pick up.
+   * window for the reactive runner to pick up.
    */
   resetForRetry(id: string, nextAttemptAt: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
-// Connection OAuth token store (workstream 2 PR 6)
+// Connection OAuth token store
 // ---------------------------------------------------------------------------
 
 /**
@@ -607,7 +605,7 @@ export interface ConnectionOAuthTokenStore {
 }
 
 // ---------------------------------------------------------------------------
-// Connection leased token store (workstream 2 PR 7)
+// Connection leased token store
 // ---------------------------------------------------------------------------
 
 /**
@@ -683,39 +681,36 @@ export interface UserStore {
      *  fixtures and admin tooling may leave it null. */
     handle?: string;
     /** Optional: bind to a Better Auth `auth_user.id`. Stamped at sign-up
-     *  time by `POST /auth/sign-up/email`. T-074: this is the canonical
-     *  bridge between Better Auth identity and the Marfa profile. Test
-     *  fixtures and admin tooling may leave it null. */
+     *  time by `POST /auth/sign-up/email`. This is the canonical bridge
+     *  between Better Auth identity and the Marfa profile. Test fixtures
+     *  and admin tooling may leave it null. */
     auth_user_id?: string;
-    /** T-178: optional role on creation. No route surfaces this — sign-up
-     *  flows default to `member`. Tests and the operator's escape hatch
+    /** Optional role on creation. No route surfaces this — sign-up flows
+     *  default to `member`. Tests and the operator's escape hatch
      *  (`setRole`) use it. */
     role?: MarfaRole;
   }): Promise<User>;
   getById(id: string): Promise<User | null>;
-  /** T-074: lookup by Better Auth `auth_user.id`. Replaces the previous
-   *  `getByEmail` after `users.email` was dropped (single source of truth
-   *  for email is `auth_user.email`). */
+  /** Lookup by Better Auth `auth_user.id`. The single source of truth for
+   *  email is `auth_user.email`; this is the canonical cross-table join. */
   getByAuthUserId(authUserId: string): Promise<User | null>;
   getByProvider(provider: string, providerId: string): Promise<User | null>;
   getByTenantId(tenantId: string): Promise<User | null>;
-  /** Lookup by claimed handle (TSC42 §8). Used for collision detection. */
+  /** Lookup by claimed handle. Used for collision detection at claim time. */
   getByHandle(handle: string): Promise<User | null>;
   /** Claim or change a user's handle. Throws on collision. */
   setHandle(id: string, handle: string): Promise<User>;
-  /** T-178: operator-only role mutation. No route surfaces this — the
-   *  current operator elevates via SQL (or via this method from a script).
-   *  A real provisioning API (`my platform users set-role` etc.) lands
-   *  when a second user shows up. */
+  /** Operator-only role mutation. No route surfaces this — elevation happens
+   *  via SQL or this method from an operator script. */
   setRole(id: string, role: MarfaRole): Promise<User>;
-  /** T-074: update the editable profile fields (first/last name, bio,
-   *  avatar blob hash). Stamps `updated_at`. `undefined` keys are
-   *  untouched; `null` clears the column. */
+  /** Update the editable profile fields (first/last name, bio, avatar blob
+   *  hash). Stamps `updated_at`. `undefined` keys are untouched; `null`
+   *  clears the column. */
   updateProfile(id: string, patch: UpdateProfileInput): Promise<User>;
-  /** T-074: read the canonical email + verification flag from the
-   *  Better Auth `auth_user` row. Returns `null` if no row matches.
-   *  Used by the profile endpoints + `/oauth/userinfo` to mirror the
-   *  email field without keeping a shadow copy on `users`. */
+  /** Read the canonical email + verification flag from the Better Auth
+   *  `auth_user` row. Returns `null` if no row matches. Used by the
+   *  profile endpoints + `/oauth/userinfo` to mirror the email field
+   *  without keeping a shadow copy on `users`. */
   getAuthUserEmail(authUserId: string): Promise<{
     email: string;
     email_verified: boolean;
@@ -726,11 +721,10 @@ export interface TenantStore {
   create(name?: string): Promise<Tenant>;
   get(id: string): Promise<Tenant | null>;
   /**
-   * T-050: enumerate all tenants. Used by background cleanup jobs that
-   * fan out per-tenant. Returns tenants in arbitrary order; callers
-   * shouldn't depend on ordering. Cost is O(tenants) — cleanup runs
-   * are off the request hot path so the unbounded scan is acceptable
-   * at the scale we're targeting.
+   * Enumerate all tenants. Used by background cleanup jobs that fan out
+   * per-tenant. Returns tenants in arbitrary order; callers shouldn't
+   * depend on ordering. Cost is O(tenants) — cleanup runs are off the
+   * request hot path so the unbounded scan is acceptable.
    */
   list(): Promise<Tenant[]>;
   getConfig(
@@ -741,7 +735,7 @@ export interface TenantStore {
     config: import("@withmarfa/shared").TenantConfig,
   ): Promise<void>;
   /**
-   * T-117: flip tenant status. `suspend` blocks future writes at the auth
+   * Flip tenant status. `suspend` blocks future writes at the auth
    * middleware (reads pass through); `unsuspend` restores. Both are no-ops
    * when the tenant is already at the target status. Returns the updated
    * row (null if the tenant id doesn't exist).
@@ -749,10 +743,10 @@ export interface TenantStore {
   suspend(id: string): Promise<Tenant | null>;
   unsuspend(id: string): Promise<Tenant | null>;
   /**
-   * T-117: cheap status read for the auth-middleware write-guard. Returns
-   * `null` when the tenant doesn't exist (the gate treats unknown
-   * tenants as `active` — the credential's own tenant_id mismatch is
-   * handled separately by the standard auth flow).
+   * Cheap status read for the auth-middleware write-guard. Returns `null`
+   * when the tenant doesn't exist (the gate treats unknown tenants as
+   * `active` — the credential's own tenant_id mismatch is handled
+   * separately by the standard auth flow).
    */
   getStatus(
     id: string,
@@ -760,8 +754,8 @@ export interface TenantStore {
 }
 
 /**
- * Per-tenant quota store (T-052). Stores ceilings; counts are computed
- * on-demand from existing tables at quota-check time.
+ * Per-tenant quota store. Stores ceilings; counts are computed on-demand
+ * from existing tables at quota-check time.
  */
 export interface TenantQuotaStore {
   /** Returns the per-tenant ceilings; null when no row exists (use env defaults). */
@@ -789,10 +783,10 @@ export interface TenantQuotaStore {
 // ---------------------------------------------------------------------------
 // OAuth store
 //
-// T-131 narrowed this store to device-flow state machine + last_used
-// stamping. The OAuth-protocol surfaces (clients / codes / tokens) moved
-// to the @better-auth/oauth-provider plugin tables (`auth_oauth_*`); read
-// helpers live on `OauthProviderStore` below.
+// This store is scoped to the device-flow state machine and OAuth-grant
+// last_used stamping. The OAuth-protocol surfaces (clients / codes / tokens)
+// are owned by the @better-auth/oauth-provider plugin tables (`auth_oauth_*`);
+// read helpers live on `OauthProviderStore` below.
 // ---------------------------------------------------------------------------
 
 export interface OAuthStore {
@@ -836,7 +830,7 @@ export interface OAuthStore {
   /**
    * Conditional `last_used_at` stamp on the underlying `system.connection`
    * (kind: app) for an OAuth grant. Mirrors `KeyStore.updateLastUsed` in
-   * shape (T-101): the WHERE clause only writes when the existing
+   * shape: the WHERE clause only writes when the existing
    * `properties.last_used_at` is NULL or older than `now - thresholdMs`,
    * so the row is updated at most once per `thresholdMs` regardless of
    * how many instances call concurrently.
@@ -863,7 +857,7 @@ export interface OAuthStore {
 }
 
 // ---------------------------------------------------------------------------
-// @better-auth/oauth-provider read helpers (T-131)
+// @better-auth/oauth-provider read helpers
 // ---------------------------------------------------------------------------
 
 /**
@@ -905,7 +899,7 @@ export interface OauthClientRow {
 }
 
 /**
- * T-158: input to `OauthProviderStore.createClient`, used by Marfa's
+ * Input to `OauthProviderStore.createClient`, used by Marfa's
  * `POST /auth/oauth2/register` override (which fronts the plugin's DCR
  * endpoint — see `routes/oauth-register.ts`).
  *
@@ -1005,12 +999,11 @@ export interface OauthProviderStore {
     clientId: string,
     authUserId: string,
   ): Promise<readonly string[] | undefined>;
-  /** T-131: bearer-middleware lookup over `auth_oauth_access_token`.
-   *  Returns the row keyed by the hashed token output of `storeTokens.hash`
-   *  (which is `hashApiKey(token, salt)`), or null if the token isn't
-   *  recognised or has expired. Powers the bearer-middleware side-channel
-   *  join — see plan §Caveats §3 (opaque tokens carry no embedded claims,
-   *  so we read the row directly). */
+  /** Bearer-middleware lookup over `auth_oauth_access_token`. Returns the
+   *  row keyed by the hashed token output of `storeTokens.hash` (which is
+   *  `hashApiKey(token, salt)`), or null if the token isn't recognised or
+   *  has expired. Opaque tokens carry no embedded claims, so the row is
+   *  read directly. */
   validateAccessToken(tokenHash: string): Promise<OauthAccessTokenRow | null>;
   /** Cascade revocation for a grant: delete every access + refresh token
    *  for (clientId, authUserId). Used by the `/auth/grants/:id/revoke`
@@ -1019,13 +1012,12 @@ export interface OauthProviderStore {
    *  re-consent on the next authorize attempt). */
   revokeTokensForGrant(clientId: string, authUserId: string): Promise<void>;
   /**
-   * T-131 follow-on (refresh-replay): delete ONLY access tokens for a
-   * grant — leaves refresh tokens + consent intact. Used by the
-   * `/oauth2/token` before-hook on refresh-token replay detection: the
-   * plugin's own logic deletes the refresh chain on stale-refresh
-   * detection but leaves access tokens valid until their TTL (default
-   * 1h). This narrows that window to zero by zapping access tokens
-   * pre-emptively when we detect a revoked refresh in the request.
+   * Delete ONLY access tokens for a grant — leaves refresh tokens + consent
+   * intact. Used by the `/oauth2/token` before-hook on refresh-token replay
+   * detection: the plugin's own logic deletes the refresh chain on
+   * stale-refresh detection but leaves access tokens valid until their TTL
+   * (default 1h). This narrows that window to zero by zapping access tokens
+   * pre-emptively when a revoked refresh is detected in the request.
    *
    * Idempotent — re-calling on an already-cleaned grant is a no-op.
    * Best-effort; callers swallow errors.
@@ -1035,11 +1027,11 @@ export interface OauthProviderStore {
     authUserId: string,
   ): Promise<void>;
   /**
-   * T-131 follow-on (refresh-replay): look up a refresh-token row by its
-   * hashed `token` column value. Returns the (clientId, userId, revoked)
-   * tuple needed to decide whether the request is a replay attempt and
-   * whose access tokens to nuke. Returns null if the token doesn't
-   * exist (e.g. already deleted by a prior chain-revocation pass).
+   * Look up a refresh-token row by its hashed `token` column value. Returns
+   * the (clientId, userId, revoked) tuple needed to decide whether the
+   * request is a replay attempt and whose access tokens to revoke. Returns
+   * null if the token doesn't exist (e.g. already deleted by a prior
+   * chain-revocation pass).
    */
   findRefreshTokenGrantKey(tokenHash: string): Promise<{
     clientId: string;
@@ -1051,21 +1043,21 @@ export interface OauthProviderStore {
    *  with the same shape the plugin's `/oauth2/token` path would produce,
    *  so the bearer middleware resolves them uniformly. */
   mintTokenPair(input: MintTokenPairInput): Promise<void>;
-  /** T-158: insert a row into `auth_oauth_client` with JSON-encoded
-   *  string[] columns matching the rest of Marfa's write paths (see
+  /** Insert a row into `auth_oauth_client` with JSON-encoded string[]
+   *  columns matching the rest of Marfa's write paths (see
    *  `CreateClientInput` for the upstream-bug context). Used exclusively
    *  by the Marfa-owned `POST /auth/oauth2/register` route in
    *  `routes/oauth-register.ts`; the plugin's own DCR endpoint is NOT
    *  exercised on Marfa deployments. */
   createClient(input: CreateClientInput): Promise<CreateClientResult>;
-  /** T-158: existence check on `(clientId)` for the registration route
-   *  to surface a clean 409 instead of a Postgres unique-violation. */
+  /** Existence check on `(clientId)` for the registration route to surface
+   *  a clean 409 instead of a Postgres unique-violation. */
   clientExists(clientId: string): Promise<boolean>;
   /**
-   * T-131 follow-on: resolve the projected `system.connection { kind: "app" }`
-   * item id for a (tenantId, clientId, authUserId) tuple. Returns the
-   * `items.id` value or `null` if no projection exists (consent never ran,
-   * or the row was hard-deleted).
+   * Resolve the projected `system.connection { kind: "app" }` item id for a
+   * (tenantId, clientId, authUserId) tuple. Returns the `items.id` value or
+   * `null` if no projection exists (consent never ran, or the row was
+   * hard-deleted).
    *
    * Used by the bearer middleware to find the `system.connection` row it
    * needs to stamp `last_used_at` on, and by the re-consent path to update
@@ -1086,12 +1078,11 @@ export interface OauthProviderStore {
   }): Promise<string | null>;
 }
 
-// T-131 review-sweep Commit 2 / F6: `OauthProviderStore.updateGrantScopes`
-// was dropped. The re-consent path now updates the projection via the
-// standard `storage.items.update` route (writes a `versions` snapshot,
-// bumps `updated_at` + `version`, lets the projection participate in
-// `/items?sort=updated_at` correctly). See `projectGrantOnConsent` in
-// `routes/auth-consent.ts`.
+// `OauthProviderStore.updateGrantScopes` was dropped. The re-consent path
+// now updates the projection via the standard `storage.items.update` route
+// (writes a `versions` snapshot, bumps `updated_at` + `version`, lets the
+// projection participate in `/items?sort=updated_at` correctly).
+// See `projectGrantOnConsent` in `routes/auth-consent.ts`.
 
 // ---------------------------------------------------------------------------
 // Audit store
@@ -1102,7 +1093,7 @@ export interface AuditEntry {
   timestamp: string;
   key_id: string | null;
   /**
-   * Tenant scope (T-041). Stamped at write time from the calling api key's
+   * Tenant scope. Stamped at write time from the calling api key's
    * `tenant_id`. Null for system-initiated audits (install pipeline,
    * cycle-budget overflow) and for bootstrap-admin keys that have no tenant.
    * `GET /audit` filters on this column when the caller is tenant-scoped;
@@ -1113,10 +1104,10 @@ export interface AuditEntry {
   resource_type: string;
   resource_id: string | null;
   /**
-   * Resolved client IP (T-027). Persisted into `details.client_ip` so no
-   * schema migration is needed; surfaced as a typed top-level field on the
-   * read path. Null for system-initiated audits (install pipeline,
-   * cycle-budget overflow) where no Hono context exists.
+   * Resolved client IP. Persisted into `details.client_ip` so no schema
+   * migration is needed; surfaced as a typed top-level field on the read
+   * path. Null for system-initiated audits (install pipeline, cycle-budget
+   * overflow) where no Hono context exists.
    */
   client_ip: string | null;
   details: Record<string, unknown>;
@@ -1125,15 +1116,15 @@ export interface AuditEntry {
 export interface AuditStore {
   log(entry: {
     key_id?: string;
-    /** See `AuditEntry.tenant_id`. Pass `c.get("apiKey")?.tenant_id ?? null`
-     *  from route handlers; null for system-initiated audits and for the
-     *  bootstrap-admin shape on self-hosted single-tenant deployments. */
+    /** Tenant scope. Pass `c.get("apiKey")?.tenant_id ?? null` from route
+     *  handlers; null for system-initiated audits and for the bootstrap-admin
+     *  shape on self-hosted single-tenant deployments. */
     tenant_id?: string | null;
     action: string;
     resource_type: string;
     resource_id?: string;
-    /** See `AuditEntry.client_ip`. Pass `c.var.clientIp ?? null` from
-     *  route handlers; null for system-initiated audits. */
+    /** Client IP. Pass `c.var.clientIp ?? null` from route handlers;
+     *  null for system-initiated audits. */
     client_ip?: string | null;
     details?: Record<string, unknown>;
   }): Promise<void>;
@@ -1145,17 +1136,15 @@ export interface AuditStore {
     until?: string;
     limit?: number;
     cursor?: string;
-    /** Tenant-scope filter (T-041). When set, returns only rows whose
-     *  `tenant_id` matches. When omitted, every row is returned —
-     *  bootstrap-admin reads on a self-hosted deployment, plus the
-     *  cleanup job which is currently global. */
+    /** Tenant-scope filter. When set, returns only rows whose `tenant_id`
+     *  matches. When omitted, every row is returned — bootstrap-admin reads
+     *  on a self-hosted deployment, plus the cleanup job which is global. */
     tenant_id?: string | null;
   }): Promise<PaginatedResult<AuditEntry>>;
   /**
-   * Hard-delete rows whose `timestamp` is older than the retention
-   * window. T-050 added the optional `tenantId` filter so the cleanup
-   * job can fan out per-tenant honouring per-tenant retention
-   * overrides:
+   * Hard-delete rows whose `timestamp` is older than the retention window.
+   * The optional `tenantId` filter lets the cleanup job fan out per-tenant,
+   * honouring per-tenant retention overrides:
    *
    * - `undefined` — every row older than the cutoff (unscoped sweep).
    * - `string` — only rows where `tenant_id` matches.
@@ -1166,16 +1155,16 @@ export interface AuditStore {
    */
   cleanup(retentionDays: number, tenantId?: string | null): Promise<number>;
   /**
-   * T-116: redact rows that identify a specific `auth_user.id` ahead of
-   * a hard-delete of the account. Rewrites `audit_log.details` to
+   * Redact rows that identify a specific `auth_user.id` ahead of a
+   * hard-delete of the account. Rewrites `audit_log.details` to
    * `{ redacted: true, user_id_sha256: <hex> }` for every row whose
-   * `resource_id === authUserId` OR whose `details` JSON object
-   * contains any field whose value equals `authUserId` (exact-equality
-   * match — substring matches are ignored to avoid false positives).
+   * `resource_id === authUserId` OR whose `details` JSON object contains
+   * any field whose value equals `authUserId` (exact-equality match —
+   * substring matches are ignored to avoid false positives).
    *
    * The row's `action`, `resource_type`, `timestamp`, and `id` are
-   * preserved — the audit chain remains intact; only personally
-   * identifying payload is scrubbed.
+   * preserved — the audit chain remains intact; only personally identifying
+   * payload is scrubbed.
    *
    * Returns the number of rows rewritten.
    */
@@ -1200,7 +1189,7 @@ export interface PersistedEvent {
   payload: string;
   /**
    * The connection whose action set off this chain of events. Null for
-   * events originating from a human caller. (Workstream 2 PR 8.)
+   * events originating from a human caller.
    */
   originating_connection_id: string | null;
   /** Hop number from the originating event. 0 = first event in a chain. */
@@ -1219,7 +1208,7 @@ export interface EventLogStore {
     edge_id?: string | null;
     tenant_id?: string;
     payload: string;
-    /** Cycle-detection metadata (workstream 2 PR 8). */
+    /** Cycle-detection metadata. */
     originating_connection_id?: string | null;
     hop_count?: number;
   }): Promise<bigint>;
@@ -1232,10 +1221,10 @@ export interface EventLogStore {
   ): Promise<PersistedEvent[]>;
 
   /**
-   * Delete events older than the given retention window. Same
-   * `tenantId` semantics as `AuditStore.cleanup` (T-050): undefined
-   * sweeps everything, a string scopes to that tenant, `null` scopes
-   * to rows whose `tenant_id IS NULL`. Returns count deleted.
+   * Delete events older than the given retention window. Same `tenantId`
+   * semantics as `AuditStore.cleanup`: undefined sweeps everything, a
+   * string scopes to that tenant, `null` scopes to rows whose
+   * `tenant_id IS NULL`. Returns count deleted.
    */
   cleanup(retentionHours: number, tenantId?: string | null): Promise<number>;
 
@@ -1259,7 +1248,7 @@ export interface SettingsStore {
   /** Atomic insert-or-bail: returns true if this caller's INSERT created the
    *  row, false if a row already existed. Used by the bootstrap path so that
    *  exactly one of N concurrent `POST /keys` on a fresh DB wins the right
-   *  to mint the seed admin key (T-007). */
+   *  to mint the seed admin key. */
   claim(key: string, value: string): Promise<boolean>;
 }
 
@@ -1398,15 +1387,15 @@ export interface EdgeStore {
  * by definition, so the implementation is a pass-through.
  */
 /**
- * T-097: cleanup hooks for the better-auth `auth_session` table. Better
- * Auth itself owns the session TTL via `expiresAt`; this store exists
- * only to drop rows past that timestamp on a periodic sweep so the
- * table doesn't grow unbounded across hosted multi-tenant scale.
+ * Cleanup hooks for the better-auth `auth_session` table. Better Auth itself
+ * owns the session TTL via `expiresAt`; this store exists only to drop rows
+ * past that timestamp on a periodic sweep so the table doesn't grow unbounded
+ * across hosted multi-tenant scale.
  *
- * Instance-wide by design — `auth_session` carries no `tenant_id`
- * column, the deletion criterion is purely time-based, and there's no
- * per-tenant retention knob. Mirrors the `VersionThinner` shape rather
- * than the `T-050` per-tenant fan-out used for retention-window jobs.
+ * Instance-wide by design — `auth_session` carries no `tenant_id` column, the
+ * deletion criterion is purely time-based, and there's no per-tenant retention
+ * knob. Mirrors the `VersionThinner` shape rather than the per-tenant fan-out
+ * used for retention-window jobs.
  */
 export interface AuthSessionStore {
   /** Delete every `auth_session` row whose `expires_at` is strictly
@@ -1415,22 +1404,20 @@ export interface AuthSessionStore {
 }
 
 /**
- * T-116: account-lifecycle store. Surfaces the `auth_user.deletion_state`
- * + `pending_deletion_at` columns added to better-auth's `auth_user`
- * table for the GDPR account-deletion lifecycle. Grouped under a single
- * sub-interface (rather than scattered as top-level methods on
- * `Storage`) so the route layer reads as
+ * Account-lifecycle store. Surfaces the `auth_user.deletion_state` +
+ * `pending_deletion_at` columns for the GDPR account-deletion lifecycle.
+ * Grouped under a single sub-interface so the route layer reads as
  * `storage.accountLifecycle.markPendingDeletion(...)` and the surface
  * is greppable as a unit.
  *
  * The hard-delete cascade itself is a top-level `Storage` method
- * (`deleteAccountCascade`) because it spans every per-tenant table
- * plus the auth island — it doesn't sit cleanly inside one sub-store.
- * The cascade re-checks `deletion_state === 'pending_deletion'` and
- * `pending_deletion_at < cutoffIso` inside its transaction (with
- * `FOR UPDATE` on PG to serialise against the cancel route's
- * `cancelPendingDeletion` UPDATE), and short-circuits if either
- * predicate is no longer true (T-136 race fix).
+ * (`deleteAccountCascade`) because it spans every per-tenant table plus
+ * the auth island — it doesn't sit cleanly inside one sub-store. The
+ * cascade re-checks `deletion_state === 'pending_deletion'` and
+ * `pending_deletion_at < cutoffIso` inside its transaction (with `FOR
+ * UPDATE` on PG to serialise against the cancel route's
+ * `cancelPendingDeletion` UPDATE), and short-circuits if either predicate
+ * is no longer true.
  */
 export interface AccountLifecycleStore {
   /** Flip `auth_user.deletion_state` → `'pending_deletion'`, stamp
@@ -1441,12 +1428,11 @@ export interface AccountLifecycleStore {
   markPendingDeletion(authUserId: string, nowIso: string): Promise<void>;
   /** Flip the state back to `'active'` and clear `pending_deletion_at`.
    *  Returns `true` when a row was actually flipped; `false` when the
-   *  UPDATE matched zero rows (account already cancelled or — the case
-   *  this signal exists for, T-141 — already hard-deleted by a cascade
-   *  that won the race). The cancel routes branch on the return:
-   *  `true` → standard "Account restored" confirmation; `false` →
-   *  "already permanently deleted" themed page + distinct audit action
-   *  so the operator-facing trail is honest. */
+   *  UPDATE matched zero rows (account already cancelled or already
+   *  hard-deleted by a cascade that won the race). The cancel routes
+   *  branch on the return: `true` → standard "Account restored"
+   *  confirmation; `false` → "already permanently deleted" themed page +
+   *  distinct audit action so the audit trail is honest. */
   cancelPendingDeletion(authUserId: string): Promise<boolean>;
   /** Read the lifecycle row by `auth_user.id`. Returns null when no
    *  matching row exists. */
@@ -1478,7 +1464,7 @@ export interface CoordinationStore {
 }
 
 /**
- * T-026: cluster-shared rate-limit + per-email throttle counters.
+ * Cluster-shared rate-limit + per-email throttle counters.
  *
  * Backing table `rate_limit_windows` keyed on (family, window_key). Two
  * production consumers ride the same store:
@@ -1499,10 +1485,7 @@ export interface CoordinationStore {
  *
  * Hot path: one DB round-trip per gated request. Acceptable at target
  * scale (low-thousands of req/s peak); PG handles tens of thousands of
- * single-row upserts per second on commodity hardware. A write-through
- * per-instance cache (mirror of the T-101 `last_used_at` shape — local
- * short-circuit + DB conditional as the authoritative floor) is a
- * future optimisation if perf measurement justifies it.
+ * single-row upserts per second on commodity hardware.
  */
 export interface RateLimitStore {
   /**
@@ -1554,7 +1537,7 @@ export interface BetterAuthStorageAdapter {
 }
 
 // ---------------------------------------------------------------------------
-// bulk_action_jobs store (T-218 async substrate)
+// bulk_action_jobs store
 // ---------------------------------------------------------------------------
 
 export type BulkActionJobStatus =
@@ -1684,10 +1667,10 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   edges: EdgeStore;
   edgeTypes: EdgeTypeStore;
   oauth: OAuthStore;
-  /** T-131: thin lookup helpers over the @better-auth/oauth-provider
-   *  plugin's tables (`auth_oauth_client`, `auth_oauth_consent`).
-   *  Used by the consent route + grant-projection after-hooks.
-   *  Optional — test contexts that skip the OAuth surface can omit. */
+  /** Thin lookup helpers over the @better-auth/oauth-provider plugin's
+   *  tables (`auth_oauth_client`, `auth_oauth_consent`). Used by the
+   *  consent route + grant-projection after-hooks. Optional — test
+   *  contexts that skip the OAuth surface can omit. */
   oauthProvider?: OauthProviderStore;
   outboundWebhooks: WebhookStore;
   outboundWebhookDeliveries: WebhookDeliveryStore;
@@ -1697,89 +1680,64 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   connectionLeasedTokens: ConnectionLeasedTokenStore;
   audit: AuditStore;
   eventLog: EventLogStore;
-  /** T-097: optional sweep store for expired better-auth session rows.
-   *  Absent on test contexts that don't wire better-auth (the cleanup
-   *  job in `index.ts` is gated on this being present). */
+  /** Optional sweep store for expired better-auth session rows. Absent on
+   *  test contexts that don't wire better-auth (the cleanup job in
+   *  `index.ts` is gated on this being present). */
   authSessions?: AuthSessionStore;
-  /** T-116: account-lifecycle store (delete state + pending stamp).
-   *  Always wired by both dialect factories; the route layer + the
-   *  purger consult it. Marked optional only because in-tree test
-   *  stubs that pre-date T-116 may not implement it; production
-   *  Storage always exposes it. */
+  /** Account-lifecycle store (delete state + pending stamp). Always wired
+   *  by both dialect factories; the route layer + the purger consult it.
+   *  Marked optional only because some in-tree test stubs do not implement
+   *  it; production Storage always exposes it. */
   accountLifecycle?: AccountLifecycleStore;
   settings: SettingsStore;
   coordination: CoordinationStore;
-  /** T-218: async substrate for `POST /items/bulk-actions`. Always wired
-   *  on both dialects. The worker module reads + writes through this
-   *  store; the route handler creates jobs + serves GET / DELETE. */
+  /** Async substrate for `POST /items/bulk-actions`. Always wired on both
+   *  dialects. The worker module reads + writes through this store; the
+   *  route handler creates jobs + serves GET / DELETE. */
   bulkActionJobs: BulkActionJobStore;
 
   users?: UserStore;
   tenants?: TenantStore;
-  /** T-052: per-tenant quotas. Always present (counts even when no
-   *  per-tenant ceilings are set). */
+  /** Per-tenant quotas. Always present (counts even when no per-tenant
+   *  ceilings are set). */
   tenantQuotas: TenantQuotaStore;
   /**
-   * T-026: cluster-shared rate-limit + per-email throttle counters.
-   * Always wired by both dialect factories; the middleware + the
-   * forgot-password route consult it. Required (not optional) because
-   * the rate-limit middleware can't degrade gracefully without it —
-   * a missing store would silently degrade to "no rate limit", which
-   * is the wrong default.
+   * Cluster-shared rate-limit + per-email throttle counters. Always wired
+   * by both dialect factories; the middleware + the forgot-password route
+   * consult it. Required (not optional) because the rate-limit middleware
+   * can't degrade gracefully without it — a missing store would silently
+   * degrade to "no rate limit", which is the wrong default.
    */
   rateLimits: RateLimitStore;
   /**
-   * T-025 part 2: optional reference to the wrapped Postgres Drizzle
-   * instance, exposed so the RLS middleware can drive
-   * `db.transaction(...)` directly. Set only on the PG storage; left
-   * `undefined` on SQLite (RLS is PG-only). The middleware skips the
-   * role-switch wrapping when this is undefined.
-   *
-   * Typed `unknown` here for the same reason as `betterAuthDb`:
-   * keeps the cross-dialect Storage interface portable. The
-   * middleware casts via the PgDb type at consumer-site.
+   * Optional reference to the wrapped Postgres Drizzle instance, exposed
+   * so the RLS middleware can drive `db.transaction(...)` to wrap each
+   * tenant-bounded request. Set only on the PG storage; `undefined` on
+   * SQLite (RLS is PG-only). The middleware skips the role-switch wrapping
+   * when this is undefined. Typed `unknown` for portability; the middleware
+   * casts via the PgDb type at consumer-site.
    */
   pgDb?: unknown;
   /**
-   * T-146: optional reference to the underlying postgres-js client.
-   * Exposed so streaming routes can `client.reserve()` a dedicated
-   * pool connection for session-level RLS (the per-request middleware
-   * uses a transaction; streams can't hold one open). Set only on
-   * the PG storage; left `undefined` on SQLite. Typed `unknown` for
-   * the same portability reason as `pgDb`; consumer-site casts to
-   * `PgClient`.
+   * Optional reference to the underlying postgres-js client. Exposed so
+   * streaming routes can `client.reserve()` a dedicated pool connection for
+   * session-level RLS (the per-request middleware uses a transaction; streams
+   * can't hold one open). Set only on the PG storage; `undefined` on SQLite.
+   * Typed `unknown` for the same portability reason as `pgDb`; consumer-site
+   * casts to `PgClient`.
    */
   pgClient?: unknown;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   /**
-   * T-116: hard-delete every artefact tied to the given `auth_user.id`.
-   * Single transaction; rollback on any failure. Order:
-   *
-   *   1. Resolve `tenant_id` via `users.auth_user_id`.
-   *   2. Revoke OAuth tokens / leased tokens / inbound webhooks for the
-   *      tenant.
-   *   3. Bulk-purge items (FK-cascades metadata + versions), preceded
-   *      by edge teardown per item.
-   *   4. Sweep tenant-scoped blobs.
-   *   5. Delete `api_keys`, `outbound_webhooks`, `inbound_webhooks`,
-   *      `tenant_quotas`, `auth_verification` rows, the `users` row,
-   *      the `tenants` row.
-   *   6. Emit `auth.account.hard_deleted` audit BEFORE redactForUser.
-   *   7. `audit.redactForUser(authUserId)` to scrub PII from the
-   *      remaining audit trail.
-   *   8. Delete the `auth_user` row — FK cascades drop sessions,
-   *      accounts, passkeys.
-   */
-  /**
-   * T-116 + T-136: hard-delete cascade for an `auth_user`. Re-checks
-   * inside its own transaction that the account is still
-   * `pending_deletion` and `pending_deletion_at < cutoffIso` before
-   * proceeding — short-circuits and returns `false` if either is no
-   * longer true (e.g., the user clicked cancel between
-   * `listPendingDeletionDue` and the cascade). On a clean run returns
-   * `true`. The PG impl uses `SELECT ... FOR UPDATE` so a concurrent
-   * `cancelPendingDeletion` blocks until the cascade either commits or
-   * the re-check skips.
+   * Hard-delete every artefact tied to the given `auth_user.id`. Single
+   * transaction; rollback on any failure. Re-checks inside its own
+   * transaction that the account is still `pending_deletion` and
+   * `pending_deletion_at < cutoffIso` before proceeding — short-circuits
+   * and returns `false` if either is no longer true (e.g. the user clicked
+   * cancel between the purger's snapshot and the cascade). On a clean run
+   * returns `true`. The PG impl uses `SELECT ... FOR UPDATE` so a
+   * concurrent `cancelPendingDeletion` blocks until the cascade either
+   * commits or the re-check skips.
    */
   deleteAccountCascade(authUserId: string, cutoffIso: string): Promise<boolean>;
   close(): Promise<void>;

@@ -184,11 +184,11 @@ describe("github-webhooks handler", () => {
       source_url: "https://github.com/withmarfa/marfa",
       source_title: "withmarfa/marfa / issues",
     });
-    // T-087: source_id populated from the GraphQL node_id, threading the
+    // source_id is populated from the GraphQL node_id, threading the
     // server's `(source, source_id)` natural-key contract.
     expect(created[0]!.source_id).toBe("I_kwDOABCDEFG12345");
-    // T-087: activity summary references the real bookmark id, not the
-    // literal string "undefined" (the runtime-sdk envelope-unwrap bug).
+    // Activity summary references the real bookmark id, not the
+    // literal string "undefined".
     const summary = emitted.at(-1);
     expect(summary?.properties?.summary).toMatch(
       /created issues bookmark itm_\d+$/,

@@ -1,6 +1,6 @@
 /**
- * In-tree integration smokes against the local-runtime substrate
- * (T-174). One smoke per in-tree integration that declares
+ * In-tree integration smokes against the local-runtime substrate.
+ * One smoke per in-tree integration that declares
  * `runtime_compatibility: ["local"]`:
  *
  *   - _template
@@ -17,11 +17,11 @@
  * drives one trigger via `supervisor.dispatchForTest`, and asserts
  * the expected outcome. The directDispatch seam keeps the smoke
  * fast — the worker_thread executor is exercised separately by the
- * existing T-173 supervisor tests.
+ * supervisor tests.
  *
  * Sync's `local`-only manifest stays as-is — the sync agent runs
  * outside the server process so it has no `dist/local.js` smoke
- * surface in this PR.
+ * surface here.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolve, dirname } from "node:path";

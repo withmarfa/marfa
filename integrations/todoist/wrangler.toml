@@ -6,8 +6,8 @@
 # Worker consumes:
 #
 #   - a per-integration scheduled-poll queue
-#   - a per-integration reactive-run queue (T-233 — Cloudflare Queues
-#     only allow one consumer per queue; per-integration queues prevent
+#   - a per-integration reactive-run queue (Cloudflare Queues allow only
+#     one consumer per queue; per-integration queues prevent
 #     silently-dropped messages addressed to non-consumer integrations)
 #
 # Deliberately NO webhook-receipt queue — Todoist supports webhooks
@@ -50,7 +50,6 @@ class_name = "PerConnectionState"
 tag = "v1"
 new_sqlite_classes = ["PerConnectionState"]
 
-# T-103: DLQ producer bindings — one per consumer queue family.
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
 queue = "marfa-scheduled-poll-todoist-tasks-staging"
@@ -70,7 +69,7 @@ max_batch_timeout = 30
 max_retries = 6
 dead_letter_queue = "marfa-scheduled-poll-todoist-tasks-staging-dlq"
 
-# T-233 — per-integration reactive-run queue.
+# Per-integration reactive-run queue.
 [[env.staging.queues.consumers]]
 queue = "marfa-reactive-run-todoist-tasks-staging"
 max_batch_size = 10

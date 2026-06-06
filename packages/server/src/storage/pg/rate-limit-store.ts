@@ -1,5 +1,5 @@
 /**
- * T-026: Postgres rate-limit / throttle counter store.
+ * Postgres rate-limit / throttle counter store.
  *
  * Atomic increment + window-rollover via a single
  * `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` round-trip. The

@@ -4,10 +4,9 @@ import type { TestContext } from "../test-utils.js";
 import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
 
 /**
- * Wave C PR6 / T-034 — passkey enrol page renderer + handler smoke.
+ * Passkey enrol page renderer + handler smoke.
  * The full WebAuthn ceremony round-trip is browser-side and isn't
- * unit-testable here; the manual cross-browser walkthrough at the
- * end of Wave C exercises that path. This file covers:
+ * unit-testable here. This file covers:
  *   - The page renders the right shell + script tag wiring.
  *   - The route is auth-gated (302s to /auth/sign-in when no
  *     session cookie is present).

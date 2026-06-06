@@ -1,5 +1,5 @@
 /**
- * Shared types for the local integrations runtime substrate (T-173).
+ * Shared types for the local integrations runtime substrate.
  *
  * The substrate boots when `MARFA_INTEGRATION_RUNTIME=local` and replaces
  * the Cloudflare side of the dispatch loop (Workers + Queues + Durable

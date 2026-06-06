@@ -196,8 +196,8 @@ describe("extension_permissions wiring", () => {
   });
 
   it("persists and surfaces metadata_permissions on POST /keys and GET /keys", async () => {
-    // Workstream 1 close-out: metadata-layer permissions ride a
-    // dedicated map. Default-off for new keys; admin still bypasses.
+    // Metadata-layer permissions ride a dedicated map. Default-off for
+    // new keys; admin still bypasses.
     const createRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {

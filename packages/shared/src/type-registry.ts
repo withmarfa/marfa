@@ -50,7 +50,7 @@ const _registry = new Map<string, TypeSchema>(
   [...ALL_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [schema.id, schema]),
 );
 
-/** The set of type IDs in the platform `system.*` registry (TSC42 §4). */
+/** The set of type IDs in the platform `system.*` registry. These are tracked separately so consumers can apply the lifecycle and search restrictions that apply to system types. */
 export const SYSTEM_TYPE_IDS: ReadonlySet<string> = new Set(
   ALL_SYSTEM_TYPES.map((schema) => schema.id),
 );
@@ -87,7 +87,7 @@ export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// Schema-enforcement levers (TSC42 §5)
+// Schema-enforcement levers
 // ---------------------------------------------------------------------------
 
 /**
@@ -157,9 +157,9 @@ export function getTypeSchema(typeId: string): TypeSchema | undefined {
 }
 
 /**
- * The five-tier namespace classification (TSC42 §3). The first segment of a
- * type identifier determines its tier; reserved roots (`core`, `system`,
- * `app`, `user`, `marfa`) carry platform-defined semantics, anything else is a
+ * The five-tier namespace classification. The first segment of a type
+ * identifier determines its tier; reserved roots (`core`, `system`, `app`,
+ * `user`, `marfa`) carry platform-defined semantics, anything else is a
  * publisher handle.
  */
 export type NamespaceTier =
@@ -274,12 +274,10 @@ const CORE_SEARCH_FIELDS = new Set(["title", "body", "description", "name"]);
 /**
  * Returns the names of string-typed fields for a type that are not already
  * covered by the 4 core search fields. Used to index custom type properties.
- *
- * T-015: respects the `searchable: false` opt-out on field definitions —
- * fields explicitly flagged as non-searchable are excluded from this list,
- * which means both dialects' FTS index (the SQLite `items_fts.extra`
- * column and the PG `search_vector` materialised tsvector) skip them.
- * Fields without the flag default to searchable.
+ * Respects the `searchable: false` opt-out — fields explicitly flagged as
+ * non-searchable are excluded, so both FTS backends (SQLite `items_fts.extra`
+ * and PG `search_vector`) skip them. Fields without the flag default to
+ * searchable.
  */
 export function getSearchableStringFields(typeId: string): string[] {
   const fields = getResolvedFields(typeId);
@@ -295,13 +293,11 @@ export function getSearchableStringFields(typeId: string): string[] {
 }
 
 /**
- * T-015: returns true when `typeId.fieldName` is a string field whose
- * definition explicitly opts out of FTS via `searchable: false`. The
- * search indexer consults this for the four core fields (title, body,
- * description, name) — `getSearchableStringFields` only covers the
- * long tail. Fields that don't exist on the type, or non-string fields,
- * return false (the default-searchable shape). The flag defaults to
- * `true` (searchable) — a type that omits it indexes the field.
+ * Returns true when `typeId.fieldName` is a string field whose definition
+ * explicitly opts out of FTS via `searchable: false`. The search indexer
+ * consults this for the four core fields (title, body, description, name) —
+ * `getSearchableStringFields` only covers the long tail. Fields that don't
+ * exist on the type, or non-string fields, return false (default-searchable).
  */
 export function isFieldSearchableExcluded(
   typeId: string,
@@ -378,7 +374,7 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
 // Cache generated Zod schemas to avoid re-creation on every validation call.
 // Two caches: one for the default permissive shape, one for strict — strict
 // mode flips z.looseObject (passes unknown properties) to z.strictObject
-// (rejects them) per TSC42 §5.
+// (rejects them).
 const zodSchemaCache = new Map<string, z.ZodType>();
 const zodSchemaStrictCache = new Map<string, z.ZodType>();
 
@@ -412,8 +408,7 @@ export type ValidationResult =
 /**
  * Validates item properties against the type schema.
  * Standard fields are validated; custom fields are passed through unless
- * `options.strict` is true, in which case unknown properties are rejected
- * (TSC42 §5 — strict-mode lever).
+ * `options.strict` is true, in which case unknown properties are rejected.
  */
 export function validateProperties(
   typeId: string,
@@ -464,9 +459,9 @@ export const SYSTEM_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> = {
 };
 
 /**
- * Lifecycle override for `system.*` types (TSC42 §4): bounded to
- * `active | revoked`, where `revoked` is terminal. Archived / trashed do not
- * apply to operational platform records.
+ * Lifecycle override for `system.*` types: bounded to `active | revoked`,
+ * where `revoked` is terminal. Archived / trashed do not apply to
+ * operational platform records.
  */
 export const SYSTEM_TYPE_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> =
   {
@@ -845,8 +840,9 @@ export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
     }
   }
 
-  // compatible_with (TSC42 §3) — structural-superset check at registration.
-  // Only enforced after the rest of the schema is well-formed; errors here
+  // compatible_with — structural-superset check at registration. Every
+  // required field on the target type must be present here with a matching
+  // shape. Only enforced after the rest of the schema is well-formed; errors
   // are emitted as `compatible_with_violation` so callers can disambiguate.
   if (obj.compatible_with !== undefined) {
     if (typeof obj.compatible_with !== "string") {

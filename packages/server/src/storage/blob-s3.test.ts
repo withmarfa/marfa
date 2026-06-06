@@ -244,7 +244,7 @@ describe("S3BlobBackend", () => {
       expect(client.config.forcePathStyle).toBeUndefined();
     });
 
-    it("accepts an R2-shaped configuration (T-029)", () => {
+    it("accepts an R2-shaped configuration", () => {
       // Cloudflare R2 is S3-compatible. The minimum config is bucket +
       // explicit credentials + an R2 endpoint of the shape
       // https://<account-id>.r2.cloudflarestorage.com. The S3 SDK

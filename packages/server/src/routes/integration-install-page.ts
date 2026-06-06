@@ -1,5 +1,5 @@
 /**
- * HTML consent screen for the integration install flow — Layer 2 PR 1.
+ * HTML consent screen for the integration install flow.
  *
  * Mirrors the OAuth consent screen pattern in routes/consent.ts:
  *   - Server-rendered HTML with inline CSS, no JS.

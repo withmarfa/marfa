@@ -41,14 +41,14 @@ Three operationally significant points the handler has to honour:
   carries the etag the handler last saw; stale etag returns 409, the
   handler refetches and reapplies once.
 
-## Per-connection upstream_base_url override (T-254)
+## Per-connection upstream_base_url override
 
 **People API is hosted at `people.googleapis.com`**, distinct from
-Calendar / Tasks / Drive which live under `www.googleapis.com`. T-254
-added `connection.properties.configuration.upstream_base_url_override`
-— a per-connection knob the connection-proxy consults before falling
+Calendar / Tasks / Drive which live under `www.googleapis.com`. The
+`connection.properties.configuration.upstream_base_url_override` field
+is a per-connection knob the connection-proxy consults before falling
 back to the credential's `upstream_base_url`. Multiple google.\*
-integrations can now share one OAuth credential row while targeting
+integrations can share one OAuth credential row while targeting
 different upstream hosts.
 
 Operator setup (install-time):

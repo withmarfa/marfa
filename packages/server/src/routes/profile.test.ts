@@ -21,7 +21,7 @@ import {
 } from "./profile.js";
 
 /**
- * T-074: profile endpoint coverage.
+ * Profile endpoint coverage.
  *
  * Every test here is targeted at a real bug class — if the endpoint
  * landed without these, the failure modes would be:
@@ -222,8 +222,8 @@ async function insertAuthUser(
     );
     return;
   }
-  // SQLite path — use the storage facade's typed run helper. T-071 made
-  // it async (libsql client returns a Promise); await is load-bearing.
+  // SQLite path — use the storage facade's typed run helper. The async
+  // libsql client returns a Promise; await is load-bearing.
   const runner = (
     storage as unknown as {
       __sqliteRun?: (
@@ -260,7 +260,7 @@ interface ProfileBody {
 // Suites
 // ---------------------------------------------------------------------------
 
-describe("Profile routes (T-074)", () => {
+describe("Profile routes", () => {
   let hosted: HostedContext;
 
   beforeAll(async () => {
@@ -294,21 +294,20 @@ describe("Profile routes (T-074)", () => {
       expect(res.status).toBe(401);
     });
 
-    // T-091: confirm /profile/me resolves the same user payload when the
-    // bearer is an OAuth access token (synthetic ApiKey with `tenant_id`
-    // populated from the grant) — matches the userinfo path. The earlier
-    // smoke report described this as "null fields" because optional
-    // first_name / last_name / bio were unset; the resolution path itself
-    // works fine. This test locks in that contract.
+    // Confirm /profile/me resolves the same user payload when the bearer
+    // is an OAuth access token (synthetic ApiKey with `tenant_id` populated
+    // from the grant) — matches the userinfo path. Optional fields
+    // (first_name / last_name / bio) may be unset; the resolution path
+    // itself must work regardless.
     it("returns the populated profile when authenticated by an OAuth bearer", async () => {
       const u = await provisionUser(hosted, {
         handle: "olive",
         email: "olive@example.com",
       });
 
-      // T-131: mint an OAuth bearer through the new plugin-tables setup
-      // helper. Same end-to-end behaviour the old createClient + items.create
-      // + createToken three-step produced — but writes into auth_oauth_*.
+      // Mint an OAuth bearer through the plugin-tables setup helper.
+      // Writes into auth_oauth_*, same end-to-end behaviour as creating
+      // a client + token via the raw three-step.
       const { token: rawToken } = await seedOauthBearer(
         hosted.storage,
         ["openid", "profile", "email"],

@@ -354,7 +354,7 @@ describe("POST /items/bulk-actions (async)", () => {
       ctx.adminKey,
     );
 
-    // T-079: audit insert is fire-and-forget — poll until our row lands.
+    // Audit insert is fire-and-forget — poll until our row lands.
     interface AuditDataShape {
       data: {
         action: string;
@@ -388,7 +388,7 @@ describe("POST /items/bulk-actions (async)", () => {
     );
     expect(mine).toBeDefined();
     expect(mine?.resource_type).toBe("items.bulk_action");
-    // T-218: audit entry now also carries the job id for traceability.
+    // The audit entry also carries the job id for traceability.
     expect(
       (mine?.details as { job_id?: string } | undefined)?.job_id,
     ).toBeDefined();

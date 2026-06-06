@@ -12,8 +12,7 @@
 #      (`env.RUNTIME_CONTROL.fetch(...)`) at path
 #      `/webhooks/inbound/:connection_id`. No edge / HTTP fetch — the
 #      bound runtime-control Worker's fetch handler receives the
-#      request directly. Replaces the workers.dev URL workaround
-#      that landed in T-244 (T-250).
+#      request directly.
 #
 # Secrets (set via `wrangler secret put --env <env>`):
 #   - CONNECTION_ID   the system.connection id baked into the
@@ -23,9 +22,8 @@
 #                     the Marfa server.
 #
 # Service Bindings (configured per-env below):
-#   - RUNTIME_CONTROL → marfa-runtime-control-<env>. Replaces the
-#                       prior `WEBHOOK_URL` HTTP-fetch path. No DNS,
-#                       no TLS, no edge involved.
+#   - RUNTIME_CONTROL → marfa-runtime-control-<env>. No DNS, no TLS,
+#                       no edge involved.
 #
 # This Worker has NO durable state — it's a stateless edge translator
 # from "email envelope" to "signed JSON webhook". Reliability comes

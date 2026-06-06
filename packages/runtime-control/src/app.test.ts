@@ -68,7 +68,7 @@ describe("control plane app — base routes", () => {
     expect(res.status).toBe(503);
   });
 
-  it("returns 501 for OAuth lease (Layer 2 wires it)", async () => {
+  it("returns 501 for OAuth lease (not yet implemented)", async () => {
     const app = buildApp();
     const res = await app.request(
       "/lease/conn_123/oauth/cap_calendar_read",

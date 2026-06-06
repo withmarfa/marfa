@@ -244,7 +244,7 @@ describe("publish — hop budget enforcement", () => {
     expect(result).toBeUndefined();
   });
 
-  it("enforces budget on connector-originated events even when hopCount=0 (T-008)", async () => {
+  it("enforces budget on connector-originated events even when hopCount=0", async () => {
     // A misbehaving connector that stamps `originatingConnectionId` but
     // leaves hopCount at 0 must not slip past the budget. The fix
     // attributes by origin presence — effective hopCount floors at 1.
@@ -266,7 +266,7 @@ describe("publish — hop budget enforcement", () => {
     expect(overflow).toHaveBeenCalledTimes(1);
   });
 
-  it("admits human-originated events with no origin and hopCount=0 (T-008)", async () => {
+  it("admits human-originated events with no origin and hopCount=0", async () => {
     // A human caller MUST omit both fields — the budget bypass for that
     // shape stays in place. Regression in case the new attribution logic
     // accidentally narrowed it.
@@ -360,10 +360,10 @@ describe("defaultCycleDetectionWiring — per-tenant hop-budget cache (§3.9)", 
 });
 
 // ---------------------------------------------------------------------------
-// T-144 — ALS-driven cycle resolution
+// ALS-driven cycle resolution
 // ---------------------------------------------------------------------------
 
-describe("publish — cycle resolution from cycleRequestContext (T-144)", () => {
+describe("publish — cycle resolution from cycleRequestContext", () => {
   it("reads cycle metadata from the ALS when the event arg omits it", async () => {
     initEventLog(ctx.storage.eventLog);
     const item = fakeItem("item-als-resolved");

@@ -7,11 +7,10 @@ import {
 import type { DlqProducer } from "../queue-consumer.js";
 
 /**
- * Routing tests for `buildConsumerEnv` (T-103). The wrapper's own
- * tests in `queue-consumer.test.ts` mock `dlqProducerFor` directly,
- * which doesn't exercise the env→consumer wiring: a swap in the
- * worker-entry switch (e.g. webhook → SCHEDULED_POLL) would still
- * pass those tests but route DLQ messages to the wrong queue at
+ * Routing tests for `buildConsumerEnv`. The queue-consumer tests mock
+ * `dlqProducerFor` directly, which doesn't exercise the env→consumer
+ * wiring: a swap in the worker-entry switch (e.g. webhook → SCHEDULED_POLL)
+ * would still pass those tests but route DLQ messages to the wrong queue at
  * runtime. These tests pin the kind → binding map.
  */
 
@@ -39,7 +38,7 @@ const CONFIG: IntegrationWorkerConfig = {
   echo: { echo_ttl_seconds: 60 },
 };
 
-describe("buildConsumerEnv.dlqProducerFor (T-103 routing)", () => {
+describe("buildConsumerEnv.dlqProducerFor routing", () => {
   it("routes webhook → WEBHOOK_RECEIPT_DLQ_QUEUE", () => {
     const wh = makeProducer("webhook");
     const env = { ...makeBaseEnv(), WEBHOOK_RECEIPT_DLQ_QUEUE: wh };

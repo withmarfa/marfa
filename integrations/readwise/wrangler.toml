@@ -47,7 +47,6 @@ class_name = "PerConnectionState"
 tag = "v1"
 new_sqlite_classes = ["PerConnectionState"]
 
-# T-103: DLQ producer bindings.
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
 queue = "marfa-scheduled-poll-readwise-staging"

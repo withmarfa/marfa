@@ -69,11 +69,11 @@ describe("echo suppression", () => {
     expect(await echo.inLagWindow("ext_123")).toBe(false);
   });
 
-  it("inLagWindow deletes the underlying record on expiry (T-016)", async () => {
-    // Pre-T-016 a connector that wrote to an external_id and never read
-    // it back via shouldSkipReactive would leak the DO storage row
-    // forever. inLagWindow now mirrors shouldSkipReactive's
-    // expire-on-read so cleanup happens on every access path.
+  it("inLagWindow deletes the underlying record on expiry", async () => {
+    // A connector that writes to an external_id and never reads it back
+    // via shouldSkipReactive would leak the storage row forever.
+    // inLagWindow mirrors shouldSkipReactive's expire-on-read so cleanup
+    // happens on every access path.
     let now = 1_000_000;
     const storage = createInMemoryStorage();
     const echo = createEchoSuppression(
@@ -92,10 +92,9 @@ describe("echo suppression", () => {
   });
 
   it("expire-on-read holds at scale (1000 records, half un-read, all gone post-window)", async () => {
-    // Direct exercise of the AC pattern from T-016: 1000 records, leave
-    // half un-read, advance past the lag window, walk every key — all
-    // gone. We "walk" by calling inLagWindow on each, since that's now
-    // an expire-on-read path.
+    // 1000 records, leave half un-read, advance past the lag window,
+    // walk every key — all gone. We "walk" by calling inLagWindow on
+    // each, since that's an expire-on-read path.
     let now = 1_000_000;
     const storage = createInMemoryStorage();
     const echo = createEchoSuppression(

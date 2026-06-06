@@ -1,40 +1,35 @@
 /**
- * T-189 regression — the streaming-RLS cleanup must scope its reset
- * to the role + tenant GUC only, NOT use `DISCARD ALL`.
+ * Regression guard: the streaming-RLS cleanup must scope its reset to the
+ * role + tenant GUC only, NOT use `DISCARD ALL`.
  *
- * Pre-fix the cleanup ran `DISCARD ALL` on stream release. That
- * deallocated every server-side prepared statement on the recycled
- * connection. postgres.js retains a client-side `statements` cache
- * keyed per physical connection, so the next query that bound to a
- * cached statement name would surface `prepared statement "<name>"
- * does not exist` (SQLSTATE 26000). postgres.js does auto-retry on
- * the `FetchPreparedStatement` routine, but under concurrent SSE +
- * writes the retry window races against in-flight pipelined queries
- * — the QA Session 1 reproduction observed ~20% POST /items 500s.
+ * Using `DISCARD ALL` on stream release deallocates every server-side
+ * prepared statement on the recycled connection. postgres.js retains a
+ * client-side `statements` cache keyed per physical connection, so the
+ * next query that bound to a cached statement name surfaces
+ * `prepared statement "<name>" does not exist` (SQLSTATE 26000).
+ * Under concurrent SSE + writes the retry window races against in-flight
+ * pipelined queries and caused ~20% POST /items 500s.
  *
- * The fix scopes the reset to exactly what the cleanup invariant
- * requires:
+ * The correct reset scopes to exactly what the cleanup invariant requires:
  *
  *   - `RESET ROLE` — drop the `marfa_app` elevation.
  *   - `set_config('marfa.tenant_id', '', false)` — clear the GUC the
  *     RLS policies read.
  *
  * Prepared statements survive untouched. RLS policies consult
- * `current_setting('marfa.tenant_id')` at execute time, so a
- * statement compiled while the GUC held tenant A executes safely
- * once the GUC flips to tenant B (or clears) — the cache is value-
- * agnostic with respect to tenant context.
+ * `current_setting('marfa.tenant_id')` at execute time, so a statement
+ * compiled while the GUC held tenant A executes safely once the GUC flips
+ * to tenant B (or clears) — the cache is value-agnostic.
  *
- * Two assertions land below:
+ * Two assertions:
  *
- *   1. **Server-side prepared statements survive release.** A
- *      session-level prepared statement created before the streaming
- *      reservation must still exist after `ctx.release()`. Under
- *      `DISCARD ALL` it would be deallocated; under the scoped reset
- *      it persists. This is the direct lock-in against a revert.
- *   2. **Role + tenant GUC are cleared on release.** The cleanup
- *      invariant must still hold — a connection returned to the pool
- *      cannot carry the `marfa_app` role or a leaked `marfa.tenant_id`.
+ *   1. **Server-side prepared statements survive release.** A session-level
+ *      prepared statement created before the streaming reservation must
+ *      still exist after `ctx.release()`. Under `DISCARD ALL` it would be
+ *      deallocated; under the scoped reset it persists.
+ *   2. **Role + tenant GUC are cleared on release.** A connection returned
+ *      to the pool cannot carry the `marfa_app` role or a leaked
+ *      `marfa.tenant_id`.
  *
  * Postgres-only — RLS is a PG feature.
  */
@@ -47,7 +42,7 @@ import { acquireStreamRls } from "./streaming-rls.js";
 const isPg = process.env.DB_DIALECT === "pg";
 const url = process.env.DATABASE_URL ?? "";
 
-describe.skipIf(!isPg || !url)("streaming-rls cleanup (T-189)", () => {
+describe.skipIf(!isPg || !url)("streaming-rls cleanup", () => {
   it("preserves server-side prepared statements across release (no DISCARD ALL)", async () => {
     // max: 1 ensures the streaming `reserve()` and the post-release
     // queries land on the same physical connection — deterministic
@@ -57,8 +52,8 @@ describe.skipIf(!isPg || !url)("streaming-rls cleanup (T-189)", () => {
       // eslint-disable-next-line @typescript-eslint/no-empty-function
       onnotice: () => {},
     });
-    const stmtName = `marfa_t189_test_${Math.random().toString(36).slice(2, 10)}`;
-    const tenantId = "t-189-cache-test";
+    const stmtName = `marfa_rls_test_${Math.random().toString(36).slice(2, 10)}`;
+    const tenantId = "streaming-rls-cache-test";
     try {
       // Create a session-level prepared statement directly. PREPARE
       // is server-side; the statement lives until DEALLOCATE,
@@ -100,7 +95,7 @@ describe.skipIf(!isPg || !url)("streaming-rls cleanup (T-189)", () => {
       // eslint-disable-next-line @typescript-eslint/no-empty-function
       onnotice: () => {},
     });
-    const tenantId = "t-189-invariant-test";
+    const tenantId = "streaming-rls-invariant-test";
     try {
       const ctx = await acquireStreamRls(client, tenantId);
       // During the stream: role is marfa_app + GUC is set. Query via

@@ -258,7 +258,7 @@ describe("ConnectionClient", () => {
   });
 });
 
-describe("ConnectionClient cycle headers (T-039)", () => {
+describe("ConnectionClient cycle headers", () => {
   it("stamps X-Marfa-Cycle-Origin / X-Marfa-Cycle-Hop on createItem when cycleParent is the parent", async () => {
     const captured: Captured[] = [];
     const client = new ConnectionClient({
@@ -386,7 +386,7 @@ describe("ConnectionClient cycle headers (T-039)", () => {
 });
 
 describe("ConnectionClient — server-response unwrap", () => {
-  it("getItem unwraps the { item, metadata } server envelope (T-236 substrate fix)", async () => {
+  it("getItem unwraps the { item, metadata } server envelope", async () => {
     const captured: Captured[] = [];
     const client = new ConnectionClient({
       apiUrl: "https://api.example.com",
@@ -394,11 +394,8 @@ describe("ConnectionClient — server-response unwrap", () => {
       refreshCredential: () => Promise.resolve(REFRESHED),
       fetch: makeFetch(
         [
-          // `GET /items/:id` returns `{ item, metadata }` from the
-          // server. Pre-fix, the SDK returned the wrapper as the
-          // ItemResource, so handler code reading `item.id` and
-          // `item.properties.<x>` saw `undefined` — visible in T-236's
-          // hosted Marfa walkthrough as `title: null` on outbound tasks.
+          // `GET /items/:id` returns `{ item, metadata }` from the server;
+          // the client unwraps to the bare ItemResource.
           () =>
             new Response(
               JSON.stringify({
@@ -464,7 +461,7 @@ describe("ConnectionClient — server-response unwrap", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ConnectionClient.uploadBlob (T-239)
+// ConnectionClient.uploadBlob
 //
 // The SDK forwards raw bytes to the server's `POST /blobs` route using the
 // connection's runtime credential. Server-side concerns (tenant scoping, R2
@@ -515,7 +512,7 @@ function makeUploadFetch(
   }) as typeof fetch;
 }
 
-describe("ConnectionClient.uploadBlob (T-239)", () => {
+describe("ConnectionClient.uploadBlob", () => {
   const PDF_BYTES = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e]);
   const okResponse = () =>
     new Response(

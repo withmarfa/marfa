@@ -1,9 +1,8 @@
 /**
- * OAuth bootstrap routes — Layer 3 substrate.
+ * OAuth bootstrap routes.
  *
  * Two endpoints that complete the OAuth Authorization Code dance for
- * connector connections (the inbound side of WS3's connector OAuth
- * proxy story):
+ * connector connections:
  *
  *   - `POST /connections/:id/oauth/start` (admin-gated): builds the
  *     upstream provider's authorize URL with a server-signed `state`
@@ -59,12 +58,11 @@ interface OAuthAuthorizeConfig {
   /** Comma-separated default scopes to request when the start request
    *  doesn't override. */
   oauth_default_scope: string | null;
-  /** Provider-specific authorize-URL hints baked into the credential
-   *  (T-259) — e.g. `{ access_type: "offline", prompt: "consent" }` for
-   *  Google to guarantee a `refresh_token` on the code exchange.
-   *  Merged into the authorize URL on `/oauth/start`; the caller's
-   *  `extra_params` overrides per-key. `null` when the credential has
-   *  no defaults declared. */
+  /** Provider-specific authorize-URL hints baked into the credential —
+   *  e.g. `{ access_type: "offline", prompt: "consent" }` for Google to
+   *  guarantee a `refresh_token` on the code exchange. Merged into the
+   *  authorize URL on `/oauth/start`; the caller's `extra_params` overrides
+   *  per-key. `null` when the credential has no defaults declared. */
   authorize_extra_params: Record<string, string> | null;
 }
 
@@ -88,14 +86,14 @@ async function readAuthorizeConfig(
       "Connection has no credential_ref — cannot start OAuth flow",
     );
   }
-  // T-235: thread the connection's tenant into the credential lookup.
-  // Both call sites for `readAuthorizeConfig` resolve the connection
-  // through an untenanted lookup (admin start route, unauthenticated
-  // provider callback) — once the connection is in hand, its
-  // `tenant_id` is the load-bearing input to fence the credential
-  // resolution. The install pipeline enforces same-tenant
-  // `credential_ref` on create, so any legitimately-installed
-  // reference IS in the same tenant; this is defence-in-depth.
+  // Thread the connection's tenant into the credential lookup. Both call
+  // sites for `readAuthorizeConfig` resolve the connection through an
+  // untenanted lookup (admin start route, unauthenticated provider
+  // callback) — once the connection is in hand, its `tenant_id` is the
+  // load-bearing input to fence the credential resolution. The install
+  // pipeline enforces same-tenant `credential_ref` on create, so any
+  // legitimately-installed reference is in the same tenant; this is
+  // defence-in-depth.
   const credential = await storage.items.get(
     credentialRef,
     connection.tenant_id ?? undefined,
@@ -130,10 +128,10 @@ async function readAuthorizeConfig(
       "Connection's credential is missing required OAuth provider config (kind:oauth_token + oauth_authorize_url + oauth_token_url + oauth_client_id + secret_encrypted)",
     );
   }
-  // T-259 — defensively validate the shape (Record<string, string>) so a
-  // malformed JSON value on the credential row doesn't poison the
-  // authorize URL with `undefined`-stringified values. Anything that
-  // isn't a plain object of string→string is treated as absent.
+  // Defensively validate the shape (Record<string, string>) so a malformed
+  // JSON value on the credential row doesn't poison the authorize URL with
+  // `undefined`-stringified values. Anything that isn't a plain object of
+  // string→string is treated as absent.
   let authorize_extra_params: Record<string, string> | null = null;
   if (
     cfg.authorize_extra_params &&
@@ -324,8 +322,8 @@ export interface OAuthCallbackOptions {
  * request's `redirect_uri` must match one entry exactly (string equality
  * after both sides are URL-canonicalised — protocol, host, port, path).
  * Empty list = unenforced (dev / self-hosted convenience). Hosted
- * deployments MUST set this via `MARFA_OAUTH_REDIRECT_ALLOWLIST` to close
- * the open-redirect-via-OAuth class T-010 covers.
+ * deployments MUST set this via `MARFA_OAUTH_REDIRECT_ALLOWLIST` to prevent
+ * open-redirect attacks via the OAuth start flow.
  */
 export interface OAuthStartOptions {
   redirectUriAllowlist?: readonly string[];
@@ -370,8 +368,8 @@ function isRedirectAllowed(
  *     extra_params?: Record<string, string>  // e.g. {access_type: "offline", prompt: "consent"}
  *   }
  *
- * PKCE (T-010): every flow includes `code_challenge` + `code_challenge_method=S256`.
- * The verifier is generated server-side and stored in the encrypted state
+ * Every flow includes `code_challenge` + `code_challenge_method=S256`. The
+ * verifier is generated server-side and stored in the encrypted state
  * envelope; the callback exchanges it at the token endpoint. There is no
  * non-PKCE path — the connector OAuth bootstrap requires it unconditionally.
  */
@@ -446,12 +444,11 @@ export function oauthStartRoutes(
       code_challenge_method: "S256",
     });
     if (scope.length > 0) params.set("scope", scope);
-    // T-259 — credential-baked defaults FIRST, caller's override SECOND.
+    // Credential-baked defaults go in FIRST, caller's override SECOND.
     // The latter wins per-key (each `params.set` overwrites). This lets
-    // a Google credential carry `access_type=offline` + `prompt=consent`
-    // by default so every consumer (install pipeline, manual curl,
-    // future re-auth flows) gets the refresh-token-bearing dance
-    // without having to remember the params.
+    // a credential carry defaults like `access_type=offline` +
+    // `prompt=consent` so every consumer gets the right params without
+    // having to specify them each time.
     if (config.authorize_extra_params) {
       for (const [k, v] of Object.entries(config.authorize_extra_params)) {
         params.set(k, v);
@@ -569,10 +566,9 @@ export function oauthCallbackRoutes(
       return c.html(renderErrorPage(reason, 400), 400);
     }
 
-    // PKCE: every flow started post-T-010 carries a code_verifier in the
-    // state envelope. A missing verifier means the state was issued by an
-    // older code path or by a hostile caller — refuse outright rather
-    // than trying to exchange without PKCE.
+    // Every flow carries a code_verifier in the state envelope. A missing
+    // verifier means the state was issued by a hostile caller or a stale
+    // code path — refuse outright rather than attempting a non-PKCE exchange.
     if (typeof envelope.code_verifier !== "string") {
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,

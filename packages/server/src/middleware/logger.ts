@@ -63,12 +63,10 @@ const LEVEL_TO_SEVERITY: Record<LogLevel, SeverityNumber> = {
 };
 
 /**
- * T-275: mirror a log line to the OpenTelemetry logs pipeline. A pure no-op
+ * Mirror a log line to the OpenTelemetry logs pipeline. A pure no-op
  * unless a global `LoggerProvider` is registered by `instrumentation.ts`
- * (i.e. only when `MARFA_OTEL_ENABLED=true` with a logs endpoint). The OTLP
- * log exporter ships these to PostHog in hosted mode. PII redaction runs in
- * the `PiiRedactionLogRecordProcessor` before export; the `log()` body /
- * request line is Marfa-controlled and safe.
+ * (i.e. only when `MARFA_OTEL_ENABLED=true` with a logs endpoint). PII
+ * redaction runs in the `PiiRedactionLogRecordProcessor` before export.
  */
 function emitOtelLog(
   level: LogLevel,
@@ -133,8 +131,8 @@ export function loggerMiddleware() {
 
     process.stdout.write(JSON.stringify(entry) + "\n");
 
-    // T-275: mirror to OTel logs (no-op unless a LoggerProvider is
-    // registered). Severity tracks the response status.
+    // Mirror to OTel logs (no-op unless a LoggerProvider is registered).
+    // Severity tracks the response status.
     const level: LogLevel =
       entry.status >= 500 ? "error" : entry.status >= 400 ? "warn" : "info";
     emitOtelLog(level, `${entry.method} ${entry.path}`, { ...entry });

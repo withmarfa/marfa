@@ -1,13 +1,12 @@
 /**
- * Tests for `cycleMiddleware` (T-039).
+ * Tests for `cycleMiddleware`.
  *
  * Exercises every resolution path: header pair (connector continuing a
  * chain), api-key fallback (connector chain head — runtime credential
  * and OAuth), and the human sentinel.
  *
- * Mounted alongside `clientIpMiddleware` and `authMiddleware` in
- * `app.ts`; these tests stand up a minimal Hono app with the same
- * mounting order so the real middleware composition is exercised.
+ * These tests stand up a minimal Hono app with the same mounting order
+ * as `app.ts` so the real middleware composition is exercised.
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
@@ -26,8 +25,8 @@ function buildApp(opts?: { apiKey?: ApiKey | undefined }): Hono<AppEnv> {
   });
   app.use("*", cycleMiddleware());
   app.get("/echo", (c) => c.json({ cycle: c.var.cycle }));
-  // T-144: read the ALS-stored value from inside the handler so tests
-  // can assert that `c.var.cycle` and `cycleRequestContext.getStore()`
+  // Read the ALS-stored value from inside the handler so tests can
+  // assert that `c.var.cycle` and `cycleRequestContext.getStore()`
   // resolve to the same shape (the middleware writes both in lockstep).
   app.get("/echo-both", (c) => {
     const als = cycleRequestContext.getStore() ?? null;
@@ -200,7 +199,7 @@ describe("cycleMiddleware", () => {
     });
   });
 
-  describe("cycleRequestContext — ALS lockstep (T-144)", () => {
+  describe("cycleRequestContext — ALS lockstep", () => {
     it("writes the resolved cycle to BOTH c.var.cycle AND cycleRequestContext", async () => {
       const app = buildApp({
         apiKey: apiKey({

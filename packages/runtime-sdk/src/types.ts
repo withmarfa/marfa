@@ -49,13 +49,13 @@ export function nextHopMetadata(
 
 /**
  * Stamped on the message body by the queue-consumer wrapper when a
- * handler permanently fails (T-103). Routes through the per-Worker
- * DLQ producer binding so `cf-queues-pull` peek surfaces a real reason
- * rather than `null`. Optional because:
+ * handler permanently fails. Routes through the per-Worker DLQ producer
+ * binding so `cf-queues-pull` peek surfaces a real reason rather than
+ * `null`. Optional because:
  *
  *   - Messages on the main queue never carry this — it's a DLQ marker.
  *   - The wrapper only stamps when a `dlqProducerFor` binding is wired,
- *     so integrations without DLQ-routing keep their old behaviour.
+ *     so integrations without DLQ-routing keep their existing behaviour.
  *   - DLQ landings via Cloudflare's auto-routing (`attempts > max_retries`
  *     on a `retry: true` loop) can't be enriched in flight, so peek
  *     output for those still shows `null` — see the route's fallback.
@@ -81,8 +81,8 @@ export interface QueueEnvelopeBase {
    *  and for activity emission attribution. */
   tenant_id?: string;
   /** Set only on messages routed to a DLQ by the runtime-sdk consumer
-   *  wrapper on permanent failure (T-103). Read by `cf-queues-pull`
-   *  peek to populate `failure_reason`. */
+   *  wrapper on permanent failure. Read by `cf-queues-pull` peek to
+   *  populate `failure_reason`. */
   _failure_reason?: FailureReason;
 }
 
@@ -95,10 +95,9 @@ export interface WebhookMessage extends QueueEnvelopeBase {
   /**
    * Raw body, base64-encoded so it survives JSON serialisation through
    * the Cloudflare Queue. The SDK's `buildConnectionContext` decodes to
-   * `ArrayBuffer` and surfaces it as `body` on the handler input
-   * (T-009). Bodies > 256KB will eventually be handed off via R2 with a
-   * presigned URL substituted (`body_url` populated); the SDK resolves
-   * transparently. R2 wiring lands in Layer 2.
+   * `ArrayBuffer` and surfaces it as `body` on the handler input.
+   * Bodies > 256KB are handed off via R2 with a presigned URL
+   * substituted (`body_url` populated); the SDK resolves transparently.
    */
   body_base64: string;
   body_url?: string;

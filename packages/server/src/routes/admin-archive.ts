@@ -29,10 +29,9 @@ interface ArchiveManifest {
   format: string;
   created_at: string;
   /**
-   * T-053: tenant_id stamped at export time. Used here to verify
-   * the importing admin's authority over the source tenant. An
-   * archive without this field restores as null, so single-tenant
-   * self-host archives keep working.
+   * tenant_id stamped at export time. Used here to verify the importing
+   * admin's authority over the source tenant. An archive without this
+   * field restores as null, so single-tenant self-host archives keep working.
    */
   tenant_id?: string | null;
   item_count: number;
@@ -49,10 +48,10 @@ const restoreArchiveRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      // T-053: platform admins targeting a specific tenant pass an
-      // explicit `?target_tenant_id=<id>`. Tenant-bound admins
-      // (tenant_admin / admin with tenant_id) may not override —
-      // the manifest tenant_id must match their own tenant.
+      // Platform admins targeting a specific tenant pass an explicit
+      // `?target_tenant_id=<id>`. Tenant-bound admins (tenant_admin /
+      // admin with tenant_id) may not override — the manifest
+      // tenant_id must match their own tenant.
       target_tenant_id: z
         .string()
         .optional()
@@ -124,12 +123,12 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     const itemLines: string[] = [];
     const blobUploads: Promise<void>[] = [];
     let blobCount = 0;
-    // T-053: resolve the tenant under which the archive will be
-    // restored. Tenant-bound admins use their own tenant; platform
-    // admins (no tenant_id on the key) MUST pass `target_tenant_id`
-    // explicitly. The empty-string sentinel still applies for
-    // single-tenant self-hosts (platform admin without a target
-    // param on a deployment whose archive has tenant_id = null).
+    // Resolve the tenant under which the archive will be restored.
+    // Tenant-bound admins use their own tenant; platform admins (no
+    // tenant_id on the key) MUST pass `target_tenant_id` explicitly.
+    // The empty-string sentinel still applies for single-tenant
+    // self-hosts (platform admin without a target param on a
+    // deployment whose archive has tenant_id = null).
     const callerTenant = callerKey.tenant_id;
     let restoreTenantId: string;
     if (callerTenant) {
@@ -230,18 +229,18 @@ export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
     inputStream.pipe(gunzip).pipe(extract);
     await entries;
 
-    // T-053: verify manifest.tenant_id against the resolved restore
-    // tenant. Three legitimate shapes:
+    // Verify manifest.tenant_id against the resolved restore tenant.
+    // Three legitimate shapes:
     //   - manifest.tenant_id is null/undefined → an untenanted archive
     //     or single-tenant self-host export. Allowed regardless of
-    //     restore tenant (the import semantics fall back to a NULL
-    //     tenant_id on items, matching the source shape).
+    //     restore tenant (import semantics fall back to NULL tenant_id
+    //     on items, matching the source shape).
     //   - manifest.tenant_id matches restoreTenantId → expected
     //     same-tenant round-trip.
     //   - mismatch → reject. Platform admins bypass via the explicit
     //     `target_tenant_id` query param: their resolved
-    //     restoreTenantId then equals the manifest, which lands in
-    //     the matching branch above.
+    //     restoreTenantId then equals the manifest, landing in the
+    //     matching branch above.
     // Closure-modified `manifest` — TS doesn't narrow through the
     // entry-handler closure, so cast back to the declared type for
     // the access. Null when no manifest.json was present (defensive;

@@ -1,5 +1,5 @@
 /**
- * Tests for the Integration registry + install pipeline (Layer 2 PR 1).
+ * Tests for the Integration registry + install pipeline.
  *
  * Covers:
  *   - POST /integrations: platform-credential gate, manifest validation,
@@ -516,18 +516,18 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-232 — catalogue visibility for tenant-scoped member tokens.
+// Catalogue visibility for tenant-scoped member tokens.
 //
 // Manifests register under platform credentials (is_platform: true), which
 // carry tenant_id: null. The default tenant-equality filter on items.list
-// hid them from any in-tenant caller — turning the marketplace surface
-// invisible to every real user. The fix opts the dedicated catalogue list
-// into `includePlatformScoped: true` so platform-scoped rows surface
-// alongside the caller's own; per-tenant integration rows must stay
-// isolated, and the generic /items route must stay strictly equality-fenced.
+// hides them from any in-tenant caller — turning the marketplace surface
+// invisible to every real user. The catalogue list opts into
+// `includePlatformScoped: true` so platform-scoped rows surface alongside
+// the caller's own; per-tenant integration rows must stay isolated, and the
+// generic /items route must stay strictly equality-fenced.
 // ---------------------------------------------------------------------------
 
-describe("GET /integrations — catalogue visibility (T-232)", () => {
+describe("GET /integrations — catalogue visibility", () => {
   async function mintTenantKey(
     tenantId: string,
     typePermissions: Record<string, "read" | "write" | "none"> = {},
@@ -684,10 +684,8 @@ describe("GET /integrations — catalogue visibility (T-232)", () => {
 
   it("does not widen the generic /items route — system.connection stays tenant-isolated", async () => {
     // Out-of-scope guard. The fix is local to the catalogue endpoint;
-    // a stray system.connection row with tenant_id IS NULL (known
-    // leftover dev data shape per the T-232 brief) must remain
+    // a stray system.connection row with tenant_id IS NULL must remain
     // invisible to a member token hitting the generic /items route.
-    // Mirrors the staging end-to-end check `curl /items?type=system.connection`.
     if (!ctx.storage.tenants) return;
     const tenant = await ctx.storage.tenants.create("tenant-items-gate");
     const memberKey = await mintTenantKey(tenant.id, {
@@ -729,24 +727,18 @@ describe("GET /integrations — catalogue visibility (T-232)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T-234 — platform-scoped get-by-id + install for tenant member callers.
+// Platform-scoped get-by-id + install for tenant member callers.
 //
 // The catalogue list endpoint opts into `includePlatformScoped: true` so
-// platform-scoped manifests surface to in-tenant callers (T-232). The
-// single-id `get` calls (`GET /integrations/:id`, `GET/POST
-// /integrations/:id/install`) and the admin install (`POST
-// /connections/install`) did not — they tenant-fenced through
-// `items.get(id, tenantId)` and therefore 404'd for any caller with a
-// real tenant. Catalogue listed manifests but trying to open or install
-// one threw `integration_not_found`.
-//
-// The fix adds `ItemGetOptions.includePlatformScoped` and threads it
-// through all four sites. The resulting install pipeline still stamps
-// the new `system.connection` with the caller's tenant_id (never the
-// manifest's null tenant) — the regression test below pins that.
+// platform-scoped manifests surface to in-tenant callers. The single-id
+// `get` calls (`GET /integrations/:id`, `GET/POST /integrations/:id/install`)
+// and the admin install (`POST /connections/install`) thread the same
+// option through `items.get`. The install pipeline still stamps the new
+// `system.connection` with the caller's tenant_id (never the manifest's
+// null tenant) — the regression test below pins that.
 // ---------------------------------------------------------------------------
 
-describe("GET /integrations/:id + /:id/install — platform-scope (T-234)", () => {
+describe("GET /integrations/:id + /:id/install — platform-scope", () => {
   async function mintTenantMember(
     tenantId: string,
     typePermissions: Record<string, "read" | "write" | "none"> = {
@@ -832,7 +824,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope (T-234)", () =
 
     const formBody = new URLSearchParams({
       decision: "approve",
-      label: "T-234-member-install",
+      label: "member-install",
     }).toString();
 
     const res = await ctx.app.request(`/integrations/${regBody.id}/install`, {

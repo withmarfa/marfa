@@ -2,8 +2,7 @@
 #
 # Deploy the runtime-control Worker by rendering the templated
 # wrangler.control.toml against the calling shell's environment and
-# invoking `wrangler deploy`. T-252 — closes the manual
-# substitute-deploy-revert ritual that preceded this script.
+# invoking `wrangler deploy`.
 #
 # Usage:
 #   ./infra/cloudflare/scripts/deploy-control.sh <staging|prod> [extra wrangler args]
@@ -113,10 +112,9 @@ fi
 echo "→ Rendered config preview (key bindings only):"
 grep -E '^name|^\[env\.[a-z]+\]|routes|kv_namespaces|account_id|CLOUDFLARE_ACCOUNT_ID' "$RENDERED_TOML" | sed 's/^/  /'
 
-# Pre-build workspace deps so the bundle picks up fresh dist artefacts —
-# mirrors scripts/deploy-worker.sh's T-251 behaviour. runtime-control
-# itself has no `build` script (bundled via wrangler), so this only
-# rebuilds upstream deps (@withmarfa/shared, @withmarfa/webhooks).
+# Pre-build workspace deps so the bundle picks up fresh dist artefacts.
+# runtime-control itself has no `build` script (bundled via wrangler),
+# so this only rebuilds upstream deps (@withmarfa/shared, @withmarfa/webhooks).
 echo "→ Pre-building workspace deps for @withmarfa/runtime-control"
 pnpm --filter "@withmarfa/runtime-control..." --if-present build
 

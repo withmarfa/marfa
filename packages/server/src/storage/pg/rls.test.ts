@@ -1,14 +1,12 @@
 /**
- * T-025 part 1 — Postgres RLS schema scaffold.
+ * Postgres RLS schema scaffold.
  *
  * Verifies the migration applied: `marfa_app` role exists, RLS is enabled
  * on every tenant-scoped table, and the per-table policies are present.
  *
  * Cross-tenant denial via the actual role-on-checkout path is tested in
- * T-025 part 2 (the connection-pool wiring isn't yet plugged in — see
- * config.ts `rlsEnforce` docstring).
- *
- * SQLite skips the entire suite — RLS is a Postgres-only concern.
+ * `rls-enforcement.test.ts`. SQLite skips the entire suite — RLS is a
+ * Postgres-only concern.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -17,7 +15,7 @@ import { createTestContext, type TestContext } from "../../test-utils.js";
 const dialect = process.env.DB_DIALECT ?? "sqlite";
 const isPg = dialect === "pg";
 
-describe.skipIf(!isPg)("Postgres RLS scaffold (T-025 part 1)", () => {
+describe.skipIf(!isPg)("Postgres RLS scaffold", () => {
   let ctx: TestContext;
   let pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
 

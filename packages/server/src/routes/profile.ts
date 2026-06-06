@@ -3,8 +3,8 @@
 // The wire shape is defined in @withmarfa/shared (`Profile`,
 // `UpdateProfileInput`) and validated by the Zod schemas below.
 //
-// T-074. Apps consume profile data through `/oauth/userinfo` gated on
-// the standard OIDC `profile` and `email` scopes; first-party callers
+// Apps consume profile data through `/oauth/userinfo` gated on the
+// standard OIDC `profile` and `email` scopes; first-party callers
 // (CLI, MCP, the user themselves) hit the endpoints in this file
 // directly with a bearer token resolving to a tenant.
 //

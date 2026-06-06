@@ -8,28 +8,18 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
- * T-026 acceptance — the cluster-shared regression test.
+ * Cluster-shared rate-limit regression test.
  *
- * The ticket calls for: "two concurrent processes against the shared
- * store don't double-handle". We model that here as two middleware
- * instances bound to the SAME `Storage` handle — every middleware
- * keeps its own in-process per-tenant-cap cache, but they share the
- * `rate_limit_windows` rows that hold the actual counters. That's the
- * property the regression is about: the SAME `(family, window_key)`
- * row gets seen by both readers, so the cap holds cluster-wide.
+ * Models two middleware instances bound to the SAME `Storage` handle —
+ * every middleware keeps its own in-process per-tenant-cap cache, but
+ * they share the `rate_limit_windows` rows that hold the actual
+ * counters. The key property: the SAME `(family, window_key)` row is
+ * seen by both readers, so the cap holds cluster-wide.
  *
- * Going one tier higher — spawning real child processes that each boot
- * a Hono app — would test transport plumbing too (HTTP framing, body
- * parsing) but adds no signal at the rate-limit invariant itself. The
- * cold-eyes hand-back for the PR documents this scope deliberately:
- * regression-test scope is the counter row, not the transport stack.
- *
- * Test contexts default to SQLite. SQLite is single-process by file
- * lock, so on a single shared file two middleware instances serialise
- * upserts via the lock — exactly the behaviour we want for the
- * assertion. The PG matrix exercises the same scenarios via the
- * dialect-specific upsert path; both share the row, both honour the
- * cap.
+ * SQLite is single-process by file lock, so on a single shared file
+ * two middleware instances serialise upserts via the lock — exactly
+ * the behaviour we want for the assertion. The PG matrix exercises the
+ * same scenarios via the dialect-specific upsert path.
  */
 
 let ctx: TestContext | undefined;
@@ -87,7 +77,7 @@ async function probe(app: Hono<AppEnv>): Promise<Response> {
   return await app.fetch(new Request("http://test/probe", { method: "GET" }));
 }
 
-describe("rate-limit middleware — cluster-shared cap (T-026)", () => {
+describe("rate-limit middleware — cluster-shared cap", () => {
   it("two instances against one DB cannot collectively exceed the per-credential cap", async () => {
     // GET requests double the configured cap, so with defaultLimit=5
     // the effective cap is 10. Send 12 requests alternating across the

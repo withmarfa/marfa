@@ -1,22 +1,22 @@
 /**
- * T-116: PG account hard-delete cascade.
+ * PG account hard-delete cascade.
  *
  * Tears down every artefact tied to an `auth_user.id` in a single
  * transaction. Order is chosen so each step's preconditions are
  * satisfied by the previous step's writes; rollback on any failure
  * leaves the account in `pending_deletion` for the next purger tick.
  *
- * **T-136 race-safety re-check (step 0).** Before any writes, the
- * cascade does `SELECT ... FOR UPDATE` on the `auth_user` row and
- * verifies `deletion_state === 'pending_deletion'` AND
- * `pending_deletion_at < cutoffIso`. If either predicate fails — the
- * user cancelled between the purger's `listPendingDeletionDue` and
- * this transaction acquiring the row lock, or a fresh requestDelete
- * landed but hasn't yet aged into the grace cutoff — the cascade
- * returns `false` without touching anything. The `FOR UPDATE` lock
- * blocks any concurrent `cancelPendingDeletion` UPDATE on the same
- * row until this transaction either commits the cascade or rolls
- * back. Returns `true` when the cascade actually ran.
+ * **Race-safety re-check (step 0).** Before any writes, the cascade does
+ * `SELECT ... FOR UPDATE` on the `auth_user` row and verifies
+ * `deletion_state === 'pending_deletion'` AND
+ * `pending_deletion_at < cutoffIso`. If either predicate fails — the user
+ * cancelled between the purger's `listPendingDeletionDue` and this
+ * transaction acquiring the row lock, or a fresh requestDelete landed but
+ * hasn't yet aged into the grace cutoff — the cascade returns `false`
+ * without touching anything. The `FOR UPDATE` lock blocks any concurrent
+ * `cancelPendingDeletion` UPDATE on the same row until this transaction
+ * either commits the cascade or rolls back. Returns `true` when the
+ * cascade actually ran.
  *
  * Step ordering (after the step-0 re-check):
  *   1. Resolve `users.tenant_id`. If no row, only the auth_user
@@ -87,15 +87,14 @@ export async function pgDeleteAccountCascade(
   // transaction; on rollback the affected items still exist so a
   // residual FTS row is self-healing on the next purger tick.)
   //
-  // T-025 RLS bypass: this is a privileged operation that crosses
-  // tenant boundaries (auth_user is in the auth_* island; the user's
-  // tenant data lives behind the per-tenant RLS policies). The store
-  // calls run on the wrapped instance which falls through to the base
-  // when no ALS context is installed; the purger doesn't install
-  // one, so the cascade runs as the connection owner and is not
-  // policy-gated. Documented.
+  // RLS bypass: this is a privileged operation that crosses tenant
+  // boundaries (auth_user is in the auth_* island; the user's tenant data
+  // lives behind the per-tenant RLS policies). The store calls run on the
+  // wrapped instance which falls through to the base when no ALS context
+  // is installed; the purger doesn't install one, so the cascade runs as
+  // the connection owner and is not policy-gated.
   return db.transaction(async (tx) => {
-    // ---- 0. T-136 race-safety re-check. ----------------------------------
+    // ---- 0. Race-safety re-check. ----------------------------------------
     // SELECT ... FOR UPDATE on the auth_user row. The lock blocks any
     // concurrent cancelPendingDeletion UPDATE until this transaction
     // commits or rolls back. If state is no longer pending_deletion OR

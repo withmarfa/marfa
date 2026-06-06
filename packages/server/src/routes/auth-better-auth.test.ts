@@ -82,8 +82,8 @@ describe("better-auth /auth/* surface", () => {
         `sign-up/email returned ${String(signUpRes.status)}: ${text.slice(0, 600)}`,
       );
     }
-    // Wave C PR2: requireEmailVerification blocks sign-in until the
-    // user clicks the verify link. Stand-in for that here.
+    // requireEmailVerification blocks sign-in until the user clicks the
+    // verify link. Stand-in for that here.
     await markEmailVerified(ctx.storage, "carol@example.com");
 
     const res = await signIn(ctx, "carol@example.com", "correct horse battery");
@@ -184,7 +184,7 @@ describe("better-auth /auth/* surface", () => {
         `sign-up/email returned ${String(signUpRes.status)}: ${text.slice(0, 400)}`,
       );
     }
-    // Wave C PR2: sign-up no longer auto-signs-in; verify + sign in
+    // requireEmailVerification means sign-up doesn't auto-sign-in; verify
     // explicitly so we have a session cookie to send back.
     await markEmailVerified(ctx.storage, "frank@example.com");
     const signInRes = await signIn(
@@ -296,16 +296,15 @@ describe("better-auth /auth/* surface", () => {
       code_challenge_methods_supported?: string[];
     };
     expect(body.issuer).toBeTruthy();
-    // T-131: endpoints moved under the @better-auth/oauth-provider plugin's
-    // basePath. The legacy /auth/authorize + /auth/token paths are gone;
-    // RPs reading the discovery doc follow the issued URLs (which include
-    // the /auth/oauth2/* path) — no client-side flow break.
+    // Endpoints live under the @better-auth/oauth-provider plugin's
+    // basePath (/auth/oauth2/*). RPs reading the discovery doc follow
+    // the issued URLs.
     expect(body.authorization_endpoint).toMatch(/\/auth\/oauth2\/authorize$/);
     expect(body.token_endpoint).toMatch(/\/auth\/oauth2\/token$/);
     expect(body.code_challenge_methods_supported).toEqual(["S256"]);
   });
 
-  it("T-158: discovery doc advertises the device_code grant + device_authorization_endpoint", async () => {
+  it("discovery doc advertises the device_code grant + device_authorization_endpoint", async () => {
     // RFC 8628 §4: clients discover the device-flow initiation endpoint
     // via the `device_authorization_endpoint` metadata field. The grant
     // type URN appears in `grant_types_supported` so conformant clients
@@ -338,7 +337,7 @@ describe("better-auth /auth/* surface", () => {
     expect(body.device_authorization_endpoint).toMatch(/\/auth\/device$/);
   });
 
-  it("T-158: openid-configuration also advertises the device_code grant", async () => {
+  it("openid-configuration also advertises the device_code grant", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
     const res = await request(
       ctx.app,
@@ -356,7 +355,7 @@ describe("better-auth /auth/* surface", () => {
     expect(body.device_authorization_endpoint).toMatch(/\/auth\/device$/);
   });
 
-  it("T-080: every discovery-doc URL field is prefixed with the configured authBaseUrl", async () => {
+  it("every discovery-doc URL field is prefixed with the configured authBaseUrl", async () => {
     const base = "https://example.test";
     ctx = await createTestContext({
       authAllowSignup: false,
@@ -370,15 +369,13 @@ describe("better-auth /auth/* surface", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
 
-    // T-131: the @better-auth/oauth-provider plugin sets the issuer to
-    // `${authBaseUrl}/auth` (basePath included) per its in-basePath
-    // serving model. The bare-root /.well-known endpoint we mount via
-    // the plugin's `oauthProviderAuthServerMetadata` helper re-publishes
-    // the same payload; RFC 8414 strict reading would prefer the issuer
-    // match the retrieval prefix, but most RPs only require consistency
-    // across token + id_token claims (which IS preserved — they all use
-    // the plugin's issuer string). Tracked as a follow-on if a strict
-    // RP surfaces the mismatch.
+    // The @better-auth/oauth-provider plugin sets the issuer to
+    // `${authBaseUrl}/auth` (basePath included). The bare-root
+    // /.well-known endpoint re-publishes the same payload; RFC 8414
+    // strict reading would prefer the issuer match the retrieval
+    // prefix, but most RPs only require consistency across token +
+    // id_token claims (preserved — they all use the plugin's issuer
+    // string).
     expect(body.issuer).toBe(`${base}/auth`);
 
     // Every absolute-URL field starts with the configured base. If the
@@ -402,10 +399,10 @@ describe("better-auth /auth/* surface", () => {
   it("/auth/grants returns app connections, /auth/grants/{id} revokes", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
 
-    // T-131: under the new surface, OAuth clients live in `auth_oauth_client`
-    // (owned by the @better-auth/oauth-provider plugin). The /auth/grants
-    // endpoint reads system.connection items directly — for this test we
-    // create the projection row with a fake client_id string. The /grants
+    // OAuth clients live in `auth_oauth_client` (owned by the
+    // @better-auth/oauth-provider plugin). The /auth/grants endpoint
+    // reads system.connection items directly — for this test we create
+    // the projection row with a fake client_id string. The /grants
     // listing doesn't validate against the client table.
     const fakeClientId = `client_${Math.random().toString(36).slice(2, 8)}`;
     const grant = await ctx.storage.items.create({
@@ -456,6 +453,6 @@ describe("better-auth /auth/* surface", () => {
     expect(list2.some((g) => g.id === grant.id)).toBe(false);
   });
 
-  // T-131: removed test for "/auth/clients" — that route is gone (the
-  // plugin owns client registration at /auth/oauth2/register).
+  // "/auth/clients" is gone — the plugin owns client registration at
+  // /auth/oauth2/register.
 });

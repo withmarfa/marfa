@@ -1,36 +1,25 @@
 /**
- * @better-auth/oauth-provider plugin wiring (T-131).
+ * @better-auth/oauth-provider plugin wiring.
  *
  * The OAuth protocol surface is owned by the @better-auth/oauth-provider
  * plugin; endpoints land under `/auth/oauth2/*` via Better Auth's
  * catch-all (basePath `/auth`).
  *
  * Three coupled pieces in this file:
- *   1. `buildAllowedScopes(...)`  — enumerates the Marfa scope grammar
- *       at instance-construction time from the type / edge registries
- *       so the plugin's allowlist accepts every concrete typed scope
- *       (`core.note:read`, `edge.parent-of:write`, …). Custom types
- *       registered at runtime require a server restart to surface
- *       (acceptable tradeoff; documented).
- *   2. `createOauthProviderConfig(...)` — returns the `OAuthOptions`
- *       passed to `oauthProvider({...})`. Wires:
- *         - opaque tokens hashed via Marfa's existing `hashApiKey(t,salt)`
- *           so the bearer middleware shares the same hash format
- *         - `marfa_at_` prefix on access tokens (bearer-middleware contract)
- *         - `marfa_rt_` prefix on refresh tokens
- *         - `clientReference` → tenant_id resolved via the hosted-mode
- *           users table (auth_user.id → users.tenant_id)
- *         - `customAccessTokenClaims` / `customIdTokenClaims` /
- *           `customUserInfoClaims` for OIDC profile + email + tenant_id
- *         - `schema` override mapping the plugin's model names onto
- *           our `auth_oauth_*` Drizzle tables
- *   3. `buildOauthHooks(...)` — the four `hooks.after` matchers that
- *       project plugin grant lifecycle into `system.connection` items
- *       and emit `auth.grant.created` / `auth.grant.revoked` audit rows.
- *       These are the user-facing surface — the `/auth/security` page
- *       reads `system.connection app` rows directly. Audit-row shapes
- *       are NEW under T-131 (the homegrown surface had no clean wrapper
- *       seam; the plugin's hooks API gives us one for the first time).
+ *   1. `buildAllowedScopes(...)` — enumerates the Marfa scope grammar at
+ *      instance-construction time from the type / edge registries so the
+ *      plugin's allowlist accepts every concrete typed scope
+ *      (`core.note:read`, `edge.parent-of:write`, …). Custom types
+ *      registered at runtime require a server restart to surface
+ *      (acceptable tradeoff; documented).
+ *   2. `buildOauthProviderPlugin(...)` — constructs the plugin with
+ *      opaque tokens hashed via Marfa's `hashApiKey(t, salt)`, the
+ *      `marfa_at_` / `marfa_rt_` prefixes, tenant binding via
+ *      `clientReference` + `postLogin.consentReferenceId`, and OIDC
+ *      custom claims for profile + email + tenant_id.
+ *   3. `buildOauthProjectionPlugin(...)` — the before-hook that
+ *      defends against refresh-token replay by pre-emptively revoking
+ *      access tokens when a stale refresh is detected.
  */
 
 import { oauthProvider } from "@better-auth/oauth-provider";
@@ -79,7 +68,7 @@ const METADATA_SUBRESOURCES = ["types"] as const;
  */
 export function buildAllowedScopes(): string[] {
   const out = new Set<string>([
-    // OIDC literals (T-074)
+    // OIDC literals
     "openid",
     "profile",
     "email",
@@ -119,7 +108,7 @@ export function buildAllowedScopes(): string[] {
 
 /**
  * Resolve a Better Auth user's tenant_id by joining through the `users`
- * table (the T-074 bridge). Returns `undefined` in keys-mode (no users
+ * table. Returns `undefined` in keys-mode (no users
  * table) or when the user has no tenant assigned yet.
  *
  * Used by:
@@ -177,11 +166,10 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     consentPage: "/auth/authorize",
 
     // ----- Dynamic client registration (RFC 7591) -----
-    // Mirrors today's behaviour: `POST /auth/clients` was a public,
-    // no-auth endpoint for the public-client model (PKCE replaces the
-    // client secret as the binding). The plugin's deprecation note
-    // (tied to MCP standardising unauth DCR) is a future-watch item;
-    // tracked in T-099.
+    // `POST /auth/clients` is a public, no-auth endpoint for the
+    // public-client model (PKCE replaces the client secret as the
+    // binding). The plugin's deprecation note on unauthenticated DCR
+    // is a future-watch item; revisit if MCP standardises it.
     allowDynamicClientRegistration: true,
     allowUnauthenticatedClientRegistration: true,
 
@@ -237,11 +225,11 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     clientRegistrationAllowedScopes: allowedScopes,
 
     // ----- Silence the OAuth discovery-doc location warning -----
-    // T-193: the plugin emits a WARN at construct time advising operators to
+    // The plugin emits a WARN at construct time advising operators to
     // serve the issuer-suffixed discovery URL
     // (`/.well-known/oauth-authorization-server/auth` for our `/auth`
     // basePath). Marfa deliberately serves the bare-root variant
-    // (`/.well-known/oauth-authorization-server` — see `app.ts:450`) and
+    // (`/.well-known/oauth-authorization-server` — see `app.ts`) and
     // documents the partial RFC 8414 §3 deviation in
     // `packages/server/CLAUDE.md` under "Discovery doc issuer field". The
     // `issuer` value matches what id_token signatures use, so RP-side token
@@ -379,22 +367,20 @@ export function buildOauthProjectionPlugin(opts: {
         ...(refreshHasher
           ? [
               {
-                // T-131 follow-on (refresh-replay): the plugin detects stale
+                // Refresh-replay defence: the plugin detects stale
                 // refresh tokens (rotation: old marked `revoked: true`,
                 // new issued; replay finds old → plugin deletes refresh
                 // chain + throws invalid_grant). The plugin does NOT
-                // delete access tokens issued from the same chain, leaving
-                // them valid until TTL (default 1h). We close that gap:
-                // on every /oauth2/token request with grant_type=
-                // refresh_token, we hash the request's refresh_token and
-                // peek at the row — if it exists AND revoked, this is a
-                // replay attempt and we pre-emptively delete access tokens
-                // for (clientId, userId). The plugin's own logic then
-                // runs (returning invalid_grant); access tokens are gone.
+                // delete access tokens from the same chain, leaving them
+                // valid until TTL (default 1h). We close that gap: on
+                // every /oauth2/token with grant_type=refresh_token, we
+                // hash the refresh token and peek at the row — if revoked,
+                // this is a replay and we pre-emptively delete access
+                // tokens for (clientId, userId). The plugin's own logic
+                // then runs (returning invalid_grant); access tokens gone.
                 //
-                // Best-effort — if the hash lookup misses or the cleanup
-                // fails, the request continues unmolested and the existing
-                // 1h TTL still bounds exposure. Idempotent on repeat calls.
+                // Best-effort — failures are logged, the 1h TTL still
+                // bounds exposure. Idempotent on repeat calls.
                 matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
                 handler: createAuthMiddleware(async (ctx: HookCtxLite) => {
                   try {
@@ -422,28 +408,21 @@ export function buildOauthProjectionPlugin(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * T-131 follow-on (refresh-replay): runs before the plugin handles a
- * `/oauth2/token` request. If the request body is a `grant_type=
- * refresh_token` request AND the supplied refresh token corresponds to
- * a row marked `revoked: true`, this is a replay attempt — the plugin
- * is about to delete the refresh chain + throw invalid_grant. We
- * pre-emptively delete access tokens for the same (clientId, userId)
- * so a parallel request can't slip through with one of them.
+ * Refresh-replay before-hook. Runs before the plugin handles a
+ * `/oauth2/token` request. If the request body is a
+ * `grant_type=refresh_token` request AND the supplied refresh token
+ * corresponds to a row marked `revoked: true`, this is a replay attempt
+ * — the plugin is about to delete the refresh chain + throw
+ * `invalid_grant`. We pre-emptively delete access tokens for the same
+ * (clientId, userId) so a parallel request can't slip through with one.
  *
- * Best-effort throughout: if the hash lookup misses (refresh row
- * already cleaned up), we skip silently. If access-token deletion
- * fails, we log and continue. The 1h TTL on access tokens always
- * bounds exposure regardless.
+ * Best-effort: if the hash lookup misses (refresh row already cleaned
+ * up), we skip silently. If access-token deletion fails, we log and
+ * continue. The 1h TTL on access tokens always bounds exposure.
  *
- * Why we don't also wire after-hooks for /oauth2/consent (projection),
- * /oauth2/revoke (cascade), /oauth2/token (last_used_at), /oauth2/end-
- * session (cascade): every one of those flows is owned by an explicit
- * Marfa-side handler that does the work deterministically (consent →
- * `POST /auth/authorize/decision`; revoke → `/auth/grants/:id/revoke`
- * and `DELETE /auth/grants/:id`; last_used_at → bearer middleware on
- * the next authenticated request). Adding after-hooks would double-write
- * or no-op. Kept the shell so the before-hook has a home, and so future
- * hook additions have a single place to land.
+ * The consent, revoke, last_used_at, and end-session flows are all owned
+ * by explicit Marfa-side handlers — adding after-hooks for those would
+ * double-write or no-op. This shell exists only for the before-hook.
  */
 async function detectAndZapReplayedAccessTokens(
   ctx: HookCtxLite,

@@ -123,11 +123,10 @@ describe("createTestHarness", () => {
     expect(mintCalls).toBe(3);
   });
 
-  it("decodes body_base64 → ArrayBuffer at the dispatcher seam (T-009)", async () => {
+  it("decodes body_base64 → ArrayBuffer at the dispatcher seam", async () => {
     // Round-trip the wire format through the dispatcher: enqueue with
     // body_base64; the SDK should hand the handler an ArrayBuffer with
-    // matching bytes. The base64 round-trip is the seam that broke 3 of
-    // 5 webhook integrations in production pre-T-009.
+    // matching bytes.
     const harness = createTestHarness({ integrationName: "marfa.test" });
     const original = "hello, webhook world";
     const bytes = new TextEncoder().encode(original);

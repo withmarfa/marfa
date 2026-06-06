@@ -1,14 +1,14 @@
 /**
- * T-131: tests for the /auth/authorize consent route + the
+ * Tests for the /auth/authorize consent route + the
  * /auth/authorize/decision proxy handler.
  *
- * Original coverage (T-131 hand-back):
+ * Coverage:
  *   - GET /auth/authorize without a session redirects to /auth/sign-in
  *   - GET /auth/authorize 4xxs when the plugin's signed query (`sig`)
  *     or `client_id` is missing
  *   - POST /auth/authorize/decision without a session redirects to /auth/sign-in
  *
- * Fix-up additions (post-review sweep):
+ * Additional cases:
  *   - F1: POST decision projection reads client_id from oauth_query, not the form
  *   - F2: POST decision accept=true with zero scopes → 302 to consent w/ error
  *   - F7: auth.grant.created audit row carries client_ip
@@ -392,7 +392,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(grant?.properties.client_id).not.toBe("ATTACKER_CONTROLLED_VALUE");
 
     // Audit row exists with the real client_id + the resolved client_ip.
-    // Audit insert is fire-and-forget (T-079) — poll briefly.
+    // Audit insert is fire-and-forget — poll briefly.
     const storage = ctx.storage;
     const audits = await waitForAudit(
       () =>

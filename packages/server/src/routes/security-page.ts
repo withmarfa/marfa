@@ -1,7 +1,7 @@
 /**
  * Security page renderer for `/auth/security`.
  *
- * Wave C PR7 / T-031. Auth-gated. Shows two surfaces:
+ * Auth-gated. Shows two surfaces:
  *
  *   1. Connected apps — `system.connection` items of kind `app`
  *      with name (resolved from oauth_clients), scope summary,

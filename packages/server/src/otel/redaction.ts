@@ -10,7 +10,7 @@ import type {
 import type { AnyValueMap } from "@opentelemetry/api-logs";
 
 /**
- * PII discipline for OpenTelemetry (T-275).
+ * PII discipline for OpenTelemetry.
  *
  * Two layers, both keyed on the *attribute name* (case-insensitive):
  *

@@ -2,8 +2,8 @@
  * Web Crypto helpers — internal to `@withmarfa/webhooks`.
  *
  * `globalThis.crypto.subtle` is available in Cloudflare Workers and
- * Node 20+, so a single implementation works in both runtimes. No
- * `node:crypto` import path here — that's the whole point of T-035.
+ * Node 20+, so a single implementation works in both runtimes without
+ * a `node:crypto` import path.
  */
 
 const subtle = globalThis.crypto.subtle;

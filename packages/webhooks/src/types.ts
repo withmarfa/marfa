@@ -46,19 +46,19 @@ export type Verifier = (
 
 /** Set of recognised verification methods. Mirrors the discriminated
  *  union arm in the Integration manifest's `webhook_verification`
- *  field. T-011 dropped the `custom` arm; this list is intentionally
- *  closed. */
+ *  field. This list is intentionally closed; the manifest schema does
+ *  not accept a `custom` arm. */
 export const VERIFICATION_METHODS = [
   "hmac-sha256",
   "slack",
   "stripe",
   "github",
   "google-channel",
-  // T-244: Cloudflare Email Worker → JSON envelope, HMAC-signed by
-  // the Worker against the per-connection subscription secret. The
-  // adapter shares the on-the-wire shape of `hmac-sha256` (signature
-  // header `X-Marfa-Signature`, idempotency header `X-Marfa-Delivery-Id`)
-  // — the split exists to declare the body schema at manifest time.
+  // Cloudflare Email Worker → JSON envelope, HMAC-signed by the Worker
+  // against the per-connection subscription secret. The adapter shares
+  // the on-the-wire shape of `hmac-sha256` (signature header
+  // `X-Marfa-Signature`, idempotency header `X-Marfa-Delivery-Id`) —
+  // the split exists to declare the body schema at manifest time.
   "cloudflare-email",
 ] as const;
 

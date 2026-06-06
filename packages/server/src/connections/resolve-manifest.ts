@@ -1,15 +1,10 @@
 /**
- * Resolve the Integration manifest for a Connection — workstream 3
- * Layer 2 PR 2.
+ * Resolve the Integration manifest for a Connection.
  *
  * The connection must carry `properties.integration_ref` pointing at a
  * `system.integration` item; this helper looks up that item and
- * validates its stored manifest blob.
- *
- * The transition-period inline-manifest fallback was removed in T-022 —
- * Layer 2 migrations have run and no production caller now depends on
- * the inline path. A connection without `integration_ref` is treated
- * as a configuration error.
+ * validates its stored manifest blob. A connection without
+ * `integration_ref` is treated as a configuration error.
  *
  * Errors:
  *   - `NOT_FOUND` — connection doesn't exist or isn't visible in the

@@ -69,7 +69,7 @@ export class PgEventLogStore implements EventLogStore {
     const cutoff = new Date(
       Date.now() - retentionHours * 3_600_000,
     ).toISOString();
-    // T-050 — three filter shapes (see audit-store.cleanup).
+    // Three filter shapes (see audit-store.cleanup).
     const tenantClause =
       tenantId === undefined
         ? undefined

@@ -1,5 +1,5 @@
 /**
- * Equality test for the auto-generated SQLite SCHEMA_SQL (T-145).
+ * Equality test for the auto-generated SQLite SCHEMA_SQL.
  *
  * Applies migrations to one fresh DB and SCHEMA_SQL to a second fresh DB,
  * then dumps the schema from each and asserts equality. If the generator
@@ -53,7 +53,7 @@ afterAll(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-describe("SCHEMA_SQL equivalence (T-145)", () => {
+describe("SCHEMA_SQL equivalence", () => {
   it("produces the same schema as running migrations from 0000", async () => {
     // DB 1: migrations applied via Drizzle's migrator.
     const migrationsPath = join(workDir, "migrations.db");

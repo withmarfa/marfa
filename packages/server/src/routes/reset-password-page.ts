@@ -1,8 +1,7 @@
 /**
  * Reset-password page renderer for `/auth/reset-password`.
  *
- * Wave C PR3 / T-033. Server-rendered HTML, uses the shared auth-page
- * layout (PR4). Three states:
+ * Server-rendered HTML, uses the shared auth-page layout. Three states:
  *
  *   - `form` — token present + valid (or untested). Renders password
  *     + confirm fields and the hidden token round-trip.

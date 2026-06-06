@@ -12,7 +12,7 @@
  *   - POST   /admin/tenants/:id/unsuspend         — flip status to 'active'
  *   - GET    /admin/tenants/:id/metrics           — usage snapshot
  *   - GET    /admin/tenants/:id/keys              — a tenant's API keys
- *   - POST   /admin/account-deletion/purge-now    — force a one-shot pending-delete sweep (T-124)
+ *   - POST   /admin/account-deletion/purge-now    — force a one-shot pending-delete sweep
  *
  * Quotas READ/WRITE for a specific tenant reuses the existing
  * `/tenants/:id/quotas` GET + PUT (already platform-admin-gated). No

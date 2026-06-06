@@ -1,10 +1,9 @@
 /**
  * Tests for the integration_ref-based manifest resolution helper.
  *
- * Post-T-022 the helper resolves only via the connection's
- * `integration_ref` → `system.integration` item. The transition-period
- * inline-manifest fallback was dropped; missing or unresolvable refs
- * surface as `MISSING_REQUIRED_FIELD`.
+ * The helper resolves only via the connection's
+ * `integration_ref` → `system.integration` item. Missing or
+ * unresolvable refs surface as `MISSING_REQUIRED_FIELD`.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext } from "../test-utils.js";
@@ -114,7 +113,7 @@ describe("resolveConnectionManifest", () => {
     expect((thrown as MarfaError).code).toBe(ErrorCode.NOT_FOUND);
   });
 
-  it("throws MISSING_REQUIRED_FIELD when the connection has no integration_ref (T-022)", async () => {
+  it("throws MISSING_REQUIRED_FIELD when the connection has no integration_ref", async () => {
     const connectionId = await createConnection(undefined);
     let thrown: unknown = null;
     try {
@@ -126,7 +125,7 @@ describe("resolveConnectionManifest", () => {
     expect((thrown as MarfaError).code).toBe(ErrorCode.MISSING_REQUIRED_FIELD);
   });
 
-  it("throws MISSING_REQUIRED_FIELD when integration_ref doesn't resolve (T-022)", async () => {
+  it("throws MISSING_REQUIRED_FIELD when integration_ref doesn't resolve", async () => {
     const connectionId = await createConnection("itm_does_not_exist");
     let thrown: unknown = null;
     try {

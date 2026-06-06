@@ -121,8 +121,8 @@ describe("renderSignInPage", () => {
     // No federated provider POST forms.
     expect(html).not.toContain('action="/auth/sign-in/provider/');
     expect(html).not.toContain("Continue with");
-    // Wave C PR6 reuses `.separator` + `.oidc` classes on the passkey
-    // block, so we don't assert their absence anymore.
+    // The passkey block reuses `.separator` + `.oidc` classes, so we
+    // don't assert their absence here.
   });
 
   it("renders an error banner with role=alert when error is set", () => {
@@ -163,7 +163,7 @@ describe("renderSignInPage", () => {
     expect(html).toContain("Check your email");
   });
 
-  it("Wave C PR4: links to /auth/static/auth.css and carries no inline <style>", () => {
+  it("links to /auth/static/auth.css and carries no inline <style>", () => {
     const html = renderSignInPage({
       mode: "password",
       returnTo: "/",
@@ -623,9 +623,8 @@ describe("POST /auth/sign-in (form wrapper)", () => {
       },
       headers: { origin: ORIGIN },
     });
-    // Wave C PR2: requireEmailVerification is on; flip the flag so
-    // sign-in isn't blocked. Stand-in for the user clicking the
-    // verification link.
+    // requireEmailVerification is on; flip the flag so sign-in isn't
+    // blocked — stand-in for the user clicking the verification link.
     await markEmailVerified(ctx.storage, "bob@example.com");
 
     const formBody = new URLSearchParams({

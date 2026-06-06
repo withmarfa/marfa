@@ -62,11 +62,11 @@ Two layers coexist permanently and don't share credentials:
 
 Sign-up is gated by `MARFA_AUTH_ALLOW_SIGNUP` (default `false`). Single-user self-hosted instances enable it for the initial admin sign-up only. Better Auth tables (`auth_user`, `auth_session`, `auth_account`, `auth_verification`) are isolated under the `auth_*` prefix and use Drizzle's timestamp-mode columns (Date round-trip), distinct from marfa's TEXT-ISO convention elsewhere in the schema.
 
-Email verification is required (Wave C PR2). New accounts sign up successfully but `auth_user.email_verified` starts `false` and `requireEmailVerification: true` blocks sign-in until the user clicks a verification link. Migration `0042` (PG) / `0035` (SQLite) marks any account predating the verification requirement as verified, so the requirement doesn't lock existing users out. The verify-email surface lives at `/auth/verify-email`; the sign-up wrapper redirects to it after a successful sign-up.
+Email verification is required. New accounts sign up successfully but `auth_user.email_verified` starts `false` and `requireEmailVerification: true` blocks sign-in until the user clicks a verification link. Migration `0042` (PG) / `0035` (SQLite) marks any account predating the verification requirement as verified, so the requirement doesn't lock existing users out. The verify-email surface lives at `/auth/verify-email`; the sign-up wrapper redirects to it after a successful sign-up.
 
-Sign-in methods land per workstream-1 plan: email + password (PR 1), passkey + magic link (PR 2), generic OIDC client / federated (PR 3), Marfa as IdP via OIDC Provider plugin (PR 5).
+Sign-in methods: email + password, passkey + magic link, generic OIDC client / federated, Marfa as IdP via OIDC Provider plugin.
 
-User-app grants are stored as `system.connection` items with `kind: app`. The OAuth tables `oauth_codes` and `oauth_tokens` reference the item id via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE). The previous standalone `oauth_grants` table is dropped. The same `system.connection` type carries the other two kinds shipped by the Connections build: `integration` (a connected upstream service such as Google Calendar) and `tenant` (a relationship between two tenants).
+User-app grants are stored as `system.connection` items with `kind: app`. The OAuth tables `oauth_codes` and `oauth_tokens` reference the item id via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE). The previous standalone `oauth_grants` table is dropped. The same `system.connection` type carries the other kind shipped by the Connections build: `integration` (a connected upstream service such as Google Calendar).
 
 The OAuth consent endpoints (`GET/POST /auth/authorize`) gate on the better-auth session cookie, not admin bearer tokens. End users sign in via `/auth/sign-in` and approve their own grants; an unauthenticated request to `/auth/authorize` redirects to `/auth/sign-in?return_to=<original-url>`. Admin bearer tokens are still required for `/auth/clients` (client registration) and `/auth/tokens` (token management).
 
@@ -78,7 +78,7 @@ The reserved `system.*` namespace carries platform-internal items. All `system.*
 - `system.credential` — API keys and OAuth tokens (encrypted at rest under per-domain HKDF tags).
 - `system.app` — registered app identities. Required before any `app.<app-name>.<type>` references resolve.
 - `system.webhook` — outbound webhook subscriptions (URL, secret, event filters, delivery state).
-- `system.connection` — approved relationships (the three kinds described under Authentication).
+- `system.connection` — approved relationships (the two kinds described under Authentication).
 - `system.integration` — published Integration manifests. One row per `(name, version)` pair; the install pipeline persists the manifest onto the `system.connection` it produces.
 - `system.activity` — operator-visible state: sync progress, errors, reauth prompts. Severity-tagged. The `severity: action_required` slice surfaces as a Repairs-style inbox.
 
@@ -90,13 +90,13 @@ The metadata-layer `extensions` map is otherwise free-form, but a handful of nam
 
 ## Connections runtime substrate
 
-Three coupled subsystems shipped together as the Connections build (workstreams 1–3):
+Three coupled subsystems shipped together as the Connections build:
 
 - **Connection OAuth proxy** — `POST /connections/:id/proxy/*` forwards to the connection's configured upstream URL with `Authorization: Bearer <decrypted access_token>`. Refreshes on 401, single-flight refresh, refresh-token rotation, flips `runtime_status: reauth_required` on terminal failure.
 - **Connection leased tokens** — `/connections/:id/lease-tokens` issues short-TTL bearers that an upstream service can use to call back into Marfa directly without holding the connection's full credential. Manifest-capability gated.
 - **Reactive run bridge + hop budget** — events published via `pubsub.publish` carry cycle-detection metadata (`originating_connection_id`, `hop_count`). The bridge fans out to subscribed connections; events whose `hop_count` exceeds the tenant's `max_event_hop_budget` are dropped and recorded as `system.activity` with `severity: error` so the user surface can show the loop detection. The Cloudflare control plane (`runtime-control`) verifies inbound webhook receipts, enqueues per-Integration Worker messages, and mediates the **runtime-credential broker** that mints a short-lived per-connection key the Worker uses for callbacks. Inbound webhook signature verification (HMAC-SHA256, Slack, Stripe, GitHub) lives in the shared `@withmarfa/webhooks` package — Web Crypto only, so both `runtime-control` (Workers) and `packages/server` (Node) consume it without runtime drift.
 
-**Two substrates run integrations.** The Cloudflare path above is the `hosted` substrate. T-173 added the `local` substrate — a Node + pg-boss + `worker_thread` runtime bundled inside `@withmarfa/server` for self-hosters who don't want a Cloudflare dependency. The two are exclusive per-deployment via `MARFA_INTEGRATION_RUNTIME`; the handler authoring surface (`@withmarfa/runtime-sdk`) is identical on both. Component map lives in `packages/server/CLAUDE.md` under "Local integrations runtime"; the operator-facing semantic parity sheet is at `withmarfa/docs/guides/connections/runtime-substrates.mdx`.
+**Two substrates run integrations.** The Cloudflare path above is the `hosted` substrate. The `local` substrate is a Node + pg-boss + `worker_thread` runtime bundled inside `@withmarfa/server` for self-hosters who don't want a Cloudflare dependency. The two are exclusive per-deployment via `MARFA_INTEGRATION_RUNTIME`; the handler authoring surface (`@withmarfa/runtime-sdk`) is identical on both. Component map lives in `packages/server/CLAUDE.md` under "Local integrations runtime"; the operator-facing semantic parity sheet is at `withmarfa/docs/guides/connections/runtime-substrates.mdx`.
 
 For the per-route specifics — including the OAuth bootstrap callback at `/oauth/callback/:provider` and the inbound webhook receipt URL pattern — see `packages/server/CLAUDE.md`.
 
@@ -117,28 +117,28 @@ Server package (not needed for shared or SDK development):
 - `API_KEY_SALT` — salt for key hashing (required in production)
 - `CORS_ORIGINS` — allowed origins, comma-separated
 - `AUTH_MODE` — `keys` (default) or `hosted` (multi-tenant with user accounts)
-- `MARFA_DEFAULT_QUOTA_ITEMS` / `MARFA_DEFAULT_QUOTA_WEBHOOKS` / `MARFA_DEFAULT_QUOTA_BLOBS` / `MARFA_DEFAULT_QUOTA_STORAGE_BYTES` / `MARFA_DEFAULT_QUOTA_RATE_PER_MINUTE` — T-052 default per-tenant ceilings. Unset = unlimited (no enforcement). Per-tenant overrides via `tenant_quotas` rows take precedence. Today `items`, `webhooks`, `blobs`, `storage_bytes`, and `rate_per_minute` enforcement are all wired (T-052 + Wave B Part 2 follow-on).
-- `MARFA_RLS_ENFORCE` — when `true`, each tenant-bounded request is wrapped in a Drizzle transaction with `SET LOCAL ROLE marfa_app` and `set_config('marfa.tenant_id', $tenant, true)` so the per-table RLS policies actually filter queries (defense-in-depth beneath the application-layer scoping). **Defaults to `true`**; explicit opt-out is `MARFA_RLS_ENFORCE=false`. SQLite is unaffected — the middleware skips when `storage.pgDb` is undefined regardless of this flag. Platform-admin keys (no tenant_id) and anonymous routes bypass the wrapper. Streaming responses (`/events`, `/export`) apply session-level RLS on a dedicated pool connection inside the route itself (T-146; see `storage/pg/streaming-rls.ts`) — they're exempt from the transaction wrapper but not from RLS.
+- `MARFA_DEFAULT_QUOTA_ITEMS` / `MARFA_DEFAULT_QUOTA_WEBHOOKS` / `MARFA_DEFAULT_QUOTA_BLOBS` / `MARFA_DEFAULT_QUOTA_STORAGE_BYTES` / `MARFA_DEFAULT_QUOTA_RATE_PER_MINUTE` — default per-tenant ceilings. Unset = unlimited (no enforcement). Per-tenant overrides via `tenant_quotas` rows take precedence. `items`, `webhooks`, `blobs`, `storage_bytes`, and `rate_per_minute` enforcement are all wired.
+- `MARFA_RLS_ENFORCE` — when `true`, each tenant-bounded request is wrapped in a Drizzle transaction with `SET LOCAL ROLE marfa_app` and `set_config('marfa.tenant_id', $tenant, true)` so the per-table RLS policies actually filter queries (defense-in-depth beneath the application-layer scoping). **Defaults to `true`**; explicit opt-out is `MARFA_RLS_ENFORCE=false`. SQLite is unaffected — the middleware skips when `storage.pgDb` is undefined regardless of this flag. Platform-admin keys (no tenant_id) and anonymous routes bypass the wrapper. Streaming responses (`/events`, `/export`) apply session-level RLS on a dedicated pool connection inside the route itself (see `storage/pg/streaming-rls.ts`) — they're exempt from the transaction wrapper but not from RLS.
 - `RATE_LIMIT_REQUESTS` — requests per minute (default: 1000)
 - `RATE_LIMIT_ENABLED` — set to `false` to disable rate limiting entirely (on by default)
 - `ENABLE_HSTS` — `true` to add Strict-Transport-Security header (only behind TLS)
 - `TRUSTED_PROXY_CIDRS` — comma-separated CIDRs (e.g. `10.0.0.0/8,127.0.0.1/32`) for opt-in `x-forwarded-for` trust. Unset = ignore the header (recommended when no reverse proxy is in front). Malformed CIDRs throw at startup.
-- `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90). Tenant override: `TenantConfig.audit_retention_days` (T-050).
+- `AUDIT_RETENTION_DAYS` — audit log retention in days (default: 90). Tenant override: `TenantConfig.audit_retention_days`.
 - `AUDIT_CLEANUP_INTERVAL_MS` — audit cleanup interval in ms (default: 86400000)
-- `MARFA_EVENT_LOG_RETENTION_HOURS` — hours an event_log entry survives before the cleanup job purges it (default: 168 / 7 days). Controls how far back an SSE client's `Last-Event-ID` can reach; older cursors receive a terminal `catchup_too_old` event. Tenant override: `TenantConfig.event_log_retention_hours` (T-050).
+- `MARFA_EVENT_LOG_RETENTION_HOURS` — hours an event_log entry survives before the cleanup job purges it (default: 168 / 7 days). Controls how far back an SSE client's `Last-Event-ID` can reach; older cursors receive a terminal `catchup_too_old` event. Tenant override: `TenantConfig.event_log_retention_hours`.
 - `VERSION_RECENT_DAYS` — version recent window in days (default: 30)
 - `VERSION_DAILY_SNAPSHOT_DAYS` — daily thinning window end in days (default: 90)
 - `VERSION_WEEKLY_SNAPSHOT_DAYS` — weekly thinning window end in days (default: 365)
 - `VERSION_MAX_VERSIONS` — hard cap per item (default: 500)
 - `VERSION_THINNING_INTERVAL_MS` — thinning job interval in ms (default: 3600000)
-- `TRASH_RETENTION_DAYS` — days a trashed item survives before hard-delete (default: 60; `0` disables). Tenant-scoped overrides via `TenantConfig.trash_retention_days` (T-050) take precedence per tenant; the env default applies to the NULL-tenant bucket and to tenants without an override.
+- `TRASH_RETENTION_DAYS` — days a trashed item survives before hard-delete (default: 60; `0` disables). Tenant-scoped overrides via `TenantConfig.trash_retention_days` take precedence per tenant; the env default applies to the NULL-tenant bucket and to tenants without an override.
 - `TRASH_PURGE_INTERVAL_MS` — trash purge job interval in ms (default: 86400000)
 - `AUTH_SESSION_CLEANUP_INTERVAL_MS` — cadence (ms) for the better-auth session cleanup sweep that drops `auth_session` rows past their `expires_at` (default: 3600000 / 1h). Instance-wide, not tenant-scoped — Better Auth owns the TTL.
 - `ERROR_WEBHOOK_URL` — webhook URL for 500 error notifications (optional, debounced)
 - `MARFA_ERROR_WEBHOOK_TIMEOUT_MS` — per-fetch timeout (ms) for error-webhook delivery (default: 5000). Tunable so a slow webhook endpoint can't stall the error path.
 - `MARFA_ACCOUNT_DELETE_CANCEL_COOLDOWN_MS` — per-account throttle (ms) on cancel-email emission from the deletion-guard middleware; stops a sign-in-attempt flood minting fresh cancel tokens + emails for a pending-deletion account (default: 3600000 / 1h; `0` disables).
 - `MARFA_AUTH_BASE_URL` — issuer URL the better-auth instance is reached at (e.g. `http://localhost:<PORT>`). Drives cookie domains and the OAuth issuer field on the discovery doc. Defaults to `http://localhost:<PORT>`.
-- `MARFA_AUTH_ALLOW_SIGNUP` — when `true`, enables the email + password sign-up endpoint at `/auth/sign-up/email`. Default `false` per the workstream-1 sign-up policy. Single-user self-hosted instances flip it on for the initial admin account, then back off.
+- `MARFA_AUTH_ALLOW_SIGNUP` — when `true`, enables the email + password sign-up endpoint at `/auth/sign-up/email`. Default `false`. Single-user self-hosted instances flip it on for the initial admin account, then back off.
 - `MARFA_AUTH_SECRET` — shared secret for cookie signing. Required in production; falls back to a per-process ephemeral secret in dev.
 - `MARFA_OIDC_PROVIDERS` — JSON array configuring federated sign-in providers (Google, GitHub, Authentik, etc.). Each entry: `{ providerId, clientId, clientSecret, discoveryUrl?, scopes? }`. Surfaces `Sign in with <providerId>` buttons on the sign-in page and exposes `/auth/sign-in/oauth2` + `/auth/oauth2/callback/<providerId>`. Empty array (default) means no federated providers.
 - `MARFA_EMAIL_BACKEND` — `cloudflare | smtp | none`. Default `none` — email-dependent flows (forgot-password, magic-link, email-verify) return HTTP 503 with `email_transport_not_configured` until an operator picks a backend. The factory at `src/email/index.ts` constructs the transport at boot.
@@ -147,15 +147,15 @@ Server package (not needed for shared or SDK development):
 - `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account id (the `marfa` org account). Required when `MARFA_EMAIL_BACKEND=cloudflare`.
 - `CLOUDFLARE_EMAIL_API_TOKEN` — Cloudflare API token with "Send Email" permission on the marfa account. Required when `MARFA_EMAIL_BACKEND=cloudflare`. Mint a dedicated send-only token for least-privilege rather than reusing a broad account-wide token.
 - `MARFA_SMTP_HOST` / `MARFA_SMTP_PORT` / `MARFA_SMTP_USER` / `MARFA_SMTP_PASS` / `MARFA_SMTP_SECURE` — SMTP backend config. Required when `MARFA_EMAIL_BACKEND=smtp`. Default port `587`. `MARFA_SMTP_SECURE=true` for implicit TLS (port 465); leave unset for STARTTLS on 587.
-- `MARFA_INTEGRATION_RUNTIME` — `hosted | local`. **Default `local` from T-174** (was `hosted` in T-173). `local` boots the Node + pg-boss + `worker_thread` substrate inside the server process and mounts `POST /runtime/webhook/:connection_id` as the inbound webhook receipt. Requires `DB_DIALECT=pg`; SQLite self-hosts must set this to `hosted` explicitly until they migrate. Hosted Marfa deployments + any operator that wants the Cloudflare path sets the env var explicitly to `hosted`. Per-Connection state lives under the `connection.runtime` reserved extension namespace. See `packages/server/src/integrations/local-runtime/` and `withmarfa/docs/guides/connections/runtime-substrates.mdx`.
+- `MARFA_INTEGRATION_RUNTIME` — `hosted | local`. **Default `local`.** `local` boots the Node + pg-boss + `worker_thread` substrate inside the server process and mounts `POST /runtime/webhook/:connection_id` as the inbound webhook receipt. Requires `DB_DIALECT=pg`; SQLite self-hosts must set this to `hosted` explicitly until they migrate. Hosted Marfa deployments + any operator that wants the Cloudflare path sets the env var explicitly to `hosted`. Per-Connection state lives under the `connection.runtime` reserved extension namespace. See `packages/server/src/integrations/local-runtime/` and `withmarfa/docs/guides/connections/runtime-substrates.mdx`.
 - `MARFA_INTEGRATIONS_ROOT` — absolute path to the `integrations/` directory the local runtime loads `dist/local.js` entries from. Defaults to the in-tree directory resolved from the running bundle; set explicitly when the server runs outside the monorepo (packaged Docker image, etc.).
-- `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` — `hosted`-substrate only (T-233). JSON map of `integration_name → Cloudflare Queues producer URL`. Each integration that consumes reactive `item-event` dispatches has its own queue (Cloudflare Queues only allow one consumer per queue; a shared queue would silently drop messages addressed to non-consumer integrations). Example: `{"google.calendar":"https://api.cloudflare.com/client/v4/accounts/.../queues/.../messages","withmarfa.task-auto-archive":"https://..."}`. Unset → reactive-run bridge disabled. Malformed JSON / empty map → bridge disabled + loud error log. Unmapped integration at fanout → one-time `system.activity action_required` per integration per process lifetime, dispatch skipped.
+- `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` — `hosted`-substrate only. JSON map of `integration_name → Cloudflare Queues producer URL`. Each integration that consumes reactive `item-event` dispatches has its own queue (Cloudflare Queues only allow one consumer per queue; a shared queue would silently drop messages addressed to non-consumer integrations). Example: `{"google.calendar":"https://api.cloudflare.com/client/v4/accounts/.../queues/.../messages","withmarfa.task-auto-archive":"https://..."}`. Unset → reactive-run bridge disabled. Malformed JSON / empty map → bridge disabled + loud error log. Unmapped integration at fanout → one-time `system.activity action_required` per integration per process lifetime, dispatch skipped.
 - `MARFA_REACTIVE_RUN_SEND_TIMEOUT_MS` — per-fetch timeout (ms) for the `hosted`-substrate reactive-run bridge's Cloudflare Queues producer call (default: 5000). Tune up for realistic Queues latency. Only relevant when the bridge is wired (`CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS` + `CLOUDFLARE_QUEUES_API_TOKEN` set).
 - `MARFA_RUNTIME_CONTROL_URL` / `MARFA_RUNTIME_BROKER_KEY` — `hosted`-substrate only: the Cloudflare runtime-control plane URL and the platform broker key the server presents to mint per-Connection runtime credentials. Read by `routes/connections.ts`; unset on `local`-substrate deployments.
 
 **Cloudflare Email Service setup.** The send domain `mail.marfa.so` is onboarded via the Cloudflare dashboard ("Email Service → Sending → Onboard Domain"); CF auto-writes DKIM, SPF, MX, and DMARC records under `cf-bounce.mail.marfa.so` to the `marfa.so` zone. Domain onboarding is dashboard-only — there's no programmatic API for it as of the public-beta phase. Send-time errors from CF (suppressed recipients, validation failures) surface through structured logs; CF maintains its own internal suppression list, so the server holds no parallel `email_suppressions` state.
 
-## Schema-enforcement levers (TSC42 §5)
+## Schema-enforcement levers
 
 Three optional levers live in `TenantConfig.enforcement` (writable via `PUT /tenants/current/config`) plus an optional per-credential `enforcement_override` on `ApiKey`. All three default off; flip on per-type to tighten validation:
 
@@ -165,7 +165,7 @@ Three optional levers live in `TenantConfig.enforcement` (writable via `PUT /ten
 
 Per-credential `enforcement_override` merges over the tenant default — setting `strict_mode` on a credential does not clear the tenant's `source_allowlist`.
 
-## Platform credentials (TSC42 §3/§4)
+## Platform credentials
 
 The `is_platform: boolean` flag on `ApiKey` gates registration and writes of the reserved namespaces (`core.*`, `system.*`, `marfa.*`). The seed value lives on the bootstrap admin credential created at server install; only an existing platform credential may mint another. Ordinary tenant admin/member keys default to `is_platform: false` and are rejected when they try to claim reserved namespaces.
 
@@ -313,6 +313,10 @@ A bare noun reads as neither yes nor no — rename it to one of the shapes above
 ### `tenant` vs "space"
 
 The internal code term for an isolated data boundary is **`tenant`** — keep it in code, schemas, DB columns, and the role vocabulary (`tenant_admin`). The user-facing word is **"space"** — use it in product docs and any user-visible copy. Not "instance" (that means a server deployment) and not "workspace" (oversells the team angle — a space is usually one person). The split is deliberate: don't surface `tenant` to users, don't invent a third term in code.
+
+## Comments
+
+Comments are self-contained and make sense to anyone reading this repository cold. Explain _why_ — the decision, constraint, or non-obvious trade-off — not the _what_, which the code already states. Never reference internal trackers, ticket numbers, or project phases; a comment that only points at external context is noise. If a comment doesn't earn its place by capturing intent, delete it — the code and its history carry the rest.
 
 ## Commits
 

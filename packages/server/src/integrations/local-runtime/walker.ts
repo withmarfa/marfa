@@ -7,7 +7,7 @@
  * the queue.
  *
  * Match rules (mirrors `buildEntryForConnection` in `envelope.ts`):
- *   - item-level `state === "active"` (T-175)
+ *   - item-level `state === "active"`
  *   - `properties.kind === "integration"`
  *   - `properties.status` unset OR `"active"`
  *   - `properties.integration_ref` resolves to a `system.integration` whose

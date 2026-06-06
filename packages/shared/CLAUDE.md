@@ -6,10 +6,10 @@ Contents (`src/`):
 
 - `types.ts` — every wire type that crosses the network. `Item`, `CreateItemInput`, `UpdateItemInput`, `ApiKey`, `TenantConfig`, `User`, `Edge`, `EnforcementSettings`, `Tier`, `ItemState`. Source of truth — server schemas and SDK signatures derive from these. Wire-shape changes start here.
 - `errors.ts` — `MarfaError` + the `ErrorCode` enum. Add new codes here; the HTTP status map at the bottom keeps the wire shape stable.
-- `validation.ts` — pure shape validators that don't need the registry: `isValidId`, `isValidTimestamp`, `isValidTypeIdentifier` (TSC42 §3 namespace grammar), `isValidHandle` (TSC42 §8), `isValidEmail`, `isValidUrl`. Synchronous and side-effect-free.
+- `validation.ts` — pure shape validators that don't need the registry: `isValidId`, `isValidTimestamp`, `isValidTypeIdentifier` (dot-separated namespace grammar), `isValidHandle` (lowercase alphanumeric + hyphens, 3–32 chars, reserved-word check), `isValidEmail`, `isValidUrl`. Synchronous and side-effect-free.
 - `ids.ts` — `generateId` (UUIDv7) and helpers.
 - `type-registry.ts` — the in-memory `TYPE_REGISTRY` (seeded with `ALL_TYPES` + `ALL_SYSTEM_TYPES` from `@withmarfa/types`); namespace classifiers (`classifyNamespace`, `isCoreType`, `isSystemType`, etc.); `validateTypeSchema` (registration validation incl. inheritance and `compatible_with` checks); `validateProperties`; `validateTransition` (lifecycle gate, with system.\* override); enforcement helpers (`resolveEnforcement`, `isTypeInStrictMode`, `getSourceAllowlist`, `getSourceFilter`).
-- `diff-type-schemas.ts` — `diffTypeSchemas` (TSC42 §7) classifies a registration diff as `noop | patch | minor | major`; `isValidVersionBump` encodes the integer-version semantics.
+- `diff-type-schemas.ts` — `diffTypeSchemas` classifies a registration diff as `noop | patch | minor | major`; `isValidVersionBump` encodes the integer-version semantics.
 - `edge-registry.ts` — same shape as type-registry, for edge types.
 - `scopes.ts` — OAuth scope grammar (`<type>:<verb>`, `edge.<type>:<verb>`, `metadata:<verb>`); `parseScope`, `scopesToTypePermissions`, etc.
 - `query-parser.ts` — the `?filter=` DSL parser used by `/items` and `/search`. `SYSTEM_FIELDS` lists the columns the parser knows (state, type, source, timestamp, created_at, updated_at, tier, device, version, id).

@@ -3,8 +3,7 @@ import { createTestContext, request, waitForAudit } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
- * Wave C PR8 — every auth-side wrapper writes a stable-shape audit
- * row. Tests cover:
+ * Every auth-side wrapper writes a stable-shape audit row. Tests cover:
  *   - sign-up success → `auth.sign_up`
  *   - sign-in success → `auth.sign_in.success`
  *   - sign-in failure → `auth.sign_in.failed`
@@ -42,7 +41,7 @@ async function postForm(
   );
 }
 
-describe("Wave C PR8 — auth audit-row hardening", () => {
+describe("auth audit-row hardening", () => {
   it("sign-up success writes an `auth.sign_up` audit row", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const res = await postForm(ctx, "/auth/sign-up", {
@@ -55,7 +54,7 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
     });
     expect(res.status).toBe(302);
 
-    // T-079: poll briefly until the fire-and-forget audit row lands.
+    // Poll briefly until the fire-and-forget audit row lands.
     const ctxRef = ctx;
     const rows = await waitForAudit(
       () => ctxRef.storage.audit.list({ action: "auth.sign_up" }),
@@ -88,7 +87,7 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
       return_to: "/",
     });
     expect(res.status).toBe(302);
-    // T-079: poll until the fire-and-forget audit row lands.
+    // Poll until the fire-and-forget audit row lands.
     const ctxRef = ctx;
     const rows = await waitForAudit(
       () => ctxRef.storage.audit.list({ action: "auth.sign_in.success" }),
@@ -113,7 +112,6 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
     });
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("error=invalid_credentials");
-    // T-079.
     const ctxRef = ctx;
     const rows = await waitForAudit(
       () => ctxRef.storage.audit.list({ action: "auth.sign_in.failed" }),
@@ -136,7 +134,6 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
       return_to: "/",
     });
     expect(res.status).toBe(302);
-    // T-079.
     const ctxRef = ctx;
     const rows = await waitForAudit(
       () =>
@@ -194,7 +191,6 @@ describe("Wave C PR8 — auth audit-row hardening", () => {
       return_to: "/",
     });
     expect(reset.status).toBe(200);
-    // T-079.
     const ctxRef = ctx;
     const rows = await waitForAudit(
       () =>

@@ -90,7 +90,7 @@ Push pushes have no body — `handleWebhook` extracts the calendar id
 from `X-Goog-Resource-URI`, drives the same incremental-sync path
 the schedule handler uses (`events.list?syncToken=...`), and acks.
 
-## Deterministic-id idempotency (T-020)
+## Deterministic-id idempotency
 
 Outbound new-event POST stamps a client-supplied `id` derived from
 the Marfa item id (`SHA-256("marfa:" + item.id)` → 64-char hex, which

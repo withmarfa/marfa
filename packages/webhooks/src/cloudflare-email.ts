@@ -1,10 +1,10 @@
 /**
- * Cloudflare Email Routing → Email Worker → webhook verifier (T-244).
+ * Cloudflare Email Routing → Email Worker → webhook verifier.
  *
  * The Cloudflare Email Worker that backs `withmarfa.inbox` receives an
  * inbound email via Email Routing, parses MIME via `postal-mime`, then
- * POSTs a JSON envelope to the staging server's webhook receipt
- * endpoint. The wire shape:
+ * POSTs a JSON envelope to the server's webhook receipt endpoint. The
+ * wire shape:
  *
  *   X-Marfa-Signature:    sha256=<hex>     HMAC-SHA256 of the raw body
  *                                          against the per-connection

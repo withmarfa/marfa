@@ -1,5 +1,5 @@
 /**
- * T-218: periodic GC of terminal bulk_action_jobs rows. Mirrors the
+ * Periodic GC of terminal bulk_action_jobs rows. Mirrors the
  * RateLimitWindowCleaner pattern — single-process timer, coordination
  * lock for multi-instance safety, retention window measured against
  * `finished_at`.

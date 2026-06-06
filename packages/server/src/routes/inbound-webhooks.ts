@@ -68,15 +68,12 @@ function rowToWire(
 
 /**
  * Validates that the caller can mutate inbound webhook subscriptions
- * for the given connection. Workstream 2 PR 5 narrow gate: the caller
- * must be authenticated AND match either:
+ * for the given connection. The caller must be authenticated AND match
+ * either:
  *   1. An admin credential whose tenant scope covers the connection.
- *   2. The connector's own credential — credential whose `source` is
+ *   2. The connector's own credential — a credential whose `source` is
  *      `oauth:${connectionId}` (the OAuth-token synthetic credential
  *      pattern from the auth middleware).
- *
- * Tenant scoping in WS2 leans on tenant_id matching; full RBAC ladders
- * (per-Connection ACLs, etc.) are deferred to WS3 alongside the runtime.
  *
  * `c` is typed via the Hono Context import to avoid a self-referencing
  * router type — we don't need OpenAPI-specific context here, just the
@@ -412,8 +409,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     const body = c.req.valid("json");
 
     // Manifest is resolved server-side from the connection's
-    // `integration_ref` → `system.integration` item. The inline-manifest
-    // fallback was dropped in T-022.
+    // `integration_ref` → `system.integration` item.
     const { manifest } = await resolveConnectionManifest(
       storage,
       connectionId,

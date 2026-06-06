@@ -1,22 +1,13 @@
 /**
- * Layer 1 acceptance test — exercises the full vertical of the runtime
- * substrate against a real Marfa server (in-process), demonstrating
- * that the per-Integration handler → SDK → server round-trip works
- * end-to-end.
+ * Acceptance test — exercises the full vertical of the runtime substrate
+ * against a real Marfa server (in-process), demonstrating that the
+ * per-Integration handler → SDK → server round-trip works end-to-end.
  *
- * Steps covered (from Plan A's 5-step acceptance list):
- *   3. The integration test in `packages/runtime-test` runs the same
- *      handler synchronously and asserts the same observable side
- *      effects.
- *   5. A second connection's runtime credential is denied access to
- *      the first connection's `connection.runtime` subtree.
- *
- * Steps 1, 2, 4 require live `wrangler dev` + Cloudflare Queues and
- * are run by the orchestrator at deploy time. Their behaviour is
- * exercised in unit form by:
- *   - PR 1's runtime-control app.test.ts (route shapes)
- *   - PR 4's webhook-flow.test.ts (verify → enqueue with mocks)
- *   - PR 3's reactive-run-bridge.test.ts (env-gated bridge runtime)
+ * Cases covered:
+ *   - The integration test in `packages/runtime-test` runs the same
+ *     handler synchronously and asserts the same observable side effects.
+ *   - A second connection's runtime credential is denied access to the
+ *     first connection's `connection.runtime` subtree.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -71,9 +62,9 @@ async function mintRuntimeCredential(connectionId: string): Promise<MintResp> {
       connection_id: connectionId,
       label: `acceptance ${suffix}`,
       source: `acceptance-${suffix}`,
-      // Layer 2's install pipeline narrows these from the manifest's
-      // declared scopes. Layer 1 default is permissive — what the
-      // control-plane lease broker passes in routes/lease.ts.
+      // The install pipeline narrows these from the manifest's declared
+      // scopes. Default here is permissive — what the control-plane
+      // lease broker passes in routes/lease.ts.
       type_permissions: { "*": "write" },
     },
   });
@@ -81,8 +72,7 @@ async function mintRuntimeCredential(connectionId: string): Promise<MintResp> {
   return (await res.json()) as MintResp;
 }
 
-// T-175: mint endpoint requires a real, active system.connection — the
-// pre-T-175 core.note placeholder no longer passes the gate.
+// The mint endpoint requires a real, active system.connection.
 async function createActiveConnection(): Promise<string> {
   const item = await ctx.storage.items.create(
     {
@@ -98,9 +88,9 @@ async function createActiveConnection(): Promise<string> {
   return item.id;
 }
 
-describe("Layer 1 acceptance", () => {
+describe("runtime substrate acceptance", () => {
   it("end-to-end: handler reads cursor → writes cursor → emits activity", async () => {
-    // 1. Create the Connection (T-175: must be a real system.connection).
+    // 1. Create the Connection.
     const connectionId = await createActiveConnection();
 
     // 2. Mint a runtime credential for this Connection.
@@ -180,7 +170,7 @@ describe("Layer 1 acceptance", () => {
   });
 
   it("step 5 — cross-connection runtime credential is denied", async () => {
-    // Create two distinct active Connections (T-175).
+    // Create two distinct active Connections.
     const connA = await createActiveConnection();
     const connB = await createActiveConnection();
 

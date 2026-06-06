@@ -12,17 +12,16 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-// PR 2 of workstream 2: extends system.connection for the
-// `integration` kind. WS1 already declared the kind value
-// in the enum but populated no shape. These tests exercise the new fields
-// end-to-end via POST /items + GET /items to confirm the schema accepts
-// them, persists them, and rejects invalid enum values.
+// Tests for the `integration` kind of system.connection. Exercises the
+// connector-specific fields end-to-end via POST /items + GET /items to
+// confirm the schema accepts them, persists them, and rejects invalid
+// enum values.
 //
 // Authority: writes to system.* require is_platform: true on the
 // credential. The bootstrap admin key created by createTestContext is
-// platform, so it can write any system type. There is no separate
-// /connections route in WS2 — the shape is reachable through the
-// generic items API, gated by the existing platform-credential check.
+// platform, so it can write any system type. The shape is reachable
+// through the generic items API, gated by the existing
+// platform-credential check.
 
 interface ItemResponse {
   item: {
@@ -154,7 +153,7 @@ describe("system.connection — kind: integration shape", () => {
 
   // The new connector-specific fields are additive; existing
   // app items must continue to validate without them.
-  it("regression: app kind still validates with the WS1 shape", async () => {
+  it("regression: app kind still validates", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {

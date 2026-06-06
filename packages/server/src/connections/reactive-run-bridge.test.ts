@@ -64,10 +64,10 @@ describe("tryStartReactiveRunBridge", () => {
   });
 });
 
-// T-233 — env-var parsing for CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS.
-// Replaces the single-URL CLOUDFLARE_QUEUES_REACTIVE_RUN_URL shape;
-// each integration's reactive-run queue is now resolved via the map.
-describe("tryStartReactiveRunBridge — env-var resolution (T-233)", () => {
+// CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS env-var parsing. Each integration's
+// reactive-run queue is resolved via a JSON map of
+// integration_name → producer URL.
+describe("tryStartReactiveRunBridge — env-var resolution", () => {
   const restoreEnv = (urls: string | undefined, token: string | undefined) => {
     if (urls === undefined) {
       delete process.env.CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS;
@@ -162,14 +162,12 @@ describe("tryStartReactiveRunBridge — env-var resolution (T-233)", () => {
   });
 });
 
-// T-135 — bounded undici Pool transport. The bridge constructs a Pool
-// when config.fetch is absent (production path) and bypasses the Pool
-// when config.fetch is injected (test path). These tests assert the
+// Bounded undici Pool transport. The bridge constructs a Pool per queue
+// origin when config.fetch is absent (production path) and bypasses the
+// Pool when config.fetch is injected (test path). These tests assert the
 // wiring without requiring intricate undici-MockAgent setup; the actual
-// connection-reuse property is a guarantee of undici itself and is
-// verified end-to-end via the staging load smoke described in the
-// T-135 vault ticket.
-describe("reactive-run-bridge — Pool transport (T-135 + T-233)", () => {
+// connection-reuse property is a guarantee of undici itself.
+describe("reactive-run-bridge — Pool transport", () => {
   it("stop() releases Pools cleanly when Pool path is in use", async () => {
     // Construct without config.fetch — Pools are created on demand by
     // sendOne. Without an actual fanout the map stays empty; stop()
@@ -207,10 +205,10 @@ describe("reactive-run-bridge — Pool transport (T-135 + T-233)", () => {
   });
 
   it("Pool URL parsing handles per-integration URLs with path + query segments", async () => {
-    // The Pool is constructed against `new URL(url).origin` per origin
-    // (T-233); sendOne uses `url.pathname + url.search` for the request
-    // path. Smoke-test the URL forms we hit in production (Cloudflare
-    // Queues messages endpoint sits under
+    // The Pool is constructed against `new URL(url).origin` per origin;
+    // sendOne uses `url.pathname + url.search` for the request path.
+    // Smoke-test the URL forms used in production (Cloudflare Queues
+    // messages endpoint sits under
     // /client/v4/accounts/<id>/queues/<id>/messages).
     const bridge = tryStartReactiveRunBridge(STORAGE_STUB, {
       resolveQueueUrl: () =>

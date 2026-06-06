@@ -1,9 +1,9 @@
 /**
  * Tests for the three connection-management routes that live alongside
  * each other in `routes/connections.ts`:
- *   - `POST /connections/install` (T-040 JSON install)
+ *   - `POST /connections/install` (JSON install)
  *   - `POST /connections/:id/uninstall`
- *   - `POST /connections/preview-event` (T-083 — bridge-envelope preview)
+ *   - `POST /connections/preview-event` (bridge-envelope preview)
  *
  * Pipeline-level mechanics live in
  * `connections/install-pipeline.test.ts` and
@@ -194,10 +194,10 @@ describe("POST /connections/install — happy path", () => {
     expect(props.integration_ref).toBe(integration.id);
   });
 
-  it("threads body.configuration onto the new connection's properties.configuration (T-254)", async () => {
+  it("threads body.configuration onto the new connection's properties.configuration", async () => {
     // Install-time configuration seed — the connection's
     // `configuration` bag is otherwise stamped as an empty object by
-    // the install-pipeline. T-254 routes the body field through the
+    // the install-pipeline. The body field is threaded through the
     // install-pipeline so server-side callers can populate per-
     // connection knobs (e.g. `upstream_base_url_override`) in one
     // round-trip instead of install + PATCH.
@@ -288,12 +288,12 @@ describe("POST /connections/install — error mapping", () => {
   });
 });
 
-describe("POST /connections/install — platform-scoped manifest, tenant_admin caller (T-234)", () => {
-  // The route is widened to admit `tenant_admin` (T-051 Wave B). A
-  // tenant_admin's tenant_id is non-null, so without the
-  // `includePlatformScoped` widening on the manifest lookup the route
-  // 404s for any manifest registered by a platform credential. Pin
-  // both the success path and the tenant-stamping invariant.
+describe("POST /connections/install — platform-scoped manifest, tenant_admin caller", () => {
+  // The route admits `tenant_admin`. A tenant_admin's tenant_id is
+  // non-null, so without the `includePlatformScoped` widening on the
+  // manifest lookup the route 404s for any manifest registered by a
+  // platform credential. Pin both the success path and the
+  // tenant-stamping invariant.
   it("tenant_admin can install a platform-scoped manifest; resulting connection lands in caller tenant", async () => {
     if (!ctx.storage.tenants) return;
     const tenant = await ctx.storage.tenants.create("t234-conn-install");
@@ -464,7 +464,7 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
 });
 
 // ---------------------------------------------------------------------------
-// `POST /connections/preview-event` (T-083) — render bridge envelopes for a
+// `POST /connections/preview-event` — render bridge envelopes for a
 // synthetic event without dispatch. Auth gate, the four `dispatch_reason`s
 // the route surfaces, and the unfiltered walk's silence on non-subscribers.
 // Cross-tenant gating is exercised by the bridge's own tests; the preview

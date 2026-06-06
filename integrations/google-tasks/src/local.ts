@@ -1,5 +1,5 @@
 /**
- * Local-runtime entry for the google-tasks integration (T-174 shape).
+ * Local-runtime entry for the google-tasks integration.
  * Same scaffold as google-calendar/src/local.ts; see that file for
  * context.
  */

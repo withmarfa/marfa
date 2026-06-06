@@ -6,15 +6,13 @@ import type { AppConfig } from "../config.js";
 import type { AppEnv } from "./auth.js";
 
 /**
- * T-052: per-tenant quota enforcement.
+ * Per-tenant quota enforcement.
  *
  * Checks the current count for `resource` against the effective limit
  * (tenant override OR env default OR Infinity). Throws `QUOTA_EXCEEDED`
  * (HTTP 429) when adding `increment` would push the tenant past their
  * cap. Counts are computed on-demand via `tenantQuotas.count(...)` —
- * no eager-increment / reconcile machinery in this PR; the eager path
- * is filed as a follow-on once load measurements justify the
- * complexity.
+ * no eager-increment / reconcile machinery.
  *
  * **No-op when caller has no tenant_id.** Platform-admin keys (single-
  * tenant self-hosts and the bootstrap admin) bypass quota enforcement

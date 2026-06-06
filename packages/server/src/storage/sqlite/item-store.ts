@@ -339,13 +339,12 @@ export class SqliteItemStore implements ItemStore {
     }
 
     if (filters.allowed_types) {
-      // T-045: an empty allowed_types array means "the caller has no
-      // readable types" — typically a member-tier credential or an OAuth
-      // token whose scopes don't project into any type_permission. The
-      // route layer (computeTypeFilter) returns `undefined` to mean "no
-      // filter" (admin / tenant_admin) and an array to mean "filter
-      // to these patterns". An empty array must filter to zero rows; the
-      // earlier shape silently fell through and returned every row.
+      // An empty allowed_types array means "the caller has no readable
+      // types" — typically a member-tier credential or an OAuth token
+      // whose scopes don't project into any type_permission. The route
+      // layer (computeTypeFilter) returns `undefined` for "no filter"
+      // (admin / tenant_admin) and an array for "filter to these patterns".
+      // An empty array must filter to zero rows.
       if (filters.allowed_types.length === 0) {
         conditions.push(sql`1=0`);
       } else {
@@ -705,7 +704,7 @@ export class SqliteItemStore implements ItemStore {
       eq(items.state, "trashed"),
       lt(items.updated_at, beforeDate),
     ];
-    // T-050 — tenantId === null filters to rows where tenant_id IS NULL
+    // tenantId === null filters to rows where tenant_id IS NULL
     // (single-tenant self-host items + any rows with no tenant scope).
     // Empty string is NOT a sentinel here — items.tenant_id is nullable,
     // not empty-string-defaulted like blobs.tenant_id.

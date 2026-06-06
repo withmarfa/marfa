@@ -7,7 +7,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 
 /**
- * Wave C PR2 — end-to-end smoke for the verify-on-signup flow:
+ * End-to-end smoke for the verify-on-signup flow:
  *   - sign-up emits no Set-Cookie (requireEmailVerification on)
  *   - sign-up wrapper redirects to /auth/verify-email
  *   - GET /auth/verify-email without token → pending state
@@ -64,7 +64,7 @@ async function postSignInForm(
   );
 }
 
-describe("Wave C PR2: verify-on-signup flow", () => {
+describe("verify-on-signup flow", () => {
   it("sign-up returns 302 to /auth/verify-email with no session cookie", async () => {
     ctx = await createTestContext({
       authAllowSignup: true,
@@ -108,7 +108,7 @@ describe("Wave C PR2: verify-on-signup flow", () => {
     expect(html).toContain('action="/auth/verify-email/resend"');
   });
 
-  it("derives the return target from a same-origin callbackURL (T-270)", async () => {
+  it("derives the return target from a same-origin callbackURL", async () => {
     ctx = await createTestContext();
     // The verification email link carries `callbackURL` (Better Auth's
     // param), not `return_to`. A same-origin callbackURL is normalised to a

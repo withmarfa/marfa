@@ -2,7 +2,7 @@ import { Container, getContainer } from "@cloudflare/containers";
 import { env } from "cloudflare:workers";
 
 /**
- * Worker front for the Marfa server running on Cloudflare Containers (T-277).
+ * Worker front for the Marfa server running on Cloudflare Containers.
  *
  * The container runs the full Node server image (`packages/server/Dockerfile`).
  * This Worker is a thin front: a Durable-Object-backed `Container` manages one
@@ -64,9 +64,8 @@ const cfEnv = env as unknown as Env;
 export class MarfaServerContainer extends Container<Env> {
   defaultPort = 8600;
 
-  // Scale-to-zero idle timer (test mode). Production may move to always-warm
-  // (a large value) once streaming + background-job continuity are validated
-  // — that decision is recorded in the T-277 ticket + Hosted Launch Decisions.
+  // Scale-to-zero idle timer. Production may move to always-warm (a large
+  // value) once streaming + background-job continuity are validated.
   sleepAfter = cfEnv.CONTAINER_SLEEP_AFTER ?? "20m";
 
   // Server config + secrets injected into the container process at launch.

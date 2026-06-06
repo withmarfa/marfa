@@ -1,8 +1,8 @@
 /**
  * Browser-side WebAuthn ceremony for passkey enroll + sign-in.
  *
- * Wave C PR6 / T-034. Served from `GET /auth/passkey/passkey.js` (see
- * `auth-static.ts` mounts). Imported as a TypeScript template literal
+ * Served from `GET /auth/passkey/passkey.js` (see `auth-static.ts`
+ * mounts). Imported as a TypeScript template literal
  * (same pattern as `auth-css.ts`) so tsup bundles it into `dist/`
  * without a separate static-asset copy step.
  *

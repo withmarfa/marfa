@@ -37,7 +37,7 @@ describe("envNumber (§3.16 zero-safe env reader)", () => {
   });
 });
 
-describe("parseOtelSampleRatio (T-275)", () => {
+describe("parseOtelSampleRatio", () => {
   it("defaults to 0.05 when unset or empty", () => {
     expect(parseOtelSampleRatio(undefined)).toBe(0.05);
     expect(parseOtelSampleRatio("")).toBe(0.05);
@@ -59,7 +59,7 @@ describe("parseOtelSampleRatio (T-275)", () => {
   });
 });
 
-describe("parseOtelHeaders (T-275)", () => {
+describe("parseOtelHeaders", () => {
   it("returns an empty object when unset", () => {
     expect(parseOtelHeaders(undefined)).toEqual({});
     expect(parseOtelHeaders("")).toEqual({});

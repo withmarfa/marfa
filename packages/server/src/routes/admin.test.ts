@@ -1,5 +1,5 @@
 /**
- * T-117 — `/admin/*` operator route tests. Covers the auth gate, every
+ * `/admin/*` operator route tests. Covers the auth gate, every
  * happy path, the suspend → write-rejected contract enforced by the
  * tenant-suspension middleware, the audit-trail on suspend/unsuspend,
  * and the cross-tenant platform-admin read path (the core value
@@ -331,7 +331,7 @@ describe("tenant suspension", () => {
 });
 
 // ===========================================================================
-// T-124 — POST /admin/account-deletion/purge-now
+// POST /admin/account-deletion/purge-now
 // ===========================================================================
 
 /**
@@ -388,7 +388,7 @@ async function seedPendingDeletionUser(
   return userId;
 }
 
-describe("POST /admin/account-deletion/purge-now (T-124)", () => {
+describe("POST /admin/account-deletion/purge-now", () => {
   it("401 without credentials", async () => {
     const res = await request(
       ctx.app,
@@ -531,7 +531,7 @@ describe("POST /admin/account-deletion/purge-now (T-124)", () => {
 });
 
 // ===========================================================================
-// T-124 — graceDays: 0 short-circuit (separate test context)
+// graceDays: 0 short-circuit (separate test context)
 // ===========================================================================
 
 describe("POST /admin/account-deletion/purge-now — graceDays=0 short-circuit", () => {

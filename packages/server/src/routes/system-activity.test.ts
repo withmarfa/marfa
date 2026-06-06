@@ -12,13 +12,10 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-// PR 3 of workstream 2: adds the system.activity type and the
-// documented TSC42 §4 exception that lets the server stamp `tier: "feed"`
-// on activity items emitted by a connection whose `feed_activity === true`.
-//
-// The client tier write rejection on system.* (existing, TSC42 §4)
-// remains in place — only the server decides; the per-Connection toggle
-// drives the decision.
+// system.activity: the server stamps `tier: "feed"` on activity items
+// emitted by a connection whose `feed_activity === true`. Client tier
+// writes on system.* remain rejected — only the server makes this
+// decision, keyed off the per-Connection toggle.
 
 interface ItemResponse {
   item: {
@@ -44,8 +41,7 @@ async function createConnection(
 ): Promise<string> {
   // Stamping `source` makes the dedup index forgive repeated runs that
   // happen to share a tenant; pass-through unknown property `feed_activity`
-  // is preserved by the loose-object validation. Once PR 2 lands, this
-  // field is declared in the schema directly; behaviour is unchanged.
+  // is preserved by the loose-object validation.
   const res = await request(ctx.app, "POST", "/items", {
     key: ctx.adminKey,
     body: {
@@ -130,7 +126,7 @@ describe("system.activity — schema + feed-tier exception", () => {
     expect(created.item.tier).not.toBe("feed");
   });
 
-  it("rejects a client-supplied tier on system.activity (TSC42 §4 still upheld for client writes)", async () => {
+  it("rejects a client-supplied tier on system.activity", async () => {
     const connectionId = await createConnection(true, "conn-client-tier-test");
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,

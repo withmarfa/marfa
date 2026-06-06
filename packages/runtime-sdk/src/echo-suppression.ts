@@ -41,14 +41,14 @@ export interface EchoSuppression {
 
   /** Returns true if this incoming change matches a recent outbound
    *  write — caller should skip it. Deletes the underlying record on
-   *  expiry so the storage partition stays bounded (T-016). */
+   *  expiry so the storage partition stays bounded. */
   shouldSkipReactive(externalId: string, contentHash: string): Promise<boolean>;
 
   /** Returns true if there's an outstanding outbound write for the
    *  given external_id whose lag window hasn't elapsed. Caller should
    *  defer reactive reads of the corresponding Marfa item. Deletes the
    *  underlying record on expiry so cleanup happens on every access
-   *  path, not just `shouldSkipReactive` (T-016). */
+   *  path, not just `shouldSkipReactive`. */
   inLagWindow(externalId: string): Promise<boolean>;
 }
 
@@ -97,11 +97,10 @@ export function createEchoSuppression(
       const lagDeadline = record.expires_at_ms - echoMs + lagMs;
       const now = now_ms();
       if (lagDeadline <= now) {
-        // T-016: delete on expiry so a connector that writes to
-        // `external_id` and never reads it back doesn't leak DO
-        // storage. `shouldSkipReactive` already does this on its own
-        // path; mirroring it here closes the second access path
-        // without introducing a periodic prune.
+        // Delete on expiry so a connector that writes to `external_id`
+        // and never reads it back via `shouldSkipReactive` doesn't leak
+        // storage. Mirroring the expire-on-read here closes the second
+        // access path without a periodic prune.
         await storage.delete(key(externalId));
         return false;
       }

@@ -5,14 +5,14 @@
  * screen, unifying the visual surface with sign-in / sign-up /
  * device-flow.
  *
- * Re-consent diff (T-032): when the caller passes `priorScopes` (the
- * scope set the user previously approved on this client, looked up via
+ * Re-consent diff: when the caller passes `priorScopes` (the scope set
+ * the user previously approved on this client, looked up via
  * `system.connection` of `kind: app`), the screen renders three group
  * blocks — Previously granted (kept), New permissions (added), and No
  * longer requested (removed) — instead of the flat read / write split.
  * First-time consent (no prior grant) renders the flat shape.
  *
- * Authorization flow (T-131): the @better-auth/oauth-provider plugin
+ * Authorization flow: the @better-auth/oauth-provider plugin
  * signs the full authorize-request query string (response_type +
  * client_id + redirect_uri + scope + state + code_challenge +
  * code_challenge_method + exp + sig) and redirects to the consent page
@@ -62,20 +62,19 @@ interface ConsentParams {
    */
   descriptions?: Record<string, string>;
   /**
-   * Wave C PR5: the literal scope set the user previously approved on
-   * this client (e.g. `["core.note:read", "core.note:write"]`). When
-   * present, the screen renders the diff variant — "Previously
-   * granted" / "New permissions" / "No longer requested" — instead of
-   * the flat read / write split. When absent (first-time consent or
-   * no prior grant), renders flat.
+   * The literal scope set the user previously approved on this client
+   * (e.g. `["core.note:read", "core.note:write"]`). When present, the
+   * screen renders the diff variant — "Previously granted" / "New
+   * permissions" / "No longer requested" — instead of the flat read /
+   * write split. When absent (first-time consent or no prior grant),
+   * renders flat.
    */
   priorScopes?: readonly string[];
   /**
-   * T-131 fix-up F2: when set, renders an inline error banner above
-   * the form. Used when the page is reached via a redirect from a
-   * failed consent submission (e.g. zero-scopes accept → "approve
-   * needs at least one permission ticked"). When undefined, no banner
-   * renders.
+   * When set, renders an inline error banner above the form. Used when
+   * the page is reached via a redirect from a failed consent submission
+   * (e.g. zero-scopes accept → "approve needs at least one permission
+   * ticked"). When undefined, no banner renders.
    */
   errorMessage?: string;
 }
@@ -262,9 +261,9 @@ export function renderConsentScreen(params: ConsentParams): string {
     ? `<span class="client-name">${safeClient}</span> needs different permissions than before.`
     : `<span class="client-name">${safeClient}</span> is asking to access your Marfa space. Untick anything you'd rather not share.`;
 
-  // T-131 F2 inline error banner — survives across pages because the
-  // POST handler 302s back to GET with `?error=...` on validation
-  // failure rather than re-rendering.
+  // Inline error banner — survives across pages because the POST handler
+  // 302s back to GET with `?error=...` on validation failure rather than
+  // re-rendering.
   const errorBanner = params.errorMessage
     ? `<div class="alert alert--error" role="alert">${escapeHtml(params.errorMessage)}</div>`
     : "";

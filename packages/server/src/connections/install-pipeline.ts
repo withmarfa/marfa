@@ -1,5 +1,5 @@
 /**
- * Integration install pipeline — workstream 3 Layer 2 PR 1.
+ * Integration install pipeline.
  *
  * Owns the multi-step install of an Integration manifest into a tenant:
  *   1. Insert a `system.connection.integration` item bound
@@ -9,14 +9,12 @@
  *   3. Emit a `system.activity` row referencing the connection.
  *
  * Order matters — the runtime credential mint stamps `connection_id`, so
- * the connection id must exist first. The orchestrator's plan-review
- * flagged the call sequence as "credential mint → connection insert →
- * activity emit"; the actual execution order is connection-first because
- * the credential needs the id to bind to. Outcome is identical: no
- * orphan credentials, no half-installed state.
+ * the connection id must exist first. Execution order is
+ * connection-first because the credential needs the id to bind to:
+ * no orphan credentials, no half-installed state.
  *
  * Atomicity — `storage.runInTransaction` is genuinely transactional on
- * both dialects (T-071), but install spans multiple storage stores and
+ * both dialects, but install spans multiple storage stores and
  * external side effects (audit, activity emit), and a single Drizzle tx
  * doesn't bracket those cleanly. So the pipeline uses **compensating
  * writes**: each step records what to undo on failure, and the catch-all
@@ -35,8 +33,7 @@
  * a specific `integration_ref` at the manifest's exact version. When a
  * new manifest version registers as a sibling item, existing
  * connections keep pointing at the old version's item id; an explicit
- * upgrade flow (Layer 3 work) would re-bind. Plan B does not address
- * the upgrade flow on purpose.
+ * upgrade flow would re-bind. This is intentionally out of scope here.
  */
 import { randomBytes } from "node:crypto";
 import {
@@ -68,9 +65,9 @@ export interface InstallInput {
   /** Display label for the credential and connection. Falls back to
    *  `${manifest_name} ${manifest_version}` at the route layer. */
   label: string;
-  /** Resolved client IP of the caller (T-027). Threaded into the audit
-   *  row so installs are attributable. Null when the install runs
-   *  outside a Hono request (e.g. one-shot CLI scripts). */
+  /** Resolved client IP of the caller. Threaded into the audit row so
+   *  installs are attributable. Null when the install runs outside a
+   *  Hono request (e.g. one-shot CLI scripts). */
   clientIp?: string | null;
   /**
    * Optional id of a pre-existing `system.credential` to reference from
@@ -78,7 +75,7 @@ export interface InstallInput {
    * (e.g. `google.calendar` + `google.tasks`) share one credential row
    * instead of duplicating per-integration.
    *
-   * Two credential kinds are accepted (T-241):
+   * Two credential kinds are accepted:
    *   - `kind: "oauth_token"` — created by
    *     `POST /credentials/oauth-provider`. Carries OAuth client config
    *     + encrypted client secret. The connection's OAuth dance reads
@@ -110,9 +107,9 @@ export interface InstallInput {
    * `POST /connections/install`) pre-populate per-connection knobs that
    * would otherwise require a follow-on `PATCH /items/:id` round-trip.
    *
-   * T-254 motivating case: `upstream_base_url_override` so a
-   * connection sharing the shared google.* OAuth credential can point
-   * at a per-host upstream (e.g. `people.googleapis.com` for
+   * Motivating case: `upstream_base_url_override` so a connection
+   * sharing the shared google.* OAuth credential can point at a
+   * per-host upstream (e.g. `people.googleapis.com` for
    * `google.contacts`). Without this seam, the override has to be
    * patched onto the connection after install but before the OAuth
    * dance — fragile.
@@ -207,10 +204,9 @@ export async function performInstall(
       );
     }
     const credProps = candidate.properties as { kind?: unknown };
-    // T-241: accept both oauth_token (the original kind) and api_token
-    // (static-bearer integrations). Both shapes carry an
-    // upstream_base_url + an encrypted secret; the connection-proxy
-    // branches at request time on `kind`.
+    // Accept both oauth_token and api_token credential kinds. Both
+    // shapes carry an upstream_base_url + an encrypted secret; the
+    // connection-proxy branches at request time on `kind`.
     if (credProps.kind !== "oauth_token" && credProps.kind !== "api_token") {
       throw new MarfaError(
         ErrorCode.INVALID_REQUEST,
@@ -223,11 +219,10 @@ export async function performInstall(
   // Compensation stack — each step pushes a rollback closure. On any
   // subsequent failure we walk the stack in reverse and re-throw.
   //
-  // T-012: do NOT use `compensations.reverse()` — that mutates the array
-  // in place. If a recovery path re-invokes rollback (or any code reads
-  // `compensations` after rollback returns) the stack is silently
-  // backwards from where the caller expects. Iterate via a downward
-  // index instead so the original push-order is preserved.
+  // Do NOT use `compensations.reverse()` — that mutates the array in
+  // place. Iterate via a downward index so the original push-order is
+  // preserved; any code that re-reads `compensations` after rollback
+  // sees the same sequence.
   const compensations: (() => Promise<void>)[] = [];
   const rollback = async (originalErr: unknown): Promise<never> => {
     for (let i = compensations.length - 1; i >= 0; i--) {
@@ -252,9 +247,9 @@ export async function performInstall(
     status: "active" as const,
     granted_at: now,
     integration_ref: input.integrationItemId,
-    // T-254: seed from optional install-time configuration; falls back
-    // to the empty default. The bag stays free-form — per-integration
-    // install contracts validate their own keys.
+    // Seed from optional install-time configuration; falls back to the
+    // empty default. The bag stays free-form — per-integration install
+    // contracts validate their own keys.
     configuration: input.configuration ?? {},
     direction: manifest.direction,
     triggers: manifest.triggers,
@@ -337,10 +332,10 @@ export async function performInstall(
   }
 
   // -------------------------------------------------------------------
-  // Audit trail (T-012). Awaited and rolled back on failure — `system.connection`
-  // writes are operationally significant and an unaudited install isn't
-  // auditable, so the audit write is awaited (not fire-and-forget) and a
-  // failure fails the install rather than being swallowed.
+  // Audit trail. Awaited and rolled back on failure — `system.connection`
+  // writes are operationally significant; an unaudited install must not
+  // silently succeed. A failure here rolls back the install rather than
+  // being swallowed.
   // -------------------------------------------------------------------
   try {
     await storage.audit.log({

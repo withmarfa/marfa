@@ -1,5 +1,5 @@
 /**
- * Worker-thread entry script for the local runtime executor (T-173).
+ * Worker-thread entry script for the local runtime executor.
  *
  * The supervisor (main thread) spawns one `Worker` per integration in a
  * small pool, then dispatches `WorkerDispatchRequest` payloads over

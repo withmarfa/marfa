@@ -1,5 +1,5 @@
 /**
- * T-131: `/auth/authorize` consent page (Hono route).
+ * `/auth/authorize` consent page (Hono route).
  *
  * Replaces the homegrown GET/POST `/auth/authorize` handlers that lived
  * in `routes/auth-pages.ts`. The @better-auth/oauth-provider plugin's
@@ -126,9 +126,9 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     }
     const clientName = client.name ?? clientId;
 
-    // Wave C PR5 re-consent diff: look up the user's prior consent for
-    // (client_id, user_id) in auth_oauth_consent. If present, the renderer
-    // shows the diff (added/kept/removed); if not, renders flat.
+    // Look up the user's prior consent for (client_id, user_id) in
+    // auth_oauth_consent. If present, the renderer shows the diff
+    // (added/kept/removed); if not, renders flat.
     const priorScopes = await resolvePriorScopes(
       deps.storage,
       clientId,
@@ -156,10 +156,9 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       errorMessage,
     });
 
-    // F9: every consent-page render carries `Cache-Control: no-store` etc.
-    // (Wave C PR8 / §3.18 regression — the homegrown surface had this set
-    // explicitly; the T-131 rewrite dropped it.) See `routes/no-store.ts`
-    // for the helper used across every auth HTML surface.
+    // Every consent-page render carries `Cache-Control: no-store`.
+    // See `routes/no-store.ts` for the helper used across every auth
+    // HTML surface.
     setNoStore(c);
     return c.html(html);
   });
@@ -266,7 +265,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // listing would be missing).
     //
     // F7: thread `client_ip` so the audit row carries it per CLAUDE.md
-    // T-027 convention.
+    // client_ip threaded so the audit row carries the source address.
     if (accept) {
       try {
         await projectGrantOnConsent(deps.storage, {
@@ -369,9 +368,8 @@ async function projectGrantOnConsent(
     clientIp: string | null;
   },
 ): Promise<void> {
-  // T-144: cycle metadata flows through `cycleRequestContext` (set by
-  // `cycleMiddleware`) — `publish()` reads it automatically. The
-  // explicit `cycle` field on `opts` was dead weight under the new shape.
+  // Cycle metadata flows through `cycleRequestContext` (set by
+  // `cycleMiddleware`) — `publish()` reads it automatically.
   let tenantId: string | undefined;
   if (storage.users) {
     const userRow = await storage.users.getByAuthUserId(opts.authUserId);
@@ -496,9 +494,8 @@ async function projectGrantOnConsent(
     tenantId,
   });
 
-  // F7: thread `client_ip` per CLAUDE.md T-027 convention. Every audit
-  // row carries the resolved client IP so operators can correlate
-  // grants with the source request.
+  // Thread `client_ip` so every audit row carries the resolved client IP
+  // and operators can correlate grants with the source request.
   void storage.audit.log({
     tenant_id: tenantId ?? null,
     action: "auth.grant.created",
@@ -587,9 +584,8 @@ const OIDC_SCOPE_DESCRIPTIONS: Record<string, string> = {
  * User-facing copy for the consent screen, keyed by type id (core
  * types, system types) or edge type id. Intentionally separate from
  * the type registry's `description` field — those are written for
- * developers (reference notes, schema rationale, internal references
- * to workstream IDs, etc.) and read fine in API docs but land poorly
- * on a consent screen. Keep these short, plain, second-person, and
+ * developers (reference notes, schema rationale, internal dev notes,
+ * etc.) and read fine in API docs but land poorly on a consent screen. Keep these short, plain, second-person, and
  * one line each.
  *
  * Missing entries fall back to the type registry's `description` —

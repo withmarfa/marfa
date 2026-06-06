@@ -1,7 +1,7 @@
 /**
- * Verify route (T-082) — tests the synchronous service-binding dispatch
- * with a mocked Marfa server (verify-context + activity poll) and a
- * mocked service binding.
+ * Verify route — tests the synchronous service-binding dispatch with a
+ * mocked Marfa server (verify-context + activity poll) and a mocked
+ * service binding.
  */
 import { describe, it, expect } from "vitest";
 import { buildApp } from "../app.js";

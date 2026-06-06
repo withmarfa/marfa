@@ -4,9 +4,8 @@
  * (`IntegrationManifestSchema`) and the install pipeline persists it
  * onto the `system.connection` row.
  *
- * §2.3 fix: this file was authored against the Layer-1 contract and
- * never updated when the schema tightened at Layer 2. The shape now
- * matches the canonical schema exactly:
+ * §2.3 fix: this file was out of date with the canonical schema. The shape now
+ * matches it exactly:
  *   - `triggers[0]` carries cron under a nested `config: { cron }`
  *   - `tombstone_mapping` uses the canonical `state-trashed` value
  *   - `partial_write_mode` uses the hyphenated `all-or-nothing` value
@@ -20,7 +19,7 @@ export const TEMPLATE_MANIFEST = {
   version: "0.0.1",
   publisher: "marfa",
   description:
-    "Skeleton Integration. No external service. Exists to exercise the runtime substrate end-to-end during Layer 1 acceptance.",
+    "Skeleton Integration. No external service. Exists to exercise the runtime substrate end-to-end.",
   manifest_schema_version: "1.0.0",
   direction: "read" as const,
   runtime_compatibility: ["hosted", "local"] as const,

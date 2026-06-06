@@ -1,5 +1,5 @@
 /**
- * Worker-thread pool for the local runtime executor (T-173).
+ * Worker-thread pool for the local runtime executor.
  *
  * The supervisor hands each queue message to `Executor.dispatch`, which
  * routes to the appropriate per-integration pool. The pool keeps a small

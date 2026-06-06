@@ -1,7 +1,7 @@
 # readwise
 
-Inbound-only sync of Readwise highlights + parent books. Consumes the
-token-credential install seam shipped under T-241 PR1 + T-246.
+Inbound-only sync of Readwise highlights + parent books. Uses the
+token-credential install seam with a non-default `auth_scheme`.
 
 ## Identity
 
@@ -28,7 +28,7 @@ POST /credentials/api-token {
 }
 ```
 
-The substrate (T-246) reads `api_token_config.auth_scheme` at proxy
+The substrate reads `api_token_config.auth_scheme` at proxy
 read-time and stamps the correct header. Default is `Bearer`; this
 integration's install MUST pass `"Token"`.
 
@@ -95,8 +95,7 @@ under the same publisher is a follow-on if Reader access is needed.
 
 The harness at `_local/validate-readwise.ts` (gitignored) drives the
 production handler against the user's real Readwise account using
-only GET operations. The validation log on T-242 carries the asserts:
-≥1 book + ≥1 highlight land in Marfa; cursor advances; second sweep is
-a near-no-op (only items genuinely updated in the interval); `no
-destructive operations performed against the live Readwise account`
-surfaces in the activity summary.
+only GET operations. Validation asserts: ≥1 book + ≥1 highlight land in Marfa; cursor
+advances; second sweep is a near-no-op (only items genuinely updated
+in the interval); `no destructive operations performed against the
+live Readwise account` surfaces in the activity summary.

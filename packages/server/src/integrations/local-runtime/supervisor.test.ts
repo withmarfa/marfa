@@ -349,7 +349,8 @@ describe("local-runtime supervisor", () => {
     const integrationId = await createIntegrationItem();
     const connectionId = await createActiveConnection(integrationId);
 
-    // Revoke the Connection so the credential mint refuses (T-175).
+    // Revoke the Connection so the credential mint refuses; a revoked
+    // Connection cannot mint a runtime credential and therefore cannot run.
     await ctx.storage.items.transition(connectionId, "revoked", undefined);
 
     const registration = buildRegistration(() => Promise.resolve({ ok: true }));

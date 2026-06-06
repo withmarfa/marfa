@@ -47,12 +47,11 @@ describe("createInMemoryStorage", () => {
     expect(await s.get("k")).toBeUndefined();
   });
 
-  // ─── T-257 — by-value semantics on put + get (DO parity) ──────────────
+  // ─── by-value semantics on put + get (DO parity) ──────────────────────
   // Without these guarantees, handlers that mutate a cursor object in
   // place leak the mutation back into the stored map. That works in
   // tests (where the storage is a Map of object refs) but breaks in
-  // production (where DO storage serialises every value). The readwise
-  // "second sweep uses persisted watermark" flake was the trigger.
+  // production (where DO storage serialises every value).
 
   it("put captures by value — caller mutations after put don't leak into storage", async () => {
     const s = createInMemoryStorage();

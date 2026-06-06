@@ -15,7 +15,7 @@ describe("ErrorCode", () => {
     expect(ErrorCode.DUPLICATE_SOURCE).toBe("duplicate_source");
   });
 
-  it("includes T-111 webhook and resource-specific codes", () => {
+  it("includes webhook and resource-specific codes", () => {
     expect(ErrorCode.INVALID_REQUEST).toBe("invalid_request");
     expect(ErrorCode.WEBHOOK_SIGNATURE_MISSING).toBe(
       "webhook_signature_missing",
@@ -48,7 +48,7 @@ describe("httpStatus", () => {
     expect(httpStatus(ErrorCode.DUPLICATE_SOURCE)).toBe(409);
   });
 
-  it("maps T-111 codes to expected statuses", () => {
+  it("maps webhook and resource-specific codes to expected statuses", () => {
     expect(httpStatus(ErrorCode.INVALID_REQUEST)).toBe(400);
     expect(httpStatus(ErrorCode.WEBHOOK_SIGNATURE_MISSING)).toBe(400);
     expect(httpStatus(ErrorCode.WEBHOOK_SIGNATURE_INVALID)).toBe(401);

@@ -1,4 +1,4 @@
-// T-090: OIDC ID Token signing.
+// OIDC ID Token signing.
 //
 // Generates and persists a single RS256 keypair the first time the server
 // boots against a given storage; subsequent boots re-import the persisted

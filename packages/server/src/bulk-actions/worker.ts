@@ -1,5 +1,5 @@
 /**
- * T-218: in-process worker loop for the bulk_action job substrate.
+ * In-process worker loop for the bulk_action job substrate.
  *
  * One loop per server process. PG: `claimNext` atomically picks a row
  * via `SELECT … FOR UPDATE SKIP LOCKED` so multiple processes pointed

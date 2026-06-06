@@ -5,13 +5,12 @@
  *   - `item-event`: any core.task event (created, updated,
  *     state_changed, deleted, restored) fires a bounded sweep.
  *     The reactive-run bridge already drops the connector's own
- *     writes (Layer 2 PR 3 self-event suppression) so own-archive
- *     events don't loop.
+ *     writes (self-event suppression) so own-archive events don't loop.
  *   - `schedule`: daily fallback for guarantee under low event
  *     volume.
  *
- * Sweep is two-phase (T-019): collect-then-act, never iterate a
- * paginated filter while mutating items out of that filter.
+ * Sweep is two-phase: collect-then-act, never iterate a paginated
+ * filter while mutating items out of that filter.
  *
  *   1. Pagination phase. Page through `core.task` items in
  *      `state: active`, sorted by `created_at asc`, capped at
@@ -98,8 +97,9 @@ async function runSweep(
   const cutoffIso = new Date(cutoffMs).toISOString();
 
   // Phase 1 — collect. Walk pages, collect IDs of items older than
-  // the cutoff. Do NOT transition while paginating; that's what
-  // T-019 guards against.
+  // the cutoff. Do NOT transition while paginating; transitioning
+  // inside the page loop can silently skip rows under offset-based
+  // cursors.
   let inspected = 0;
   let cursor: string | undefined;
   let pages = 0;

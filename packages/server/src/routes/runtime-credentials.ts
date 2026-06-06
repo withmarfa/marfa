@@ -2,12 +2,12 @@
  * POST /system/runtime-credentials — mint a per-Connection runtime
  * credential.
  *
- * Workstream 3 Layer 1 PR 4. Called by the control-plane lease broker
- * (which authenticates against the Marfa server using a long-lived
- * `MARFA_RUNTIME_BROKER_KEY` carrying `is_platform: true`) to mint a
- * short-TTL bearer for a specific Connection's runtime. The broker
- * caches the result on the per-Connection DO with TTL ≤ 5 min and
- * presents it on every Marfa API call the integration's Worker makes.
+ * Called by the control-plane lease broker (which authenticates against
+ * the Marfa server using a long-lived `MARFA_RUNTIME_BROKER_KEY` carrying
+ * `is_platform: true`) to mint a short-TTL bearer for a specific
+ * Connection's runtime. The broker caches the result on the per-Connection
+ * DO with TTL ≤ 5 min and presents it on every Marfa API call the
+ * integration's Worker makes.
  *
  * The minted credential carries:
  *   - `is_runtime_credential: true`
@@ -16,9 +16,8 @@
  *     `connection.runtime` namespace.
  *
  * Permissions translated from the manifest at mint time:
- *   - `type_permissions` from manifest.permissions (when surfaced in
- *     Layer 2's install pipeline; Layer 1 accepts whatever the caller
- *     supplies and trusts the broker).
+ *   - `type_permissions` from manifest.permissions (caller supplies;
+ *     the broker is trusted to project from the manifest).
  *   - `extension_permissions` always carries `connection.runtime: write`
  *     so the credential can write its own subtree. Additional
  *     extension grants come from the manifest.
@@ -160,21 +159,20 @@ const InboundSubscriptionSchema = z.object({
   verification_adapter_id: z.string().optional(),
   /** Manifest name (e.g. `acme.calendar-sync`) projected from the
    *  connection's integration_ref so the control plane can stamp it on
-   *  the queue message envelope (T-009). */
+   *  the queue message envelope. */
   integration_name: z.string().optional(),
   events: z.array(z.string()),
   disabled: z.boolean(),
 });
 
 // ---------------------------------------------------------------------------
-// Verify-context lookup — control-plane internal (T-082).
+// Verify-context lookup — control-plane internal.
 //
 // Resolves the bits of state the runtime-control verify route needs to
 // build a queue message envelope and dispatch it: the connection itself
 // (validated as kind `integration` and active), the integration manifest
 // name, and the tenant_id. Gated on `is_platform: true` — operator-debug
-// surface, not consumer-facing. Mirrors the same gate the
-// `/system/runtime-credentials` endpoint applies (line 30 of this file).
+// surface, not consumer-facing.
 // ---------------------------------------------------------------------------
 
 const VerifyContextSchema = z.object({
@@ -242,11 +240,11 @@ const verifyContextRoute = createRoute({
 });
 
 // ---------------------------------------------------------------------------
-// DLQ-context lookup — control-plane internal (T-084).
+// DLQ-context lookup — control-plane internal.
 //
 // Sibling of verify-context, but without the kind/state narrowing. DLQ
 // inspection should work even on paused or revoked connections — that's
-// often *why* an operator is inspecting. Confirms the connection exists,
+// often why an operator is inspecting. Confirms the connection exists,
 // surfaces enough metadata for the DLQ routes to operate, and gates on
 // `is_platform: true`. Used as the auth-forwarding seam by
 // runtime-control's POST /dlq/peek and POST /dlq/replay routes.
@@ -370,11 +368,11 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
 
     const body = c.req.valid("json");
 
-    // T-175: refuse to mint a runtime credential for a non-active
-    // Connection. Cuts every downstream activity path (queue handler
-    // dispatch, reactive-run callback, lease refresh) when a Connection
-    // is revoked at the item layer — the lease broker hits this endpoint
-    // on every cache miss, so the gate is load-bearing.
+    // Refuse to mint a runtime credential for a non-active Connection.
+    // Cuts every downstream activity path (queue handler dispatch,
+    // reactive-run callback, lease refresh) when a Connection is revoked
+    // at the item layer. The lease broker hits this endpoint on every
+    // cache miss, so the gate is load-bearing.
     const connection = await storage.items.get(body.connection_id);
     if (connection?.type !== "system.connection") {
       throw new MarfaError(
@@ -577,12 +575,12 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     }
     const { connection_id } = c.req.valid("param");
 
-    // T-175: refuse to surface subscriptions for non-active Connections.
-    // Belt-and-braces — the uninstall pipeline disables subscriptions
-    // individually (step 5), but a Connection that landed in `revoked`
-    // through a different path (admin override, future API) would still
-    // list non-disabled rows here without this gate. Return an empty
-    // list so the control-plane receipt handler 404s upstream.
+    // Refuse to surface subscriptions for non-active Connections.
+    // The uninstall pipeline disables subscriptions individually, but a
+    // Connection that landed in `revoked` through a different path (admin
+    // override, future API) would still list non-disabled rows here without
+    // this gate. Return an empty list so the control-plane receipt handler
+    // 404s upstream.
     const connection = await storage.items.get(connection_id);
     if (connection?.type !== "system.connection") {
       return c.json({ subscriptions: [] }, 200);
@@ -592,9 +590,9 @@ export function runtimeCredentialRoutes(storage: Storage, salt: string) {
     }
 
     const rows = await storage.inboundWebhooks.listByConnection(connection_id);
-    // T-009: project the integration manifest's `name` so the control
-    // plane can stamp `integration_name` on the queue message envelope.
-    // Resolve once per connection (low cardinality) rather than per-row.
+    // Project the integration manifest's `name` so the control plane can
+    // stamp `integration_name` on the queue message envelope. Resolve once
+    // per connection (low cardinality) rather than per-row.
     let integrationName: string | undefined;
     const integrationRef = (
       connection.properties as { integration_ref?: string }

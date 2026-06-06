@@ -20,9 +20,9 @@ import type {
 import { nextHopMetadata, SDK_DEFAULT_HOP_BUDGET } from "./types.js";
 
 /**
- * Test-only `Message<T>` constructor (T-043 D2). The canonical impl
- * lives at `packages/runtime-test/src/in-memory-queue.ts:createMessage`;
- * we inline a minimal version here because runtime-test depends on
+ * Test-only `Message<T>` constructor. The canonical impl lives at
+ * `packages/runtime-test/src/in-memory-queue.ts:createMessage`; we
+ * inline a minimal version here because runtime-test depends on
  * runtime-sdk (importing the canonical impl would invert that). The
  * shape mirrors Cloudflare's `Message<T>` (id, timestamp, body,
  * attempts, ack, retry) plus `acked` / `retried` / `retryDelaySeconds`
@@ -158,13 +158,12 @@ describe("consumeBatch", () => {
     expect(m.retryDelaySeconds).toBe(1);
   });
 
-  it("only retries the failing message in a partial-failure batch (T-043)", async () => {
+  it("only retries the failing message in a partial-failure batch", async () => {
     // The whole point of per-message ack: a partial failure DOES NOT
-    // re-deliver the successful messages on retry. Pre-T-043 this batch
-    // would have thrown QueueRetryRequested, and Cloudflare would have
-    // re-delivered all three messages including the two that already
-    // processed. With per-message ack, message #2 retries; #1 and #3
-    // stay acked.
+    // re-deliver the successful messages on retry. Without per-message
+    // ack, Cloudflare would re-deliver all three messages including the
+    // two that already processed. With per-message ack, message #2
+    // retries; #1 and #3 stay acked.
     let invocations = 0;
     registerScheduleHandler(() => {
       invocations++;
@@ -248,13 +247,12 @@ describe("consumeBatch", () => {
     expect(retried.retried).toBe(false);
   });
 
-  it("logs to console.error when buildConnectionContext throws (T-255)", async () => {
-    // Reproduces the silent-failure mode that motivated T-255: when the
-    // queue consumer's credential mint fails (e.g. broker secrets missing
-    // on the Worker), the throw is caught by the dispatch try/catch but
-    // the activity-emit backstop downstream also can't reach Marfa — so
-    // nothing surfaces to the operator. The console.error added in
-    // T-255 is the only visible signal in that degraded mode.
+  it("logs to console.error when buildConnectionContext throws", async () => {
+    // When the queue consumer's credential mint fails (e.g. broker
+    // secrets missing on the Worker), the throw is caught by the
+    // dispatch try/catch but the activity-emit backstop downstream also
+    // can't reach Marfa. The console.error is the only visible signal in
+    // that degraded mode.
     registerScheduleHandler(() => Promise.resolve({ ok: true }));
     const env: ConsumerEnvironment = {
       ...makeEnv(),
@@ -293,7 +291,7 @@ describe("consumeBatch", () => {
     expect(line).toContain("lease broker returned 500");
   });
 
-  it("acks-and-skips messages whose tenant_id mismatches env.tenantId (T-017)", async () => {
+  it("acks-and-skips messages whose tenant_id mismatches env.tenantId", async () => {
     let dispatched = 0;
     registerScheduleHandler(() => {
       dispatched++;
@@ -323,7 +321,7 @@ describe("consumeBatch", () => {
     expect(dispatched).toBe(1);
   });
 
-  it("refuses to dispatch reactive item-events past the hop budget (T-008)", async () => {
+  it("refuses to dispatch reactive item-events past the hop budget", async () => {
     let dispatched = 0;
     registerItemEventHandler(() => {
       dispatched++;
@@ -348,7 +346,7 @@ describe("consumeBatch", () => {
     expect(m.acked).toBe(true);
   });
 
-  it("dispatches reactive item-events under the hop budget (T-008)", async () => {
+  it("dispatches reactive item-events under the hop budget", async () => {
     let dispatched = 0;
     registerItemEventHandler(() => {
       dispatched++;
@@ -394,7 +392,7 @@ describe("consumeBatch", () => {
   });
 });
 
-describe("consumeBatch — DLQ failure-reason enrichment (T-103)", () => {
+describe("consumeBatch — DLQ failure-reason enrichment", () => {
   beforeEach(() => {
     _resetHandlers();
   });
@@ -411,7 +409,7 @@ describe("consumeBatch — DLQ failure-reason enrichment (T-103)", () => {
     return { producer, sent };
   }
 
-  it("stamps `_failure_reason` and forwards to the DLQ producer when handler returns retry:false", async () => {
+  it("stamps _failure_reason and forwards to the DLQ producer when handler returns retry:false", async () => {
     registerWebhookHandler(() =>
       Promise.resolve({
         ok: false,
@@ -492,7 +490,7 @@ describe("consumeBatch — DLQ failure-reason enrichment (T-103)", () => {
     expect(sentBody._failure_reason.attempts).toBe(2);
   });
 
-  it("falls through to ack-only when no dlqProducerFor is configured (pre-T-103 behaviour)", async () => {
+  it("falls through to ack-only when no dlqProducerFor is configured", async () => {
     registerWebhookHandler(() =>
       Promise.resolve({
         ok: false,

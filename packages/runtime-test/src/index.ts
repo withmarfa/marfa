@@ -4,8 +4,8 @@
  * In-memory mocks of the Cloudflare runtime primitives the runtime
  * substrate depends on, plus a `createTestHarness` helper that bundles
  * them into a ConsumerEnvironment compatible with the SDK's
- * `consumeBatch`. Used by per-Integration test suites and by Layer 1
- * acceptance verification.
+ * `consumeBatch`. Used by per-Integration test suites and runtime
+ * acceptance tests.
  */
 export {
   createInMemoryStorage,

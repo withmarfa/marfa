@@ -8,10 +8,10 @@ import {
 } from "./security-page.js";
 
 /**
- * Wave C PR7 / T-031 — security page renderer + handler smoke. Full
- * round-trip (sign-in cookie → /auth/security → revoke → reload)
- * lives in `security-flow.test.ts`; this file covers the renderer
- * states + the route auth gate.
+ * Security page renderer + handler smoke. Full round-trip
+ * (sign-in cookie → /auth/security → revoke → reload) lives in
+ * `security-flow.test.ts`; this file covers the renderer states +
+ * the route auth gate.
  */
 
 let ctx: TestContext | undefined;

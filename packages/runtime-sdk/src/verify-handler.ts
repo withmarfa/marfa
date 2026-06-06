@@ -1,20 +1,18 @@
 /**
- * Synchronous verify-handler entry point for per-Integration Workers
- * (T-082). Wraps `dispatchMessage` with HTTP request/response shaping
- * so the runtime-control verify route can dispatch a one-shot envelope
- * over a service binding and read the `HandlerResult` synchronously.
+ * Synchronous verify-handler entry point for per-Integration Workers.
+ * Wraps `dispatchMessage` with HTTP request/response shaping so the
+ * runtime-control verify route can dispatch a one-shot envelope over a
+ * service binding and read the `HandlerResult` synchronously.
  *
- * Integration workers grow a `POST /verify` entry point that calls
+ * Integration workers expose a `POST /verify` entry point that calls
  * `verifyHandler(env, request)`. The control plane is responsible for
- * synthesising a valid envelope (using the same `buildQueueMessageBody`
- * helper the reactive-run bridge uses); this function trusts the
- * envelope, builds the `ConnectionContext`, and runs `dispatchMessage`
- * once.
+ * synthesising a valid envelope; this function trusts the envelope,
+ * builds the `ConnectionContext`, and runs `dispatchMessage` once.
  *
  * Persistence is real — verify executes against the connection's actual
  * runtime credential and writes through the same Marfa API the
  * production queue path does. There is no dry-run mode (preview-event
- * already covers static envelope rendering).
+ * covers static envelope rendering).
  */
 import { dispatchMessage } from "./handlers.js";
 import {

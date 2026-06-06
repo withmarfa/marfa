@@ -37,9 +37,9 @@ Three operationally significant differences shape this integration:
   the only inbound rail; there is no `webhook` trigger on the manifest
   and no webhook handler.
 - **No client-supplied IDs on `tasks.insert`.** Calendar accepts a
-  client `id` (T-020 deterministic-id idempotency). Tasks rejects it
-  — Google assigns the id server-side. The idempotency rail here is a
-  sentinel string injected into `notes`
+  client `id` (SHA-256 deterministic-id idempotency). Tasks rejects
+  it — Google assigns the id server-side. The idempotency rail here
+  is a sentinel string injected into `notes`
   (`[marfa-id:<marfa_item_id>]`); on a handler retry the handler scans
   the target list for an existing task carrying the sentinel before
   issuing a fresh insert.

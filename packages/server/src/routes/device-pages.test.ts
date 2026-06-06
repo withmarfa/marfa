@@ -7,15 +7,14 @@ import {
 } from "./device-pages.js";
 
 /**
- * Wave C PR4 — behaviour-preserving smoke for the three device-flow
- * page renderers after the layout extraction. The handler-side smoke
- * (RFC 8628 polling round-trip) lives in device-grant.test.ts; this
- * file asserts the HTML shape directly.
+ * Behaviour-preserving smoke for the three device-flow page renderers.
+ * The handler-side smoke (RFC 8628 polling round-trip) lives in
+ * device-grant.test.ts; this file asserts the HTML shape directly.
  */
 
 const SCOPES: ParsedScope[] = [{ typePattern: "core.note", operation: "read" }];
 
-describe("renderDevicePage (Wave C PR4)", () => {
+describe("renderDevicePage", () => {
   it("links to the shared stylesheet and has no inline <style>", () => {
     const html = renderDevicePage({ prefilled: "" });
     expect(html).toContain(
@@ -61,7 +60,7 @@ describe("renderDevicePage (Wave C PR4)", () => {
   });
 });
 
-describe("renderDeviceConsentScreen (Wave C PR4)", () => {
+describe("renderDeviceConsentScreen", () => {
   const PARAMS = {
     clientName: "marfa CLI",
     scopes: SCOPES,
@@ -126,7 +125,7 @@ describe("renderDeviceConsentScreen (Wave C PR4)", () => {
   });
 });
 
-describe("renderDeviceDecisionPage (Wave C PR4)", () => {
+describe("renderDeviceDecisionPage", () => {
   it("renders a success banner when approved", () => {
     const html = renderDeviceDecisionPage({ approved: true });
     expect(html).toContain('class="banner banner--success"');

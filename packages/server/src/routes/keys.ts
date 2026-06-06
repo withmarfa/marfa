@@ -303,21 +303,19 @@ export function keyRoutes(storage: Storage, salt: string) {
   router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");
     if (!isBootstrap) {
-      // T-051: tenant_admin can mint own-tenant keys. The new key's
-      // tenant_id is stamped from the caller's tenant_id in the storage
-      // layer; `is_platform` is coerced to `false` unless the caller is
-      // itself platform (see line ~310 below), so a tenant_admin
-      // cannot escalate to platform via the request body.
+      // tenant_admin can mint own-tenant keys. The new key's tenant_id
+      // is stamped from the caller's tenant_id in the storage layer;
+      // `is_platform` is coerced to `false` unless the caller is itself
+      // platform (see below), so a tenant_admin cannot escalate to
+      // platform via the request body.
       requireTenantAdmin(c);
     }
 
-    // T-007: under bootstrap, atomically claim the sentinel
-    // BEFORE minting. Two concurrent unauthenticated POST /keys against a
-    // fresh DB both pass the middleware gate (which reads the sentinel
-    // non-atomically); only the caller whose INSERT-ON-CONFLICT-DO-NOTHING
-    // returns a row gets to mint. Everyone else falls through to
-    // requireAdmin and receives 401, which is correct because by then
-    // bootstrap is closed.
+    // Under bootstrap, atomically claim the sentinel BEFORE minting. Two
+    // concurrent unauthenticated POST /keys against a fresh DB both pass
+    // the middleware gate (which reads the sentinel non-atomically); only
+    // the caller whose INSERT-ON-CONFLICT-DO-NOTHING returns a row gets to
+    // mint. Everyone else falls through to requireAdmin and receives 401.
     if (isBootstrap) {
       const claimed = await storage.settings.claim("bootstrapped", "true");
       if (!claimed) {
@@ -334,12 +332,12 @@ export function keyRoutes(storage: Storage, salt: string) {
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
 
-    // Platform-credential gate (TSC42 §3/§4): only an existing platform
-    // credential can mint another. Bootstrap is a special case — the very
-    // first credential created at install time IS the seed platform
-    // credential, so we accept the request body's flag (or default to true
-    // when bootstrapping). After that, callers without is_platform: true
-    // see their request silently coerced to false.
+    // Only a platform credential can mint another platform credential.
+    // Bootstrap is a special case — the very first credential created at
+    // install time IS the seed platform credential, so we accept the
+    // request body's flag (or default to true when bootstrapping). After
+    // that, callers without is_platform: true see their request silently
+    // coerced to false.
     const callerIsPlatform = c.get("apiKey")?.is_platform === true;
     let isPlatform: boolean;
     if (isBootstrap) {
@@ -348,12 +346,12 @@ export function keyRoutes(storage: Storage, salt: string) {
       isPlatform = callerIsPlatform && body.is_platform === true;
     }
 
-    // T-051: stamp the new key's tenant_id from the caller's tenant_id
-    // so a tenant_admin minting an own-tenant key gets the binding
-    // automatically. Bootstrap is a special case — the seed admin is
-    // stamped tenant-less (NULL) so it can write across tenants until a
-    // hosted-mode tenant is created. Platform admins on a single-tenant
-    // self-host also have tenant_id undefined; that path is unchanged.
+    // Stamp the new key's tenant_id from the caller's tenant_id so a
+    // tenant_admin minting an own-tenant key gets the binding automatically.
+    // Bootstrap is a special case — the seed admin is stamped tenant-less
+    // (NULL) so it can write across tenants until a hosted-mode tenant is
+    // created. Platform admins on a single-tenant self-host also have
+    // tenant_id undefined; that path is unchanged.
     const newKeyTenantId = c.get("apiKey")?.tenant_id;
 
     const stored = await storage.keys.create(
@@ -407,11 +405,9 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(listKeysRoute, async (c) => {
-    // T-051 follow-on (Wave B Part 2): widened from `requireAdmin`
-    // to `requireTenantAdmin`. tenant_admin sees only its own
-    // tenant's keys; admin (no tenant_id) sees all. Cross-tenant
-    // visibility is fenced at the application layer here AND at the
-    // DB layer (T-025 RLS) when enforcement is on.
+    // tenant_admin sees only its own tenant's keys; admin (no tenant_id)
+    // sees all. Cross-tenant visibility is fenced at the application layer
+    // here and at the DB layer when RLS enforcement is on.
     const key = requireTenantAdmin(c);
     const all = await storage.keys.list();
     const visible =

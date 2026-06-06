@@ -26,10 +26,10 @@ const EnforcementSchema = z
 
 const TenantConfigSchema = z.object({
   enforcement: EnforcementSchema,
-  // T-050 — tenant-scoped retention overrides for the cleanup
-  // jobs. Each falls back to the instance env default when unset.
-  // `0` disables the job for that tenant (matches env-default
-  // semantics for `TRASH_RETENTION_DAYS=0`); negatives are rejected.
+  // Per-tenant retention overrides for the cleanup jobs. Each falls back
+  // to the instance env default when unset. `0` disables the job for
+  // that tenant (matches env-default semantics for `TRASH_RETENTION_DAYS=0`);
+  // negatives are rejected.
   audit_retention_days: z.number().int().min(0).optional(),
   event_log_retention_hours: z.number().int().min(0).optional(),
   trash_retention_days: z.number().int().min(0).optional(),
@@ -124,7 +124,7 @@ const putConfigRoute = createRoute({
 });
 
 // ---------------------------------------------------------------------------
-// T-052: Tenant quotas
+// Tenant quotas
 // ---------------------------------------------------------------------------
 
 const QuotaSchema = z.object({
@@ -177,11 +177,10 @@ const getQuotasRoute = createRoute({
   },
 });
 
-// T-052 follow-on (Wave B Part 2): tenant_admin's read-own surface.
 // `GET /tenants/me/quotas` resolves the calling key's tenant_id from
-// `c.var.apiKey` so tenant_admins don't need to know — or be told
-// — their own tenant_id to read their ceilings. Cleaner than asking
-// them to invoke the platform-admin route at `/{tenant_id}/quotas`.
+// `c.var.apiKey` so tenant_admins don't need to know their own tenant_id
+// to read their ceilings. The explicit `/{tenant_id}/quotas` route is
+// for platform admins.
 const getOwnQuotasRoute = createRoute({
   operationId: "getOwnQuotas",
   method: "get",
@@ -310,14 +309,10 @@ export function tenantRoutes(storage: Storage) {
     return c.json(body, 200);
   });
 
-  // T-052: per-tenant quota administration.
-  //
-  // **Route order matters.** The `/me/quotas` route is registered BEFORE
-  // `/{id}/quotas` so a request to `GET /tenants/me/quotas` matches the
-  // tenant-admin handler instead of the platform-admin handler with
-  // `id="me"`. Hono dispatches in registration order; flipping these
-  // would surface as a 403 for tenant_admin (caught in the test
-  // suite — see `auth.tenant-admin-completeness.test.ts`).
+  // **Route order matters.** `/me/quotas` is registered BEFORE `/{id}/quotas`
+  // so a request to `GET /tenants/me/quotas` matches the tenant-admin handler
+  // instead of the platform-admin handler with `id="me"`. Hono dispatches in
+  // registration order; flipping these would 403 tenant_admin callers.
   router.openapi(getOwnQuotasRoute, async (c) => {
     const key = requireTenantAdmin(c);
     const tenantId = key.tenant_id;

@@ -1,17 +1,14 @@
 /**
- * T-160 — proves `runInTransaction` is genuinely transactional on
- * Postgres AND doesn't double-consume pool slots.
+ * Proves `runInTransaction` is genuinely transactional on Postgres AND
+ * doesn't double-consume pool slots.
  *
- * Pre-T-160 PG's `runInTransaction` used `client.begin(async () => fn())`
- * which discarded the transaction-scoped query interface. Storage calls
- * inside `fn` fell through to the unwrapped base instance and acquired
- * SECOND pool connections per query, while the `begin` connection sat
- * `idle in transaction` waiting for queries that never came. Under
- * concurrent load the pool saturated, every `runInTransaction` callback
- * blocked acquiring an inner connection, and the server wedged. Now uses
- * the same `db.transaction` + ALS pattern as SQLite (T-071) so the inner
- * work flows through the transaction's reserved connection — one pool
- * slot per `runInTransaction`, not two.
+ * `runInTransaction` uses `db.transaction` + ALS so the inner work flows
+ * through the transaction's reserved connection — one pool slot per
+ * `runInTransaction`, not two. Without this, storage calls inside `fn`
+ * fall through to the unwrapped base instance and acquire SECOND pool
+ * connections per query, while the `begin` connection sits `idle in
+ * transaction`. Under concurrent load the pool saturates and every
+ * `runInTransaction` callback blocks acquiring an inner connection.
  *
  * Three tests cover the contract:
  *   1. Throw mid-tx → both writes roll back.
@@ -25,7 +22,7 @@ import { createTestContext, type TestContext } from "../../test-utils.js";
 const dialect = process.env.DB_DIALECT ?? "sqlite";
 const isPg = dialect === "pg";
 
-describe.skipIf(!isPg)("PgStorage.runInTransaction (T-160)", () => {
+describe.skipIf(!isPg)("PgStorage.runInTransaction", () => {
   let ctx: TestContext;
 
   beforeAll(async () => {
@@ -96,13 +93,12 @@ describe.skipIf(!isPg)("PgStorage.runInTransaction (T-160)", () => {
   });
 
   it("supports concurrent runInTransaction calls without pool deadlock", async () => {
-    // Pool size is 10 (`pg/connection.ts`). Pre-T-160, each
-    // `runInTransaction` consumed two pool slots (one for the
-    // discarded `client.begin` and one for each inner query via the
-    // unwrapped baseDb), so >5 concurrent calls deadlocked. Post-fix,
-    // each call holds one slot via the proxy + ALS routing. 12 parallel
-    // writes here exceed the pool size on the old shape and pass on the
-    // new shape.
+    // Pool size is 10 (`pg/connection.ts`). Without the ALS routing, each
+    // `runInTransaction` consumed two pool slots (one for the outer begin
+    // and one for each inner query via the unwrapped baseDb), so >5
+    // concurrent calls deadlocked. With the fix, each call holds one slot
+    // via the proxy + ALS routing. 12 parallel writes here exceed the pool
+    // size on the old shape and pass on the new shape.
     const concurrency = 12;
     const results = await Promise.all(
       Array.from({ length: concurrency }, (_, i) =>

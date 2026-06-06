@@ -54,7 +54,7 @@ export async function createPgStorage(
 ): Promise<Storage> {
   // `db` is the wrapped Drizzle instance (per-request RLS context aware);
   // `baseDb` is the raw owner-connection instance reserved for Better Auth.
-  // T-025 part 2: see `request-context.ts` for the substitution mechanic.
+  // See `request-context.ts` for the substitution mechanic.
   const { db, baseDb, client, close } = await createConnection(
     connectionString,
     {
@@ -92,8 +92,8 @@ export async function createPgStorage(
   const connectionLeasedTokenStore = new PgConnectionLeasedTokenStore(db);
   const auditStore = new PgAuditStore(db);
   const eventLogStore = new PgEventLogStore(db);
-  // T-097: auth_session sweep runs against the unwrapped owner instance,
-  // matching how better-auth itself talks to its tables (baseDb).
+  // auth_session sweep runs against the unwrapped owner instance, matching
+  // how better-auth itself talks to its tables (baseDb).
   const authSessionStore = new PgAuthSessionStore(baseDb);
   const edgeStore = new PgEdgeStore(db);
   const edgeTypeStore = new PgEdgeTypeStore(db);
@@ -117,8 +117,8 @@ export async function createPgStorage(
     edges: edgeStore,
     edgeTypes: edgeTypeStore,
     oauth: oauthStore,
-    // T-131: thin reader over the plugin's tables for the consent route
-    // + projection after-hooks. The plugin itself owns writes.
+    // Thin reader over the plugin's tables for the consent route +
+    // projection after-hooks. The plugin itself owns writes.
     oauthProvider: new PgOauthProviderStore(db),
     outboundWebhooks: webhookStore,
     outboundWebhookDeliveries: deliveryStore,
@@ -129,57 +129,52 @@ export async function createPgStorage(
     audit: auditStore,
     eventLog: eventLogStore,
     authSessions: authSessionStore,
-    // T-116: account-lifecycle store reads/writes auth_user's deletion
-    // columns. Lives on the unwrapped base instance because the auth_*
-    // tables are RLS-bypassed (better-auth manages its own context).
+    // account-lifecycle store reads/writes auth_user's deletion columns.
+    // Lives on the unwrapped base instance because the auth_* tables are
+    // RLS-bypassed (better-auth manages its own context).
     accountLifecycle: new PgAccountLifecycleStore(baseDb),
     settings: new PgSettingsStore(db),
     coordination: new PgCoordinationStore(client),
-    // T-218: async substrate for bulk_action. Wired on the wrapped
-    // instance so RLS scopes its tenant_id reads/writes per request;
-    // the worker runs outside a request and bypasses RLS via the
-    // unwrapped path on `client.reserve()` — not needed in the store
-    // class itself, only at the worker boundary.
+    // Async substrate for bulk_action. Wired on the wrapped instance so
+    // RLS scopes its tenant_id reads/writes per request; the worker runs
+    // outside a request and bypasses RLS via the unwrapped path on
+    // `client.reserve()` — not needed in the store class itself, only at
+    // the worker boundary.
     bulkActionJobs: new PgBulkActionJobStore(db),
     tenantQuotas: new PgTenantQuotaStore(db),
-    // T-026: cluster-shared rate-limit + per-email throttle counters.
-    // Wired on the wrapped instance so the request-context RLS proxy
-    // doesn't bypass it; the rate-limit table is platform-internal
-    // (no tenant_id column, no RLS policy) and the queries target
-    // global counters by design.
+    // Cluster-shared rate-limit + per-email throttle counters. Wired on
+    // the wrapped instance so the request-context RLS proxy doesn't bypass
+    // it; the rate-limit table is platform-internal (no tenant_id column,
+    // no RLS policy) and the queries target global counters by design.
     rateLimits: new PgRateLimitStore(db),
-    // T-050: tenant store wired unconditionally — see sqlite index.ts
-    // for rationale. The fan-out on tenant cleanup needs `tenants.list`
+    // Tenant store wired unconditionally — see sqlite index.ts for the
+    // rationale. The fan-out on tenant cleanup needs `tenants.list`
     // available regardless of authMode.
     tenants: new PgTenantStore(db),
     ...(options?.authMode === "hosted" && {
       users: new PgUserStore(db),
     }),
     /**
-     * Genuinely transactional under postgres-js + ALS routing (T-160).
-     * Opens a Drizzle transaction via `db.transaction(async tx => …)`
-     * and installs `tx` on `pgRequestContext` so every store call inside
-     * `fn` resolves its executor to the transaction via the proxy in
-     * `request-context.ts`. All work inside `fn` runs on the
-     * transaction's reserved connection; rollback is real on throw.
+     * Opens a Drizzle transaction via `db.transaction(async tx => …)` and
+     * installs `tx` on `pgRequestContext` so every store call inside `fn`
+     * resolves its executor to the transaction via the proxy in
+     * `request-context.ts`. All work inside `fn` runs on the transaction's
+     * reserved connection; rollback is real on throw.
      *
-     * It must install `tx` on the ALS rather than discarding the
-     * transaction-scoped query interface (as a bare
-     * `client.begin(async () => fn())` would). Without the ALS context,
-     * storage calls inside `fn` fall through to the unwrapped base
-     * instance and acquire SECOND pool connections per query while the
-     * `begin` connection sits `idle in transaction` — under concurrent
-     * writes the pool saturates and every `runInTransaction` callback
-     * blocks acquiring an inner connection.
+     * The ALS installation is critical: without it, storage calls inside
+     * `fn` fall through to the unwrapped base instance and acquire SECOND
+     * pool connections per query while the `begin` connection sits `idle in
+     * transaction` — under concurrent writes the pool saturates and every
+     * `runInTransaction` callback blocks acquiring an inner connection.
      *
-     * Goes through the wrapped `db`: when the caller is already inside
-     * the RLS middleware's transaction (a tenant-scoped request), the
-     * proxy resolves `transaction` against the existing `tx` and Drizzle
-     * issues a SAVEPOINT — staying on the middleware's connection and
-     * preserving RLS isolation. Outside a request (retention jobs,
-     * single-tenant self-host), the proxy falls through to `baseDb` and
-     * opens a fresh transaction on the owner connection. Either way the
-     * inner work shares one pool slot, not two.
+     * Goes through the wrapped `db`: when the caller is already inside the
+     * RLS middleware's transaction (a tenant-scoped request), the proxy
+     * resolves `transaction` against the existing `tx` and Drizzle issues a
+     * SAVEPOINT — staying on the middleware's connection and preserving RLS
+     * isolation. Outside a request (retention jobs, single-tenant self-host),
+     * the proxy falls through to `baseDb` and opens a fresh transaction on
+     * the owner connection. Either way the inner work shares one pool slot,
+     * not two.
      */
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
       return await db.transaction(async (tx) => {
@@ -190,9 +185,9 @@ export async function createPgStorage(
       authUserId: string,
       cutoffIso: string,
     ): Promise<boolean> => {
-      // The cascade runs on the unwrapped base instance: see the note
-      // on `accountLifecycle` above — auth_* are RLS-bypassed and this
-      // operation crosses tenant/auth boundaries by design.
+      // The cascade runs on the unwrapped base instance — auth_* tables
+      // are RLS-bypassed and this operation crosses tenant/auth boundaries
+      // by design.
       return pgDeleteAccountCascade(
         baseDb,
         storage as Storage,
@@ -215,16 +210,15 @@ export async function createPgStorage(
     // Better Auth runs on the unwrapped base instance — its tables
     // (auth_user, auth_session, etc.) carry no RLS policies and the
     // auth library manages its own connection context outside the
-    // per-request RLS middleware. T-025 part 2.
+    // per-request RLS middleware.
     betterAuthDb: baseDb,
     betterAuthDialect: "pg" as const,
-    // T-025 part 2: the wrapped Drizzle instance, exposed so the
-    // RLS middleware can drive `db.transaction(...)` directly to
-    // wrap each tenant-bounded request.
+    // The wrapped Drizzle instance, exposed so the RLS middleware can
+    // drive `db.transaction(...)` to wrap each tenant-bounded request.
     pgDb: db,
-    // T-146: the underlying postgres-js client, exposed so streaming
-    // routes (`/events`, `/export`) can `client.reserve()` a dedicated
-    // pool connection for session-level RLS.
+    // The underlying postgres-js client, exposed so streaming routes
+    // (`/events`, `/export`) can `client.reserve()` a dedicated pool
+    // connection for session-level RLS.
     pgClient: client,
   } satisfies Storage & {
     __pgClient(query: string, params?: unknown[]): Promise<unknown[]>;

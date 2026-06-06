@@ -3,8 +3,8 @@ import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
- * Wave C PR4 — `GET /auth/static/auth.css` is the shared auth-page
- * stylesheet. Tests cover:
+ * `GET /auth/static/auth.css` is the shared auth-page stylesheet.
+ * Tests cover:
  *   - 200 + text/css with the bytes
  *   - Cache-Control + ETag headers present
  *   - 304 on If-None-Match match (cached revalidation path)

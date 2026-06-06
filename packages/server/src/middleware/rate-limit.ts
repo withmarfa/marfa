@@ -16,8 +16,8 @@ export interface RateLimitConfig {
   trustedProxyCidrs: CidrRange[];
   /**
    * Required storage handle. The rate-limit counter lives in the shared
-   * store (`storage.rateLimits`), so the handle is mandatory. It also
-   * carries the per-tenant rate-cap lookup (T-052 follow-on).
+   * store (`storage.rateLimits`) and the per-tenant rate-cap lookup
+   * reads `storage.tenantQuotas`.
    */
   storage: Storage;
   /**
@@ -30,7 +30,7 @@ export interface RateLimitConfig {
 }
 
 /**
- * Sliding-window rate limiter backed by `storage.rateLimits` (T-026).
+ * Sliding-window rate limiter backed by `storage.rateLimits`.
  *
  * The counter table sits in the same database every other tenant-scoped
  * table lives in. Two server instances pointed at the same DB share
@@ -38,20 +38,13 @@ export interface RateLimitConfig {
  * same code path stays correct on single-tenant self-hosts.
  *
  * Hot path: one upsert round-trip per gated request. The per-tenant
- * ceiling LOOKUP (tenant_quotas.rate_per_minute_limit) stays cached
- * in-process for 60s — that's a CAP read, not a counter, and the cache
- * is purely a perf optimisation under correct multi-instance semantics
- * (cache miss → DB read; staleness is bounded by the TTL).
+ * ceiling lookup (tenant_quotas.rate_per_minute_limit) stays cached
+ * in-process for 60s — that's a cap read, not a counter, and the cache
+ * is purely a perf optimisation (cache miss → DB read; staleness is
+ * bounded by the TTL).
  *
  * Configuration is required — there is no fallback that reads
  * `process.env`. `app.ts` constructs the config from `AppConfig`.
- *
- * **Correctness-first, not perf-first.** The per-request PG round-trip
- * is acceptable at target scale; a write-through per-instance cache
- * (instance-local short-circuit + the DB upsert as the authoritative
- * floor — the T-101 `last_used_at` debounce shape) is a future
- * optimisation if perf measurement demands it. Counter accuracy +
- * cluster-shared correctness come first.
  */
 interface TenantLimitCacheEntry {
   /** `null` means "no per-tenant cap" (env default also unset). */
@@ -88,7 +81,7 @@ export function rateLimitMiddleware(
 
   /**
    * Fetch the per-tenant rate cap (with cache). Returns `null` for
-   * tenants with no override and no env default. T-052.
+   * tenants with no override and no env default.
    */
   async function tenantRateLimit(
     tenantId: string,
@@ -171,10 +164,10 @@ export function rateLimitMiddleware(
       );
     }
 
-    // T-052 follow-on: per-tenant ceiling on top of the per-credential
-    // window. A noisy single credential is bounded by the cap above;
-    // a tenant's collective fleet is bounded here. Skipped for
-    // tenant-less keys (single-tenant self-hosts, platform admin).
+    // Per-tenant ceiling on top of the per-credential window. A noisy
+    // single credential is bounded by the cap above; a tenant's
+    // collective fleet is bounded here. Skipped for tenant-less keys
+    // (single-tenant self-hosts, platform admin).
     const tenantId = apiKey?.tenant_id;
     if (tenantId) {
       const tenantLimitValue = await tenantRateLimit(tenantId, now);

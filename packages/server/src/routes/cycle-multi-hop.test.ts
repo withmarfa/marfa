@@ -1,12 +1,11 @@
 /**
- * T-144 multi-hop integration test.
+ * Multi-hop cycle integration test.
  *
- * The pre-existing `cycle-attribution.test.ts` covers individual hops
- * (a single inbound `X-Marfa-Cycle-*` header pair → published event
- * carries the right origin / hop count). What it does not cover is a
- * full closed loop where the chain is conn-A → conn-B → conn-A → … and
- * the budget gate eventually trips. T-144 calls for that end-to-end
- * coverage in a single integration test.
+ * The `cycle-attribution.test.ts` covers individual hops (a single
+ * inbound `X-Marfa-Cycle-*` header pair → published event carries the
+ * right origin / hop count). This test covers a full closed loop where
+ * the chain is conn-A → conn-B → conn-A → … and the budget gate
+ * eventually trips.
  *
  * The test drives the loop by issuing successive `POST /items` requests
  * with mounting `X-Marfa-Cycle-Hop` values under a fixed
@@ -78,7 +77,7 @@ async function nextCreatedMatching(
   });
 }
 
-describe("cycle multi-hop A→B→A→… loop (T-144)", () => {
+describe("cycle multi-hop A→B→A→… loop", () => {
   it("propagates the same originator across alternating connector hops and trips the budget at the tail", async () => {
     // Install the production cycle-detection wiring so overflow emits
     // the `system.activity` row we'll assert at the end. Default

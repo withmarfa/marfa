@@ -23,8 +23,8 @@ class SecretCryptoError extends Error {
 /**
  * Generic AES-256-GCM encrypt/decrypt for short server-side secrets that
  * the verifier needs back in plaintext (HMAC verification keys, OAuth
- * access/refresh tokens, etc). Workstream 2 PR 5 introduces this for
- * inbound webhook secrets; PR 6 reuses it for OAuth tokens.
+ * access/refresh tokens, etc). Used for inbound webhook secrets and
+ * OAuth tokens.
  *
  * The key is derived from `MARFA_AUTH_SECRET` via HKDF-SHA256, with a
  * caller-supplied `info` string that scopes derivations: rotating
@@ -144,9 +144,9 @@ export const SECRET_INFO = {
   connectionOauthToken: "connection-oauth-tokens",
   /**
    * API-key credentials carried by `system.credential` rows of
-   * `kind: api_key`. Used by Layer-3 connectors that re-present an
-   * existing long-lived API key as a Connection's credential — the
-   * sync agent re-presentation is the first consumer.
+   * `kind: api_key`. Used by connectors that re-present an existing
+   * long-lived API key as a Connection's credential — the sync agent
+   * re-presentation is the first consumer.
    *
    * The plaintext key continues to live on the local machine that
    * uses it (e.g. `~/.marfa/sync.connection.json` for the sync agent);

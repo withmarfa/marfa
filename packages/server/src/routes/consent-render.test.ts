@@ -5,18 +5,17 @@ import { renderConsentScreen } from "./consent.js";
 /**
  * Shape-asserting smoke for `renderConsentScreen`. Covers:
  *
- * - Layout / contract (Wave C PR4 + T-131): shared stylesheet link,
- *   no inline `<style>`, form posts to `/auth/authorize/decision` with
- *   the signed `oauth_query` round-tripped verbatim, scope checkboxes
- *   named `scopes` with the literal as `value`, Allow/Deny buttons
- *   carry `name="accept" value="true|false"`, wide card variant.
+ * - Layout / contract: shared stylesheet link, no inline `<style>`,
+ *   form posts to `/auth/authorize/decision` with the signed
+ *   `oauth_query` round-tripped verbatim, scope checkboxes named
+ *   `scopes` with the literal as `value`, Allow/Deny buttons carry
+ *   `name="accept" value="true|false"`, wide card variant.
  *
- * - Re-consent diff variant (Wave C PR5 / T-032): added / kept /
- *   removed group rendering, heading copy switch, removed rows
- *   strikethrough-classed.
+ * - Re-consent diff variant: added / kept / removed group rendering,
+ *   heading copy switch, removed rows strikethrough-classed.
  *
- * - Error banner (T-131 F2): rendered when `errorMessage` is set,
- *   escaped against XSS, absent otherwise.
+ * - Error banner: rendered when `errorMessage` is set, escaped against
+ *   XSS, absent otherwise.
  *
  * - Polish-pass shape: title + lede only (no avatar / no eyebrow),
  *   sections rendered as plain labelled groups, toggle-switch
@@ -255,7 +254,7 @@ describe("renderConsentScreen — re-consent diff", () => {
   });
 });
 
-describe("renderConsentScreen — error banner (T-131 F2)", () => {
+describe("renderConsentScreen — error banner", () => {
   it("omits the alert div when errorMessage is undefined", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).not.toContain("alert--error");

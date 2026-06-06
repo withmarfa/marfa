@@ -2,9 +2,8 @@ import { z } from "zod";
 import { isValidTypeIdentifier } from "./validation.js";
 
 /**
- * Integration manifest contract — workstream 2 PR 4.
+ * Integration manifest — Zod schema is the canonical definition.
  *
- * This Zod schema is the canonical definition of an Integration manifest.
  * The committed JSON Schema artefact at
  * `packages/types/integration-manifest-schema.json` is generated from this
  * file by `packages/shared/scripts/generate-manifest-schema.ts` and exists
@@ -35,24 +34,22 @@ import { isValidTypeIdentifier } from "./validation.js";
  * Triggers — design intent.
  *
  *   - **schedule**   — runs on a cron expression. Manifest declares the
- *                      cron string; the runtime (workstream 3) enforces.
+ *                      cron string; the runtime enforces.
  *   - **webhook**    — external service POSTs to a per-Connection inbound
  *                      URL when a relevant event occurs upstream. The
- *                      manifest declares this trigger; PR 5's inbound
- *                      webhook subscription consumes the manifest's
- *                      verification declaration.
+ *                      manifest declares this trigger; the inbound webhook
+ *                      subscription consumes the manifest's verification
+ *                      declaration.
  *   - **item-event** — a Marfa item changes. The connector subscribes via
- *                      the item-event bus (workstream 3 wires the
- *                      runtime); cycle-detection metadata (PR 8)
+ *                      the item-event bus; cycle-detection metadata
  *                      protects against A→B→A loops.
  *   - **manual**     — the Integration declares it accepts user-initiated
  *                      runs. The runtime surfaces this as a UI affordance
  *                      ("Run now"). A manifest opting out of this trigger
  *                      means the UI does not offer manual invocation.
  *
- * Bidirectional handling — the four positions per Design Direction lines
- * 97–104, declared per-Integration in the manifest, not per-tenant or
- * platform-wide. Defaults match the design's stated defaults.
+ * Bidirectional handling — declared per-Integration in the manifest, not
+ * per-tenant or platform-wide. Defaults match the design's stated defaults.
  */
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -61,14 +58,10 @@ const SemverSchema = z.string().regex(SEMVER_RE, {
 });
 
 /**
- * Manifest `name` follows TSC42 §3 publisher-namespaced grammar — same
- * shape as a publisher type identifier (e.g. `acme.calendar-sync`). This
- * keeps the marketplace dedupe key stable, matches the rest of Marfa's
- * identifier conventions, and lets the server reuse `isValidTypeIdentifier`
- * for the format check. The Design Direction doc names "publisher" as a
- * first-class concept (lines 44–46, 120) but doesn't constrain the
- * manifest name shape explicitly; we default to namespaced and document
- * the choice here.
+ * Manifest `name` must follow the publisher-namespaced type-identifier
+ * grammar (e.g. `acme.calendar-sync`). This keeps the marketplace dedupe
+ * key stable, matches Marfa's identifier conventions, and lets the server
+ * reuse `isValidTypeIdentifier` for the format check.
  */
 const ManifestNameSchema = z.string().refine((s) => isValidTypeIdentifier(s), {
   message:
@@ -136,10 +129,10 @@ const BidirectionalHandlingSchema = z.object({
    * Tombstone mapping — what happens when the external service deletes
    * something Marfa has locally.
    *   - `state-trashed` (default for read-only Connections): set
-   *     `state: trashed` on the Marfa item.
+   *     `state: trashed` on the item.
    *   - `prompt-user`   (default for read-write Connections): emit a
-   *     `system.activity` with `severity: action_required` letting the
-   *     user resolve.
+   *     `system.activity` with `severity: action_required` for the user
+   *     to resolve.
    *   - `ignore`        : do not propagate the delete.
    */
   tombstone_mapping: TombstoneMappingSchema,
@@ -157,22 +150,20 @@ const BidirectionalHandlingSchema = z.object({
 const OAuthRequirementValue = z.enum(["proxy", "leased"]);
 
 /**
- * Token-credential requirements — manifest 1.1.0 additive field (T-241).
+ * Token-credential requirements — manifest 1.1.0 additive field.
  *
- * For integrations whose upstream uses a static API token (Todoist,
- * Readwise, Raindrop, etc.) rather than an OAuth flow. The map key
- * names the capability (typically the integration's name, e.g.
- * `todoist`); the value is always `"required"` today. The install
- * pipeline accepts a `credential_ref` pointing at a
+ * For integrations whose upstream uses a static API token rather than
+ * an OAuth flow. The map key names the capability (typically the
+ * integration's name, e.g. `todoist`); the value is always `"required"`
+ * today. The install pipeline accepts a `credential_ref` pointing at a
  * `system.credential` of `kind: api_token` whose `api_token_config`
- * carries the upstream base URL; the connection proxy reads the
- * bearer at request time and stamps `Authorization: Bearer …`
- * directly, with no refresh primitive.
+ * carries the upstream base URL; the connection proxy reads the bearer
+ * at request time and stamps `Authorization: Bearer …` directly, with
+ * no refresh primitive.
  *
- * Optional + additive: existing manifests at 1.0.0 keep validating
+ * Optional and additive: existing manifests at 1.0.0 keep validating
  * without declaring this field. Integrations that declare it bump
- * `manifest_schema_version` to `1.1.0` so the field's presence is
- * intentional, not silent.
+ * `manifest_schema_version` to `1.1.0`.
  */
 const TokenRequirementValue = z.literal("required");
 
@@ -185,10 +176,10 @@ const WebhookVerificationSchema = z.discriminatedUnion("method", [
   // (Calendar / Drive / Gmail) — body-less; verification by X-Goog-
   // Channel-Token header against the per-channel stored secret.
   z.object({ method: z.literal("google-channel") }),
-  // T-244: Cloudflare Email Routing → Email Worker → signed JSON
-  // envelope. Verification is HMAC-SHA256 over the body (same on-wire
-  // shape as `hmac-sha256`); the distinct method declares the body
-  // schema (parsed-email envelope) the integration handler expects.
+  // `cloudflare-email` covers Cloudflare Email Routing → Email Worker
+  // → signed JSON envelope. Verification is HMAC-SHA256 over the body
+  // (same on-wire shape as `hmac-sha256`); the distinct method declares
+  // the body schema (parsed-email envelope) the integration handler expects.
   z.object({ method: z.literal("cloudflare-email") }),
 ]);
 

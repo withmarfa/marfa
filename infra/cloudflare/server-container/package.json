@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Cloudflare Worker front + Container Durable Object for the hosted Marfa server (T-277).",
+  "description": "Cloudflare Worker front + Container Durable Object for the hosted Marfa server.",
   "scripts": {
     "typecheck": "tsc --noEmit"
   },

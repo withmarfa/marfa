@@ -100,7 +100,7 @@ export function isValidLanguageCode(value: string): boolean {
 // Type identifiers: dot-separated segments. Min 2 segments.
 // Segments: lowercase alphanumeric, underscores, hyphens. Max 128 characters.
 //
-// TSC42 §3 namespace grammar (enforced structurally below):
+// Namespace grammar (enforced structurally below):
 //   core.<segment>             — exactly two segments under core (subtypes
 //                                permitted: core.media.book, core.entity.person)
 //   system.<segment>           — exactly two segments
@@ -108,7 +108,7 @@ export function isValidLanguageCode(value: string): boolean {
 //                                from publisher trust; the explicit segment
 //                                makes that visible)
 //   user.<segment>             — exactly two segments (subtypes permitted)
-//   <publisher>.<type>         — exactly two segments where first is a
+//   <publisher>.<type>         — two or more segments where the first is a
 //                                non-reserved-root handle
 const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
 
@@ -121,10 +121,9 @@ export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Reserved structural words for the handle namespace (TSC42 §8). Four
- * categories:
- *   - Common-meaning structural words (admin, api, support, login, ...)
- *     that would clash with operational URL slugs and pronouns.
+ * Reserved words for the handle namespace. Four categories:
+ *   - Structural words (admin, api, support, login, ...) that would clash
+ *     with operational URL slugs and pronouns.
  *   - Future-reserved namespaces (sync, auth, data) — names plausibly
  *     needed for future platform-shipped namespaces. Cheap to lock now,
  *     easy to release later if no concrete driver materialises.
@@ -132,8 +131,7 @@ export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
  *     likely confusion vectors for end users browsing the marketplace.
  *   - Major consumer apps and platforms — same rationale.
  *
- * The list is intentionally non-exhaustive. A pre-launch tightening pass
- * will review and expand. Domain-verified claim-with-verification can
+ * The list is intentionally non-exhaustive. Domain-verified claims can
  * unlock specific entries for the legitimate owner once that flow lands.
  */
 export const RESERVED_HANDLE_WORDS: ReadonlySet<string> = new Set([
@@ -207,11 +205,11 @@ export function isReservedHandle(value: string): boolean {
 const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 /**
- * Returns true if the value is a valid handle per TSC42 §8: lowercase
- * alphanumeric and hyphens only, 3–32 characters, no leading/trailing
- * hyphens, no consecutive hyphens, not a reserved root or structural word.
- * Comparison is case-insensitive — the canonical form is the lowercase
- * input; collision detection at the storage layer also lowercases.
+ * Returns true if the value is a valid handle: lowercase alphanumeric and
+ * hyphens only, 3–32 characters, no leading/trailing hyphens, no consecutive
+ * hyphens, not a reserved root or structural word. Comparison is
+ * case-insensitive — the canonical form is lowercase; collision detection at
+ * the storage layer also lowercases.
  */
 export function isValidHandle(value: string): boolean {
   if (typeof value !== "string") return false;
@@ -225,9 +223,9 @@ export function isValidHandle(value: string): boolean {
 
 /**
  * Returns true if the value is a syntactically valid type identifier under
- * the five-tier namespace grammar. Server-side enforcement of who can
- * register `core.*` / `system.*` / `marfa.*` happens separately
- * (registration time; gated by the credential's is_platform flag).
+ * the five-tier namespace grammar. Who can register `core.*` / `system.*` /
+ * `marfa.*` types is enforced separately at registration time, gated by the
+ * credential's `is_platform` flag.
  */
 export function isValidTypeIdentifier(value: string): boolean {
   if (value.length > 128) return false;
@@ -247,16 +245,10 @@ export function isValidTypeIdentifier(value: string): boolean {
       // (server-side validation rejects deeper system registrations).
       return segments.length >= 2;
     default:
-      // <publisher>.<type>[.<subtype>...] — at least two segments. A
-      // publisher namespace may carry sub-namespaces just like the
-      // reserved roots do (e.g. `google.calendar.event`,
-      // `google.tasks.task`). The original cap was `=== 2` and was lifted
-      // when the `google.*` integration family landed needing
-      // `google.calendar.event` as a publisher type — no other publisher
-      // identifier today is deeper than two segments, so the cap was a
-      // bounded-set assumption rather than a structural rule.
-      // Publisher handles still cannot collide with reserved roots; see
-      // classifyNamespace.
+      // <publisher>.<type>[.<subtype>...] — at least two segments. Publisher
+      // namespaces may carry sub-namespaces just like the reserved roots do
+      // (e.g. `google.calendar.event`, `google.tasks.task`). Publisher handles
+      // cannot collide with reserved roots; see classifyNamespace.
       if (RESERVED_ROOTS.has(root)) return false;
       return segments.length >= 2;
   }

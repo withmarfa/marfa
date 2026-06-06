@@ -10,9 +10,8 @@
  * param — server-rendered "tabs" so switching modes survives form
  * navigation without client-side state.
  *
- * Wave C PR4: layout extraction. Inline `<style>` block dropped;
- * the page now references the shared stylesheet at
- * `/auth/static/auth.css` via the `renderAuthLayout` helper.
+ * References the shared stylesheet at `/auth/static/auth.css` via
+ * the `renderAuthLayout` helper; no inline `<style>` block.
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
@@ -167,11 +166,10 @@ export function renderSignInPage(params: SignInPageParams): string {
 
   const activeForm = isPasswordMode ? passwordForm : magicForm;
 
-  // Wave C PR6 / T-034 — passkey sign-in button. Hidden by default
-  // and revealed by the inline script only on browsers that support
-  // WebAuthn AND are running in a secure context. The script lives
-  // inline (rather than in passkey.js) because it needs to read
-  // `params.returnTo` to redirect on success.
+  // Passkey sign-in button. Hidden by default and revealed by the inline
+  // script only on browsers that support WebAuthn AND are running in a
+  // secure context. The script lives inline (rather than in passkey.js)
+  // because it needs to read `params.returnTo` to redirect on success.
   const passkeyButton = `
     <div id="passkey-block" hidden>
       <div class="separator" role="separator" aria-orientation="horizontal">

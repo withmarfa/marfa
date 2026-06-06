@@ -16,7 +16,8 @@
  *      so the first run pulls everything.
  *   2. Call `GET /api/v2/export/?updatedAfter=<iso>` via
  *      `ctx.marfa.proxyRequest`. Substrate stamps
- *      `Authorization: Token <key>` (T-246).
+ *      `Authorization: Token <key>` (set via `auth_scheme: "Token"` on
+ *      the credential at install time).
  *   3. Iterate `payload.results` (books). For each book:
  *      - Upsert as `readwise.book` (source_id = user_book_id).
  *      - For each highlight in the book:

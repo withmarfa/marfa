@@ -13,14 +13,13 @@ interface QueueProducer {
 }
 
 /**
- * Per-integration webhook-receipt queue routing (T-247). Each
- * integration with a `webhook` trigger gets its own queue and its own
- * producer binding on the control plane. Cloudflare Queues allow only
- * one consumer per queue; the runtime-sdk's envelope filter on
- * `integration_name` is a defence-in-depth check that only fires
- * AFTER a message reaches a consumer, so a shared queue would
- * silently filter out every integration except the one that owns the
- * consumer slot.
+ * Per-integration webhook-receipt queue routing. Each integration with
+ * a `webhook` trigger gets its own queue and its own producer binding
+ * on the control plane. Cloudflare Queues allow only one consumer per
+ * queue; the runtime-sdk's envelope filter on `integration_name` is a
+ * defence-in-depth check that only fires AFTER a message reaches a
+ * consumer, so a shared queue would silently filter out every
+ * integration except the one that owns the consumer slot.
  *
  * The resolver returns the per-integration producer when one is
  * bound, falling back to the shared `WEBHOOK_RECEIPT_QUEUE` for
@@ -83,9 +82,9 @@ function hasAnyWebhookProducer(env: ControlPlaneEnv): boolean {
  *      verified_at_ms } onto WEBHOOK_RECEIPT_QUEUE; respond 202.
  *
  * `integration_name` on the queue message is stamped from the matched
- * subscription's projected `integration_name` (T-009) — the per-
- * Integration Worker's envelope filter then accepts it. Subscriptions
- * whose connection has no resolvable integration_ref get an empty
+ * subscription's projected `integration_name` — the per-Integration
+ * Worker's envelope filter then accepts it. Subscriptions whose
+ * connection has no resolvable integration_ref get an empty
  * integration_name and the receipt is rejected so the runtime layer
  * never sees an unrouteable message.
  */
@@ -108,12 +107,12 @@ export function registerWebhookRoutes(
         503,
       );
     }
-    // T-247 — early sanity check: if no webhook-receipt producer
-    // binding is wired AT ALL (neither the shared nor any
-    // per-integration), fail fast with a clear deploy-misconfigured
-    // 503. The per-integration resolver lower down handles the
-    // narrower case "the requested integration's producer isn't
-    // wired" once we know which integration it routes to.
+    // Early sanity check: if no webhook-receipt producer binding is
+    // wired AT ALL (neither the shared nor any per-integration), fail
+    // fast with a clear deploy-misconfigured 503. The per-integration
+    // resolver lower down handles the narrower case "the requested
+    // integration's producer isn't wired" once we know which
+    // integration it routes to.
     if (!hasAnyWebhookProducer(env)) {
       return c.json(
         {
@@ -152,9 +151,9 @@ export function registerWebhookRoutes(
 
     // Try each subscription; first that verifies wins. Most connections
     // have exactly one subscription so the loop usually runs once. The
-    // `ADAPTERS` table from `@withmarfa/webhooks` covers all four
-    // supported methods — unknown methods (shouldn't happen post-T-011
-    // since the manifest schema rejects them) get a clear error.
+    // `ADAPTERS` table from `@withmarfa/webhooks` covers all supported
+    // methods — unknown methods (the manifest schema rejects them at
+    // install time) get a clear routing failure.
     let matched: {
       sub: (typeof subscriptions)[number];
       deliveryId: string;
@@ -184,9 +183,9 @@ export function registerWebhookRoutes(
     if (!matched) {
       return c.json({ error: "verification_failed", reason: lastReason }, 401);
     }
-    // T-009: refuse to enqueue a message we can't route — without a
-    // resolved integration_name, the per-Integration Worker's envelope
-    // filter would silently drop it.
+    // Refuse to enqueue a message we can't route — without a resolved
+    // integration_name, the per-Integration Worker's envelope filter
+    // would silently drop it.
     if (
       !matched.sub.integration_name ||
       matched.sub.integration_name.length === 0
@@ -201,12 +200,11 @@ export function registerWebhookRoutes(
       );
     }
 
-    // T-247: resolve the per-integration queue producer (with the
-    // shared queue as fallback for github-webhooks). Done here, AFTER
-    // verification + integration_name resolution, so the 503
-    // surfaces a real misconfiguration (binding missing for an
-    // integration we routed to) rather than a generic 503 on every
-    // request.
+    // Resolve the per-integration queue producer (with the shared queue
+    // as fallback for github-webhooks). Done here, AFTER verification +
+    // integration_name resolution, so the 503 surfaces a real
+    // misconfiguration (binding missing for an integration we routed to)
+    // rather than a generic 503 on every request.
     const queueChoice = resolveWebhookQueueProducer(
       env,
       matched.sub.integration_name,

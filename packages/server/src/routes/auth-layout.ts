@@ -1,12 +1,10 @@
 /**
- * Shared HTML scaffold for every auth-surface page.
- *
- * Wave C PR4 — `renderAuthLayout` is the single source of truth for
- * the `<!DOCTYPE>...</html>` envelope, the `<meta viewport>` tag, the
- * `<title>` and — critically — the `<link rel="stylesheet">` to
- * `/auth/static/auth.css`. Page renderers (`renderSignInPage`,
- * `renderConsentScreen`, etc.) build the inner HTML and hand it to
- * this helper rather than duplicating the scaffold.
+ * Shared HTML scaffold for every auth-surface page. `renderAuthLayout`
+ * is the single source of truth for the `<!DOCTYPE>...</html>` envelope,
+ * the `<meta viewport>` tag, the `<title>`, and the `<link rel="stylesheet">`
+ * to `/auth/static/auth.css`. Page renderers (`renderSignInPage`,
+ * `renderConsentScreen`, etc.) build the inner HTML and hand it to this
+ * helper rather than duplicating the scaffold.
  *
  * Title is escaped here so callers don't have to remember.
  */
@@ -30,7 +28,7 @@ interface AuthLayoutParams {
   /**
    * When `true`, the card uses the wider variant (`max-width: 560px`).
    * Used by surfaces that show longer scope lists / diff sections —
-   * consent today, the security page once PR7 lands.
+   * consent today, the security page once it ships.
    */
   wide?: boolean;
 }

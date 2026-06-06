@@ -11,21 +11,19 @@ import { log } from "../middleware/logger.js";
 const MS_PER_DAY = 86_400_000;
 
 /**
- * T-050: optional per-tenant fan-out wiring shared by both retention
- * jobs. When provided, the job:
+ * Optional per-tenant fan-out wiring shared by both retention jobs. When
+ * provided, the job:
  *   1. Lists every tenant via `tenants.list()`.
  *   2. For each tenant, resolves the effective retention (the tenant's
- *      `TenantConfig` override field, falling back to the instance
- *      default).
+ *      `TenantConfig` override field, falling back to the instance default).
  *   3. Runs a tenant-scoped sweep with that effective retention.
- *   4. Also runs the NULL-tenant sweep at the instance default — this
- *      catches single-tenant self-host items and any rows with no
- *      tenant scope.
+ *   4. Also runs the NULL-tenant sweep at the instance default — catches
+ *      single-tenant self-host items and any rows with no tenant scope.
  *   5. Sums the deleted counts.
  *
- * Each per-tenant + the NULL sweep are gated by a per-tenant
- * coordination lock (`<jobName>:<tenant-id-or-null>`) so multi-instance
- * deployments still run each sweep once cluster-wide per tick.
+ * Each per-tenant + the NULL sweep are gated by a per-tenant coordination
+ * lock (`<jobName>:<tenant-id-or-null>`) so multi-instance deployments run
+ * each sweep once cluster-wide per tick.
  */
 export interface TenantFanout {
   tenants: TenantStore;
@@ -57,12 +55,11 @@ export interface TenantFanout {
  * advisory lock so multi-instance deployments run the purge once per
  * tick cluster-wide instead of once per instance.
  *
- * T-050: when `fanout` is supplied, a single `runOnce()` tick fans out
- * across every tenant + a NULL-bucket sweep, honouring per-tenant
- * `trash_retention_days` overrides from `TenantConfig`. When `fanout`
- * is omitted the job behaves exactly as before — a single unscoped
- * sweep using the instance default. Single-tenant self-hosts that
- * never wire `tenants` keep the old behaviour for free.
+ * When `fanout` is supplied, a single `runOnce()` tick fans out across
+ * every tenant + a NULL-bucket sweep, honouring per-tenant
+ * `trash_retention_days` overrides from `TenantConfig`. When `fanout` is
+ * omitted the job runs a single unscoped sweep using the instance default.
+ * Single-tenant self-hosts that never wire `tenants` get the simpler path.
  */
 export class TrashPurger {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -151,17 +148,17 @@ export class TrashPurger {
 }
 
 /**
- * T-097: drops expired better-auth `auth_session` rows on a periodic
- * tick. Better Auth itself owns the session TTL via `expiresAt`; this
- * job exists only so the table doesn't grow unbounded between natural
- * expiries (browser-side ephemeral cookies vanish on tab close, but
- * the server-side row stays around until the sweep catches up).
+ * Drops expired better-auth `auth_session` rows on a periodic tick.
+ * Better Auth itself owns the session TTL via `expiresAt`; this job exists
+ * only so the table doesn't grow unbounded between natural expiries
+ * (browser-side ephemeral cookies vanish on tab close, but the server-side
+ * row stays around until the sweep catches up).
  *
  * Instance-wide — `auth_session` carries no `tenant_id` column and the
- * deletion criterion is purely time-based, so the per-tenant fan-out
- * shape used by retention-window jobs (T-050) doesn't apply. Cluster-
- * wide coordination lock keyed `"auth-session-cleanup"` keeps multi-
- * instance deployments running once per tick.
+ * deletion criterion is purely time-based, so the per-tenant fan-out shape
+ * used by retention-window jobs doesn't apply. Cluster-wide coordination
+ * lock keyed `"auth-session-cleanup"` keeps multi-instance deployments
+ * running once per tick.
  */
 export class AuthSessionCleaner {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -215,9 +212,9 @@ export class AuthSessionCleaner {
 }
 
 /**
- * T-116: hard-delete accounts that have sat in `pending_deletion` past
- * the grace window. Pattern mirrors `AuthSessionCleaner` (instance-wide
- * sweep, cluster-wide coordination lock). Two-layer locking:
+ * Hard-delete accounts that have sat in `pending_deletion` past the grace
+ * window. Pattern mirrors `AuthSessionCleaner` (instance-wide sweep,
+ * cluster-wide coordination lock). Two-layer locking:
  *
  *   - Outer lock `account-deletion-purge` gates the whole tick so
  *     multi-instance deployments don't double-list the due set.
@@ -226,20 +223,17 @@ export class AuthSessionCleaner {
  *     its own this lock does NOT block a cancel route (the cancel
  *     never takes it).
  *
- * **T-136 race-safety.** The cancel route does not acquire the
+ * **Cancel-vs-cascade race.** The cancel route does not acquire the
  * per-account lock — so the lock alone cannot prevent a cancel landing
  * between `listPendingDeletionDue` and `deleteAccountCascade`. The
- * actual mitigation lives inside the cascade itself: `SELECT ... FOR
- * UPDATE` on the `auth_user` row at step 0 + a re-check that
- * `deletion_state === 'pending_deletion'` AND `pending_deletion_at <
- * cutoffIso` before any writes. A concurrent cancel either commits
- * before the cascade acquires the row lock (cascade re-reads the
- * fresh `active` state and short-circuits) or blocks behind the
- * cascade's row lock until the cascade commits. We pass `cutoffIso`
- * into the cascade so it knows what window to validate against, and
- * use the `boolean` return to count actually-purged accounts (a
- * cascade that short-circuited returns `false` and does not increment
- * `purged`).
+ * mitigation lives inside the cascade itself: `SELECT ... FOR UPDATE` on
+ * the `auth_user` row + a re-check that `deletion_state === 'pending_deletion'`
+ * AND `pending_deletion_at < cutoffIso` before any writes. A concurrent
+ * cancel either commits before the cascade acquires the row lock (cascade
+ * re-reads the fresh `active` state and short-circuits) or blocks behind
+ * the cascade's row lock until the cascade commits. The `boolean` return
+ * counts actually-purged accounts (a short-circuited cascade returns
+ * `false`).
  *
  * `graceDays <= 0` disables the job — operator override for self-hosts
  * that don't want a grace window.
@@ -284,12 +278,11 @@ export class PendingDeletePurger {
     const due = await accountLifecycle.listPendingDeletionDue(cutoff);
     let purged = 0;
     for (const row of due) {
-      // The per-account lock keeps two purger instances from racing
-      // on the same row. The cascade's in-transaction re-check
-      // (T-136) is what guards against a concurrent cancel. Use the
-      // cascade's boolean return to track whether the row was
-      // actually purged (vs. short-circuited because the user
-      // cancelled between list + cascade).
+      // The per-account lock keeps two purger instances from racing on the
+      // same row. The cascade's in-transaction re-check is what guards
+      // against a concurrent cancel. Use the cascade's boolean return to
+      // track whether the row was actually purged (vs. short-circuited
+      // because the user cancelled between list + cascade).
       const cascadeRan = this.coordination
         ? await this.coordination.withJobLock(
             `account-delete:${row.auth_user_id}`,
@@ -323,15 +316,14 @@ export class PendingDeletePurger {
 }
 
 /**
- * T-026: drops expired `rate_limit_windows` rows on a periodic tick.
- * Expired rows aren't a correctness risk (the upsert path overwrites
- * them transparently inside the next request); the GC just keeps the
- * table from growing unboundedly across the long tail of one-shot
- * windows (e.g. a single IP that hit `/auth/sign-up` once).
+ * Drops expired `rate_limit_windows` rows on a periodic tick. Expired rows
+ * aren't a correctness risk (the upsert path overwrites them transparently);
+ * the GC just keeps the table from growing unboundedly across the long tail
+ * of one-shot windows (e.g. a single IP that hit `/auth/sign-up` once).
  *
- * Instance-wide, not tenant-scoped — the table has no `tenant_id`
- * column. Cluster-wide coordination lock keyed `"rate-limit-cleanup"`
- * keeps multi-instance deployments running once per tick.
+ * Instance-wide, not tenant-scoped — the table has no `tenant_id` column.
+ * Cluster-wide coordination lock keyed `"rate-limit-cleanup"` keeps
+ * multi-instance deployments running once per tick.
  */
 export class RateLimitWindowCleaner {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -388,19 +380,19 @@ export class RateLimitWindowCleaner {
 // ---------------------------------------------------------------------------
 
 /**
- * T-050: shared fan-out runner. Used by `TrashPurger` for the
- * unit-of-days delete job (and exposed via {@link runTenantCleanup} for
- * the audit + event-log jobs which live inline in `index.ts`).
+ * Shared fan-out runner. Used by `TrashPurger` for the unit-of-days delete
+ * job (and exposed via {@link runTenantCleanup} for the audit + event-log
+ * jobs which live inline in `index.ts`).
  *
- * For each tenant + the NULL-tenant bucket, resolves an effective
- * retention (per-tenant override OR `instanceDefault`) and runs a
- * tenant-scoped sweep with `cutoff = now - retention * unitMs`. A
- * value of `0` for the effective retention is the documented "disable
- * for this scope" sentinel and skips the sweep without an error.
+ * For each tenant + the NULL-tenant bucket, resolves an effective retention
+ * (per-tenant override OR `instanceDefault`) and runs a tenant-scoped sweep
+ * with `cutoff = now - retention * unitMs`. A value of `0` for the effective
+ * retention is the documented "disable for this scope" sentinel and skips
+ * the sweep without an error.
  *
  * Each per-tenant invocation grabs `coordination.withJobLock` on a
- * tenant-specific key (`<jobName>:<tenant-id-or-_no_tenant>`) so two
- * server instances racing the same tick don't double-process a tenant.
+ * tenant-specific key (`<jobName>:<tenant-id-or-_no_tenant>`) so two server
+ * instances racing the same tick don't double-process a tenant.
  */
 async function runTenantFanout(opts: {
   jobName: string;
@@ -458,15 +450,14 @@ async function runOneScope(
 }
 
 /**
- * T-050: fan-out runner for the audit + event-log cleanup jobs that
- * live inline in `index.ts`. Same shape as the in-class fan-out above
- * but exposed for the inline callsites that don't have their own
- * Purger class. Returns the total number of rows deleted across every
- * scope swept this tick.
+ * Fan-out runner for the audit + event-log cleanup jobs that live inline in
+ * `index.ts`. Same shape as the in-class fan-out above but exposed for
+ * callsites that don't have their own Purger class. Returns the total number
+ * of rows deleted across every scope swept this tick.
  *
- * `unitMs` is `MS_PER_DAY` for the audit job (retention is in days)
- * and `3_600_000` for the event-log job (retention is in hours);
- * passed in by the caller so the helper stays unit-agnostic.
+ * `unitMs` is `MS_PER_DAY` for the audit job (retention is in days) and
+ * `3_600_000` for the event-log job (retention is in hours); passed in by
+ * the caller so the helper stays unit-agnostic.
  */
 export async function runTenantCleanup(opts: {
   jobName: string;

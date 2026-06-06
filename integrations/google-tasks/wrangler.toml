@@ -8,9 +8,9 @@
 #   - a per-integration scheduled-poll queue (so google.tasks's cron
 #     schedule doesn't contend with google.calendar's,
 #     task-auto-archive's, or rss-watcher's)
-#   - a per-integration reactive-run queue (T-233 — Cloudflare Queues
-#     only allow one consumer per queue; per-integration queues prevent
-#     the silently-dropped-message failure mode of a shared queue)
+#   - a per-integration reactive-run queue (Cloudflare Queues only
+#     allow one consumer per queue; per-integration queues prevent the
+#     silently-dropped-message failure mode of a shared queue)
 #
 # Deliberately NO webhook-receipt queue — Tasks API has no
 # channels.watch surface, no Pub/Sub, no inbound push notifications.
@@ -52,9 +52,9 @@ class_name = "PerConnectionState"
 tag = "v1"
 new_sqlite_classes = ["PerConnectionState"]
 
-# T-103: DLQ producer bindings — one per consumer queue family. The
-# Worker stamps `_failure_reason` on permanent failures before they
-# leave the operator's peekable surface.
+# DLQ producer bindings — one per consumer queue family. The Worker
+# stamps `_failure_reason` on permanent failures before they leave
+# the operator's peekable surface.
 [[env.staging.queues.producers]]
 binding = "SCHEDULED_POLL_QUEUE"
 queue = "marfa-scheduled-poll-google-tasks-staging"
@@ -74,7 +74,7 @@ max_batch_timeout = 30
 max_retries = 6
 dead_letter_queue = "marfa-scheduled-poll-google-tasks-staging-dlq"
 
-# T-233 — per-integration reactive-run queue. Server routes envelopes
+# Per-integration reactive-run queue. Server routes envelopes
 # by `integration_name` to the matching queue URL via
 # `CLOUDFLARE_QUEUES_REACTIVE_RUN_URLS`.
 [[env.staging.queues.consumers]]

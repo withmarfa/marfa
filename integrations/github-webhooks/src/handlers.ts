@@ -138,7 +138,7 @@ export async function handleGithubWebhook(
       summary: `github-webhooks: failed to create ${event ?? "unknown"} bookmark`,
       detail: { error: errorMessage(err), delivery_id: deliveryId },
     });
-    // Retry on Marfa-side failures; the delivery is not yet
+    // Retry on server-side failures; the delivery is not yet
     // recorded so the next attempt re-tries.
     return { ok: false, retry: true, reason: "create_failed" };
   }
@@ -182,10 +182,10 @@ function buildIssueBookmark(payload: IssuePayload): CreateItemInput | null {
   if (payload.repository?.full_name !== undefined) {
     properties.source_title = `${payload.repository.full_name} / issues`;
   }
-  // T-087: prefer GraphQL global node_id (opaque, stable) over numeric
-  // id; fall back to id when the payload lacks node_id. Threads the
-  // server's `(source, source_id)` natural-key contract so a duplicate
-  // delivery can't produce two rows.
+  // Prefer GraphQL global node_id (opaque, stable) over numeric id;
+  // fall back to numeric id when the payload lacks node_id. Threads
+  // the server's `(source, source_id)` natural-key contract so a
+  // duplicate delivery can't produce two rows.
   const sourceId = pickSourceId(issue.node_id, issue.id);
   return sourceId === undefined
     ? { type: "core.bookmark", properties }

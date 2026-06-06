@@ -7,13 +7,12 @@
  * if a chunk contains multiple `;`-terminated statements, ONLY THE FIRST
  * RUNS. Trailing statements are silently dropped without an error.
  *
- * The bug class T-145 surfaced (and fixed in 0043 / 0044 / 0046): a
- * migration file that wrote two SQL statements separated by `;` but
- * forgot the breakpoint between them. The PG migrator (postgres-js)
- * handles multi-statement strings natively, so the bug only manifested
- * under SQLite — but it manifested as "column never created" /
- * "table never dropped", surfacing far downstream from the migration
- * itself.
+ * Drizzle's libsql migrator splits on the marker, so a migration file
+ * that writes two `;`-terminated statements without a breakpoint between
+ * them silently drops all but the first. The PG migrator (postgres-js)
+ * handles multi-statement strings natively, so the bug only manifests
+ * under SQLite — as "column never created" / "table never dropped",
+ * surfacing far downstream from the migration itself.
  *
  * This linter runs over `packages/server/drizzle/sqlite/*.sql`,
  * splits each file on `--> statement-breakpoint`, and asserts that
@@ -166,7 +165,7 @@ function main(): void {
   console.error(
     "Drizzle's libsql migrator splits each .sql file on `--> statement-breakpoint` and runs each chunk via\n" +
       "libsql's single-statement `execute()`. Multiple `;`-terminated statements in one chunk silently drop\n" +
-      "all but the first — see T-145 (PR #240) for the background.\n",
+      "all but the first — each chunk must contain exactly one `;`-terminated statement.\n",
   );
   for (const o of offenses) {
     console.error(

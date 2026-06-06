@@ -3,9 +3,9 @@ import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AppEnv } from "./auth.js";
 
 /**
- * Stamps Marfa request context onto the active OpenTelemetry server span
- * (T-275) so traces join the existing JSON request logs by `request_id`,
- * and so the error-aware sampler's error gate fires on 5xx.
+ * Stamps request context onto the active OpenTelemetry server span so
+ * traces join the existing JSON request logs by `request_id`, and so
+ * the error-aware sampler's error gate fires on 5xx.
  *
  * API-only (`@opentelemetry/api`) — when OpenTelemetry is disabled there is
  * no active span and this is a pure pass-through (`trace.getActiveSpan()`

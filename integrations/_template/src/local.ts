@@ -1,5 +1,5 @@
 /**
- * Local-runtime entry for the template integration (T-174).
+ * Local-runtime entry for the template integration.
  *
  * Counterpart to `worker.ts` (the Cloudflare-side entry). Imported by
  * the server's local runtime substrate via

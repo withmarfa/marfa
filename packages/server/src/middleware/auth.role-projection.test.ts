@@ -1,16 +1,11 @@
 /**
- * T-178 — bearer middleware projects `users.role` onto OAuth principals.
+ * Bearer middleware role projection for OAuth principals.
  *
- * Before T-178 the middleware hardcoded `role: "member"` on every OAuth
- * bearer, so admin-gated routes (`/keys` CRUD via `requireTenantAdmin`,
- * `/admin/*` via `requireAdmin`) always 403-ed for OAuth-authenticated
- * admins. After T-178 the middleware reads the underlying `users.role`
- * for the auth_user the token was issued to.
- *
- * The `is_platform` ceiling on OAuth principals stays — even when the
- * underlying user has `role: 'admin'`, `is_platform` is hardcoded `false`.
- * Platform-admin is an operator-tier flag for API keys with explicit
- * `is_platform: true`; OAuth tokens never claim it.
+ * The middleware reads the underlying `users.role` for the auth_user the
+ * token was issued to, so admin-gated routes work for OAuth-authenticated
+ * admins. The `is_platform` ceiling stays hardcoded false on OAuth
+ * principals — platform-admin is an operator-tier flag exclusive to API
+ * keys with explicit `is_platform: true`; OAuth tokens never claim it.
  *
  * Tests run hosted-mode (`storage.users` present) so the role-projection
  * lookup has a `users` row to consult.
@@ -37,7 +32,7 @@ function tenants() {
   return ctx.storage.tenants;
 }
 
-describe("T-178 — bearer middleware role projection (OAuth)", () => {
+describe("bearer middleware role projection (OAuth)", () => {
   it("projects users.role 'admin' onto the OAuth principal — /keys CRUD succeeds", async () => {
     const tenant = await tenants().create("admin-tenant");
     const { token } = await seedOauthBearer(
@@ -70,9 +65,8 @@ describe("T-178 — bearer middleware role projection (OAuth)", () => {
     });
 
     const res = await request(ctx.app, "GET", "/keys", { key: token });
-    // Authenticated but insufficient role → 403, not 401. Before T-178
-    // every OAuth bearer landed here; the change makes the gate gradient
-    // (admin/tenant_admin pass, member fails).
+    // Authenticated but insufficient role → 403, not 401. The gate is
+    // gradient: admin/tenant_admin pass, member fails.
     expect(res.status).toBe(403);
   });
 

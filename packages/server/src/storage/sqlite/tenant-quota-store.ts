@@ -5,15 +5,15 @@ import { tenantQuotas, items, outboundWebhooks, blobs } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 /**
- * T-052 per-tenant quota store (SQLite). Stores ceilings in
- * `tenant_quotas`; counts are computed on-demand via COUNT(*) on the
- * underlying tables, scoped by tenant_id.
+ * Per-tenant quota store (SQLite). Stores ceilings in `tenant_quotas`;
+ * counts are computed on-demand via COUNT(*) on the underlying tables,
+ * scoped by tenant_id.
  *
- * The blobs table uses the empty-string sentinel for instance-wide rows
- * (T-049); count() for `blobs` filters by exact tenant_id, so platform-
- * admin uploads (under '') don't count against any specific tenant — the
+ * The blobs table uses an empty-string sentinel for instance-wide rows;
+ * count() for `blobs` filters by exact tenant_id, so platform-admin
+ * uploads (under '') don't count against any specific tenant — the
  * empty-string sentinel acts as a separate "tenant" for quota purposes,
- * which is the right thing for hosted multi-tenant.
+ * which is the correct behavior for hosted multi-tenant.
  */
 export class SqliteTenantQuotaStore implements TenantQuotaStore {
   constructor(private db: DrizzleDb) {}
@@ -107,11 +107,10 @@ export class SqliteTenantQuotaStore implements TenantQuotaStore {
       return row?.c ?? 0;
     }
     if (resource === "storage_bytes") {
-      // SUM(size) across the tenant's blob metadata rows. T-052
-      // follow-on (Wave B Part 2): the storage backend dedupes the
-      // physical file by hash, so this counts every blob row whose
-      // tenant_id matches — different tenants uploading the same
-      // hash see the row in their own scope (T-049 multi-row design).
+      // SUM(size) across the tenant's blob metadata rows. The storage
+      // backend dedupes the physical file by hash, so this counts every
+      // blob row whose tenant_id matches — different tenants uploading
+      // the same hash each see the row in their own scope.
       const row = await this.db
         .select({ s: sql<number>`coalesce(sum(${blobs.size}), 0)` })
         .from(blobs)

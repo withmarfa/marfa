@@ -1,15 +1,15 @@
 packages:
   - "packages/*"
   - "infra/cloudflare"
-  # T-277: Worker front + Container Durable Object for the hosted server.
+  # Worker front + Container Durable Object for the hosted server.
   # Nested under infra/cloudflare/ to keep all Cloudflare deployables
   # together; a separate workspace package (distinct deps: @cloudflare/containers).
   - "infra/cloudflare/server-container"
   - "integrations/*"
-  # T-244: the withmarfa.inbox integration ships an adjacent Cloudflare
-  # Email Worker (`integrations/withmarfa-inbox/email-worker`) as a
-  # nested workspace package. Different deployable (CF Email Worker
-  # vs per-Integration Worker), distinct dependency set (postal-mime).
+  # The withmarfa.inbox integration ships an adjacent Cloudflare Email
+  # Worker (`integrations/withmarfa-inbox/email-worker`) as a nested
+  # workspace package. Different deployable (CF Email Worker vs
+  # per-Integration Worker), distinct dependency set (postal-mime).
   - "integrations/*/email-worker"
 
 # Catch the worktree-staleness gotcha: when a long-lived worktree

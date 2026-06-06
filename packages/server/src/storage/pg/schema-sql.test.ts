@@ -1,5 +1,5 @@
 /**
- * Re-run safety test for the auto-generated Postgres SCHEMA_SQL (T-145).
+ * Re-run safety test for the auto-generated Postgres SCHEMA_SQL.
  *
  * SCHEMA_SQL runs on every server boot via createConnection() — once on a
  * fresh DB to populate it, and again on every subsequent boot to no-op.
@@ -7,10 +7,10 @@
  * already-bootstrapped DB must not error.
  *
  * Fresh-apply correctness is exercised by the rest of the PG test suite —
- * every createTestContext() invocation boots through the per-file
- * template clone, which has the schema applied via migrations. If a
- * CREATE TABLE statement were malformed, 1000+ downstream tests would
- * surface it before this one.
+ * every createTestContext() invocation boots through the per-file template
+ * clone, which has the schema applied via migrations. If a CREATE TABLE
+ * statement were malformed, 1000+ downstream tests would surface it before
+ * this one.
  *
  * Drift between SCHEMA_SQL and the migrations is caught by the
  * `schema-sql-freshness` CI job, which regenerates the artefact and
@@ -45,7 +45,7 @@ afterAll(async () => {
   if (clone) await clone.drop();
 });
 
-describeOrSkip("SCHEMA_SQL re-run safety — Postgres (T-145)", () => {
+describeOrSkip("SCHEMA_SQL re-run safety — Postgres", () => {
   it("re-applies cleanly against an already-bootstrapped DB", async () => {
     // The clone already has the schema applied (via the template's
     // migrations). Re-applying SCHEMA_SQL must complete without errors —
@@ -64,14 +64,13 @@ describeOrSkip("SCHEMA_SQL re-run safety — Postgres (T-145)", () => {
     }
   });
 
-  it("re-applies cleanly when constraint names differ from SCHEMA_SQL's labels (T-157)", async () => {
-    // Mirrors the conformance-DB shape that surfaced T-157 during the
-    // T-146 deploy: three PKs were named differently from the labels the
-    // generator captured. Under the pre-T-157 name-based guards, applying
-    // SCHEMA_SQL crashed with "multiple primary keys for table 'blobs'
-    // are not allowed". Under T-157's semantic guards (contype + column
-    // set) the IF NOT EXISTS check matches by shape regardless of name,
-    // so the ADD CONSTRAINT is correctly skipped.
+  it("re-applies cleanly when constraint names differ from SCHEMA_SQL's labels", async () => {
+    // Covers a case where PKs were renamed to something the generator had
+    // not seen. Under name-based guards, applying SCHEMA_SQL crashed with
+    // "multiple primary keys for table 'blobs' are not allowed". Under
+    // the semantic guards (contype + column set) the IF NOT EXISTS check
+    // matches by shape regardless of name, so the ADD CONSTRAINT is
+    // correctly skipped.
     const sql = postgres(clone!.url, {
       max: 1,
       // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -114,11 +113,11 @@ describeOrSkip("SCHEMA_SQL re-run safety — Postgres (T-145)", () => {
       }
 
       try {
-        // The expected pre-T-157 failure was: pg_constraint lookup by name
-        // returned NOT EXISTS (the constraint exists but with the new
-        // alias), so the ADD CONSTRAINT statement ran and Postgres raised
-        // "multiple primary keys for table '<table>' are not allowed". The
-        // semantic guards close this class — pass means the bug is fixed.
+        // Without semantic guards, pg_constraint lookup by name returns NOT
+        // EXISTS (the constraint exists but under the new alias), so the ADD
+        // CONSTRAINT statement runs and Postgres raises "multiple primary
+        // keys for table '<table>' are not allowed". The semantic guards
+        // (contype + column set) close this class — pass means working.
         await expect(sql.unsafe(SCHEMA_SQL)).resolves.toBeDefined();
       } finally {
         // Restore each constraint name so subsequent tests see the

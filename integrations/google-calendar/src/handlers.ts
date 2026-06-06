@@ -16,12 +16,12 @@
  *     Update the syncToken on success.
  *
  * - ITEM-EVENT (outbound, fires on Marfa `core.event` mutations):
- *     - The reactive bridge already filters self-events (Layer 2
- *       PR 3); double-check defensively against `cycle`.
+ *     - The reactive bridge already filters self-events; double-check
+ *       defensively against `cycle`.
  *     - If we're inside the lag window for this external_id,
  *       defer (return ok=false retry=true).
  *     - For created items: POST to Calendar with a deterministic
- *       client-supplied `id` derived from the Marfa item id (T-020).
+ *       client-supplied `id` derived from the Marfa item id.
  *       On 200/201, record mapping + echo.trackOutboundWrite. On
  *       409 (Calendar already has an event with that id from a
  *       prior attempt that didn't persist its cursor write), GET
@@ -36,15 +36,15 @@
  *       (per partial_write_mode: accept-partial).
  *     - On Calendar 5xx, return retry=true.
  *
- * T-020 idempotency: Cloudflare Queues whole-batch retry semantics
- * mean a transient failure between successful Calendar POST and
- * cursor-write produces a duplicate Calendar event on retry. The
- * fix is a deterministic client-supplied `id` on the POST: Calendar
- * accepts a custom `id` (5–1024 chars, base32hex alphabet — hex is
- * a subset, so a SHA-256 hex digest is valid) and returns 409 on
- * conflict, which we recognise as "I already created this event,
- * fetch its current state and record the mapping". The handler
- * therefore produces at most one Calendar event per Marfa item id,
+ * Idempotency: Cloudflare Queues whole-batch retry semantics mean a
+ * transient failure between a successful Calendar POST and the
+ * cursor-write produces a duplicate Calendar event on retry. The fix
+ * is a deterministic client-supplied `id` on the POST: Calendar
+ * accepts a custom `id` (5–1024 chars, base32hex alphabet — hex is a
+ * subset, so a SHA-256 hex digest is valid) and returns 409 on
+ * conflict, which the handler recognises as "I already created this
+ * event, fetch its current state and record the mapping". The handler
+ * therefore produces at most one Calendar event per item id,
  * regardless of retry count.
  */
 import {
@@ -343,8 +343,8 @@ async function handleItemEventSingle(
   message: ItemEventMessage,
   config: ConnectionConfig,
 ): Promise<HandlerResult> {
-  // Defensive self-event filter — the bridge already drops these
-  // (Layer 2 PR 3) but check anyway.
+  // Defensive self-event filter — the bridge already drops these,
+  // but check anyway.
   if (
     ctx.cycle?.originating_connection_id === ctx.connection_id ||
     message.cycle.originating_connection_id === ctx.connection_id
@@ -406,13 +406,13 @@ async function handleItemEventSingle(
   // Create or update on Calendar.
   const calendarPayload = buildCalendarPayload(item);
   if (externalId === null) {
-    // T-020: stamp a deterministic id derived from the Marfa item id
-    // so a retry of the same handler invocation reaches Calendar
-    // with the same id. Calendar's `events.insert` accepts a
-    // client-supplied `id` (5–1024 chars, base32hex alphabet — hex
-    // is a subset of base32hex, so a SHA-256 hex digest is valid)
-    // and returns 409 on conflict. The 409 path below recovers the
-    // mapping idempotently without creating a duplicate event.
+    // Stamp a deterministic id derived from the item id so a retry
+    // of the same handler invocation reaches Calendar with the same
+    // id. Calendar's `events.insert` accepts a client-supplied `id`
+    // (5–1024 chars, base32hex alphabet — hex is a subset of
+    // base32hex, so a SHA-256 hex digest is valid) and returns 409
+    // on conflict. The 409 path below recovers the mapping
+    // idempotently without creating a duplicate event.
     const deterministicId = await deriveDeterministicCalendarId(item.id);
     // Single-calendar mode: write to the configured default calendar
     // (the primary by default).
@@ -488,15 +488,14 @@ export function registerHandlers(): void {
 }
 
 // ---------------------------------------------------------------------------
-// PR4 — channels.watch push notifications.
+// channels.watch push notifications.
 //
 // Active when multi-calendar configuration is set AND a webhook
 // receipt URL is available on `properties.configuration.inbound_webhook_url`
-// (operator/install sets this when the inbound subscription is minted).
+// (set when the inbound subscription is minted at install time).
 // Without an inbound URL the integration still works on the schedule
-// poll path; channels are simply not created. This degradation is
-// deliberate — the schedule trigger is both the renewal cron AND the
-// fallback for any push gap.
+// poll path; channels are simply not created. The schedule trigger
+// is both the renewal cron and the fallback for any push gap.
 // ---------------------------------------------------------------------------
 
 /** Channel renewal leeway — refresh a channel when it's within this
@@ -886,10 +885,10 @@ async function syncOneCalendar(
 }
 
 // ---------------------------------------------------------------------------
-// Multi-calendar handlers (T-231 PR3). Active when the connection's
+// Multi-calendar handlers. Active when the connection's
 // `properties.configuration` carries `selected_calendar_ids[]` and a
-// `default_write_calendar_id` — i.e. the post-install picker has been
-// run. Without that configuration, the single-calendar path above runs.
+// `default_write_calendar_id` (set by the install-time picker).
+// Without that configuration, the single-calendar path above runs.
 // ---------------------------------------------------------------------------
 
 interface PerCalendarCursor {
@@ -920,10 +919,10 @@ async function handleScheduleMulti(
   cursor.per_calendar = cursor.per_calendar ?? {};
   cursor.mapping_calendars = cursor.mapping_calendars ?? {};
 
-  // PR4 — push notifications. Ensure every selected calendar has a
-  // live (and not expiring-soon) watch channel pointed at the
-  // connection's inbound receipt URL. Skipped gracefully when the URL
-  // isn't configured; the schedule poll alone keeps the integration
+  // Push notifications: ensure every selected calendar has a live
+  // (and not expiring-soon) watch channel pointed at the connection's
+  // inbound receipt URL. Skipped gracefully when the URL isn't
+  // configured; the schedule poll alone keeps the integration
   // functional in that case.
   const inboundWebhookUrl = await resolveInboundWebhookUrl(ctx);
   if (inboundWebhookUrl !== null) {
@@ -1156,7 +1155,7 @@ async function handleItemEventMulti(
     const resp = await ctx.marfa.proxyRequest("POST", postPath, postPayload);
 
     if (resp.status === 409) {
-      // T-020 idempotent recovery — same handling as single-calendar mode.
+      // Idempotent recovery — same handling as single-calendar mode.
       const fetchPath = `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(writeCalendarId)}/events/${encodeURIComponent(deterministicId)}`;
       const fetchResp = await ctx.marfa.proxyRequest("GET", fetchPath);
       if (!fetchResp.ok) {

@@ -4,7 +4,7 @@ import type { PgClient, PgDb } from "./connection.js";
 import { pgRequestContext, type PgTxContext } from "./request-context.js";
 
 /**
- * T-146: session-level RLS for streaming routes (`/events`, `/export`).
+ * Session-level RLS for streaming routes (`/events`, `/export`).
  *
  * The transaction-wrapping middleware (`rls-tenant-context.ts`) cannot
  * cover streaming responses — the stream holds the response open for an
@@ -22,14 +22,13 @@ import { pgRequestContext, type PgTxContext } from "./request-context.js";
  * GUC — and returns the connection to the pool. If the reset fails the
  * connection is destroyed instead so it never returns poisoned. The
  * scoped reset is the precise match for the cleanup invariant ("no
- * leaked tenant context on connection return to pool"); the previous
- * `DISCARD ALL` was a sledgehammer that also invalidated server-side
- * prepared statements while postgres.js retained their client-side
- * names, surfacing as `prepared statement "<name>" does not exist`
- * 500s on subsequent writes under concurrent SSE + write load (T-189).
- * RLS policies read `current_setting('marfa.tenant_id')` at execute
- * time, not bind time, so cached statements are safe to survive the
- * reset.
+ * leaked tenant context on connection return to pool"); using
+ * `DISCARD ALL` also invalidated server-side prepared statements while
+ * postgres.js retained their client-side names, surfacing as
+ * `prepared statement "<name>" does not exist` 500s on subsequent
+ * writes under concurrent SSE + write load. RLS policies read
+ * `current_setting('marfa.tenant_id')` at execute time, not bind time,
+ * so cached statements are safe to survive the reset.
  *
  * **Why session-level rather than per-event short transactions:**
  * per-event txs add latency per emit and complicate cursor / replay
@@ -177,17 +176,16 @@ export async function withStreamRls<T>(
  * rows. Catastrophic. The cost of destroy is one re-establishment;
  * the cost of a leak is unbounded.
  *
- * Scoped reset, not `DISCARD ALL`. The cleanup invariant is "no
- * leaked tenant context on connection return to pool" — that's
- * narrower than `DISCARD ALL`, which also drops every prepared
- * statement on the session. postgres.js caches statement names
- * client-side per `Sql` instance and reuses them across reservations
- * of the same underlying connection; nuking the server side without
- * a client-side invalidation hook surfaces as `prepared statement
- * "<name>" does not exist` 500s on the next request that touches the
- * recycled connection (T-189 — ~20% POST /items failure rate under
- * concurrent SSE + writes). The two statements below clear exactly
- * what was set in `acquireStreamRls`:
+ * Scoped reset, not `DISCARD ALL`. The cleanup invariant is "no leaked
+ * tenant context on connection return to pool" — that's narrower than
+ * `DISCARD ALL`, which also drops every prepared statement on the session.
+ * postgres.js caches statement names client-side per `Sql` instance and
+ * reuses them across reservations of the same underlying connection; nuking
+ * the server side without a client-side invalidation hook surfaces as
+ * `prepared statement "<name>" does not exist` 500s on the next request
+ * that touches the recycled connection (~20% POST /items failure rate under
+ * concurrent SSE + writes). The two statements below clear exactly what was
+ * set in `acquireStreamRls`:
  *
  *   - `RESET ROLE` — back to the pool's default owner role.
  *   - `SELECT set_config('marfa.tenant_id', '', false)` — empty the

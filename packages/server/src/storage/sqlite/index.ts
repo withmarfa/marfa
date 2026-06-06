@@ -84,7 +84,7 @@ export async function createSqliteStorage(
   const connectionLeasedTokenStore = new SqliteConnectionLeasedTokenStore(db);
   const auditStore = new SqliteAuditStore(db);
   const eventLogStore = new SqliteEventLogStore(db);
-  // T-097: auth_session sweep — instance-wide, no tenant scoping.
+  // auth_session sweep — instance-wide, no tenant scoping.
   const authSessionStore = new SqliteAuthSessionStore(db);
   const edgeStore = new SqliteEdgeStore(db);
   const edgeTypeStore = new SqliteEdgeTypeStore(db);
@@ -98,9 +98,8 @@ export async function createSqliteStorage(
     }
   });
 
-  // Same pattern for the custom-type registry. T-071: pre-driver-swap this
-  // ran synchronously in the SqliteTypeStore constructor via better-sqlite3;
-  // libsql is async-only, so it's now an explicit fire-and-forget warm-up.
+  // Same pattern for the custom-type registry. libsql is async-only, so
+  // the warm-up is an explicit fire-and-forget rather than a sync call.
   void typeStore.loadCustomTypes().then((types) => {
     for (const t of types) {
       if (!isCoreType(t.id)) registerTypeSchema(t);
@@ -118,8 +117,8 @@ export async function createSqliteStorage(
     edges: edgeStore,
     edgeTypes: edgeTypeStore,
     oauth: oauthStore,
-    // T-131: thin reader over the plugin's tables for the consent route
-    // + projection after-hooks. The plugin itself owns writes.
+    // Thin reader over the @better-auth/oauth-provider plugin's tables
+    // for the consent route and projection after-hooks. The plugin owns writes.
     oauthProvider: new SqliteOauthProviderStore(db),
     outboundWebhooks: webhookStore,
     outboundWebhookDeliveries: deliveryStore,
@@ -130,34 +129,33 @@ export async function createSqliteStorage(
     audit: auditStore,
     eventLog: eventLogStore,
     authSessions: authSessionStore,
-    // T-116: account-lifecycle store reads/writes auth_user's deletion
-    // columns. SQLite has no RLS so we use the wrapped instance like
-    // the other auth-* stores; transactional consistency is preserved
-    // via Drizzle's ALS routing.
+    // Account-lifecycle store reads/writes auth_user's deletion columns.
+    // SQLite has no RLS so we use the wrapped instance like the other
+    // auth-* stores; transactional consistency is preserved via Drizzle's
+    // ALS routing.
     accountLifecycle: new SqliteAccountLifecycleStore(db),
     settings: new SqliteSettingsStore(db),
     coordination: new SqliteCoordinationStore(),
-    // T-218: async substrate for bulk_action — single-process, see
-    // bulk-action-job-store.ts for the no-FOR-UPDATE claim path.
+    // Async bulk-action substrate — single-process; see
+    // bulk-action-job-store.ts for the claim-without-FOR-UPDATE path.
     bulkActionJobs: new SqliteBulkActionJobStore(db),
     tenantQuotas: new SqliteTenantQuotaStore(db),
-    // T-026: cluster-shared rate-limit + per-email throttle counters.
-    // Same shape as the PG wiring; SQLite is single-process by file
-    // lock so "shared" collapses to "still correct in-process".
+    // Rate-limit + per-email throttle counters. Same shape as the PG
+    // wiring; SQLite is single-process by file lock so "cluster-shared"
+    // collapses to "still correct in-process".
     rateLimits: new SqliteRateLimitStore(db),
-    // T-050: tenant store is wired unconditionally so the per-tenant
-    // cleanup fan-out works on any deployment, including keys-mode
-    // self-hosts that have explicitly created tenant rows. No hosted-
-    // mode gate — the store is harmless in single-tenant deployments
-    // (it just lists zero tenants and the cleanup falls through to the
-    // NULL-bucket sweep).
+    // Tenant store is wired unconditionally so the per-tenant cleanup
+    // fan-out works on any deployment, including keys-mode self-hosts
+    // that have explicitly created tenant rows. In single-tenant
+    // deployments it simply lists zero tenants and the cleanup falls
+    // through to the NULL-bucket sweep.
     tenants: new SqliteTenantStore(db),
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),
     }),
     /**
-     * Genuinely transactional under libsql + ALS routing (T-071). Opens a
-     * libsql `BEGIN IMMEDIATE` via Drizzle's `db.transaction(async tx => …)`,
+     * Genuinely transactional under libsql + ALS routing. Opens a libsql
+     * `BEGIN IMMEDIATE` via Drizzle's `db.transaction(async tx => …)`,
      * stores `tx` on the per-request ALS so every store call inside `fn`
      * resolves its executor to the transaction, and rolls back on throw.
      * Rollback is real — not a no-op for async bodies.

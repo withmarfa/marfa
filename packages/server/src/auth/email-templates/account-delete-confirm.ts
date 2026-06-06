@@ -1,10 +1,10 @@
 /**
- * Account-delete confirm template (T-116).
+ * Account-delete confirmation email.
  *
  * Sent on `POST /auth/account/delete`. Single-use confirmation link;
  * clicking it flips the account into `pending_deletion` and starts
- * the 30-day grace window. Subject is deliberately specific so the
- * recipient sees it isn't a routine notification.
+ * the grace window. Subject is deliberately specific so the recipient
+ * sees it isn't a routine notification.
  */
 const ACCENT = "#1f6feb";
 const TEXT = "#1f2328";

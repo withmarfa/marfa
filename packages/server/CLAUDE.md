@@ -7,18 +7,18 @@ The Hono HTTP server exposing the Marfa API. Private package — never published
 - `src/index.ts` — the entry point. Boots storage, blob backend, retention workers (`TrashPurger`, `VersionThinner`, audit cleanup, event-log cleanup, `AuthSessionCleaner`), and the Hono app.
 - `src/app.ts` — composes the router from per-route modules; sets up middleware (auth, rate limit, CORS, logging).
 - `src/routes/*.ts` — one file per route group: `items.ts`, `types.ts`, `keys.ts`, `tenants.ts`, `users.ts`, `edges.ts`, `search.ts`, `bulk.ts`, etc. Routes use `@hono/zod-openapi`'s `createRoute` so OpenAPI generation falls out for free.
-- `src/storage/` — dual-dialect Drizzle layer. `interface.ts` defines `Storage`, `ItemStore`, `KeyStore`, etc.; `pg/` and `sqlite/` are sibling implementations. `connection.ts` imports the bootstrap `SCHEMA_SQL` from a sibling `schema-sql.generated.ts` — auto-generated from migrations by `scripts/generate-schema-sql.ts` (T-145). Never hand-edit the generated file.
+- `src/storage/` — dual-dialect Drizzle layer. `interface.ts` defines `Storage`, `ItemStore`, `KeyStore`, etc.; `pg/` and `sqlite/` are sibling implementations. `connection.ts` imports the bootstrap `SCHEMA_SQL` from a sibling `schema-sql.generated.ts` — auto-generated from migrations by `scripts/generate-schema-sql.ts`. Never hand-edit the generated file.
 - `src/middleware/auth.ts` — bearer-token + OAuth resolution; sets `c.var.apiKey`.
 - `src/test-utils.ts` — `createTestContext()` for in-process integration tests across PG/SQLite.
-- `src/integrations/local-runtime/` (T-173) — Node-bundled integrations substrate. Conditional boot via `MARFA_INTEGRATION_RUNTIME=local`; pg-boss drives cron + queue, `worker_thread` per-integration pool runs handler code, per-Connection state lives under the `connection.runtime` reserved extension namespace. See the dedicated section below.
+- `src/integrations/local-runtime/` — Node-bundled integrations substrate. Conditional boot via `MARFA_INTEGRATION_RUNTIME=local`; pg-boss drives cron + queue, `worker_thread` per-integration pool runs handler code, per-Connection state lives under the `connection.runtime` reserved extension namespace. See the dedicated section below.
 
 ## Schema changes
 
 When changing a column or adding a table:
 
 1. Edit the Drizzle schema (`storage/{pg,sqlite}/schema.ts`).
-2. Generate migrations: `pnpm --filter @withmarfa/server run migrate:pg:generate` and `migrate:sqlite:generate`. Each command refreshes the corresponding `src/storage/<dialect>/schema-sql.generated.ts` automatically as a post-step (T-145) — the PG one needs Docker running so it can spin up a transient `postgres:17` to dump the schema. **Never hand-edit a `schema-sql.generated.ts` file**; the next regen overwrites it and the `schema-sql-freshness` CI job catches drift.
-3. Hand-review the generated SQL under `drizzle/{pg,sqlite}/` — Drizzle Kit sometimes produces DROP+ADD when a careful ALTER+UPDATE+ALTER would be lossless. Edit the SQL by hand if needed, then re-run the regen so `schema-sql.generated.ts` reflects the edit. For multi-statement SQLite migrations, ensure `--> statement-breakpoint` separates each `;` — libsql's migrator silently drops trailing statements without it (T-145 surfaced + fixed three pre-existing instances of this). The `sqlite-migrations-lint` CI job + the `pnpm --filter @withmarfa/server lint:sqlite-migrations` script enforce this and will fail loud if a new migration introduces the regression.
+2. Generate migrations: `pnpm --filter @withmarfa/server run migrate:pg:generate` and `migrate:sqlite:generate`. Each command refreshes the corresponding `src/storage/<dialect>/schema-sql.generated.ts` automatically as a post-step — the PG one needs Docker running so it can spin up a transient `postgres:17` to dump the schema. **Never hand-edit a `schema-sql.generated.ts` file**; the next regen overwrites it and the `schema-sql-freshness` CI job catches drift.
+3. Hand-review the generated SQL under `drizzle/{pg,sqlite}/` — Drizzle Kit sometimes produces DROP+ADD when a careful ALTER+UPDATE+ALTER would be lossless. Edit the SQL by hand if needed, then re-run the regen so `schema-sql.generated.ts` reflects the edit. For multi-statement SQLite migrations, ensure `--> statement-breakpoint` separates each `;` — libsql's migrator silently drops trailing statements without it. The `sqlite-migrations-lint` CI job + the `pnpm --filter @withmarfa/server lint:sqlite-migrations` script enforce this and will fail loud if a new migration introduces the regression.
 4. Update both `_journal.json` files under `drizzle/{pg,sqlite}/meta/` to add the new entry (Drizzle Kit usually handles this automatically when it generates the migration).
 5. Run `pnpm test:fresh-sqlite` and `pnpm test:pg` to verify the migration is correctly applied to existing databases AND the bootstrap path produces the same shape.
 
@@ -28,21 +28,21 @@ Every new route under `src/routes/` ships with a sibling `*.test.ts` covering at
 
 The OpenAPI spec is generated from `createRoute` definitions — never hand-edited. Run `pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json` after route changes; the freshness CI job checks for drift.
 
-## Auth helpers (T-051 layered, Wave B Part 2 completeness pass)
+## Auth helpers
 
 Three tiers, picked by intent:
 
 - **`requireAuth(c)`** — bearer token must resolve. No role check.
-- **`requireTenantAdmin(c)`** — admits both `admin` (platform) and `tenant_admin` (tenant-bounded). Use for routes that genuinely belong inside a tenant. **The route MUST thread `key.tenant_id` into storage queries** so a tenant_admin attempting to address another tenant's resource gets a 404 (cross-tenant probes never see other tenants' data). With T-025 (Postgres RLS) wired, the DB layer enforces this independently when `MARFA_RLS_ENFORCE=true`; the application-layer fence remains load-bearing for self-hosts that leave RLS off.
+- **`requireTenantAdmin(c)`** — admits both `admin` (platform) and `tenant_admin` (tenant-bounded). Use for routes that genuinely belong inside a tenant. **The route MUST thread `key.tenant_id` into storage queries** so a tenant_admin attempting to address another tenant's resource gets a 404 (cross-tenant probes never see other tenants' data). With Postgres RLS wired, the DB layer enforces this independently when `MARFA_RLS_ENFORCE=true`; the application-layer fence remains load-bearing for self-hosts that leave RLS off.
 - **`requireAdmin(c)`** — platform-only. Use for routes that need cross-tenant authority or instance-level ops: tenant CRUD, OAuth client registration, audit cleanup, metrics, archive restore, platform-credential mint.
 
 **Type access bypass.** `checkTypeAccess` and `computeTypeFilter` admit both `admin` and `tenant_admin` without consulting `type_permissions`. tenant_admin is the "admin within tenant" tier — keys deliberately scoped to a subset of types belong as `member` with explicit `type_permissions`, not as tenant_admin. The platform-credential gate on `system.*` / `marfa.*` writes still applies (tenant_admin is not platform unless explicitly minted that way).
 
 When auditing a `requireAdmin` callsite for tenant widening: the route is safe to widen iff every storage operation it performs filters by (or stamps from) the caller's `tenant_id`. Lookups via path id MUST go through tenant-scoped store methods (e.g., `get(id, tenant_id)`); list operations MUST pass `tenant_id`; create operations MUST stamp `tenant_id` from the caller. If any of those isn't the case, either leave as `requireAdmin` or add a route-level tenant filter / 404-cloak (the pattern used in `keys.list/revoke/update` here).
 
-Routes widened in T-051 (Wave B Part 1): `POST /keys`, all `/webhooks/*`, `POST /connections/install`, `POST /connections/:id/uninstall`. Routes widened in Wave B Part 2: `GET /keys`, `DELETE /keys/:id`, `PATCH /keys/:id`, `DELETE /items/:id/purge`, plus the new `GET /tenants/me/quotas`. Routes still on `requireAdmin`: `tenants.*` (cross-tenant CRUD by definition), `oauth.client/token`, `audit.cleanup`, `metrics`, `admin-archive`, admin blob ops, and `types.update/delete` + `edge-types.create/delete` (the storage layer for custom types/edge-types loads through an in-memory registry that doesn't currently filter by tenant_id at lookup time — widening these requires a small registry-side audit, filed as follow-on).
+Routes scoped to `requireTenantAdmin`: `POST /keys`, all `/webhooks/*`, `POST /connections/install`, `POST /connections/:id/uninstall`, `GET /keys`, `DELETE /keys/:id`, `PATCH /keys/:id`, `DELETE /items/:id/purge`, plus `GET /tenants/me/quotas`. Routes still on `requireAdmin`: `tenants.*` (cross-tenant CRUD by definition), `oauth.client/token`, `audit.cleanup`, `metrics`, `admin-archive`, admin blob ops, and `types.update/delete` + `edge-types.create/delete` (the storage layer for custom types/edge-types loads through an in-memory registry that doesn't currently filter by tenant_id at lookup time — widening these requires a small registry-side audit).
 
-**Platform-scoped catalogue reads (T-234).** Some `system.*` types are registered by platform credentials (`is_platform: true`) and live with `tenant_id IS NULL` — `system.integration` is the canonical example today. Tenant members must still be able to read them (the catalogue is a marketplace surface), so the reads need to opt in to the widening:
+**Platform-scoped catalogue reads.** Some `system.*` types are registered by platform credentials (`is_platform: true`) and live with `tenant_id IS NULL` — `system.integration` is the canonical example today. Tenant members must still be able to read them (the catalogue is a marketplace surface), so the reads need to opt in to the widening:
 
 - For **list reads**, set `ItemFilters.includePlatformScoped: true` on `items.list({...})`.
 - For **single-id reads**, pass `{ includePlatformScoped: true }` as the third arg to `items.get(id, tenantId, ...)`.
@@ -58,7 +58,7 @@ Most write routes follow the same gate sequence:
 1. Resolve auth (`requireAuth(c)`, `requireTenantAdmin(c)`, `requireAdmin(c)`, or — for metadata-layer mutations — `requireMetadataPermission(c, subresource, level)` which admits admin + scope-bearing credentials).
 2. Validate body shape (Zod via `createRoute`).
 3. Check type permissions (`requireTypeAccess(c, type, "write")`).
-4. Resolve enforcement levers (TSC42 §5): tenant config + per-credential override → effective `EnforcementSettings`.
+4. Resolve enforcement levers (strict mode, source allow-list, source filter): tenant config + per-credential override → effective `EnforcementSettings`.
 5. Apply source allow-list (reject if violating).
 6. Apply strict-mode validation (reject unknown properties when on).
 7. Stamp `source`, `tier` from credential defaults.
@@ -73,15 +73,15 @@ Middleware composes shared per-request state on `c.var`. Routes read these direc
 
 - **`apiKey: ApiKey | undefined`** — set by `authMiddleware` from the bearer token. Carries `tenant_id`, `connection_id` (runtime credentials), `source`, role, and the permission maps. `undefined` for anonymous requests.
 - **`authType: "api_key" | "oauth" | undefined`** — distinguishes how the bearer was resolved.
-- **`clientIp: string | null`** — resolved by `clientIpMiddleware` against `TRUSTED_PROXY_CIDRS`. Threaded into every `audit.log` call (T-027).
+- **`clientIp: string | null`** — resolved by `clientIpMiddleware` against `TRUSTED_PROXY_CIDRS`. Threaded into every `audit.log` call.
 - **`requestId: string`** — per-request UUID for log correlation.
-- **`cycle: { originatingConnectionId: string | null; hopCount: number }`** — cycle metadata (T-039), resolved by `cycleMiddleware` after auth. Reads `X-Marfa-Cycle-Origin` / `X-Marfa-Cycle-Hop` (a connector continuing a chain), or falls back to the api key's connection binding (a connector kicking off a chain), or stamps the human sentinel `{ null, 0 }` for ordinary user requests. **T-144 — routes do NOT spread `...c.var.cycle` into `publish(...)` anymore.** The resolved cycle is written to `cycleRequestContext` (AsyncLocalStorage at `src/cycle-context.ts`) alongside `c.var.cycle`; `pubsub.publish` and `pubsub.publishEdge` read it automatically. `c.var.cycle` stays exposed for diagnostic reads only. **Never `null`** — the sentinel is always present.
+- **`cycle: { originatingConnectionId: string | null; hopCount: number }`** — cycle-detection metadata resolved by `cycleMiddleware` after auth. Reads `X-Marfa-Cycle-Origin` / `X-Marfa-Cycle-Hop` (a connector continuing a chain), or falls back to the api key's connection binding (a connector kicking off a chain), or stamps the human sentinel `{ null, 0 }` for ordinary user requests. Routes do NOT spread `...c.var.cycle` into `publish(...)`. The resolved cycle is written to `cycleRequestContext` (AsyncLocalStorage at `src/cycle-context.ts`) alongside `c.var.cycle`; `pubsub.publish` and `pubsub.publishEdge` read it automatically. `c.var.cycle` stays exposed for diagnostic reads only. **Never `null`** — the sentinel is always present.
 
 Middleware order in `app.ts`: logger → CORS → client-ip → auth → cycle → rate-limit → routes. The cycle resolver depends on auth's `c.var.apiKey`, so it must run after auth.
 
-## Cycle metadata propagation (T-144)
+## Cycle metadata propagation
 
-Same shape as Postgres RLS (T-025): state that must stay coherent across a request flows through one mechanism (middleware + AsyncLocalStorage), not by every caller spreading the value. `cycleMiddleware` resolves the per-request cycle and writes it to both `c.var.cycle` (diagnostic) and `cycleRequestContext` (the ALS at `src/cycle-context.ts`). `pubsub.publish` and `pubsub.publishEdge` consult the ALS automatically; route handlers do not carry `...c.var.cycle` on every publish call.
+State that must stay coherent across a request flows through one mechanism (middleware + AsyncLocalStorage), not by every caller spreading the value. `cycleMiddleware` resolves the per-request cycle and writes it to both `c.var.cycle` (diagnostic) and `cycleRequestContext` (the ALS at `src/cycle-context.ts`). `pubsub.publish` and `pubsub.publishEdge` consult the ALS automatically; route handlers do not carry `...c.var.cycle` on every publish call.
 
 **Explicit override path.** Server-internal callers that need to synthesise a cycle (rather than propagate the request's) can pass `originatingConnectionId` and/or `hopCount` explicitly on the `publish` event argument — the resolver short-circuits to the explicit values when either field is present. No internal caller exercises this today; the `POST /connections/preview-event` route runs its own duplicate of `passesHopBudget`'s effective-hop logic against `body.cycle` for hypothetical-event reasoning (it never calls `publish`).
 
@@ -89,7 +89,7 @@ Same shape as Postgres RLS (T-025): state that must stay coherent across a reque
 
 **Wire-tampering defence preserved.** The `Math.max(hopCount, 1)` floor inside `passesHopBudget` (and the duplicate in `POST /connections/preview-event`) is kept. It defends against malformed inbound `X-Marfa-Cycle-Hop` headers (origin set but `hopCount: 0`) — the ALS refactor removes the contributor-discipline failure mode but does not subsume the wire-tampering one.
 
-## Postgres RLS (T-025)
+## Postgres RLS
 
 Two coordinated PRs land RLS as defence-in-depth beneath the application-layer tenant scoping.
 
@@ -97,7 +97,7 @@ Two coordinated PRs land RLS as defence-in-depth beneath the application-layer t
 
 **Part 2 — connection-pool wiring.** Migration `0037_rls_extend_grants.sql` extends GRANTs to the remaining tables `marfa_app` needs (`inbound_webhooks`, `inbound_webhook_events`, `connection_oauth_tokens`, `connection_leased_tokens`, `oauth_*`, `users`) plus identity-column sequences.
 
-**Part 3 follow-on (Wave B Part 4) — direct-tenant_id policies.** Migration `0040_rls_extend_policies.sql` extends per-table RLS policies to the three direct-tenant*id tables that got GRANTs in Part 2 but no policies (`inbound_webhooks`, `connection_oauth_tokens`, `connection_leased_tokens`). Same equality-on-`current_setting` + NULL-allowance shape as Part 1's eleven tables. The other tables that got GRANTs in 0037 don't carry direct `tenant_id` columns (oauth*\*, users, tenant_quotas) and use a different gating shape — application-layer routes filter via PK joins; not in scope for this RLS layer.
+**Part 3 — direct-tenant_id policies.** Migration `0040_rls_extend_policies.sql` extends per-table RLS policies to the three direct-`tenant_id` tables that got GRANTs in Part 2 but no policies (`inbound_webhooks`, `connection_oauth_tokens`, `connection_leased_tokens`). Same equality-on-`current_setting` + NULL-allowance shape as Part 1's eleven tables. The other tables that got GRANTs in 0037 don't carry direct `tenant_id` columns (`oauth_*`, `users`, `tenant_quotas`) and use a different gating shape — application-layer routes filter via PK joins; not in scope for this RLS layer.
 
 The Drizzle PG instance is wrapped in a per-request context proxy (`storage/pg/request-context.ts`) that consults an `AsyncLocalStorage` on every method access. The RLS middleware (`middleware/rls-tenant-context.ts`) wraps each tenant-bounded request in `db.transaction(async tx => { SELECT set_config('marfa.tenant_id', $1, true); SET LOCAL ROLE marfa_app; ... })` and stores `tx` on the ALS. Storage calls during the request flow through `tx`'s reserved connection and are subject to the policies.
 
@@ -110,13 +110,13 @@ The Drizzle PG instance is wrapped in a per-request context proxy (`storage/pg/r
 
 Streaming responses (`/events` SSE + `/export` NDJSON / archive) are a special case — wrapping them in a transaction would pin a pool connection for the response's full duration. They are exempt from the transaction wrapper but apply session-level RLS internally via a different mechanism (see next section).
 
-## Streaming RLS (T-146)
+## Streaming RLS
 
 `/events` and `/export` apply RLS at the database layer through a different mechanism than the request middleware. They cannot wrap themselves in a transaction (long-lived txns wedge pool slots, accumulate locks, risk deadlocks), so each stream reserves a dedicated pool connection and applies **session-level** `SET ROLE marfa_app` + `set_config('marfa.tenant_id', $1, false)` (third arg `false` = NOT `SET LOCAL`). Storage reads inside the stream flow through that connection via the existing `pgRequestContext` ALS proxy — Drizzle bound to the reserved connection becomes the `tx` substitute.
 
 The helper lives at `storage/pg/streaming-rls.ts`. Public surface: `acquireStreamRls(client, tenantId) -> StreamRlsContext` and `withStreamRls(client, tenantId, fn)`. The context carries `release()` — idempotent cleanup that runs a **scoped reset** (`RESET ROLE` plus clearing the `marfa.tenant_id` GUC via `set_config('marfa.tenant_id', '', false)`) on the connection, then returns it to the pool. If the reset fails the connection is destroyed via `reserved.end()` instead — a reset failure means the connection is in an unknown state, and a connection returned to the pool with `marfa_app` role + a leaked `marfa.tenant_id` would be served to a future request as that tenant. The destroy fallback is the load-bearing safety property.
 
-**Why scoped reset, not `DISCARD ALL` (T-189).** The cleanup invariant is "no leaked tenant context on connection return to pool" — narrower than what `DISCARD ALL` does. `DISCARD ALL` also drops every prepared statement on the session, but postgres.js caches statement names client-side per `Sql` instance and reuses them across reservations of the same underlying connection. Nuking the server side without a client-side invalidation hook surfaced as `prepared statement "<name>" does not exist` 500s on the next request that touched the recycled connection (~20% POST /items failure rate under concurrent SSE + writes). RLS policies read `current_setting('marfa.tenant_id')` at execute time, not bind time, so prepared statements compiled under one tenant's GUC execute safely once the GUC flips — the cache is value-agnostic, and the scoped reset matches the actual invariant precisely.
+**Why scoped reset, not `DISCARD ALL`.** The cleanup invariant is "no leaked tenant context on connection return to pool" — narrower than what `DISCARD ALL` does. `DISCARD ALL` also drops every prepared statement on the session, but postgres.js caches statement names client-side per `Sql` instance and reuses them across reservations of the same underlying connection. Nuking the server side without a client-side invalidation hook surfaced as `prepared statement "<name>" does not exist` 500s on the next request that touched the recycled connection (~20% POST /items failure rate under concurrent SSE + writes). RLS policies read `current_setting('marfa.tenant_id')` at execute time, not bind time, so prepared statements compiled under one tenant's GUC execute safely once the GUC flips — the cache is value-agnostic, and the scoped reset matches the actual invariant precisely.
 
 **Cleanup invariants:**
 
@@ -129,7 +129,7 @@ The helper lives at `storage/pg/streaming-rls.ts`. Public surface: `acquireStrea
 
 **Activation conditions.** All three must hold for the stream to acquire an RLS context:
 
-- `options.rlsEnforce === true` (env-driven; default on for T-146).
+- `options.rlsEnforce === true` (env-driven; default on).
 - `options.pgClient !== null` (PG dialect; SQLite passes `null`).
 - Caller has a tenant_id (tenant_admin / member — not platform-admin / anonymous / single-tenant self-host).
 
@@ -137,7 +137,7 @@ If any condition is false the route runs on the owner connection, matching the p
 
 **Transaction-wrapper exemption.** `STREAMING_PATH_PREFIXES` in `middleware/rls-tenant-context.ts` exempts `/events` + `/export` from the per-request transaction wrapper. They apply session-level RLS internally (above) rather than wrapping the long-lived response in a transaction.
 
-## Per-tenant background cleanup (T-050)
+## Per-tenant background cleanup
 
 Three cleanup jobs (`TrashPurger`, audit cleanup, event-log cleanup) fan out per-tenant. Each tick the job lists every tenant via `TenantStore.list()`, resolves the effective retention (per-tenant `TenantConfig` override OR env default), and runs the cleanup once per tenant scope plus once for the NULL-tenant bucket (single-tenant self-host items + any rows with no tenant scope).
 
@@ -153,11 +153,11 @@ Coordination locks are keyed per-tenant (`<jobName>:<tenant-id>`, plus `<jobName
 
 The `runTenantCleanup` helper in `storage/retention.ts` is the shared fan-out runner; `TrashPurger.runOnce` accepts an optional `TenantFanout` config that wires the same fan-out semantics for the items-table job.
 
-## Auth session cleanup (T-097)
+## Auth session cleanup
 
 `AuthSessionCleaner` in `storage/retention.ts` drops `auth_session` rows past their `expires_at`. **Instance-wide, not tenant-scoped** — the table carries no `tenant_id` column, the deletion criterion is purely time-based, and Better Auth itself owns the session TTL. Cluster-wide coordination lock keyed `"auth-session-cleanup"`. Cadence configured via `AUTH_SESSION_CLEANUP_INTERVAL_MS` (default 1h). Logs only on non-zero deletes.
 
-## OAuth scope grammar enforcement (T-045)
+## OAuth scope grammar enforcement
 
 OAuth tokens are issued with scopes parsed by `parseScope` in `@withmarfa/shared`. At token-resolve time the auth middleware projects them into the synthetic `ApiKey`'s `type_permissions`, `edge_permissions`, and `metadata_permissions` maps. From that point the data plane gates flow through the same helpers used for ordinary API keys:
 
@@ -168,7 +168,7 @@ OAuth tokens are issued with scopes parsed by `parseScope` in `@withmarfa/shared
 - **Empty `allowed_types` filters to zero rows.** The storage layer treats `allowed_types: []` as "no readable types" (forces `1=0` in SQL). Passing it through unfiltered would return every row — a security gap a no-scope token could exploit — so the empty case must deny, not widen.
 - **More-restrictive-wins is automatic.** OAuth tokens are synthetic `ApiKey` records built only from the granted scopes — there's no underlying API key whose permissions might be wider. Scope and credential are the same map.
 
-## OAuth Provider plugin (T-131)
+## OAuth Provider plugin
 
 The OAuth-protocol surface is owned by [@better-auth/oauth-provider](https://www.better-auth.com/docs/plugins/oauth-provider) plugin mounted on the better-auth instance. Endpoints land under `/auth/oauth2/*` via the basePath catch-all. The plugin's own tables (`auth_oauth_client`, `auth_oauth_access_token`, `auth_oauth_refresh_token`, `auth_oauth_consent`) replace the dropped `oauth_clients` / `oauth_tokens` / `oauth_codes`.
 
@@ -196,7 +196,7 @@ The OAuth-protocol surface is owned by [@better-auth/oauth-provider](https://www
 
 **Token tenant binding (`postLogin.consentReferenceId`).** Two parallel hooks bind the plugin's tables to Marfa's tenant model. `clientReference` is called at CLIENT-REGISTRATION time and writes `auth_oauth_client.reference_id` (immutable for the life of the client). `postLogin.consentReferenceId` is called at TOKEN-ISSUANCE time and writes `auth_oauth_access_token.reference_id` for every minted token. Both resolve via `resolveTenantIdForAuthUser(storage, user.id)` — same path. Without the `postLogin` block, every issued token would land with `reference_id=NULL` and the bearer middleware would surface them as `tenant_id=undefined` (keys-mode behavior — multi-tenant scoping broken). The `postLogin` config also requires `page` + `shouldRedirect` (the plugin's optional multi-account-selection UX); Marfa has single-account-per-session so `shouldRedirect: () => false` makes the page a no-op.
 
-**Discovery doc issuer field (RFC 8414 §3 — partial deviation, documented).** The bare-root `/.well-known/oauth-authorization-server` + `/.well-known/openid-configuration` paths re-publish the plugin's metadata at the apex, but the `issuer` field they return is `<baseURL>/auth` (the basePath of the better-auth catch-all), not `<baseURL>`. Strict RFC 8414 readers expect `issuer` to match the discovery URL's host (no basePath). Practical impact is bounded: id_token `iss` claims match the discovery doc's `issuer` value, so token-signature validation by RPs works correctly. The discrepancy only bites strict-RFC validators that compare the discovery URL string against the issuer string. A full fix requires reorganising the Better Auth basePath from `/auth` to `/`, which would touch every route + sign-in / sign-up / consent surface and is out of T-131 scope. Tracked as a known limitation rather than a follow-on; revisit if/when a strict-validating RP needs to integrate.
+**Discovery doc issuer field (RFC 8414 §3 — partial deviation, documented).** The bare-root `/.well-known/oauth-authorization-server` + `/.well-known/openid-configuration` paths re-publish the plugin's metadata at the apex, but the `issuer` field they return is `<baseURL>/auth` (the basePath of the better-auth catch-all), not `<baseURL>`. Strict RFC 8414 readers expect `issuer` to match the discovery URL's host (no basePath). Practical impact is bounded: id_token `iss` claims match the discovery doc's `issuer` value, so token-signature validation by RPs works correctly. The discrepancy only bites strict-RFC validators that compare the discovery URL string against the issuer string. A full fix requires reorganising the Better Auth basePath from `/auth` to `/`, which would touch every route + sign-in / sign-up / consent surface. Tracked as a known limitation; revisit if/when a strict-validating RP needs to integrate.
 
 **Grant projection.** A sibling shell plugin (`buildOauthProjectionPlugin` in `auth/oauth-provider.ts`) hosts hooks for `/oauth2/consent`, `/oauth2/token`, `/oauth2/revoke`, `/oauth2/end-session`. Consent-side projection writes (first-time consent) OR updates (re-consent — refreshes `scopes` + `granted_at` on the existing row) the `system.connection { kind: "app" }` item, in the explicit `POST /auth/authorize/decision` route. Revoke-side projection currently log-and-no-ops; the user-facing `/auth/grants/:id/revoke` handler is the actual cascade path (calls `storage.oauthProvider.revokeTokensForGrant(clientId, userId)`).
 
@@ -208,7 +208,7 @@ The OAuth-protocol surface is owned by [@better-auth/oauth-provider](https://www
 
 **Scope grammar.** Plugin's `scopes` allowlist is enumerated from `TYPE_REGISTRY.keys()` + `EDGE_TYPE_REGISTRY.keys()` at instance construction (`auth/oauth-provider.ts` → `buildAllowedScopes`). Custom types registered at runtime via `POST /types` are NOT picked up until server restart — acceptable tradeoff; the plugin's scope-allowlist is static.
 
-## FTS dialect parity (T-015)
+## FTS dialect parity
 
 Both dialects index the same set of property fields and respect the same per-type opt-out. The dialect-agnostic helper `extractSearchableText` in `storage/search-text.ts` is the single source of truth for "what text contributes to FTS for this item."
 
@@ -221,19 +221,19 @@ Both dialects index the same set of property fields and respect the same per-typ
 
 The PG migration set is two steps: `0038_items_search_vector.sql` adds the column + index, `0039_backfill_items_search_vector.sql` populates `search_vector` for every existing row using the same field set as the write-time indexer, so any DB running the migrator catches up cleanly. The backfill doesn't consult per-type `searchable: false` opt-outs (those are TS-side metadata) — back-filled rows surface a slightly broader vector than their type metadata implies until the next write rewrites them; never narrower.
 
-## Per-tenant quotas (T-052)
+## Per-tenant quotas
 
 Per-tenant resource ceilings are stored in `tenant_quotas` (PK `tenant_id`); missing rows / NULL columns fall back to env defaults (`MARFA_DEFAULT_QUOTA_*`). Counts are computed on-demand via `COUNT(*)` on the underlying tables at quota-check time — no eager-increment / reconcile machinery in this PR (the eager path is a follow-on once load measurement justifies the complexity).
 
-`enforceQuota(c, storage, resource, increment)` is the gate. It's a no-op for tenant-less keys (single-tenant self-hosts + platform admin), so the existing instance-wide flow is unaffected. Routes wired: `POST /webhooks` (resource: `webhooks`), `POST /items` (resource: `items`), and — Wave B Part 2 — `POST /blobs` (both `blobs` count and `storage_bytes` sum). The `count(...)` store method computes everything on demand: `COUNT(*)` for count-style resources, `SUM(size)` for `storage_bytes`. Eager-increment + reconcile is filed as a follow-on if per-tenant cardinality climbs.
+`enforceQuota(c, storage, resource, increment)` is the gate. It's a no-op for tenant-less keys (single-tenant self-hosts + platform admin), so the existing instance-wide flow is unaffected. Routes wired: `POST /webhooks` (resource: `webhooks`), `POST /items` (resource: `items`), `POST /blobs` (both `blobs` count and `storage_bytes` sum). The `count(...)` store method computes everything on demand: `COUNT(*)` for count-style resources, `SUM(size)` for `storage_bytes`. Eager-increment + reconcile is a follow-on if per-tenant cardinality climbs.
 
-Per-tenant `rate_per_minute_limit` enforcement lives in the rate-limit middleware (Wave B Part 2) — applied as a second window on top of the existing per-credential cap. A noisy single credential is bounded by the credential cap; a tenant's collective fleet is bounded by the tenant cap. The middleware caches each tenant's ceiling in-process for 60s to avoid a DB roundtrip per request; tenant-cap changes take up to 60s to propagate. Skipped for tenant-less keys.
+Per-tenant `rate_per_minute_limit` enforcement lives in the rate-limit middleware — applied as a second window on top of the existing per-credential cap. A noisy single credential is bounded by the credential cap; a tenant's collective fleet is bounded by the tenant cap. The middleware caches each tenant's ceiling in-process for 60s to avoid a DB roundtrip per request; tenant-cap changes take up to 60s to propagate. Skipped for tenant-less keys.
 
 Admin surface: `GET /tenants/:id/quotas` and `PUT /tenants/:id/quotas` (platform-admin only). Workspace_admin's read-own surface (`GET /tenants/me/quotas`) lands separately.
 
 Errors: `quota_exceeded` (HTTP 429) with `details: { resource, limit, current }` so SDK / CLI / operator alerts can wire off the shape.
 
-## Blob storage tenant scoping (T-049)
+## Blob storage tenant scoping
 
 The `blobs` metadata table has a composite PK on `(tenant_id, hash)`. Different tenants uploading the same hash bytes get separate metadata rows; the storage backend (filesystem / S3) still keys by hash globally so the physical file is shared (content-addressed deduplication preserved). `tenant_id` is `NOT NULL DEFAULT ''` — empty string is the sentinel for instance-wide / single-tenant / platform-admin uploads, used to keep the composite PK clean across both dialects.
 
@@ -259,23 +259,23 @@ Pluggable transport for transactional email. Three backends in-tree, picked by `
 
 **The `email.suppressed` audit action.** Not emitted by the current backend — suppression is tracked at the Cloudflare account level (above), so no audit row is written for it.
 
-## Email verification on sign-up (Wave C PR2)
+## Email verification on sign-up
 
 Every new sign-up gets `auth_user.email_verified = false` and the better-auth instance carries `emailAndPassword.requireEmailVerification: true`, so password sign-in is blocked until the user clicks the verification link.
 
 - **Hook.** `emailVerification.sendOnSignUp: true` + the `sendVerificationEmail` callback wired to the rich transport (HTML template at `auth/email-templates/verify-email.ts`, idempotency key per `(user_id, token)` for log correlation). Token TTL: 3600s (1h, set via `emailVerification.expiresIn`).
 - **Sign-up wrapper.** `POST /auth/sign-up` detects the verification-required path by the absence of a Set-Cookie on better-auth's response (which `shouldSkipAutoSignIn` produces when `requireEmailVerification` is on) and 302s to `/auth/verify-email?email=…&return_to=…` instead of `return_to`.
-- **Verify-email page.** `GET /auth/verify-email` renders one of four states: `pending` (no token, just-redirected after sign-up), `success` (token validated), `failure` (expired / invalid / unknown — falls back to a resend form), `resent` (after a successful resend). Uses the shared auth-page layout from PR4.
+- **Verify-email page.** `GET /auth/verify-email` renders one of four states: `pending` (no token, just-redirected after sign-up), `success` (token validated), `failure` (expired / invalid / unknown — falls back to a resend form), `resent` (after a successful resend). Uses the shared auth-page layout.
 - **Resend.** `POST /auth/verify-email/resend` calls better-auth's `POST /auth/send-verification-email` and redirects back with `?sent=1` regardless of whether the address actually exists, to avoid email enumeration.
 - **Existing-account migration.** Migration `0042_grandfather_email_verified.sql` (PG) / `0035_…` (SQLite) flips `email_verified=true` for any account predating the verification requirement, so the requirement doesn't lock them out. Fresh DBs match zero rows; the migration is a no-op there.
-- **Tests.** `markEmailVerified(storage, email)` in `src/test-utils.ts` is the test-side stand-in for clicking the verify link — direct `UPDATE auth_user SET email_verified = TRUE WHERE LOWER(email) = ?`. Use it between sign-up and sign-in in any test that needs an authenticated session post-PR2.
+- **Tests.** `markEmailVerified(storage, email)` in `src/test-utils.ts` is the test-side stand-in for clicking the verify link — direct `UPDATE auth_user SET email_verified = TRUE WHERE LOWER(email) = ?`. Use it between sign-up and sign-in in any test that needs an authenticated session after sign-up.
 
-## Forgot-password + reset (Wave C PR3 / T-033)
+## Forgot-password + reset
 
 End-user surface for resetting a forgotten password. Sits on top of better-auth's `request-password-reset` + `reset-password` endpoints, but the email URL bypasses better-auth's intermediate validate-and-redirect GET — our hook constructs a URL pointing at our themed `/auth/reset-password` page directly. Token validation happens on POST.
 
 - **Routes.** `GET /auth/forgot-password` (email form), `POST /auth/forgot-password` (soft-fail dispatch), `GET /auth/reset-password?token=…` (renders the new-password form), `POST /auth/reset-password` (validates fields, dispatches to better-auth, renders success/failure).
-- **Hook.** `emailAndPassword.sendResetPassword` builds an in-house URL (`${baseURL}/auth/reset-password?token=…`) and routes the email through the rich Marfa transport (idempotency key per `(user_id, token)` for log correlation). Conditional on a real backend — same gate pattern as PR2's verification flow.
+- **Hook.** `emailAndPassword.sendResetPassword` builds an in-house URL (`${baseURL}/auth/reset-password?token=…`) and routes the email through the rich Marfa transport (idempotency key per `(user_id, token)` for log correlation). Conditional on a real backend — same gate pattern as the email verification flow.
 - **Token TTL.** `resetPasswordTokenExpiresIn: 3600` (1 hour). Single-use — better-auth deletes the verification row on successful reset.
 - **Session revocation.** `revokeSessionsOnPasswordReset: true` — every other session for the user is dropped on a successful reset. The user must re-sign-in everywhere.
 - **Per-email throttle.** `auth/per-email-throttle.ts` mints `PerEmailThrottle` instances. The forgot-password router holds one (3/hour per email, in-memory). Layered on top of the per-IP `pathLimits` cap (`/auth/forgot-password: 30`) in `middleware/rate-limit.ts`.
@@ -283,7 +283,7 @@ End-user surface for resetting a forgotten password. Sits on top of better-auth'
 - **Multi-instance.** Throttle is in-memory only. Multi-instance deployments need a shared counter (Redis); deferred until hosted-multi-tenant lights up.
 - **Tests.** `password-reset.test.ts` exercises the full sign-up → forgot → DB-token-read → reset → sign-in round-trip (plus single-use replay rejection + session revocation). `readLatestResetToken(storage)` in `test-utils.ts` reads the most recent `auth_verification` row — used by the integration test in lieu of intercepting the email transport.
 
-## Auth audit-row hardening (Wave C PR8)
+## Auth audit rows
 
 Every auth-side wrapper writes a stable-shape audit row through `storage.audit.log`. The shape across actions is uniform — `{ action, resource_type, resource_id, client_ip, details }` — so an operator querying `audit_log` can correlate auth events without matching ad-hoc field names.
 
@@ -298,30 +298,30 @@ Actions emitted today:
 | `auth.password_reset.requested`                    | `POST /auth/forgot-password` (always — captures attempts)                                                                                                       | email                                         | `{ email }`                                                        |
 | `auth.password_reset.completed`                    | `POST /auth/reset-password` success                                                                                                                             | token-prefix                                  | `{ token_prefix }`                                                 |
 | `auth.email.verified`                              | `GET /auth/verify-email?token=…` success                                                                                                                        | token-prefix                                  | `{ token_prefix }`                                                 |
-| `auth.account.delete_requested`                    | `POST /auth/account/delete` success — user initiates account deletion                                                                                           | `auth_user_id`                                | (none — T-139: no email PII)                                       |
-| `auth.account.delete_confirmed`                    | `GET /auth/account/delete/confirm?token=…` success — user clicks the confirm link                                                                               | `auth_user_id`                                | (none — T-139)                                                     |
+| `auth.account.delete_requested`                    | `POST /auth/account/delete` success — user initiates account deletion                                                                                           | `auth_user_id`                                | (none — no email PII in audit)                                     |
+| `auth.account.delete_confirmed`                    | `GET /auth/account/delete/confirm?token=…` success — user clicks the confirm link                                                                               | `auth_user_id`                                | (none — no email PII in audit)                                     |
 | `auth.account.delete_cancelled`                    | Cancel route (POST `/auth/account/delete/cancel` or GET `/auth/account/cancel`) where `cancelPendingDeletion` matched a row                                     | `auth_user_id`                                | `{ source: "session" \| "link" }`                                  |
-| `auth.account.cancel_attempted_but_already_purged` | Cancel route reached but `cancelPendingDeletion` matched zero rows (T-141 — cascade won the race)                                                               | `auth_user_id`                                | `{ source: "session" \| "link" }`                                  |
-| `auth.account.sign_in_blocked_pending_deletion`    | Deletion-guard middleware (T-137) intercepts a sign-in attempt against a pending-deletion account                                                               | `auth_user_id`                                | (none — T-139)                                                     |
+| `auth.account.cancel_attempted_but_already_purged` | Cancel route reached but `cancelPendingDeletion` matched zero rows (cascade committed before the cancel UPDATE)                                                 | `auth_user_id`                                | `{ source: "session" \| "link" }`                                  |
+| `auth.account.sign_in_blocked_pending_deletion`    | Deletion-guard middleware intercepts a sign-in attempt against a pending-deletion account                                                                       | `auth_user_id`                                | (none — no email PII in audit)                                     |
 | `auth.account.hard_deleted`                        | `deleteAccountCascade` transaction commits hard-delete (emitted from `storage/{pg,sqlite}/account-cascade.ts`; survives the post-cascade `redactForUser` sweep) | `auth_user_id`                                | `{ tenant_id, redacted: false }`                                   |
-| `auth.grant.created`                               | Code-flow: `POST /auth/authorize/decision` accept. Device-flow: `POST /auth/device/consent` approve (T-131 — both consent surfaces emit)                        | client_id                                     | `{ client_id, user_id, scopes, grant_item_id, source?, created? }` |
-| `auth.grant.revoked`                               | `DELETE /auth/grants/:id` and `POST /auth/grants/:id/revoke` (T-131)                                                                                            | client_id                                     | `{ client_id, user_id, grant_item_id }`                            |
+| `auth.grant.created`                               | Code-flow: `POST /auth/authorize/decision` accept. Device-flow: `POST /auth/device/consent` approve (both consent surfaces emit)                                | client_id                                     | `{ client_id, user_id, scopes, grant_item_id, source?, created? }` |
+| `auth.grant.revoked`                               | `DELETE /auth/grants/:id` and `POST /auth/grants/:id/revoke`                                                                                                    | client_id                                     | `{ client_id, user_id, grant_item_id }`                            |
 
 **Emission sources.** Most rows are written by route wrappers (`routes/auth-account.ts`, `routes/auth-pages.ts`). Two come from elsewhere by design: `auth.account.sign_in_blocked_pending_deletion` from `middleware/account-deletion-guard.ts` (the sign-in interception sits in middleware to be path-agnostic across better-auth's various sign-in endpoints), and `auth.account.hard_deleted` from `storage/{pg,sqlite}/account-cascade.ts` (must be inside the cascade transaction so the row is committed atomically with the deletion and survives the same-transaction `redactForUser` sweep that nukes every other audit row referencing the user).
 
 The `auth.account.cancel_attempted_but_already_purged` row exists for honesty in the operator trail. The POST cancel pre-checks `getAccountLifecycle` and short-circuits to 400 `not_pending_deletion` on the normal "already active" / "already gone" case, but a TOCTOU window remains between that read and the `cancelPendingDeletion` UPDATE. When the cascade commits inside that window (or — for the GET-by-link path, which has no pre-check — at any point before the UPDATE), the UPDATE matches zero rows. The route renders the honest page / response and writes this audit action instead of the standard `auth.account.delete_cancelled` row that would lie about a cancel that never happened.
 
-Calls are fire-and-forget (`void storage.audit.log(...)`) — audit failures must never block the user-facing flow. `client_ip` threads through `c.var.clientIp` (T-027 client-ip middleware). The one exception is `auth.account.hard_deleted`, which is `await`-ed inside the cascade transaction so the row commits atomically.
+Calls are fire-and-forget (`void storage.audit.log(...)`) — audit failures must never block the user-facing flow. `client_ip` threads through `c.var.clientIp`. The one exception is `auth.account.hard_deleted`, which is `await`-ed inside the cascade transaction so the row commits atomically.
 
-**T-131 emit-site notes.** Both `auth.grant.*` rows emit from explicit Marfa route handlers, not from the @better-auth/oauth-provider plugin's `hooks.after` matchers. The hooks fire AFTER the plugin's catch-all completes but with limited body context — `/oauth2/consent` reads `client_id` from the signed `oauth_query`, and `/oauth2/revoke` carries a token-in-hand rather than `(client_id, user_id)`. The explicit Marfa handlers have those values from the request body:
+Both `auth.grant.*` rows emit from explicit Marfa route handlers, not from the `@better-auth/oauth-provider` plugin's `hooks.after` matchers. The hooks fire after the plugin's catch-all completes but with limited body context — `/oauth2/consent` reads `client_id` from the signed `oauth_query`, and `/oauth2/revoke` carries a token-in-hand rather than `(client_id, user_id)`. The explicit Marfa handlers have those values from the request body:
 
 - **Code-flow consent** → `routes/auth-consent.ts` `POST /auth/authorize/decision` (which the consent form posts to, then proxies to the plugin's `/oauth2/consent`)
 - **Device-flow consent** → `routes/auth-pages.ts` `POST /auth/device/consent` approve path; the audit row carries `source: "device"` to distinguish from code-flow + `created: true|false` to distinguish first-consent from re-consent
 - **Revoke** → `routes/auth-pages.ts` `DELETE /auth/grants/:id` + `POST /auth/grants/:id/revoke`
 
-`client_id` + `scopes` for the consent rows are read from the **verified** `oauth_query` (the plugin-signed query string), not from form fields — form values can't widen scopes or swap client identity (T-131 review-sweep F1). The shell plugin's `hooks.before` matcher in `auth/oauth-provider.ts` is reserved for refresh-replay access-token revocation; no projection or audit emit lives in the plugin shell.
+`client_id` + `scopes` for the consent rows are read from the **verified** `oauth_query` (the plugin-signed query string), not from form fields — form values can't widen scopes or swap client identity. The shell plugin's `hooks.before` matcher in `auth/oauth-provider.ts` is reserved for refresh-replay access-token revocation; no projection or audit emit lives in the plugin shell.
 
-## Per-IP rate limits on auth surfaces (Wave C PR8)
+## Per-IP rate limits on auth surfaces
 
 `middleware/rate-limit.ts`'s `pathLimits` carry small per-IP caps on every auth-abuse-prone endpoint. The middleware iterates entries in object insertion order and takes the FIRST `path.startsWith(prefix)` match — so more-specific prefixes (`/auth/sign-in/magic-link`) MUST appear before broader siblings (`/auth/sign-in`).
 
@@ -341,7 +341,7 @@ Defaults (per-minute window per IP):
 
 Per-email throttle on `/auth/forgot-password` (3/hour, in-route, `auth/per-email-throttle.ts`) sits inside the per-IP cap — bot-net protection on the IP layer, account-protection on the email layer. The window is shared (`config.rateLimitWindowMs`, default 60s) — per-path windows would need a middleware refactor; deferred.
 
-## Passkey UI (Wave C PR6 / T-034)
+## Passkey UI
 
 Browser-side WebAuthn ceremony on top of better-auth's passkey plugin.
 
@@ -350,9 +350,9 @@ Browser-side WebAuthn ceremony on top of better-auth's passkey plugin.
 - **Enrol page.** `GET /auth/passkey/enroll` — auth-gated (redirects to `/auth/sign-in?return_to=` when no session). Inline click handler calls `MarfaPasskey.enroll()`. Hides itself on browsers without `window.PublicKeyCredential` or non-secure-context — fallback paragraph explains the requirement.
 - **Sign-in.** `/auth/sign-in` carries a "Use a passkey" button (also hidden when unsupported). Inline handler runs the auth ceremony and `window.location.assign(returnTo)` on success. Browser-side `JSON.stringify(returnTo).replace(/</...)` escape prevents `</script>` breakouts even though `validateReturnTo` already rejects off-origin paths.
 - **Capability detection.** Done client-side in JS — no UA sniffing. `isSupported()` checks `window.isSecureContext` + `PublicKeyCredential` + `navigator.credentials.{create,get}`.
-- **Tests.** `passkey-enroll-page.test.ts` covers the renderer (link to script, fallback paragraph, escape paths) + the route auth gate. The static-asset route gets ETag + 304 + content-type assertions. The full WebAuthn round-trip is browser-side and exercised in the manual cross-browser walkthrough at end of Wave C (Chrome on macOS Touch ID, Safari on iOS iCloud Keychain, Chrome on Android).
+- **Tests.** `passkey-enroll-page.test.ts` covers the renderer (link to script, fallback paragraph, escape paths) + the route auth gate. The static-asset route gets ETag + 304 + content-type assertions. The full WebAuthn round-trip is browser-side and exercised in a manual cross-browser walkthrough (Chrome on macOS Touch ID, Safari on iOS iCloud Keychain, Chrome on Android).
 
-## Re-consent diff (Wave C PR5 / T-032)
+## Re-consent diff
 
 When a user OAuth-grants the same client a second time and the requested scopes differ from last time, the consent screen renders a diff instead of the flat read / write split.
 
@@ -365,7 +365,7 @@ When a user OAuth-grants the same client a second time and the requested scopes 
   - The H1 copy switches from "wants to access your data" to "is requesting updated access to your data".
 - **CSS.** `auth.css` adds `.section--kept` / `.section--added` / `.section--removed` modifiers (subtle accent borders + tinted backgrounds) and `.scope-row--removed` (line-through + soft opacity).
 
-## Security page (Wave C PR7 / T-031)
+## Security page
 
 User-facing page at `/auth/security` listing connected apps and active sessions, with revoke buttons.
 
@@ -379,15 +379,15 @@ User-facing page at `/auth/security` listing connected apps and active sessions,
 
 The metadata layer's `extensions` map is a free-form JSON sidecar keyed by namespace string. A handful of namespaces are **reserved** with constrained write-access semantics:
 
-- **`connection.runtime`** (workstream 2) — verbose per-Connection runtime state for `system.connection` items of kind `integration`: sync cursors, in-flight idempotency keys, recent error tail, retry counters. Writable only by the connector's own credential (the one referenced by `credential_ref` on the Connection); readable by tenant admins and the connector. The runtime executor in workstream 3 is the legitimate writer; in workstream 2 the namespace is reserved but no internal code writes it yet.
+- **`connection.runtime`** — verbose per-Connection runtime state for `system.connection` items of kind `integration`: sync cursors, in-flight idempotency keys, recent error tail, retry counters. Writable only by the connector's own credential (the one referenced by `credential_ref` on the Connection); readable by tenant admins and the connector. The runtime executor is the legitimate writer.
 
 Reserved namespaces are documented here so accidental general-purpose use ("just stash some stuff") doesn't conflict with platform semantics. Application-defined extensions should use namespaced keys that don't collide with reserved roots.
 
-## Per-connection upstream_base_url override (T-254)
+## Per-connection upstream_base_url override
 
 `connection.properties.configuration.upstream_base_url_override` is a per-connection knob the connection-proxy consults before falling back to the credential's `upstream_base_url`. Lets multiple integrations sharing one OAuth credential target different upstream hosts — e.g. `google.contacts` on `people.googleapis.com` while `google.calendar` / `drive` / `tasks` use the same credential row pointing at `www.googleapis.com`. Per-connection rather than per-credential because the override is part of the install-time decision, not the credential's identity. Malformed values (not parseable as a URL) fail loud with `OAUTH_PROXY_UPSTREAM_INVALID` rather than silently routing to the credential's host. Trust model is unchanged from the broader proxy gate — only tenant-admin can install / configure a connection.
 
-## OpenTelemetry (T-275)
+## OpenTelemetry
 
 Vendor-neutral OTel for traces + logs, **off by default**. Self-host opts in; hosted Marfa sets `MARFA_OTEL_ENABLED=true`.
 
@@ -415,7 +415,7 @@ Vendor-neutral OTel for traces + logs, **off by default**. Self-host opts in; ho
 
 **PG connection-cap math.** Peak in-flight connections under the test matrix: `maxForks (6) × maxPoolSize per file (3) + admin clients (≈1 per worker)` ≈ 24 connections. `scripts/test-pg.sh` bumps the container to `max_connections=500` for headroom; CI runs against the postgres image's default `max_connections=100`, which is comfortably above the 24 peak. If a future change raises `maxForks` past about 25, the CI service container's cap becomes the bottleneck — bump `max_connections` on the CI service container too (note: GHA service containers don't expose `command:` directly, so the cleanest path is a custom postgres image or a startup script).
 
-## Local integrations runtime (T-173)
+## Local integrations runtime
 
 Node-bundled integrations substrate. Boots conditionally on `MARFA_INTEGRATION_RUNTIME=local`; replaces the Cloudflare-side execution layer (Workers + Queues + Durable Objects + KV) with an in-process equivalent. The handler authoring surface (`@withmarfa/runtime-sdk`) is unchanged — integrations import the same primitives and run on either substrate.
 
@@ -442,6 +442,6 @@ Node-bundled integrations substrate. Boots conditionally on `MARFA_INTEGRATION_R
 
 **Operator footprint.** Two containers — server + Postgres. No Redis, no extra binary, no Postgres extension dependency. pg-boss creates its own `pgboss` schema inside the same Postgres instance the rest of the server already uses.
 
-**Default.** `MARFA_INTEGRATION_RUNTIME` defaults to `local` from T-174. Hosted Marfa deployments + any operator that wants to delegate to the Cloudflare bridge sets the env var explicitly to `hosted`.
+**Default.** `MARFA_INTEGRATION_RUNTIME` defaults to `local`. Hosted Marfa deployments + any operator that wants to delegate to the Cloudflare bridge sets the env var explicitly to `hosted`.
 
 **Public docs.** The semantic parity sheet between substrates lives in `withmarfa/docs/guides/connections/runtime-substrates.mdx`.

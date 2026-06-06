@@ -11,7 +11,7 @@ import type { MetadataPermission, TypePermission } from "./types.js";
  *   - metadata sub:     "metadata.types:write" → kind="metadata", subresource="types"
  *   - edge scope:       "edge.parent-of:write" or "edge.*:write"
  *                       → kind="edge", edgeType="parent-of" or "*"
- *   - OIDC literal:     "openid" / "profile" / "email"  (T-074)
+ *   - OIDC literal:     "openid" / "profile" / "email"
  *                       → kind="oidc", oidcScope=<literal>, no operation suffix
  *
  * Per-edge-type scopes surface fine-grained edge permissions through OAuth,
@@ -48,16 +48,13 @@ const EDGE_SCOPE_RE = /^edge\.([a-z0-9_*][a-z0-9_.\-*]*):(read|write)$/;
 // segment (`types`, future siblings).
 const METADATA_SUB_SCOPE_RE = /^metadata\.([a-z][a-z0-9_-]*):(read|write)$/;
 
-/** T-074: standard OIDC literals. Recognised by `parseScope` ahead of the
+/** Standard OIDC literals. Recognised by `parseScope` ahead of the
  *  `<type>:<verb>` matchers so they can't collide with future type names
- *  (which require a colon-separated verb).
- *
- *  T-131: `offline_access` added — RFC 6749 / OIDC standard literal that
- *  signals the RP wants a refresh token. The @better-auth/oauth-provider
- *  plugin requires it to be in the requested scope set before issuing a
- *  refresh token alongside the access token. Without recognition here,
- *  the consent route 400s on this scope and the consent decision never
- *  reaches the plugin's `/oauth2/consent` endpoint. */
+ *  (which require a colon-separated verb). `offline_access` is the RFC
+ *  6749 / OIDC standard literal that signals the RP wants a refresh token;
+ *  the OAuth provider plugin requires it to be in the requested scope set
+ *  before issuing a refresh token. Without recognition here, the consent
+ *  route rejects this scope before it reaches the consent endpoint. */
 const OIDC_LITERALS: ReadonlySet<OidcScope> = new Set([
   "openid",
   "profile",
@@ -67,7 +64,7 @@ const OIDC_LITERALS: ReadonlySet<OidcScope> = new Set([
 
 /** Parses a scope string into its type pattern and operation. Returns null if invalid. */
 export function parseScope(scope: string): ParsedScope | null {
-  // T-074: OIDC literals (openid / profile / email). No operation suffix.
+  // OIDC literals (openid / profile / email). No operation suffix.
   if (OIDC_LITERALS.has(scope as OidcScope)) {
     return {
       typePattern: scope,
@@ -179,8 +176,8 @@ export function scopesToTypePermissions(
     if (!parsed) continue;
 
     // Skip metadata, edge, and OIDC scopes — they don't map to
-    // type_permissions. T-074 added OIDC literals to the grammar; they
-    // surface only on the synthetic ApiKey's `oidc_scopes` set.
+    // type_permissions. OIDC literals surface only on the synthetic
+    // ApiKey's `oidc_scopes` set.
     if (
       parsed.kind === "metadata" ||
       parsed.kind === "edge" ||
@@ -272,11 +269,11 @@ export function scopesToMetadataPermissions(
 }
 
 /**
- * **T-074: OIDC scope projection.** Filters a granted scope list down to
- * the standard OIDC literals (`openid` / `profile` / `email`). Surfaced
- * on the synthetic OAuth `ApiKey` as `oidc_scopes` and consumed only by
- * `/oauth/userinfo` to gate field visibility. Unrecognised scopes —
- * type, edge, metadata, malformed — are ignored.
+ * Filters a granted scope list down to the standard OIDC literals
+ * (`openid` / `profile` / `email`). Surfaced on the synthetic OAuth
+ * `ApiKey` as `oidc_scopes` and consumed only by `/oauth/userinfo` to
+ * gate field visibility. Unrecognised scopes — type, edge, metadata,
+ * malformed — are ignored.
  */
 export function scopesToOidcScopes(scopes: string[]): Set<OidcScope> {
   const out = new Set<OidcScope>();

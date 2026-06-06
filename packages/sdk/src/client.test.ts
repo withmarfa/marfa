@@ -110,9 +110,9 @@ beforeAll(async () => {
     fetch: testFetch,
   });
 
-  // T-218: the bulk_action endpoint is async — start the worker so
-  // SDK calls that poll for terminal state actually complete. Tight
-  // pollIntervalMs because tests want fast turnaround.
+  // The bulk_action endpoint is async — start the worker so SDK calls
+  // that poll for terminal state actually complete. Tight pollIntervalMs
+  // because tests want fast turnaround.
   const bulkActionWorker = new BulkActionWorker({
     storage,
     pollIntervalMs: 25,
@@ -228,9 +228,9 @@ describe("items", () => {
 
 describe("items.upsert", () => {
   // The server resolves a `(source, source_id)` POST as natural-key
-  // upsert (T-038): first call → 201 Created, second call with the same
-  // pair → 200 Updated. `request<T>` consumes that status; `upsert`
-  // surfaces it as `created: boolean`.
+  // upsert: first call → 201 Created, second call with the same pair →
+  // 200 Updated. `request<T>` consumes that status; `upsert` surfaces it
+  // as `created: boolean`.
 
   it("returns created=true on a fresh natural-key insert (HTTP 201)", async () => {
     const sourceId = `upsert-fresh-${Date.now().toString()}`;
@@ -807,7 +807,7 @@ describe("types", () => {
     const registered = await client.types.register({
       id,
       version: 1,
-      label: "T-163 register-unwrap test",
+      label: "register-unwrap test",
       description:
         "Ephemeral type proving register() returns the persisted schema",
       fields: {
@@ -827,7 +827,7 @@ describe("types", () => {
     await client.types.register({
       id,
       version: 1,
-      label: "T-167 update-unwrap test",
+      label: "update-unwrap test",
       description: "Ephemeral type for the update-unwrap assertion",
       fields: {
         name: { type: "string", required: true },
@@ -836,7 +836,7 @@ describe("types", () => {
     try {
       const updated = await client.types.update(id, {
         version: 2,
-        label: "T-167 update-unwrap test (v2)",
+        label: "update-unwrap test (v2)",
         description: "Updated description on v2",
         fields: {
           name: { type: "string", required: true },
@@ -1256,7 +1256,7 @@ describe("items.bulk", () => {
 });
 
 // ---------------------------------------------------------------------------
-// items.createWithAttachments (T-100)
+// items.createWithAttachments
 // ---------------------------------------------------------------------------
 
 describe("items.createWithAttachments", () => {

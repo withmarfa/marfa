@@ -14,9 +14,9 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
     {},
     "audit_log.details",
   );
-  // T-027: client_ip is persisted alongside the rest of details for
-  // schema compatibility (audit_log.details is JSON, no migration); the
-  // typed interface lifts it back to a top-level field on the read path.
+  // client_ip is persisted alongside the rest of details (audit_log.details
+  // is JSON, so no migration was needed); the typed interface lifts it back
+  // to a top-level field on the read path.
   const ipRaw = details.client_ip;
   const client_ip =
     typeof ipRaw === "string" && ipRaw.length > 0 ? ipRaw : null;
@@ -45,7 +45,7 @@ export class PgAuditStore implements AuditStore {
     client_ip?: string | null;
     details?: Record<string, unknown>;
   }): Promise<void> {
-    // T-027: fold the typed `client_ip` into the JSON `details` blob.
+    // Fold the typed `client_ip` into the JSON `details` blob.
     // Persisting alongside the existing details keeps the schema stable
     // (no migration needed) while exposing IP as a typed field on read.
     const detailsBlob: Record<string, unknown> = { ...(entry.details ?? {}) };
@@ -92,10 +92,10 @@ export class PgAuditStore implements AuditStore {
     if (filters.until) {
       conditions.push(lte(auditLog.timestamp, filters.until));
     }
-    // T-041: tenant scope. When the caller is tenant-scoped (filter
-    // explicitly set), restrict to rows with matching `tenant_id`. When
-    // omitted, no tenant filter is applied — bootstrap-admin reads on
-    // self-hosted, plus the cleanup job which is currently global.
+    // Tenant scope. When the caller is tenant-scoped (filter explicitly set),
+    // restrict to rows with matching `tenant_id`. When omitted, no tenant
+    // filter is applied — bootstrap-admin reads on self-hosted, plus the
+    // cleanup job which is currently global.
     if (filters.tenant_id !== undefined && filters.tenant_id !== null) {
       conditions.push(eq(auditLog.tenant_id, filters.tenant_id));
     }
@@ -140,7 +140,7 @@ export class PgAuditStore implements AuditStore {
     const cutoff = new Date(
       Date.now() - retentionDays * 24 * 60 * 60 * 1000,
     ).toISOString();
-    // T-050 — three filter shapes:
+    // Three filter shapes:
     //   undefined → every row older than cutoff
     //   string    → tenant_id = X
     //   null      → tenant_id IS NULL
@@ -162,11 +162,11 @@ export class PgAuditStore implements AuditStore {
   }
 
   async redactForUser(authUserId: string): Promise<number> {
-    // T-116: scrub PII from audit rows that name this user. The
-    // pre-filter (LIKE '%authUserId%' OR resource_id = ?) is a cheap
-    // index-friendly cut to avoid scanning every row; the in-memory
-    // check below is the authoritative filter (substring matches in
-    // unrelated `details` payloads do not falsely trigger).
+    // Scrub PII from audit rows that name this user. The pre-filter
+    // (LIKE '%authUserId%' OR resource_id = ?) is a cheap index-friendly
+    // cut to avoid scanning every row; the in-memory check below is the
+    // authoritative filter (substring matches in unrelated `details`
+    // payloads do not falsely trigger).
     const sentinel = JSON.stringify({
       redacted: true,
       user_id_sha256: createHash("sha256").update(authUserId).digest("hex"),
@@ -198,8 +198,7 @@ export class PgAuditStore implements AuditStore {
 }
 
 /**
- * Decide whether an audit row genuinely identifies the user. Match
- * criteria (T-116):
+ * Decide whether an audit row genuinely identifies the user. Match criteria:
  *   - `resource_id === authUserId`, OR
  *   - any leaf string value inside `details` (recursive walk) equals
  *     `authUserId` exactly. Substring matches do not count — that's

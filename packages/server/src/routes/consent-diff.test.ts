@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import { computeConsentDiff } from "./consent-diff.js";
 
 /**
- * Wave C PR5 / T-032 — pure-function tests for the re-consent diff
- * helper. The set-difference logic is the load-bearing bit; the
- * rendering side is exercised in `consent-render.test.ts`.
+ * Pure-function tests for the re-consent diff helper. The set-difference
+ * logic is the load-bearing bit; the rendering side is exercised in
+ * `consent-render.test.ts`.
  */
 
 describe("computeConsentDiff", () => {

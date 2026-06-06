@@ -21,7 +21,7 @@ import type { PgClient } from "../storage/pg/connection.js";
 import { acquireStreamRls } from "../storage/pg/streaming-rls.js";
 
 /**
- * Options for `exportRoutes`. `rlsEnforce` + `pgClient` enable T-146
+ * Options for `exportRoutes`. `rlsEnforce` + `pgClient` enable
  * session-level RLS on a dedicated pool connection for the duration
  * of the stream. Without both set, the route runs on the owner
  * connection — used for SQLite, for tenant-less callers (platform
@@ -34,7 +34,7 @@ export interface ExportRoutesOptions {
 }
 
 /**
- * T-053: resolve the target tenant for an export request.
+ * Resolve the target tenant for an export request.
  *
  * Three cases:
  *   1. **tenant_admin / member with tenant_id** — caller's tenant
@@ -112,11 +112,10 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe("Output format: `ndjson` (default) or `archive`"),
-      // T-053: platform admins scope a hosted-mode export to a
-      // specific tenant by passing `?target_tenant_id=<id>`. Tenant-
-      // bound callers (tenant_admin / member) get their own
-      // tenant automatically; supplying a mismatching value here
-      // returns 403.
+      // Platform admins scope a hosted-mode export to a specific tenant
+      // by passing `?target_tenant_id=<id>`. Tenant-bound callers
+      // (tenant_admin / member) get their own tenant automatically;
+      // supplying a mismatching value here returns 403.
       target_tenant_id: z
         .string()
         .optional()
@@ -168,20 +167,20 @@ export function exportRoutes(
 
     const query = c.req.valid("query");
 
-    // T-053: resolve the target tenant up front so it's available to
-    // the audit log AND both downstream paths (archive + NDJSON). The
-    // resolver throws on cross-tenant attempts.
+    // Resolve the target tenant up front so it's available to the audit
+    // log and both downstream paths (archive + NDJSON). The resolver
+    // throws on cross-tenant attempts.
     const tenantId = resolveExportTenant(
       c.get("apiKey"),
       query.target_tenant_id,
     );
 
-    // T-053: audit the export attempt before streaming starts. Stamped
-    // for both archive and NDJSON paths. `details.scope: "platform_unscoped"`
+    // Audit the export attempt before streaming starts — stamped for
+    // both archive and NDJSON paths. `details.scope: "platform_unscoped"`
     // signals operators when a platform admin exports without a
-    // target_tenant_id (self-host fallback path that returns all rows —
+    // target_tenant_id (the self-host fallback that returns all rows —
     // fine on single-tenant deployments, a real concern on hosted
-    // multi-tenant). Alerting on the shape catches accidental cross-
+    // multi-tenant). Alerting on this shape catches accidental cross-
     // tenant exports.
     const platformUnscoped =
       c.get("apiKey")?.tenant_id === undefined &&
@@ -232,13 +231,12 @@ export function exportRoutes(
     const allowedTypes = getTypeFilter(c);
     const encoder = new TextEncoder();
 
-    // T-146: when the caller has a tenant_id and RLS enforcement is on,
-    // pin a dedicated pool connection for the stream and apply
-    // session-level `SET ROLE marfa_app` + `marfa.tenant_id`. Storage
-    // reads inside the stream then flow through that connection and
-    // are RLS-filtered at the DB layer. Tenant-less callers (platform
-    // admin / single-tenant self-host) and SQLite skip — same
-    // semantics as the non-streaming RLS middleware.
+    // When the caller has a tenant_id and RLS enforcement is on, pin a
+    // dedicated pool connection for the stream and apply session-level
+    // role + tenant_id. Storage reads then flow through that connection
+    // and are filtered at the DB layer. Tenant-less callers (platform
+    // admin / single-tenant self-host) and SQLite skip — same semantics
+    // as the non-streaming RLS middleware.
     const stream = new ReadableStream({
       async start(controller) {
         const rlsCtx =
@@ -311,11 +309,11 @@ interface ArchiveManifest {
   format: string;
   created_at: string;
   /**
-   * T-053: tenant_id stamped at export time. `null` for single-
-   * tenant self-host exports (no tenant scope on either side);
-   * a string for hosted-mode exports. Used by `/admin/restore-archive`
-   * to verify cross-tenant restore attempts (rejected unless the
-   * platform admin passes an explicit `target_tenant_id`).
+   * tenant_id stamped at export time. `null` for single-tenant
+   * self-host exports (no tenant scope on either side); a string for
+   * hosted-mode exports. Used by `/admin/restore-archive` to verify
+   * cross-tenant restore attempts (rejected unless the platform admin
+   * passes an explicit `target_tenant_id`).
    */
   tenant_id: string | null;
   item_count: number;
@@ -343,17 +341,17 @@ async function handleArchiveExport(
   const since = c.req.query("since");
   const until = c.req.query("until");
   const source = c.req.query("source");
-  // T-053: resolve target tenant (caller's own, or platform-admin's
+  // Resolve the target tenant (caller's own, or the platform admin's
   // explicit target). The audit row in the parent handler already
-  // captured the `started` action; the manifest below stamps the
-  // resolved tenant_id for restore-side verification.
+  // captured the export action; the manifest below stamps the resolved
+  // tenant_id for restore-side verification.
   const tenantId = resolveExportTenant(
     c.get("apiKey"),
     c.req.query("target_tenant_id"),
   );
   const allowedTypes = getTypeFilter(c);
 
-  // T-146: dedicated-connection session-level RLS for the collect pass.
+  // Dedicated-connection session-level RLS for the collect pass.
   // Same shape as the NDJSON path above.
   const rlsCtx =
     options.rlsEnforce && options.pgClient !== null && tenantId
@@ -391,10 +389,9 @@ async function handleArchiveExport(
           : undefined;
       } while (cursor);
 
-      // Resolve blob metadata from the database. T-049: tenant-scoped
-      // lookup using the export caller's tenant_id. Platform admins
-      // on single-tenant self-hosts pass `""` (the instance-wide
-      // sentinel).
+      // Resolve blob metadata from the database. Lookup is tenant-scoped
+      // using the export caller's tenant_id. Platform admins on
+      // single-tenant self-hosts pass `""` (the instance-wide sentinel).
       for (const hash of blobHashes) {
         const record = await storage.blobs.get(hash, tenantId ?? "");
         if (record) {
@@ -417,9 +414,9 @@ async function handleArchiveExport(
   // / S3), not Postgres — so they don't need the RLS context. The
   // session has already been released at this point.
 
-  // Build manifest. T-053: tenant_id is the resolved scope of this
-  // export — the calling tenant or the platform-admin's
-  // target_tenant_id; null for single-tenant self-hosts.
+  // Build manifest. tenant_id is the resolved scope of this export —
+  // the calling tenant or the platform admin's target_tenant_id; null
+  // for single-tenant self-hosts.
   const manifest: ArchiveManifest = {
     version: 1,
     format: "marfa-archive-v1",

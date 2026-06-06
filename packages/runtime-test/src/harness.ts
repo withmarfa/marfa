@@ -1,7 +1,7 @@
 /**
  * Test harness: builds a full `ConsumerEnvironment` from in-memory
  * mocks. Per-Integration tests use this to drive their handlers in
- * isolation; Layer 3's integration test suites all hang off it.
+ * isolation; per-Integration test suites hang off it.
  *
  * Usage:
  *
@@ -115,10 +115,10 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       };
     },
     async consume() {
-      // T-043 D2: drain via `drainMessages()` so each payload arrives
-      // wrapped in a `Message<T>` envelope with `ack()` / `retry()` /
-      // `attempts`. The consumer dispatches per-message; outcome
-      // counters are still populated for telemetry compatibility.
+      // Drain via `drainMessages()` so each payload arrives wrapped in
+      // a `Message<T>` envelope with `ack()` / `retry()` / `attempts`.
+      // The consumer dispatches per-message; outcome counters are still
+      // populated for telemetry compatibility.
       const messages = queue.drainMessages();
       return consumeBatch(env, messages);
     },

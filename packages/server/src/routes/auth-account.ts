@@ -1,5 +1,5 @@
 /**
- * T-116 — account-lifecycle deletion routes.
+ * Account-lifecycle deletion routes.
  *
  * Surfaces:
  *   - POST /auth/account/delete           — initiate. Mints a confirm
@@ -43,8 +43,7 @@ function newToken(): string {
  * Resolve the caller into an `auth_user.id`. Two paths:
  *
  *   1. Bearer auth (api key) — tenant_admin or admin in a tenant.
- *      We resolve the tenant's `users.auth_user_id` (canonical bridge,
- *      T-074).
+ *      We resolve the tenant's `users.auth_user_id` (canonical bridge).
  *   2. Better-auth session cookie — `auth.getSession()` returns the
  *      user directly.
  *
@@ -80,9 +79,9 @@ export function authAccountRoutes(
 
   const accountLifecycle = storage.accountLifecycle;
   if (!accountLifecycle) {
-    // No-op router. The account-lifecycle store isn't wired (test
-    // contexts that pre-date T-116). Every route falls through to 404
-    // via Hono's missing-handler behaviour. Documented; intentional.
+    // No-op router. The account-lifecycle store isn't wired on this
+    // instance. Every route falls through to 404 via Hono's
+    // missing-handler behaviour. Documented; intentional.
     return router;
   }
 
@@ -150,10 +149,10 @@ export function authAccountRoutes(
       });
     }
 
-    // T-139: no plaintext email in audit details. The auth_user_id in
-    // resource_id correlates back to the email via the auth_user row when
-    // operators need it; logging the email here would re-introduce the
-    // PII trail T-107 deliberately removed from email-transport logs.
+    // No plaintext email in audit details. The auth_user_id in resource_id
+    // correlates back to the email via the auth_user row when operators
+    // need it; logging the email here would re-introduce a PII trail
+    // that was deliberately removed from email-transport logs.
     void storage.audit.log({
       action: "auth.account.delete_requested",
       resource_type: "auth_account",
@@ -223,7 +222,7 @@ export function authAccountRoutes(
       });
     }
 
-    // T-139: see the delete_requested site above for the rationale.
+    // No plaintext email in audit details — same rationale as the delete_requested site above.
     void storage.audit.log({
       action: "auth.account.delete_confirmed",
       resource_type: "auth_account",
@@ -257,8 +256,8 @@ export function authAccountRoutes(
         400,
       );
     }
-    // T-141: branch on whether the UPDATE actually flipped a row. The
-    // `getAccountLifecycle` pre-check above has a TOCTOU window with the
+    // Branch on whether the UPDATE actually flipped a row. The
+    // `getAccountLifecycle` pre-check has a TOCTOU window with the
     // purger's cascade — `getAccountLifecycle` can read pending, the
     // cascade can commit (hard-deleting the auth_user), then this
     // UPDATE no-ops. Without this branch the audit row + JSON response
@@ -305,12 +304,12 @@ export function authAccountRoutes(
     }
     const authUserId = row.value;
     await deleteVerificationByIdentifier(storage, identifier);
-    // T-141: branch on whether the UPDATE actually flipped a row. The
-    // verification row above can resolve before the cascade commits,
-    // but by the time `cancelPendingDeletion` runs the auth_user row
-    // may be gone — at which point the UPDATE matches zero rows. The
-    // "Account restored" page would be a lie; render the honest one
-    // instead and write a distinct audit action.
+    // Branch on whether the UPDATE actually flipped a row. The
+    // verification row can resolve before the cascade commits, but by
+    // the time `cancelPendingDeletion` runs the auth_user row may be
+    // gone — at which point the UPDATE matches zero rows. The "Account
+    // restored" page would be a lie; render the honest one instead and
+    // write a distinct audit action.
     const cancelled = await accountLifecycle.cancelPendingDeletion(authUserId);
     if (!cancelled) {
       void storage.audit.log({
@@ -467,11 +466,10 @@ async function findVerificationByValue(
 ): Promise<VerificationRow | null> {
   const db = storage.betterAuthDb;
   if (!db) return null;
-  // Drizzle query builder on both dialects (T-138 — replaces a raw-SQL
-  // path that string-interpolated the SQLite branch). `like` + `eq`
-  // parameterise everything; both schemas expose the same column shape
-  // so the only dialect difference is `.get()` (sqlite) vs result-array
-  // destructure (pg) and the dynamic schema import.
+  // Drizzle query builder on both dialects. `like` + `eq` parameterise
+  // everything; both schemas expose the same column shape so the only
+  // dialect difference is `.get()` (sqlite) vs result-array destructure
+  // (pg) and the dynamic schema import.
   if (storage.betterAuthDialect === "pg") {
     const { auth_verification } = await import("../storage/pg/schema.js");
     const rows = await (
@@ -641,7 +639,7 @@ function renderCancelledPage(): string {
   });
 }
 
-// T-141: rendered when the cancel UPDATE matched zero rows because the
+// Rendered when the cancel UPDATE matched zero rows because the
 // account-deletion cascade had already committed. The user clicked the
 // cancel link in time — the system just couldn't honour it. Don't imply
 // they missed a deadline.

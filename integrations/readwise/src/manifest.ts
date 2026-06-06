@@ -1,14 +1,13 @@
 /**
  * Manifest for the Readwise inbound integration (`readwise.highlights`).
  *
- * Token-credential consumer of the T-241 PR1 substrate. Uses Readwise's
- * Export API (`GET /api/v2/export/?updatedAfter=...&pageCursor=...`)
- * as the inbound rail; outbound is out of scope (manifest direction is
- * `read`).
+ * Uses Readwise's Export API
+ * (`GET /api/v2/export/?updatedAfter=...&pageCursor=...`) as the
+ * inbound rail; outbound is out of scope (manifest direction is `read`).
  *
  * Readwise requires `Authorization: Token <key>` (not Bearer), so the
  * credential is minted via `POST /credentials/api-token` with
- * `auth_scheme: "Token"` (T-246).
+ * `auth_scheme: "Token"`.
  *
  * Hourly cron — highlights aren't time-critical and Readwise's
  * per-token rate limit (240 req/min on Export) is generous but worth

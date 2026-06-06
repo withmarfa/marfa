@@ -6,8 +6,8 @@ import { filterToRawSql } from "../filter-sql.js";
 import type { PgClient, PgDb } from "./connection.js";
 import { rowToItem } from "./helpers.js";
 import type { items } from "./schema.js";
-// T-015: shared FTS text extractor — both dialects compute the
-// indexable text the same way so the cross-dialect parity test holds.
+// Shared FTS text extractor — both dialects compute the indexable text
+// the same way so the cross-dialect parity test holds.
 import { extractSearchableText } from "../search-text.js";
 
 /**
@@ -50,12 +50,11 @@ function buildTsQueryExpr(
 
 export class PgSearchStore implements SearchStore {
   /**
-   * T-015: writes go through the request-context-aware Drizzle
-   * instance (`db`) so an `index()` call inside a `db.transaction(...)`
-   * runs on the same reserved connection as the parent INSERT/UPDATE.
-   * Reads (the `search` method's raw SQL) use the bare client — search
-   * isn't typically nested in a write transaction, and taking a fresh
-   * pool connection is fine for it.
+   * Writes go through the request-context-aware Drizzle instance (`db`)
+   * so an `index()` call inside a `db.transaction(...)` runs on the same
+   * reserved connection as the parent INSERT/UPDATE. Reads (the `search`
+   * method's raw SQL) use the bare client — search isn't typically nested
+   * in a write transaction, and taking a fresh pool connection is fine.
    */
   constructor(
     private db: PgDb,
@@ -63,14 +62,14 @@ export class PgSearchStore implements SearchStore {
   ) {}
 
   /**
-   * T-015: write the materialised tsvector for an item. The text fed
-   * to `to_tsvector('english', ...)` comes from the shared
+   * Write the materialised tsvector for an item. The text fed to
+   * `to_tsvector('english', ...)` comes from the shared
    * `extractSearchableText` helper, which respects per-type
    * `searchable: false` opt-outs and produces the same field set the
    * SQLite FTS5 indexer uses. Called inside the same transaction as
    * the items INSERT/UPDATE so the row + its search vector commit
-   * atomically; if the index call fails, the parent transaction
-   * rolls the row back too.
+   * atomically; if the index call fails, the parent transaction rolls
+   * the row back too.
    */
   async index(
     itemId: string,
@@ -95,10 +94,9 @@ export class PgSearchStore implements SearchStore {
   }
 
   /**
-   * T-015: clear the search vector. Called when an item is hard-
-   * deleted or restored from a state that excluded it from FTS. The
-   * row may already be gone (cascade delete); the UPDATE no-ops in
-   * that case.
+   * Clear the search vector. Called when an item is hard-deleted or
+   * restored from a state that excluded it from FTS. The row may already
+   * be gone (cascade delete); the UPDATE no-ops in that case.
    */
   async remove(itemId: string): Promise<void> {
     await this.db.execute(
@@ -121,12 +119,10 @@ export class PgSearchStore implements SearchStore {
     );
     params.push(paramValue);
 
-    // T-015: read the materialised search_vector column. Replaces the
-    // at-query-time `to_tsvector(...)` sequential scan that the at-
-    // query-time shape required. The column is populated by
-    // `index()` at item write time; rows whose search_vector is NULL
-    // (un-backfilled, mid-migration) are simply invisible to search
-    // until the next write or the backfill UPDATE catches them.
+    // Read the materialised search_vector column. The column is populated
+    // by `index()` at item write time; rows whose search_vector is NULL
+    // (un-backfilled, mid-migration) are invisible to search until the
+    // next write or the backfill UPDATE catches them.
     const tsvec = `i.search_vector`;
 
     // Default: exclude trashed
@@ -175,7 +171,7 @@ export class PgSearchStore implements SearchStore {
 
     // Type permission filtering
     if (filters.allowed_types) {
-      // T-045: empty allowed_types means "no readable types" — see
+      // Empty allowed_types means "no readable types" — see
       // PgItemStore.list. Must filter to zero rows.
       if (filters.allowed_types.length === 0) {
         conditions.push("AND 1=0");

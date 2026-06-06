@@ -43,12 +43,12 @@ export interface IntegrationWorkerEnv extends PerConnectionAlarmEnv {
    */
   MARFA_RUNTIME_BROKER_KEY: string;
   /**
-   * Optional DLQ producer bindings (T-103). Wire whichever DLQ queues
-   * the Worker's main consumers spill into; the wrapper routes by
-   * message kind so an integration that consumes multiple queue
-   * families gets the matching DLQ for each. Bindings are declared
-   * per-env in the integration's `wrangler.toml` as
-   * `[[env.<env>.queues.producers]]` pointing at the relevant DLQ.
+   * Optional DLQ producer bindings. Wire whichever DLQ queues the
+   * Worker's main consumers spill into; the wrapper routes by message
+   * kind so an integration that consumes multiple queue families gets
+   * the matching DLQ for each. Bindings are declared per-env in the
+   * integration's `wrangler.toml` as `[[env.<env>.queues.producers]]`
+   * pointing at the relevant DLQ.
    *
    * When a binding is unset, the wrapper takes the no-DLQ
    * permanent-failure path (ack + activity emit only).
@@ -108,8 +108,8 @@ async function mintCredentialViaBroker(
  * this runs.
  *
  * Exported for unit-testing the env→consumer wiring (specifically the
- * `dlqProducerFor` kind→binding map added in T-103); not part of the
- * public Worker bootstrap surface.
+ * `dlqProducerFor` kind→binding map); not part of the public Worker
+ * bootstrap surface.
  */
 export function buildConsumerEnv(
   env: IntegrationWorkerEnv,
@@ -128,13 +128,11 @@ export function buildConsumerEnv(
       // PerConnectionStateCore exposes that subset of
       // DurableObjectStorage. We can't reach into the DO from
       // outside, so we hand back a façade that proxies each KV
-      // call through a request to the DO's fetch handler — but
-      // since the queue message dispatches the handler INSIDE the
-      // DO would be cleaner. For Layer 3 we keep the SDK helpers
-      // running in the Worker isolate (matches the in-memory test
-      // harness shape) and reach into the DO state only through
-      // setAlarm / setNextRunAt on the alarm path. Storage proxy
-      // below is simple per-key over fetch.
+      // call through a request to the DO's fetch handler. SDK
+      // helpers run in the Worker isolate (matches the in-memory
+      // test harness shape) and reach into the DO state only
+      // through setAlarm / setNextRunAt on the alarm path. Storage
+      // proxy below is simple per-key over fetch.
       return makeStorageProxy(stub);
     },
     mintCredential: (connectionId: string) =>
@@ -183,11 +181,11 @@ export function createIntegrationWorker<
         innerUrl.search = "";
         return stub.fetch(new Request(innerUrl.toString(), { method: "POST" }));
       }
-      // T-082: synchronous one-shot dispatch from the runtime-control
-      // verify route. Reuses the same ConsumerEnvironment the queue
-      // consumer builds so the handler runs against the real per-
-      // Connection runtime credential and writes through the same
-      // Marfa client — verify is real-handler, real-writes.
+      // Synchronous one-shot dispatch from the runtime-control verify
+      // route. Reuses the same ConsumerEnvironment the queue consumer
+      // builds so the handler runs against the real per-Connection
+      // runtime credential and writes through the same Marfa API —
+      // verify is real-handler, real-writes.
       if (url.pathname === "/verify" && request.method === "POST") {
         const consumerEnv = buildConsumerEnv(env, config);
         return verifyHandler(consumerEnv, request);

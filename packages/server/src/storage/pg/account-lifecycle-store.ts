@@ -1,15 +1,13 @@
 /**
- * T-116: PG account-lifecycle store.
+ * PG account-lifecycle store.
  *
  * Surfaces `auth_user.deletion_state` + `pending_deletion_at` and the
- * accompanying credential-revocation cascade that fires the moment a
- * user confirms an account-deletion email. Pattern mirrors
- * `pg/tenant-store.ts` (single-table store), with one widening:
- * `markPendingDeletion` runs a Drizzle transaction that also revokes
- * the user's tenant's `api_keys` rows and drops every `auth_session`
- * for the user atomically — so the moment the state flips,
- * authenticated callers stop seeing the account on every credential
- * path.
+ * accompanying credential-revocation cascade that fires the moment a user
+ * confirms an account-deletion email. `markPendingDeletion` runs a Drizzle
+ * transaction that also revokes the user's tenant's `api_keys` rows and
+ * drops every `auth_session` for the user atomically — so the moment the
+ * state flips, authenticated callers stop seeing the account on every
+ * credential path.
  */
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import type { AccountLifecycleStore } from "../interface.js";
@@ -56,10 +54,10 @@ export class PgAccountLifecycleStore implements AccountLifecycleStore {
   }
 
   async cancelPendingDeletion(authUserId: string): Promise<boolean> {
-    // T-141: surface rows-affected to the route layer so the
-    // "Account restored" confirmation only renders when the UPDATE
-    // actually flipped a row. `.returning()` is cheap (single PK column)
-    // and matches the Drizzle-PG pattern used elsewhere for confirm-on-write.
+    // Surface rows-affected so the "Account restored" confirmation only
+    // renders when the UPDATE actually flipped a row. `.returning()` is
+    // cheap (single PK column) and matches the Drizzle-PG pattern used
+    // elsewhere for confirm-on-write.
     const rows = await this.db
       .update(auth_user)
       .set({ deletion_state: "active", pending_deletion_at: null })

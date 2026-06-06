@@ -5,8 +5,8 @@
  * tests build a ConnectionContext from in-memory pieces and assert the
  * observable side effects (cursor advanced, activity emitted).
  *
- * The full @withmarfa/runtime-test harness ships in PR 5; this test
- * builds the context inline because the helpers it needs are tiny.
+ * The full @withmarfa/runtime-test harness is available for richer scenarios;
+ * this test builds the context inline because the helpers it needs are tiny.
  */
 import { describe, it, expect } from "vitest";
 import {

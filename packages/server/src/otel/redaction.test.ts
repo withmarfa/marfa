@@ -6,9 +6,10 @@ import {
 } from "./redaction.js";
 
 /**
- * T-275 PII discipline. `redactAttributes` is the gating surface: if a
- * denied key ever survives, this test fails loudly. Keep-safe attributes
- * must pass through untouched so traces/logs stay useful.
+ * PII discipline for OpenTelemetry. `redactAttributes` is the gating
+ * surface: if a denied key ever survives, this test fails loudly.
+ * Keep-safe attributes must pass through untouched so traces/logs
+ * stay useful.
  */
 describe("redactAttributes — PII denylist", () => {
   it.each([...DENYLIST_EXACT])("drops exact-denied key %s", (key) => {

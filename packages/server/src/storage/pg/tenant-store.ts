@@ -20,9 +20,9 @@ export class PgTenantStore implements TenantStore {
       id: row.id,
       name: row.name,
       created_at: row.created_at,
-      // T-117: column carries a NOT NULL DEFAULT 'active'; the insert above
-      // omits it, so the DB stamps it. Echo back the same default on the
-      // returned row so the caller doesn't need a follow-up read.
+      // The status column carries NOT NULL DEFAULT 'active'; the insert
+      // above omits it, so the DB stamps it. Echo back the same default on
+      // the returned row so the caller doesn't need a follow-up read.
       status: "active",
     };
   }

@@ -60,9 +60,9 @@ Three operationally significant points the handler honours:
 YouTube Data API v3 lives at `https://www.googleapis.com`, the same
 host as Calendar / Tasks / Drive. The shared google.\* OAuth
 credential row (`upstream_base_url = "https://www.googleapis.com"`)
-works without a T-254 per-connection
-`upstream_base_url_override`. Reuse the existing credential via
-`credential_ref` on `POST /connections/install`.
+works without a per-connection `upstream_base_url_override`. Reuse
+the existing credential via `credential_ref` on
+`POST /connections/install`.
 
 ## Configuration
 

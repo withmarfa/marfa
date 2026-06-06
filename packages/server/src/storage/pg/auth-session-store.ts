@@ -4,10 +4,9 @@ import { auth_session } from "./schema.js";
 import type { PgDb } from "./connection.js";
 
 /**
- * T-097: Postgres sweep for expired better-auth session rows. Runs
- * against the unwrapped base instance (no RLS) since the `auth_*`
- * tables carry no policies — see the Better Auth bypass note in
- * `app.ts`.
+ * Postgres sweep for expired better-auth session rows. Runs against the
+ * unwrapped base instance (no RLS) since the `auth_*` tables carry no
+ * policies — see the Better Auth bypass note in `app.ts`.
  */
 export class PgAuthSessionStore implements AuthSessionStore {
   constructor(private db: PgDb) {}

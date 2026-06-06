@@ -15,9 +15,7 @@
  *      `/webhooks/inbound/<CONNECTION_ID>`. The synthetic
  *      `https://runtime-control` host in the URL is ignored by the
  *      binding; only path + headers + body reach the bound Worker's
- *      `fetch` handler. No DNS / TLS / edge involved. Replaces the
- *      `marfa-runtime-control-staging.withmarfa.workers.dev` HTTP-fetch
- *      workaround that landed in T-244 (closed in T-250).
+ *      `fetch` handler. No DNS / TLS / edge involved.
  *   5. The bound Worker verifies the HMAC, idempotency-checks on the
  *      Message-ID, and enqueues a `WebhookMessage` for the
  *      `withmarfa.inbox` handler.
@@ -28,10 +26,10 @@
  * Message-ID idempotency makes duplicate forwards safe.
  *
  * Attachments: v1 captures metadata only (`filename`, `mime_type`,
- * `size_bytes`). Actual blob upload is gated on T-239 (runtime-sdk
- * `uploadBlob` primitive). We do NOT include attachment content in
- * the JSON envelope — that would balloon the webhook body well past
- * the substrate's small-body fast path.
+ * `size_bytes`). Attachment content is not included in the JSON
+ * envelope — that would balloon the webhook body well past the
+ * substrate's small-body fast path. Blob upload can be wired once
+ * the runtime SDK ships an `uploadBlob` primitive.
  */
 import PostalMime, {
   type Email,

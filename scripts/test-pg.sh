@@ -89,8 +89,8 @@ echo "→ Running server tests (Postgres)"
 #   - MARFA_TEST_PG_ADMIN_URL — points at the `postgres` system DB so the
 #     globalSetup can CREATE/DROP the test template + per-file clones.
 #     Required for the per-file template-database lifecycle that replaced
-#     the shared-DB + truncate-on-setup pattern (PR 1 of the May 2026 CI/test
-#     audit). See packages/server/src/storage/pg/test-template.ts.
+#     the shared-DB + truncate-on-setup pattern. See
+#     packages/server/src/storage/pg/test-template.ts.
 DB_DIALECT=pg \
   DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/${PG_DB}" \
   MARFA_TEST_PG_ADMIN_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/postgres" \

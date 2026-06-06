@@ -8,7 +8,7 @@
  * overflow, scheduled-poll hit a 5xx, etc.).
  *
  * Connections with `feed_activity: true` get tier:'feed' stamped on
- * the resulting item by the server (existing behaviour from WS2).
+ * the resulting item by the server.
  */
 import type { ConnectionClient } from "./connection-client.js";
 

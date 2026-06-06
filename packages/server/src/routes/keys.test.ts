@@ -241,9 +241,9 @@ describe("bootstrap sentinel", () => {
       const stamped = await storage.settings.get("bootstrapped");
       expect(stamped).toBe("true");
 
-      // T-150: bootstrap mint emits the distinct `key.bootstrap` action,
-      // not `key.create`, so post-incident forensics can grep for the
-      // first-mint event directly.
+      // Bootstrap mint emits the distinct `key.bootstrap` action, not
+      // `key.create`, so operators can identify the first-mint event
+      // in audit logs without ambiguity.
       const audits = await waitForAudit(
         () => storage.audit.list({ action: "key.bootstrap" }),
         (r) => r.data.some((row) => row.resource_id === body.id),
@@ -265,7 +265,7 @@ describe("bootstrap sentinel", () => {
     }
   });
 
-  it("admin-issued POST /keys emits `key.create`, not `key.bootstrap` (T-150)", async () => {
+  it("admin-issued POST /keys emits `key.create`, not `key.bootstrap`", async () => {
     // Self-contained — bootstrap a fresh app, then use the bootstrap
     // admin to mint a second key on the now-closed (non-bootstrap)
     // branch. Avoids depending on the shared `ctx` because freshApp()
@@ -366,7 +366,7 @@ describe("bootstrap sentinel", () => {
     }
   });
 
-  it("concurrent unauthenticated POST /keys mints exactly one admin key (T-007)", async () => {
+  it("concurrent unauthenticated POST /keys mints exactly one admin key", async () => {
     const { app, storage } = await freshApp();
     try {
       const N = 8;
@@ -397,17 +397,15 @@ describe("bootstrap sentinel", () => {
     }
   });
 
-  // The remaining T-014 assertions exercise SQLite-specific introspection
-  // (`__sqliteAll`, `runSqliteMigrations`). The PG side is exercised by the
-  // production server boot path under `DB_DIALECT=pg` (this file's
-  // dialect-aware `freshApp` runs the bootstrap path against the PG
-  // container) and by the SCHEMA_SQL diff itself; running these specific
-  // introspection tests on PG would require parallel PG-flavoured queries
-  // for marginal additional coverage.
+  // The following assertions exercise SQLite-specific introspection
+  // (`__sqliteAll`, `runSqliteMigrations`). The PG side is exercised by
+  // the production server boot path under `DB_DIALECT=pg` and by the
+  // SCHEMA_SQL diff itself; running these on PG would require parallel
+  // PG-flavoured queries for marginal additional coverage.
   const SKIP_SQLITE_ONLY = (process.env.DB_DIALECT ?? "sqlite") !== "sqlite";
 
   it.skipIf(SKIP_SQLITE_ONLY)(
-    "bootstrap stamps __drizzle_migrations so a follow-up migrate is a no-op (T-014, sqlite)",
+    "bootstrap stamps __drizzle_migrations so a follow-up migrate is a no-op (sqlite)",
     async () => {
       const { storage } = (await freshApp()) as unknown as {
         storage: Awaited<ReturnType<typeof createSqliteStorage>>;
@@ -432,7 +430,7 @@ describe("bootstrap sentinel", () => {
   );
 
   it.skipIf(SKIP_SQLITE_ONLY)(
-    "bootstrap then `pnpm migrate` is a no-op — no DROP errors (T-014, sqlite)",
+    "bootstrap then `pnpm migrate` is a no-op — no DROP errors (sqlite)",
     async () => {
       // Bootstrap a fresh DB at a known path, close it, then drive Drizzle's
       // migrate runner against the same path. Pre-fix, the runner replays
@@ -465,7 +463,7 @@ describe("bootstrap sentinel", () => {
   );
 
   it.skipIf(SKIP_SQLITE_ONLY)(
-    "bootstrap creates idx_api_keys_connection_id (T-014, sqlite)",
+    "bootstrap creates idx_api_keys_connection_id (sqlite)",
     async () => {
       const { storage } = (await freshApp()) as unknown as {
         storage: Awaited<ReturnType<typeof createSqliteStorage>>;

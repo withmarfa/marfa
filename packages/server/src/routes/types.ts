@@ -364,8 +364,8 @@ export function typeRoutes(storage: Storage) {
   // POST /types — register a custom type. Admins bypass the check;
   // non-admin credentials (member keys, OAuth tokens) need the
   // `metadata.types:write` scope explicitly granted. Default-off for
-  // new keys per the workstream-1 brief: type registration is a
-  // privileged capability that has to be deliberately granted.
+  // new keys: type registration is a privileged capability that has to
+  // be deliberately granted.
   router.openapi(registerTypeRoute, async (c) => {
     requireMetadataPermission(c, "types", "write");
     const body = c.req.valid("json");
@@ -377,10 +377,10 @@ export function typeRoutes(storage: Storage) {
         "Invalid type identifier. Must follow the five-tier namespace grammar: core.<type>, system.<type>, app.<app-name>.<type>, user.<type>, or <publisher>.<type>. Forward slashes and reserved-root collisions are rejected.",
       );
     }
-    // TSC42 §3/§4 platform-credential gate. Only credentials marked as
-    // platform may register `core.*`, `system.*`, or `marfa.*` types — these
-    // tiers are platform-shipped/operational, not authored at runtime by
-    // ordinary tenant admins.
+    // Platform-credential gate. Only credentials marked as platform may
+    // register `core.*`, `system.*`, or `marfa.*` types — these tiers are
+    // platform-shipped/operational, not authored at runtime by ordinary
+    // tenant admins.
     if (typeof body.id === "string") {
       const tier = classifyNamespace(body.id);
       const isPlatformCaller = c.get("apiKey")?.is_platform === true;
@@ -507,11 +507,10 @@ export function typeRoutes(storage: Storage) {
       validateParentChain(schema.id, schema.parent);
     }
 
-    // TSC42 §7: server-side semver diff via a structural classifier —
-    // no-op submissions are rejected, descriptive-only changes accept the
-    // existing version, additive and breaking changes require an explicit
-    // bump. The classifier
-    // returns the diff class for telemetry / SDK error messages.
+    // Server-side semver diff via a structural classifier: no-op
+    // submissions are rejected, descriptive-only changes accept the existing
+    // version, additive and breaking changes require an explicit bump. The
+    // classifier returns the diff class for telemetry / SDK error messages.
     const diff = diffTypeSchemas(existing, schema);
     if (diff === "noop") {
       throw new MarfaError(

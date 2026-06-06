@@ -4,7 +4,7 @@ import type { ControlPlaneEnv } from "../env.js";
 import { MarfaServerClient } from "../marfa-client.js";
 
 /**
- * Synchronous verify-route (T-082).
+ * Synchronous verify-route.
  *
  *   POST /connections/:connection_id/verify
  *     body: {
@@ -16,7 +16,7 @@ import { MarfaServerClient } from "../marfa-client.js";
  *       }
  *     }
  *
- *   Response shape (matches the T-082 ticket's "What" section):
+ *   Response shape:
  *     {
  *       ok: boolean,
  *       handler_result: HandlerResult,
@@ -27,9 +27,8 @@ import { MarfaServerClient } from "../marfa-client.js";
  *
  * Auth gate: the operator's bearer must be a platform credential
  * (`is_platform: true`). The gate is enforced by forwarding the bearer
- * to the server's `GET /system/connections/:id/verify-context` endpoint
- * — that endpoint already gates on `is_platform: true` (matching the
- * pattern at `packages/server/src/routes/runtime-credentials.ts:30`).
+ * to the server's `GET /system/connections/:id/verify-context` endpoint,
+ * which gates on `is_platform: true`.
  *
  * Dispatch path:
  *   1. Look up the connection's integration_name + tenant_id via the
@@ -90,8 +89,8 @@ interface ActivityRow {
  *  Lives inline because runtime-control doesn't (and shouldn't) depend
  *  on the server package — the envelope is a stable wire shape every
  *  per-Integration Worker consumes, so a parallel implementation here
- *  is the lower-coupling option than wiring up a workspace dep just for
- *  this one helper. Shape drift is caught by `verifyHandler`'s
+ *  is lower coupling than wiring up a workspace dep just for this one
+ *  helper. Shape drift is caught by `verifyHandler`'s
  *  `integration_name` filter and the dispatcher's kind-switch. */
 function buildVerifyEnvelope(args: {
   integrationName: string;
@@ -117,7 +116,8 @@ function buildVerifyEnvelope(args: {
 /** Map a manifest-name to its service binding via the in-tree
  *  integration registry (`@withmarfa/shared` → `IN_TREE_INTEGRATIONS`).
  *  Same data source as `arm-schedule.ts`. The bounded-set assumption
- *  is documented on `env.ts`. */
+ *  (this pattern only works for the in-tree set declared in
+ *  `wrangler.control.toml`) is documented in `env.ts`. */
 function resolveServiceBinding(
   env: ControlPlaneEnv,
   integrationName: string,

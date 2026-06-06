@@ -32,18 +32,17 @@ export enum ErrorCode {
   TOKEN_REUSE_DETECTED = "token_reuse_detected",
   RATE_LIMITED = "rate_limited",
   /**
-   * T-052: per-tenant resource cap exceeded. Body details carry the
-   * resource (`items` | `webhooks` | `blobs` | `storage_bytes` |
-   * `rate_per_minute`), the configured limit, and the current count
-   * before the request was rejected — operators wire alerts off the
-   * shape so a tenant approaching their cap can be flagged early.
+   * Per-tenant resource cap exceeded. Body details carry the resource
+   * (`items` | `webhooks` | `blobs` | `storage_bytes` | `rate_per_minute`),
+   * the configured limit, and the current count before the request was
+   * rejected — operators wire alerts off the shape so a tenant approaching
+   * their cap can be flagged early.
    */
   QUOTA_EXCEEDED = "quota_exceeded",
   /**
-   * T-117: tenant operator has suspended this tenant. The auth middleware
-   * rejects every non-GET request with this code; reads pass through.
-   * Platform-admin keys bypass the gate so operators can inspect a
-   * suspended tenant.
+   * Tenant operator has suspended this tenant. The auth middleware rejects
+   * every non-GET request with this code; reads pass through. Platform-admin
+   * keys bypass the gate so operators can inspect a suspended tenant.
    */
   TENANT_SUSPENDED = "tenant_suspended",
   CONFLICT = "conflict",
@@ -52,27 +51,25 @@ export enum ErrorCode {
   CORE_TYPE_IMMUTABLE = "core_type_immutable",
   WEBHOOK_NOT_FOUND = "webhook_not_found",
   /**
-   * T-111: a signed-webhook receiver rejected a request that omitted the
-   * verification headers required to compute
-   * the signature. Distinct from `INBOUND_WEBHOOK_VERIFICATION_FAILED`
-   * (which means headers were present but the signature didn't validate).
+   * A signed-webhook receiver rejected a request that omitted the
+   * verification headers required to compute the signature. Distinct from
+   * `INBOUND_WEBHOOK_VERIFICATION_FAILED` (which means headers were present
+   * but the signature didn't validate).
    */
   WEBHOOK_SIGNATURE_MISSING = "webhook_signature_missing",
   /**
-   * T-111: signed-webhook receiver rejected a request whose signature
-   * headers were present but failed verification against the configured
-   * shared secret.
+   * A signed-webhook receiver rejected a request whose signature headers
+   * were present but failed verification against the configured shared secret.
    */
   WEBHOOK_SIGNATURE_INVALID = "webhook_signature_invalid",
   /**
-   * T-111: signed-webhook receiver has no shared secret configured.
-   * Returned as HTTP 503 so the upstream retries after the operator
-   * wires the secret.
+   * A signed-webhook receiver has no shared secret configured. Returned as
+   * HTTP 503 so the upstream retries after the operator wires the secret.
    */
   WEBHOOK_SECRET_NOT_CONFIGURED = "webhook_secret_not_configured",
   /**
-   * T-111: signed-webhook receiver verified the signature but the
-   * payload itself could not be parsed as the expected JSON shape.
+   * A signed-webhook receiver verified the signature but the payload itself
+   * could not be parsed as the expected JSON shape.
    */
   WEBHOOK_PAYLOAD_INVALID = "webhook_payload_invalid",
   INBOUND_WEBHOOK_NOT_FOUND = "inbound_webhook_not_found",
@@ -90,7 +87,7 @@ export enum ErrorCode {
    * upstream returned `invalid_grant` or equivalent, or no refresh token
    * is available). The connection's `runtime_status` has been flipped to
    * `reauth_required`; the user must re-authorise the connector before
-   * any further proxy calls will succeed. (workstream 2 PR 6)
+   * any further proxy calls will succeed.
    */
   OAUTH_PROXY_REAUTH_REQUIRED = "oauth_proxy_reauth_required",
   /**
@@ -106,32 +103,31 @@ export enum ErrorCode {
    */
   OAUTH_PROXY_UPSTREAM_INVALID = "oauth_proxy_upstream_invalid",
   /**
-   * T-111: `system.connection` item lookup by id returned no row.
-   * Replaces generic `NOT_FOUND` on connection-resolving routes so
-   * clients can branch on the specific resource type.
+   * `system.connection` item lookup by id returned no row. Allows clients
+   * to branch on the specific resource type rather than a generic `NOT_FOUND`.
    */
   CONNECTION_NOT_FOUND = "connection_not_found",
   /**
-   * T-111: API key lookup by id returned no row. Replaces generic
-   * `NOT_FOUND` on `/keys/:id` routes.
+   * API key lookup by id returned no row. Replaces generic `NOT_FOUND`
+   * on `/keys/:id` routes.
    */
   API_KEY_NOT_FOUND = "api_key_not_found",
   /**
-   * T-111: Integration manifest lookup by id (or `name@version`)
-   * returned no row in the registry. Replaces generic `NOT_FOUND`
-   * on the integrations registry surface.
+   * Integration manifest lookup by id (or `name@version`) returned no row
+   * in the registry. Replaces generic `NOT_FOUND` on the integrations
+   * registry surface.
    */
   INTEGRATION_NOT_FOUND = "integration_not_found",
   /**
-   * T-111: OAuth grant (`oauth_codes` / token row) lookup returned
-   * no row. Replaces generic `NOT_FOUND` on grant-revocation and
+   * OAuth grant (`oauth_codes` / token row) lookup returned no row.
+   * Replaces generic `NOT_FOUND` on grant-revocation and
    * grant-introspection paths.
    */
   OAUTH_GRANT_NOT_FOUND = "oauth_grant_not_found",
   /**
    * Lease issuance was requested for a `capability_id` the supplied
    * Integration manifest doesn't declare with `oauth_requirements:
-   * <capability>: "leased"`. (workstream 2 PR 7)
+   * <capability>: "leased"`.
    */
   LEASE_CAPABILITY_NOT_DECLARED = "lease_capability_not_declared",
   /**
@@ -169,15 +165,16 @@ export enum ErrorCode {
    */
   PROPERTY_SHADOWS_FIELD = "property_shadows_field",
   /**
-   * Server-side semver-diff at type registration (TSC42 §7): the submitted
-   * version doesn't match the diff class against the existing schema. E.g.
-   * removing a field while bumping a "patch" version, or re-submitting an
-   * identical schema (no-op).
+   * At type registration, the submitted version does not match the diff
+   * class against the existing schema — e.g. removing a field while
+   * submitting a patch version, or re-submitting an identical schema
+   * (no-op).
    */
   VERSION_BUMP_MISMATCH = "version_bump_mismatch",
   /**
-   * `compatible-with` declaration on a type (TSC42 §3) doesn't satisfy the
-   * structural-superset rule against the named target.
+   * A `compatible_with` declaration does not satisfy the structural-superset
+   * rule: every required field on the target type must be present with a
+   * matching shape.
    */
   COMPATIBLE_WITH_VIOLATION = "compatible_with_violation",
   // ---------------------------------------------------------------------
@@ -203,16 +200,16 @@ export enum ErrorCode {
   /** An atomic bulk upsert failed on one item and rolled back the whole batch. */
   BULK_ATOMIC_ROLLBACK = "bulk_atomic_rollback",
   /**
-   * T-218: a referenced bulk_action job id does not exist or is not
-   * visible to the caller. Returned by `GET /items/bulk-actions/jobs/:id`
-   * and `DELETE /items/bulk-actions/jobs/:id`. The cancelled / failed
-   * terminal states are NOT in this enum — they're carried in the job
-   * envelope's `status` field on a 200 GET, and SDKs classify them
-   * client-side rather than the server returning an HTTP error.
+   * A referenced bulk-action job id does not exist or is not visible to
+   * the caller. Returned by `GET /items/bulk-actions/jobs/:id` and
+   * `DELETE /items/bulk-actions/jobs/:id`. Cancelled / failed terminal
+   * states are NOT in this enum — they're carried in the job envelope's
+   * `status` field on a 200 GET, and SDKs classify them client-side
+   * rather than the server returning an HTTP error.
    */
   BULK_JOB_NOT_FOUND = "bulk_job_not_found",
   // ---------------------------------------------------------------------
-  // Email transport (Wave C PR1)
+  // Email transport
   // ---------------------------------------------------------------------
   /**
    * The server has no email backend configured (`MARFA_EMAIL_BACKEND`
@@ -239,15 +236,14 @@ export enum ErrorCode {
    */
   HANDLE_RESERVED = "handle_reserved",
   /**
-   * T-118 precursor: `PATCH /items/:id` was called with a `source_id` that
-   * already belongs to a different item under the caller's stamped `source`.
-   * The natural-key uniqueness invariant `(source, source_id)` matches the
-   * create-time constraint enforced by `ItemStore.create` — re-pointing an
-   * item at an in-use natural key would create two rows with the same
-   * lookup tuple, breaking the create-or-update contract that downstream
-   * importers and the sync agent rely on. Rejected pre-write so no partial
-   * state lands. PATCHing the SAME source_id the item already carries is a
-   * no-op success, not a conflict.
+   * `PATCH /items/:id` was called with a `source_id` that already belongs
+   * to a different item under the caller's stamped `source`. The natural-key
+   * uniqueness invariant `(source, source_id)` matches the create-time
+   * constraint — re-pointing an item at an in-use natural key would create
+   * two rows with the same lookup tuple, breaking the create-or-update
+   * contract that downstream importers and the sync agent rely on. Rejected
+   * pre-write so no partial state lands. PATCHing the same `source_id` the
+   * item already carries is a no-op success, not a conflict.
    */
   SOURCE_ID_CONFLICT = "source_id_conflict",
 }

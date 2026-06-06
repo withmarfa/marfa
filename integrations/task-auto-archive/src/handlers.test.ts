@@ -116,9 +116,9 @@ function buildContext(opts: BuildOpts = {}): BuiltContext {
       // Implementation here: cursor encodes a numeric offset, and
       // we always re-filter from the current task list. This is a
       // faithful approximation as long as nothing mutates between
-      // pages — exactly the contract the T-019 collect-then-act
-      // refactor enforces from the handler side. A *separate* test
-      // exercises the offset hazard with mutations interleaved.
+      // pages — exactly the contract the collect-then-act sweep
+      // enforces from the handler side. A *separate* test exercises
+      // the offset hazard with mutations interleaved.
       const offset = query.cursor === undefined ? 0 : Number(query.cursor);
       const filtered = tasks
         .filter(
@@ -361,20 +361,17 @@ describe("task-auto-archive handlers", () => {
     });
   });
 
-  it("processes every due row even with an offset-based cursor (T-019)", async () => {
-    // Real Marfa today returns an opaque keyset cursor that's stable
-    // across in-place state changes. The pre-T-019 handler relied
-    // on that — it transitioned items inside the pagination loop,
-    // and the second page silently picked up where the first left
-    // off. If a future cursor change made `cursor` offset-based,
-    // page 2 would call `slice(offset, offset + size)` against a
-    // freshly-filtered list whose offset now points past unprocessed
-    // rows, and half the rows would be skipped.
+  it("processes every due row even with an offset-based cursor", async () => {
+    // Real Marfa returns an opaque keyset cursor that's stable across
+    // in-place state changes. Transitioning items inside the pagination
+    // loop relies on that property — if a cursor change made it
+    // offset-based, page 2 would call `slice(offset, offset + size)`
+    // against a freshly-filtered list whose offset now points past
+    // unprocessed rows, and half the rows would be skipped.
     //
-    // T-019 split the sweep into collect-then-act, so the listItems
-    // calls finish before any transitions happen. This test stubs
-    // listItems with offset-based behaviour and asserts every due
-    // row is still archived.
+    // The sweep is collect-then-act: all listItems calls finish before
+    // any transitions happen. This test stubs listItems with
+    // offset-based behaviour and asserts every due row is still archived.
     const now = 1_700_000_000_000;
     const tasks = [
       task("t_a", 100, now),
@@ -390,8 +387,8 @@ describe("task-auto-archive handlers", () => {
 
     // Custom client where listItems is offset-based: cursor encodes
     // the offset into the *current* (post-mutation) filtered list.
-    // With the pre-T-019 handler this would skip rows; with the
-    // collect-then-act fix the offset doesn't move because nothing
+    // With a transition-inside-loop handler this would skip rows;
+    // with collect-then-act the offset doesn't move because nothing
     // mutates between pages.
     const client = {
       createItem: (input: CreateItemInput) => {
@@ -443,8 +440,8 @@ describe("task-auto-archive handlers", () => {
 
     await handleSchedule(ctx, SCHEDULE_MSG(now));
 
-    // All four tasks must be archived. Pre-T-019 with offset-based
-    // pagination, t_c and t_d would have been skipped on page 2.
+    // All four tasks must be archived. Without collect-then-act,
+    // offset-based pagination would skip t_c and t_d on page 2.
     expect(archived.sort()).toEqual(["t_a", "t_b", "t_c", "t_d"]);
     expect(transitionCalls).toHaveLength(4);
     expect(emitted.at(-1)?.properties?.detail).toMatchObject({

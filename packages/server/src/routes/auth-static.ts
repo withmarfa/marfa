@@ -1,18 +1,14 @@
 /**
  * Static assets served from `/auth/static/*`.
  *
- * Wave C PR4 — `GET /auth/static/auth.css` (the shared auth-page
- * stylesheet).
- * Wave C PR6 / T-034 — `GET /auth/static/passkey.js` (browser-side
- * WebAuthn ceremony).
+ *   - `GET /auth/static/auth.css` — shared auth-page stylesheet.
+ *   - `GET /auth/static/passkey.js` — browser-side WebAuthn ceremony.
  *
- * Public routes — no bearer / cookie required. The CSS is needed by
- * every auth page; the passkey JS is needed by `/auth/sign-in` and
- * `/auth/passkey/enroll`. Both bundles are bundled into the build
- * via TypeScript template literals (see `auth-static/auth-css.ts`,
- * `auth-static/passkey-js.ts`) so there's no static-asset copy step
- * in tsup. ETags are SHA-1 of the bytes; `If-None-Match` returns 304
- * with no body. `Cache-Control: public, max-age=3600` — browsers
+ * Public routes — no bearer / cookie required. Both files are inlined
+ * via TypeScript template literals (`auth-static/auth-css.ts` and
+ * `auth-static/passkey-js.ts`) so there is no static-asset copy step
+ * in the build. ETags are SHA-1 of the bytes; `If-None-Match` returns
+ * 304 with no body. `Cache-Control: public, max-age=3600` — browsers
  * cache for an hour but the ETag forces revalidation across deploys
  * when bytes shift.
  */

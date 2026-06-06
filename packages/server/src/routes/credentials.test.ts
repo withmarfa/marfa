@@ -216,7 +216,7 @@ describe("POST /credentials/oauth-provider — validation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /credentials/api-token (T-241)
+// POST /credentials/api-token
 // ---------------------------------------------------------------------------
 
 const VALID_API_TOKEN_BODY = {
@@ -290,7 +290,7 @@ describe("POST /credentials/api-token — happy path", () => {
     expect(res.status).toBe(201);
   });
 
-  it("persists auth_scheme on api_token_config when supplied (T-246)", async () => {
+  it("persists auth_scheme on api_token_config when supplied", async () => {
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
       key: ctx.adminKey,
       body: {

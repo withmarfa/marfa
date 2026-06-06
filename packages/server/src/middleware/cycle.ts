@@ -6,7 +6,7 @@ import type { AppEnv } from "./auth.js";
 
 /**
  * Header pair carrying the parent event's cycle metadata into a
- * connector-driven request (T-039).
+ * connector-driven request.
  *
  * The SDK's `ConnectionClient.request()` stamps these on every mutating
  * call (POST/PUT/PATCH/DELETE; not GET) using the connector's parent
@@ -69,7 +69,7 @@ function originFromApiKey(
 }
 
 /**
- * Resolve cycle metadata for the current request (T-039, T-144).
+ * Resolve cycle metadata for the current request.
  *
  * Mount AFTER `clientIpMiddleware` AND `authMiddleware`: the resolution
  * needs access to `c.var.apiKey` to compute the chain-head fallback.
@@ -90,10 +90,9 @@ function originFromApiKey(
  *      `{ originatingConnectionId: null, hopCount: 0 }`. Bypasses the
  *      budget at `passesHopBudget`.
  *
- * **T-144 — request-scoped propagation.** After resolving the cycle the
- * middleware writes it to BOTH `c.var.cycle` (kept exposed for
- * diagnostic reads and the existing `cycle.test.ts` assertion path) AND
- * the `cycleRequestContext` `AsyncLocalStorage` store. `publish()` and
+ * After resolving the cycle the middleware writes it to BOTH
+ * `c.var.cycle` (kept exposed for diagnostic reads) AND the
+ * `cycleRequestContext` `AsyncLocalStorage` store. `publish()` and
  * `publishEdge()` in `pubsub.ts` read the ALS automatically, so route
  * handlers don't thread `...c.var.cycle` into every publish call.
  * The two writes stay in lockstep — single resolved value, written
