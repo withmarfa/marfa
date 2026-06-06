@@ -4,6 +4,17 @@ import { findIntegration, integrationsWithTrigger } from "@withmarfa/shared";
 import type { ControlPlaneEnv } from "../env.js";
 import { MarfaServerClient } from "../marfa-client.js";
 
+/**
+ * Max inbound webhook body we'll accept and forward. The body is
+ * base64-encoded (~1.34× its raw size) into the queue message alongside
+ * the headers and envelope fields; Cloudflare Queues cap a message at
+ * 128 KiB. 64 KiB raw keeps the encoded payload plus headers safely
+ * under that cap, so an oversized body is rejected here with a clear 413
+ * rather than failing opaquely at `producer.send` (and losing the
+ * delivery). Real webhook payloads sit well under this.
+ */
+const MAX_WEBHOOK_BODY_BYTES = 64 * 1024;
+
 /** Slim shape — mirror of the `QueueProducer` shape in env.ts. */
 interface QueueProducer {
   send(
@@ -124,6 +135,15 @@ export function registerWebhookRoutes(
       );
     }
     const rawBody = await c.req.arrayBuffer();
+    if (rawBody.byteLength > MAX_WEBHOOK_BODY_BYTES) {
+      return c.json(
+        {
+          error: "body_too_large",
+          message: `Webhook body exceeds the ${String(MAX_WEBHOOK_BODY_BYTES)}-byte limit and cannot be forwarded.`,
+        },
+        413,
+      );
+    }
     const marfa = new MarfaServerClient(
       env.MARFA_API_URL,
       env.MARFA_RUNTIME_BROKER_KEY,
