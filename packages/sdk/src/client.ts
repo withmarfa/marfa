@@ -632,6 +632,33 @@ export class MarfaClient {
       return res.item;
     },
 
+    /**
+     * Read many items by id in one round-trip via `POST /items/bulk-get`.
+     * Tenant-scoped and permission-filtered exactly like `get`: ids the
+     * caller cannot read (other tenant, type not permitted, trashed, or
+     * non-existent) are silently omitted, so the returned array may be
+     * shorter than `ids` and is in no guaranteed order. Capped at 100 ids
+     * server-side — an over-cap request throws a `validation_error`.
+     *
+     * `opts.include` hydrates extras inline (edges / metadata / extensions /
+     * system) the same way the list endpoint does, collapsing what would
+     * otherwise be one request per id.
+     */
+    getMany: async (
+      ids: string[],
+      opts?: {
+        include?: ("edges" | "metadata" | "extensions" | "system")[];
+      },
+    ): Promise<Item[]> => {
+      if (ids.length === 0) return [];
+      const res = await this.transport.request<{ items: Item[] }>(
+        "POST",
+        "/items/bulk-get",
+        { body: { ids, ...(opts?.include && { include: opts.include }) } },
+      );
+      return res.items;
+    },
+
     list: async (filters?: ListFilters): Promise<PaginatedResult<Item>> => {
       return this.transport.request<PaginatedResult<Item>>("GET", "/items", {
         query: filters,
@@ -882,11 +909,14 @@ export class MarfaClient {
         );
       }
 
-      // `items.bulk` returns ids, not full Items — hydrate with concurrent GETs.
-      const hydrated = await Promise.all(
-        [hostId, ...attachmentIds].map((id) => this.items.get(id)),
-      );
-      const [host, ...attachments] = hydrated;
+      // `items.bulk` returns ids, not full Items — hydrate them in a single
+      // batched read instead of one GET per id. `getMany` omits any id it
+      // can't resolve, so re-key the result by id and re-project in request
+      // order to preserve the host-then-attachments shape callers expect.
+      const requestedIds = [hostId, ...attachmentIds];
+      const fetched = await this.items.getMany(requestedIds);
+      const byId = new Map(fetched.map((item) => [item.id, item]));
+      const host = byId.get(hostId);
       if (!host) {
         throw new MarfaError(
           "internal_error",
@@ -894,6 +924,17 @@ export class MarfaClient {
           500,
         );
       }
+      const attachments = attachmentIds.map((id) => {
+        const item = byId.get(id);
+        if (!item) {
+          throw new MarfaError(
+            "internal_error",
+            `createWithAttachments: attachment hydration returned no item for ${id}`,
+            500,
+          );
+        }
+        return item;
+      });
 
       return { host, attachments };
     },

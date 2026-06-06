@@ -13,6 +13,7 @@ import { createMarfaAuth } from "./auth/instance.js";
 import type { OidcSigner } from "./auth/oidc-signing.js";
 import { itemRoutes } from "./routes/items.js";
 import { bulkRoutes } from "./routes/bulk.js";
+import { bulkGetRoutes } from "./routes/bulk-get.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
 import { edgesBulkRoutes } from "./routes/edges-bulk.js";
 import { edgeTypeRoutes } from "./routes/edge-types.js";
@@ -470,6 +471,7 @@ export function createApp(
   // Protected routes
   app.route("/items", itemRoutes(storage));
   app.route("/items", bulkRoutes(storage));
+  app.route("/items", bulkGetRoutes(storage));
   app.route("/items", extensionRoutes(storage));
   app.route("/items", itemEdgeListingRoutes(storage));
   app.route("/edges", edgeRoutes(storage));
