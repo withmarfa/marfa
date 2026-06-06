@@ -13,7 +13,8 @@
  *   2. Look up `accountLifecycle.getAccountLifecycleByEmail(email)`.
  *   3. If the account is `'pending_deletion'`:
  *      a. Reuse an existing valid cancel token if one is present;
- *         otherwise mint a fresh one (30d TTL) and insert it.
+ *         otherwise mint a fresh one (TTL = the configured grace window)
+ *         and insert it.
  *      b. Dispatch the `account-delete-cancel` email — gated by a
  *         per-account cooldown so repeated sign-in attempts can't
  *         flood the targeted user's inbox or burn email quota.
@@ -55,7 +56,7 @@ const TARGET_PATHS = new Set([
   "/auth/sign-in/magic-link",
 ]);
 
-const CANCEL_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CANCEL_IDENTIFIER_PREFIX = "account-cancel:";
 
 /**
@@ -83,6 +84,7 @@ export function accountDeletionGuardMiddleware(
   storage: Storage,
   emailTransport: MarfaEmailTransport | undefined,
   baseURL: string,
+  graceDays: number,
 ) {
   // In-memory per-account cooldown on cancel-email sends. Closed-over
   // by the middleware closure so it persists across requests inside
@@ -118,7 +120,7 @@ export function accountDeletionGuardMiddleware(
     );
     if (!token) {
       token = randomBytes(32).toString("hex");
-      const expiresAt = new Date(nowMs + CANCEL_TTL_MS);
+      const expiresAt = new Date(nowMs + graceDays * MS_PER_DAY);
       await insertCancelToken(
         storage,
         `${CANCEL_IDENTIFIER_PREFIX}${token}`,
@@ -306,45 +308,52 @@ async function insertCancelToken(
   value: string,
   expiresAt: Date,
 ): Promise<void> {
+  const db = storage.betterAuthDb;
+  if (!db) return;
+  // Typed Drizzle insert against the same `auth_verification` table the
+  // delete-request flow writes to. The timestamp-mode columns encode
+  // Date per dialect (INTEGER on SQLite, TIMESTAMP on PG), so no manual
+  // ISO/unix conversion is needed.
   const id = randomBytes(16).toString("hex");
   const now = new Date();
   if (storage.betterAuthDialect === "pg") {
-    const pgStorage = storage as unknown as {
-      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    if (!pgStorage.__pgClient) return;
-    // postgres-js parameterised queries don't accept Date; send ISO strings instead.
-    await pgStorage.__pgClient(
-      `INSERT INTO auth_verification
-        (id, identifier, value, expires_at, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
+    const { auth_verification } = await import("../storage/pg/schema.js");
+    await (
+      db as {
+        insert: (t: typeof auth_verification) => {
+          values: (row: Record<string, unknown>) => Promise<unknown>;
+        };
+      }
+    )
+      .insert(auth_verification)
+      .values({
         id,
         identifier,
         value,
-        expiresAt.toISOString(),
-        now.toISOString(),
-        now.toISOString(),
-      ],
-    );
+        expiresAt,
+        createdAt: now,
+        updatedAt: now,
+      });
   } else {
-    const sqliteStorage = storage as unknown as {
-      __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
-    };
-    if (!sqliteStorage.__sqliteRun) return;
-    // SQLite stores timestamps as unix-second integers.
-    await sqliteStorage.__sqliteRun(
-      `INSERT INTO auth_verification
-        (id, identifier, value, expires_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-      [
+    const { auth_verification } = await import("../storage/sqlite/schema.js");
+    await (
+      db as {
+        insert: (t: typeof auth_verification) => {
+          values: (row: Record<string, unknown>) => {
+            run: () => Promise<unknown>;
+          };
+        };
+      }
+    )
+      .insert(auth_verification)
+      .values({
         id,
         identifier,
         value,
-        Math.floor(expiresAt.getTime() / 1000),
-        Math.floor(now.getTime() / 1000),
-        Math.floor(now.getTime() / 1000),
-      ],
-    );
+        expiresAt,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
   }
 }

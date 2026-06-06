@@ -22,6 +22,42 @@ import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
 export const TEST_API_KEY_SALT = "test-salt";
 const SALT = TEST_API_KEY_SALT;
 
+/**
+ * Resolve the raw-SQL test escape hatches off the storage object, throwing
+ * if they're absent. These are test-only internals (`__sqliteRun` /
+ * `__pgClient`) the storage layer exposes for direct setup writes. An
+ * earlier version silently no-op'd when they were missing — so a change to
+ * the storage shape would quietly skip the setup and surface as a confusing
+ * downstream failure. Fail loudly instead.
+ */
+function requireSqliteRun(
+  storage: Storage,
+): (sql: string, params: unknown[]) => Promise<unknown> {
+  const s = storage as unknown as {
+    __sqliteRun?: (sql: string, params: unknown[]) => Promise<unknown>;
+  };
+  if (!s.__sqliteRun) {
+    throw new Error(
+      "test-utils: storage.__sqliteRun escape hatch missing — SQLite test storage internals changed",
+    );
+  }
+  return s.__sqliteRun;
+}
+
+function requirePgClient(
+  storage: Storage,
+): (sql: string, params?: unknown[]) => Promise<unknown> {
+  const s = storage as unknown as {
+    __pgClient?: (sql: string, params?: unknown[]) => Promise<unknown>;
+  };
+  if (!s.__pgClient) {
+    throw new Error(
+      "test-utils: storage.__pgClient escape hatch missing — PG test storage internals changed",
+    );
+  }
+  return s.__pgClient;
+}
+
 export interface TestContext {
   app: Hono<AppEnv>;
   storage: Storage;
@@ -156,10 +192,7 @@ export async function seedOauthBearer(
     opts.authUserId ?? `auth_user_${Math.random().toString(36).slice(2, 10)}`;
   if (!opts.authUserId) {
     if (dialect === "sqlite") {
-      const sqlite = storage as unknown as {
-        __sqliteRun?: (sql: string, params: unknown[]) => Promise<unknown>;
-      };
-      await sqlite.__sqliteRun?.(
+      await requireSqliteRun(storage)(
         "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES (?, ?, ?, 1, ?, ?, 'active')",
         [
           authUserId,
@@ -170,10 +203,7 @@ export async function seedOauthBearer(
         ],
       );
     } else {
-      const pg = storage as unknown as {
-        __pgClient?: (sql: string, params?: unknown[]) => Promise<unknown>;
-      };
-      await pg.__pgClient?.(
+      await requirePgClient(storage)(
         "INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES ($1, $2, $3, true, $4, $4, 'active') ON CONFLICT (id) DO NOTHING",
         [
           authUserId,
@@ -287,26 +317,16 @@ export async function markEmailVerified(
   const dialect = process.env.DB_DIALECT ?? "sqlite";
   const lower = email.toLowerCase();
   if (dialect === "pg") {
-    const pg = storage as unknown as {
-      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    if (pg.__pgClient) {
-      await pg.__pgClient(
-        `UPDATE auth_user SET email_verified = TRUE WHERE LOWER(email) = $1`,
-        [lower],
-      );
-    }
-    return;
-  }
-  const sqlite = storage as unknown as {
-    __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
-  };
-  if (sqlite.__sqliteRun) {
-    await sqlite.__sqliteRun(
-      "UPDATE auth_user SET email_verified = 1 WHERE LOWER(email) = ?",
+    await requirePgClient(storage)(
+      `UPDATE auth_user SET email_verified = TRUE WHERE LOWER(email) = $1`,
       [lower],
     );
+    return;
   }
+  await requireSqliteRun(storage)(
+    "UPDATE auth_user SET email_verified = 1 WHERE LOWER(email) = ?",
+    [lower],
+  );
 }
 
 /**

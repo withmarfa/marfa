@@ -249,7 +249,12 @@ export function createApp(
   // is a pass-through.
   app.use(
     "*",
-    accountDeletionGuardMiddleware(storage, emailTransport, config.authBaseUrl),
+    accountDeletionGuardMiddleware(
+      storage,
+      emailTransport,
+      config.authBaseUrl,
+      config.accountDeletionGraceDays ?? 30,
+    ),
   );
 
   // Cycle metadata resolution. Reads X-Marfa-Cycle-Origin /
@@ -512,7 +517,13 @@ export function createApp(
   // `/auth/account/*`.
   app.route(
     "/auth",
-    authAccountRoutes(storage, auth, emailTransport, config.authBaseUrl),
+    authAccountRoutes(
+      storage,
+      auth,
+      emailTransport,
+      config.authBaseUrl,
+      config.accountDeletionGraceDays ?? 30,
+    ),
   );
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all
