@@ -8,6 +8,15 @@ export enum ErrorCode {
   VALIDATION_ERROR = "validation_error",
   MISSING_REQUIRED_FIELD = "missing_required_field",
   INVALID_TYPE = "invalid_type",
+  /**
+   * A create / upsert named a type identifier that is well-formed but not
+   * registered. Distinct from `INVALID_TYPE` (the identifier is malformed,
+   * e.g. contains a slash) and `TYPE_NOT_FOUND` (a `/types/:id` lookup miss).
+   * An unregistered type has no schema to validate against, so the write is
+   * rejected rather than persisting an unvalidated, typo-prone item. Register
+   * the type via `POST /types` first.
+   */
+  UNKNOWN_TYPE = "unknown_type",
   INVALID_ID = "invalid_id",
   VERSION_CONFLICT = "version_conflict",
   UNAUTHORIZED = "unauthorized",
@@ -256,6 +265,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.VALIDATION_ERROR]: 400,
   [ErrorCode.MISSING_REQUIRED_FIELD]: 400,
   [ErrorCode.INVALID_TYPE]: 400,
+  [ErrorCode.UNKNOWN_TYPE]: 400,
   [ErrorCode.INVALID_ID]: 400,
   [ErrorCode.VERSION_CONFLICT]: 409,
   [ErrorCode.UNAUTHORIZED]: 401,

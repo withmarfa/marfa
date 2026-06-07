@@ -98,16 +98,28 @@ export class SqliteItemStore implements ItemStore {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
     }
 
-    // Validate properties against type schema if registered; accept unknown types
-    // Empty properties {} are treated as a draft — skip validation
+    // Every item must carry a registered type. An unregistered identifier has
+    // no schema to validate against, so accepting it would let typo'd or
+    // ad-hoc types persist with zero conformance checking — the opposite of a
+    // typed data layer's promise. Reject before any write. Custom types are
+    // loaded into the registry at startup and on `POST /types`, so a legitimate
+    // custom type resolves here.
     const typeSchema = getTypeSchema(input.type);
-    if (typeSchema && Object.keys(input.properties).length > 0) {
-      const validation = validateProperties(input.type, input.properties);
-      if (!validation.success) {
-        throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
-          errors: validation.errors,
-        });
-      }
+    if (!typeSchema) {
+      throw new MarfaError(
+        ErrorCode.UNKNOWN_TYPE,
+        `Unknown type: ${input.type}. Register it via POST /types before creating items of this type.`,
+        { type: input.type },
+      );
+    }
+    // Validate properties against the type schema. Runs unconditionally —
+    // an empty `{}` must still fail required-field checks (a core.note with
+    // no body is invalid whether properties is empty or partially filled).
+    const validation = validateProperties(input.type, input.properties);
+    if (!validation.success) {
+      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
+        errors: validation.errors,
+      });
     }
 
     const now = new Date().toISOString();

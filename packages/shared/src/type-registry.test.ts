@@ -289,6 +289,27 @@ describe("validateProperties", () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it("rejects a null byte (U+0000) in a string property", () => {
+    const result = validateProperties("core.note", {
+      body: `a${String.fromCharCode(0)}b`,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.some((e) => e.field === "body")).toBe(true);
+    }
+  });
+
+  it("round-trips other Unicode and control chars unchanged", () => {
+    // Only U+0000 is illegal for Postgres TEXT; emoji, RTL marks, accents,
+    // newline, and tab must all pass validation untouched.
+    const body = "emoji 😀 rtl ‮ accent é em—dash\ttab\nnewline";
+    const result = validateProperties("core.note", { body });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.body).toBe(body);
+    }
+  });
 });
 
 describe("core.message — light cross-platform message", () => {
