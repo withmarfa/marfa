@@ -1330,9 +1330,18 @@ export interface EdgeStore {
   list(
     filters?: EdgeListFilters & { tenantId?: string },
   ): Promise<PaginatedResult<Edge>>;
+  /**
+   * Replace an edge's properties in place. `source_id` / `target_id` /
+   * `edge_type` are immutable. When `tenantId` is supplied the UPDATE is
+   * additionally fenced to that tenant so a tenant-scoped caller cannot
+   * mutate another tenant's edge by id — a cross-tenant id matches zero
+   * rows and throws `edge ... not found`. Omitting `tenantId` leaves the
+   * update unscoped (platform-admin / single-tenant self-host).
+   */
   updateProperties(
     id: string,
     properties: Record<string, unknown>,
+    tenantId?: string,
   ): Promise<Edge>;
   delete(id: string): Promise<void>;
   deleteBySource(sourceId: string, edgeType?: string): Promise<void>;
@@ -1394,6 +1403,11 @@ export interface EdgeStore {
    * absent. Used by `POST /edges/bulk` upsert to resolve duplicate edges to
    * their ids for in-place property updates. One SQL query per distinct
    * `edge_type`.
+   *
+   * When `tenantId` is supplied the lookup is fenced to that tenant so a
+   * tenant-scoped bulk upsert never resolves (and then mutates) another
+   * tenant's edge that happens to share the same `(source, target, type)`
+   * triple. Omitting `tenantId` leaves the lookup unscoped.
    */
   findByTriplesBatch(
     pairs: {
@@ -1401,6 +1415,7 @@ export interface EdgeStore {
       target_id: string;
       edge_type: string;
     }[],
+    tenantId?: string,
   ): Promise<Map<string, Edge>>;
   /**
    * All outbound edges of a given type from sourceId. Used for cycle checks,

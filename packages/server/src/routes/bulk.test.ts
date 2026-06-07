@@ -390,15 +390,43 @@ describe("POST /items/bulk", () => {
     expect(body.error.code).toBe("validation_error");
   });
 
-  it("requires admin role", async () => {
+  it("admits a member with write on the item's type (matches POST /items)", async () => {
+    // Bulk write authorization mirrors single-item POST /items: a member
+    // holding write on the type can bulk-create it.
     const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
       {
-        label: "bulk-member",
-        source: `bulk-member-${rawKey.slice(-6)}`,
+        label: "bulk-member-allowed",
+        source: `bulk-member-ok-${rawKey.slice(-6)}`,
         role: "member",
-        type_permissions: { "*": "write" },
+        type_permissions: { "core.note": "write" },
+      },
+      keyHash,
+    );
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: rawKey,
+      body: {
+        items: [{ type: "core.note", properties: { body: "member-ok" } }],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { counts: { created: number } };
+    expect(body.counts.created).toBe(1);
+  });
+
+  it("rejects a member without write on the item's type (atomic 400)", async () => {
+    // No type_permissions → no writable types. The atomic pre-check aborts
+    // the whole batch with bulk_atomic_rollback carrying type_not_permitted.
+    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
+    const keyHash = hashApiKey(rawKey, "test-salt");
+    await ctx.storage.keys.create(
+      {
+        label: "bulk-member-denied",
+        source: `bulk-member-no-${rawKey.slice(-6)}`,
+        role: "member",
+        type_permissions: {},
       },
       keyHash,
     );
@@ -409,7 +437,45 @@ describe("POST /items/bulk", () => {
         items: [{ type: "core.note", properties: { body: "nope" } }],
       },
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; details?: { code?: string } };
+    };
+    expect(body.error.code).toBe("bulk_atomic_rollback");
+    expect(body.error.details?.code).toBe("type_not_permitted");
+  });
+
+  it("surfaces a per-item type_not_permitted error in non-atomic mode", async () => {
+    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
+    const keyHash = hashApiKey(rawKey, "test-salt");
+    await ctx.storage.keys.create(
+      {
+        label: "bulk-member-mixed",
+        source: `bulk-member-mix-${rawKey.slice(-6)}`,
+        role: "member",
+        type_permissions: { "core.note": "write" },
+      },
+      keyHash,
+    );
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: rawKey,
+      body: {
+        items: [
+          { type: "core.note", properties: { body: "allowed" } },
+          { type: "core.task", properties: { title: "denied" } },
+        ],
+        atomic: false,
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      counts: { created: number; errored: number };
+      results: { outcome: string; error?: { code: string } }[];
+    };
+    expect(body.counts.created).toBe(1);
+    expect(body.counts.errored).toBe(1);
+    expect(body.results[1]!.error?.code).toBe("type_not_permitted");
   });
 
   it("stamps source from the credential and ignores forged payload source", async () => {

@@ -65,6 +65,38 @@ function isSourceDedupViolation(err: unknown): boolean {
   return false;
 }
 
+/**
+ * Detect a primary-key collision on `items.id`. Happens when a caller
+ * supplies an explicit `id` that already exists. The tenant-scoped
+ * pre-checks (`get(id, tenantId)`) miss the case where the id belongs to
+ * ANOTHER tenant — the PK is `id` alone, not `(tenant_id, id)`, so the
+ * insert trips the constraint. Surface it as a clean `CONFLICT` (409)
+ * instead of an opaque 500. Drizzle wraps the libsql error: the outer
+ * Error carries a "Failed query" message with `code: undefined`, while the
+ * `cause` carries `SQLITE_CONSTRAINT` + the offending column (`items.id`)
+ * in its message. Inspect both. The source-dedup index has its own trap.
+ */
+function isPrimaryKeyViolation(err: unknown): boolean {
+  const cause =
+    err != null && typeof err === "object"
+      ? (err as { cause?: unknown }).cause
+      : undefined;
+  for (const layer of [err, cause]) {
+    if (layer == null || typeof layer !== "object") continue;
+    const e = layer as { code?: unknown; message?: unknown };
+    const code = typeof e.code === "string" ? e.code : "";
+    const message = typeof e.message === "string" ? e.message : "";
+    if (message.includes("idx_items_source_dedup")) return false;
+    if (
+      code.includes("SQLITE_CONSTRAINT") &&
+      (message.includes("items.id") || message.includes("PRIMARY KEY"))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export class SqliteItemStore implements ItemStore {
   constructor(
     private db: DrizzleDb,
@@ -156,27 +188,38 @@ export class SqliteItemStore implements ItemStore {
 
       const schemaVersion = getTypeSchema(input.type, tenantId)?.version ?? 1;
 
-      await tx
-        .insert(items)
-        .values({
-          id,
-          tenant_id: tenantId,
-          type: input.type,
-          state,
-          tier: input.tier ?? "library",
-          properties: JSON.stringify(properties),
-          created_at: now,
-          updated_at: now,
-          timestamp: input.timestamp ?? now,
-          source: input.source,
-          source_id: input.source_id,
-          version: 1,
-          schema_version: schemaVersion,
-          device: input.device,
-          capture_latitude: input.capture_latitude,
-          capture_longitude: input.capture_longitude,
-        })
-        .run();
+      try {
+        await tx
+          .insert(items)
+          .values({
+            id,
+            tenant_id: tenantId,
+            type: input.type,
+            state,
+            tier: input.tier ?? "library",
+            properties: JSON.stringify(properties),
+            created_at: now,
+            updated_at: now,
+            timestamp: input.timestamp ?? now,
+            source: input.source,
+            source_id: input.source_id,
+            version: 1,
+            schema_version: schemaVersion,
+            device: input.device,
+            capture_latitude: input.capture_latitude,
+            capture_longitude: input.capture_longitude,
+          })
+          .run();
+      } catch (err) {
+        if (isPrimaryKeyViolation(err)) {
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            `Item with id=${id} already exists`,
+            { existing_id: id },
+          );
+        }
+        throw err;
+      }
 
       await tx
         .insert(metadata)

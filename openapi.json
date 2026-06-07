@@ -4102,7 +4102,7 @@
           "Items"
         ],
         "summary": "Bulk upsert items",
-        "description": "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Admin-only and atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten.",
+        "description": "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / tenant_admin bypass; members need the per-type permission), and operates only within the caller's tenant.",
         "security": [
           {
             "bearerAuth": []
@@ -4366,7 +4366,7 @@
             }
           },
           "403": {
-            "description": "Admin required",
+            "description": "Write access denied for one of the item types",
             "content": {
               "application/json": {
                 "schema": {
@@ -4378,7 +4378,8 @@
                         "code": {
                           "type": "string",
                           "enum": [
-                            "forbidden"
+                            "forbidden",
+                            "type_not_permitted"
                           ]
                         },
                         "message": {
@@ -7983,7 +7984,7 @@
           "Edges"
         ],
         "summary": "Bulk upsert edges",
-        "description": "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. Admin-only and atomic by default; both endpoints must already hold the items being wired together.",
+        "description": "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and edge type (admin / tenant_admin bypass; members need both per-type permissions), and operates only within the caller's tenant.",
         "security": [
           {
             "bearerAuth": []
@@ -8213,7 +8214,7 @@
             }
           },
           "403": {
-            "description": "Admin required",
+            "description": "Write access denied for a source type or edge type",
             "content": {
               "application/json": {
                 "schema": {
@@ -8225,7 +8226,9 @@
                         "code": {
                           "type": "string",
                           "enum": [
-                            "forbidden"
+                            "forbidden",
+                            "type_not_permitted",
+                            "edge_permission_denied"
                           ]
                         },
                         "message": {
