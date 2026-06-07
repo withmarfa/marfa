@@ -25,7 +25,7 @@ import {
   getTypeFilter,
 } from "../middleware/auth.js";
 import { enforceQuota } from "../middleware/quota.js";
-import type { Storage } from "../storage/interface.js";
+import type { Storage, ItemSortField } from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { publish } from "../pubsub.js";
@@ -234,9 +234,15 @@ const listItemsRoute = createRoute({
         .optional()
         .describe("Filter expression in the query grammar"),
       sort: z
-        .enum(["created_at", "updated_at", "timestamp"])
+        .string()
+        .regex(
+          /^(created_at|updated_at|timestamp|properties\.[a-z0-9_]+)$/,
+          "sort must be created_at, updated_at, timestamp, or properties.<field>",
+        )
         .optional()
-        .describe("Field to sort by"),
+        .describe(
+          "Field to sort by: a system column (created_at, updated_at, timestamp) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical.",
+        ),
       direction: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
       since: z
         .string()
@@ -1261,7 +1267,9 @@ export function itemRoutes(storage: Storage) {
       tags,
       filter,
       allowed_types: getTypeFilter(c),
-      sort: query.sort ?? undefined,
+      // The query schema's regex already constrains this to a system column or
+      // `properties.<field>`; the storage layer re-validates via parseSortField.
+      sort: (query.sort as ItemSortField | undefined) ?? undefined,
       direction: query.direction ?? undefined,
       since: query.since,
       until: query.until,

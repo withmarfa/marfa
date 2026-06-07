@@ -151,7 +151,15 @@ export interface ListFilters {
    *  `edge[parent-of] not_exists`. The filter language is how edge and
    *  hierarchy relationships are queried. */
   filter?: string;
-  sort?: "created_at" | "updated_at" | "timestamp";
+  /**
+   * Sort key. Either a system column (`created_at` | `updated_at` |
+   * `timestamp`) or a naturally-orderable custom field via
+   * `properties.<field>` (e.g. `properties.due_at`). Property sorts order
+   * datetimes and strings lexically and numbers numerically, with absent
+   * values last. Enum-semantic fields (status, priority) are deliberately not
+   * sortable here — their order isn't lexical, so sort those client-side.
+   */
+  sort?: "created_at" | "updated_at" | "timestamp" | `properties.${string}`;
   direction?: "asc" | "desc";
   since?: string;
   until?: string;
