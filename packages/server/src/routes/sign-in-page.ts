@@ -1,14 +1,19 @@
 /**
  * Sign-in page renderer for the human-facing /auth/sign-in surface.
  *
- * Server-rendered HTML, no client-side framework. The form submits to
- * the wrapper handler (`POST /auth/sign-in`) which dispatches to
- * Better Auth's JSON API and translates success/failure back into
- * 302 redirects so the no-JavaScript path works.
+ * Server-rendered HTML, no client-side framework. One combined form
+ * submits to the wrapper handler (`POST /auth/sign-in`), which dispatches
+ * to Better Auth's JSON API and translates success/failure back into 302
+ * redirects so the no-JavaScript path works.
  *
- * Two modes (password / magic-link) are picked by the `mode` query
- * param — server-rendered "tabs" so switching modes survives form
- * navigation without client-side state.
+ * Password and passwordless (magic link) share a single form and one
+ * email field. The two submit buttons each carry `name="mode"` — "Sign
+ * in" submits `mode=password`, "Email me a one-time sign-in link" submits
+ * `mode=magic` — so a browser sends the clicked button's value and the
+ * handler dispatches on it. The form is `novalidate`, so the optional
+ * password isn't required when the user takes the magic-link path; the
+ * server does the field validation. A passkey button (revealed only on
+ * capable browsers) and any configured OIDC providers sit below.
  *
  * References the shared stylesheet at `/auth/static/auth.css` via
  * the `renderAuthLayout` helper; no inline `<style>` block.
@@ -17,8 +22,13 @@
 import { renderAuthLayout } from "./auth-layout.js";
 
 interface SignInPageParams {
-  /** Active mode — `password` (default) or `magic`. */
-  mode: "password" | "magic";
+  /**
+   * Accepted for URL compatibility (redirect URLs from the POST handler
+   * still carry `?mode=…`), but no longer changes the layout — password
+   * and magic link share one combined form now. Kept so the GET handler
+   * can pass the parsed value through without a type error.
+   */
+  mode?: "password" | "magic";
   /**
    * Where to send the user after a successful sign-in. Validated by the
    * caller — only relative paths starting with `/` are accepted. The
@@ -65,7 +75,6 @@ function escapeHtml(str: string): string {
 
 /** Renders the sign-in page as a complete HTML document string. */
 export function renderSignInPage(params: SignInPageParams): string {
-  const isPasswordMode = params.mode !== "magic";
   const safeReturnTo = escapeHtml(params.returnTo);
 
   const errorMessage = params.error
@@ -80,24 +89,13 @@ export function renderSignInPage(params: SignInPageParams): string {
     ? `<div class="banner banner--success" role="status">Check your email for a sign-in link.</div>`
     : "";
 
-  const passwordHref = `/auth/sign-in?${escapeHtml(
-    buildQuery({ mode: "password", return_to: params.returnTo }),
-  )}`;
-  const magicHref = `/auth/sign-in?${escapeHtml(
-    buildQuery({ mode: "magic", return_to: params.returnTo }),
-  )}`;
-  const passwordSelected = isPasswordMode ? "true" : "false";
-  const magicSelected = isPasswordMode ? "false" : "true";
-  const tabsHtml = `
-    <div class="tabs" role="tablist">
-      <a class="tab ${isPasswordMode ? "tab--active" : ""}" href="${passwordHref}" role="tab" aria-selected="${passwordSelected}">Email + password</a>
-      <a class="tab ${!isPasswordMode ? "tab--active" : ""}" href="${magicHref}" role="tab" aria-selected="${magicSelected}">Email me a link</a>
-    </div>
-  `;
-
-  const passwordForm = `
+  // One combined form. The two submit buttons each carry `name="mode"`,
+  // so the browser sends the clicked button's value and the POST handler
+  // dispatches password vs. magic-link off it. `novalidate` keeps the
+  // optional password from blocking the magic-link path client-side; the
+  // server validates the fields it needs per mode.
+  const signInForm = `
     <form method="POST" action="/auth/sign-in" class="form" novalidate>
-      <input type="hidden" name="mode" value="password">
       <input type="hidden" name="return_to" value="${safeReturnTo}">
       <label class="field">
         <span class="field__label">Email</span>
@@ -112,29 +110,10 @@ export function renderSignInPage(params: SignInPageParams): string {
         <span class="field__label">Password</span>
         <input type="password"
                name="password"
-               required
-               autocomplete="current-password"
-               aria-required="true">
+               autocomplete="current-password">
       </label>
-      <button type="submit" class="btn btn--primary">Sign in</button>
-    </form>
-  `;
-
-  const magicForm = `
-    <form method="POST" action="/auth/sign-in" class="form" novalidate>
-      <input type="hidden" name="mode" value="magic">
-      <input type="hidden" name="return_to" value="${safeReturnTo}">
-      <label class="field">
-        <span class="field__label">Email</span>
-        <input type="email"
-               name="email"
-               required
-               autocomplete="email"
-               autofocus
-               aria-required="true">
-      </label>
-      <button type="submit" class="btn btn--primary">Send sign-in link</button>
-      <p class="field__hint">We'll email you a one-time link. No password needed.</p>
+      <button type="submit" name="mode" value="password" class="btn btn--primary">Sign in</button>
+      <button type="submit" name="mode" value="magic" class="btn">Email me a one-time sign-in link</button>
     </form>
   `;
 
@@ -163,8 +142,6 @@ export function renderSignInPage(params: SignInPageParams): string {
          <a href="/auth/sign-up?${buildQuery({ return_to: params.returnTo })}">Create one</a>
        </p>`
     : "";
-
-  const activeForm = isPasswordMode ? passwordForm : magicForm;
 
   // Passkey sign-in button. Hidden by default and revealed by the inline
   // script only on browsers that support WebAuthn AND are running in a
@@ -210,12 +187,12 @@ export function renderSignInPage(params: SignInPageParams): string {
 
   const bodyHtml = `
     <h1>Sign in to Marfa</h1>
+    <p class="lede">Your data layer, in one place.</p>
     ${errorBanner}
     ${successBanner}
-    ${tabsHtml}
-    ${activeForm}
-    ${oidcButtons}
+    ${signInForm}
     ${passkeyButton}
+    ${oidcButtons}
     ${signupLink}
     <script src="/auth/static/passkey.js"></script>
     <script>${passkeyScript}</script>
