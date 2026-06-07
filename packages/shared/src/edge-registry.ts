@@ -4,7 +4,7 @@ import type {
   EdgeCascade,
   EdgeTypeSchema,
 } from "@withmarfa/types";
-import { isSubtypeOf, TYPE_REGISTRY } from "./type-registry.js";
+import { getTypeSchema, isSubtypeOf } from "./type-registry.js";
 
 // Re-export types so consumers of @withmarfa/shared can reach them without
 // depending on @withmarfa/types directly.
@@ -126,14 +126,17 @@ export function listEdgeTypes(tenantId?: string | null): EdgeTypeSchema[] {
 export function satisfiesEdgeConstraint(
   typeId: string,
   constraints: readonly string[],
+  tenantId?: string | null,
 ): boolean {
   if (constraints.length === 0) return true;
   if (constraints.includes("*")) return true;
-  // Unknown item types can't be reasoned about — fail closed.
-  if (!TYPE_REGISTRY.has(typeId)) return false;
+  // Unknown item types can't be reasoned about — fail closed. Resolve within
+  // the tenant so a custom item type used as an edge endpoint is recognised
+  // (core/system types resolve regardless of tenant).
+  if (!getTypeSchema(typeId, tenantId)) return false;
   for (const allowed of constraints) {
     if (allowed === "*") return true;
-    if (isSubtypeOf(typeId, allowed)) return true;
+    if (isSubtypeOf(typeId, allowed, tenantId)) return true;
   }
   return false;
 }

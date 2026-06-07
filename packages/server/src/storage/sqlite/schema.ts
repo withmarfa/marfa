@@ -251,13 +251,22 @@ export const oauthDeviceCodes = sqliteTable(
   ],
 );
 
-export const customTypes = sqliteTable("custom_types", {
-  id: text("id").primaryKey(),
-  tenant_id: text("tenant_id"),
-  schema: text("schema").notNull(),
-  created_at: text("created_at").notNull(),
-  updated_at: text("updated_at").notNull(),
-});
+// Custom types are namespaced per tenant. The composite PK on (tenant_id, id)
+// lets two tenants register the same type id independently — each owns its own
+// type vocabulary. `tenant_id` is NOT NULL DEFAULT '' (empty-string sentinel)
+// for single-tenant self-host / platform registrations, mirroring the `blobs`
+// and `custom_edge_types` tables.
+export const customTypes = sqliteTable(
+  "custom_types",
+  {
+    tenant_id: text("tenant_id").notNull().default(""),
+    id: text("id").notNull(),
+    schema: text("schema").notNull(),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.tenant_id, t.id] })],
+);
 
 // Custom edge types are namespaced per tenant. The composite PK on
 // (tenant_id, id) lets two tenants register the same edge-type id

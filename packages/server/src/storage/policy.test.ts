@@ -2,35 +2,39 @@ import { describe, expect, it } from "vitest";
 import { TYPE_REGISTRY } from "@withmarfa/shared";
 import type { TypeSchema } from "@withmarfa/shared";
 import { resolveMergePolicy } from "./policy.js";
+import type { TypeResolver } from "./policy.js";
 
-function makeRegistry(schemas: TypeSchema[]): Map<string, TypeSchema> {
+// The core registry resolves types globally; wrap it as a resolver function.
+const coreResolver: TypeResolver = (id) => TYPE_REGISTRY.get(id);
+
+function makeResolver(schemas: TypeSchema[]): TypeResolver {
   const m = new Map<string, TypeSchema>();
   for (const s of schemas) m.set(s.id, s);
-  return m;
+  return (id) => m.get(id);
 }
 
 describe("resolveMergePolicy", () => {
   it("returns an empty policy for unknown types", () => {
-    const result = resolveMergePolicy("missing.type", TYPE_REGISTRY);
+    const result = resolveMergePolicy("missing.type", coreResolver);
     expect(result).toEqual({});
   });
 
   it("returns the type's own policy when no parent", () => {
-    const result = resolveMergePolicy("core.note", TYPE_REGISTRY);
+    const result = resolveMergePolicy("core.note", coreResolver);
     expect(result.fields?.body).toBe("keep_both_copies");
     expect(result.fields?.notes).toBe("keep_both_copies");
     expect(result.default).toBe("last_writer_wins");
   });
 
   it("inherits keep-both fields from parent (core.media.book)", () => {
-    const result = resolveMergePolicy("core.media.book", TYPE_REGISTRY);
+    const result = resolveMergePolicy("core.media.book", coreResolver);
     expect(result.fields?.body).toBe("keep_both_copies");
     expect(result.fields?.notes).toBe("keep_both_copies");
     expect(result.default).toBe("last_writer_wins");
   });
 
   it("entity.person inherits parent's empty keep-both policy", () => {
-    const result = resolveMergePolicy("core.entity.person", TYPE_REGISTRY);
+    const result = resolveMergePolicy("core.entity.person", coreResolver);
     expect(result.fields ?? {}).toEqual({});
     expect(result.default).toBe("last_writer_wins");
   });
@@ -56,7 +60,7 @@ describe("resolveMergePolicy", () => {
     };
     const result = resolveMergePolicy(
       "test.child",
-      makeRegistry([parent, child]),
+      makeResolver([parent, child]),
     );
     expect(result.fields?.body).toBe("last_writer_wins");
     expect(result.fields?.notes).toBe("keep_both_copies");
@@ -82,7 +86,7 @@ describe("resolveMergePolicy", () => {
     };
     const result = resolveMergePolicy(
       "test.child2",
-      makeRegistry([parent, child]),
+      makeResolver([parent, child]),
     );
     expect(result.fields?.body).toBe("keep_both_copies");
   });
@@ -103,7 +107,7 @@ describe("resolveMergePolicy", () => {
     };
     const result = resolveMergePolicy(
       "test.child3",
-      makeRegistry([parent, child]),
+      makeResolver([parent, child]),
     );
     expect(result.default).toBe("keep_both_copies");
   });
@@ -133,7 +137,7 @@ describe("resolveMergePolicy", () => {
     };
     const result = resolveMergePolicy(
       "test.gp.p.c",
-      makeRegistry([grandparent, parent, child]),
+      makeResolver([grandparent, parent, child]),
     );
     expect(result.fields?.a).toBe("keep_both_copies");
     expect(result.fields?.b).toBe("keep_both_copies");
@@ -148,7 +152,7 @@ describe("resolveMergePolicy", () => {
 describe("resolveMergePolicy — agreement with codegen-time resolution", () => {
   it("matches the inlined merge_policy on every core type", () => {
     for (const [typeId, schema] of TYPE_REGISTRY.entries()) {
-      const resolved = resolveMergePolicy(typeId, TYPE_REGISTRY);
+      const resolved = resolveMergePolicy(typeId, coreResolver);
       const baked = schema.merge_policy ?? {};
       const expectedFields = baked.fields ?? {};
       const actualFields = resolved.fields ?? {};

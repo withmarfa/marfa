@@ -386,6 +386,13 @@
       "when": 1780790401000,
       "tag": "0054_oauth_consent_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "6",
+      "when": 1780790402000,
+      "tag": "0055_custom_types_tenant_pk",
+      "breakpoints": true
     }
   ]
 }

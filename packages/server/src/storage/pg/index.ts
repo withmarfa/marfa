@@ -72,9 +72,12 @@ export async function createPgStorage(
   const typeStore = new PgTypeStore(db);
 
   const loadedCustomTypes = await typeStore.loadCustomTypes();
-  for (const ct of loadedCustomTypes) {
-    if (!isCoreType(ct.id)) {
-      registerTypeSchema(ct);
+  for (const { tenant_id, schema } of loadedCustomTypes) {
+    if (!isCoreType(schema.id)) {
+      // Register into the owning tenant's overlay so one tenant's custom types
+      // never resolve for another tenant's lookups. The empty-string sentinel
+      // maps to the null-tenant bucket.
+      registerTypeSchema(schema, tenant_id);
     }
   }
   const keyStore = new PgKeyStore(db);

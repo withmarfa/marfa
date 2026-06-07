@@ -273,17 +273,44 @@ export interface VersionStore {
   listThinningCandidates(
     threshold: number,
     limit: number,
-  ): Promise<{ itemId: string; type: string; versionCount: number }[]>;
+  ): Promise<
+    {
+      itemId: string;
+      type: string;
+      tenantId: string | null;
+      versionCount: number;
+    }[]
+  >;
 }
 
 export interface TypeStore {
-  list(): Promise<TypeSchema[]>;
-  get(id: string): Promise<TypeSchema | undefined>;
+  /** Lists the types visible to a tenant: the global core/system set plus the
+   *  tenant's own custom types. Omit `tenantId` for the null-tenant bucket
+   *  (single-tenant self-host / platform). */
+  list(tenantId?: string): Promise<TypeSchema[]>;
+  /** Resolves a type by id within the tenant: core/system types resolve
+   *  globally, custom types only for their owning tenant. */
+  get(id: string, tenantId?: string): Promise<TypeSchema | undefined>;
   create(schema: TypeSchema, tenantId?: string): Promise<TypeSchema>;
-  update(id: string, schema: TypeSchema): Promise<TypeSchema>;
-  delete(id: string): Promise<void>;
-  loadCustomTypes(): Promise<TypeSchema[]>;
+  update(
+    id: string,
+    schema: TypeSchema,
+    tenantId?: string,
+  ): Promise<TypeSchema>;
+  delete(id: string, tenantId?: string): Promise<void>;
+  /** Load every custom type across all tenants for server-startup registry
+   *  warmup. Each row carries its owning tenant so the warmup can register it
+   *  into the right tenant overlay. */
+  loadCustomTypes(): Promise<LoadedType[]>;
   countCustom(): Promise<number>;
+}
+
+/** A type schema paired with the tenant that owns it — the shape the startup
+ *  warmup needs to register each custom type into the correct tenant overlay.
+ *  The empty-string `tenant_id` is the null-tenant sentinel. */
+export interface LoadedType {
+  tenant_id: string;
+  schema: TypeSchema;
 }
 
 export interface EdgeTypeStore {
@@ -313,6 +340,7 @@ export interface SearchStore {
     itemId: string,
     properties: Record<string, unknown>,
     typeId?: string,
+    tenantId?: string,
   ): Promise<void>;
   remove(itemId: string): Promise<void>;
 }

@@ -18,7 +18,6 @@ import {
   generateId,
   isValidId,
   getTypeSchema,
-  TYPE_REGISTRY,
   validateProperties,
   coerceNullProperties,
   validateTransition,
@@ -119,8 +118,10 @@ export class PgItemStore implements ItemStore {
     // ad-hoc types persist with zero conformance checking — the opposite of a
     // typed data layer's promise. Reject before any write. Custom types are
     // loaded into the registry at startup and on `POST /types`, so a legitimate
-    // custom type resolves here.
-    const typeSchema = getTypeSchema(input.type);
+    // custom type resolves here. The registry is tenant-scoped: a custom type
+    // resolves only for its owning tenant, so a tenant cannot create items of
+    // another tenant's custom type — the create gate sees `unknown_type`.
+    const typeSchema = getTypeSchema(input.type, tenantId);
     if (!typeSchema) {
       throw new MarfaError(
         ErrorCode.UNKNOWN_TYPE,
@@ -134,7 +135,9 @@ export class PgItemStore implements ItemStore {
     // Persist the validated (coerced) properties so `null` on an optional
     // field — which validation treats as "unset" — drops out before the write
     // rather than landing as a stored null.
-    const validation = validateProperties(input.type, input.properties);
+    const validation = validateProperties(input.type, input.properties, {
+      tenantId,
+    });
     if (!validation.success) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
         errors: validation.errors,
@@ -169,7 +172,7 @@ export class PgItemStore implements ItemStore {
           }
         }
 
-        const schemaVersion = getTypeSchema(input.type)?.version ?? 1;
+        const schemaVersion = getTypeSchema(input.type, tenantId)?.version ?? 1;
 
         await tx.insert(items).values({
           id,
@@ -195,7 +198,7 @@ export class PgItemStore implements ItemStore {
           tags: JSON.stringify(input.tags ?? []),
         });
 
-        await this.searchStore.index(id, properties, input.type);
+        await this.searchStore.index(id, properties, input.type, tenantId);
 
         return {
           id,
@@ -490,7 +493,7 @@ export class PgItemStore implements ItemStore {
         // values with null. Required-field nulls are preserved.
         const incomingProps =
           input.properties !== undefined
-            ? coerceNullProperties(row.type, input.properties)
+            ? coerceNullProperties(row.type, input.properties, tenantId)
             : undefined;
         const now = new Date().toISOString();
         const deviceId = row.device ?? undefined;
@@ -550,7 +553,7 @@ export class PgItemStore implements ItemStore {
           }
 
           await this.searchStore.remove(id);
-          await this.searchStore.index(id, merged, row.type);
+          await this.searchStore.index(id, merged, row.type, tenantId);
 
           return rowToItem({
             ...row,
@@ -576,7 +579,9 @@ export class PgItemStore implements ItemStore {
             current: { version: row.version, properties: currentProps },
             ancestor: { version: input.version, properties: {} },
             conflicting_fields: Object.keys(incomingProps ?? {}),
-            merge_policy: resolveMergePolicy(row.type, TYPE_REGISTRY),
+            merge_policy: resolveMergePolicy(row.type, (id) =>
+              getTypeSchema(id, tenantId),
+            ),
           } satisfies ConflictResponse;
         }
 
@@ -595,7 +600,9 @@ export class PgItemStore implements ItemStore {
               properties: ancestor.properties,
             },
             conflicting_fields: result.conflicting_fields,
-            merge_policy: resolveMergePolicy(row.type, TYPE_REGISTRY),
+            merge_policy: resolveMergePolicy(row.type, (id) =>
+              getTypeSchema(id, tenantId),
+            ),
           } satisfies ConflictResponse;
         }
 
@@ -650,7 +657,7 @@ export class PgItemStore implements ItemStore {
         }
 
         await this.searchStore.remove(id);
-        await this.searchStore.index(id, result.merged, row.type);
+        await this.searchStore.index(id, result.merged, row.type, tenantId);
 
         return rowToItem({
           ...row,
@@ -760,7 +767,7 @@ export class PgItemStore implements ItemStore {
       .set({ state: "active", updated_at: now })
       .where(this.tenantWhere(id, tenantId));
 
-    await this.searchStore.index(id, row.properties, row.type);
+    await this.searchStore.index(id, row.properties, row.type, tenantId);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
@@ -797,7 +804,7 @@ export class PgItemStore implements ItemStore {
     if (state === "trashed") {
       await this.searchStore.remove(id);
     } else if (row.state === "trashed") {
-      await this.searchStore.index(id, row.properties, row.type);
+      await this.searchStore.index(id, row.properties, row.type, tenantId);
     }
 
     return { ...row, state, updated_at: now };

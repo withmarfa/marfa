@@ -884,10 +884,11 @@ export function itemRoutes(storage: Storage) {
     // persistence work.
     if (
       isTypeInStrictMode(enforcement, type) &&
-      getTypeSchema(type) !== undefined
+      getTypeSchema(type, tenantId) !== undefined
     ) {
       const strictResult = validateProperties(type, properties, {
         strict: true,
+        tenantId,
       });
       if (!strictResult.success) {
         throw new MarfaError(
@@ -1454,8 +1455,10 @@ export function itemRoutes(storage: Storage) {
         ...item.properties,
         ...body.properties,
       };
-      if (getTypeSchema(item.type)) {
-        const validation = validateProperties(item.type, merged);
+      if (getTypeSchema(item.type, tid)) {
+        const validation = validateProperties(item.type, merged, {
+          tenantId: tid,
+        });
         if (!validation.success) {
           throw new MarfaError(
             ErrorCode.INVALID_PROPERTIES,

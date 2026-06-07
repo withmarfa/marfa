@@ -37,8 +37,9 @@ export class SqliteSearchStore implements SearchStore {
     itemId: string,
     properties: Record<string, unknown>,
     typeId?: string,
+    tenantId?: string,
   ): Promise<void> {
-    const text = extractSearchableText(properties, typeId);
+    const text = extractSearchableText(properties, typeId, tenantId);
     await this.db.run(sql`
       INSERT INTO items_fts(item_id, title, body, description, name, extra)
       VALUES (${itemId}, ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra})

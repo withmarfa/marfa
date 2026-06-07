@@ -3,7 +3,7 @@ import {
   MarfaError,
   ErrorCode,
   getTypeSchema,
-  TYPE_REGISTRY,
+  listTypes,
   ALL_TYPES,
   validateTypeSchema,
   isValidTypeIdentifier,
@@ -14,7 +14,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
-  requireAdmin,
+  requireTenantAdmin,
   requireMetadataPermission,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -34,8 +34,14 @@ const CORE_TYPE_IDS = new Set(ALL_TYPES.map((t) => t.id));
 
 const MAX_INHERITANCE_DEPTH = 10;
 
-/** Validate parent chain: parent must exist, no circular references, depth capped. */
-function validateParentChain(typeId: string, parentId: string): void {
+/** Validate parent chain: parent must exist, no circular references, depth
+ *  capped. Parents resolve within the caller's tenant so a custom type may
+ *  inherit from another of the tenant's custom types (or from a core type). */
+function validateParentChain(
+  typeId: string,
+  parentId: string,
+  tenantId?: string,
+): void {
   let current = parentId;
   let depth = 0;
   while (current) {
@@ -52,7 +58,7 @@ function validateParentChain(typeId: string, parentId: string): void {
         "Circular inheritance detected",
       );
     }
-    const parentSchema = getTypeSchema(current);
+    const parentSchema = getTypeSchema(current, tenantId);
     if (!parentSchema) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -342,13 +348,22 @@ export function typeRoutes(storage: Storage) {
 
   router.openapi(listTypesRoute, (c) => {
     requireAuth(c);
-    return c.json(Array.from(TYPE_REGISTRY.values()), 200);
+    // Core/system types are global; custom types resolve only within the
+    // caller's tenant. `listTypes(tenantId)` returns core/system plus this
+    // tenant's own custom types — never another tenant's.
+    const tenantId = c.get("apiKey")?.tenant_id;
+    return c.json(listTypes(tenantId), 200);
   });
 
   router.openapi(getTypeRoute, (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    const schema = resolveTypeSchema(id, TYPE_REGISTRY);
+    // Resolve through the tenant-scoped lookup so a probe for another tenant's
+    // custom type id resolves to nothing here and 404s.
+    const tenantId = c.get("apiKey")?.tenant_id;
+    const schema = resolveTypeSchema(id, (typeId) =>
+      getTypeSchema(typeId, tenantId),
+    );
     if (!schema) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
@@ -358,6 +373,10 @@ export function typeRoutes(storage: Storage) {
   router.openapi(registerTypeRoute, async (c) => {
     requireMetadataPermission(c, "types", "write");
     const body = c.req.valid("json");
+    // The registration is scoped to the caller's tenant: every inheritance,
+    // compatible-with, parent-chain, and existence check below resolves within
+    // this tenant's overlay, so a custom type is isolated to it from creation.
+    const tenantId = c.get("apiKey")?.tenant_id;
 
     if (typeof body.id === "string" && !isValidTypeIdentifier(body.id)) {
       throw new MarfaError(
@@ -390,7 +409,7 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const result = validateTypeSchema(body);
+    const result = validateTypeSchema(body, tenantId);
     if (!result.success) {
       // Surface specific error codes so clients can disambiguate from generic schema failures.
       const hasPropertyShadowsField = result.errors.some(
@@ -432,17 +451,16 @@ export function typeRoutes(storage: Storage) {
     }
 
     if (schema.parent) {
-      validateParentChain(schema.id, schema.parent);
+      validateParentChain(schema.id, schema.parent, tenantId);
     }
 
-    if (getTypeSchema(schema.id)) {
+    if (getTypeSchema(schema.id, tenantId)) {
       throw new MarfaError(
         ErrorCode.TYPE_ALREADY_EXISTS,
         `Type "${schema.id}" already exists`,
       );
     }
 
-    const tenantId = c.get("apiKey")?.tenant_id;
     const created = await storage.types.create(schema, tenantId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -456,8 +474,12 @@ export function typeRoutes(storage: Storage) {
   });
 
   router.openapi(updateTypeRoute, async (c) => {
-    requireAdmin(c);
+    requireTenantAdmin(c);
     const { id } = c.req.valid("param");
+    // Scope to the caller's tenant: a tenant_admin sees and mutates only its
+    // own custom types. A probe for another tenant's id resolves to nothing
+    // and 404s.
+    const tenantId = c.get("apiKey")?.tenant_id;
 
     if (!isValidTypeIdentifier(id)) {
       throw new MarfaError(
@@ -473,13 +495,13 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const existing = getTypeSchema(id);
+    const existing = getTypeSchema(id, tenantId);
     if (!existing) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
 
     const body = c.req.valid("json");
-    const result = validateTypeSchema({ ...body, id });
+    const result = validateTypeSchema({ ...body, id }, tenantId);
     if (!result.success) {
       throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
         errors: result.errors,
@@ -489,7 +511,7 @@ export function typeRoutes(storage: Storage) {
     const schema = result.data;
 
     if (schema.parent) {
-      validateParentChain(schema.id, schema.parent);
+      validateParentChain(schema.id, schema.parent, tenantId);
     }
 
     // Server-side semver diff via a structural classifier: no-op
@@ -517,7 +539,7 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const updated = await storage.types.update(id, schema);
+    const updated = await storage.types.update(id, schema, tenantId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,
@@ -530,8 +552,11 @@ export function typeRoutes(storage: Storage) {
   });
 
   router.openapi(deleteTypeRoute, async (c) => {
-    requireAdmin(c);
+    requireTenantAdmin(c);
     const { id } = c.req.valid("param");
+    // Scope to the caller's tenant: a tenant_admin can only delete its own
+    // custom types; another tenant's id resolves as not-found.
+    const tenantId = c.get("apiKey")?.tenant_id;
 
     if (CORE_TYPE_IDS.has(id)) {
       throw new MarfaError(
@@ -540,14 +565,13 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const existing = getTypeSchema(id);
+    const existing = getTypeSchema(id, tenantId);
     if (!existing) {
       throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
     }
 
     const { force } = c.req.valid("query");
     if (force !== "true") {
-      const tenantId = c.get("apiKey")?.tenant_id;
       const items = await storage.items.list({
         tenantId,
         type: id,
@@ -561,7 +585,7 @@ export function typeRoutes(storage: Storage) {
       }
     }
 
-    await storage.types.delete(id);
+    await storage.types.delete(id, tenantId);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       tenant_id: c.get("apiKey")?.tenant_id ?? null,

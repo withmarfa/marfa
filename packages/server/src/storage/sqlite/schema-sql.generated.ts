@@ -43,14 +43,6 @@ CREATE TABLE IF NOT EXISTS \`tenant_quotas\` (
   \`updated_at\` text NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS \`custom_types\` (
-	\`id\` text PRIMARY KEY NOT NULL,
-	\`tenant_id\` text,
-	\`schema\` text NOT NULL,
-	\`created_at\` text NOT NULL,
-	\`updated_at\` text NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS "items" (
 	\`id\` text PRIMARY KEY NOT NULL,
 	\`tenant_id\` text,
@@ -412,6 +404,15 @@ CREATE TABLE IF NOT EXISTS \`auth_oauth_consent\` (
 	\`created_at\` integer,
 	\`updated_at\` integer,
 	FOREIGN KEY (\`user_id\`) REFERENCES \`auth_user\`(\`id\`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS "custom_types" (
+  \`tenant_id\` text NOT NULL DEFAULT '',
+  \`id\` text NOT NULL,
+  \`schema\` text NOT NULL,
+  \`created_at\` text NOT NULL,
+  \`updated_at\` text NOT NULL,
+  PRIMARY KEY (\`tenant_id\`, \`id\`)
 );
 
 CREATE TABLE IF NOT EXISTS "custom_edge_types" (

@@ -92,8 +92,10 @@ export async function createSqliteStorage(
   });
 
   void typeStore.loadCustomTypes().then((types) => {
-    for (const t of types) {
-      if (!isCoreType(t.id)) registerTypeSchema(t);
+    for (const { tenant_id, schema } of types) {
+      // Register into the owning tenant's overlay so one tenant's custom types
+      // never resolve for another tenant's lookups.
+      if (!isCoreType(schema.id)) registerTypeSchema(schema, tenant_id);
     }
   });
 
