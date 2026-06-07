@@ -14,14 +14,23 @@
  * upsert-updates to existing edge properties emit nothing because there is
  * no `edge.updated` event in the current pubsub enum.
  *
- * Admin-only, mirroring items.bulk. Same 5000-edge cap.
+ * Authorization mirrors single-edge `POST /edges`: the caller needs write
+ * on the source item's type AND write on the edge type (admin /
+ * tenant_admin bypass both). Operates only within the caller's tenant —
+ * every storage query is threaded with `key.tenant_id`, so a tenant-scoped
+ * caller can neither resolve nor mutate another tenant's edges. Same
+ * 5000-edge cap as items.bulk.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import {
+  requireAuth,
+  requireTypeAccess,
+  requireEdgePermission,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
@@ -86,7 +95,7 @@ const edgesBulkRoute = createRoute({
   tags: ["Edges"],
   summary: "Bulk upsert edges",
   description:
-    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. Admin-only and atomic by default; both endpoints must already hold the items being wired together.",
+    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and edge type (admin / tenant_admin bypass; members need both per-type permissions), and operates only within the caller's tenant.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -132,10 +141,14 @@ const edgesBulkRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema([
+            "forbidden",
+            "type_not_permitted",
+            "edge_permission_denied",
+          ]),
         },
       },
-      description: "Admin required",
+      description: "Write access denied for a source type or edge type",
     },
   },
 });
@@ -176,9 +189,20 @@ async function processBulkEdge(
     mode: "upsert" | "create_only";
     tenantId: string | undefined;
     existingByTriple: Map<string, Edge>;
+    /**
+     * Per-edge write authorization, mirroring single-edge `POST /edges`:
+     * write on the source item's type AND write on the edge type. Admin /
+     * tenant_admin bypass both. The source item is resolved tenant-scoped,
+     * so a cross-tenant source returns `null` and the edge-type gate alone
+     * applies (matching `PATCH /edges/:id`, where a trashed/cross-tenant
+     * source skips the type gate but RLS remains the data-plane fence).
+     * Throws on denial; the caller routes that to an `errored` outcome /
+     * atomic rollback.
+     */
+    checkEdgeWrite: (sourceType: string | null, edgeType: string) => void;
   },
 ): Promise<{ result: BulkEdgeResult; created?: Edge }> {
-  const { mode, tenantId, existingByTriple } = options;
+  const { mode, tenantId, existingByTriple, checkEdgeWrite } = options;
 
   if (!isValidId(raw.source_id)) {
     return {
@@ -205,6 +229,29 @@ async function processBulkEdge(
     };
   }
 
+  // Authorize the write before any mutation. Resolve the source item's
+  // type tenant-scoped (getIncludingTrashed so a trashed source still runs
+  // the gate, matching PATCH /edges/:id). A cross-tenant source resolves to
+  // null and the edge-type gate alone applies.
+  try {
+    const srcItem = await storage.items.getIncludingTrashed(
+      raw.source_id,
+      tenantId,
+    );
+    checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
+  } catch (err) {
+    if (err instanceof MarfaError) {
+      return {
+        result: {
+          index,
+          outcome: "errored",
+          error: { code: err.code, message: err.message },
+        },
+      };
+    }
+    throw err;
+  }
+
   const tripleKey = `${raw.source_id}|${raw.target_id}|${raw.edge_type}`;
   const existing = existingByTriple.get(tripleKey);
 
@@ -221,9 +268,13 @@ async function processBulkEdge(
     }
     // upsert — replace properties in place. Matches PATCH /edges/:id
     // semantics (properties overwrite; source/target/type immutable).
+    // Tenant-fenced so a triple that collided with another tenant's edge
+    // (defence-in-depth beyond the tenant-scoped duplicate lookup) cannot
+    // be mutated here.
     const updated = await storage.edges.updateProperties(
       existing.id,
       raw.properties ?? {},
+      tenantId,
     );
     return {
       result: { index, outcome: "updated", id: updated.id },
@@ -271,7 +322,18 @@ export function edgesBulkRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(edgesBulkRoute, async (c) => {
-    requireAdmin(c);
+    // Authenticated + per-edge dual gate (source-type write + edge-type
+    // write), mirroring single-edge `POST /edges`. admin / tenant_admin
+    // bypass both gates. Tenant scoping is threaded through every storage
+    // query below so a tenant-scoped caller stays inside its own tenant.
+    requireAuth(c);
+    const checkEdgeWrite = (
+      sourceType: string | null,
+      edgeType: string,
+    ): void => {
+      if (sourceType !== null) requireTypeAccess(c, sourceType, "write");
+      requireEdgePermission(c, edgeType, "write");
+    };
 
     const body = c.req.valid("json");
     const rawEdges = body.edges;
@@ -327,10 +389,30 @@ export function edgesBulkRoutes(storage: Storage) {
             },
           );
         }
+        // Authorize the write up-front so an unauthorized edge aborts the
+        // batch before any row lands (SQLite can't roll back async txns).
+        try {
+          const srcItem = await storage.items.getIncludingTrashed(
+            raw.source_id,
+            tenantId,
+          );
+          checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
+        } catch (err) {
+          if (err instanceof MarfaError) {
+            throw new MarfaError(
+              ErrorCode.BULK_ATOMIC_ROLLBACK,
+              `Bulk edges rolled back on edge ${String(i)}`,
+              { index: i, code: err.code, message: err.message },
+            );
+          }
+          throw err;
+        }
       }
     }
 
-    // Pre-resolve duplicates in one batched pass. Edges with existing
+    // Pre-resolve duplicates in one batched pass, tenant-scoped so a triple
+    // that matches another tenant's edge is never resolved (and thus never
+    // mutated) by a tenant-scoped caller. Edges with existing
     // `(source_id, target_id, edge_type)` rows take the skipped/updated
     // path; the rest go through full validation + create.
     const existingByTriple = await storage.edges.findByTriplesBatch(
@@ -339,6 +421,7 @@ export function edgesBulkRoutes(storage: Storage) {
         target_id: e.target_id,
         edge_type: e.edge_type,
       })),
+      tenantId,
     );
 
     const run = async (): Promise<{
@@ -352,6 +435,7 @@ export function edgesBulkRoutes(storage: Storage) {
           mode,
           tenantId,
           existingByTriple,
+          checkEdgeWrite,
         });
         if (atomic && result.outcome === "errored") {
           throw new MarfaError(

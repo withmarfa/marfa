@@ -65,6 +65,38 @@ function isSourceDedupViolation(err: unknown): boolean {
   if (message.includes("idx_items_source_dedup")) return true;
   return false;
 }
+
+/**
+ * Detect a primary-key collision on `items.id`. Happens when a caller
+ * supplies an explicit `id` that already exists in ANOTHER tenant — the
+ * tenant-scoped pre-checks miss it because the PK is `id` alone, not
+ * `(tenant_id, id)`. Surface it as a clean `CONFLICT` (409) instead of an
+ * opaque 500. PG raises `23505` against the items pkey constraint
+ * (`items_pkey`); the source-dedup index has its own trap above.
+ */
+function isPrimaryKeyViolation(err: unknown): boolean {
+  const cause =
+    err != null && typeof err === "object"
+      ? (err as { cause?: unknown }).cause
+      : undefined;
+  for (const layer of [err, cause]) {
+    if (layer == null || typeof layer !== "object") continue;
+    const e = layer as {
+      code?: unknown;
+      constraint_name?: unknown;
+      message?: unknown;
+    };
+    const code = typeof e.code === "string" ? e.code : "";
+    const constraint =
+      typeof e.constraint_name === "string" ? e.constraint_name : "";
+    const message = typeof e.message === "string" ? e.message : "";
+    if (constraint === "idx_items_source_dedup") return false;
+    if (message.includes("idx_items_source_dedup")) return false;
+    if (code === "23505" && constraint === "items_pkey") return true;
+    if (code === "23505" && message.includes("items_pkey")) return true;
+  }
+  return false;
+}
 import { detectConflict } from "../conflict.js";
 // When an items.* method opens a transaction and subsequently calls
 // searchStore.{index,remove}, the searchStore writes need to flow through
@@ -174,24 +206,35 @@ export class PgItemStore implements ItemStore {
 
         const schemaVersion = getTypeSchema(input.type, tenantId)?.version ?? 1;
 
-        await tx.insert(items).values({
-          id,
-          tenant_id: tenantId,
-          type: input.type,
-          state,
-          tier: input.tier ?? "library",
-          properties: JSON.stringify(properties),
-          created_at: now,
-          updated_at: now,
-          timestamp: input.timestamp ?? now,
-          source: input.source,
-          source_id: input.source_id,
-          version: 1,
-          schema_version: schemaVersion,
-          device: input.device,
-          capture_latitude: input.capture_latitude,
-          capture_longitude: input.capture_longitude,
-        });
+        try {
+          await tx.insert(items).values({
+            id,
+            tenant_id: tenantId,
+            type: input.type,
+            state,
+            tier: input.tier ?? "library",
+            properties: JSON.stringify(properties),
+            created_at: now,
+            updated_at: now,
+            timestamp: input.timestamp ?? now,
+            source: input.source,
+            source_id: input.source_id,
+            version: 1,
+            schema_version: schemaVersion,
+            device: input.device,
+            capture_latitude: input.capture_latitude,
+            capture_longitude: input.capture_longitude,
+          });
+        } catch (err) {
+          if (isPrimaryKeyViolation(err)) {
+            throw new MarfaError(
+              ErrorCode.CONFLICT,
+              `Item with id=${id} already exists`,
+              { existing_id: id },
+            );
+          }
+          throw err;
+        }
 
         await tx.insert(metadata).values({
           item_id: id,

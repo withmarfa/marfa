@@ -33,6 +33,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAdmin,
   requireAuth,
+  requireTypeAccess,
   getTypeFilter,
 } from "../middleware/auth.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
@@ -187,7 +188,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Admin-only and atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / tenant_admin bypass; members need the per-type permission), and operates only within the caller's tenant.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -233,10 +234,10 @@ const bulkRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description: "Admin required",
+      description: "Write access denied for one of the item types",
     },
   },
 });
@@ -440,6 +441,14 @@ async function processBulkItem(
     mode: "upsert" | "create_only";
     tenantId: string | undefined;
     stampedSource: string | undefined;
+    /**
+     * Per-item write authorization. Mirrors the single-item `POST /items`
+     * gate (`requireTypeAccess(c, type, "write")`): admin / tenant_admin
+     * bypass; a member must hold write on the item's type. Throws
+     * `TYPE_NOT_PERMITTED` (403) which surfaces as a per-item `errored`
+     * outcome in best-effort mode and aborts the batch in atomic mode.
+     */
+    checkWrite: (type: string) => void;
   },
 ): Promise<BulkItemResult> {
   if (!isValidTypeIdentifier(raw.type)) {
@@ -453,7 +462,20 @@ async function processBulkItem(
     };
   }
 
-  const { mode, tenantId, stampedSource } = options;
+  const { mode, tenantId, stampedSource, checkWrite } = options;
+
+  try {
+    checkWrite(raw.type);
+  } catch (err) {
+    if (err instanceof MarfaError) {
+      return {
+        index,
+        outcome: "errored",
+        error: { code: err.code, message: err.message },
+      };
+    }
+    throw err;
+  }
   const sourceId = raw.source_id;
 
   let existing: Item | null = null;
@@ -564,7 +586,14 @@ export function bulkRoutes(storage: Storage) {
 
   // POST /items/bulk — list-in
   router.openapi(bulkRoute, async (c) => {
-    requireAdmin(c);
+    // Authenticated + per-item type-write authorization, mirroring the
+    // single-item `POST /items` gate. admin / tenant_admin bypass type
+    // permissions; a member must hold write on each item's type. tenant
+    // scoping is threaded through every storage call below via `tenantId`.
+    requireAuth(c);
+    const checkWrite = (type: string): void => {
+      requireTypeAccess(c, type, "write");
+    };
 
     const body = c.req.valid("json");
     const items = body.items;
@@ -623,6 +652,20 @@ export function bulkRoutes(storage: Storage) {
             },
           );
         }
+        // Authorize the write up-front so an unauthorized type aborts the
+        // batch before any row lands (SQLite can't roll back async txns).
+        try {
+          checkWrite(raw.type);
+        } catch (err) {
+          if (err instanceof MarfaError) {
+            throw new MarfaError(
+              ErrorCode.BULK_ATOMIC_ROLLBACK,
+              `Bulk upsert rolled back on item ${String(i)}`,
+              { index: i, code: err.code, message: err.message },
+            );
+          }
+          throw err;
+        }
       }
     }
 
@@ -633,6 +676,7 @@ export function bulkRoutes(storage: Storage) {
           mode,
           tenantId,
           stampedSource,
+          checkWrite,
         });
         if (atomic && result.outcome === "errored") {
           // In atomic mode a single failure aborts the whole batch. Throw

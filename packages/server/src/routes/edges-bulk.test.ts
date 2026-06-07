@@ -373,13 +373,15 @@ describe("POST /edges/bulk", () => {
     expect(body.error.code).toBe("validation_error");
   });
 
-  it("requires admin role", async () => {
+  it("admits a member with source-type + edge-type write (matches POST /edges)", async () => {
+    // Bulk edge authorization mirrors single-edge POST /edges: a member
+    // holding write on the source item's type AND the edge type succeeds.
     const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
       {
-        label: "edges-bulk-member",
-        source: `edges-bulk-member-${rawKey.slice(-6)}`,
+        label: "edges-bulk-member-ok",
+        source: `edges-bulk-member-ok-${rawKey.slice(-6)}`,
         role: "member",
         type_permissions: { "*": "write" },
         edge_permissions: { "*": "write" },
@@ -396,7 +398,42 @@ describe("POST /edges/bulk", () => {
         ],
       },
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { counts: { created: number } };
+    expect(body.counts.created).toBe(1);
+  });
+
+  it("rejects a member lacking edge-type write (atomic 400)", async () => {
+    // Has source-type write but no edge_permissions → edge_permission_denied,
+    // surfaced as a bulk_atomic_rollback by the atomic pre-check.
+    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
+    const keyHash = hashApiKey(rawKey, "test-salt");
+    await ctx.storage.keys.create(
+      {
+        label: "edges-bulk-member-noedge",
+        source: `edges-bulk-member-noedge-${rawKey.slice(-6)}`,
+        role: "member",
+        type_permissions: { "*": "write" },
+        edge_permissions: {},
+      },
+      keyHash,
+    );
+    const { sourceId, targetId } = await makePair();
+
+    const res = await request(ctx.app, "POST", "/edges/bulk", {
+      key: rawKey,
+      body: {
+        edges: [
+          { source_id: sourceId, target_id: targetId, edge_type: "about" },
+        ],
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; details?: { code?: string } };
+    };
+    expect(body.error.code).toBe("bulk_atomic_rollback");
+    expect(body.error.details?.code).toBe("edge_permission_denied");
   });
 
   it("returns an empty-counts shape for an empty edges array", async () => {

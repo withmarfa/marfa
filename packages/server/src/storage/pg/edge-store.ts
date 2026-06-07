@@ -140,12 +140,17 @@ export class PgEdgeStore implements EdgeStore {
   async updateProperties(
     id: string,
     properties: Record<string, unknown>,
+    tenantId?: string,
   ): Promise<Edge> {
     const now = new Date().toISOString();
+    const where =
+      tenantId !== undefined
+        ? and(eq(edges.id, id), eq(edges.tenant_id, tenantId))
+        : eq(edges.id, id);
     const [row] = await this.db
       .update(edges)
       .set({ properties: JSON.stringify(properties), updated_at: now })
-      .where(eq(edges.id, id))
+      .where(where)
       .returning();
     if (!row) throw new Error(`edge ${id} not found`);
     return rowToEdge(row);
@@ -344,6 +349,7 @@ export class PgEdgeStore implements EdgeStore {
       target_id: string;
       edge_type: string;
     }[],
+    tenantId?: string,
   ): Promise<Map<string, Edge>> {
     const out = new Map<string, Edge>();
     if (pairs.length === 0) return out;
@@ -357,16 +363,18 @@ export class PgEdgeStore implements EdgeStore {
       const sourceIds = Array.from(new Set(entries.map((e) => e.s)));
       const targetIds = Array.from(new Set(entries.map((e) => e.t)));
       const wanted = new Set(entries.map((e) => `${e.s}|${e.t}`));
+      const conditions = [
+        eq(edges.edge_type, edgeType),
+        inArray(edges.source_id, sourceIds),
+        inArray(edges.target_id, targetIds),
+      ];
+      if (tenantId !== undefined) {
+        conditions.push(eq(edges.tenant_id, tenantId));
+      }
       const rows = await this.db
         .select()
         .from(edges)
-        .where(
-          and(
-            eq(edges.edge_type, edgeType),
-            inArray(edges.source_id, sourceIds),
-            inArray(edges.target_id, targetIds),
-          ),
-        );
+        .where(and(...conditions));
       for (const row of rows) {
         const key = `${row.source_id}|${row.target_id}`;
         if (wanted.has(key)) {
