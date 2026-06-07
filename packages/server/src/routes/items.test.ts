@@ -291,6 +291,101 @@ describe("POST /items", () => {
   });
 });
 
+describe("null on an optional property is treated as unset", () => {
+  // Serializers routinely emit `null` for an absent value rather than omitting
+  // the key. An optional property sent as `null` must be ignored (the field
+  // ends up unset), not rejected as a type error. A required field sent as
+  // `null` still rejects. Applies on create, PATCH, and bulk upsert.
+
+  it("create: optional fields sent as null → 201 with those fields absent", async () => {
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.bookmark",
+        properties: {
+          url: "https://example.com",
+          title: null,
+          image_url: null,
+        },
+      },
+    });
+    expect(res.status).toBe(201);
+    const data = (await res.json()) as {
+      item: { properties: Record<string, unknown> };
+    };
+    expect("title" in data.item.properties).toBe(false);
+    expect("image_url" in data.item.properties).toBe(false);
+    expect(data.item.properties.url).toBe("https://example.com");
+  });
+
+  it("create: a required field sent as null still rejects with 400", async () => {
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: null } },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("PATCH: optional field sent as null does not overwrite the stored value", async () => {
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.bookmark",
+        properties: { url: "https://example.com", title: "Original" },
+      },
+    });
+    const { item } = (await created.json()) as { item: { id: string } };
+
+    const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { title: null } },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      item: { properties: Record<string, unknown> };
+    };
+    // null is "leave unset" — the previously-stored title survives.
+    expect(data.item.properties.title).toBe("Original");
+  });
+
+  it("bulk upsert: optional fields sent as null → created with those fields absent", async () => {
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.bookmark",
+            properties: {
+              url: "https://example.com",
+              title: null,
+              image_url: null,
+            },
+            source_id: `null-bulk-${suffix}`,
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      counts: { created: number; errored: number };
+      results: { id?: string; outcome: string }[];
+    };
+    expect(data.counts.created).toBe(1);
+    expect(data.counts.errored).toBe(0);
+    const id = data.results[0]?.id;
+    expect(id).toBeDefined();
+    const fetched = await request(ctx.app, "GET", `/items/${id!}`, {
+      key: ctx.adminKey,
+    });
+    const fetchedData = (await fetched.json()) as {
+      item: { properties: Record<string, unknown> };
+    };
+    expect("title" in fetchedData.item.properties).toBe(false);
+    expect("image_url" in fetchedData.item.properties).toBe(false);
+  });
+});
+
 describe("POST /items — platform-credential gate", () => {
   it("rejects a non-platform admin writing system.* even with explicit type_permissions", async () => {
     // Only platform credentials may write to `core.*`, `system.*`, or

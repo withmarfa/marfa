@@ -378,7 +378,17 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       break;
   }
 
-  return field.required ? schema : schema.optional();
+  // Optional fields treat an explicit JSON `null` as "unset". Serializers
+  // (ORMs, mappers, many language defaults, LLM-generated payloads) routinely
+  // emit `null` for an absent value rather than omitting the key; rejecting it
+  // as a type error makes every such caller pre-prune nulls. Accept `null` on
+  // an optional field and coerce it to `undefined` so it drops out of the
+  // validated output and never persists. Required fields keep the strict type
+  // check, so a required field sent as `null` still rejects.
+  if (field.required) return schema;
+  return schema
+    .nullish()
+    .transform((value) => (value === null ? undefined : value));
 }
 
 // Cache generated Zod schemas to avoid re-creation on every validation call.
@@ -446,6 +456,30 @@ export function validateProperties(
     message: issue.message,
   }));
   return { success: false, errors };
+}
+
+/**
+ * Returns a copy of `properties` with explicit `null` values dropped for every
+ * key that is not a required field on the type. Mirrors the create-path
+ * validation semantics (null on an optional field means "unset") for the
+ * update paths, which merge into an existing row rather than re-validating from
+ * scratch. A `null` on a required field is preserved so downstream validation
+ * still rejects it; unknown / custom keys are treated as optional (their null
+ * is dropped) to match the passthrough behavior of `validateProperties`.
+ * Unknown types are left untouched — there is no schema to classify against.
+ */
+export function coerceNullProperties(
+  typeId: string,
+  properties: Record<string, unknown>,
+): Record<string, unknown> {
+  const fields = getResolvedFields(typeId);
+  if (!fields) return properties;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (value === null && fields[key]?.required !== true) continue;
+    out[key] = value;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------

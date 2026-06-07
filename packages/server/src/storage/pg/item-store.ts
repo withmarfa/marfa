@@ -20,6 +20,7 @@ import {
   getTypeSchema,
   TYPE_REGISTRY,
   validateProperties,
+  coerceNullProperties,
   validateTransition,
   parseFilter,
   MarfaError,
@@ -130,12 +131,16 @@ export class PgItemStore implements ItemStore {
     // Validate properties against the type schema. Runs unconditionally —
     // an empty `{}` must still fail required-field checks (a core.note with
     // no body is invalid whether properties is empty or partially filled).
+    // Persist the validated (coerced) properties so `null` on an optional
+    // field — which validation treats as "unset" — drops out before the write
+    // rather than landing as a stored null.
     const validation = validateProperties(input.type, input.properties);
     if (!validation.success) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
         errors: validation.errors,
       });
     }
+    const properties = validation.data;
 
     const now = new Date().toISOString();
     const state = input.state ?? SYSTEM_DEFAULT_STATE;
@@ -172,7 +177,7 @@ export class PgItemStore implements ItemStore {
           type: input.type,
           state,
           tier: input.tier ?? "library",
-          properties: JSON.stringify(input.properties),
+          properties: JSON.stringify(properties),
           created_at: now,
           updated_at: now,
           timestamp: input.timestamp ?? now,
@@ -190,14 +195,14 @@ export class PgItemStore implements ItemStore {
           tags: JSON.stringify(input.tags ?? []),
         });
 
-        await this.searchStore.index(id, input.properties, input.type);
+        await this.searchStore.index(id, properties, input.type);
 
         return {
           id,
           type: input.type,
           state: state,
           tier: input.tier ?? "library",
-          properties: input.properties,
+          properties,
           created_at: now,
           updated_at: now,
           timestamp: input.timestamp ?? now,
@@ -479,6 +484,14 @@ export class PgItemStore implements ItemStore {
           {},
           "item update properties",
         );
+        // Treat `null` on an optional field as "leave unset" — the same
+        // semantics the create path applies — so a re-synced payload that
+        // emits explicit nulls for absent fields doesn't overwrite stored
+        // values with null. Required-field nulls are preserved.
+        const incomingProps =
+          input.properties !== undefined
+            ? coerceNullProperties(row.type, input.properties)
+            : undefined;
         const now = new Date().toISOString();
         const deviceId = row.device ?? undefined;
 
@@ -501,8 +514,8 @@ export class PgItemStore implements ItemStore {
             );
           }
 
-          const merged = input.properties
-            ? { ...currentProps, ...input.properties }
+          const merged = incomingProps
+            ? { ...currentProps, ...incomingProps }
             : currentProps;
           const newVersion = row.version + 1;
           const newTier = input.tier ?? row.tier;
@@ -562,13 +575,13 @@ export class PgItemStore implements ItemStore {
             error: { code: "version_conflict" as const, status: 409 as const },
             current: { version: row.version, properties: currentProps },
             ancestor: { version: input.version, properties: {} },
-            conflicting_fields: Object.keys(input.properties ?? {}),
+            conflicting_fields: Object.keys(incomingProps ?? {}),
             merge_policy: resolveMergePolicy(row.type, TYPE_REGISTRY),
           } satisfies ConflictResponse;
         }
 
         const result = detectConflict({
-          clientProperties: input.properties ?? {},
+          clientProperties: incomingProps ?? {},
           currentProperties: currentProps,
           ancestorProperties: ancestor.properties,
         });

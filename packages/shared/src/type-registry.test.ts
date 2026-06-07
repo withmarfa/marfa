@@ -8,6 +8,7 @@ import {
   registerTypeSchema,
   unregisterTypeSchema,
   validateProperties,
+  coerceNullProperties,
   validateTransition,
   validateTypeSchema,
 } from "./type-registry.js";
@@ -300,6 +301,31 @@ describe("validateProperties", () => {
     }
   });
 
+  it("treats null on an optional field as unset (coerced away)", () => {
+    const result = validateProperties("core.bookmark", {
+      url: "https://example.com",
+      title: null,
+      image_url: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Coerced to undefined — never `null`. JSON serialization drops the key
+      // entirely, so the field does not persist.
+      expect(result.data.title).toBeUndefined();
+      expect(result.data.image_url).toBeUndefined();
+      expect(JSON.parse(JSON.stringify(result.data))).toEqual({
+        url: "https://example.com",
+      });
+    }
+  });
+
+  it("still rejects null on a required field", () => {
+    const result = validateProperties("core.note", { body: null });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.some((e) => e.field === "body")).toBe(true);
+    }
+  });
   it("round-trips other Unicode and control chars unchanged", () => {
     // Only U+0000 is illegal for Postgres TEXT; emoji, RTL marks, accents,
     // newline, and tab must all pass validation untouched.
@@ -309,6 +335,34 @@ describe("validateProperties", () => {
     if (result.success) {
       expect(result.data.body).toBe(body);
     }
+  });
+});
+
+describe("coerceNullProperties", () => {
+  it("drops null on optional fields", () => {
+    const out = coerceNullProperties("core.bookmark", {
+      url: "https://example.com",
+      title: null,
+    });
+    expect(out).toEqual({ url: "https://example.com" });
+  });
+
+  it("preserves null on a required field for downstream rejection", () => {
+    const out = coerceNullProperties("core.note", { body: null });
+    expect(out).toEqual({ body: null });
+  });
+
+  it("drops null on unknown / custom keys (passthrough-optional)", () => {
+    const out = coerceNullProperties("core.note", {
+      body: "hi",
+      custom_field: null,
+    });
+    expect(out).toEqual({ body: "hi" });
+  });
+
+  it("leaves an unknown type untouched", () => {
+    const input = { anything: null };
+    expect(coerceNullProperties("zzz.unregistered", input)).toBe(input);
   });
 });
 
