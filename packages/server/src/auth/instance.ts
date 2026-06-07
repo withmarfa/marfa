@@ -21,6 +21,7 @@ import {
   buildOauthProviderPlugin,
   buildOauthProjectionPlugin,
 } from "./oauth-provider.js";
+import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
 
 /**
  * The first parameter type of better-auth's drizzleAdapter — used to type
@@ -279,10 +280,17 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         );
       },
     },
-    database: drizzleAdapter(options.db, {
-      provider: options.dialect === "pg" ? "pg" : "sqlite",
-      schema,
-    }),
+    // Wrap the drizzle adapter so a `create` on the `oauthConsent` model
+    // upserts on `(clientId, userId)` instead of blindly inserting — see
+    // `consent-idempotent-adapter.ts`. Paired with the unique constraint
+    // on `auth_oauth_consent (client_id, user_id)`; neither half is safe
+    // to ship without the other.
+    database: withIdempotentConsent(
+      drizzleAdapter(options.db, {
+        provider: options.dialect === "pg" ? "pg" : "sqlite",
+        schema,
+      }),
+    ),
     emailAndPassword: {
       enabled: true,
       // Auto-sign-in after sign-up keeps the consent flow seamless when
