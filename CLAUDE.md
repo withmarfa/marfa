@@ -265,7 +265,7 @@ Relationships between items are first-class typed edges, not embedded references
 
 **Direction is spec-exact.** For `parent-of` source = parent, target = child. For `in-thread` source = member, target = thread. Every consumer (cycle-detection walks, filter SQL, cascade planner) obeys this.
 
-Custom edge types register at runtime via `POST /edges/types` (admin only) and persist in `custom_edge_types`. Core types cannot be redefined. Custom edge types do not inherit.
+Custom edge types register at runtime via `POST /edge-types` (tenant-admin or platform-admin) and persist in `custom_edge_types`. They are tenant-scoped: a tenant's custom edge types resolve only within that tenant (composite `(tenant_id, id)` PK plus a per-tenant in-memory registry), while the eight core types stay global. Two tenants may register the same id independently. Core types cannot be redefined. Custom edge types do not inherit.
 
 Atomic writes on `POST /items` accept `edges: { [type]: [target_ids] }`. Edge-only mutations go through `/edges` (create / update-properties-only / delete) or `/items/:id/edges` + `/backrefs` for listings. Single-item reads hydrate edges inline; list reads opt in via `?include=edges`.
 

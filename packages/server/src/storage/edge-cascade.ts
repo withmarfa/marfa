@@ -23,6 +23,7 @@ import type { EdgeStore } from "./interface.js";
 export async function planCascadeDelete(
   edgeStore: EdgeStore,
   rootItemId: string,
+  tenantId?: string,
 ): Promise<string[]> {
   const visited = new Set<string>();
   const ordered: string[] = [];
@@ -44,7 +45,7 @@ export async function planCascadeDelete(
 
     // Block edges on EITHER side reject the delete outright.
     for (const edge of [...outbound, ...inbound]) {
-      const schema = getEdgeTypeSchema(edge.edge_type);
+      const schema = getEdgeTypeSchema(edge.edge_type, tenantId);
       if (schema?.cascade_on_delete === "block") {
         blockers.push(edge);
       }
@@ -53,7 +54,7 @@ export async function planCascadeDelete(
 
     // Cascade: walk outbound cascade edges → recurse into targets.
     for (const edge of outbound) {
-      const schema = getEdgeTypeSchema(edge.edge_type);
+      const schema = getEdgeTypeSchema(edge.edge_type, tenantId);
       if (schema?.cascade_on_delete === "cascade") {
         await walk(edge.target_id, depth + 1);
       }

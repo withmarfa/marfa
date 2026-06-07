@@ -287,12 +287,24 @@ export interface TypeStore {
 }
 
 export interface EdgeTypeStore {
-  list(): Promise<EdgeTypeSchema[]>;
-  get(id: string): Promise<EdgeTypeSchema | undefined>;
+  /** Lists a single tenant's custom edge types. Omit `tenantId` for the
+   *  null-tenant bucket (single-tenant self-host / platform). */
+  list(tenantId?: string): Promise<EdgeTypeSchema[]>;
+  get(id: string, tenantId?: string): Promise<EdgeTypeSchema | undefined>;
   create(schema: EdgeTypeSchema, tenantId?: string): Promise<EdgeTypeSchema>;
-  delete(id: string): Promise<void>;
-  /** Load every custom edge type for server-startup registry warmup. */
-  loadCustomEdgeTypes(): Promise<EdgeTypeSchema[]>;
+  delete(id: string, tenantId?: string): Promise<void>;
+  /** Load every custom edge type across all tenants for server-startup
+   *  registry warmup. Each row carries its owning tenant so the warmup can
+   *  register it into the right tenant overlay. */
+  loadCustomEdgeTypes(): Promise<LoadedEdgeType[]>;
+}
+
+/** An edge-type schema paired with the tenant that owns it — the shape the
+ *  startup warmup needs to register each custom type into the correct tenant
+ *  overlay. The empty-string `tenant_id` is the null-tenant sentinel. */
+export interface LoadedEdgeType {
+  tenant_id: string;
+  schema: EdgeTypeSchema;
 }
 
 export interface SearchStore {

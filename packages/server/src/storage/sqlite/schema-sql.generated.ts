@@ -205,14 +205,6 @@ CREATE TABLE IF NOT EXISTS "outbound_webhooks" (
 	\`updated_at\` text NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS \`custom_edge_types\` (
-  \`id\` text PRIMARY KEY NOT NULL,
-  \`tenant_id\` text,
-  \`schema\` text NOT NULL,
-  \`created_at\` text NOT NULL,
-  \`updated_at\` text NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS \`edges\` (
 	\`id\` text PRIMARY KEY NOT NULL,
 	\`tenant_id\` text,
@@ -420,6 +412,15 @@ CREATE TABLE IF NOT EXISTS \`auth_oauth_consent\` (
 	\`created_at\` integer,
 	\`updated_at\` integer,
 	FOREIGN KEY (\`user_id\`) REFERENCES \`auth_user\`(\`id\`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS "custom_edge_types" (
+  \`tenant_id\` text NOT NULL DEFAULT '',
+  \`id\` text NOT NULL,
+  \`schema\` text NOT NULL,
+  \`created_at\` text NOT NULL,
+  \`updated_at\` text NOT NULL,
+  PRIMARY KEY (\`tenant_id\`, \`id\`)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`api_keys_key_hash_unique\` ON \`api_keys\` (\`key_hash\`);

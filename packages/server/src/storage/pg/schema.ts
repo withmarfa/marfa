@@ -275,13 +275,22 @@ export const customTypes = pgTable("custom_types", {
   updated_at: text("updated_at").notNull(),
 });
 
-export const customEdgeTypes = pgTable("custom_edge_types", {
-  id: text("id").primaryKey(),
-  tenant_id: text("tenant_id"),
-  schema: text("schema").notNull(),
-  created_at: text("created_at").notNull(),
-  updated_at: text("updated_at").notNull(),
-});
+// Custom edge types are namespaced per tenant. The composite PK on
+// (tenant_id, id) lets two tenants register the same edge-type id
+// independently — each owns its own relationship vocabulary. `tenant_id`
+// is NOT NULL DEFAULT '' (empty-string sentinel) for single-tenant
+// self-host / platform registrations, mirroring the `blobs` table.
+export const customEdgeTypes = pgTable(
+  "custom_edge_types",
+  {
+    tenant_id: text("tenant_id").notNull().default(""),
+    id: text("id").notNull(),
+    schema: text("schema").notNull(),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.tenant_id, t.id] })],
+);
 
 // ---------------------------------------------------------------------------
 // outbound_webhooks

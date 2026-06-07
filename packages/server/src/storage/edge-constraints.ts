@@ -54,7 +54,10 @@ export async function assertEdgesCanBeCreated(
   }
   const resolved: ResolvedProposal[] = [];
   for (const p of proposals) {
-    const schema = getEdgeTypeSchema(p.edge_type);
+    // Resolve the edge-type schema within the caller's tenant: core types are
+    // global, custom types resolve only for their owning tenant. A tenant that
+    // references another tenant's custom edge type sees "unknown edge type".
+    const schema = getEdgeTypeSchema(p.edge_type, opts.tenant_id);
     if (!schema) {
       throw new MarfaError(
         ErrorCode.EDGE_TYPE_NOT_FOUND,
