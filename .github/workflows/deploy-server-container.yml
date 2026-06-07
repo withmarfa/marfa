@@ -79,7 +79,18 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # When STAGING_WORKERS_SUBDOMAIN is empty, the deploy script derives
+          # the auth base URL (OAuth issuer, cookie domain, device + email
+          # verification links) from STAGING_API_BASE_URL instead of the raw
+          # `*.workers.dev` origin. Set the latter to the branded public host so
+          # the issuer advertised on /.well-known/openid-configuration matches
+          # where clients actually reach the server — otherwise a browser
+          # sign-in redirect lands on a different origin and the session cookie
+          # doesn't carry. STAGING_CORS_ORIGINS must list every browser origin
+          # that calls the API with credentials.
           STAGING_WORKERS_SUBDOMAIN: ${{ vars.STAGING_WORKERS_SUBDOMAIN }}
+          STAGING_API_BASE_URL: ${{ vars.STAGING_API_BASE_URL }}
+          STAGING_CORS_ORIGINS: ${{ vars.STAGING_CORS_ORIGINS }}
           SERVER_IMAGE_TAG: ${{ needs.build-push.outputs.image_tag }}
           ENVIRONMENT: ${{ github.event.inputs.environment }}
         run: |
