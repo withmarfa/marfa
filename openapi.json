@@ -694,15 +694,11 @@
           {
             "schema": {
               "type": "string",
-              "enum": [
-                "created_at",
-                "updated_at",
-                "timestamp"
-              ],
-              "description": "Field to sort by"
+              "pattern": "^(created_at|updated_at|timestamp|properties\\.[a-z0-9_]+)$",
+              "description": "Field to sort by: a system column (created_at, updated_at, timestamp) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical."
             },
             "required": false,
-            "description": "Field to sort by",
+            "description": "Field to sort by: a system column (created_at, updated_at, timestamp) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical.",
             "name": "sort",
             "in": "query"
           },

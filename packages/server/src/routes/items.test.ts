@@ -1294,6 +1294,135 @@ describe("GET /items?filter=...", () => {
   });
 });
 
+describe("GET /items?sort=properties.<field>", () => {
+  // Seed dedicated items so ordering assertions don't depend on other tests'
+  // rows. Each helper filters the list response down to the ids it created.
+  async function createBook(props: Record<string, unknown>): Promise<string> {
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.media.book", properties: { body: "", ...props } },
+    });
+    expect(res.status).toBe(201);
+    const item = (await res.json()) as { item: { id: string } };
+    return item.item.id;
+  }
+
+  async function createTask(props: Record<string, unknown>): Promise<string> {
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.task", properties: props },
+    });
+    expect(res.status).toBe(201);
+    const item = (await res.json()) as { item: { id: string } };
+    return item.item.id;
+  }
+
+  /** Fetch every page for a sort and return the ids restricted to `known`,
+   *  preserving the server's order. Walking the cursor also exercises the
+   *  property-field keyset pagination path. */
+  async function orderedIds(
+    sort: string,
+    direction: "asc" | "desc",
+    known: Set<string>,
+  ): Promise<string[]> {
+    const ordered: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const qs = new URLSearchParams({
+        type: sort.startsWith("properties.due_at")
+          ? "core.task"
+          : "core.media.book",
+        sort,
+        direction,
+        limit: "2",
+      });
+      if (cursor) qs.set("cursor", cursor);
+      const res = await request(ctx.app, "GET", `/items?${qs.toString()}`, {
+        key: ctx.adminKey,
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        data: { id: string }[];
+        cursor: string | null;
+        has_more: boolean;
+      };
+      for (const row of body.data) if (known.has(row.id)) ordered.push(row.id);
+      cursor = body.has_more ? body.cursor : null;
+    } while (cursor);
+    return ordered;
+  }
+
+  it("sorts by a numeric property ascending and descending, NULLS LAST", async () => {
+    const small = await createBook({ title: "Small", page_count: 5 });
+    const big = await createBook({ title: "Big", page_count: 100 });
+    const mid = await createBook({ title: "Mid", page_count: 30 });
+    const none = await createBook({ title: "None" }); // page_count absent → NULL
+    const known = new Set([small, big, mid, none]);
+
+    const asc = await orderedIds("properties.page_count", "asc", known);
+    expect(asc).toEqual([small, mid, big, none]);
+
+    const desc = await orderedIds("properties.page_count", "desc", known);
+    expect(desc).toEqual([big, mid, small, none]);
+  });
+
+  it("sorts numerically, not lexically (2 before 10)", async () => {
+    const two = await createBook({ title: "Two pages", page_count: 2 });
+    const ten = await createBook({ title: "Ten pages", page_count: 10 });
+    const known = new Set([two, ten]);
+    const asc = await orderedIds("properties.page_count", "asc", known);
+    // Lexical text ordering would place "10" before "2"; numeric must not.
+    expect(asc).toEqual([two, ten]);
+  });
+
+  it("sorts by a datetime property ascending and descending, NULLS LAST", async () => {
+    const early = await createTask({
+      title: "Early",
+      due_at: "2026-01-01T09:00:00.000Z",
+    });
+    const late = await createTask({
+      title: "Late",
+      due_at: "2026-12-31T17:30:00.000Z",
+    });
+    const mid = await createTask({
+      title: "Mid",
+      due_at: "2026-06-15T12:00:00.000Z",
+    });
+    const undated = await createTask({ title: "Undated" }); // due_at absent → NULL
+    const known = new Set([early, late, mid, undated]);
+
+    const asc = await orderedIds("properties.due_at", "asc", known);
+    expect(asc).toEqual([early, mid, late, undated]);
+
+    const desc = await orderedIds("properties.due_at", "desc", known);
+    expect(desc).toEqual([late, mid, early, undated]);
+  });
+
+  it("rejects a malformed sort field with 400", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?sort=${encodeURIComponent("properties.Due At")}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("still honors the system-column sorts (back-compat)", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/items?sort=created_at&direction=asc&limit=3",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { created_at: string }[] };
+    const times = body.data.map((r) => r.created_at);
+    const sorted = [...times].sort();
+    expect(times).toEqual(sorted);
+  });
+});
+
 describe("DELETE /items/:id/purge", () => {
   it("permanently deletes a trashed item", async () => {
     // Create and trash an item

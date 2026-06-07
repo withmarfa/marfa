@@ -29,8 +29,66 @@ import { MarfaError, ErrorCode } from "@withmarfa/shared";
 // Filter types
 // ---------------------------------------------------------------------------
 
-export type ItemSortField = "created_at" | "updated_at" | "timestamp";
+/** The three system columns that have always been sortable. Their ordering is
+ *  a direct column comparison — no JSON extraction. */
+export const SYSTEM_SORTS = ["created_at", "updated_at", "timestamp"] as const;
+
+export type SystemSortField = (typeof SYSTEM_SORTS)[number];
+
+/**
+ * A list `sort` is either one of the three system columns or a
+ * `properties.<field>` form that orders on a JSON-extracted property value.
+ * Enum-semantic ordering (status, priority) is deliberately NOT supported —
+ * those fields have a meaningful order that isn't lexical, so the client owns
+ * that sort. The property form orders datetimes/strings lexically (ISO-8601
+ * sorts correctly as text) and numbers numerically.
+ */
+export type ItemSortField = SystemSortField | `properties.${string}`;
 export type SortDirection = "asc" | "desc";
+
+/** A property-field name is a single JSON key — `^[a-z0-9_]+$`. This is the
+ *  same shape the type-registry uses for field identifiers, and constraining
+ *  it here keeps the sort field safe to interpolate into a JSON path even
+ *  though the value side of every query is parameterised. */
+const PROPERTY_FIELD_PATTERN = /^[a-z0-9_]+$/;
+
+function isSystemSort(sort: string): sort is SystemSortField {
+  return (SYSTEM_SORTS as readonly string[]).includes(sort);
+}
+
+/**
+ * Resolve a raw `sort` string into a discriminated sort target.
+ *
+ * - A system column (`created_at` | `updated_at` | `timestamp`) → `{ kind: "system" }`.
+ * - A `properties.<field>` form with a `^[a-z0-9_]+$` field → `{ kind: "property", field }`.
+ * - Anything else (unknown bare column, malformed property field) → throws
+ *   `VALIDATION_ERROR`. An undefined input defaults to the legacy `created_at`.
+ *
+ * The validation lives here so both dialect stores reject malformed sorts
+ * identically before any SQL is built.
+ */
+export function parseSortField(
+  sort: ItemSortField | undefined,
+):
+  | { kind: "system"; column: SystemSortField }
+  | { kind: "property"; field: string } {
+  if (sort === undefined) return { kind: "system", column: "created_at" };
+  if (isSystemSort(sort)) return { kind: "system", column: sort };
+  if (sort.startsWith("properties.")) {
+    const field = sort.slice("properties.".length);
+    if (PROPERTY_FIELD_PATTERN.test(field)) {
+      return { kind: "property", field };
+    }
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid sort property field "${field}"; expected ${PROPERTY_FIELD_PATTERN.source}`,
+    );
+  }
+  throw new MarfaError(
+    ErrorCode.VALIDATION_ERROR,
+    `Invalid sort field "${sort}"; expected one of ${SYSTEM_SORTS.join(", ")} or properties.<field>`,
+  );
+}
 
 export interface ItemFilters {
   tenantId?: string;
@@ -97,21 +155,50 @@ interface CursorPayload {
   id: string;
 }
 
-export function encodeCursor(sortValue: string, id: string): string {
+/** Like {@link CursorPayload} but the sort value may be `null` — only the
+ *  item-list `properties.<field>` sort produces a null `v` (an absent field in
+ *  the NULLS-LAST tail). System-column sorts are NOT NULL, so the strict
+ *  {@link decodeCursor} contract still holds for every other consumer. */
+interface NullableCursorPayload {
+  v: string | null;
+  id: string;
+}
+
+export function encodeCursor(sortValue: string | null, id: string): string {
   return Buffer.from(JSON.stringify({ v: sortValue, id })).toString(
     "base64url",
   );
 }
 
 export function decodeCursor(cursor: string): CursorPayload {
+  const parsed = decodeCursorNullable(cursor);
+  if (typeof parsed.v !== "string") {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid pagination cursor",
+    );
+  }
+  return { v: parsed.v, id: parsed.id };
+}
+
+/** Decode a cursor whose sort value may be `null`. Used by the item-list query,
+ *  which can keyset over a nullable property expression. */
+export function decodeCursorNullable(cursor: string): NullableCursorPayload {
   try {
-    const parsed = JSON.parse(
+    const parsed: unknown = JSON.parse(
       Buffer.from(cursor, "base64url").toString("utf-8"),
-    ) as CursorPayload;
-    if (typeof parsed.v !== "string" || typeof parsed.id !== "string") {
+    );
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("v" in parsed) ||
+      !("id" in parsed) ||
+      (typeof parsed.v !== "string" && parsed.v !== null) ||
+      typeof parsed.id !== "string"
+    ) {
       throw new Error("Invalid cursor shape");
     }
-    return parsed;
+    return { v: parsed.v, id: parsed.id };
   } catch {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,

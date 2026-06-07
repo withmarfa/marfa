@@ -37,7 +37,12 @@ import type {
   PaginatedResult,
 } from "@withmarfa/shared";
 import type { ItemStore, ItemFilters, ItemGetOptions } from "../interface.js";
-import { encodeCursor, decodeCursor } from "../interface.js";
+import {
+  encodeCursor,
+  decodeCursorNullable,
+  parseSortField,
+} from "../interface.js";
+import { buildPropertySortExpr, propertySortValue } from "../property-sort.js";
 
 /**
  * Detect a Postgres / SQLite unique-constraint violation on the
@@ -331,9 +336,23 @@ export class PgItemStore implements ItemStore {
   }
 
   async list(filters: ItemFilters): Promise<PaginatedResult<Item>> {
-    const sortField = filters.sort ?? "created_at";
+    const sort = parseSortField(filters.sort);
     const dir = filters.direction ?? "desc";
     const limit = Math.min(filters.limit ?? 50, 200);
+
+    // For a property sort, the ORDER BY / cursor comparison runs against a
+    // JSON-extracted expression rather than a column. NULLS LAST is applied in
+    // both directions, with `id` as a stable ascending tiebreak.
+    const propertySort =
+      sort.kind === "property"
+        ? buildPropertySortExpr(
+            items.properties,
+            sort.field,
+            "pg",
+            filters.type,
+            filters.tenantId,
+          )
+        : null;
 
     const conditions = [];
 
@@ -442,39 +461,73 @@ export class PgItemStore implements ItemStore {
       }
     }
 
-    if (filters.cursor) {
-      const { v, id } = decodeCursor(filters.cursor);
-      const sortCol =
-        sortField === "updated_at"
+    const systemSortCol =
+      sort.kind === "system"
+        ? sort.column === "updated_at"
           ? items.updated_at
-          : sortField === "timestamp"
+          : sort.column === "timestamp"
             ? items.timestamp
-            : items.created_at;
-      if (dir === "desc") {
-        const clause = or(
-          lt(sortCol, v),
-          and(eq(sortCol, v), lt(items.id, id)),
-        );
-        if (clause) conditions.push(clause);
-      } else {
-        const clause = or(
-          gt(sortCol, v),
-          and(eq(sortCol, v), gt(items.id, id)),
-        );
-        if (clause) conditions.push(clause);
+            : items.created_at
+        : null;
+
+    if (filters.cursor) {
+      const { v, id } = decodeCursorNullable(filters.cursor);
+      if (propertySort) {
+        // Keyset over a nullable, NULLS-LAST expression. `id` is an ascending
+        // tiebreak in both directions, so the page boundary is a total order.
+        const e = propertySort.expr;
+        if (v === null) {
+          // Already in the trailing NULL block — only later NULL rows remain.
+          conditions.push(and(sql`${e} IS NULL`, gt(items.id, id)));
+        } else {
+          // The numeric path compares against `::numeric`; bind a number so the
+          // comparison stays numeric rather than coercing to text.
+          const bound = propertySort.numeric
+            ? sql`${Number(v)}::numeric`
+            : sql`${v}`;
+          const valueCmp =
+            dir === "desc" ? sql`${e} < ${bound}` : sql`${e} > ${bound}`;
+          const clause = or(
+            valueCmp,
+            and(sql`${e} = ${bound}`, gt(items.id, id)),
+            sql`${e} IS NULL`,
+          );
+          if (clause) conditions.push(clause);
+        }
+      } else if (systemSortCol && v !== null) {
+        // System columns are NOT NULL, so the cursor value is always present.
+        if (dir === "desc") {
+          const clause = or(
+            lt(systemSortCol, v),
+            and(eq(systemSortCol, v), lt(items.id, id)),
+          );
+          if (clause) conditions.push(clause);
+        } else {
+          const clause = or(
+            gt(systemSortCol, v),
+            and(eq(systemSortCol, v), gt(items.id, id)),
+          );
+          if (clause) conditions.push(clause);
+        }
       }
     }
 
-    const sortCol =
-      sortField === "updated_at"
-        ? items.updated_at
-        : sortField === "timestamp"
-          ? items.timestamp
-          : items.created_at;
-    const orderBy =
-      dir === "desc"
-        ? [desc(sortCol), desc(items.id)]
-        : [asc(sortCol), asc(items.id)];
+    let orderBy;
+    if (propertySort) {
+      const e = propertySort.expr;
+      // Postgres defaults to NULLS FIRST on DESC, so spell out NULLS LAST in
+      // both directions to keep absent values at the tail consistently.
+      orderBy = [
+        dir === "desc" ? sql`${e} DESC NULLS LAST` : sql`${e} ASC NULLS LAST`,
+        asc(items.id),
+      ];
+    } else {
+      const col = systemSortCol ?? items.created_at;
+      orderBy =
+        dir === "desc"
+          ? [desc(col), desc(items.id)]
+          : [asc(col), asc(items.id)];
+    }
 
     const rows = await this.db
       .select()
@@ -491,11 +544,13 @@ export class PgItemStore implements ItemStore {
       const last = data.at(-1);
       if (!last) throw new Error("unreachable: hasMore but data is empty");
       const sortValue =
-        sortField === "updated_at"
-          ? last.updated_at
-          : sortField === "timestamp"
-            ? last.timestamp
-            : last.created_at;
+        sort.kind === "property"
+          ? propertySortValue(last.properties, sort)
+          : sort.column === "updated_at"
+            ? last.updated_at
+            : sort.column === "timestamp"
+              ? last.timestamp
+              : last.created_at;
       cursor = encodeCursor(sortValue, last.id);
     }
 
