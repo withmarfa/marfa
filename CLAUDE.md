@@ -183,6 +183,19 @@ When changing schema:
 
 FTS5 virtual tables stay inline in `sqlite/connection.ts` because Drizzle Kit can't express them. Don't add other inline DDL.
 
+### Migrations on the hosted deploy (migrate-then-deploy)
+
+The server does **not** migrate on boot. The hosted Cloudflare Containers deploy applies pending migrations as an explicit step **before** the container rolls — a schema-bearing image started against the old schema crash-loops (Cloudflare surfaces a generic "Failed to start container" 500 that masks the real cause). The canonical ordering is **migrate-then-deploy**.
+
+- **Helper.** `infra/cloudflare/scripts/migrate-server-db.sh <staging|prod>` runs `pnpm --filter @withmarfa/server run migrate` with `DB_DIALECT=pg` and `DATABASE_URL` set to the env's **direct (unpooled)** Postgres URL. The migrator opens a single dedicated connection and runs DDL, which the pooled (transaction-mode PgBouncer) endpoint can't support — so the migrate step always uses the direct URL while the running app uses the pooled URL.
+- **Wiring.** `deploy-server-container.sh` calls the helper before `wrangler deploy` (skip with `SKIP_MIGRATE=1`). The `deploy-server-container.yml` workflow runs migrations in a dedicated `migrate` job that gates `deploy` (`deploy: needs: [build-push, migrate]`), so a failed migration blocks the rollout. A failed migration is always a hard stop — the container is never rolled against an unmigrated DB.
+- **Per-env DB URLs.** Resolution is per-env with a backward-compat fallback to the legacy shared name for staging:
+  - staging direct: `NEON_DATABASE_URL_STAGING` → fallback `NEON_DATABASE_URL_MARFA`
+  - prod direct: `NEON_DATABASE_URL_PROD`
+  - staging pooled (app secret): `NEON_DATABASE_URL_POOLED_STAGING` → fallback `NEON_DATABASE_URL_POOLED_MARFA`
+  - prod pooled (app secret): `NEON_DATABASE_URL_POOLED_PROD`
+- **Ordering caveat for constraint-tightening migrations.** Migrate-then-deploy is safe for additive / backward-compatible migrations (the common case). A migration that **tightens** a constraint (e.g. a new UNIQUE index) must not pre-date the code that keeps the data satisfying it — ship the code change in an earlier deploy than the tightening migration, so the constraint only lands once nothing writes a violating row. The pipeline can't detect this; it's a per-migration authoring discipline.
+
 ## OpenAPI
 
 Routes use `@hono/zod-openapi` with request/response schemas. The OpenAPI 3.1 spec is generated from the route definitions — not maintained manually. Run `pnpm --silent --filter @withmarfa/server generate:openapi > openapi.json` to update the committed spec. The spec endpoint is available at `GET /openapi.json` on a running server.

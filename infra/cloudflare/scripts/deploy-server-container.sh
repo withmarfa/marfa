@@ -14,7 +14,25 @@
 #   - CLOUDFLARE_API_TOKEN     (marfa-account token; export = $CLOUDFLARE_API_TOKEN_MARFA)
 #   - CLOUDFLARE_ACCOUNT_ID    (marfa account id)
 #
+# Migrate-before-deploy (canonical ordering: migrate-then-deploy):
+#   Unless SKIP_MIGRATE=1, this runs pending Drizzle migrations against the
+#   target env's DIRECT (unpooled) Neon URL BEFORE rolling the container. The
+#   server does not migrate on boot, so a schema-bearing image would otherwise
+#   crash-loop against the old schema (Cloudflare surfaces it as a generic
+#   "Failed to start container" 500 that masks the cause). A failed migration
+#   aborts the deploy (set -e) — the container is never rolled against an
+#   unmigrated DB. Required for the migrate step (unless SKIP_MIGRATE=1):
+#     - staging: NEON_DATABASE_URL_STAGING (or legacy NEON_DATABASE_URL_MARFA)
+#     - prod:    NEON_DATABASE_URL_PROD
+#   The running app uses the POOLED URL (DATABASE_URL Worker secret, set by
+#   init-server-container-secrets.sh) — only the migrate step uses the direct URL.
+#   Ordering caveat: a constraint-TIGHTENING migration (e.g. a new UNIQUE index)
+#   must not pre-date the code that keeps the data satisfying it — split it into
+#   a later deploy than the code change. See migrate-server-db.sh.
+#
 # Optional env:
+#   - SKIP_MIGRATE             (set to 1 to skip the pre-deploy migrate step;
+#                               only when the DB is known to be already migrated)
 #   - SERVER_IMAGE_TAG         (image tag in the managed registry; default "staging"/"prod")
 #   - SERVER_IMAGE             (full registry ref; overrides the derived one)
 #   - V_BLOB_BACKEND           ("s3" once R2 creds exist; default "fs" for staging validation)
@@ -49,6 +67,17 @@ if (( ${#MISSING[@]} > 0 )); then
   echo "error: required env vars not set:" >&2
   printf '  - %s\n' "${MISSING[@]}" >&2
   exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Migrate-then-deploy: apply pending schema migrations against the direct Neon
+# URL BEFORE rolling the container. set -e aborts the whole deploy if this
+# fails, so the container is never rolled against an unmigrated DB.
+if [[ "${SKIP_MIGRATE:-}" == "1" ]]; then
+  echo "→ SKIP_MIGRATE=1 — skipping pre-deploy migration (operator asserts DB already migrated)"
+else
+  "$SCRIPT_DIR/migrate-server-db.sh" "$ENV_NAME"
 fi
 
 # Shared / derived.
@@ -96,7 +125,6 @@ fi
 
 export SERVER_IMAGE="${SERVER_IMAGE:-registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/marfa-server:${SERVER_IMAGE_TAG}}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="$(cd "$SCRIPT_DIR/../server-container" && pwd)"
 SOURCE_JSONC="$PKG_DIR/wrangler.jsonc"
 RENDERED_JSONC="$PKG_DIR/.wrangler.rendered.jsonc"
