@@ -5,14 +5,25 @@
 # to Cloudflare's managed registry; the fast bind+deploy runs on a GitHub-hosted
 # Linux runner referencing the pushed image by tag.
 #
-# Manual trigger only — this is the riskiest deploy. Runtime secrets
-# (DATABASE_URL, MARFA_AUTH_SECRET, ...) are set out-of-band via
-# infra/cloudflare/scripts/init-server-container-secrets.sh and persist on the
-# Worker; this workflow does not handle them.
+# Manual trigger only — this is the riskiest deploy. The Worker's runtime
+# secrets (the pooled DATABASE_URL, MARFA_AUTH_SECRET, ...) are set out-of-band
+# via infra/cloudflare/scripts/init-server-container-secrets.sh and persist on
+# the Worker; this workflow does not set them.
+#
+# Migrate-then-deploy: the `migrate` job applies pending Drizzle migrations
+# against the target env's DIRECT (unpooled) Neon URL BEFORE the container
+# rolls. The server does not migrate on boot, so a schema-bearing image would
+# otherwise crash-loop against the old schema (Cloudflare surfaces a generic
+# "Failed to start container" 500 that masks the cause). `deploy` needs both
+# `build-push` and `migrate`, so a failed migration blocks the rollout and the
+# container is never started against an unmigrated DB. The deploy job passes
+# SKIP_MIGRATE=1 because the gating `migrate` job has already applied them.
 #
 # Required GitHub config (org or repo):
 #   secrets.CLOUDFLARE_API_TOKEN      marfa-account token (CLOUDFLARE_API_TOKEN_MARFA)
 #   secrets.CLOUDFLARE_ACCOUNT_ID     marfa account id
+#   secrets.NEON_DATABASE_URL_STAGING direct (unpooled) Neon URL, staging branch
+#   secrets.NEON_DATABASE_URL_PROD    direct (unpooled) Neon URL, production branch
 #   vars.STAGING_WORKERS_SUBDOMAIN    account workers.dev subdomain (staging auth base URL)
 #
 # The self-hosted runner must be enabled (gh-runner enable) for the build job.
@@ -63,8 +74,31 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler containers push "marfa-server:${{ steps.meta.outputs.tag }}"
 
-  deploy:
+  # Apply pending DB migrations BEFORE the container rolls. Gates `deploy`:
+  # a failed migration here blocks the rollout, so the container never starts
+  # against an unmigrated schema. Uses the DIRECT (unpooled) Neon URL — the
+  # running app uses the pooled URL (a Worker secret set out-of-band).
+  migrate:
     needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Apply migrations (direct Neon URL)
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment }}
+          NEON_DATABASE_URL_STAGING: ${{ secrets.NEON_DATABASE_URL_STAGING }}
+          NEON_DATABASE_URL_PROD: ${{ secrets.NEON_DATABASE_URL_PROD }}
+        run: ./infra/cloudflare/scripts/migrate-server-db.sh "$ENVIRONMENT"
+
+  deploy:
+    needs: [build-push, migrate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +111,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Deploy Worker + container
         env:
+          # Migrations already applied by the gating `migrate` job — don't repeat
+          # them in the deploy script (and the deploy job carries no DB URL).
+          SKIP_MIGRATE: "1"
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           # When STAGING_WORKERS_SUBDOMAIN is empty, the deploy script derives

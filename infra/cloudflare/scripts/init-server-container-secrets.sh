@@ -10,9 +10,18 @@
 #
 # Reads values from the calling shell's environment (source your per-machine
 # secrets file first). Secret slots use consumer-scoped names; the source env
-# vars carry the *_MARFA developer suffix.
+# vars carry the *_MARFA / *_STAGING / *_PROD developer suffix.
 #
-#   DATABASE_URL                <- NEON_DATABASE_URL_POOLED_MARFA  (pooled app conn)
+# The DATABASE_URL Worker secret is the POOLED (PgBouncer) endpoint and is
+# resolved PER-ENV, with a backward-compat fallback to the legacy shared
+# *_MARFA name so existing operator shells keep working:
+#
+#   DATABASE_URL  staging  <- NEON_DATABASE_URL_POOLED_STAGING || NEON_DATABASE_URL_POOLED_MARFA
+#   DATABASE_URL  prod     <- NEON_DATABASE_URL_POOLED_PROD
+#
+# (Pre-deploy migrations use the DIRECT/unpooled URL instead — see
+# migrate-server-db.sh. App = pooled, migrate = direct.)
+#
 #   MARFA_AUTH_SECRET           <- MARFA_SERVER_AUTH_SECRET        (stable; generated if unset)
 #   API_KEY_SALT                <- MARFA_SERVER_API_KEY_SALT       (stable; generated if unset)
 #   CLOUDFLARE_EMAIL_API_TOKEN  <- CLOUDFLARE_API_TOKEN_MARFA
@@ -51,7 +60,22 @@ put_secret() { # name value
   echo "  ✓ set $name"
 }
 
-: "${NEON_DATABASE_URL_POOLED_MARFA:?set NEON_DATABASE_URL_POOLED_MARFA}"
+# Resolve the POOLED app DB URL per-env, with a legacy fallback for staging.
+if [[ "$ENV_NAME" == "staging" ]]; then
+  POOLED_DB_URL="${NEON_DATABASE_URL_POOLED_STAGING:-${NEON_DATABASE_URL_POOLED_MARFA:-}}"
+else
+  POOLED_DB_URL="${NEON_DATABASE_URL_POOLED_PROD:-}"
+fi
+if [[ -z "$POOLED_DB_URL" ]]; then
+  echo "error: no pooled Neon URL resolved for $ENV_NAME" >&2
+  if [[ "$ENV_NAME" == "staging" ]]; then
+    echo "  set NEON_DATABASE_URL_POOLED_STAGING (or legacy NEON_DATABASE_URL_POOLED_MARFA)" >&2
+  else
+    echo "  set NEON_DATABASE_URL_POOLED_PROD" >&2
+  fi
+  exit 1
+fi
+
 : "${CLOUDFLARE_API_TOKEN_MARFA:?set CLOUDFLARE_API_TOKEN_MARFA}"
 : "${POSTHOG_PROJECT_KEY_MARFA:?set POSTHOG_PROJECT_KEY_MARFA}"
 
@@ -61,7 +85,7 @@ if [[ -z "$AUTH_SECRET" ]]; then AUTH_SECRET="$(openssl rand -hex 32)"; GEN_AUTH
 if [[ -z "$SALT" ]]; then SALT="$(openssl rand -hex 32)"; GEN_SALT=1; fi
 
 echo "→ Setting secrets on $WORKER"
-put_secret DATABASE_URL "$NEON_DATABASE_URL_POOLED_MARFA"
+put_secret DATABASE_URL "$POOLED_DB_URL"
 put_secret MARFA_AUTH_SECRET "$AUTH_SECRET"
 put_secret API_KEY_SALT "$SALT"
 put_secret CLOUDFLARE_EMAIL_API_TOKEN "$CLOUDFLARE_API_TOKEN_MARFA"
