@@ -46,12 +46,57 @@ describe("POST /items", () => {
     expect(res.status).toBe(400);
   });
 
-  it("accepts unknown type (community types)", async () => {
+  it("rejects an unregistered type with unknown_type", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
-      body: { type: "core.nonexistent", properties: {} },
+      body: { type: "zzz.totally.unregistered", properties: { foo: "bar" } },
+    });
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { error: { code: string } };
+    expect(data.error.code).toBe("unknown_type");
+  });
+
+  it("rejects an empty properties object that omits a required field", async () => {
+    // An empty `{}` must run the same required-field validation as a
+    // partially-filled body — a core.note with no `body` is invalid either way.
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: {} },
+    });
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { error: { code: string } };
+    expect(data.error.code).toBe("validation_error");
+  });
+
+  it("rejects a null byte in a string property with a 400, never a 500", async () => {
+    // A U+0000 null byte cannot be stored in a Postgres TEXT column; without
+    // the validation-layer guard it reaches the driver and surfaces as a 500.
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "a\u0000b" } },
+    });
+    expect(res.status).toBe(400);
+    const data = (await res.json()) as { error: { code: string } };
+    expect(data.error.code).toBe("validation_error");
+  });
+
+  it("round-trips emoji, RTL, accents, newlines, and tabs byte-identically", async () => {
+    // Only U+0000 is rejected; every other control character and higher
+    // Unicode codepoint must survive the write unchanged.
+    const body = "emoji 😀 rtl ‮ accent é em—dash\ttab\nnewline";
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body } },
     });
     expect(res.status).toBe(201);
+    const data = (await res.json()) as { item: { id: string } };
+    const fetched = await request(ctx.app, "GET", `/items/${data.item.id}`, {
+      key: ctx.adminKey,
+    });
+    const fetchedData = (await fetched.json()) as {
+      item: { properties: { body: string } };
+    };
+    expect(fetchedData.item.properties.body).toBe(body);
   });
 
   it("rejects request without auth", async () => {

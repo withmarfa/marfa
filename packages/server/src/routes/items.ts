@@ -142,6 +142,7 @@ const createItemRoute = createRoute({
             "validation_error",
             "missing_required_field",
             "invalid_type",
+            "unknown_type",
             "invalid_id",
             "invalid_properties",
             "edge_constraint_violation",

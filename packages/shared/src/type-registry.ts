@@ -323,12 +323,24 @@ export function isSubtypeOf(typeId: string, parentId: string): boolean {
 // Validation — Zod schema generation from field definitions
 // ---------------------------------------------------------------------------
 
+// Postgres TEXT columns cannot store the NUL codepoint (U+0000) — the byte
+// reaches the driver and throws, surfacing as an unhandled 500 on otherwise
+// well-formed client input. Reject it at the validation layer so every string
+// field is covered at once and the caller gets a clean 400 instead. NUL is the
+// only codepoint Postgres TEXT outright refuses; every other control character
+// (tab, newline, carriage return) and all higher Unicode (emoji, RTL marks,
+// accents) round-trip unchanged, so the guard is scoped to U+0000 alone.
+const noNullByte = (schema: z.ZodString): z.ZodType =>
+  schema.refine((value) => !value.includes("\u0000"), {
+    message: "Must not contain a null byte (U+0000)",
+  });
+
 function fieldToZod(field: FieldDefinition): z.ZodType {
   let schema: z.ZodType;
 
   switch (field.type) {
     case "string":
-      schema = z.string();
+      schema = noNullByte(z.string());
       break;
     case "number":
       schema = z.number();
@@ -346,16 +358,16 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       schema = z.email();
       break;
     case "datetime":
-      schema = z.string();
+      schema = noNullByte(z.string());
       break;
     case "date":
-      schema = z.string();
+      schema = noNullByte(z.string());
       break;
     case "enum":
       if (field.enum_values && field.enum_values.length > 0) {
         schema = z.enum(field.enum_values as [string, ...string[]]);
       } else {
-        schema = z.string();
+        schema = noNullByte(z.string());
       }
       break;
     case "array":

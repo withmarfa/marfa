@@ -1131,7 +1131,9 @@ describe("items.bulk", () => {
     const sourceId = `co-${suffix}`;
 
     await client.items.bulk({
-      items: [{ type: "core.note", properties: {}, source_id: sourceId }],
+      items: [
+        { type: "core.note", properties: { body: "v1" }, source_id: sourceId },
+      ],
       mode: "create_only",
     });
 

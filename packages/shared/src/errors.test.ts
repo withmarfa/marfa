@@ -45,6 +45,7 @@ describe("httpStatus", () => {
     expect(httpStatus(ErrorCode.FORBIDDEN)).toBe(403);
     expect(httpStatus(ErrorCode.INVALID_TRANSITION)).toBe(400);
     expect(httpStatus(ErrorCode.TYPE_NOT_FOUND)).toBe(404);
+    expect(httpStatus(ErrorCode.UNKNOWN_TYPE)).toBe(400);
     expect(httpStatus(ErrorCode.DUPLICATE_SOURCE)).toBe(409);
   });
 
