@@ -9,6 +9,7 @@ import {
   isValidTypeIdentifier,
   isValidHandle,
   isReservedHandle,
+  deriveHandleFromEmail,
   matchesTypePattern,
   resolveTypePermission,
 } from "./validation.js";
@@ -389,6 +390,60 @@ describe("isValidHandle", () => {
     expect(isValidHandle(undefined as unknown as string)).toBe(false);
     expect(isValidHandle(null as unknown as string)).toBe(false);
     expect(isValidHandle(42 as unknown as string)).toBe(false);
+  });
+});
+
+describe("deriveHandleFromEmail", () => {
+  it("derives a valid handle from a clean local part", () => {
+    expect(deriveHandleFromEmail("alice@example.com")).toBe("alice");
+    expect(deriveHandleFromEmail("august-cayzer@example.com")).toBe(
+      "august-cayzer",
+    );
+  });
+
+  it("always returns a value that passes isValidHandle", () => {
+    for (const email of [
+      "alice@example.com",
+      "a.b.c@example.com",
+      "x@example.com",
+      "@example.com",
+      "UPPER.Case@Example.com",
+      "weird!!!chars###@x.io",
+      "admin@example.com",
+      "a-very-long-local-part-that-exceeds-the-thirty-two-char-limit@x.io",
+      "...@x.io",
+    ]) {
+      const handle = deriveHandleFromEmail(email);
+      expect(isValidHandle(handle), `handle for ${email}: ${handle}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("lowercases and replaces dots and invalid runs with single hyphens", () => {
+    expect(deriveHandleFromEmail("First.Last@example.com")).toBe("first-last");
+    expect(deriveHandleFromEmail("a..b@example.com")).toBe("a-b");
+    expect(deriveHandleFromEmail("a_b+c@example.com")).toBe("a-b-c");
+  });
+
+  it("pads a too-short local part to clear the 3-char floor", () => {
+    expect(deriveHandleFromEmail("x@example.com")).toBe("user-x");
+    // The bare "user" fallback is itself reserved, so it gets suffixed.
+    expect(deriveHandleFromEmail("@example.com")).toBe("user-1");
+  });
+
+  it("caps the result at 32 characters with no trailing hyphen", () => {
+    const handle = deriveHandleFromEmail(
+      "a-very-long-local-part-that-keeps-going-well-past-the-limit@x.io",
+    );
+    expect(handle.length).toBeLessThanOrEqual(32);
+    expect(handle.endsWith("-")).toBe(false);
+  });
+
+  it("suffixes a reserved local part so it is no longer reserved", () => {
+    const handle = deriveHandleFromEmail("admin@example.com");
+    expect(isReservedHandle(handle)).toBe(false);
+    expect(isValidHandle(handle)).toBe(true);
   });
 });
 

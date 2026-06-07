@@ -29,6 +29,7 @@ import {
 } from "./sign-in-page.js";
 import { renderSignUpPage } from "./sign-up-page.js";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
+import { renderKeysPage, type KeysPageKey } from "./keys-page.js";
 import { renderPasskeyEnrollPage } from "./passkey-enroll-page.js";
 import { renderForgotPasswordPage } from "./forgot-password-page.js";
 import { renderResetPasswordPage } from "./reset-password-page.js";
@@ -734,6 +735,11 @@ export function authRoutes(
         email: emailStr,
         password: passwordStr,
         name: nameStr,
+        // Carry the chosen handle through to the `databaseHooks.user.create`
+        // provisioning hook, which reads it off `ctx.body.username` and
+        // claims it (falling back to an email-derived handle if it's
+        // unusable). Pre-validated above for a friendly synchronous error.
+        username: usernameLower,
         // Thread the post-verification target through to Better Auth so the
         // verification email's link returns the user into the app rather
         // than the API root. Without this, Better Auth defaults callbackURL
@@ -744,76 +750,13 @@ export function authRoutes(
     const response = await auth.handler(upstream);
 
     if (response.ok) {
-      // Provision the Marfa tenant + users row atomically with the
-      // Better Auth account. Reads the new auth_user.id from the
-      // upstream response body. Better Auth returns 200 with
-      // `{ token, user: { id, email, ... } }` on success — `token` may
-      // be null when requireEmailVerification is on, but `user.id` is
-      // always populated.
-      //
-      // The response body has already been read in some paths below
-      // (verification redirect path doesn't); we tee here so the
-      // post-tee branches still see a fresh body.
-      const responseClone = response.clone();
-      let provisioningError: Error | null = null;
-      let provisionedAuthUserId: string | null = null;
-      if (storage.users && storage.tenants) {
-        try {
-          const upstreamBody = (await responseClone.json()) as {
-            user?: { id?: string };
-          };
-          const authUserId = upstreamBody.user?.id;
-          if (typeof authUserId !== "string" || authUserId.length === 0) {
-            throw new Error(
-              "Better Auth sign-up response missing user.id; refusing to provision tenant blind",
-            );
-          }
-          provisionedAuthUserId = authUserId;
-          // With `requireEmailVerification: true`, Better Auth's
-          // generic-duplicate-response shape returns the existing user's
-          // id (the no-enumeration invariant). If that user already has
-          // a Marfa `users` row we skip provisioning — they're a
-          // returning duplicate and the verify-email page is the right
-          // next stop. The handle typed in this attempt is silently
-          // ignored since they've already claimed theirs at signup.
-          const existing = await storage.users.getByAuthUserId(authUserId);
-          if (!existing) {
-            const tenant = await storage.tenants.create(nameStr);
-            await storage.users.create({
-              name: nameStr,
-              provider: "better-auth",
-              provider_id: authUserId,
-              tenant_id: tenant.id,
-              handle: usernameLower,
-              auth_user_id: authUserId,
-            });
-          }
-        } catch (err) {
-          provisioningError =
-            err instanceof Error ? err : new Error(String(err));
-        }
-      }
-      if (provisioningError) {
-        // Best-effort rollback. Better Auth's API exposes
-        // `removeUser({ userId })` via its internal API surface. We
-        // don't have a typed handle to it from inside this wrapper;
-        // log loudly so an operator can clean up the orphan
-        // auth_user row manually. The provisioning error is the
-        // primary signal — the user sees signup_failed and re-tries
-        // with a different (e.g. less collision-prone) input.
-        await storage.audit.log({
-          action: "auth.sign_up.provision_failed",
-          resource_type: "auth_user",
-          resource_id: provisionedAuthUserId ?? emailStr,
-          client_ip: c.var.clientIp ?? null,
-          details: {
-            email: emailStr,
-            error: provisioningError.message,
-          },
-        });
-        return errorRedirect("signup_failed");
-      }
-
+      // Tenant + users-row provisioning is owned by the
+      // `databaseHooks.user.create.after` hook on the auth instance, so
+      // it runs identically for this form path and the programmatic
+      // `POST /auth/sign-up/email` path. A provisioning failure rejects
+      // the upstream sign-up (the hook rethrows after auditing), so
+      // `response.ok` here already implies the tenant exists. This
+      // wrapper only translates the result into the no-JS redirect flow.
       void storage.audit.log({
         action: "auth.sign_up",
         resource_type: "auth_user",
@@ -884,6 +827,162 @@ export function authRoutes(
       // Fall through to the generic signup_failed code.
     }
     return errorRedirect(errorCode);
+  });
+
+  // -----------------------------------------------------------------------
+  // Self-serve API keys (HTML console)
+  // -----------------------------------------------------------------------
+  //
+  // Cookie-authenticated key management for a tenant owner. The data plane
+  // (`/items`, `/keys`, …) stays strictly bearer-only; this surface lives
+  // in the `/auth/*` zone where the Better Auth session cookie is the
+  // authenticator. It's the self-serve path a freshly-onboarded hosted
+  // user takes to mint their first long-lived `marfa_k1_` key after
+  // sign-up + verification, with no pre-existing bearer token to bootstrap
+  // from. Keys minted here are `tenant_admin` (the space owner) scoped to
+  // the user's own tenant.
+
+  // Resolve the signed-in user's marfa profile (carrying tenant_id) from
+  // their Better Auth session. Null when the account has no Marfa tenant
+  // (keys-mode self-host, or an unprovisioned edge case).
+  async function resolveSessionUser(session: MarfaAuthSession) {
+    if (!storage.users) return null;
+    return storage.users.getByAuthUserId(session.user.id);
+  }
+
+  // The tenant's keys, mapped to the console's view shape.
+  async function listTenantKeys(tenantId: string): Promise<KeysPageKey[]> {
+    const all = await storage.keys.list();
+    return all
+      .filter((k) => k.tenant_id === tenantId)
+      .map((k) => ({
+        id: k.id,
+        label: k.label,
+        source: k.source,
+        created_at: k.created_at,
+        last_used_at: k.last_used_at,
+      }));
+  }
+
+  const noTenantPage = (session: MarfaAuthSession): string =>
+    renderKeysPage({
+      email: session.user.email,
+      keys: [],
+      notice: {
+        kind: "error",
+        text: "No Marfa space is provisioned for this account yet.",
+      },
+    });
+
+  router.get("/keys", async (c) => {
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
+    setNoStore(c);
+    const userRow = await resolveSessionUser(gated.session);
+    if (!userRow?.tenant_id) {
+      return c.html(noTenantPage(gated.session));
+    }
+    const keys = await listTenantKeys(userRow.tenant_id);
+    return c.html(renderKeysPage({ email: gated.session.user.email, keys }));
+  });
+
+  router.post("/keys", async (c) => {
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
+    setNoStore(c);
+    const userRow = await resolveSessionUser(gated.session);
+    if (!userRow?.tenant_id) {
+      return c.html(noTenantPage(gated.session));
+    }
+    const tenantId = userRow.tenant_id;
+
+    const formData = await c.req.formData();
+    const labelRaw = formData.get("label");
+    const label = typeof labelRaw === "string" ? labelRaw.trim() : "";
+    if (!label) {
+      const keys = await listTenantKeys(tenantId);
+      return c.html(
+        renderKeysPage({
+          email: gated.session.user.email,
+          keys,
+          notice: { kind: "error", text: "A label is required." },
+        }),
+      );
+    }
+
+    const rawKey = `marfa_k1_${randomBytes(32).toString("hex")}`;
+    const stored = await storage.keys.create(
+      {
+        label,
+        // The label doubles as the key's `source` — the provenance stamped
+        // onto items written with it, surfaced back to the owner.
+        source: label,
+        role: "tenant_admin",
+        is_platform: false,
+        type_permissions: {},
+      },
+      hashApiKey(rawKey, salt),
+      tenantId,
+    );
+    void storage.audit.log({
+      tenant_id: tenantId,
+      action: "key.create",
+      resource_type: "key",
+      resource_id: stored.id,
+      client_ip: c.var.clientIp ?? null,
+      details: { source: "auth_console" },
+    });
+
+    const keys = await listTenantKeys(tenantId);
+    return c.html(
+      renderKeysPage({
+        email: gated.session.user.email,
+        keys,
+        // Shown once, in this response body — never via a redirect query.
+        newKey: rawKey,
+        notice: { kind: "success", text: "Key created." },
+      }),
+    );
+  });
+
+  router.post("/keys/:id/revoke", async (c) => {
+    const gated = await requireConsentSession(c);
+    if (gated instanceof Response) return gated;
+    setNoStore(c);
+    const userRow = await resolveSessionUser(gated.session);
+    if (!userRow?.tenant_id) {
+      return c.html(noTenantPage(gated.session));
+    }
+    const tenantId = userRow.tenant_id;
+    const id = c.req.param("id");
+
+    // Tenant-scope the revoke: only act on a key in the caller's own
+    // tenant. A miss is silently treated as already-gone so cross-tenant
+    // probes can't enumerate key ids.
+    const target = await storage.keys.get(id);
+    const matched = target?.tenant_id === tenantId;
+    if (matched) {
+      await storage.keys.revoke(id);
+      void storage.audit.log({
+        tenant_id: tenantId,
+        action: "key.revoke",
+        resource_type: "key",
+        resource_id: id,
+        client_ip: c.var.clientIp ?? null,
+        details: { source: "auth_console" },
+      });
+    }
+
+    const keys = await listTenantKeys(tenantId);
+    return c.html(
+      renderKeysPage({
+        email: gated.session.user.email,
+        keys,
+        notice: matched
+          ? { kind: "success", text: "Key revoked." }
+          : { kind: "error", text: "Key not found." },
+      }),
+    );
   });
 
   // -----------------------------------------------------------------------
