@@ -460,7 +460,8 @@ CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_client_user_id\` ON \`auth_oauth_cli
 
 CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_consent_reference_id\` ON \`auth_oauth_consent\` (\`reference_id\`);
 
-CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_consent_user_client\` ON \`auth_oauth_consent\` (\`user_id\`,\`client_id\`);
+CREATE UNIQUE INDEX IF NOT EXISTS \`uq_auth_oauth_consent_client_user\`
+  ON \`auth_oauth_consent\` (\`client_id\`, \`user_id\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_auth_oauth_refresh_token_client_id\` ON \`auth_oauth_refresh_token\` (\`client_id\`);
 

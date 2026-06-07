@@ -456,6 +456,13 @@
       "when": 1780790400000,
       "tag": "0064_custom_edge_types_tenant_pk",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1780790401000,
+      "tag": "0065_oauth_consent_unique",
+      "breakpoints": true
     }
   ]
 }

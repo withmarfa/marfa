@@ -906,11 +906,15 @@ export const auth_oauth_consent = pgTable(
     updatedAt: timestamp("updated_at", { mode: "date" }),
   },
   (table) => [
-    // Compound index for the re-consent diff lookup
-    // (`/auth/authorize` reads prior consent for this user+client).
-    index("idx_auth_oauth_consent_user_client").on(
-      table.userId,
+    // One consent row per user-client pair. The OAuth Provider plugin's
+    // consent endpoint resolves a prior grant and updates in place, but
+    // its lookup keys on (clientId, userId, referenceId), so a re-consent
+    // that resolves a different referenceId would otherwise insert a
+    // duplicate. The idempotent adapter wrapper upserts on this pair; the
+    // constraint is the backstop against a concurrent double-insert.
+    uniqueIndex("uq_auth_oauth_consent_client_user").on(
       table.clientId,
+      table.userId,
     ),
     index("idx_auth_oauth_consent_reference_id").on(table.referenceId),
   ],

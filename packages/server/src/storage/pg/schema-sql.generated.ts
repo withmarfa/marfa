@@ -1070,8 +1070,6 @@ CREATE INDEX IF NOT EXISTS idx_auth_oauth_client_user_id ON public.auth_oauth_cl
 
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_consent_reference_id ON public.auth_oauth_consent USING btree (reference_id);
 
-CREATE INDEX IF NOT EXISTS idx_auth_oauth_consent_user_client ON public.auth_oauth_consent USING btree (user_id, client_id);
-
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_client_id ON public.auth_oauth_refresh_token USING btree (client_id);
 
 CREATE INDEX IF NOT EXISTS idx_auth_oauth_refresh_token_token ON public.auth_oauth_refresh_token USING btree (token);
@@ -1149,6 +1147,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_handle ON public.users USING btree (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider ON public.users USING btree (provider, provider_id);
 
 CREATE INDEX IF NOT EXISTS idx_versions_item_id ON public.versions USING btree (item_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_oauth_consent_client_user ON public.auth_oauth_consent USING btree (client_id, user_id);
 
 DO $$
 BEGIN
