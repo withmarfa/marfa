@@ -196,6 +196,37 @@ export function isValidHandle(value: string): boolean {
 }
 
 /**
+ * Derive a syntactically valid handle base from an email address, for the
+ * programmatic sign-up path (`POST /auth/sign-up/email`) where the user
+ * supplies no handle of their own. The result satisfies `isValidHandle`
+ * (lowercase, 3–32 chars, single hyphens, not reserved), but callers must
+ * still resolve collisions at the storage layer before claiming it — this
+ * is a deterministic *candidate*, not a guaranteed-free claim.
+ *
+ * Sanitisation maps any run of non-`[a-z0-9]` characters (including
+ * existing hyphens) to a single hyphen, trims leading/trailing hyphens,
+ * and caps at 32 chars. A too-short or empty local part is padded to the
+ * 3-char floor with a `user-` prefix; a result that lands on a reserved
+ * word is suffixed so it clears `isReservedHandle`.
+ */
+export function deriveHandleFromEmail(email: string): string {
+  const sanitize = (s: string): string =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 32)
+      .replace(/-+$/g, "");
+
+  const local = typeof email === "string" ? (email.split("@")[0] ?? "") : "";
+  let base = sanitize(local);
+  if (base.length < 3) base = sanitize(`user-${base}`);
+  if (base.length < 3) base = "user";
+  if (isReservedHandle(base)) base = sanitize(`${base}-1`);
+  return base;
+}
+
+/**
  * Returns true if the value is a syntactically valid type identifier under
  * the five-tier namespace grammar. Who can register `core.*` / `system.*` /
  * `marfa.*` types is enforced separately at registration time, gated by the

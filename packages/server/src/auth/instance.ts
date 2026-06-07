@@ -1,7 +1,14 @@
+import { randomBytes } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { genericOAuth, jwt, magicLink } from "better-auth/plugins";
 import { passkey } from "@better-auth/passkey";
+import {
+  deriveHandleFromEmail,
+  isReservedHandle,
+  isValidHandle,
+} from "@withmarfa/shared";
+import type { UserStore } from "../storage/interface.js";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import * as pgSchema from "../storage/pg/schema.js";
 import { log } from "../middleware/logger.js";
@@ -114,6 +121,35 @@ const defaultLogTransport: EmailTransport = ({ email, url }) => {
     note: "configure MARFA_EMAIL_TRANSPORT for live delivery",
   });
 };
+
+/** Append `suffix` to `base`, truncating `base` so the result stays within
+ *  the 32-char handle limit and never ends on a stray hyphen before the
+ *  suffix. */
+function handleWithSuffix(base: string, suffix: string): string {
+  const room = Math.max(0, 32 - suffix.length);
+  const head = base.slice(0, room).replace(/-+$/g, "");
+  return `${head}${suffix}`;
+}
+
+/**
+ * Resolve a free, valid handle starting from `base`. Returns `base` if it's
+ * free; otherwise appends `-2`, `-3`, … until `getByHandle` reports the
+ * candidate is unclaimed. The loop is bounded; a pathological collision run
+ * falls back to a random nonce suffix so provisioning always resolves
+ * rather than looping or throwing.
+ */
+async function claimFreeHandle(
+  users: UserStore,
+  base: string,
+): Promise<string> {
+  for (let n = 1; n <= 50; n++) {
+    const candidate = n === 1 ? base : handleWithSuffix(base, `-${String(n)}`);
+    if (!isValidHandle(candidate)) continue;
+    const taken = await users.getByHandle(candidate);
+    if (!taken) return candidate;
+  }
+  return handleWithSuffix(base, `-${randomBytes(4).toString("hex")}`);
+}
 
 /** Authenticated user on a Better Auth session. Reduced surface — only the
  *  fields the OAuth consent flow currently consumes. */
@@ -376,6 +412,80 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           // configured but the upstream returns an error.
           throw new Error(`verify_email_send_failed:${result.error}`);
         }
+      },
+    },
+    databaseHooks: {
+      user: {
+        create: {
+          // Provision the Marfa tenant + users row for every new Better
+          // Auth account, regardless of how the account was created: the
+          // programmatic `POST /auth/sign-up/email`, the server-rendered
+          // `POST /auth/sign-up` form (which forwards to the same
+          // endpoint), and federated OIDC first sign-in all converge
+          // here. A tenant is the anchor for every credential and OAuth
+          // grant — it must exist before the user can authenticate, so a
+          // single hook on the create lifecycle is the one correct place
+          // for it. Keys-mode self-hosts have no per-user tenant model
+          // (no users/tenants store) and skip this entirely.
+          after: async (user, ctx) => {
+            const users = options.storage?.users;
+            const tenants = options.storage?.tenants;
+            if (!users || !tenants) return;
+
+            try {
+              // Idempotent: Better Auth's no-enumeration sign-up returns
+              // the existing user's id for a duplicate email, so a row may
+              // already exist — never double-provision.
+              const existing = await users.getByAuthUserId(user.id);
+              if (existing) return;
+
+              // Prefer an explicitly-submitted handle (the HTML form
+              // posts `username`); fall back to a deterministic handle
+              // derived from the email for the programmatic path, which
+              // carries none. Collisions are resolved before the claim.
+              const submittedRaw = (
+                ctx?.body as { username?: unknown } | undefined
+              )?.username;
+              const submitted =
+                typeof submittedRaw === "string"
+                  ? submittedRaw.trim().toLowerCase()
+                  : undefined;
+              const desired =
+                submitted &&
+                isValidHandle(submitted) &&
+                !isReservedHandle(submitted)
+                  ? submitted
+                  : deriveHandleFromEmail(user.email);
+              const handle = await claimFreeHandle(users, desired);
+
+              const tenant = await tenants.create(user.name);
+              await users.create({
+                name: user.name,
+                provider: "better-auth",
+                provider_id: user.id,
+                tenant_id: tenant.id,
+                handle,
+                auth_user_id: user.id,
+              });
+            } catch (err) {
+              // Surface the failure loudly — a signed-up user with no
+              // tenant is the exact stranded state this hook exists to
+              // prevent. Audit the orphan for operator cleanup, then
+              // rethrow so the sign-up request fails visibly rather than
+              // appearing to succeed.
+              void options.storage?.audit.log({
+                action: "auth.sign_up.provision_failed",
+                resource_type: "auth_user",
+                resource_id: user.id,
+                details: {
+                  email: user.email,
+                  error: err instanceof Error ? err.message : String(err),
+                },
+              });
+              throw err;
+            }
+          },
+        },
       },
     },
     plugins: [
