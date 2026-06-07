@@ -372,6 +372,13 @@
       "when": 1779638405000,
       "tag": "0052_t224_naming",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1780790400000,
+      "tag": "0053_custom_edge_types_tenant_pk",
+      "breakpoints": true
     }
   ]
 }

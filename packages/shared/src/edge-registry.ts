@@ -11,20 +11,54 @@ import { isSubtypeOf, TYPE_REGISTRY } from "./type-registry.js";
 export type { EdgeCardinality, EdgeCascade, EdgeTypeSchema };
 export { ALL_EDGE_TYPES };
 
-// Internal mutable map — exposed as ReadonlyMap to prevent accidental mutation.
-const _registry = new Map<string, EdgeTypeSchema>(
+// Core edge types are global — shipped with @withmarfa/types and shared by
+// every tenant. This map is read-only after construction.
+const _coreRegistry = new Map<string, EdgeTypeSchema>(
   ALL_EDGE_TYPES.map((schema) => [schema.id, schema]),
 );
 
-/** The edge-type registry — all registered edge-type schemas by identifier. */
-export const EDGE_TYPE_REGISTRY: ReadonlyMap<string, EdgeTypeSchema> =
-  _registry;
+/**
+ * Custom edge types are tenant-scoped. The outer key is the owning tenant's
+ * id; each tenant gets its own inner id→schema map. A custom edge type
+ * registered by tenant A is therefore invisible to tenant B's lookups —
+ * the isolation that keeps one tenant's relationship vocabulary out of
+ * another's. The sentinel `NULL_TENANT` key holds custom edge types with no
+ * tenant (single-tenant self-hosts, platform-registered types) so the
+ * keys-mode flow is unaffected.
+ */
+const _customByTenant = new Map<string, Map<string, EdgeTypeSchema>>();
 
-/** Returns the edge-type schema for the given identifier, or undefined. */
+// Sentinel for custom edge types with no owning tenant — single-tenant
+// self-hosts and platform-registered types. An empty string can't collide
+// with a real tenant id (ids are non-empty), so it's a safe bucket key.
+const NULL_TENANT = "";
+
+function tenantKey(tenantId: string | null | undefined): string {
+  return tenantId ?? NULL_TENANT;
+}
+
+/**
+ * The core edge-type registry — the eight global edge types by identifier.
+ * Custom (tenant-scoped) edge types are NOT exposed here; consumers that need
+ * the full set for a tenant call `listEdgeTypes(tenantId)`. The OAuth scope
+ * allow-list reads this for the static core-scope enumeration.
+ */
+export const EDGE_TYPE_REGISTRY: ReadonlyMap<string, EdgeTypeSchema> =
+  _coreRegistry;
+
+/**
+ * Resolves an edge-type schema for a given tenant. Core edge types resolve
+ * globally; custom edge types resolve only within their owning tenant. A
+ * lookup with no `tenantId` sees core types plus the null-tenant bucket
+ * (single-tenant self-hosts), never another tenant's custom types.
+ */
 export function getEdgeTypeSchema(
   edgeTypeId: string,
+  tenantId?: string | null,
 ): EdgeTypeSchema | undefined {
-  return _registry.get(edgeTypeId);
+  const core = _coreRegistry.get(edgeTypeId);
+  if (core) return core;
+  return _customByTenant.get(tenantKey(tenantId))?.get(edgeTypeId);
 }
 
 /**
@@ -39,19 +73,42 @@ export function isCoreEdgeType(edgeTypeId: string): boolean {
   return CORE_EDGE_TYPE_IDS.has(edgeTypeId);
 }
 
-/** Registers an edge-type schema into the in-memory registry. */
-export function registerEdgeTypeSchema(schema: EdgeTypeSchema): void {
-  _registry.set(schema.id, schema);
+/**
+ * Registers a custom edge-type schema into the tenant's overlay. Core edge
+ * types are never registered here (they live in the global map); callers
+ * filter them out before calling. `tenantId` is the owning tenant — omit it
+ * only for the null-tenant bucket (single-tenant self-host / platform).
+ */
+export function registerEdgeTypeSchema(
+  schema: EdgeTypeSchema,
+  tenantId?: string | null,
+): void {
+  const key = tenantKey(tenantId);
+  let bucket = _customByTenant.get(key);
+  if (!bucket) {
+    bucket = new Map<string, EdgeTypeSchema>();
+    _customByTenant.set(key, bucket);
+  }
+  bucket.set(schema.id, schema);
 }
 
-/** Removes an edge-type schema from the in-memory registry. */
-export function unregisterEdgeTypeSchema(id: string): void {
-  _registry.delete(id);
+/** Removes a custom edge-type schema from the tenant's overlay. */
+export function unregisterEdgeTypeSchema(
+  id: string,
+  tenantId?: string | null,
+): void {
+  _customByTenant.get(tenantKey(tenantId))?.delete(id);
 }
 
-/** Lists every registered edge-type (core + custom). */
-export function listEdgeTypes(): EdgeTypeSchema[] {
-  return [..._registry.values()];
+/**
+ * Lists every edge type visible to a tenant: the global core set plus that
+ * tenant's own custom edge types. With no `tenantId`, returns core plus the
+ * null-tenant bucket — never another tenant's custom types.
+ */
+export function listEdgeTypes(tenantId?: string | null): EdgeTypeSchema[] {
+  const custom = _customByTenant.get(tenantKey(tenantId));
+  if (!custom) return [..._coreRegistry.values()];
+  return [..._coreRegistry.values(), ...custom.values()];
 }
 
 // ---------------------------------------------------------------------------

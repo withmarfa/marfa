@@ -84,8 +84,10 @@ export async function createSqliteStorage(
   const edgeTypeStore = new SqliteEdgeTypeStore(db);
 
   void edgeTypeStore.loadCustomEdgeTypes().then((types) => {
-    for (const ct of types) {
-      if (!isCoreEdgeType(ct.id)) registerEdgeTypeSchema(ct);
+    for (const { tenant_id, schema } of types) {
+      // Register into the owning tenant's overlay so one tenant's custom
+      // edge types never resolve for another tenant's lookups.
+      if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema, tenant_id);
     }
   });
 

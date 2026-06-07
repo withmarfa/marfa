@@ -93,9 +93,12 @@ export async function createPgStorage(
   const edgeTypeStore = new PgEdgeTypeStore(db);
 
   const loadedCustomEdgeTypes = await edgeTypeStore.loadCustomEdgeTypes();
-  for (const ct of loadedCustomEdgeTypes) {
-    if (!isCoreEdgeType(ct.id)) {
-      registerEdgeTypeSchema(ct);
+  for (const { tenant_id, schema } of loadedCustomEdgeTypes) {
+    if (!isCoreEdgeType(schema.id)) {
+      // Register into the owning tenant's overlay so one tenant's custom
+      // edge types never resolve for another tenant's lookups. The
+      // empty-string sentinel maps to the null-tenant bucket.
+      registerEdgeTypeSchema(schema, tenant_id);
     }
   }
 

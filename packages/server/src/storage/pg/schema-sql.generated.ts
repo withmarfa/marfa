@@ -275,7 +275,7 @@ CREATE TABLE IF NOT EXISTS public.connection_oauth_tokens (
 
 CREATE TABLE IF NOT EXISTS public.custom_edge_types (
     id text NOT NULL,
-    tenant_id text,
+    tenant_id text DEFAULT ''::text NOT NULL,
     schema text NOT NULL,
     created_at text NOT NULL,
     updated_at text NOT NULL
@@ -781,9 +781,9 @@ WHERE c.conrelid = 'public.custom_edge_types'::regclass AND c.contype = 'p'
   AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
             ORDER BY k.ord)
-      = ARRAY['id']::text[]) THEN
+      = ARRAY['tenant_id', 'id']::text[]) THEN
     ALTER TABLE ONLY public.custom_edge_types
-        ADD CONSTRAINT custom_edge_types_pkey PRIMARY KEY (id);
+        ADD CONSTRAINT custom_edge_types_tenant_id_id_pk PRIMARY KEY (tenant_id, id);
   END IF;
 END
 $$;
@@ -1400,7 +1400,7 @@ CREATE POLICY connection_oauth_tokens_tenant_isolation ON public.connection_oaut
 ALTER TABLE public.custom_edge_types ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS custom_edge_types_tenant_isolation ON public.custom_edge_types;
-CREATE POLICY custom_edge_types_tenant_isolation ON public.custom_edge_types TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id IS NULL)));
+CREATE POLICY custom_edge_types_tenant_isolation ON public.custom_edge_types TO marfa_app USING (((tenant_id = current_setting('marfa.tenant_id'::text, true)) OR (tenant_id = ''::text)));
 
 ALTER TABLE public.custom_types ENABLE ROW LEVEL SECURITY;
 

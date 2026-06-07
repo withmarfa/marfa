@@ -8261,7 +8261,7 @@
           "Edge Types"
         ],
         "summary": "Register an edge type",
-        "description": "Registers a custom edge type with its cardinality, cascade behaviour, type constraints, and optional property schema. Admin-only; the eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
+        "description": "Registers a custom edge type with its cardinality, cascade behaviour, type constraints, and optional property schema. Tenant-admin or platform-admin; the registration is scoped to the caller's tenant and is invisible to other tenants. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
         "security": [
           {
             "bearerAuth": []
@@ -8464,7 +8464,7 @@
             }
           },
           "403": {
-            "description": "Admin required",
+            "description": "Tenant-admin required",
             "content": {
               "application/json": {
                 "schema": {
@@ -8641,7 +8641,7 @@
           "Edge Types"
         ],
         "summary": "Delete an edge type",
-        "description": "Removes a custom edge type registration. Admin-only; core edge types are rejected, and the request fails while any edges of this type still exist, so delete or migrate them first.",
+        "description": "Removes a custom edge type registration scoped to the caller's tenant. Tenant-admin or platform-admin; core edge types are rejected, another tenant's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
         "security": [
           {
             "bearerAuth": []

@@ -1475,7 +1475,7 @@ export function itemRoutes(storage: Storage) {
     // rolls back lower-level surprises on either dialect.
     if (hasEdges && body.edges) {
       for (const [edgeType, targets] of Object.entries(body.edges)) {
-        const schema = getEdgeTypeSchema(edgeType);
+        const schema = getEdgeTypeSchema(edgeType, tid);
         if (!schema) {
           throw new MarfaError(
             ErrorCode.EDGE_TYPE_NOT_FOUND,
@@ -1615,7 +1615,7 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, targetItem.type, "write");
 
     const snapshots = await storage.runInTransaction(async () => {
-      const toDelete = await planCascadeDelete(storage.edges, id);
+      const toDelete = await planCascadeDelete(storage.edges, id, tid);
       const snaps = await Promise.all(
         toDelete.map((delId) => storage.items.get(delId, tid)),
       );
